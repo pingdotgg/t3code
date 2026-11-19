@@ -1,7 +1,12 @@
+import appCss from "../index.css?inline";
+import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import * as shelfHooks from "../state/olderSettledShelf";
+import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   DEFAULT_CLIENT_SETTINGS,
   EnvironmentId,
+  type LocalApi,
   ProjectId,
   ThreadId,
   type ScopedThreadRef,
@@ -14,24 +19,32 @@ import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { useProjects, useQuietThreadShells } from "../state/entities";
+import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
 
+vi.mock(import("../state/olderSettledShelf"), async (original) => {
+  const actual = await original();
+  return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
+});
 vi.mock("../state/entities", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
 vi.mock("../state/session", { spy: true });
 vi.mock("../state/use-orchestration-command", { spy: true });
+vi.mock("../localApi", { spy: true });
 vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
@@ -135,6 +148,9 @@ describe("sidebar render isolation", () => {
       environmentId: activeProject.environmentId,
       threadId: threads[0]!.id,
     };
+    threads.unshift(threadShell(activeProject.id, 100));
+    // A real wall-clock minute tick mid-test re-renders every row and reads as a leak.
+    vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue(threads);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
@@ -246,4 +262,138 @@ describe("sidebar thread rename", () => {
       expect(updateMetadata).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("sidebar thread menu", () => {
+  it("tells the menu whether the keyboard opened it", async () => {
+    const activeProject = project("active");
+    const thread = threadShell(activeProject.id, 0);
+    const threadRef = { environmentId: activeProject.environmentId, threadId: thread.id };
+    const show = vi.fn().mockResolvedValue(null);
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: threadRef,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const row = screen.getByText("Thread 0").first();
+    await expect.element(row).toBeInTheDocument();
+    row.element().closest<HTMLElement>("[data-sidebar-row]")!.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+    expect(show.mock.lastCall?.[2]).toBe("keyboard");
+    await userEvent.click(row, { button: "right" });
+    await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
+    expect(show.mock.lastCall?.[2]).toBe("mouse");
+  });
+});
+
+describe("sidebar settled pagination", () => {
+  it("keeps the viewport in place when showing more settled threads", async () => {
+    using stack = new DisposableStack();
+    const style = document.createElement("style");
+    style.textContent = appCss;
+    document.head.append(style);
+    stack.defer(() => style.remove());
+    const focusController = createWorkspaceFocusController(document);
+    stack.defer(() => focusController.dispose());
+    let loading = false;
+    const originalShelf = vi.mocked(shelfHooks.useOlderSettledShelf).getMockImplementation()!;
+    using _shelf = vi.spyOn(shelfHooks, "useOlderSettledShelf").mockImplementation((input) => ({
+      ...originalShelf(input),
+      loading,
+      retry: () => {
+        loading = true;
+      },
+    }));
+    const activeProject = project("active");
+    const threads = Array.from({ length: 70 }, (_, index) =>
+      makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make(`settled-${index}`),
+        title: `Settled thread ${index}`,
+        settledOverride: "settled",
+        settledAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    threads.unshift(threadShell(activeProject.id, 100));
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({
+      kind: "server",
+      threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+    });
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+    });
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider
+        {...workspaceAreaProps("sidebar", 0, "Threads")}
+        style={{ height: 400, minHeight: 400 }}
+      >
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const shelf = screen.container.querySelector<HTMLElement>(
+      '[data-sidebar-row="shelf:settled"]',
+    )!;
+    if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
+    const more = screen.getByRole("button", { name: "Show 25 more", exact: true });
+    await expect.element(more).toBeInTheDocument();
+    const moreButton = more.element() as HTMLButtonElement;
+    const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
+    viewport.style.height = "300px";
+    viewport.style.maxHeight = "300px";
+    moreButton.scrollIntoView({ block: "nearest" });
+    const before = viewport.scrollTop;
+    expect(before).toBeGreaterThan(0);
+    moreButton.focus({ preventScroll: true });
+    await act(() => moreButton.click());
+    await expect
+      .element(screen.getByRole("button", { name: "Loading", exact: true }))
+      .toBeInTheDocument();
+    await expect
+      .element(screen.getByRole("button", { name: "Loading", exact: true }))
+      .toHaveFocus();
+    expect(viewport.scrollTop).toBe(before);
+    const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
+    await act(() => moreButton.click());
+    expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
 });

@@ -100,6 +100,7 @@ const contentTarget = {
 };
 
 it.each([
+  { query: "", expected: "" },
   { query: "src", expected: "src" },
   { query: "a".repeat(256), expected: "a".repeat(256) },
   {

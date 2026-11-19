@@ -25,8 +25,11 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
-  it("names max instead of drawing it", () => {
+  it("names Max and Default instead of drawing them", () => {
     expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
+    const reported = descriptor(["default", "low", "medium", "high", "xhigh", "max"]);
+    expect(resolveEffortGlyph(reported, "default")?.special).toBe("Default");
+    expect(resolveEffortGlyph(reported, "low")).toMatchObject({ count: 4, filled: 1 });
   });
 
   it("names Ultracode and Ultrathink instead of drawing a level", () => {

@@ -361,6 +361,50 @@ describe("AcpRuntimeModel", () => {
     ).toBe(true);
   });
 
+  it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
+    const toolCall = (update: Omit<EffectAcpSchema.ToolCallUpdate, "toolCallId">) => {
+      const parsed = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-1", ...update },
+      } satisfies EffectAcpSchema.SessionNotification);
+      const event = parsed.events.find((candidate) => candidate._tag === "ToolCallUpdated");
+      if (!event || event._tag !== "ToolCallUpdated") {
+        throw new Error("expected a tool call update");
+      }
+      return event.toolCall;
+    };
+
+    const created = toolCall({
+      name: "old-name",
+      title: "Old title",
+      kind: "read",
+      status: "in_progress",
+      content: [{ type: "content", content: { type: "text", text: "old output" } }],
+      rawInput: { path: "old.txt", obsolete: true },
+      _meta: { old: true },
+    });
+
+    expect(
+      mergeToolCallState(created, toolCall({ rawInput: { path: "new.txt" } })).data.rawInput,
+    ).toEqual({ path: "new.txt" });
+
+    const cleared = mergeToolCallState(
+      created,
+      toolCall({
+        name: null,
+        title: null,
+        kind: null,
+        status: null,
+        content: null,
+        rawInput: null,
+        _meta: null,
+      }),
+    );
+    const { name, title, kind, content, rawInput, meta } = cleared.data;
+    expect({ name, title, kind, content, rawInput, meta }).toEqual({});
+    expect({ kind: cleared.kind, title: cleared.title, status: cleared.status }).toEqual({});
+  });
+
   it("forwards an empty ACP v1 plan to clear previous entries", () => {
     const entries = [
       [{ content: "Inspect state", priority: "high", status: "pending" }],
@@ -1351,6 +1395,10 @@ describe("extractMcpToolCallIdentity", () => {
       // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
       'delegate_task: {"mode":"async","task":"Ru',
       'delegate_task: {"mode":"async","task":"Ru...cho child-result-42\'"}',
+      // Antigravity: "Running <tool>" before agy 1.5.8, "Run mcp_<server>_<tool>" since, "?" on prompts.
+      "Running delegate_task",
+      "Run mcp_t3-code_delegate_task",
+      "Run mcp_t3-code_delegate_task?",
     ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
@@ -1568,7 +1616,12 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not brand path-like or unknown-tool titles", () => {
-    for (const title of ["t3-code/README.md", "t3-code_not_a_real_tool"]) {
+    for (const title of [
+      "t3-code/README.md",
+      "t3-code_not_a_real_tool",
+      "Run mcp_t3-code_not_a_real_tool",
+      "Run manage_task",
+    ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
         toolCallId: "path-1",
