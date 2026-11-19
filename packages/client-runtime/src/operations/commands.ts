@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -315,7 +317,11 @@ const dispatchMessage = Effect.fn("EnvironmentCommands.dispatchMessage")(functio
         Effect.fail(
           new EnvironmentRpcUnavailableError({
             environmentId: supervisor.target.environmentId,
-            message: `${supervisor.target.label} did not confirm the message within 60 seconds.`,
+            ...translatableMessage(
+              msg("{host} did not confirm the message within 60 seconds.", {
+                host: supervisor.target.label,
+              }),
+            ),
           }),
         ),
     }),
@@ -742,6 +748,10 @@ export const setThreadInteractionMode = Effect.fn("EnvironmentCommands.setThread
   },
 );
 
+// Servers without native resume dispatch command.text verbatim; newer ones clear
+// it when manualContinuationOfRunId is set.
+const MANUAL_CONTINUATION_FALLBACK_TEXT = "Continue where you left off.";
+
 export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(function* (
   input: StartThreadTurnInput,
 ) {
@@ -819,7 +829,12 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ...(input.manualContinuationOfRunId === undefined
           ? {}
           : { manualContinuationOfRunId: input.manualContinuationOfRunId }),
-        text: input.message.text,
+        text:
+          input.manualContinuationOfRunId !== undefined &&
+          input.message.text.trim().length === 0 &&
+          attachments.length === 0
+            ? MANUAL_CONTINUATION_FALLBACK_TEXT
+            : input.message.text,
         ...(context ? { context } : {}),
         ...(input.message.idleCompaction === undefined
           ? {}
