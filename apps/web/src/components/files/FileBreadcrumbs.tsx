@@ -35,6 +35,7 @@ import { useProjectEntriesQuery } from "./projectFilesQueryState";
 interface FileBreadcrumbsProps {
   readonly cwd: string;
   readonly environmentId: EnvironmentId;
+  readonly isFolder: boolean;
   /** Navigates to a folder; an empty path is the workspace root. */
   readonly onNavigateFolder: (relativePath: string) => void;
   readonly onOpenFile: (relativePath: string) => void;
@@ -306,6 +307,7 @@ function FolderBreadcrumb(props: {
 
 /** Host paths outside the workspace omit contents menus; the browser already lists their destination. */
 export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
+  const { resolvedTheme } = useTheme();
   const hostPath = isHostPath(props.relativePath);
   const breadcrumbs = fileBreadcrumbs(props.projectName, props.trail);
   const currentPath = breadcrumbPathOf(props.relativePath);
@@ -325,7 +327,15 @@ export function FileBreadcrumbs(props: FileBreadcrumbsProps) {
               data-current-file-crumb={current}
             >
               {current ? (
-                <span aria-current="page">
+                <span aria-current="page" className="flex min-w-0 items-center gap-1">
+                  {!props.isFolder && crumb.kind === "file" ? (
+                    <PierreEntryIcon
+                      pathValue={crumb.path}
+                      kind="file"
+                      theme={resolvedTheme}
+                      className="size-3.5"
+                    />
+                  ) : null}
                   <BreadcrumbLabel
                     current
                     label={crumb.label}

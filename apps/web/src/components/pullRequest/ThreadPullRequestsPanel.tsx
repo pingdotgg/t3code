@@ -40,10 +40,10 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
+import { PanelEmptyState } from "../PanelEmptyState";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openLinkPullRequestDialog } from "./LinkPullRequestDialog";
 import {
@@ -206,11 +206,18 @@ function LinkRowImpl({
               <TooltipTrigger render={<span className={PULL_REQUEST_ROW_NUMBER_CLASS} />}>
                 #{link.number}
               </TooltipTrigger>
+              {/* The repository lives here, not on the meta line, so the branches get its room. */}
               <TooltipPopup>
-                <span className="grid gap-1">
+                <span className="flex flex-col gap-0.5">
+                  <span>{link.repository}</span>
                   <span>{resolve(SOURCE_LABELS[link.source])}</span>
                   <span>
-                    <RelativeTime timestamp={link.linkedAt} />
+                    <T context="followed by a relative time such as 5m ago or just now">
+                      linked{" "}
+                      <Var>
+                        <RelativeTime timestamp={link.linkedAt} />
+                      </Var>
+                    </T>
                   </span>
                 </span>
               </TooltipPopup>
@@ -299,12 +306,6 @@ function LinkRowImpl({
               ) : null}
               {snapshot !== null ? (
                 <>
-                  <Tooltip>
-                    <TooltipTrigger render={<span className="flex min-w-0 max-w-32 font-mono" />}>
-                      <MiddleTruncate value={link.repository} showTitle={false} />
-                    </TooltipTrigger>
-                    <TooltipPopup>{link.repository}</TooltipPopup>
-                  </Tooltip>
                   <PullRequestRowBranches head={snapshot.headBranch} base={snapshot.baseBranch} />
                 </>
               ) : (
@@ -518,21 +519,23 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   if (linkCount === 0 && issues.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
-        <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">
-          <T>No linked pull requests</T>
-        </p>
-        <p className="max-w-60 text-xs text-muted-foreground">
-          <T>
-            Pull requests the agent opens from this thread land here. Link one yourself from a URL
-            or a number.
-          </T>
-        </p>
-        <Button size="sm" variant="secondary" onClick={openLinkDialog}>
-          <PlusIcon className="size-3.5" />
-          <T>Link pull request</T>
-        </Button>
+      <div className="flex h-full flex-col">
+        <PanelEmptyState
+          icon={<PullRequestGlyph.link />}
+          title={<T>No linked pull requests</T>}
+          description={
+            <T>
+              Pull requests the agent opens from this thread land here. Link one yourself from a URL
+              or a number.
+            </T>
+          }
+          action={
+            <Button size="sm" variant="secondary" onClick={openLinkDialog}>
+              <PlusIcon className="size-3.5" />
+              <T>Link pull request</T>
+            </Button>
+          }
+        />
       </div>
     );
   }
@@ -550,7 +553,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
             issues.length > 0 ? (
               <>
                 <section aria-label={gt("Linked issues")} className="flex flex-col">
-                  <h2 className="px-2 py-1 text-xs font-medium text-muted-foreground">
+                  <h2 className="px-2 py-1 text-meta text-muted-foreground">
                     <T>Issues</T>
                   </h2>
                   <ThreadDetailsIssueRows
@@ -561,7 +564,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
                   />
                 </section>
                 {linkCount > 0 ? (
-                  <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-meta text-muted-foreground">
+                  <h2 className="mt-2 border-t border-border px-3 pt-2 pb-1 text-meta text-muted-foreground">
                     <T>Pull requests</T>
                   </h2>
                 ) : null}
@@ -592,12 +595,31 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
         />
         <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-meta text-muted-foreground">
           <Tooltip>
-            <TooltipTrigger render={<span />}>
-              {linkCount > 0
-                ? gt("{count, plural, one {{count} linked} other {{count} linked}}", {
-                    count: linkCount,
-                  })
-                : null}
+            <TooltipTrigger render={<span className="flex min-w-0 flex-wrap gap-x-2" />}>
+              {linkCount > 0 ? (
+                <>
+                  <span>
+                    {gt("{count, plural, one {{count} linked} other {{count} linked}}", {
+                      count: linkCount,
+                    })}
+                  </span>
+                  <span>
+                    {gt("{count, plural, one {{count} open} other {{count} open}}", {
+                      count: openCount,
+                    })}
+                  </span>
+                </>
+              ) : null}
+              {lastSynced ? (
+                <span>
+                  <T context="followed by a relative time such as 5m ago or just now">
+                    synced{" "}
+                    <Var>
+                      <RelativeTime timestamp={lastSynced} />
+                    </Var>
+                  </T>
+                </span>
+              ) : null}
             </TooltipTrigger>
             <TooltipPopup>
               <span className="flex flex-col gap-0.5">

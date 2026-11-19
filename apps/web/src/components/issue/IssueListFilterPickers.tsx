@@ -5,7 +5,15 @@ import type {
   IssueListState,
   ProjectId,
 } from "@t3tools/contracts";
-import { FolderGit2Icon, LayersIcon, ListFilterIcon, TagIcon, UserIcon } from "lucide-react";
+import {
+  FolderGit2Icon,
+  FolderIcon,
+  LayersIcon,
+  ListFilterIcon,
+  TagIcon,
+  UserIcon,
+  UsersRoundIcon,
+} from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 
@@ -34,6 +42,7 @@ import {
   type PullRequestFilterOption,
 } from "../pullRequest/PullRequestListFilters";
 import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
+import { IssueGlyph } from "./issuePresentation";
 
 const VISIBLE_CHOICES = 30;
 const ALL_PROJECTS = "all";
@@ -104,12 +113,14 @@ export function IssueFiltersMenu(props: {
       <MenuPopup align="end" side="bottom">
         <PullRequestFilterRadioSubmenu
           label={gt("State", { $context: "issue state filter" })}
+          icon={IssueGlyph.issue}
           value={props.state}
           options={props.stateOptions}
           onChange={props.onState}
         />
         <PullRequestFilterRadioSubmenu
           label={gt("Involvement")}
+          icon={UsersRoundIcon}
           value={props.involvement}
           options={props.involvementOptions}
           onChange={props.onInvolvement}
@@ -117,6 +128,7 @@ export function IssueFiltersMenu(props: {
         {props.projects.length > 1 || props.project ? (
           <PullRequestFilterRadioSubmenu
             label={gt("Project")}
+            icon={FolderIcon}
             value={projectValue}
             options={projectOptions}
             onChange={(next) => {

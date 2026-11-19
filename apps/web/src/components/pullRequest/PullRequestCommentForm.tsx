@@ -19,6 +19,7 @@ import {
 } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -184,16 +185,12 @@ export function PullRequestCommentForm({
             )}
           </Button>
         )}
-        <Button
-          size="xs"
-          variant="secondary"
-          disabled={submitDisabled}
-          onClick={() => submitAfterDictation("comment")}
-        >
+        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
           <SendIcon className="size-3.5" />
           {submitting === "comment"
             ? gt("Posting...")
             : gt("Comment", { $context: "verb, submit button" })}
+          <PullRequestSubmitKeyHint />
         </Button>
       </div>
     </div>

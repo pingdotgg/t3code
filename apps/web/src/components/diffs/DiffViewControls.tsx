@@ -1,0 +1,289 @@
+import {
+  Columns2Icon,
+  EllipsisIcon,
+  FlaskConicalOffIcon,
+  FolderTreeIcon,
+  PilcrowIcon,
+  TextWrapIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
+} from "lucide-react";
+import { T, useGT } from "gt-react";
+
+import { updateClientSettings } from "~/hooks/useSettings";
+import { Button } from "../ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../ui/menu";
+import { RefreshIcon } from "../ui/refresh-icon";
+import { Separator } from "../ui/separator";
+import { Toggle } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/**
+ * The view controls every diff surface shares: layout, wrap, whitespace, file tree and fold-all.
+ * Place it inside an `@container/diff-toolbar` row: narrow rows keep the layout toggle and move
+ * the rest into an overflow menu.
+ */
+export function DiffViewControls({
+  diffLayout,
+  wordWrap,
+  onWordWrapChange,
+  ignoreWhitespace,
+  onIgnoreWhitespaceChange,
+  hasFiles,
+  fileTreeOpen,
+  onFileTreeOpenChange,
+  allFilesCollapsed,
+  onToggleAllFiles,
+  refresh,
+  testFileCount = 0,
+  hideTestFiles = false,
+  onHideTestFilesChange,
+}: {
+  diffLayout: "stacked" | "split";
+  wordWrap: boolean;
+  onWordWrapChange: (wordWrap: boolean) => void;
+  ignoreWhitespace: boolean;
+  onIgnoreWhitespaceChange: (ignoreWhitespace: boolean) => void;
+  /** Fold-all and the file tree only mean something once there are files. */
+  hasFiles: boolean;
+  fileTreeOpen: boolean;
+  onFileTreeOpenChange: (open: boolean) => void;
+  allFilesCollapsed: boolean;
+  onToggleAllFiles: () => void;
+  refresh?: { refreshing: boolean; onRefresh: () => void } | undefined;
+  testFileCount?: number;
+  hideTestFiles?: boolean;
+  onHideTestFilesChange?: (hidden: boolean) => void;
+}) {
+  const gt = useGT();
+  const setDiffLayout = (value: unknown) => {
+    if (value === "stacked" || value === "split") {
+      updateClientSettings({ diffLayout: value });
+    }
+  };
+
+  return (
+    <>
+      <div className="hidden items-center gap-1 @sm/diff-toolbar:flex">
+        {refresh && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={refresh.refreshing ? gt("Refreshing diff") : gt("Refresh diff")}
+                  onClick={refresh.onRefresh}
+                />
+              }
+            >
+              <RefreshIcon size="sm" refreshing={refresh.refreshing} />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {refresh.refreshing ? gt("Refreshing diff…") : gt("Refresh diff")}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {hasFiles && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="icon-sm"
+                  variant="ghost"
+                  aria-label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+                  onClick={onToggleAllFiles}
+                />
+              }
+            >
+              {allFilesCollapsed ? (
+                <ChevronsUpDownIcon className="size-3.5" />
+              ) : (
+                <ChevronsDownUpIcon className="size-3.5" />
+              )}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+      </div>
+      <div className="hidden @2xs/diff-toolbar:flex">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  diffLayout === "split" ? gt("Stacked diff view") : gt("Split diff view")
+                }
+                variant="ghost"
+                size="sm"
+                pressed={diffLayout === "split"}
+                onPressedChange={(pressed) => setDiffLayout(pressed ? "split" : "stacked")}
+              />
+            }
+          >
+            <Columns2Icon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {diffLayout === "split" ? gt("Stacked view") : gt("Split view")}
+          </TooltipPopup>
+        </Tooltip>
+      </div>
+      <div className="hidden items-center gap-1 @sm/diff-toolbar:flex">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
+                }
+                variant="ghost"
+                size="sm"
+                pressed={wordWrap}
+                onPressedChange={(pressed) => onWordWrapChange(Boolean(pressed))}
+              />
+            }
+          >
+            <TextWrapIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
+                }
+                variant="ghost"
+                size="sm"
+                pressed={ignoreWhitespace}
+                onPressedChange={(pressed) => onIgnoreWhitespaceChange(Boolean(pressed))}
+              />
+            }
+          >
+            <PilcrowIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
+          </TooltipPopup>
+        </Tooltip>
+        {testFileCount > 0 && onHideTestFilesChange && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={gt("Hide test files")}
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideTestFiles}
+                  onPressedChange={(pressed) => onHideTestFilesChange(Boolean(pressed))}
+                />
+              }
+            >
+              <FlaskConicalOffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideTestFiles
+                ? gt(
+                    "{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}",
+                    { count: testFileCount },
+                  )
+                : gt("Hide test files")}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+        {hasFiles && <Separator orientation="vertical" className="mx-0.5 h-3.5" />}
+        {hasFiles && (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
+                  variant="ghost"
+                  size="sm"
+                  pressed={fileTreeOpen}
+                  onPressedChange={(pressed) => onFileTreeOpenChange(Boolean(pressed))}
+                />
+              }
+            >
+              <FolderTreeIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
+            </TooltipPopup>
+          </Tooltip>
+        )}
+      </div>
+      <div className="flex @sm/diff-toolbar:hidden">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button size="icon-sm" variant="ghost" />}
+            aria-label={gt("More diff actions")}
+          >
+            <EllipsisIcon className="size-3.5" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup value={diffLayout} onValueChange={setDiffLayout}>
+              <DropdownMenuRadioItem value="stacked">{gt("Stacked view")}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="split">{gt("Split view")}</DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
+            {refresh && (
+              <DropdownMenuItem disabled={refresh.refreshing} onClick={refresh.onRefresh}>
+                {gt("Refresh diff")}
+              </DropdownMenuItem>
+            )}
+            {hasFiles && (
+              <DropdownMenuItem onClick={onToggleAllFiles}>
+                {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuCheckboxItem
+              checked={wordWrap}
+              onCheckedChange={(checked) => onWordWrapChange(Boolean(checked))}
+            >
+              <T>Wrap lines</T>
+            </DropdownMenuCheckboxItem>
+            <DropdownMenuCheckboxItem
+              checked={ignoreWhitespace}
+              onCheckedChange={(checked) => onIgnoreWhitespaceChange(Boolean(checked))}
+            >
+              <T>Hide whitespace changes</T>
+            </DropdownMenuCheckboxItem>
+            {testFileCount > 0 && onHideTestFilesChange && (
+              <DropdownMenuCheckboxItem
+                checked={hideTestFiles}
+                onCheckedChange={(checked) => onHideTestFilesChange(Boolean(checked))}
+              >
+                {gt("Hide test files")}
+              </DropdownMenuCheckboxItem>
+            )}
+            {hasFiles && (
+              <DropdownMenuCheckboxItem
+                checked={fileTreeOpen}
+                onCheckedChange={(checked) => onFileTreeOpenChange(Boolean(checked))}
+              >
+                <T>File tree</T>
+              </DropdownMenuCheckboxItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </>
+  );
+}

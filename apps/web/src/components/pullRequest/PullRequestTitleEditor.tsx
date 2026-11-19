@@ -22,22 +22,19 @@ import { changeRequestTermKind } from "./changeRequestTerm";
 export function PullRequestTitleEditor({
   environmentId,
   reference,
-  pullRequestKey,
   detail,
   canWriteSourceControl,
+  value: titleDraft,
+  onValueChange,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
-  pullRequestKey: string;
   detail: PullRequestDetail;
   canWriteSourceControl: boolean;
+  value: string | null;
+  onValueChange: (value: string | null) => void;
 }) {
   const update = useAtomCommand(pullRequestEnvironment.update, { reportFailure: false });
-  const [titleScope, setTitleScope] = useState<{
-    readonly pullRequestKey: string;
-    readonly text: string;
-  } | null>(null);
-  const titleDraft = titleScope?.pullRequestKey === pullRequestKey ? titleScope.text : null;
   const gt = useGT();
   const [titleSaving, setTitleSaving] = useState(false);
 
@@ -45,16 +42,16 @@ export function PullRequestTitleEditor({
     const title = next.trim();
     if (!canWriteSourceControl || titleSaving) return;
     if (title.length === 0 || title === detail.title) {
-      setTitleScope(null);
+      onValueChange(null);
       return;
     }
     setTitleSaving(true);
     // The new title shows while the host takes it, so the editor closes at once.
-    setTitleScope(null);
+    onValueChange(null);
     const result = await update({ environmentId, input: { ...reference, title } });
     setTitleSaving(false);
     if (result._tag === "Failure") {
-      setTitleScope({ pullRequestKey, text: title });
+      onValueChange(title);
       toastManager.add({
         type: "error",
         title: m(msg("The title could not be saved")),
@@ -72,7 +69,7 @@ export function PullRequestTitleEditor({
         <Tooltip>
           <TooltipTrigger
             render={
-              <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug text-foreground">
+              <h1 className="min-w-0 flex-1 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] wrap-anywhere text-foreground [--type-title:0.9375rem]">
                 {detail.title}
               </h1>
             }
@@ -82,7 +79,7 @@ export function PullRequestTitleEditor({
         {canEditPullRequestChangeRequest(detail) ? (
           <PullRequestEditButton
             aria-label={gt("Edit title")}
-            onClick={() => setTitleScope({ pullRequestKey, text: detail.title })}
+            onClick={() => onValueChange(detail.title)}
           />
         ) : null}
       </PullRequestDetailTitleRow>
@@ -101,7 +98,7 @@ export function PullRequestTitleEditor({
             term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
           },
         )}
-        onChange={(event) => setTitleScope({ pullRequestKey, text: event.target.value })}
+        onChange={(event) => onValueChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "Enter") {
@@ -109,7 +106,7 @@ export function PullRequestTitleEditor({
             void saveTitle(titleDraft);
           } else if (event.key === "Escape") {
             event.preventDefault();
-            setTitleScope(null);
+            onValueChange(null);
           }
         }}
       />
@@ -118,7 +115,7 @@ export function PullRequestTitleEditor({
           size="xs"
           variant="ghost"
           disabled={titleSaving}
-          onClick={() => setTitleScope(null)}
+          onClick={() => onValueChange(null)}
         >
           <T>Cancel</T>
         </Button>

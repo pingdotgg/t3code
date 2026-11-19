@@ -554,7 +554,7 @@ export function ThreadDetailsPrRow({
                         : "text-muted-foreground",
                     )}
                   >
-                    {describePullRequestChecks(detail.checks, m)}
+                    {describePullRequestChecks(detail.checks, m)[0]}
                   </span>
                 }
               />

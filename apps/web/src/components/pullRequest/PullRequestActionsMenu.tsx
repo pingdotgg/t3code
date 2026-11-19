@@ -1,3 +1,4 @@
+import { useId, useState, type ReactNode } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   canEditPullRequestMaintainerEdits,
@@ -25,9 +26,11 @@ import {
   RotateCcwIcon,
   ScrollTextIcon,
   Trash2Icon,
+  FolderGit2Icon,
+  PencilIcon,
+  SquareTerminalIcon,
 } from "lucide-react";
-import { Branch, msg, T, useGT, useMessages } from "gt-react";
-import { useId, useState } from "react";
+import { Branch, msg, T, useGT, useMessages, Var } from "gt-react";
 
 import { m } from "~/i18n/messages";
 
@@ -47,6 +50,8 @@ import {
   MenuSeparator,
   MenuShortcut,
   MenuTrigger,
+  MenuGroup,
+  MenuGroupLabel,
 } from "../ui/menu";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { toastManager } from "../ui/toast";
@@ -58,9 +63,10 @@ import {
   readableFailure,
 } from "./pullRequestDetail.logic";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import type { PickableEnvironment } from "./pullRequestProjectAssignment.logic";
+import { type PickableEnvironment } from "./pullRequestProjectAssignment.logic";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
+import { canEditPullRequestChangeRequest } from "@t3tools/client-runtime/pull-request-editing";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -107,21 +113,17 @@ export function PullRequestActionsMenu({
   perform,
   openOnHostText,
   copyReference,
+  inlineConfirm,
+  showCheckout,
+  checkoutMenuItems,
+  onEditTitle,
+  repositoryUrl,
+  checkoutCommand,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   pullRequestKey: string;
-  detail: Pick<
-    PullRequestDetail,
-    | "url"
-    | "state"
-    | "isDraft"
-    | "headBranch"
-    | "capabilities"
-    | "viewerPermissions"
-    | "maintainerCanModify"
-    | "observedAt"
-  >;
+  detail: PullRequestDetail;
   terminology: ChangeRequestTerminology;
   linkThreadRef: ScopedThreadRef | null;
   onThreadPickerOpenChange: (open: boolean) => void;
@@ -159,11 +161,16 @@ export function PullRequestActionsMenu({
   perform: PerformPullRequestAction;
   openOnHostText: string;
   copyReference: (value: string, failureTitle: string) => void;
+  inlineConfirm: ReturnType<typeof useInlineActionConfirm>;
+  showCheckout: boolean;
+  checkoutMenuItems: ReactNode;
+  onEditTitle: () => void;
+  repositoryUrl: string | null;
+  checkoutCommand: string | null;
 }) {
   const gt = useGT();
   const resolve = useMessages();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const inlineConfirm = useInlineActionConfirm(pullRequestKey);
   const actionPending = pendingAction !== null;
   const maintainerEditsHintId = useId();
   const updatePullRequest = useAtomCommand(pullRequestEnvironment.update, {
@@ -267,7 +274,7 @@ export function PullRequestActionsMenu({
           <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>{handoff === "ask" ? gt("Opening...") : gt("Ask a question")}</span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               {attachesToComposer
                 ? gt(
                     "Adds the {term, select, mr {merge request} cr {change request} other {pull request}} to this thread's composer.",
@@ -292,7 +299,7 @@ export function PullRequestActionsMenu({
                     term: changeRequestTermKind(terminology),
                   })}
             </span>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-meta text-muted-foreground">
               <T>A walk through the diff and what to read closely.</T>
             </span>
           </span>
@@ -311,11 +318,17 @@ export function PullRequestActionsMenu({
                 : gt("Rewrite guide")}
           </MenuItem>
         ) : null}
+        {showCheckout ? (
+          <>
+            <MenuSeparator />
+            {checkoutMenuItems}
+          </>
+        ) : null}
         {pickableEnvironments.length > 0 ? (
           <ActOnEnvironmentPicker
             environments={pickableEnvironments}
             value={actingEnvironmentId}
-            onChange={onActingEnvironmentChange}
+            onChange={(next) => onActingEnvironmentChange(next)}
             disabled={handoff !== null}
           />
         ) : null}
@@ -405,24 +418,32 @@ export function PullRequestActionsMenu({
             {showsMergeMethods ? (
               <>
                 {showsDraftToggle || showsMergeNow || showsAutoMerge ? <MenuSeparator /> : null}
-                <MenuRadioGroup
-                  value={selectedMergeMethod}
-                  onValueChange={(method) => onSelectMergeMethod(method as PullRequestMergeMethod)}
-                >
-                  {allowedMergeMethods.map((method) => (
-                    <MenuRadioItem
-                      key={method}
-                      value={method}
-                      disabled={actionPending}
-                      closeOnClick
-                    >
-                      <span className="flex min-w-0 items-center gap-2">
-                        <PullRequestGlyph.merged className="size-3.5" />
-                        <span>{resolve(PULL_REQUEST_MERGE_METHOD_LABELS[method])}</span>
-                      </span>
-                    </MenuRadioItem>
-                  ))}
-                </MenuRadioGroup>
+                <MenuGroup>
+                  <MenuGroupLabel>
+                    <T>Merge method</T>
+                  </MenuGroupLabel>
+                  <MenuRadioGroup
+                    value={selectedMergeMethod}
+                    onValueChange={(method) => {
+                      const selectedMethod = method as PullRequestMergeMethod;
+                      onSelectMergeMethod(selectedMethod);
+                    }}
+                  >
+                    {allowedMergeMethods.map((method) => (
+                      <MenuRadioItem
+                        key={method}
+                        value={method}
+                        disabled={actionPending}
+                        closeOnClick
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          <PullRequestGlyph.merged className="size-3.5" />
+                          <span>{resolve(PULL_REQUEST_MERGE_METHOD_LABELS[method])}</span>
+                        </span>
+                      </MenuRadioItem>
+                    ))}
+                  </MenuRadioGroup>
+                </MenuGroup>
               </>
             ) : null}
             {pullRequestActionMenuHasGroup(
@@ -434,10 +455,24 @@ export function PullRequestActionsMenu({
             ) : null}
           </>
         ) : null}
+        {canEditPullRequestChangeRequest(detail) ? (
+          <MenuItem onClick={() => onEditTitle()}>
+            <PencilIcon className="size-3.5" />
+            <T>Edit title</T>
+          </MenuItem>
+        ) : null}
         <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}>
           <ArrowUpRightIcon className="size-3.5" />
           {openOnHostText}
         </MenuItem>
+        {repositoryUrl ? (
+          <MenuItem onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}>
+            <FolderGit2Icon className="size-3.5" />
+            <T>
+              Open <Var>{detail.repository}</Var>
+            </T>
+          </MenuItem>
+        ) : null}
         <MenuItem
           onClick={() =>
             copyReference(
@@ -481,6 +516,16 @@ export function PullRequestActionsMenu({
             {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
           </MenuShortcut>
         </MenuItem>
+        {checkoutCommand ? (
+          <MenuItem
+            onClick={() =>
+              copyReference(checkoutCommand, resolve(msg("Failed to copy checkout command")))
+            }
+          >
+            <SquareTerminalIcon className="size-3.5" />
+            <T>Copy checkout command</T>
+          </MenuItem>
+        ) : null}
         {detail.state === "open" && can("close") ? (
           <>
             <MenuSeparator />

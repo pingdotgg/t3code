@@ -459,6 +459,10 @@ export function PreviewView({
     void localApi.shell.openExternal(externalUrl).catch(() => undefined);
   };
 
+  const handleFocusUrl = () => {
+    urlInputRef.current?.focus();
+  };
+
   const moveTarget = alternatePreviewRuntime(
     threadRef.environmentId,
     primaryEnvironmentId,
@@ -1139,12 +1143,12 @@ export function PreviewView({
         ) : null}
         {showEmptyState ? (
           <PreviewEmptyState
-            threadRef={threadRef}
             environmentId={threadRef.environmentId}
             configuredUrls={configuredUrls}
             recentEntries={recentHistoryEntries}
             onRemoveRecent={(url) => removeUrlForThread(threadRef, url)}
             onOpenUrl={(next) => void handleOpenServerUrl(next)}
+            onFocusUrl={handleFocusUrl}
           />
         ) : null}
         {snapshot && desktopOverlay ? (
@@ -1185,6 +1189,7 @@ export function PreviewView({
               code={navStatus.code}
               description={navStatus.description}
               onReload={handleRefresh}
+              onOpenInBrowser={localApi ? handleOpenInBrowser : undefined}
               {...(moveTarget === "server"
                 ? { move: { label: moveLabel, onMove: () => void handleMoveTab() } }
                 : {})}

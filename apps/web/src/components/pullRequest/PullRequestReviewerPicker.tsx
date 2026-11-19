@@ -17,7 +17,9 @@ import {
   toggleSelection,
 } from "@t3tools/client-runtime/pull-request-selection";
 import { CheckIcon, UserPlusIcon } from "lucide-react";
-import { msg, useGT, useMessages } from "gt-react";
+import { RelativeTime } from "~/components/RelativeTime";
+import { Badge } from "../ui/badge";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -93,10 +95,22 @@ export function PullRequestReviewerPicker({
     reportFailure: false,
   });
 
-  const { candidates, searchPending, searchError, truncation } = reviewerCandidateView({
+  const {
+    candidates: narrowed,
+    searchPending,
+    searchError,
+    truncation,
+  } = reviewerCandidateView({
     ...searchInput,
     search: searchResult,
   });
+  // Suggested people first, then who has already been asked, then everyone else with access.
+  const candidates = [
+    ...narrowed.filter((entry) => entry.suggestion !== undefined && !entry.isRequested),
+    ...narrowed.filter((entry) => entry.isRequested),
+    ...narrowed.filter((entry) => entry.suggestion === undefined && !entry.isRequested),
+  ];
+  const hasGroups = candidates.some((entry) => entry.isRequested || entry.suggestion !== undefined);
 
   const send = async (people: ReadonlyArray<PullRequestReviewerCandidate>, requested: boolean) => {
     for (const batch of changeBatches(people)) await sendBatch(batch, requested);
@@ -166,6 +180,7 @@ export function PullRequestReviewerPicker({
       query={query}
       onQueryChange={setQuery}
       searchLabel={gt("Search people with access")}
+      popupWidth="reviewers"
       isPending={(candidatesQuery.isPending && candidatesQuery.data === null) || searchPending}
       error={
         candidatesQuery.data === null
@@ -191,18 +206,50 @@ export function PullRequestReviewerPicker({
           ),
         )
       }
+      groupLabel={
+        hasGroups
+          ? (candidate) =>
+              candidate.isRequested
+                ? gt("Already asked")
+                : candidate.suggestion !== undefined
+                  ? gt("Suggested", { $context: "group of suggested reviewers" })
+                  : gt("Everyone with access")
+          : undefined
+      }
     >
-      {(candidate) => (
-        <>
-          <PullRequestActorLabel actor={candidate} className="flex-1" />
-          {candidate.kind === "team" ? (
-            <span className="shrink-0 text-muted-foreground">team</span>
-          ) : null}
-          {isSelected(draft, `${candidate.kind}:${candidate.id}`, candidate.isRequested) ? (
-            <CheckIcon aria-label={gt("Already asked")} className="size-3.5 shrink-0" />
-          ) : null}
-        </>
-      )}
+      {(candidate) => {
+        const selected = isSelected(
+          draft,
+          `${candidate.kind}:${candidate.id}`,
+          candidate.isRequested,
+        );
+        const reason = candidate.isRequested ? (
+          candidate.requestedAt ? (
+            <T>
+              requested{" "}
+              <Var>
+                <RelativeTime timestamp={candidate.requestedAt} />
+              </Var>
+            </T>
+          ) : null
+        ) : (
+          (candidate.suggestion ?? null)
+        );
+        return (
+          <>
+            <PullRequestActorLabel actor={candidate} className="shrink-0" />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">{reason}</span>
+            {selected && candidate.isRequested ? (
+              <Badge variant="warning">{gt("Pending", { $context: "review state" })}</Badge>
+            ) : selected ? (
+              <CheckIcon
+                aria-label={gt("Asking", { $context: "reviewer is being asked" })}
+                className="size-3.5 shrink-0 opacity-60"
+              />
+            ) : null}
+          </>
+        );
+      }}
     </PullRequestCandidatePicker>
   );
 }

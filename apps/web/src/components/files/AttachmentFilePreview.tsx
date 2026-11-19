@@ -14,18 +14,16 @@ import {
 import {
   ChevronRightIcon,
   DownloadIcon,
+  FileQuestion,
   Trash2Icon,
   WrapTextIcon,
   XIcon,
   CheckIcon,
-  Code2Icon,
   CopyIcon,
-  EyeIcon,
-  Table2Icon,
 } from "lucide-react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
-import { m, type MessageResolver } from "~/i18n/messages";
+import { m } from "~/i18n/messages";
 
 import { useAssetUrlRefresh } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -43,10 +41,12 @@ import { BrowserDocumentFrame } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import {
   FILE_SURFACE_SUBHEADER_CLASS,
+  FileRenderedViewToggle,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
   FileSurfaceNotice,
+  FileSurfaceState,
 } from "./fileSurfaceChrome";
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
@@ -82,19 +82,6 @@ export function ReadOnlySourcePreview(props: { name: string; text: string; wordW
       <SourcePreview {...props} />
     </Suspense>
   );
-}
-
-function renderedToggleLabel(
-  mode: "markdown" | "mermaid" | "html" | "table",
-  rendered: boolean,
-  resolve: MessageResolver,
-): string {
-  if (mode === "mermaid")
-    return rendered ? resolve(msg("Show Mermaid source")) : resolve(msg("Show rendered diagram"));
-  if (mode === "markdown")
-    return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
-  if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
-  return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
 }
 
 export function AttachmentFilePreview(props: {
@@ -391,20 +378,17 @@ export function AttachmentFilePreview(props: {
       onError={() => setError(gt("Unable to load image."))}
     />
   ) : (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 px-6 text-center">
-      <p className="text-sm font-medium">
-        <T>No preview for this file</T>
-      </p>
-      <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
-        {props.name.split(".").at(-1) ? (
-          <T>
-            Save it to open in an app that supports <Var>{props.name.split(".").at(-1)}</Var> files.
-          </T>
-        ) : (
-          <T>Save it to open in an app that supports this format files.</T>
-        )}
-      </p>
-    </div>
+    <FileSurfaceState
+      icon={<FileQuestion />}
+      title={gt("No preview for this file")}
+      description={
+        props.name.split(".").at(-1)
+          ? gt("Save it to open in an app that supports {extension} files.", {
+              extension: props.name.split(".").at(-1),
+            })
+          : gt("Save it to open in an app that supports this format files.")
+      }
+    />
   );
 
   return (
@@ -428,19 +412,11 @@ export function AttachmentFilePreview(props: {
           ) : null}
         </div>
         {renderedMode ? (
-          <FileSurfaceAction
-            label={renderedToggleLabel(renderedMode, rendered, messages)}
-            pressed={rendered}
-            onPress={() => setRendered((value) => !value)}
-          >
-            {rendered ? (
-              <Code2Icon className="size-3.5" />
-            ) : renderedMode === "table" ? (
-              <Table2Icon className="size-3.5" />
-            ) : (
-              <EyeIcon className="size-3.5" />
-            )}
-          </FileSurfaceAction>
+          <FileRenderedViewToggle
+            mode={renderedMode}
+            rendered={rendered}
+            onRenderedChange={setRendered}
+          />
         ) : null}
         {showsRawText ? (
           <FileSurfaceAction

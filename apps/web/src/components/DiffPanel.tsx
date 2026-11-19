@@ -1,5 +1,4 @@
 import { T, useGT, useMessages, Var } from "gt-react";
-import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffContentsLoader, FileDiffMetadata } from "@pierre/diffs";
 import {
@@ -7,6 +6,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   CHECKPOINT_DIFF_TRUNCATED_MARKER,
   type ReviewBranchCommitsResult,
@@ -17,16 +17,14 @@ import {
   ArrowRightIcon,
   CheckIcon,
   ChevronDownIcon,
-  Columns2Icon,
-  FlaskConicalOffIcon,
-  FolderTreeIcon,
-  PilcrowIcon,
-  Rows3Icon,
-  TextWrapIcon,
+  FileCheckIcon,
+  FileDiffIcon,
+  FolderGit2Icon,
+  HistoryIcon,
+  TriangleAlertIcon,
   ChevronRightIcon,
-  ChevronsDownUpIcon,
-  ChevronsUpDownIcon,
 } from "lucide-react";
+
 import * as Schema from "effect/Schema";
 import { type MouseEvent, useEffect, useRef, useState } from "react";
 import { useCodeViewFileReveal } from "./diffs/useCodeViewFileReveal";
@@ -55,7 +53,6 @@ import { useStableCallback } from "../hooks/useStableCallback";
 import {
   buildFileDiffEntries,
   getDiffCollapseIconClassName,
-  getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
   resolveFileDiffPath,
@@ -69,18 +66,19 @@ import {
   useQuietThreadShell,
   useQuietThreadVisibleTurnItems,
 } from "../state/entities";
-import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
+import { useClientSettings } from "../hooks/useSettings";
+import { useNowMinute } from "../hooks/useNowMinute";
 import { formatRelativeTimeLabel, formatShortTimestamp } from "../timestampFormat";
 import { DiffFilePathCopyButton } from "./DiffFilePathCopyButton";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-import { DiffStatLabel } from "./chat/DiffStatLabel";
+import { PanelEmptyState } from "./PanelEmptyState";
 import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/AnnotatableCodeView";
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
+import { DiffViewControls } from "./diffs/DiffViewControls";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
 import { Button, InlineButton } from "./ui/button";
-import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
   Combobox,
@@ -120,6 +118,14 @@ import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
 import { useOpenLink } from "../browser/useOpenLink";
 import { Text } from "./ui/text";
+import { DiffReviewTray } from "./diffs/DiffReviewTray";
+import {
+  DiffFileBasename,
+  DiffFileChangeIcon,
+  DiffFileHeaderStat,
+  diffHeaderTitlePath,
+  fileDiffLineStat,
+} from "./diffs/DiffFileHeaderParts";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -229,6 +235,7 @@ export default function DiffPanel({
   const gt = useGT();
   const messages = useMessages();
   const resolvedTheme = useRenderedAppearance();
+  const now = useNowMinute();
   const settings = useClientSettings((settings) => ({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
@@ -250,6 +257,24 @@ export default function DiffPanel({
   const [baseRefQuery, setBaseRefQuery] = useState("");
   // The open commit menu keeps the list it opened with, so rows do not move under the pointer.
   const [openCommitMenu, setOpenCommitMenu] = useState<ReviewBranchCommitsResult | null>(null);
+  // The comments written here since the review tray was last dismissed, for its one-press Undo.
+  // Tied to the draft they went into, so switching threads does not carry a batch across.
+  const composerDraftKey =
+    typeof composerDraftTarget === "string"
+      ? composerDraftTarget
+      : scopedThreadKey(composerDraftTarget);
+  const [reviewBatch, setReviewBatch] = useState<{
+    draftKey: string;
+    commentIds: ReadonlyArray<string>;
+  } | null>(null);
+  const reviewBatchIds = reviewBatch?.draftKey === composerDraftKey ? reviewBatch.commentIds : [];
+  const addToReviewBatch = (commentId: string) =>
+    setReviewBatch((current) => ({
+      draftKey: composerDraftKey,
+      commentIds:
+        current?.draftKey === composerDraftKey ? [...current.commentIds, commentId] : [commentId],
+    }));
+  const dismissReviewBatch = () => setReviewBatch(null);
 
   const routeThreadRef = useThreadRouteRef();
   const activeThreadId = routeThreadRef?.threadId ?? null;
@@ -450,8 +475,8 @@ export default function DiffPanel({
     selectedCommitSha !== null
       ? (selectedCommitSubject ?? gt("Commit {sha}", { sha: selectedCommitSha.slice(0, 7) }))
       : selectedGitScope === "unstaged"
-        ? gt("Uncommitted")
-        : gt("Changes");
+        ? gt("Working tree")
+        : gt("Branch changes");
   const selectedTurnLabel = gt("Turn {count}", { count: selectedCheckpointTurnCount ?? "?" });
   const selectedScopeLabel = toolCallSelection
     ? gt("Tool call")
@@ -546,16 +571,6 @@ export default function DiffPanel({
       ? Math.max(0, recordedToolCallFileCount - renderablePatch.files.length)
       : 0;
   const fileStats = new Map(lazySource?.files?.map((file) => [file.path, file]));
-  const sourceLineStat =
-    isGitSelection && selectedGitSource?.files
-      ? selectedGitSource.files.reduce(
-          (total, file) => ({
-            additions: total.additions + file.additions,
-            deletions: total.deletions + file.deletions,
-          }),
-          { additions: 0, deletions: 0 },
-        )
-      : null;
   const currentLoadDiffFiles =
     isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
       ? createGitDiffFileContentsLoader(getDiffFileContents, {
@@ -711,7 +726,6 @@ export default function DiffPanel({
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(shownFileKeys, collapsedDiffFileKeys);
-  const diffLineStat = sourceLineStat ?? getDiffLineStat(renderableFiles);
   const fileTreeEntries = diffFileTreeEntries(renderableFiles.filter(isFileShown));
   const codeViewReveal = useCodeViewFileReveal();
   // Lazy files that sat above the saved position load again only when asked for.
@@ -858,7 +872,7 @@ export default function DiffPanel({
       <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
         <DropdownMenu>
           <DropdownMenuTrigger
-            render={<Button size="xs" variant="secondary" />}
+            render={<Button size="xs" variant="ghost" />}
             className={cn("max-w-full", headerCommitSha !== null && "min-w-0 shrink")}
             aria-label={gt("Diff scope: {scope}", { scope: selectedScopeLabel })}
             data-workspace-focus-default
@@ -888,21 +902,21 @@ export default function DiffPanel({
                 <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
               </Tooltip>
             ) : (
-              <span className="shrink-0 font-mono text-xs text-muted-foreground">
+              <span className="shrink-0 font-mono text-meta text-muted-foreground">
                 {headerCommitSha.slice(0, 7)}
               </span>
             )
           ) : null}
-          <DropdownMenuContent align="start">
+          <DropdownMenuContent align="start" variant="scope" className="w-49">
             <DropdownMenuRadioGroup value={selectedScopeValue} onValueChange={selectScopeValue}>
-              <DropdownMenuRadioItem value="branch" closeOnClick>
-                <span>
-                  <T>Changes</T>
-                </span>
-              </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="unstaged" closeOnClick>
                 <span>
-                  <T>Uncommitted</T>
+                  <T>Working tree</T>
+                </span>
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="branch" closeOnClick>
+                <span>
+                  <T>Branch changes</T>
                 </span>
               </DropdownMenuRadioItem>
               <DropdownMenuRadioItem value="latest" closeOnClick>
@@ -916,7 +930,7 @@ export default function DiffPanel({
               <DropdownMenuSubTrigger>
                 <T context="agent turn">Turn</T>
               </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
+              <DropdownMenuSubContent variant="scope" className="w-50">
                 <DropdownMenuRadioGroup value={selectedTurnValue} onValueChange={selectScopeValue}>
                   {orderedTurnDiffSummaries.map((summary) => {
                     const turnCount = summary.checkpointTurnCount;
@@ -932,7 +946,7 @@ export default function DiffPanel({
                               Turn <Var>{turnCount}</Var>
                             </T>
                           </span>
-                          <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                          <span className="ml-auto text-meta tabular-nums text-muted-foreground">
                             {formatShortTimestamp(summary.completedAt, settings.timestampFormat)}
                           </span>
                         </span>
@@ -967,8 +981,8 @@ export default function DiffPanel({
                       <div
                         key={commit.sha}
                         className={cn(
-                          "flex items-center rounded-sm hover:bg-accent has-data-highlighted:bg-accent has-focus-visible:bg-accent [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
-                          selectedCommitSha === commit.sha && "bg-foreground/[0.08]",
+                          "flex items-center rounded-item hover:surface-selected-soft has-data-highlighted:surface-selected-soft has-focus-visible:surface-selected-soft [&_[data-checked]]:bg-transparent [&_[data-highlighted]]:bg-transparent",
+                          selectedCommitSha === commit.sha && "surface-selected-soft",
                         )}
                       >
                         <Tooltip>
@@ -983,8 +997,12 @@ export default function DiffPanel({
                           >
                             <span className="flex items-center gap-3">
                               <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
-                              <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                                {formatRelativeTimeLabel(commit.committedAt, undefined, messages)}
+                              <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
+                                {formatRelativeTimeLabel(
+                                  commit.committedAt,
+                                  Date.parse(now),
+                                  messages,
+                                )}
                               </span>
                             </span>
                           </TooltipTrigger>
@@ -1007,12 +1025,12 @@ export default function DiffPanel({
                             }
                             onClick={(event) => openCommitUrl(event, commitUrl)}
                           >
-                            <span className="font-mono text-xs text-muted-foreground underline underline-offset-4">
+                            <span className="font-mono text-meta text-muted-foreground underline underline-offset-4">
                               {commit.sha.slice(0, 7)}
                             </span>
                           </DropdownMenuItem>
                         ) : (
-                          <span className="shrink-0 px-2 font-mono text-xs text-muted-foreground">
+                          <span className="shrink-0 px-2 font-mono text-meta text-muted-foreground">
                             {commit.sha.slice(0, 7)}
                           </span>
                         )}
@@ -1050,7 +1068,7 @@ export default function DiffPanel({
         </DropdownMenu>
         {canSelectBranchBase && (
           <div
-            className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-xs text-muted-foreground"
+            className="flex min-w-0 max-w-full items-center gap-2 overflow-hidden text-meta text-muted-foreground"
             aria-label={gt("Comparing {head} against {base}", {
               head: comparisonHeadRef,
               base: comparisonBaseRef,
@@ -1112,7 +1130,7 @@ export default function DiffPanel({
                   value={baseRefQuery}
                   onChange={(event) => setBaseRefQuery(event.target.value)}
                 />
-                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-3xs text-muted-foreground">
+                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border ps-3 pe-6.5 pt-2 pb-1.5 text-micro text-muted-foreground">
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
                     <span>
@@ -1195,177 +1213,29 @@ export default function DiffPanel({
           </div>
         )}
       </div>
-      <div
-        className={cn(
-          "flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]",
-          headerCommitSha !== null && "gap-0",
-        )}
-      >
-        {codeViewFiles.length > 0 || (isGitSelection && selectedGitSource?.files?.length) ? (
-          <DiffStatLabel
-            font="mono"
-            additions={diffLineStat.additions}
-            deletions={diffLineStat.deletions}
-            className="mr-1 text-2xs"
-            layout="inline"
-          />
-        ) : null}
-        {canRefreshGitDiff && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={isRefreshingDiff ? gt("Refreshing diff") : gt("Refresh diff")}
-                  onClick={refreshDiffFromUserAction}
-                />
-              }
-            >
-              <RefreshIcon size="sm" refreshing={isRefreshingDiff} />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {isRefreshingDiff ? gt("Refreshing diff…") : gt("Refresh diff")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        {diffFileKeys.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-sm"
-                  variant="ghost"
-                  aria-label={
-                    allDiffFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")
-                  }
-                  onClick={toggleDiffFileCollapse}
-                />
-              }
-            >
-              {allDiffFilesCollapsed ? (
-                <ChevronsUpDownIcon className="size-3.5" />
-              ) : (
-                <ChevronsDownUpIcon className="size-3.5" />
-              )}
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {allDiffFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        <ToggleGroup
-          aria-label={gt("Diff layout")}
-          className="shrink-0"
-          variant="segmented-flat"
-          value={[diffLayout]}
-          onValueChange={(value) => {
-            const next = value[0];
-            if (next === "stacked" || next === "split") {
-              updateClientSettings({ diffLayout: next });
-            }
-          }}
-        >
-          <Toggle aria-label={gt("Stacked diff view")} value="stacked">
-            <Rows3Icon className="size-3.5" />
-          </Toggle>
-          <Toggle aria-label={gt("Split diff view")} value="split">
-            <Columns2Icon className="size-3.5" />
-          </Toggle>
-        </ToggleGroup>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
-                }
-                variant="ghost"
-                size="sm"
-                pressed={wordWrap}
-                onPressedChange={(pressed) => {
-                  setWordWrapOverride(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <TextWrapIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                aria-label={
-                  diffIgnoreWhitespace
-                    ? gt("Show whitespace changes")
-                    : gt("Hide whitespace changes")
-                }
-                variant="ghost"
-                size="sm"
-                pressed={diffIgnoreWhitespace}
-                onPressedChange={(pressed) => {
-                  useDiffPanelSessionStore.getState().setIgnoreWhitespace(Boolean(pressed));
-                }}
-              />
-            }
-          >
-            <PilcrowIcon className="size-3.5" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">
-            {diffIgnoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
-          </TooltipPopup>
-        </Tooltip>
-        {testFileCount > 0 && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={gt("Hide test files")}
-                  variant="ghost"
-                  size="sm"
-                  pressed={hideTestFiles}
-                  onPressedChange={(pressed) => setHideTestFiles(Boolean(pressed))}
-                />
-              }
-            >
-              <FlaskConicalOffIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {hideTestFiles
-                ? gt(
-                    "{count, plural, one {Show {count} hidden test file} other {Show {count} hidden test files}}",
-                    { count: testFileCount },
-                  )
-                : gt("Hide test files")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
-        {diffFileKeys.length > 0 && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
-                  variant="ghost"
-                  size="sm"
-                  pressed={fileTreeOpen}
-                  onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
-                />
-              }
-            >
-              <FolderTreeIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
+      <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        <DiffViewControls
+          diffLayout={diffLayout}
+          wordWrap={wordWrap}
+          onWordWrapChange={setWordWrapOverride}
+          ignoreWhitespace={diffIgnoreWhitespace}
+          onIgnoreWhitespaceChange={(value) =>
+            useDiffPanelSessionStore.getState().setIgnoreWhitespace(value)
+          }
+          hasFiles={diffFileKeys.length > 0}
+          testFileCount={testFileCount}
+          hideTestFiles={hideTestFiles}
+          onHideTestFilesChange={setHideTestFiles}
+          fileTreeOpen={fileTreeOpen}
+          onFileTreeOpenChange={setFileTreeOpen}
+          allFilesCollapsed={allDiffFilesCollapsed}
+          onToggleAllFiles={toggleDiffFileCollapse}
+          refresh={
+            canRefreshGitDiff
+              ? { refreshing: isRefreshingDiff, onRefresh: refreshDiffFromUserAction }
+              : undefined
+          }
+        />
       </div>
     </>
   );
@@ -1373,17 +1243,23 @@ export default function DiffPanel({
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
-          <T>Select a thread to inspect turn diffs.</T>
-        </div>
+        <PanelEmptyState
+          icon={<FileDiffIcon />}
+          title={gt("No thread selected")}
+          description={gt("Pick a thread to see what its turns changed.")}
+        />
       ) : !isGitRepo && !toolCallSelection ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
-          <T>Turn diffs are unavailable because this project is not a git repository.</T>
-        </div>
+        <PanelEmptyState
+          icon={<FolderGit2Icon />}
+          title={gt("Not a git repository")}
+          description={gt("Diffs compare git checkpoints, so this project has none to show.")}
+        />
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
-          <T>No completed turns yet.</T>
-        </div>
+        <PanelEmptyState
+          icon={<HistoryIcon />}
+          title={gt("No turns yet")}
+          description={gt("Each finished turn's changes land here.")}
+        />
       ) : isGitSelection && !canReadFiles ? (
         fileAccess.isPending ? (
           <DiffPanelLoadingState label={gt("Checking file access...")} />
@@ -1413,8 +1289,13 @@ export default function DiffPanel({
                   : gt("This preview exceeds the size limit. Changes shown are incomplete.")}
               </p>
             )}
+            {selectedPatchError && lazySource ? (
+              <p className="shrink-0 px-3 text-caption text-error-foreground">
+                {selectedPatchError}
+              </p>
+            ) : null}
             {omittedToolCallFiles > 0 && (
-              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-caption text-muted-foreground">
+              <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
                 {gt(
                   "This tool call changed {recorded} files. The recorded patch omits {omitted} of them.",
                   {
@@ -1424,13 +1305,11 @@ export default function DiffPanel({
                 )}
               </p>
             )}
-            {selectedPatchError && !renderablePatch && (
-              <div className="px-3">
-                <p className="mb-2 text-caption text-error-foreground">{selectedPatchError}</p>
-              </div>
-            )}
             {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (
               <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-meta">
+                {selectedPatchError ? (
+                  <p className="text-error-foreground">{selectedPatchError}</p>
+                ) : null}
                 <p className="text-muted-foreground">
                   <T>The provider recorded file content without a diff.</T>
                 </p>
@@ -1439,7 +1318,7 @@ export default function DiffPanel({
                     <p className="text-muted-foreground">{label}</p>
                     <pre
                       className={cn(
-                        "overflow-auto font-mono text-caption",
+                        "overflow-auto font-mono text-meta",
                         wordWrap && "whitespace-pre-wrap wrap-break-word",
                       )}
                     >
@@ -1463,14 +1342,44 @@ export default function DiffPanel({
                             : gt("Loading changes...")
                   }
                 />
+              ) : selectedPatchError ? (
+                <PanelEmptyState
+                  tone="error"
+                  icon={<TriangleAlertIcon />}
+                  title={gt("Couldn't load this diff")}
+                  description={selectedPatchError}
+                  action={
+                    !selectedTurn && canRefreshGitDiff ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => refreshDiffFromUserAction()}
+                      >
+                        <T>Try again</T>
+                      </Button>
+                    ) : null
+                  }
+                />
+              ) : hasNoNetChanges ? (
+                <PanelEmptyState
+                  icon={<FileCheckIcon />}
+                  title={gt("No changes")}
+                  description={
+                    selectedTurn
+                      ? gt("This turn left every file as it was.")
+                      : selectedGitScope === "unstaged"
+                        ? gt("The working tree matches the last commit.")
+                        : selectedGitScope === "commit"
+                          ? gt("This commit has no changes.")
+                          : gt("This branch has no changes against its base.")
+                  }
+                />
               ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-meta text-dim-foreground">
-                  <p>
-                    {hasNoNetChanges
-                      ? gt("No net changes in this selection.")
-                      : gt("No patch available for this selection.")}
-                  </p>
-                </div>
+                <PanelEmptyState
+                  icon={<FileDiffIcon />}
+                  title={gt("No patch available")}
+                  description={gt("There is nothing to show for this selection.")}
+                />
               )
             ) : lazySource || renderablePatch?.kind === "files" ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
@@ -1478,16 +1387,15 @@ export default function DiffPanel({
                   className="min-h-0 min-w-0 flex-1"
                   onClickCapture={(event) => {
                     const action = getDiffHeaderClickAction(event.nativeEvent);
-                    if (action?.type === "open") openDiffFile(action.filePath);
-                    else if (action?.type === "toggle") toggleDiffFileCollapsed(action.fileKey);
+                    if (!action) return;
+                    // The redesign's basename in the header prefix names its file for Open.
+                    const filePath = diffHeaderTitlePath(event.nativeEvent.composedPath());
+                    if (filePath) openDiffFile(filePath);
+                    else if (action.type === "toggle") toggleDiffFileCollapsed(action.fileKey);
                   }}
                   onContextMenuCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
-                    const title = composedPath.find(
-                      (node): node is HTMLElement =>
-                        node instanceof HTMLElement && node.hasAttribute("data-title"),
-                    );
-                    const filePath = title?.textContent?.trim();
+                    const filePath = diffHeaderTitlePath(composedPath)?.trim();
                     if (!filePath) return;
                     event.preventDefault();
                     onFileContextMenu(
@@ -1515,6 +1423,7 @@ export default function DiffPanel({
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
+                    onCommentAdded={addToReviewBatch}
                     renderHeaderFilenameSuffix={(fileDiff) => {
                       const path = resolveFileDiffPath(fileDiff);
                       const state = fileStates.get(path);
@@ -1529,38 +1438,37 @@ export default function DiffPanel({
                         />
                       );
                     }}
-                    {...(lazySource
-                      ? {
-                          unsafeCSSExtra:
-                            "[data-additions-count], [data-deletions-count] { display: none; }",
-                          renderHeaderMetadata: (fileDiff: FileDiffMetadata) => {
-                            const stat = fileStats.get(resolveFileDiffPath(fileDiff));
-                            return stat ? (
-                              <DiffStatLabel
-                                font="mono"
-                                additions={stat.additions}
-                                deletions={stat.deletions}
-                              />
-                            ) : null;
-                          },
-                        }
-                      : {})}
+                    renderHeaderMetadata={(fileDiff) => {
+                      // A lazily loaded file's hunks may not be here yet; the scope's stats are.
+                      const stat = lazySource
+                        ? fileStats.get(resolveFileDiffPath(fileDiff))
+                        : fileDiffLineStat(fileDiff);
+                      return stat ? (
+                        <DiffFileHeaderStat additions={stat.additions} deletions={stat.deletions} />
+                      ) : null;
+                    }}
                     onFileCollapsedChange={setDiffFileCollapsed}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
+                      const filePath = resolveFileDiffPath(fileDiff);
+                      // One flex row: the slot wraps it in a block div, and bare svgs would stack.
                       return (
-                        <DiffFileCollapseToggle
-                          filePath={resolveFileDiffPath(fileDiff)}
-                          fileKey={fileKey}
-                          collapsed={collapsed}
-                          iconClassName={getDiffCollapseIconClassName(fileDiff)}
-                          onToggle={toggleDiffFileCollapsed}
-                          {...(fileDiff.cacheKey?.endsWith(":pending") &&
-                          !collapsedDiffFileKeys.has(fileKey)
-                            ? {
-                                load: () => requestFile(resolveFileDiffPath(fileDiff)),
-                              }
-                            : {})}
-                        />
+                        <span className="flex min-w-0 items-center gap-1.25">
+                          <DiffFileCollapseToggle
+                            filePath={filePath}
+                            fileKey={fileKey}
+                            collapsed={collapsed}
+                            iconClassName={getDiffCollapseIconClassName(fileDiff)}
+                            onToggle={toggleDiffFileCollapsed}
+                            {...(fileDiff.cacheKey?.endsWith(":pending") &&
+                            !collapsedDiffFileKeys.has(fileKey)
+                              ? {
+                                  load: () => requestFile(filePath),
+                                }
+                              : {})}
+                          />
+                          <DiffFileChangeIcon type={fileDiff.type} />
+                          <DiffFileBasename path={filePath} />
+                        </span>
                       );
                     }}
                     options={{
@@ -1612,6 +1520,11 @@ export default function DiffPanel({
                 </div>
               </div>
             )}
+            <DiffReviewTray
+              composerDraftTarget={composerDraftTarget}
+              commentIds={reviewBatchIds}
+              onDismiss={dismissReviewBatch}
+            />
           </div>
         </>
       )}

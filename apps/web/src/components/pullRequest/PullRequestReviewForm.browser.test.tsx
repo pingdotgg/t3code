@@ -39,7 +39,7 @@ it("submits only the line comments still in the draft when dictation finishes", 
       reference={reference}
       completionScope={null}
       term="pr"
-      verdicts={["comment"]}
+      verdict="comment"
       requestChangesSummaryRequired={false}
       textareaRef={createRef()}
       pending={false}

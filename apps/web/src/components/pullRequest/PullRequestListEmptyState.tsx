@@ -1,71 +1,93 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
+/** Every variant wears the same small notice the design gives a list filtered to nothing:
+ * one glyph, a title, a sentence and the buttons that change the answer. */
 import { T, useGT, Var } from "gt-react";
-import { PlusIcon, SearchIcon } from "lucide-react";
+import { FolderPlusIcon, PlusIcon, SearchIcon } from "lucide-react";
+import type { ElementType, ReactNode } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
 import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
+import { PullRequestGlyph } from "./pullRequestIcons";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 
-function BranchMark({ joined }: { joined: boolean }) {
+/** The list's one notice shape, shared with the page's unavailable and sign-in states. */
+export function PullRequestListNotice({
+  icon: Icon,
+  title,
+  description,
+  children,
+}: {
+  icon: ElementType<{ className?: string; "aria-hidden"?: boolean }>;
+  title: ReactNode;
+  description: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <svg
-      aria-hidden
-      viewBox="0 0 120 72"
-      className="h-20 w-32 text-muted-foreground/60"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M10 58h100" className="text-muted-foreground/30" stroke="currentColor" />
-      <circle cx="10" cy="58" r="5" fill="currentColor" fillOpacity={0.25} />
-      <circle cx="110" cy="58" r="5" fill="currentColor" fillOpacity={0.25} />
-      {joined ? (
-        <path d="M30 58c0-18 8-26 24-26h12c16 0 24 8 24 26" />
-      ) : (
-        <>
-          <path d="M30 58c0-18 8-26 24-26h4" />
-          <path
-            d="M90 58c0-18-8-26-24-26h-4"
-            strokeDasharray="2 7"
-            className="text-muted-foreground/50"
-          />
-        </>
-      )}
-      <circle
-        cx="60"
-        cy="32"
-        r={joined ? 5 : 4}
-        fill={joined ? "currentColor" : "none"}
-        fillOpacity={0.25}
-        className={joined ? undefined : "text-muted-foreground/45"}
-      />
-    </svg>
+    <Empty size="compact">
+      <Icon aria-hidden className="size-5.5 text-dim-foreground" />
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+      {children ? <div className="flex flex-wrap justify-center gap-2">{children}</div> : null}
+    </Empty>
+  );
+}
+
+function CheckAgainButton({
+  refreshing,
+  onRefresh,
+}: {
+  refreshing: boolean;
+  onRefresh: () => void;
+}) {
+  const gt = useGT();
+  return (
+    <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
+      <RefreshIcon size="sm" refreshing={refreshing} />
+      {refreshing ? gt("Checking...") : gt("Check again")}
+    </Button>
   );
 }
 
 export function PullRequestListEmptyState({
   query,
   filtered,
+  filterSummary,
   searching,
   hasProjects,
+  signIn,
   canLoadMore,
   loadingMore,
   refreshing,
   onClearQuery,
+  onClearFilters,
   onLoadMore,
   onRefresh,
 }: {
   query: string;
   filtered: boolean;
+  /** The active filters as one sentence, said where the list would be. */
+  filterSummary: string | null;
   searching: boolean;
   hasProjects: boolean;
+  /**
+   * Every host the projects live on is signed out or missing its CLI, so the empty list is not
+   * an answer. Carries the host's own name and the server's words for the fix.
+   */
+  signIn: {
+    hostLabel: string;
+    changeRequestPlural: string;
+    detail: string | null;
+    Icon: ElementType;
+  } | null;
   canLoadMore: boolean;
   loadingMore: boolean;
   refreshing: boolean;
   onClearQuery: () => void;
+  /** Puts every filter back to its default: open, all involvement, nothing narrowed. */
+  onClearFilters: () => void;
   onLoadMore: () => void;
   onRefresh: () => void;
 }) {
@@ -73,23 +95,39 @@ export function PullRequestListEmptyState({
   const shownQuery = query.length > 48 ? `${query.slice(0, 48)}…` : query;
   if (!hasProjects) {
     return (
-      <Empty>
-        <BranchMark joined={false} />
-        <EmptyHeader>
-          <EmptyTitle>
-            <T>No projects in this workspace</T>
-          </EmptyTitle>
-          <EmptyDescription>
-            <T>Add a project, and the pull requests from its repository appear here.</T>
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
-            <PlusIcon className="size-3.5" />
-            <T>Add project</T>
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <PullRequestListNotice
+        icon={FolderPlusIcon}
+        title={<T>No projects in this workspace</T>}
+        description={<T>Add a project, and the pull requests from its repository appear here.</T>}
+      >
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => openCommandPalette({ open: "add-project" })}
+        >
+          <PlusIcon className="size-3.5" />
+          <T>Add project</T>
+        </Button>
+      </PullRequestListNotice>
+    );
+  }
+
+  // Ahead of the filters too: nothing they narrow was read.
+  if (signIn) {
+    return (
+      <PullRequestListNotice
+        icon={signIn.Icon}
+        title={gt("Sign in to {host}", { host: signIn.hostLabel })}
+        description={
+          signIn.detail ??
+          gt("Sign in to {host} on this server to see {changeRequests}.", {
+            host: signIn.hostLabel,
+            changeRequests: signIn.changeRequestPlural,
+          })
+        }
+      >
+        <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+      </PullRequestListNotice>
     );
   }
 
@@ -104,59 +142,60 @@ export function PullRequestListEmptyState({
 
   if (query.length > 0) {
     return (
-      <Empty>
-        <BranchMark joined={false} />
-        <EmptyHeader>
-          <EmptyTitle>
-            <T>
-              Nothing matches “<Var>{shownQuery}</Var>”
-            </T>
-          </EmptyTitle>
-          <EmptyDescription>
-            <T>
-              The hosts were searched for it. Try fewer words, or search by number, author or
-              branch.
-            </T>
-          </EmptyDescription>
-        </EmptyHeader>
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button size="sm" variant="secondary" onClick={onClearQuery}>
-            <SearchIcon className="size-3.5" />
-            <T>Clear search</T>
-          </Button>
-          <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
-            <RefreshIcon size="sm" refreshing={refreshing} />
-            {refreshing ? gt("Checking...") : gt("Check again")}
-          </Button>
-        </div>
-      </Empty>
+      <PullRequestListNotice
+        icon={SearchIcon}
+        title={
+          <T>
+            Nothing matches “<Var>{shownQuery}</Var>”
+          </T>
+        }
+        description={
+          <T>
+            The hosts were searched for it. Try fewer words, or search by number, author or branch.
+          </T>
+        }
+      >
+        <Button size="sm" variant="secondary" onClick={onClearQuery}>
+          <T>Clear search</T>
+        </Button>
+        {}
+        <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+      </PullRequestListNotice>
     );
   }
 
-  return (
-    <Empty>
-      <BranchMark joined={false} />
-      <EmptyHeader>
-        <EmptyTitle>
-          {filtered ? gt("Nothing under these filters") : gt("No pull requests")}
-        </EmptyTitle>
-        <EmptyDescription>
-          {filtered
-            ? gt("Widen the state, involvement or project filter to see more.")
-            : gt("Pull requests from every project in this workspace appear here.")}
-        </EmptyDescription>
-      </EmptyHeader>
-      <div className="flex flex-wrap justify-center gap-2">
+  if (filtered) {
+    return (
+      <PullRequestListNotice
+        icon={PullRequestGlyph.closed}
+        title={<T>No pull requests match</T>}
+        description={filterSummary ?? <T>Widen the filters to see more.</T>}
+      >
+        <Button size="sm" variant="secondary" onClick={onClearFilters}>
+          <T>Clear filters</T>
+        </Button>
+        {/* The filters were only applied to the pages read so far. */}
         {canLoadMore ? (
           <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
             {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
           </Button>
         ) : null}
-        <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
-          <RefreshIcon size="sm" refreshing={refreshing} />
-          {refreshing ? gt("Checking...") : gt("Check again")}
+      </PullRequestListNotice>
+    );
+  }
+
+  return (
+    <PullRequestListNotice
+      icon={PullRequestGlyph.pullRequest}
+      title={<T>No open pull requests</T>}
+      description={<T>Open pull requests from every project in this workspace appear here.</T>}
+    >
+      {canLoadMore ? (
+        <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
+          {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
         </Button>
-      </div>
-    </Empty>
+      ) : null}
+      <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+    </PullRequestListNotice>
   );
 }

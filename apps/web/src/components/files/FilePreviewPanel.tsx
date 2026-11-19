@@ -1,7 +1,7 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { DownloadIcon, CopyIcon, CheckIcon, Code2Icon, EyeIcon, Table2Icon } from "lucide-react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { m, type MessageResolver } from "~/i18n/messages";
+import { DownloadIcon, CopyIcon, CheckIcon } from "lucide-react";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { m } from "~/i18n/messages";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
@@ -49,7 +49,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { EllipsisIcon, FolderTree, Globe2, MessageSquarePlusIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   lazy,
@@ -65,6 +65,13 @@ import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
+import {
+  formatMediaLength,
+  formatMediaSize,
+  mediaFormatLabel,
+  mediaMetadataParts,
+  useMediaByteSize,
+} from "~/components/media/mediaFileInfo";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
@@ -77,7 +84,11 @@ import { requestWorkspaceFocus } from "~/lib/workspaceFocus";
 import type { ChatFileAttachment } from "~/types";
 import { isHostPath } from "@t3tools/shared/path";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
+import { Button } from "~/components/ui/button";
+import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { useComposerHandleContext } from "~/composerHandleContext";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { buildFileReviewComment, type ReviewCommentContext } from "~/reviewCommentContext";
@@ -91,6 +102,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
+import { addFileMentionToChat } from "./addFileToChat";
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import { AudioPreview } from "./AudioPreview";
 import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
@@ -98,6 +110,7 @@ import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import { PreviewImage } from "./PreviewImage";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileExplorerPane } from "./FileExplorerPane";
+import { FileMediaDetails } from "./FileMediaDetails";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -116,6 +129,7 @@ import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
   FILE_SURFACE_SUBHEADER_CLASS,
+  FileRenderedViewToggle,
   FileSurfaceAction,
   FileSurfaceFailure,
   FileSurfaceLoading,
@@ -217,7 +231,7 @@ function WorkspaceImagePreview(props: {
   if (assetUrl._tag === "Failure") {
     return (
       <MediaActions source={actionsSource}>
-        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-error-foreground">
+        <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-meta leading-relaxed text-error-foreground">
           <T>Unable to load workspace image.</T>
         </div>
       </MediaActions>
@@ -275,7 +289,7 @@ export function WorkspaceBrowserPreview(props: {
 
   if (assetUrl._tag === "Failure") {
     return (
-      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-xs leading-relaxed text-error-foreground">
+      <div className="flex min-h-0 flex-1 items-center justify-center px-6 text-center text-meta leading-relaxed text-error-foreground">
         <T>Unable to load file preview.</T>
       </div>
     );
@@ -383,16 +397,32 @@ function WorkspaceVideoPreview(props: {
       ? ""
       : `${assetUrl._tag === "Success" && assetUrl.url.includes("?") ? "&" : "?"}${fileRevision !== undefined ? "file" : "workspace"}-revision=${encodeURIComponent(revision)}`;
   const latestUrl = assetUrl._tag === "Success" ? `${assetUrl.url}${revisionSuffix}` : null;
+  const [videoMetadata, setVideoMetadata] = useState<{
+    width: number;
+    height: number;
+    duration: number;
+  } | null>(null);
+  const sizeBytes = useMediaByteSize(latestUrl);
+  const metadata = mediaMetadataParts([
+    mediaFormatLabel(props.name),
+    videoMetadata && videoMetadata.width > 0
+      ? `${videoMetadata.width}×${videoMetadata.height}`
+      : null,
+    videoMetadata ? formatMediaLength(videoMetadata.duration) : null,
+    formatMediaSize(sizeBytes),
+  ]);
 
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4">
+    <div className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col items-center gap-2.5 overflow-auto p-4">
       <MediaVideoPlayer
         src={latestUrl}
         sourceFailed={assetUrl._tag === "Failure"}
         label={props.name}
         revision={revision}
         preload="metadata"
-        className="flex h-full min-h-0 w-full max-w-5xl items-center justify-center"
+        transport="custom"
+        onMetadata={setVideoMetadata}
+        className="flex max-h-[calc(100%-2.375rem)] min-h-0 w-full max-w-5xl shrink items-center justify-center overflow-hidden rounded-lg border border-divider bg-black"
         videoClassName="aspect-auto max-h-full w-auto max-w-full"
         onRetry={refreshAssetUrl}
         actionsSource={{
@@ -403,6 +433,14 @@ function WorkspaceVideoPreview(props: {
           asset: { environmentId: props.environmentId, resource },
         }}
       />
+      <div className="w-full max-w-5xl">
+        <FileMediaDetails
+          environmentId={props.environmentId}
+          cwd={props.workspaceRoot}
+          relativePath={props.name}
+          metadata={metadata}
+        />
+      </div>
     </div>
   );
 }
@@ -858,6 +896,7 @@ function EditableFileSurface({
   onPendingChange,
   onEditorChange,
 }: EditableFileSurfaceProps) {
+  const gt = useGT();
   const messages = useMessages();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
@@ -916,9 +955,8 @@ function EditableFileSurface({
     for (const annotation of remapped) {
       for (const entry of annotation.metadata.entries) {
         if (entry.kind !== "comment" || !promptCommentIds.has(entry.id)) continue;
-        addReviewComment(
-          composerDraftTarget,
-          buildFileReviewComment({
+        addReviewComment(composerDraftTarget, {
+          ...buildFileReviewComment({
             id: entry.id,
             filePath: relativePath,
             startLine: entry.startLine,
@@ -926,7 +964,8 @@ function EditableFileSurface({
             text: entry.text,
             contents: file.contents,
           }),
-        );
+          ...(entry.createdAt !== undefined ? { createdAt: entry.createdAt } : {}),
+        });
       }
     }
   };
@@ -947,10 +986,11 @@ function EditableFileSurface({
     const entry = lineAnnotations
       .flatMap((annotation) => annotation.metadata.entries)
       .find((candidate) => candidate.id === entryId);
+    // oxlint-disable-next-line react/purity -- Submission timestamps are read in this event handler (oxc#27309).
+    const createdAt = new Date().toISOString();
     if (entry) {
-      addReviewComment(
-        composerDraftTarget,
-        buildFileReviewComment({
+      addReviewComment(composerDraftTarget, {
+        ...buildFileReviewComment({
           id: entry.id,
           filePath: relativePath,
           startLine: entry.startLine,
@@ -958,7 +998,8 @@ function EditableFileSurface({
           text,
           contents,
         }),
-      );
+        createdAt,
+      });
     }
     setLineAnnotations((current) =>
       current.map((annotation) => ({
@@ -966,7 +1007,7 @@ function EditableFileSurface({
         metadata: {
           entries: annotation.metadata.entries.map((annotationEntry) =>
             annotationEntry.id === entryId
-              ? { ...annotationEntry, kind: "comment", text }
+              ? { ...annotationEntry, kind: "comment", text, createdAt }
               : annotationEntry,
           ),
         },
@@ -1089,7 +1130,7 @@ function EditableFileSurface({
               );
               if (entries.length === 0) return null;
               return (
-                <div className="py-1">
+                <div className="flex flex-col gap-2 pt-1.5 pr-3 pb-2 pl-10">
                   {entries.map((entry) => (
                     <DiffCommentAnnotation
                       key={entry.id}
@@ -1103,6 +1144,10 @@ function EditableFileSurface({
                       ])}
                       kind={entry.kind}
                       rangeLabel={formatFileCommentRange(entry.startLine, entry.endLine, messages)}
+                      createdAt={entry.createdAt}
+                      // A saved file comment is the composer's context entry for it.
+                      stateLabel={entry.kind === "comment" ? gt("In composer") : undefined}
+                      submitLabel={gt("Done", { $context: "button, saves a file comment" })}
                       text={entry.text}
                       onCancel={() => removeAnnotationEntry(entry.id)}
                       onComment={(text) => submitAnnotationEntry(entry.id, text)}
@@ -1191,19 +1236,6 @@ function RenderedMarkdownSurface({
   );
 }
 
-function renderedToggleLabel(
-  mode: "markdown" | "mermaid" | "html" | "table",
-  rendered: boolean,
-  resolve: MessageResolver,
-): string {
-  if (mode === "mermaid")
-    return rendered ? resolve(msg("Show Mermaid source")) : resolve(msg("Show rendered diagram"));
-  if (mode === "markdown")
-    return rendered ? resolve(msg("Show markdown source")) : resolve(msg("Show rendered markdown"));
-  if (mode === "table") return rendered ? resolve(msg("Show source")) : resolve(msg("Show table"));
-  return rendered ? resolve(msg("Show HTML source")) : resolve(msg("Show rendered page"));
-}
-
 function initialExplorerOpen(): boolean {
   try {
     return getLocalStorageItem(FILE_EXPLORER_STORAGE_KEY, Schema.Boolean) ?? true;
@@ -1240,6 +1272,7 @@ export default function FilePreviewPanel({
   const gt = useGT();
   const m = useMessages();
   const { resolvedTheme } = useTheme();
+  const composerRef = useComposerHandleContext();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
@@ -1447,6 +1480,9 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
+  // Mentions resolve against the workspace, so only workspace files can be added.
+  const canAddToChat =
+    previewPath !== null && relativePath !== null && !isHostFile && composerRef !== null;
   const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
@@ -1539,10 +1575,11 @@ export default function FilePreviewPanel({
             className="min-w-0 flex-1"
             data-file-breadcrumbs
           >
-            <div className="flex h-full w-max min-w-full items-center text-xs">
+            <div className="flex h-full w-max min-w-full items-center text-meta">
               <FileBreadcrumbs
                 cwd={cwd}
                 environmentId={environmentId}
+                isFolder={isFolder}
                 onNavigateFolder={navigateToFolder}
                 onOpenFile={onOpenFile}
                 projectName={projectName}
@@ -1552,6 +1589,31 @@ export default function FilePreviewPanel({
               />
             </div>
           </ScrollArea>
+          {canToggleRendered && renderedMode ? (
+            <FileRenderedViewToggle
+              mode={renderedMode}
+              rendered={rendered}
+              onRenderedChange={(pressed) => {
+                if (pressed === rendered) return;
+                setRenderedPreferred(pressed);
+                setHandledReveal(
+                  pressed && relativePath !== null
+                    ? { path: relativePath, requestId: revealRequestId }
+                    : null,
+                );
+              }}
+            />
+          ) : null}
+          {canAddToChat ? (
+            <FileSurfaceAction
+              label={gt("Add to chat")}
+              onPress={() => {
+                if (relativePath) addFileMentionToChat(composerRef, relativePath);
+              }}
+            >
+              <MessageSquarePlusIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
           {absolutePath &&
           (environmentId === primaryEnvironmentId ||
             environmentId === hostEnvironmentId ||
@@ -1567,45 +1629,44 @@ export default function FilePreviewPanel({
               revealFileManager={revealsInFileManager}
             />
           ) : null}
-          {canToggleRendered && renderedMode ? (
-            <FileSurfaceAction
-              label={renderedToggleLabel(renderedMode, rendered, m)}
-              pressed={rendered}
-              onPress={() => {
-                const pressed = !rendered;
-                setRenderedPreferred(pressed);
-                setHandledReveal(
-                  pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
-                    : null,
-                );
-              }}
-            >
-              {rendered ? (
-                <Code2Icon className="size-3.5" />
-              ) : renderedMode === "table" ? (
-                <Table2Icon className="size-3.5" />
-              ) : (
-                <EyeIcon className="size-3.5" />
-              )}
-            </FileSurfaceAction>
-          ) : null}
-          {showsRawText ? (
-            <FileSurfaceAction
-              label={wordWrap ? gt("Disable word wrap") : gt("Enable word wrap")}
-              pressed={wordWrap}
-              onPress={() => setWordWrapOverride(!wordWrap)}
-            >
-              <WrapTextIcon className="size-3.5" />
-            </FileSurfaceAction>
-          ) : null}
-          {canOpenInBrowser ? (
-            <FileSurfaceAction
-              label={gt("Open file in preview browser")}
-              onPress={handleOpenInBrowser}
-            >
-              <Globe2 className="size-3.5" />
-            </FileSurfaceAction>
+          {showsRawText || canOpenInBrowser ? (
+            <Menu>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <Button
+                          type="button"
+                          className="shrink-0"
+                          aria-label={gt("More file actions")}
+                          variant="ghost"
+                          size="icon-sm"
+                        />
+                      }
+                    />
+                  }
+                >
+                  <EllipsisIcon className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup>
+                  <T>More file actions</T>
+                </TooltipPopup>
+              </Tooltip>
+              <MenuPopup align="end">
+                {showsRawText ? (
+                  <MenuCheckboxItem checked={wordWrap} onCheckedChange={setWordWrapOverride}>
+                    <T>Word wrap</T>
+                  </MenuCheckboxItem>
+                ) : null}
+                {canOpenInBrowser ? (
+                  <MenuItem onClick={handleOpenInBrowser}>
+                    <Globe2 aria-hidden />
+                    <T>Open file in preview browser</T>
+                  </MenuItem>
+                ) : null}
+              </MenuPopup>
+            </Menu>
           ) : null}
           {!isHostFile && previewPath !== null ? (
             <FileSurfaceAction
@@ -1744,41 +1805,37 @@ export default function FilePreviewPanel({
               refreshRevision={fileRefreshRevision}
             />
           ) : relativePath && file.error && file.data === null ? (
-            <div
-              role="alert"
-              className="scrollbar-gutter-both flex min-h-0 flex-1 flex-col overflow-auto"
-            >
-              <div className="my-auto flex shrink-0 flex-col gap-3 px-6 py-6 text-center text-meta leading-relaxed">
-                <p className="text-error-foreground">
+            <FileSurfaceFailure
+              message={
+                <>
                   {file.readError ? filePreviewReadErrorMessage(file.readError, m) : file.error}
-                </p>
-                {attemptedPath ? (
-                  <p className="text-muted-foreground">
-                    <T>
-                      Attempted path
-                      <code className="block break-all font-mono text-foreground select-all">
-                        <Var>{attemptedPath}</Var>
-                      </code>
-                    </T>
-                  </p>
-                ) : null}
-                {!isHostFile ? (
-                  <p className="text-muted-foreground">
-                    <T>
-                      Workspace folder:{" "}
-                      <code className="break-all font-mono select-all">
-                        <Var>{file.readError?.cwd ?? cwd}</Var>
-                      </code>
-                      . Check the link's path or locate the file in Files.
-                    </T>
-                  </p>
-                ) : null}
-              </div>
-            </div>
+                  {attemptedPath ? (
+                    <span className="mt-2 block">
+                      <T>
+                        Attempted path
+                        <code className="block break-all font-mono text-foreground select-all">
+                          <Var>{attemptedPath}</Var>
+                        </code>
+                      </T>
+                    </span>
+                  ) : null}
+                  {!isHostFile ? (
+                    <span className="mt-2 block">
+                      <T>
+                        Workspace folder:{" "}
+                        <code className="break-all font-mono select-all">
+                          <Var>{file.readError?.cwd ?? cwd}</Var>
+                        </code>
+                        . Check the link's path or locate the file in Files.
+                      </T>
+                    </span>
+                  ) : null}
+                </>
+              }
+              onRetry={file.refresh}
+            />
           ) : relativePath && file.data === null ? (
-            <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
-              <Spinner size="lg" />
-            </div>
+            <FileSurfaceLoading />
           ) : relativePath && file.data ? (
             renderMermaid ? (
               <Suspense fallback={<FileSurfaceLoading />}>
