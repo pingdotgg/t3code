@@ -190,6 +190,19 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       expect(
         yield* Effect.promise(() => launch(bound, ["push", "com.example.app", '{"a":1}'])),
       ).toEqual(["push", "com.example.app", '{"a":1}', ...target]);
+      expect(
+        yield* Effect.promise(() =>
+          launch(bound, ["metro", "prepare", "--public-base-url", "https://h:8081"]),
+        ),
+      ).toEqual([
+        "metro",
+        "prepare",
+        "--public-base-url",
+        "https://h:8081",
+        ...target,
+        "--project-root",
+        path.resolve("."),
+      ]);
       // After `--` everything is text: no help, no overrides, and bound flags go before it.
       for (const text of [["--help"], ["literal text", "--session", "mine"]]) {
         expect(yield* Effect.promise(() => launch(bound, ["fill", "@e5", "--", ...text]))).toEqual([

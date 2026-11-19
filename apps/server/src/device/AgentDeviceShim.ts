@@ -291,6 +291,9 @@ const pathOperands = {
 for (const position of pathOperands) if (operands[position] !== undefined) command[operands[position]] = absolute(command[operands[position]]);
 // A push payload is a file or inline JSON.
 if (name === "push" && operands[1] !== undefined && existsSync(absolute(command[operands[1]]))) command[operands[1]] = absolute(command[operands[1]]);
+// metro prepare defaults --project-root to its cwd, which is no longer the caller's.
+const given = flag => options.some(arg => arg === flag || arg.startsWith(flag + "="));
+if (name === "metro" && operand(0) === "prepare" && !given("--project-root") && !given("--remote-config")) command.splice(end < 0 ? command.length : command.indexOf("--"), 0, "--project-root", resolve("."));
 }
 const env = { ...process.env, ELECTRON_RUN_AS_NODE: "1" };
 delete env.AGENT_DEVICE_DAEMON_BASE_URL;
