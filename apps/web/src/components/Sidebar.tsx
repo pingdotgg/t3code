@@ -334,6 +334,9 @@ const sidebarProviderEntriesAtom = Atom.make((get) => {
 const EMPTY_PROVIDER_ENTRIES: ReadonlyMap<string, SidebarProviderEntry> = new Map();
 const EMPTY_THREADS: readonly EnvironmentThreadShell[] = [];
 
+// Double-clicking blank sidebar space starts a thread; rows and controls keep their own handling.
+const SIDEBAR_DOUBLE_CLICK_IGNORE_SELECTOR = "li, button, a, input, textarea, [role='button']";
+
 const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
@@ -2981,6 +2984,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <SidebarContent
         ref={sidebarContentRef}
         className="min-h-full"
+        onDoubleClick={(event) => {
+          if (projects.length === 0) return;
+          if (!(event.target instanceof Element)) return;
+          if (event.target.closest(SIDEBAR_DOUBLE_CLICK_IGNORE_SELECTOR)) return;
+          handleNewThreadClick(event);
+        }}
         fixedHeader={
           <SidebarGroup className="z-[1]">
             <SidebarThreadHeader
