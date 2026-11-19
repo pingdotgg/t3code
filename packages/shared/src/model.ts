@@ -538,6 +538,17 @@ export function createModelSelection(
   return selections.length > 0 ? { ...base, options: selections } : base;
 }
 
+/** A model picker's pick: re-picking the current model keeps its options, another model starts without any. */
+export function pickModelSelection(
+  current: ModelSelection | null | undefined,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ModelSelection {
+  return current?.instanceId === instanceId && current.model === model
+    ? current
+    : createModelSelection(instanceId, model);
+}
+
 export function resolvePromptInjectedEffort(
   caps: ModelCapabilities,
   rawEffort: string | null | undefined,

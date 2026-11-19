@@ -6,7 +6,10 @@ import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   EnvironmentId,
   type FilesystemBrowseEntry,
+  type IssueListInput,
+  type IssueListResult,
   ORCHESTRATION_V2_WS_METHODS,
+  type OrchestrationV2ArchivedShellSnapshot,
   ThreadId,
   ProjectId,
   type ReviewDiffPreviewInput,
@@ -51,8 +54,10 @@ import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
+import { createIssueEnvironmentAtoms, createMergedIssueListAtoms } from "./issues.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
+import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
 import {
   createAtomCommandScheduler,
@@ -192,8 +197,8 @@ const readEnvironmentQuery = <A, E>(
     Effect.tap(() => Effect.yieldNow),
   );
 
-const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A, E>(
-  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A>(
+  atom: Atom.Atom<A>,
 ) {
   const registry = AtomRegistry.make();
   const unmount = registry.mount(atom);
@@ -258,6 +263,50 @@ it.effect("keeps complete review metadata visible while a refresh is held", () =
       expect(value?.sources[0]!.files).toHaveLength(2);
     }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
     expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.diffHash).toBe("2");
+  }),
+);
+
+it.effect("keeps manual Issues refresh intent through an overlapping write", () =>
+  Effect.gen(function* () {
+    const requests = yield* Queue.unbounded<IssueListInput>();
+    const release = yield* Deferred.make<void>();
+    const answer: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
+    const rpcSession = {
+      client: {
+        [WS_METHODS.issuesList]: (input: IssueListInput) =>
+          Queue.offer(requests, input).pipe(
+            Effect.andThen(input.refresh ? Deferred.await(release) : Effect.void),
+            Effect.as(answer),
+          ),
+      },
+    } as unknown as RpcSession.RpcSession;
+    const { runtime } = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+    const issues = createIssueEnvironmentAtoms(runtime);
+    const listings = createMergedIssueListAtoms(issues, String);
+    const target = {
+      environmentId: QUERY_ENVIRONMENT.environmentId,
+      input: { state: "all" },
+    } as const;
+    const registry = yield* mountEnvironmentQuery(listings.atom([target]));
+    expect(yield* Queue.take(requests)).toEqual({ state: "all" });
+    yield* readEnvironmentQuery(registry, issues.list(target));
+
+    listings.refresh(registry, [target], "manual");
+    expect(yield* Queue.take(requests)).toEqual({ state: "all", refresh: true });
+
+    listings.refreshEnvironment(registry, target.environmentId);
+    expect(yield* Queue.take(requests)).toEqual({ state: "all", refresh: true });
+
+    yield* Deferred.succeed(release, undefined);
+    yield* readEnvironmentQuery(registry, issues.list(target));
+    listings.refreshEnvironment(registry, target.environmentId);
+    expect(yield* Queue.take(requests)).toEqual({ state: "all" });
   }),
 );
 
@@ -558,7 +607,7 @@ describe("finite environment subscription lifecycle", () => {
 
 describe("environment query lifecycle", () => {
   it.effect(
-    "terminal metadata waits for snapshots and retains known sessions across restarts",
+    "terminal metadata retains known sessions until a new snapshot and keeps the manager identity",
     () =>
       Effect.gen(function* () {
         const harness = yield* makeEnvironmentQueryHarness(Effect.void);
@@ -589,10 +638,9 @@ describe("environment query lifecycle", () => {
         const session = { ...QUERY_RPC_SESSION, client };
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session));
         const atoms = createTerminalEnvironmentAtoms(harness.runtime);
-        const atom = atoms.metadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: null,
-        });
+        const target = { environmentId: QUERY_ENVIRONMENT.environmentId, input: null };
+        const atom = atoms.metadata(target);
+        const feed = atoms.metadataFeed(target);
         const registry = AtomRegistry.make();
         const observed: Array<ReadonlyArray<TerminalSummary>> = [];
         const unsubscribe = registry.subscribe(
@@ -616,9 +664,15 @@ describe("environment query lifecycle", () => {
         expect(selectEnvironmentQueryData(registry.get(atom))).toBeNull();
         expect(observed).toEqual([]);
 
-        yield* Queue.offer(events, { type: "snapshot", terminals: [checkout] });
+        yield* Queue.offer(events, {
+          type: "snapshot",
+          terminals: [checkout],
+          managerId: "manager-1",
+        });
         yield* Deferred.await(receivedCheckout);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+        const initialSnapshotId = selectEnvironmentQueryData(registry.get(feed))?.snapshotId;
+        expect(initialSnapshotId).toBe("manager-1");
 
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...session }));
         yield* Queue.take(started);
@@ -628,9 +682,10 @@ describe("environment query lifecycle", () => {
         yield* Queue.take(started);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
 
-        yield* Queue.offer(events, { type: "snapshot", terminals: [] });
+        yield* Queue.offer(events, { type: "snapshot", terminals: [], managerId: "manager-1" });
         yield* Deferred.await(receivedEmpty);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([]);
+        expect(selectEnvironmentQueryData(registry.get(feed))?.snapshotId).toBe(initialSnapshotId);
       }),
   );
 
@@ -702,6 +757,42 @@ describe("environment query lifecycle", () => {
         }),
       );
       expect(yield* Queue.take(inputs)).toEqual(sent);
+    }),
+  );
+
+  // The server sizes a shared PTY to every attached viewer, so a lingering attach pins its grid.
+  it.effect("terminal attach detaches as soon as its last viewer leaves", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void);
+      const attached = yield* Deferred.make<void>();
+      const detached = yield* Deferred.make<void>();
+      const client = {
+        [WS_METHODS.terminalAttach]: () =>
+          Stream.fromEffect(Deferred.succeed(attached, undefined)).pipe(
+            Stream.drain,
+            Stream.concat(Stream.never),
+            Stream.ensuring(Deferred.succeed(detached, undefined)),
+          ),
+      } as unknown as RpcSession.RpcSession["client"];
+      yield* SubscriptionRef.set(
+        harness.supervisorSession,
+        Option.some({ ...QUERY_RPC_SESSION, client }),
+      );
+      const atoms = createTerminalEnvironmentAtoms(harness.runtime);
+      const registry = AtomRegistry.make();
+      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const unsubscribe = registry.subscribe(
+        atoms.attach({
+          environmentId: QUERY_ENVIRONMENT.environmentId,
+          input: { threadId: "thread-1", terminalId: "terminal-1", cwd: "/tmp/project" },
+        }),
+        () => {},
+        { immediate: true },
+      );
+      yield* Deferred.await(attached);
+
+      unsubscribe();
+      yield* Deferred.await(detached);
     }),
   );
 
@@ -1202,7 +1293,7 @@ describe("environment query lifecycle", () => {
     }),
   );
 
-  it.effect("refetches when mounted again after its stale time, while still cached", () =>
+  it.effect("refetches a stale query on remount while another view keeps the cache live", () =>
     Effect.gen(function* () {
       let now = 0;
       using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -1216,6 +1307,11 @@ describe("environment query lifecycle", () => {
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const sidebar = harness.family(
+        { environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined },
+        "sidebar",
+      );
+      registry.mount(sidebar);
       const read = readEnvironmentQuery(registry, harness.atom);
       const remount = Effect.gen(function* () {
         const unmount = registry.mount(harness.atom);
@@ -1237,6 +1333,7 @@ describe("environment query lifecycle", () => {
       // Past the stale time, well inside the default 5 minute idle TTL.
       now = 61_000;
       expect(yield* remount).toBe("after edit");
+      expect(yield* readEnvironmentQuery(registry, sidebar)).toBe("after edit");
       expect(fetches).toBe(2);
     }),
   );
@@ -1361,6 +1458,58 @@ describe("environment query lifecycle", () => {
       yield* Deferred.succeed(afterDelete, {});
       expect(yield* readEnvironmentQuery(registry, atom)).toEqual({});
       expect(settled).toEqual([{ fork: "Fork" }, {}]);
+    }),
+  );
+
+  it.effect("re-reads an open archive when a thread leaves the shell", () =>
+    Effect.gen(function* () {
+      const requests =
+        yield* Queue.unbounded<Deferred.Deferred<OrchestrationV2ArchivedShellSnapshot>>();
+      const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
+        rpcSession: {
+          client: {
+            [ORCHESTRATION_V2_WS_METHODS.getArchivedShellSnapshot]: () =>
+              Effect.gen(function* () {
+                const answer = yield* Deferred.make<OrchestrationV2ArchivedShellSnapshot>();
+                yield* Queue.offer(requests, answer);
+                return yield* Deferred.await(answer);
+              }),
+          },
+        } as unknown as RpcSession.RpcSession,
+      });
+      const shellState = Atom.make<Pick<EnvironmentShellState, "removedAt">>({
+        removedAt: new Map(),
+      }).pipe(Atom.keepAlive);
+      const runtime = harness.runtime as unknown as Atom.AtomRuntime<
+        EnvironmentRegistry.EnvironmentRegistry | HttpClient.HttpClient
+      >;
+      const atom = createOrchestrationEnvironmentAtoms(runtime, {
+        shellState: () => shellState,
+      }).archivedShellSnapshot({ environmentId: QUERY_ENVIRONMENT.environmentId, input: {} });
+      const page = (threads: OrchestrationV2ArchivedShellSnapshot["threads"]) => ({
+        schemaVersion: 1,
+        snapshotSequence: 1,
+        projects: [v2Project],
+        threads,
+      });
+      const registry = yield* mountEnvironmentQuery(atom);
+      const archivedIds = Effect.map(readEnvironmentQuery(registry, atom), (snapshot) =>
+        snapshot.threads.map((thread) => thread.id),
+      );
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
+
+      // Another client archives the thread, then deletes it from the archive.
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 2]]) });
+      expect(registry.get(atom).waiting).toBe(true);
+      yield* Deferred.succeed(
+        yield* Queue.take(requests),
+        page([{ ...v2ThreadShell, archivedAt: v2Now }]),
+      );
+      expect(yield* archivedIds).toEqual([v2ThreadId]);
+      registry.set(shellState, { removedAt: new Map([[v2ThreadId, 3]]) });
+      yield* Deferred.succeed(yield* Queue.take(requests), page([]));
+      expect(yield* archivedIds).toEqual([]);
     }),
   );
 });
