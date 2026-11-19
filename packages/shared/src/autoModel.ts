@@ -160,29 +160,20 @@ const PACE_BAND = 0.15;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-function roomWindows(provider: ServerProvider, model: string, now: number) {
-  const windows = (provider.usageLimits?.windows ?? []).filter((w) => {
-    if (!usageWindowLimitsModel(provider, w, model)) return false;
-    if (w.resetsAt && Number.isFinite(Date.parse(w.resetsAt)) && Date.parse(w.resetsAt) <= now) {
-      return false;
-    }
-    return true;
-  });
-  // Claude's monthly spend caps only extra usage past the plan windows, so the plan windows decide.
-  const planWindows = windows.filter((w) => w.id !== "monthly_spend");
-  return planWindows.length > 0 ? planWindows : windows;
+/** Used % of each window that limits `model` and has not reset yet. */
+function roomPercents(provider: ServerProvider, model: string, now: number, kind?: string) {
+  return (provider.usageLimits?.windows ?? []).flatMap((w) =>
+    usageWindowLimitsModel(provider, w, model) &&
+    (kind === undefined || w.kind === kind) &&
+    !(w.resetsAt && Date.parse(w.resetsAt) <= now)
+      ? [w.usedPercent]
+      : [],
+  );
 }
 
-function sessionUsedPercent(
-  provider: ServerProvider,
-  model: string,
-  now: number,
-): number | undefined {
-  const windows = roomWindows(provider, model, now).filter(
-    (w) =>
-      w.kind === "session" && typeof w.usedPercent === "number" && Number.isFinite(w.usedPercent),
-  );
-  return windows.length > 0 ? Math.max(...windows.map((w) => w.usedPercent!)) : undefined;
+function sessionUsedPercent(provider: ServerProvider, model: string, now: number) {
+  const percents = roomPercents(provider, model, now, "session");
+  return percents.length > 0 ? Math.max(...percents) : undefined;
 }
 
 /**
@@ -192,14 +183,7 @@ function sessionUsedPercent(
  */
 function weeklyWindows(provider: ServerProvider, model: string, now: number) {
   return (provider.usageLimits?.windows ?? []).flatMap((w) => {
-    if (
-      w.kind !== "weekly" ||
-      !usageWindowLimitsModel(provider, w, model) ||
-      typeof w.usedPercent !== "number" ||
-      !Number.isFinite(w.usedPercent)
-    ) {
-      return [];
-    }
+    if (w.kind !== "weekly" || !usageWindowLimitsModel(provider, w, model)) return [];
     const resetsAt =
       w.resetsAt === undefined
         ? now + (w.windowDurationMins ?? Number.NaN) * MINUTE
@@ -275,15 +259,10 @@ function hasRoom(provider: ServerProvider, model: string, now: number): boolean 
   return peak !== undefined && peak < STICKY_MAX_USED_PERCENT;
 }
 
-function peakUsedPercent(provider: ServerProvider, model: string, now: number): number | undefined {
-  const windows = roomWindows(provider, model, now);
-  const known = windows.flatMap((w) =>
-    typeof w.usedPercent === "number" && Number.isFinite(w.usedPercent) ? [w.usedPercent] : [],
-  );
-  if (known.length === 0) return undefined;
-  const peak = Math.max(...known);
-  // Unknown only while no known window is already past 90%.
-  return known.length === windows.length || peak >= STICKY_MAX_USED_PERCENT ? peak : undefined;
+/** Undefined when no window that limits `model` reports usage: unknown, not empty. */
+function peakUsedPercent(provider: ServerProvider, model: string, now: number) {
+  const percents = roomPercents(provider, model, now);
+  return percents.length > 0 ? Math.max(...percents) : undefined;
 }
 
 /**
