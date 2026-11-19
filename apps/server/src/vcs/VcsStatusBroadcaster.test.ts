@@ -80,6 +80,7 @@ function layerTestFor(state: {
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
+  beforeRefSnapshot?: Effect.Effect<void>;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -142,7 +143,11 @@ function layerTestFor(state: {
                 Effect.andThen(Effect.sync(() => state.currentLocalStatus.refName)),
               ),
         readRefSnapshot: () =>
-          Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
+          (state.beforeRefSnapshot ?? Effect.void).pipe(
+            Effect.andThen(
+              Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
+            ),
+          ),
         upstreamDivergence: () =>
           Effect.sync(() =>
             state.currentRemoteStatus?.hasUpstream && state.currentLocalStatus.refName !== null
@@ -2284,3 +2289,109 @@ it.effect("does not replay older queued branches after a new subscriber snapshot
     yield* Fiber.join(subscriber);
   }).pipe(Effect.provide(layerTestFor(state)));
 });
+
+// `remoteUpdated` is published after the first poll has decided whether to re-read local status.
+const subscribeForFirstPoll = Effect.fn("test.subscribeForFirstPoll")(function* (
+  b: VcsStatusBroadcaster.VcsStatusBroadcaster["Service"],
+) {
+  const polled = yield* Deferred.make<void>();
+  yield* b.streamStatus({ cwd: "/repo" }).pipe(
+    Stream.runForEach((event) =>
+      event._tag === "remoteUpdated" ? Deferred.succeed(polled, undefined) : Effect.void,
+    ),
+    Effect.forkScoped({ startImmediately: true }),
+  );
+  return polled;
+});
+
+it.effect("a retried first poll reads local status again", () => {
+  const state = newState();
+  state.currentRemoteStatus = baseRemoteStatus;
+  return Effect.gen(function* () {
+    const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    const firstFailed = yield* Deferred.make<void>();
+    let attempts = 0;
+    state.beforeRemoteStatus = Effect.suspend(() =>
+      attempts++ === 0
+        ? Deferred.succeed(firstFailed, undefined).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new GitManagerError({ operation: "test", cwd: "/repo", detail: "offline" }),
+              ),
+            ),
+          )
+        : Effect.void,
+    );
+    const polled = yield* subscribeForFirstPoll(b);
+    yield* Deferred.await(firstFailed);
+    yield* TestClock.adjust("30 seconds");
+    yield* Deferred.await(polled);
+    // The initial load, then the retry: its baseline was spent on the failed attempt.
+    assert.strictEqual(state.localStatusCalls, 2);
+  }).pipe(Effect.provide(layerTestFor(state)));
+});
+
+it.effect("a first subscription's poll re-reads when its load reused a cached result", () => {
+  const state = newState();
+  state.currentRemoteStatus = baseRemoteStatus;
+  return Effect.gen(function* () {
+    const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+    // Caches local status without a remote, so the subscription's load reads nothing itself.
+    yield* b.refreshStatus("/repo", { localOnly: true });
+    yield* Deferred.await(yield* subscribeForFirstPoll(b));
+    // The refresh's read, then the poll's: a probe cannot certify a read it did not precede.
+    assert.strictEqual(state.localStatusCalls, 2);
+  }).pipe(Effect.provide(layerTestFor(state)));
+});
+
+it.effect.each([
+  { refs: "unchanged", localReads: 1 },
+  { refs: "moved", localReads: 2 },
+] as const)(
+  "a first subscription's poll re-reads local status only when refs moved (%j)",
+  ({ refs, localReads }) => {
+    const state = newState();
+    state.currentRemoteStatus = baseRemoteStatus;
+    if (refs === "moved") {
+      state.beforeRemoteStatus = Effect.sync(() => {
+        state.refSnapshot = "moved";
+      });
+    }
+    return Effect.gen(function* () {
+      const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* Deferred.await(yield* subscribeForFirstPoll(b));
+      assert.strictEqual(state.localStatusCalls, localReads);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  },
+);
+
+it.effect.each([
+  { refs: "unchanged", localReads: 1 },
+  { refs: "moved", localReads: 2 },
+  // A probe that never finishes certifies nothing and must not hold up the remote read.
+  { refs: "unfinished", localReads: 2 },
+] as const)(
+  "a checkout re-reads local status after its remote read only when refs moved (%j)",
+  ({ refs, localReads }) => {
+    const state = newState();
+    state.currentRemoteStatus = baseRemoteStatus;
+    return Effect.gen(function* () {
+      const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      yield* b.getStatus({ cwd: "/repo" });
+      state.localStatusCalls = 0;
+      if (refs === "unfinished") state.beforeRefSnapshot = Effect.never;
+      const remoteStarted = yield* Deferred.make<void>();
+      const releaseRemote = yield* Deferred.make<void>();
+      state.beforeRemoteStatus = Deferred.succeed(remoteStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(releaseRemote)),
+      );
+      yield* b.refreshAfterCheckout("/repo");
+      yield* Deferred.await(remoteStarted);
+      if (refs === "moved") state.refSnapshot = "moved";
+      yield* Deferred.succeed(releaseRemote, undefined);
+      // The checkout's background refresh holds the remote lock until its local decision is made.
+      yield* b.refreshPullRequestStatus("/repo");
+      assert.strictEqual(state.localStatusCalls, localReads);
+    }).pipe(Effect.provide(layerTestFor(state)));
+  },
+);
