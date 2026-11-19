@@ -931,6 +931,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const instanceId = ProviderInstanceId.make("antigravity-wake-test");
       const threadId = ThreadId.make("thread-antigravity-wake");
       const adapter = yield* makeAntigravityAdapterV2({
+        userHome: process.cwd(),
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
