@@ -6,6 +6,7 @@ export const releasePackageFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "packages/contracts/package.json",
+  "packages/openshell/package.json",
 ] as const;
 
 /**

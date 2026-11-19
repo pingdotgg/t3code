@@ -281,6 +281,17 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     Effect.map((settings) => settings.linkedEnvironmentsEnabled),
     Effect.orElseSucceed(() => false),
   );
+  // The fleet tools cost every agent schema bytes, so they are hidden where no
+  // fleet can be managed rather than failing on call.
+  const fleetAvailable = serverSettings.getSettings.pipe(
+    Effect.map(
+      (settings) =>
+        settings.openshellEnabled &&
+        settings.openshell.managingInstance &&
+        (settings.openshell.gatewayUrl ?? "").trim() !== "",
+    ),
+    Effect.orElseSucceed(() => false),
+  );
   const pullRequests = yield* Effect.serviceOption(PullRequestService.PullRequestService);
   const projections = yield* Effect.serviceOption(ProjectionStore.ProjectionStoreV2);
   // Every request reads it, and a remote added mid-thread shows the tools within a minute.
@@ -336,7 +347,13 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
       limited.thread === undefined
         ? undefined
         : yield* Cache.get(forgeOfThread, limited.thread.threadId);
-    return { ...limited, linkedEnvironments, origin, ...(forge === undefined ? {} : { forge }) };
+    return {
+      ...limited,
+      linkedEnvironments,
+      origin,
+      fleetAvailable: yield* fleetAvailable,
+      ...(forge === undefined ? {} : { forge }),
+    };
   });
   // Untraced: a span here would wrap the tool call; the HTTP server span already covers it.
   return Effect.fnUntraced(function* (httpEffect) {

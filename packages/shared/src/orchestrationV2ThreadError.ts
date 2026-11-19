@@ -74,13 +74,15 @@ export function orchestrationV2WorktreePending(
   runs: ReadonlyArray<OrchestrationV2Run>,
 ): boolean {
   const latest = latestExecutedRun(runs);
-  return (
-    worktreePath === null &&
-    (latest?.status === "preparing" ||
-      latest?.status === "failed" ||
-      latest?.status === "interrupted") &&
-    latest.workspacePreparation?.type === "worktree"
-  );
+  const unresolved =
+    latest?.status === "preparing" ||
+    latest?.status === "failed" ||
+    latest?.status === "interrupted";
+  // A sandbox run can never resolve to a local workspace, so it holds while it
+  // is the latest executed run; a worktree holds only while that run is also
+  // missing its path.
+  if (unresolved && latest?.workspacePreparation?.type === "sandbox") return true;
+  return worktreePath === null && unresolved && latest?.workspacePreparation?.type === "worktree";
 }
 
 /** Held queues can execute out of ordinal order; unfinished runs count as latest. */

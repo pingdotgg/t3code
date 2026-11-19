@@ -1,0 +1,32 @@
+{
+  "name": "@t3tools/openshell",
+  "version": "0.1.7",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./OpenShellGatewayDriver": {
+      "types": "./src/OpenShellGatewayDriver.ts",
+      "import": "./src/OpenShellGatewayDriver.ts"
+    },
+    "./gatewayClient": {
+      "types": "./src/gatewayClient.ts",
+      "import": "./src/gatewayClient.ts"
+    },
+    "./sandboxPolicy": {
+      "types": "./src/sandboxPolicy.ts",
+      "import": "./src/sandboxPolicy.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
