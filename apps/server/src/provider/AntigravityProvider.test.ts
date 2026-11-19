@@ -16,6 +16,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -112,20 +113,22 @@ const expectedCommands = [
   { name: "logout", description: "Sign out of Google" },
 ];
 
-const layerTest = ProviderHostLive.layer.pipe(
-  Layer.provideMerge(
-    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-      shouldRunScopeWork: () => Effect.succeed(false),
-    }),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provide(
-    ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+const makeLayerTest = (runBackgroundWork: boolean) =>
+  ProviderHostLive.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(runBackgroundWork),
+      }),
     ),
-  ),
-);
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  );
+const layerTest = makeLayerTest(false);
 
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
@@ -302,7 +305,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         models: [],
         setup: { canAuthenticate: true, canInstall: true },
         showInteractionModeToggle: false,
-        supportsConversationRollback: false,
+        supportsConversationRollback: true,
         supportsTextGeneration: false,
       });
       expect(yield* Ref.get(harness.probeCalls)).toBe(0);
@@ -383,6 +386,23 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expectedCommands,
       );
       expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a workspace's native commands when the catalog reports its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      // The catalog probe runs in a scratch directory and reports no cwd.
+      yield* harness.provider.onAvailableCommands(commands.slice(1));
+      expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+        expectedCommands,
+      );
+      expect((yield* harness.provider.snapshot.getSnapshot).slashCommands).toEqual(
+        expectedCommands.slice(1),
+      );
     }),
   );
 
@@ -804,6 +824,52 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       yield* harness.provider.onSessionStarted(started);
       expect((yield* republished)?.usageLimits).toEqual(failed);
+    }),
+  );
+});
+
+it.layer(makeLayerTest(true))("Antigravity periodic health checks", (it) => {
+  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
+      const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+      yield* harness.provider.snapshot.streamChanges.pipe(
+        Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* Ref.set(
+        harness.probe,
+        Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+      );
+
+      yield* TestClock.adjust("5 minutes");
+
+      expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
+      expect((yield* Ref.get(published)).map((snapshot) => snapshot.status)).not.toContain("error");
+
+      yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+      yield* TestClock.adjust("30 seconds");
+      const failProbe = yield* Deferred.make<void>();
+      yield* Ref.set(
+        harness.probe,
+        Deferred.await(failProbe).pipe(
+          Effect.andThen(
+            Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+          ),
+        ),
+      );
+      yield* TestClock.adjust("5 minutes");
+      yield* harness.provider.onSignedOut;
+      yield* Deferred.succeed(failProbe, undefined);
+      yield* TestClock.adjust("30 seconds");
+
+      const auth = (yield* Ref.get(published)).map((snapshot) => snapshot.auth.status);
+      expect(auth.slice(auth.indexOf("unauthenticated"))).not.toContain("authenticated");
+      expect(auth.at(-1)).toBe("unauthenticated");
     }),
   );
 });

@@ -79,19 +79,27 @@ import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import { previewErrorText } from "./previewFailureMessages";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
 describe("bounded binary previews", () => {
   it("preserves length-delimited local and global PAX attributes", async () => {
     const encode = (value: string) => new TextEncoder().encode(value);
-    const block = (name: string, content: Uint8Array, type = "0", size = content.length) => {
+    const block = (
+      name: string,
+      content: Uint8Array,
+      type = "0",
+      size = content.length,
+      linkname = "",
+    ) => {
       const bytes = new Uint8Array(512 + Math.ceil(content.length / 512) * 512);
       const write = (offset: number, value: string) => bytes.set(encode(value), offset);
       write(0, name);
       write(124, size.toString(8).padStart(11, "0") + "\0");
       bytes.fill(32, 148, 156);
       write(156, type);
+      write(157, linkname);
       write(
         148,
         bytes
@@ -123,6 +131,15 @@ describe("bounded binary previews", () => {
       block("Local", attributes({ size: "3", mtime: "-172800" }), "x"),
       block("short.txt", encode("bye"), "0", 0),
       block("again.txt", encode("again"), "0", 0),
+      block("Global", attributes({ size: "", mtime: "" }), "g"),
+      block("original.txt", encode("hello world")),
+      block("alias.txt", encode(""), "1", 0, "original.txt"),
+      block("chain.txt", encode(""), "1", 0, "alias.txt"),
+      block("Local", attributes({ linkpath: "original.txt" }), "x"),
+      block("pax-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("LongLink", encode("original.txt\0"), "K"),
+      block("gnu-link.txt", encode(""), "1", 0, "wrong-target"),
+      block("original.txt", encode("replacement")),
       new Uint8Array(1024),
     ];
     const bytes = new Uint8Array(chunks.reduce((size, chunk) => size + chunk.length, 0));
@@ -154,6 +171,14 @@ describe("bounded binary previews", () => {
         ["world.txt", 5, "1969-12-31T00:00:00.000Z"],
         ["short.txt", 3, "1969-12-30T00:00:00.000Z"],
         ["again.txt", 5, "1969-12-31T00:00:00.000Z"],
+        ...[
+          "original.txt",
+          "alias.txt",
+          "chain.txt",
+          "pax-link.txt",
+          "gnu-link.txt",
+          "original.txt",
+        ].map((path) => [path, 11, "1970-01-01T00:00:00.000Z"]),
       ]);
       const entry = await request({ type: "entry", path: "café\n9 size=1\nname.txt" });
       if (entry.type !== "entry") throw new Error("Expected entry");
@@ -164,6 +189,43 @@ describe("bounded binary previews", () => {
       if (reopened.type !== "entry") throw new Error("Expected entry");
       expect(new TextDecoder().decode(reopened.bytes)).toBe("hello");
       expect(reopened.bytes.buffer.byteLength).toBe(5);
+      for (const path of ["alias.txt", "chain.txt", "pax-link.txt", "gnu-link.txt"]) {
+        const linked = await request({ type: "entry", path });
+        if (linked.type !== "entry") throw new Error("Expected hard link entry");
+        expect(new TextDecoder().decode(linked.bytes)).toBe("hello world");
+      }
+      const unresolved = new Uint8Array(
+        await new Blob([
+          block("missing.txt", encode(""), "1", 0, "nowhere.txt"),
+          block("early.txt", encode(""), "1", 0, "later.txt"),
+          block("later.txt", encode("hello")),
+          block("folder/", encode(""), "5"),
+          block("to-folder.txt", encode(""), "1", 0, "folder/"),
+          block("replaced.txt", encode("stale")),
+          block("replaced.txt", encode(""), "2", 0, "elsewhere.txt"),
+          block("to-replaced.txt", encode(""), "1", 0, "replaced.txt"),
+          block("Local", attributes({ linkpath: "" }), "x"),
+          block("emptied.txt", encode(""), "1", 0, "later.txt"),
+          new Uint8Array(1024),
+        ]).arrayBuffer(),
+      );
+      const skipped = await request({
+        type: "open",
+        kind: "archive",
+        name: "links.tar",
+        bytes: unresolved.buffer,
+      });
+      if (skipped.type !== "archive") throw new Error("Expected archive");
+      expect(skipped.entries.map((entry) => entry.path)).toEqual([
+        "later.txt",
+        "folder/",
+        "replaced.txt",
+      ]);
+      expect(await request({ type: "entry", path: "replaced.txt" })).toEqual({
+        type: "error",
+        code: "archive-entry-unavailable",
+        message: "archive-entry-unavailable",
+      });
     } finally {
       worker.terminate();
     }
@@ -305,7 +367,7 @@ describe("bounded binary previews", () => {
         await act(() => trigger.focus());
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{ArrowDown}{Enter}");
         await vi.waitFor(() =>
@@ -316,7 +378,7 @@ describe("bounded binary previews", () => {
         await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{Escape}");
       } finally {
@@ -1271,9 +1333,9 @@ it.each([
     const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
     const { prepareOffice } = await import("./officeArchive");
     if (row > 250000) {
-      await expect(prepareOffice(bytes, "xlsx")).rejects.toThrow(
-        "This workbook exceeds the preview limit",
-      );
+      await expect(
+        prepareOffice(bytes, "xlsx").catch((cause: unknown) => previewErrorText(cause, "")),
+      ).resolves.toContain("This workbook exceeds the preview limit");
       return;
     }
     const prepared = await prepareOffice(bytes, "xlsx");
@@ -1417,7 +1479,7 @@ it("toggles a Mermaid attachment between diagram and source through the lazy pre
     expect(image?.alt).toBe("Mermaid diagram");
     expect(image?.naturalWidth).toBeGreaterThan(0);
   });
-  await page.getByRole("button", { name: "Close image preview" }).click();
+  await page.getByRole("button", { name: "Back, close image preview" }).click();
   await vi.waitFor(() => expect(document.querySelector('[role="dialog"]')).toBeNull());
   await screen.getByRole("button", { name: "Show Mermaid source" }).click();
   await vi.waitFor(() => expect(screen.container.querySelector("pre")?.textContent).toBe(text));
@@ -1494,6 +1556,42 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     URL.revokeObjectURL(edited);
   }
 });
+
+it("loads an edited HTML file outside the workspace from a renewed URL", async () => {
+  const { WorkspaceBrowserPreview } = await import("./FilePreviewPanel");
+  const preview = (mutation: string) => (
+    <WorkspaceBrowserPreview
+      environmentId={EnvironmentId.make("test")}
+      threadRef={{ environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") }}
+      draft={false}
+      workspaceRoot="/repo"
+      absolutePath="/tmp/report.html"
+      title="Report"
+      workspaceMutationId={mutation}
+    />
+  );
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,original", expiresAt: 0 });
+  await using screen = await render(preview("first"));
+  const opened = screen.container.querySelector("iframe");
+  expect(opened?.getAttribute("src")).toMatch(/^data:text\/html,original/);
+
+  assetUrlState.mockReturnValue({
+    _tag: "Success",
+    url: "data:text/html,original",
+    expiresAt: 0,
+    waiting: true,
+  });
+  await screen.rerender(preview("second"));
+  expect(assetUrlState).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "second");
+  expect(screen.container.querySelector("iframe")).toBe(opened);
+
+  assetUrlState.mockReturnValue({ _tag: "Success", url: "data:text/html,edited", expiresAt: 0 });
+  await screen.rerender(preview("second"));
+  expect(screen.container.querySelector("iframe")?.getAttribute("src")).toMatch(
+    /^data:text\/html,edited/,
+  );
+});
+
 function planningPdf(
   titles = ["Quarterly outlook", "Delivery milestones", "Budget and risks"],
   firstHeight = 140,

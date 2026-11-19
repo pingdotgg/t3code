@@ -7,6 +7,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  RunAttemptId,
   RunId,
   ScheduledTaskId,
   SECRET_REQUEST_UNSAVED_NOTE,
@@ -105,7 +106,7 @@ function baseThread(input: {
 function makeRun(input: {
   readonly id: RunId;
   readonly ordinal: number;
-  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed";
+  readonly status: "running" | "waiting" | "cancelled" | "queued" | "completed" | "failed";
   readonly instanceId?: ProviderInstanceId;
 }) {
   return {
@@ -125,6 +126,15 @@ function makeRun(input: {
 
 it("readThread preserves caller access errors and prefers activity-run status over a newer cancelled queued run", async () => {
   let callerUnavailable = false;
+  let pendingBackgroundTasks: OrchestrationV2ThreadShell["pendingBackgroundTasks"] = [
+    {
+      taskId: "task-subagent",
+      kind: "subagent",
+      parentTaskId: "task-parent",
+      providerInstanceId: parentInstanceId,
+      childThreadId,
+    },
+  ];
   const pullRequestLink = (number: number, state: "open" | "merged", watched: boolean) => ({
     host: "github.com",
     repository: "acme/web",
@@ -201,16 +211,9 @@ it("readThread preserves caller access errors and prefers activity-run status ov
                   threadId === parentThreadId
                     ? ({
                         ...projection.thread,
+                        pinnedAt: now,
                         blockedOnThreadWait: true,
-                        pendingBackgroundTasks: [
-                          {
-                            taskId: "task-subagent",
-                            kind: "subagent",
-                            parentTaskId: "task-parent",
-                            providerInstanceId: parentInstanceId,
-                            childThreadId,
-                          },
-                        ],
+                        pendingBackgroundTasks,
                       } as unknown as OrchestrationV2ThreadShell)
                     : null,
                 ),
@@ -218,6 +221,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
             input.threadId === parentThreadId
               ? Effect.succeed(projection)
               : Effect.die(`unexpected thread ${input.threadId}`),
+          getRunCount: () => Effect.succeed(projection.runs.length),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         ServerSettings.layerTest(),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -243,6 +247,7 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     expect(result.thread.status).toBe("running");
     expect(result.thread.latestRunId).toBe(cancelledRunId);
     expect(result.thread.activeRunId).toBe(activeRunId);
+    expect(result.thread.pinned).toBe(true);
     expect(result.thread.blockedOnThreadWait).toBe(true);
     expect(result.thread.pendingBackgroundTasks).toEqual([
       { taskId: "task-subagent", kind: "subagent", childThreadId },
@@ -262,6 +267,26 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
+    const awaiting = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(awaiting.thread.status).toBe("waiting");
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "failed" })],
+    });
+    const failed = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(failed.thread.status).toBe("failed");
+
+    Object.assign(projection, {
+      runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
+    });
+    // An unawaited command (a dev server) does not hold the thread once its turn ends.
+    pendingBackgroundTasks = [{ taskId: "dev-server", kind: "command" }];
+    const released = yield* service.readThread(makeScope(), { threadId: parentThreadId });
+    expect(released.thread.status).toBe("completed");
 
     callerUnavailable = true;
     const denied = yield* service
@@ -341,6 +366,7 @@ it("readThread pages cut-off text without splitting an emoji across pages", asyn
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -448,6 +474,7 @@ it("readThread returns the newest items that fit the response budget", async () 
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -554,6 +581,7 @@ it("readThread keeps an activity page within an MCP client's output limit and pa
           },
           getThreadRecords: () => Effect.succeed(projection),
           getProjectThreadRecords: () => Effect.succeed(projection),
+          getRunCount: () => Effect.succeed(projection.runs.length),
           getThreadShell: () =>
             Effect.succeed(projection.thread as unknown as OrchestrationV2ThreadShell),
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
@@ -835,6 +863,7 @@ it("readThread and sendToThread reach threads in other projects", async () => {
               hasMore: false,
               hasEarlier: false,
             }),
+          getRunCount: (threadId) => Effect.succeed(foreignProjection(threadId).runs.length),
           getProjectThreadRecords: (input) =>
             input.threadId === foreignThreadId && input.projectId === foreignProjectId
               ? Effect.succeed(foreignProjection(input.threadId))
@@ -1173,4 +1202,92 @@ it("requestSecret returns the unsaved note for a declined, cancelled or timed-ou
     { status: "cancelled", note: SECRET_REQUEST_UNSAVED_NOTE.cancelled },
     { status: "timed_out", note: SECRET_REQUEST_UNSAVED_NOTE.timed_out },
   ]);
+});
+
+it("requestSecret cancels its card when a steering restart supersedes the request", async () => {
+  const originalRoot = NodeId.make("node-mcp-secret-root-original");
+  const steeredRoot = NodeId.make("node-mcp-secret-root-steered");
+  const dispatched: Array<{
+    readonly type: string;
+    readonly turnItemId?: TurnItemId;
+    readonly nodeId?: NodeId;
+    readonly secretStatus?: string;
+  }> = [];
+  let steered = false;
+  const projection = () => {
+    const card = dispatched.find(
+      (command) => command.type === "secret_request.record" && command.secretStatus === "pending",
+    );
+    return {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [
+        {
+          ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }),
+          rootNodeId: steered ? steeredRoot : originalRoot,
+          activeAttemptId: RunAttemptId.make("attempt-mcp-secret-original"),
+        },
+      ],
+      visibleTurnItems: [],
+      turnItems:
+        card === undefined
+          ? []
+          : [{ type: "secret_request", id: card.turnItemId, secretStatus: "pending" }],
+      providerTurns: [],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          getThreadShell: () =>
+            Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command as (typeof dispatched)[number]);
+              // The user steers right after the card opens, replacing the run's root.
+              if (command.type === "secret_request.record" && command.secretStatus === "pending") {
+                steered = true;
+              }
+              return undefined as never;
+            }),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    const result = yield* service.requestSecret(makeScope(), {
+      label: "Booking details",
+      reason: "To check the passenger in.",
+      timeoutMs: 60_000,
+    });
+    // The wait ended the moment its attempt was superseded instead of blocking
+    // the agent's turn until the timeout, and the card closed with it.
+    expect(result).toEqual({ status: "cancelled", note: SECRET_REQUEST_UNSAVED_NOTE.cancelled });
+    const records = dispatched.filter((command) => command.type === "secret_request.record");
+    expect(records.map((command) => command.secretStatus)).toEqual(["pending", "cancelled"]);
+    expect(records.every((command) => command.nodeId === originalRoot)).toBe(true);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
 });
