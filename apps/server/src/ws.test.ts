@@ -56,7 +56,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { Headers, HttpRouter, HttpServer } from "effect/http";
+import { Headers, HttpClient, HttpRouter, HttpServer } from "effect/http";
 import * as Context from "effect/Context";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
@@ -565,15 +565,14 @@ it.effect("shell groups read distinct threads once and keep each event's own seq
     const collectSummary = (afterSequence: number) =>
       collect(afterSequence).pipe(
         Effect.map((items) =>
-          items.flatMap(
-            (item): ReadonlyArray<ReadonlyArray<string | number>> =>
-              item.kind === "thread.updated"
-                ? [[item.kind, item.sequence, item.thread.id]]
-                : item.kind === "thread.removed"
-                  ? [[item.kind, item.sequence, item.threadId]]
-                  : item.kind === "project.updated"
-                    ? [[item.kind, item.sequence, item.project.id]]
-                    : [],
+          items.flatMap((item): ReadonlyArray<ReadonlyArray<string | number>> =>
+            item.kind === "thread.updated"
+              ? [[item.kind, item.sequence, item.thread.id]]
+              : item.kind === "thread.removed"
+                ? [[item.kind, item.sequence, item.threadId]]
+                : item.kind === "project.updated"
+                  ? [[item.kind, item.sequence, item.project.id]]
+                  : [],
           ),
         ),
       );
@@ -1015,13 +1014,11 @@ it.live.each([
       const server = Context.get(context, HttpServer.HttpServer);
       const origin = HttpServer.formatAddress(server.address).replace(/^http/, "ws");
       if (protocol !== ORCHESTRATION_PROTOCOL_VERSION) {
-        const response = yield* Effect.promise(() =>
-          fetch(
-            `${origin.replace(/^ws/, "http")}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${protocol}`,
-          ),
-        );
+        const response = yield* HttpClient.get(
+          `${origin.replace(/^ws/, "http")}/ws?${ORCHESTRATION_PROTOCOL_QUERY_PARAM}=${protocol}`,
+        ).pipe(Effect.provide(FetchHttpClient.layer));
         assert.equal(response.status, 426);
-        assert.deepEqual(yield* Effect.promise(() => response.json()), {
+        assert.deepEqual(yield* response.json, {
           code: "orchestration_protocol_incompatible",
           message: `Update this client to one that supports orchestration protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`,
           orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
