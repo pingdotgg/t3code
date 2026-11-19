@@ -65,7 +65,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
   - [ ] Start an isolated engine with `node apps/server/dist/bin.mjs serve --base-dir /tmp/board-lane-<n>/t3 --port <3800 + n> --no-browser`. Never point a lane at `~/.t3`.
   - [ ] Mint the lane token with `node apps/server/dist/bin.mjs auth session issue --base-dir /tmp/board-lane-<n>/t3 --token-only --label lane-<n>`.
   - [ ] For web lanes, run `AGENT_BOARD_ENGINE_URL=http://127.0.0.1:<3800 + n> AGENT_BOARD_TOKEN=<token> vp run --filter @agent-board/app dev:web` and open the printed URL in Orca's embedded browser with `orca-ide tab create --url <url> --json`.
-  - [ ] For Electron lanes, run `AGENT_BOARD_CDP_PORT=<9300 + n> vp run --filter @agent-board/app dev` under WSLg and attach the `browser` API inside `eval` to `http://127.0.0.1:<9300 + n>`.
+  - [ ] For Electron lanes, run `AGENT_BOARD_CDP_PORT=<9300 + n> vp run --filter @agent-board/app dev:windows`, which launches the Windows build of Electron on the Windows PC, and attach the `browser` API inside `eval` to `http://127.0.0.1:<9300 + n>`. WSL's mirrored networking shares 127.0.0.1 with Windows. Capture the full window, frame included, with a PowerShell `CopyFromScreen` of the window bounds.
 - [ ] Deliver input only through `orca-ide click`, `fill`, `keypress`, and `drag`, or the `browser` API actions. Read state only through `orca-ide eval` and `orca-ide snapshot`.
 - [ ] Save every screenshot to `/tmp/swarm-<pr-id>/worker-<n>/<slug>.png` and return the paths with the report.
 
@@ -144,9 +144,11 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] In `electron/main.ts`, open one window that loads the Vite dev server in development and the `agentboard://app` protocol in production. Turn on remote debugging when `AGENT_BOARD_CDP_PORT` is set.
 - [ ] In `theme.css`, set the dark tokens from the approved prototype at `artifacts/agent-board-prototype/index.html`, and draw the dot grid on the board canvas.
 - [ ] Replace the default OS title bar with T3 Code's. Copy T3 desktop's hidden title bar with dark overlay window controls, the hidden menu bar, and the dark background before first paint from `apps/desktop/src/window/DesktopWindow.ts`. Draw a dark top bar at the overlay height with a drag region, so the close, minimize, and maximize buttons sit on dark.
+- [ ] Leave the window frame to Windows 11, which rounds the corners and draws the caption buttons over the dark overlay. Use no frameless or transparent window.
 - [ ] In `viewport.ts`, implement pan, zoom around the cursor between 0.3 and 2, and fit to content with a 0.7 floor. `Viewport.tsx` renders the dotted canvas with zoom buttons.
 - [ ] In `Sidebar.tsx`, render the empty Projects and Workspace sections and a footer slot.
 - [ ] Make `dev:web` run the renderer in a plain browser for web lanes.
+- [ ] Add `dev:windows`. Run from WSL, it builds the main and preload bundles, starts the Vite dev server in WSL, keeps a matching Electron `win32-x64` binary in `C:\Users\Kyle\AppData\Local\agent-board\`, copies the bundles to a Windows folder, and launches `electron.exe` there. The app is a Windows app, and the engine stays in WSL.
 
 **You see.**
 
@@ -159,20 +161,20 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk does not have the app, so record that fact and gate the head. Open web dev mode at head. Save `b1-regression.png`. Pass when the dark sidebar and the dotted canvas render.
-- [ ] Lane 2. Launch the Electron app under WSLg and attach over CDP. Save `b1-electron.png`. Pass when the window title is `Agent Board` and the DOM matches web dev mode.
+- [ ] Lane 2. Launch the app on Windows with `dev:windows` and attach over CDP. Save `b1-electron.png`. Pass when the window title is `Agent Board`, the DOM matches web dev mode, and the full-window capture shows dark caption buttons on the dark bar and rounded corners.
 - [ ] Lane 3. Drag the empty canvas 200 px right. Save `b1-pan.png`. Pass when the dot grid offset moved 200 px.
 - [ ] Lane 4. Press Ctrl and scroll up over a fixed point. Save `b1-zoom.png`. Pass when the zoom label rises and the point under the cursor stays within 2 px.
 - [ ] Lane 5. Click zoom in, zoom out, and fit. Save `b1-zoom-buttons.png`. Pass when the label changes on each click and fit returns 70% or more.
 - [ ] Lane 6. Resize the window to 1170 by 930, then 1600 by 1000. Save `b1-resize.png`. Pass when the sidebar stays 240 px wide and the body has no horizontal scrollbar.
 - [ ] Lane 7. Reload the page and read the console. Save `b1-console.png`. Pass when the console has no errors.
-- [ ] Lane 8. Run `vp run --filter @agent-board/app build`, then `start`. Save `b1-production.png`. Pass when the renderer loads from `agentboard://app`.
+- [ ] Lane 8. Build the Windows package with `vp run --filter @agent-board/app build`, then launch it on Windows. Save `b1-production.png`. Pass when the renderer loads from `agentboard://app`.
 - [ ] Lane 9. Press Tab through the sidebar. Save `b1-focus.png`. Pass when each focused item shows a visible focus ring.
 - [ ] Lane 10. Run the boundary check at head. Save `b1-boundary.txt`. Pass when it exits 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
 - [ ] Metric. Time from Electron process start to the renderer mark `board:first-paint`. Trunk does not have the app, so the budget is absolute.
-- [ ] Probe. Launch the production build five times and read the logged mark each time.
+- [ ] Probe. Launch the Windows production build five times and read the logged mark each time.
 - [ ] Baseline. Record that trunk has no app, then record the five head times.
 - [ ] Rule. The median stays under 1500 ms and no run exceeds 2500 ms.
 
@@ -322,13 +324,13 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends K1 to the base-branch stack and the operator lands it bottom-up.
 
-## Connect to the local engine and list its projects (B2)
+## Boot or join the WSL engine and list its projects (B2)
 
 **Depends on.** K1.
 
 **Files.**
 
-- [ ] Create `apps/board/electron/engine.ts` and `apps/board/electron/engine.test.ts`.
+- [ ] Create `apps/board/electron/engine.ts`, `apps/board/electron/wslEngine.ts`, and `apps/board/electron/engine.test.ts`.
 - [ ] Create `apps/board/electron/ipc.ts`.
 - [ ] Create `apps/board/src/connection/platform.ts` and `apps/board/src/connection/runtime.ts`.
 - [ ] Create `apps/board/src/state/projects.ts`.
@@ -337,29 +339,35 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Build.**
 
-- [ ] In `engine.ts`, find the engine at `AGENT_BOARD_ENGINE_URL`, else `http://127.0.0.1:3773`. Mint a bearer with `t3 auth session issue --token-only --label agent-board --ttl 30d`, using `AGENT_BOARD_T3_CLI` when set. Store the token with Electron `safeStorage`. On a 401, mint a new token once, then surface `auth_failed`.
+- [ ] In `wslEngine.ts`, run every engine command inside WSL through `wsl.exe -d <distro> --cd ~ --exec`, with the login-shell `PATH`, the way T3 desktop does (`apps/desktop/src/backend/DesktopBackendConfiguration.ts:727-752`). The distro is WSL's default, and a setting picks another from `wsl.exe --list --verbose`. On Linux, run the same commands directly.
+- [ ] In `engine.ts`, find the engine in this order, so installing the app is enough to reach the WSL dev environment.
+  - [ ] `AGENT_BOARD_ENGINE_URL`, when set.
+  - [ ] Join a running engine. Read `~/.t3/userdata/server-runtime.json` in the distro, and use its `origin` when its `pid` is alive and the origin answers. That shares projects and threads with T3 desktop's WSL backend or T3's service. `AGENT_BOARD_T3_HOME` overrides `~/.t3` for lanes.
+  - [ ] Boot one. Start `t3 serve` from the login `PATH`, or else the newest T3 runtime T3 desktop installed under `~/.t3/wsl-runtime/`, as a child process the app owns. Stop it when the app quits. Never stop an engine the app joined.
+  - [ ] Install one. When WSL has no T3 runtime, ask once, then run T3's install script (`curl -fsSL https://t3.codes/install.sh | sh`) inside WSL and boot it.
+- [ ] Mint a bearer with that runtime's `auth session issue --token-only --label agent-board --ttl 30d` through `wslEngine.ts`. `AGENT_BOARD_T3_CLI` overrides the command. Store the token with Electron `safeStorage`. On a 401, mint a new token once, then surface `auth_failed`.
 - [ ] In `platform.ts` and `runtime.ts`, build the connection runtime the way `apps/mobile/src/connection/platform.ts` and `runtime.ts` do, with a bearer target registered through `ConnectionOnboarding`.
 - [ ] In `state/projects.ts`, read projects with `createEnvironmentProjectAtoms`. `ProjectList.tsx` lists them.
-- [ ] In `EngineStatus.tsx`, show the `EnvironmentSupervisor` phase as `Engine connected · local`, `Connecting`, or `Offline`.
+- [ ] In `EngineStatus.tsx`, show how the app reached the engine and its phase, as `Engine connected · joined`, `Engine connected · booted`, `Starting engine in WSL`, `Connecting`, or `Offline`.
 
 **You see.**
 
-- [ ] The sidebar lists the engine's projects, and the footer reads `Engine connected · local`.
+- [ ] On a fresh launch with nothing running, the app starts the engine in WSL itself, and the sidebar lists the projects from that environment.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `engine.test.ts` uses a fake fetch and a fake CLI. It asserts the discovery order, exactly one reissue on the first 401, and the `auth_failed` error on the second 401. Run `vp test run electron/engine.test.ts` from `apps/board`.
+- [ ] `engine.test.ts` uses a fake `wsl.exe` runner and a fake fetch. It asserts the discovery order, that a stale `server-runtime.json` (dead `pid`) leads to a boot, that the app stops only an engine it booted, exactly one reissue on the first 401, and the `auth_failed` error on the second 401. Run `vp test run electron/engine.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk does not have the app, so record that fact. Seed three projects in the lane engine and open the head app. Save `b2-regression.png`. Pass when the sidebar lists the three seeded project names.
-- [ ] Lane 2. Start the app with the engine stopped, then start the engine. Save `b2-late-engine.png`. Pass when the footer shows `Offline` within 3 s and `Engine connected · local` within 10 s of the engine starting.
-- [ ] Lane 3. Stop the engine while connected, then start it again. Save `b2-reconnect.png`. Pass when the footer returns to connected without a page reload.
+- [ ] Lane 2. Start the Windows app with no engine running in WSL. Save `b2-boot.png`. Pass when the footer shows `Starting engine in WSL`, then `Engine connected · booted` within 15 s, and the WSL process list shows the child engine.
+- [ ] Lane 3. Quit the app after lane 2. Save `b2-quit.txt`. Pass when the booted engine process is gone within 5 s.
 - [ ] Lane 4. Revoke the lane token with `auth session revoke`. Save `b2-reissue.png`. Pass when the app logs one reissue and reconnects.
 - [ ] Lane 5. Add a project through the engine CLI while the app runs. Save `b2-add-project.png`. Pass when the project appears within 2 s.
 - [ ] Lane 6. Archive a project through the engine. Save `b2-archive-project.png`. Pass when the project leaves the list within 2 s.
-- [ ] Lane 7. Point `AGENT_BOARD_ENGINE_URL` at a closed port. Save `b2-bad-url.png`. Pass when the footer shows the URL and `Offline`.
-- [ ] Lane 8. Run the Electron app under WSLg against the lane engine. Save `b2-electron.png`. Pass when the Electron window lists the same projects.
+- [ ] Lane 7. Start an engine in WSL first, as T3 desktop's WSL backend does, then open the app. Save `b2-join.png`. Pass when the footer shows `Engine connected · joined`, and quitting the app leaves that engine running.
+- [ ] Lane 8. Point `AGENT_BOARD_T3_HOME` at an empty folder with no T3 runtime on the `PATH`. Save `b2-install.png`. Pass when the app asks before installing, and a decline leaves the footer on `Offline` with the reason.
 - [ ] Lane 9. Seed 50 projects. Save `b2-many.png`. Pass when the list scrolls and the footer stays visible.
 - [ ] Lane 10. Run the boundary check at head. Save `b2-boundary.txt`. Pass when it exits 0.
 
@@ -456,8 +464,8 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Build.**
 
 - [ ] In `engineUpdate.ts`, read the engine version and the `serverSelfUpdate` capability from the server config, and the newest release from `server.getNpmRelease`. Follow `packages/client-runtime/src/connection/outdatedHostUpdate.ts`.
-- [ ] Start an update with `server.updateServerWithProgress`, keep its `updateId`, and match it to the `ready` lifecycle event after the reconnect to report committed or rolled back.
-- [ ] In `EngineVersion.tsx`, show `Engine <version>` and, when a newer release exists and the capability is present, an `Update to <version>` button with progress.
+- [ ] Update the way the engine was reached. For T3's service, start `server.updateServerWithProgress`, keep its `updateId`, and match it to the `ready` lifecycle event after the reconnect to report committed or rolled back. For an engine the app booted from `t3` on the `PATH`, run `t3 update` in WSL, then restart the child. For an engine joined from T3 desktop's runtime, show the version only, because T3 desktop updates its own runtime.
+- [ ] In `EngineVersion.tsx`, show `Engine <version>` and, when a newer release exists and the app can update that engine, an `Update to <version>` button with progress.
 
 **You see.**
 
@@ -470,7 +478,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk does not have the app, so record that fact. Open the head app against a lane engine. Save `b4-regression.png`. Pass when the footer shows the lane engine's version.
-- [ ] Lane 2. Use a foreground lane engine, which has no self-update capability. Save `b4-no-capability.png`. Pass when no update button shows.
+- [ ] Lane 2. Join an engine started from T3 desktop's runtime under `~/.t3/wsl-runtime/`. Save `b4-joined-desktop.png`. Pass when the version shows and no update button shows.
 - [ ] Lane 3. Install the previous `t3` release as a user service in a scratch home, then open the app. Save `b4-outdated.png`. Pass when the button names the newest release.
 - [ ] Lane 4. Click the update button on the lane 3 service. Save `b4-progress.png`. Pass when progress shows downloading, then installing.
 - [ ] Lane 5. Wait for the reconnect after lane 4. Save `b4-committed.png`. Pass when the footer shows the new version and the outcome reads committed.
@@ -1040,7 +1048,8 @@ These stay unproven until B3 runs.
 ## Appendix C. Risks
 
 - `packages/client-runtime` has no stable API. An upstream merge can break the board build. Every owner runs `vp run --filter @agent-board/app typecheck` after merging upstream, and the fix always lands in `apps/board`.
-- Electron lanes need WSLg. If WSLg is missing, B1, B2, B11 Electron lanes fail. Web dev mode covers every other lane.
+- Electron lanes run on the Windows PC and depend on WSL's mirrored networking, which `.wslconfig` sets today. If it changes to NAT, the app can't reach the WSL engine or Vite server on 127.0.0.1, and the lanes fail until it is set back.
+- T3 desktop starts its own WSL backend on `~/.t3` and may not join one the board booted. Two engines on one state folder would fight over `state.sqlite`. B2 lane 7 proves the board joins T3 desktop's engine. If T3 desktop launched second also starts its own, the board stops its child and joins T3 desktop's engine.
 - B4's update lanes need systemd user services in WSL. If they are missing, B4 records the gap and proves the update path on a machine that has them.
 - CLI sessions from `t3 auth session issue` never renew. B2 mints a new token on the first 401.
 - The orchestrator can write a malformed store file. B5, B7, B8, and B9 parse every file at the boundary, keep the last valid state, and show a banner.
