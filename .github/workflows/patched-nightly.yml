@@ -97,7 +97,10 @@ jobs:
           fork_config_patch="$RUNNER_TEMP/mobile-fork-config.patch"
           git show "$WORKFLOW_SHA:.github/patches/mobile-fork-config.patch" > "$fork_config_patch"
           fork_config_patch_sha="$(sha256sum "$fork_config_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; } \
+          remote_delegate_patch="$RUNNER_TEMP/remote-delegate-worktree.patch"
+          git show "$WORKFLOW_SHA:.github/patches/remote-delegate-worktree.patch" > "$remote_delegate_patch"
+          remote_delegate_patch_sha="$(sha256sum "$remote_delegate_patch" | cut -d' ' -f1)"
+          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; printf '%s\n' "$remote_delegate_patch_sha"; } \
             | sha256sum | cut -c1-16)"
 
           dry_run=false
@@ -190,6 +193,8 @@ jobs:
           git apply "$thread_list_patch"
           git apply --check "$fork_config_patch"
           git apply "$fork_config_patch"
+          git apply --check "$remote_delegate_patch"
+          git apply "$remote_delegate_patch"
           git add -A
           git commit -m "patch: apply portable fork fixes to upstream nightly"
           if [[ "$dry_run" == "true" ]]; then
