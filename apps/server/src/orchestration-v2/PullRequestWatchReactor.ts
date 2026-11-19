@@ -591,6 +591,16 @@ export const make = Effect.gen(function* () {
       ),
     ).pipe(Effect.map((landed) => landed.every(Boolean)));
 
+  // A merged PR's watch holds its thread from settling, so it must not wait out the host.
+  const endMergedSnapshots = (group: WatchGroup) => {
+    const merged = group.targets.filter((target) => target.link.snapshot?.state === "merged");
+    return eachTarget({ ...group, targets: merged }, (target) =>
+      target.link.snapshot ? finished(group.key, target, target.link.snapshot) : Effect.void,
+    ).pipe(
+      Effect.as({ ...group, targets: group.targets.filter((target) => !merged.includes(target)) }),
+    );
+  };
+
   const referenceOf = (group: WatchGroup) => {
     const first = group.targets[0]!;
     return { projectId: first.thread.projectId, ...identityOf(first.link) };
@@ -645,12 +655,10 @@ export const make = Effect.gen(function* () {
       if (Cause.hasInterruptsOnly(detailRead.cause))
         return yield* Effect.failCause(detailRead.cause);
       lastReads.delete(group.key);
-      // A merged PR's watch holds its thread from settling, so it must not wait out the host.
-      if (group.targets.every((target) => target.link.snapshot?.state === "merged")) {
+      const unended = yield* endMergedSnapshots(group);
+      if (unended.targets.length === 0) {
         readFailures.delete(group.key);
-        return yield* eachTarget(group, (target) =>
-          target.link.snapshot ? finished(group.key, target, target.link.snapshot) : Effect.void,
-        );
+        return;
       }
       const reason = providerFailureReason(detailRead.cause);
       if (reason === "rate-limited") return;
@@ -661,7 +669,7 @@ export const make = Effect.gen(function* () {
       }
       const failures = (readFailures.get(group.key) ?? 0) + 1;
       readFailures.set(group.key, failures);
-      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(group, giveUp))) {
+      if (failures >= READ_FAILURE_LIMIT && (yield* eachTarget(unended, giveUp))) {
         readFailures.delete(group.key);
       }
       return yield* Effect.failCause(detailRead.cause);
@@ -840,7 +848,7 @@ export const make = Effect.gen(function* () {
           }),
           Effect.flatMap((fingerprint) =>
             fingerprint === "paused"
-              ? Effect.void
+              ? endMergedSnapshots(group).pipe(Effect.asVoid)
               : reads.withPermit(
                   readGroup(group, fingerprint).pipe(
                     Effect.catchCause(
