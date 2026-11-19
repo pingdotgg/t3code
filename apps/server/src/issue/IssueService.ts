@@ -808,8 +808,6 @@ const make = Effect.gen(function* () {
         ).pipe(
           Effect.flatMap((list) => Queue.offer(queue, { _tag: "complete", list })),
           Effect.andThen(Queue.end(queue)),
-          Effect.catch((error) => Queue.fail(queue, error)),
-          Effect.forkScoped,
         ),
       ),
     detail: traced("detail", detail),

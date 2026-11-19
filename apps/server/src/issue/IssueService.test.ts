@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -249,6 +251,29 @@ describe("IssueService", () => {
       expect(completed.list.entries).toHaveLength(11);
       expect(completed.list.nextCursors["github.com acme/fast"]).toBe("next");
       yield* Fiber.join(running);
+    }),
+  );
+
+  it.effect("forwards a tracker defect to the list stream", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const defect = new Error("Fixture tracker defect");
+      const service = yield* makeService({
+        projects: [project({ id: "web", repository: "acme/web" })],
+        trackers: [
+          fakeTracker({
+            listIssues: () =>
+              Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.die(defect))),
+          }),
+        ],
+      });
+      const consumer = yield* service
+        .listProgress({ state: "open" })
+        .pipe(Stream.runDrain, Effect.timeoutOption("1 second"), Effect.exit, Effect.forkChild);
+      yield* Deferred.await(started);
+      yield* TestClock.adjust("1 second");
+      const exit = yield* Fiber.join(consumer);
+      expect(Exit.isFailure(exit) && Cause.squash(exit.cause)).toBe(defect);
     }),
   );
 
