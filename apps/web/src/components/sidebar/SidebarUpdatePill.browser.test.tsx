@@ -4,9 +4,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
+import { EnvironmentId } from "@t3tools/contracts";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { act, render } from "../../../test/render";
-import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { DesktopUpdateButton, SidebarUpdatePill } from "./SidebarUpdatePill";
 import type { UpdateEverythingRow } from "./updateEverything.logic";
+import { setUpdateEverythingRun } from "./updateEverythingRun";
 
 const mocks = vi.hoisted(() => {
   const listeners = new Set<() => void>();
@@ -93,6 +96,7 @@ function setup(
   mocks.rows = rows;
   mocks.checkProviders = checkProviders;
   delete window.desktopBridge;
+  setUpdateEverythingRun(() => null);
 }
 
 function publish(update: DesktopUpdateState | null) {
@@ -226,5 +230,98 @@ describe("SidebarUpdatePill check", () => {
     });
     await expect.element(available).toHaveAttribute("data-update-state", "available");
     await expect.element(available).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("can check again when the app is up to date but a provider check hangs", async () => {
+    const upToDate = {
+      ...nightlyUpdate([]),
+      status: "up-to-date",
+      availableVersion: null,
+    } as const;
+    setup(upToDate, { checkProviders: () => new Promise<void>(() => {}) });
+    const checkForUpdate = vi.fn(async () => ({ checked: true, state: upToDate }));
+    window.desktopBridge = { checkForUpdate } as Partial<DesktopBridge> as DesktopBridge;
+    await using screen = await render(<SidebarUpdatePill />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await vi.waitFor(() => expect(checkForUpdate).toHaveBeenCalledTimes(1));
+    const checking = screen.getByRole("button", { name: "Checking for updates…" });
+    await expect.element(checking).not.toHaveAttribute("aria-disabled");
+
+    await userEvent.click(checking);
+    await vi.waitFor(() => expect(checkForUpdate).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("DesktopUpdateButton update run", () => {
+  it("shows a finished run's failure and lets it be dismissed", async () => {
+    setup(nightlyUpdate([]));
+    setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId: EnvironmentId.make("studio"),
+          label: "studio",
+          updatesProviders: true,
+          server: null,
+          handedOffVersion: null,
+          startedAt: 0,
+          result: "failed",
+          failure: "Claude did not update",
+          providerFailure: null,
+        },
+      ],
+    }));
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <DesktopUpdateButton />
+      </AppAtomRegistryProvider>,
+    );
+
+    const failed = screen.getByRole("button", { name: "studio failed" });
+    await expect.element(failed).not.toHaveAttribute("aria-disabled");
+    await userEvent.click(failed);
+    await expect.element(page.getByText("Claude did not update")).toBeVisible();
+    await userEvent.click(page.getByRole("button", { name: "Dismiss" }));
+
+    await expect
+      .element(screen.getByRole("button", { name: "Update 0.0.50-nightly.2 ready to download" }))
+      .not.toHaveAttribute("aria-disabled");
+  });
+
+  it("lets the header leave the wait for an offline handed-off server", async () => {
+    setup(nightlyUpdate([]));
+    setUpdateEverythingRun(() => ({
+      localVersion: null,
+      phase: "servers",
+      restartAt: null,
+      machines: [
+        {
+          environmentId: EnvironmentId.make("offline"),
+          label: "offline",
+          updatesProviders: false,
+          server: null,
+          handedOffVersion: "0.0.50-nightly.2",
+          startedAt: 0,
+          result: null,
+          failure: null,
+          providerFailure: null,
+        },
+      ],
+    }));
+    await using screen = await render(
+      <AppAtomRegistryProvider>
+        <DesktopUpdateButton />
+      </AppAtomRegistryProvider>,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /^offline restarting/ }));
+    await userEvent.click(page.getByRole("button", { name: "Hide" }));
+
+    await expect
+      .element(screen.getByRole("button", { name: "Update 0.0.50-nightly.2 ready to download" }))
+      .not.toHaveAttribute("aria-disabled");
   });
 });

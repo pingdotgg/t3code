@@ -20,6 +20,16 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+const PROVIDER_REFRESH_TIMEOUT_MS = 60_000;
+
+function withRefreshTimeout<A>(refresh: Promise<A>): Promise<A | "timeout"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), PROVIDER_REFRESH_TIMEOUT_MS);
+  });
+  return Promise.race([refresh, timeout]).finally(() => clearTimeout(timer));
+}
+
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
 export function useCheckProviderUpdates() {
@@ -39,7 +49,13 @@ export function useCheckProviderUpdates() {
             manageableIds.has(environment.environmentId),
         )
         .map(async ({ environmentId, label }) => {
-          const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
+          // A hung refresh must not hold the check, and the spinner, forever.
+          const result = await withRefreshTimeout(
+            refreshProviders({ environmentId, input: { refreshModels: true } }),
+          );
+          if (result === "timeout") {
+            return [`${label}: No answer after ${PROVIDER_REFRESH_TIMEOUT_MS / 1000} seconds.`];
+          }
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
           const error = squashAtomCommandFailure(result);
           return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];

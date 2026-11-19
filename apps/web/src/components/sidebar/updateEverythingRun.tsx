@@ -140,6 +140,11 @@ export function dismissSettledUpdateRunMachines(): void {
   );
 }
 
+/** Hides servers a relaunch still waits on. Their watch keeps running and reports how they ended. */
+export function hideHandedOffUpdateRun(): void {
+  setUpdateEverythingRun(() => null);
+}
+
 export function waitForServerUpdateHandoff(
   environmentId: EnvironmentId,
   finished: Promise<unknown>,

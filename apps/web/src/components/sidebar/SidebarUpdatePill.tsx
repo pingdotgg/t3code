@@ -40,7 +40,7 @@ import {
   shouldShowDesktopUpdateCheckIcon,
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
-import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
+import { SidebarUpdateCapsule, UpdateRunButton } from "./SidebarUpdateCapsule";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
 import {
@@ -282,16 +282,19 @@ function DesktopUpdateControl({
       : isChecking
         ? "Checking for updates…"
         : (idleTooltip?.title ?? "Check for updates");
-  // Only the real status disables; the spin latch releases on an animation event that a
-  // paused (hidden or off-screen) animation never fires.
+  // Only the app's own status disables. A provider check can hang, so clicking again retries it,
+  // and the spin latch releases on an animation event a paused animation never fires.
   const disabled = runsEverything
     ? false
     : showUpdateDetails
       ? isDesktopUpdateButtonDisabled(state)
-      : isChecking || !canCheckForUpdate(state);
-  const isInteractionDisabled = disabled || isActionPending || isRunningEverything;
-  const showReleaseNotesPopover =
-    !isRunningEverything && shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state);
+      : !canCheckForUpdate(state);
+  // A run's button only opens its details, so a run never disables it.
+  const isInteractionDisabled = !isRunningEverything && (disabled || isActionPending);
+  const showReleaseNotesPopover = shouldUseSidebarUpdateReleaseNotesPopover(
+    showUpdateDetails,
+    state,
+  );
 
   const [releaseNotesOpen, setReleaseNotesOpen] = useState(false);
   const [releaseNotesTriggerFocusVisible, setReleaseNotesTriggerFocusVisible] = useState(false);
@@ -447,39 +450,58 @@ function DesktopUpdateControl({
     />
   );
 
-  // Outside the sidebar there is no room for the capsule; the button shows the run instead.
-  if (run !== null && inSidebar) {
+  const buttonClassName =
+    className ??
+    cn(
+      "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
+      isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
+      showUpdateIconState || run !== null
+        ? cn(
+            "bg-sidebar-control-surface text-sidebar-foreground",
+            !isInteractionDisabled && "hover:bg-sidebar-row-hover",
+          )
+        : cn(
+            "text-(--sidebar-icon-color)",
+            !isInteractionDisabled && "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
+          ),
+      disabled && !showUpdateIconState && "opacity-60",
+    );
+
+  if (run !== null) {
     const local: UpdateRunLocalState =
       run.localVersion === null
         ? null
         : state?.status === "downloading"
           ? { status: "downloading", percent: state.downloadPercent }
           : { status: "waiting" };
-    return (
+    const bridge = window.desktopBridge;
+    const onRestart =
+      run.localVersion === null && action === "install" && bridge
+        ? async () => {
+            saveUpdateEverythingResult({
+              localVersion: localUpdateVersion,
+              updatedServers: 0,
+              updatedProviders: 0,
+              failures: [],
+              restarting: [],
+            });
+            if (!(await installLocalUpdate(bridge))) clearSavedUpdateEverythingResult();
+          }
+        : undefined;
+    return inSidebar ? (
       <SidebarMenuItem className="ml-auto flex flex-1">
-        <SidebarUpdateCapsule
-          run={run}
-          local={local}
-          icon={statusIcon}
-          {...(run.localVersion === null && action === "install" && window.desktopBridge
-            ? {
-                onRestart: async () => {
-                  saveUpdateEverythingResult({
-                    localVersion: localUpdateVersion,
-                    updatedServers: 0,
-                    updatedProviders: 0,
-                    failures: [],
-                    restarting: [],
-                  });
-                  if (!(await installLocalUpdate(window.desktopBridge!))) {
-                    clearSavedUpdateEverythingResult();
-                  }
-                },
-              }
-            : {})}
-        />
+        <SidebarUpdateCapsule run={run} local={local} icon={statusIcon} onRestart={onRestart} />
         {confirmDialog}
       </SidebarMenuItem>
+    ) : (
+      <UpdateRunButton
+        run={run}
+        local={local}
+        icon={statusIcon}
+        onRestart={onRestart}
+        className={buttonClassName}
+        updateState={iconStatus}
+      />
     );
   }
 
@@ -489,24 +511,7 @@ function DesktopUpdateControl({
       aria-label={idleTooltip?.detail ? `${tooltip}: ${idleTooltip.detail}` : tooltip}
       aria-disabled={isInteractionDisabled || undefined}
       data-update-state={iconStatus}
-      className={
-        className ??
-        cn(
-          "inline-flex size-8 items-center justify-center rounded-full outline-hidden ring-ring transition-colors focus-visible:ring-2 focus-visible:ring-inset",
-          isInteractionDisabled ? "cursor-not-allowed" : "cursor-pointer",
-          showUpdateIconState
-            ? cn(
-                "bg-sidebar-control-surface text-sidebar-foreground",
-                !isInteractionDisabled && "hover:bg-sidebar-row-hover",
-              )
-            : cn(
-                "text-(--sidebar-icon-color)",
-                !isInteractionDisabled &&
-                  "hover:bg-sidebar-row-hover hover:text-sidebar-foreground",
-              ),
-          ((disabled && !showUpdateIconState) || isRunningEverything) && "opacity-60",
-        )
-      }
+      className={buttonClassName}
       onClick={handleAction}
       onBlur={() => {
         suppressReleaseNotesFocusOpen.current = false;
