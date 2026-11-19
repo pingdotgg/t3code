@@ -20,8 +20,13 @@ class ScrollElement extends EventTarget {
   }
 }
 
-function targetsTimeline(target: EventTarget | null, timeline: ScrollElement, deltaY: number) {
-  return isTimelineScrollTarget(target, timeline as unknown as HTMLElement, deltaY);
+function targetsTimeline(
+  target: EventTarget | null,
+  timeline: ScrollElement,
+  deltaY: number,
+  wheel?: { deltaX: number; shiftKey: boolean },
+) {
+  return isTimelineScrollTarget(target, timeline as unknown as HTMLElement, deltaY, wheel);
 }
 
 function setup() {
@@ -46,6 +51,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("timeline scroll targets", () => {
+  it.each([
+    { deltaX: 5, deltaY: -30, shiftKey: false, targets: true },
+    { deltaX: 80, deltaY: -30, shiftKey: false, targets: false },
+    { deltaX: -80, deltaY: 30, shiftKey: false, targets: false },
+    { deltaX: 0, deltaY: -30, shiftKey: true, targets: false },
+  ])("leaves sideways wheel gestures out of the timeline: %j", ({ targets, ...wheel }) => {
+    const { timeline } = setup();
+    const table = new ScrollElement(timeline);
+    expect(targetsTimeline(table, timeline, wheel.deltaY, wheel)).toBe(targets);
+  });
+
   it.each([-30, 30])("keeps a nested tool group's scroll out of the timeline: %i", (deltaY) => {
     const { timeline, group, content } = setup();
     expect(targetsTimeline(content, timeline, deltaY)).toBe(false);
