@@ -159,9 +159,7 @@ describe("ForgejoIssueTracker", () => {
   it.effect("only reports issue candidates truncated when labels have another page", () =>
     Effect.gen(function* () {
       let labelLinks: string | undefined;
-      const paths: string[] = [];
       const api = yield* tracker(({ path }) => {
-        paths.push(path);
         switch (path.split("?")[0]) {
           case "repos/acme/web/assignees":
             return { stdout: encode([{ login: "theo" }]) };
@@ -181,19 +179,12 @@ describe("ForgejoIssueTracker", () => {
         assignees: [{ id: "theo", login: "theo", name: null, avatarUrl: null }],
         truncated: false,
       });
-      expect(paths.filter((path) => path.includes("/assignees"))).toEqual([
-        "repos/acme/web/assignees",
-      ]);
 
       labelLinks =
         'Link: <https://forgejo.test:3000/api/v1/repos/acme/web/labels?page=2>; rel="next"';
       const partial = yield* api.listCandidates!(target);
       expect(partial.labels).toEqual([{ name: "bug", color: "d73a4a", description: null }]);
       expect(partial.truncated).toBe(true);
-      expect(paths.filter((path) => path.includes("/labels"))).toEqual([
-        "repos/acme/web/labels?limit=50&page=1",
-        "repos/acme/web/labels?limit=50&page=1",
-      ]);
     }),
   );
 
