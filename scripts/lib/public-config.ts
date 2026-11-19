@@ -110,6 +110,33 @@ export function loadRepoEnv({
   };
 }
 
+const DEFAULT_APP_SCHEME = "t3code";
+// The official app's schemes on every channel; a fork claiming one opens in place of T3 Code.
+const OFFICIAL_APP_SCHEMES = new Set(["t3code", "t3code-dev", "t3code-preview"]);
+
+/**
+ * The deep-link scheme the desktop and mobile apps register and links name; development builds
+ * append `-dev`, mobile preview builds `-preview`. `T3CODE_APP_SCHEME` sets it for a fork.
+ */
+export function resolveAppScheme(env: Environment): string {
+  const scheme = env.T3CODE_APP_SCHEME?.trim();
+  if (!scheme) return DEFAULT_APP_SCHEME;
+  if (!/^[a-z][a-z0-9.+-]*$/.test(scheme)) {
+    throw new Error(
+      `T3CODE_APP_SCHEME must be a lowercase URL scheme such as acmecode, not ${scheme}.`,
+    );
+  }
+  return scheme;
+}
+
+/** Bakes a fork's scheme into bundles; default builds define nothing, so their output is unchanged. */
+export function appSchemeDefine(env: Environment): Record<string, string> {
+  const scheme = resolveAppScheme(env);
+  return scheme === DEFAULT_APP_SCHEME
+    ? {}
+    : { __T3CODE_BUILD_APP_SCHEME__: JSON.stringify(scheme) };
+}
+
 const UPSTREAM_EAS_PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
 const T3_OPERATED_DOMAINS = ["t3.codes", "t3.chat"];
 
@@ -144,6 +171,12 @@ function assertStandaloneConfig(config: T3CodePublicConfig, ...sources: readonly
     if (value && isT3OperatedUrl(value)) {
       throw new Error(`T3CODE_STANDALONE=1 does not allow ${name} to point at ${value}.`);
     }
+  }
+  const appScheme = firstNonEmpty(sources, "T3CODE_APP_SCHEME");
+  if (!appScheme || OFFICIAL_APP_SCHEMES.has(resolveAppScheme({ T3CODE_APP_SCHEME: appScheme }))) {
+    throw new Error(
+      "T3CODE_STANDALONE=1 needs T3CODE_APP_SCHEME set to the fork's own deep-link scheme, not T3 Code's.",
+    );
   }
   if (firstNonEmpty(sources, "T3CODE_EAS_PROJECT_ID") === UPSTREAM_EAS_PROJECT_ID) {
     throw new Error("T3CODE_STANDALONE=1 needs your own T3CODE_EAS_PROJECT_ID, not T3's.");

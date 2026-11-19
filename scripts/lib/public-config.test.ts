@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { loadRepoEnv } from "./public-config.ts";
+import { appSchemeDefine, loadRepoEnv } from "./public-config.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -54,7 +54,11 @@ describe("loadRepoEnv", () => {
 });
 
 describe("loadRepoEnv in a standalone build", () => {
-  const fork = { T3CODE_STANDALONE: "true", GITHUB_REPOSITORY: "fork-owner/t3code" };
+  const fork = {
+    T3CODE_STANDALONE: "true",
+    GITHUB_REPOSITORY: "fork-owner/t3code",
+    T3CODE_APP_SCHEME: "forkcode",
+  };
 
   it("passes the fork's own config through and normalizes the switch", () => {
     expect(
@@ -76,6 +80,8 @@ describe("loadRepoEnv in a standalone build", () => {
     [{ T3CODE_EAS_PROJECT_ID: "d763fcb8-d37c-41ea-a773-b54a0ab4a454" }, "T3CODE_EAS_PROJECT_ID"],
     [{ GITHUB_REPOSITORY: "pingdotgg/t3code" }, "pingdotgg/t3code"],
     [{ GITHUB_REPOSITORY: "" }, "owner/repo"],
+    [{ T3CODE_APP_SCHEME: "" }, "T3CODE_APP_SCHEME"],
+    [{ T3CODE_APP_SCHEME: "t3code-dev" }, "T3CODE_APP_SCHEME"],
   ])("refuses T3-operated config %j", (override, message) => {
     expect(() =>
       loadRepoEnv({ baseEnv: { ...fork, ...override }, repoRoot: makeTemporaryDirectory() }),
@@ -89,6 +95,17 @@ describe("loadRepoEnv in a standalone build", () => {
         repoRoot: makeTemporaryDirectory(),
       }),
     ).toMatchObject({ T3CODE_RELAY_URL: "https://relay.t3.codes" });
+  });
+});
+
+describe("appSchemeDefine", () => {
+  it("bakes in only a fork's valid scheme", () => {
+    expect(appSchemeDefine({})).toEqual({});
+    expect(appSchemeDefine({ T3CODE_APP_SCHEME: "t3code" })).toEqual({});
+    expect(appSchemeDefine({ T3CODE_APP_SCHEME: "forkcode" })).toEqual({
+      __T3CODE_BUILD_APP_SCHEME__: '"forkcode"',
+    });
+    expect(() => appSchemeDefine({ T3CODE_APP_SCHEME: "Fork Code" })).toThrow("lowercase");
   });
 });
 

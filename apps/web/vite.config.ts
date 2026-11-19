@@ -18,7 +18,7 @@ import {
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
 
-import { loadRepoEnv } from "../../scripts/lib/public-config";
+import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build";
 import { resolveTaggedSourceVersion } from "../../scripts/lib/tagged-source-version";
 import { thirdPartyLicensesPlugin } from "../../scripts/lib/third-party-licenses";
@@ -377,6 +377,7 @@ export default defineConfig(({ command }) => {
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
       // Provider sign-in returns only to this build's own hosted app.
       ...standaloneBuildDefine({ ...repoEnv, T3CODE_HOSTED_APP_URL: configuredHostedAppUrl }),
+      ...appSchemeDefine(repoEnv),
     },
     resolve: {
       tsconfigPaths: true,

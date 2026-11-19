@@ -5,7 +5,9 @@ import appleAppSiteAssociation from "../web/public/.well-known/apple-app-site-as
 import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
-vi.mock("../../scripts/lib/public-config.ts", () => ({
+vi.mock("../../scripts/lib/public-config.ts", async (importOriginal) => ({
+  resolveAppScheme: (await importOriginal<typeof import("../../scripts/lib/public-config.ts")>())
+    .resolveAppScheme,
   // app.config copies these into process.env, so an unset key must stay absent, not "undefined".
   loadRepoEnv: () =>
     Object.fromEntries(
@@ -17,6 +19,7 @@ vi.mock("../../scripts/lib/public-config.ts", () => ({
         "T3CODE_MOBILE_BUNDLE_ID",
         "T3CODE_IOS_TEAM_ID",
         "T3CODE_DESKTOP_UPDATE_REPOSITORY",
+        "T3CODE_APP_SCHEME",
       ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
     ),
 }));
@@ -46,6 +49,7 @@ it.each([
   const config = await loadConfig(value);
   expect(config.ios?.bundleIdentifier).toBe(identifier);
   expect(config.android?.package).toBe(identifier);
+  expect(config.scheme).toBe(identifier.replace("com.t3tools.t3code", "t3code").replace(".", "-"));
   // Copied thread links open this app only while app.t3.codes lists it.
   const host = new URL(DEFAULT_HOSTED_APP_URL).host;
   expect(config.ios?.associatedDomains).toContain(`applinks:${host}`);
@@ -87,11 +91,14 @@ it.each([
 ])("signs APP_VARIANT=%j as the fork's app", async (value, identifier) => {
   vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
   vi.stubEnv("T3CODE_IOS_TEAM_ID", "FORKTEAM01");
+  vi.stubEnv("T3CODE_APP_SCHEME", "forkcode");
   vi.stubEnv("T3CODE_DESKTOP_UPDATE_REPOSITORY", "fork/t3code");
   const config = await loadConfig(value);
   expect(config.ios?.bundleIdentifier).toBe(identifier);
   expect(config.android?.package).toBe(identifier);
   expect(config.ios?.appleTeamId).toBe("FORKTEAM01");
+  // The URL scheme follows the variant like the identifier: forkcode, forkcode-dev, forkcode-preview.
+  expect(config.scheme).toBe(identifier.replace("com.fork.code", "forkcode").replace(".", "-"));
   expect(config.ios?.entitlements?.["keychain-access-groups"]).toEqual([
     `$(AppIdentifierPrefix)${identifier}`,
   ]);

@@ -1,7 +1,7 @@
 import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
-import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { loadRepoEnv, resolveAppScheme } from "../../scripts/lib/public-config.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -11,6 +11,8 @@ Object.assign(process.env, repoEnv);
 process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+// iOS URL types and Android intent filters claim it; a fork's own keeps official links out.
+const appScheme = resolveAppScheme(repoEnv);
 // Standalone builds use only the fork's own Expo project and hosted app; unset means none.
 const isStandaloneBuild = repoEnv.T3CODE_STANDALONE === "1";
 const easProjectId =
@@ -101,21 +103,21 @@ const RELEASE_ASSETS = {
 const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
-    scheme: "t3code-dev",
+    scheme: `${appScheme}-dev`,
     bundleIdSuffix: ".dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
     appName: "T3 Code Preview",
-    scheme: "t3code-preview",
+    scheme: `${appScheme}-preview`,
     bundleIdSuffix: ".preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
-    scheme: "t3code",
+    scheme: appScheme,
     bundleIdSuffix: "",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,

@@ -570,6 +570,33 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     }),
   );
 
+  it.effect("registers the configured app scheme instead of T3 Code's", () =>
+    Effect.gen(function* () {
+      for (const platform of ["mac", "linux"] as const) {
+        const config = yield* createBuildConfig(
+          platform,
+          platform === "mac" ? "dmg" : "AppImage",
+          "0.0.33",
+          false,
+          false,
+          undefined,
+          undefined,
+        );
+        const protocols = (config[platform] as { protocols: Array<{ schemes: string[] }> })
+          .protocols;
+        assert.deepStrictEqual(protocols[0]?.schemes, ["forkcode", "forkcode-dev"], platform);
+      }
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { GITHUB_REPOSITORY: "fork-owner/t3code", T3CODE_APP_SCHEME: "forkcode" },
+          }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("names updatable AppImages without a version and apart per channel", () =>
     Effect.gen(function* () {
       const appImageName = (version: string) =>
