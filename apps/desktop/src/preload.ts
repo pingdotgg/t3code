@@ -45,6 +45,7 @@ try {
 
 // oxlint-disable-next-line t3code/no-global-process-runtime -- Electron exposes the client platform in its sandboxed preload process.
 const clientPlatform = process.platform;
+const WHEEL_ZOOM_INTERVAL_MS = 100;
 
 if (clientPlatform === "darwin") {
   // Native buttons ignore Chromium zoom; reserve native points even after reload.
@@ -56,6 +57,26 @@ if (clientPlatform === "darwin") {
   };
   window.addEventListener("DOMContentLoaded", syncWindowControlInset, { once: true });
   window.addEventListener("resize", syncWindowControlInset);
+
+  // Chromium zooms on Ctrl+wheel only; Mac apps zoom on Cmd+wheel too. A trackpad sends a burst
+  // of small wheel events, so step at most once per interval like a mouse notch would.
+  let lastWheelZoomAt = Number.NEGATIVE_INFINITY;
+  window.addEventListener(
+    "wheel",
+    (event) => {
+      if (!event.metaKey || event.ctrlKey || event.deltaY === 0) return;
+      // Canvases such as the terminal handle wheels themselves and ignore preventDefault.
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.timeStamp - lastWheelZoomAt < WHEEL_ZOOM_INTERVAL_MS) return;
+      lastWheelZoomAt = event.timeStamp;
+      void ipcRenderer.invoke(
+        IpcChannels.ZOOM_MAIN_WINDOW_CHANNEL,
+        event.deltaY < 0 ? "in" : "out",
+      );
+    },
+    { capture: true, passive: false },
+  );
 }
 
 const syncHtmlFullscreen = () => {

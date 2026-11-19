@@ -32,6 +32,7 @@ import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -42,6 +43,7 @@ import {
   readMedia,
   syncHtmlFullscreen,
   toLocalBackendPath,
+  zoomMainWindow,
 } from "./window.ts";
 
 const readyWslConfig: DesktopBackendManager.DesktopBackendStartConfig = {
@@ -652,4 +654,36 @@ describe("probeRemoteEditors PATH scan", () => {
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+});
+
+describe("zoomMainWindow", () => {
+  const layerFor = (zooms: DesktopWindow.MainWindowZoomDirection[]) => {
+    const window = {
+      webContents: { id: 1 },
+      isDestroyed: () => false,
+    } as unknown as Electron.BrowserWindow;
+    return Layer.mergeAll(
+      Layer.mock(ElectronWindow.ElectronWindow)({ main: Effect.succeedSome(window) }),
+      Layer.mock(DesktopWindow.DesktopWindow)({
+        zoomMain: (direction) => Effect.sync(() => void zooms.push(direction)),
+      }),
+    );
+  };
+
+  it.effect("zooms the main window from its own renderer's Cmd+wheel", () => {
+    const zooms: DesktopWindow.MainWindowZoomDirection[] = [];
+    return Effect.gen(function* () {
+      yield* zoomMainWindow.handler("in", { sender: { id: 1 } });
+      yield* zoomMainWindow.handler("out", { sender: { id: 1 } });
+      assert.deepStrictEqual(zooms, ["in", "out"]);
+    }).pipe(Effect.provide(layerFor(zooms)));
+  });
+
+  it.effect("ignores other renderers", () => {
+    const zooms: DesktopWindow.MainWindowZoomDirection[] = [];
+    return Effect.gen(function* () {
+      yield* zoomMainWindow.handler("in", { sender: { id: 2 } });
+      assert.deepStrictEqual(zooms, []);
+    }).pipe(Effect.provide(layerFor(zooms)));
+  });
 });

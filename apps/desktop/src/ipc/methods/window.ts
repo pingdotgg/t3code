@@ -44,6 +44,7 @@ import * as ElectronMenu from "../../electron/ElectronMenu.ts";
 import * as ElectronShell from "../../electron/ElectronShell.ts";
 import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopWindow from "../../window/DesktopWindow.ts";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
@@ -552,6 +553,26 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
       state.leaving = window.isFullScreen();
       window.setFullScreen(false);
     }
+  }),
+});
+
+// Chromium only zooms on Ctrl+wheel, so the macOS preload reports Cmd+wheel here.
+export const zoomMainWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.ZOOM_MAIN_WINDOW_CHANNEL,
+  payload: Schema.Literals(["in", "out"]),
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.window.zoomMainWindow")(function* (direction, event) {
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const main = yield* electronWindow.main;
+    if (
+      event === undefined ||
+      Option.isNone(main) ||
+      main.value.isDestroyed() ||
+      main.value.webContents.id !== event.sender.id
+    ) {
+      return;
+    }
+    yield* (yield* DesktopWindow.DesktopWindow).zoomMain(direction);
   }),
 });
 
