@@ -375,7 +375,11 @@ const publishThemeFile = Effect.fn(function* (input: {
         }
         throw error;
       } finally {
-        if (!saved) NodeFS.unlinkSync(rollbackPath);
+        if (!saved) {
+          try {
+            NodeFS.unlinkSync(rollbackPath);
+          } catch {}
+        }
       }
     },
     catch: (cause) => (isThemeDestinationDirectoryError(cause) ? cause : publishFailure(cause)),
