@@ -7372,6 +7372,39 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* message("message:turn-start-commands:later", "user", "/compact later", 4);
         yield* message("message:turn-start-commands:assistant", "assistant", "/compact", 6);
 
+        const nativeId = NodeId.make("subagent:turn-start-commands:native");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:native"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: nativeId,
+          driver,
+          providerInstanceId,
+          occurredAt: created,
+          payload: {
+            id: nativeId,
+            threadId,
+            runId,
+            parentNodeId: NodeId.make("node:turn-start-commands:rolled-back"),
+            status: "completed",
+            startedAt: created,
+            completedAt: created,
+            origin: "provider_native",
+            createdBy: "agent",
+            driver,
+            providerInstanceId,
+            providerThreadId: null,
+            childThreadId: null,
+            nativeTaskRef: null,
+            prompt: "Do the work",
+            title: "native",
+            model: null,
+            completionDelivery: { state: "delivered", observedByRunId: null },
+            result: null,
+            updatedAt: created,
+          },
+        });
         yield* sql`
         INSERT INTO orchestration_v2_projection_subagents (
           subagent_id, thread_id, run_id, parent_node_id, provider, origin, status, updated_at,
@@ -7405,7 +7438,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             "message:turn-start-commands:rolled-back",
           ],
         );
-        assert.deepEqual(context.subagents, []);
+        assert.deepEqual(
+          context.subagents.map((task) => task.id),
+          [nativeId],
+        );
         assert.deepEqual(context.contextTransfers, []);
 
         const planOf = Effect.fn("planOf")(function* (table: string) {
