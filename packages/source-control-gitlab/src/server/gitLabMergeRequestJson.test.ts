@@ -88,6 +88,21 @@ describe("decodeMergeRequestListJson", () => {
     });
   });
 
+  it("keeps the colour of each label GitLab details", () => {
+    const batch = expectSuccess(
+      decodeMergeRequestListJson(
+        listJson([
+          {
+            iid: 42,
+            labels: [{ id: 1, name: "bug", color: "#d9534f", text_color: "#FFFFFF" }],
+          },
+        ]),
+      ),
+    );
+
+    expect(batch.items[0]?.labels).toEqual([{ name: "bug", color: "#d9534f" }]);
+  });
+
   it("treats a merged timestamp as merged whatever the state says", () => {
     const batch = expectSuccess(
       decodeMergeRequestListJson(
@@ -1188,7 +1203,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
                     author: { username: "bilal", name: "Bilal", avatarUrl: null },
-                    labels: { nodes: [{ title: "bug" }] },
+                    labels: { nodes: [{ title: "bug", color: "#d9534f" }] },
                     approved: false,
                     approvedBy: { nodes: [] },
                     reviewers: {
@@ -1217,7 +1232,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
         isDraft: true,
         mergeability: "conflicting",
         reviewRequestLogins: ["julius"],
-        labels: [expect.objectContaining({ name: "bug" })],
+        labels: [{ name: "bug", color: "#d9534f" }],
       }),
     ]);
     expect([...page.states]).toEqual([

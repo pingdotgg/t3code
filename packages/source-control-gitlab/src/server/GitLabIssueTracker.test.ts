@@ -333,6 +333,33 @@ describe("GitLabIssueTracker", () => {
     }),
   );
 
+  it.effect("lists each issue's labels with the colour GitLab gave them", () =>
+    Effect.gen(function* () {
+      // GitLab details labels only when asked; otherwise it answers bare names.
+      const api = yield* tracker((args) =>
+        encode([
+          {
+            ...ISSUE,
+            labels: args[1]!.includes("with_labels_details=true")
+              ? [{ id: 1, name: "bug", color: "#d9534f", text_color: "#FFFFFF" }]
+              : ["bug"],
+          },
+        ]),
+      );
+      const page = yield* api.listIssues({
+        cwd: "/w",
+        host: "gitlab.com",
+        scope: "acme/web",
+        state: "open",
+        involvement: "all",
+        viewer: "julius",
+        sort: "updated",
+        limit: 1,
+      });
+      expect(page.items[0]?.labels).toEqual([{ name: "bug", color: "#d9534f" }]);
+    }),
+  );
+
   it.effect("removes the viewer's own award by id, paging until it is found", () =>
     Effect.gen(function* () {
       const calls: string[] = [];
