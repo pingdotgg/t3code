@@ -27,7 +27,7 @@ export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean
 
   return (
     <div className="pointer-events-none fixed inset-x-0 top-3 z-100 flex justify-center px-4">
-      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5">
+      <div className="pointer-events-auto flex max-w-full items-center gap-1 rounded-full bg-popover p-0.5 shadow-lg/5 [-webkit-app-region:no-drag]">
         <Button
           type="button"
           size="sm-pill"
