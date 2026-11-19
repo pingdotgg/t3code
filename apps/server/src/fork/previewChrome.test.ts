@@ -57,6 +57,7 @@ const storedZip = (entries: ReadonlyArray<{ readonly name: string; readonly mode
 
 it("pins full Chrome where its archive unpacks, and keeps the shell on macOS", () => {
   expect(fullChromeRelease("linux64")).toMatchObject({
+    version: PreviewBrowser.VERSION,
     product: "chrome",
     executable: "chrome",
     url: expect.stringMatching(/\/linux64\/chrome-linux64\.zip$/),

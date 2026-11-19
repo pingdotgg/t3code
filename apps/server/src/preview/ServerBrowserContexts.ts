@@ -66,13 +66,10 @@ interface Options {
   ) => Promise<{ readonly path: string; readonly release: () => Promise<void> } | undefined>;
   readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-  /** Chrome's environment on a display, or undefined to run headless. */
-  readonly display?: (env: NodeJS.ProcessEnv) => Promise<NodeJS.ProcessEnv | undefined>;
-=======
   /** Names Chrome in the browser's own user agent, which is all a service worker ever sends. */
   readonly chrome: { readonly version: string; readonly platform: NodeJS.Platform };
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
+  /** Chrome's environment on a display, or undefined to run headless. */
+  readonly display?: (env: NodeJS.ProcessEnv) => Promise<NodeJS.ProcessEnv | undefined>;
   /** Closes the shared browser once it has held no context for this long. */
   readonly idleBrowserMs?: number;
   readonly onContextClose?: (context: BrowserContext) => void;
@@ -154,12 +151,9 @@ export class ServerBrowserContexts {
   private async launchOptions() {
     const executable = await this.options.executable();
     const env = this.options.env ?? process.env;
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-    const display = await this.options.display?.(env);
-=======
     // A page's override never reaches its workers, so the browser itself must name Chrome.
     const userAgent = chromeUserAgent(this.options.chrome);
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
+    const display = await this.options.display?.(env);
     return {
       executable,
       env: display ?? env,

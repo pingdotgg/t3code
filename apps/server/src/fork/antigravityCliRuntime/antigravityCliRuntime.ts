@@ -1,4 +1,3 @@
-import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import { makeUnavailableUsageLimits } from "@t3tools/provider-core/server/usageLimits";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Clock from "effect/Clock";
@@ -111,17 +110,6 @@ export const withAntigravityCliCompaction =
       const { compactThread: _, ...harness } = session;
       return harness as Session;
     });
-
-const CLI_T3_MCP_TOOL_NAME = /^mcp_t3-code_[A-Za-z0-9_]+$/;
-
-/**
- * `agy acp` titles an MCP call "Run <name>", and the ACP adapter finds no T3 tool in that title.
- * The call's `name` is the tool's own name, in a form the adapter knows, so it becomes the title.
- */
-export const antigravityCliMcpToolCall = (toolCall: AcpToolCallState): AcpToolCallState =>
-  typeof toolCall.data.name === "string" && CLI_T3_MCP_TOOL_NAME.test(toolCall.data.name)
-    ? { ...toolCall, data: { ...toolCall.data, title: toolCall.data.name } }
-    : toolCall;
 
 const RefreshToken = Schema.Struct({ refresh_token: Schema.NonEmptyString });
 const decodeRefreshToken = Schema.decodeUnknownOption(

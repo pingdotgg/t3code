@@ -19,7 +19,6 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
-  antigravityCliMcpToolCall,
   antigravitySessionDirectories,
   profileAntigravityRuntimeState,
   readAntigravityAccount,
@@ -300,8 +299,7 @@ export function makeAntigravityAcpAdapterFlavor(
         respond: (answers) => makeAntigravityUserInputResponse(request, answers),
       };
     },
-    normalizeToolCall: (toolCall) =>
-      antigravityCliMcpToolCall(normalizeAntigravityToolCall(toolCall)),
+    normalizeToolCall: normalizeAntigravityToolCall,
     extractSubagentUpdate: extractAntigravitySubagentUpdate,
     supportsImagePrompts: true,
     // `agy` compacts on /compact; makeAntigravityAdapterV2 withholds it from the older harness runtime.

@@ -18,11 +18,8 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
 import * as DisplayModeWrap from "../fork/displayModeWrap/DisplayModeWrap.ts";
-=======
 import * as McpAppModelContext from "../mcpApps/McpAppModelContext.ts";
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -127,11 +124,8 @@ export const layer: Layer.Layer<
     const eventSink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-    const displayModeWrap = yield* DisplayModeWrap.orUnchanged;
-=======
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
+    const displayModeWrap = yield* DisplayModeWrap.orUnchanged;
 
     const load = Effect.fn("ProviderTurnControlService.load")(function* (input: {
       readonly threadId: ThreadId;
@@ -455,7 +449,10 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
+          const appContext = yield* McpAppModelContext.forProvider(
+            mcpAppModelContext,
+            input.threadId,
+          );
           const wrapped = yield* displayModeWrap.wrapUserText({
             threadId: input.threadId,
             message,
@@ -464,12 +461,6 @@ export const layer: Layer.Layer<
               records: message.context?.records ?? [],
             }),
           });
-=======
-          const appContext = yield* McpAppModelContext.forProvider(
-            mcpAppModelContext,
-            input.threadId,
-          );
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,

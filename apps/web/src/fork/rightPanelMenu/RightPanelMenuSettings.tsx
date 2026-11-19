@@ -54,7 +54,7 @@ const MENU_ITEM_ROWS = {
   files: { label: "Files", icon: Files, builtInKey: "F" },
   diff: { label: "Diff", icon: FileDiff, builtInKey: "D" },
   "pull-request": { label: "Pull request", icon: PullRequestGlyph.pullRequest, builtInKey: "P" },
-  "pull-requests": { label: "Linked pull requests", icon: PullRequestGlyph.link, builtInKey: "L" },
+  "pull-requests": { label: "Linked items", icon: PullRequestGlyph.link, builtInKey: "L" },
   device: { label: "Device", icon: Smartphone, builtInKey: "M" },
   "side-chat": { label: "Side chat", icon: MessagesSquare, builtInKey: "S" },
   replies: forkRow("replies"),

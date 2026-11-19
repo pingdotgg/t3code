@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import * as McpAppModelContext from "../../mcpApps/McpAppModelContext.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../../orchestration-v2/ProviderSessionManager.ts";
@@ -475,7 +476,9 @@ it.effect("wraps a steering message sent after the agent's hidden tool work", ()
       Layer.merge(
         store,
         ProviderTurnControlService.layer.pipe(
-          Layer.provide(Layer.mergeAll(store, sessions, wrapper, eventSink)),
+          Layer.provide(
+            Layer.mergeAll(store, sessions, wrapper, eventSink, McpAppModelContext.layerEmpty),
+          ),
         ),
       ),
     ),
@@ -510,7 +513,9 @@ it.effect("leaves the note owed after a slash command sent as a steer", () =>
         store,
         wrapper,
         ProviderTurnControlService.layer.pipe(
-          Layer.provide(Layer.mergeAll(store, sessions, wrapper, eventSink)),
+          Layer.provide(
+            Layer.mergeAll(store, sessions, wrapper, eventSink, McpAppModelContext.layerEmpty),
+          ),
         ),
       ),
     ),

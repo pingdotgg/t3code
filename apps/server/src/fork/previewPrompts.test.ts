@@ -41,7 +41,12 @@ describe.each([
     profilesDir = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-preview-prompts-"));
     // Like other browser tests, run without Chrome's sandbox, which some CI hosts lack.
     const env = { T3CODE_SERVER_BROWSER_SANDBOX: "0" };
-    contexts = new ServerBrowserContexts({ profilesDir, executable: async () => "chrome", env });
+    contexts = new ServerBrowserContexts({
+      profilesDir,
+      executable: async () => "chrome",
+      env,
+      chrome: { version: "157.0.8103.78", platform: "linux" },
+    });
     context = await contexts.contextFor(profileId);
     await context.route(`${ORIGIN}/**`, (route) =>
       route.fulfill({ contentType: "text/html", body: "<!doctype html>" }),

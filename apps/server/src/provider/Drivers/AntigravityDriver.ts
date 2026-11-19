@@ -291,28 +291,17 @@ export const AntigravityDriver: ProviderDriver<
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
         spawn: withUserAgyState(
           executable,
           buildAntigravityAcpSpawnInput({
             installation: executable,
             profile,
-            cwd: input.cwd,
-            baseEnv: processEnvironment,
+            cwd: runtimeInput.cwd,
+            baseEnv: spawnEnvironment,
             auth,
             runtimeTempDirectory,
           }),
         ),
-=======
-        spawn: buildAntigravityAcpSpawnInput({
-          installation: executable,
-          profile,
-          cwd: runtimeInput.cwd,
-          baseEnv: spawnEnvironment,
-          auth,
-          runtimeTempDirectory,
-        }),
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,

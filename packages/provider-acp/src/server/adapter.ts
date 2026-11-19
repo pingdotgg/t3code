@@ -9275,7 +9275,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     : flavor.getModelContextWindow?.(selection, session);
                 },
               }),
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
           ...(flavor.readAccount === undefined
             ? {}
             : {
@@ -9287,10 +9286,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   ),
                 ),
               }),
-          ...(postSettleContinuationEnabled || followsAgentWorkState
-=======
           ...(canReportBackgroundWork
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
             ? {
                 hasPendingBackgroundWork: Effect.gen(function* () {
                   if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;

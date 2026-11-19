@@ -105,11 +105,8 @@ export const CLAUDE_PROVIDER = {
 const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
 const makeServerConfig = (
   providers: ReadonlyArray<unknown>,
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-  settings: unknown = {},
-=======
   supportsIssues = false,
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
+  settings: unknown = {},
 ): ServerConfig => ({
   ...decodeServerConfig({
     environment: {
@@ -612,14 +609,11 @@ export function installFakeEnvironment(
 ): Disposable {
   threads = fixtures;
   baseServerConfig = {
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-    ...makeServerConfig(options?.providers ?? [CODEX_PROVIDER], options?.settings),
-=======
     ...makeServerConfig(
       options?.providers ?? [CODEX_PROVIDER],
       fixtures.some((thread) => (thread.issues?.length ?? 0) > 0),
+      options?.settings,
     ),
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
     keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
   };
   dispatched = [];

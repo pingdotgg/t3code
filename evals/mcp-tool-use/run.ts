@@ -60,11 +60,7 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-=======
 import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
-import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";

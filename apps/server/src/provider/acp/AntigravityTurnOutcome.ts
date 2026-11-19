@@ -127,13 +127,9 @@ function turnFailure(
   // The agent maps only the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
   const apiError = API_ERROR.exec(text) ?? antigravityCliApiError(text);
-=======
-  const apiError = API_ERROR.exec(text);
   const reusable = (failure: OrchestrationV2ProviderFailure) =>
     ({ failure, threadDisposition: "reusable" }) as const;
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
     return reusable(
       makeProviderFailure({

@@ -1,11 +1,5 @@
 {
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-  "claudeSystemAppendBytes": 5630,
-  "codexAdditionalContextBytes": 7024,
+  "claudeSystemAppendBytes": 5737,
+  "codexAdditionalContextBytes": 7131,
   "mcpToolListJsonBytes": 57666
-=======
-  "claudeSystemAppendBytes": 6037,
-  "codexAdditionalContextBytes": 7431,
-  "mcpToolListJsonBytes": 52145
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
 }

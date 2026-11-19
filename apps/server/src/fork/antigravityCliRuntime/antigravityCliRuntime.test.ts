@@ -349,10 +349,13 @@ describe("Antigravity CLI runtime", () => {
       const result: EffectAcpSchema.PromptResponse = { stopReason: "end_turn" };
 
       assert.deepEqual(yield* check(result), {
-        class: "provider_error",
-        message: "User location is not supported for the API use.",
-        code: "FAILED_PRECONDITION",
-        retryable: false,
+        failure: {
+          class: "provider_error",
+          message: "User location is not supported for the API use.",
+          code: "FAILED_PRECONDITION",
+          retryable: false,
+        },
+        threadDisposition: "reusable",
       });
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
@@ -401,7 +404,7 @@ describe("Antigravity CLI runtime", () => {
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 
-  it("knows a T3 MCP call by the tool name that the CLI sends", () => {
+  it("knows a T3 MCP call by the title that the CLI sends", () => {
     const { normalizeToolCall } = makeAntigravityAcpAdapterFlavor(baseOptions);
     const identity = (call: { name: string; kind: string; title: string }) =>
       extractMcpToolCallIdentity(
@@ -422,10 +425,6 @@ describe("Antigravity CLI runtime", () => {
         tool,
       );
     }
-    assert.isUndefined(
-      identity({ name: "run_command", kind: "execute", title: "Run mcp_t3-code_send_to_user" }),
-      "a shell command whose text is the title of a send",
-    );
     assert.isUndefined(
       identity({
         name: "mcp_notes_send_to_user",

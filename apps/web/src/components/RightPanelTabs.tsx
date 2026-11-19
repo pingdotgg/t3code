@@ -410,12 +410,8 @@ function RightPanelEmptyState(props: {
       onClick: props.onAddPullRequest,
     },
     {
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
       id: "pull-requests",
-      label: msg("Linked pull requests"),
-=======
       label: msg("Linked items"),
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,
@@ -1271,12 +1267,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddPullRequest,
     },
     {
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
       id: "pull-requests",
-      label: msg("Linked pull requests"),
-=======
       label: msg("Linked items"),
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
       icon: PullRequestGlyph.link,
       shortcut: "L",
       available: props.pullRequestsAvailable,

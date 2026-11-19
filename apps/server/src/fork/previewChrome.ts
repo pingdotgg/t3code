@@ -6,24 +6,25 @@ import type { PreviewBrowserRelease } from "../preview/PreviewBrowser.ts";
 
 // Full Chrome for Testing, which the preview browser's "xvfb" mode runs (see previewBrowserMode.ts).
 // macOS keeps the shell: the Chrome app bundle holds symlinks the installer will not unpack.
-// Pin from each chrome zip in known-good-versions-with-downloads.json.
-const VERSION = "156.0.8078.80";
+// Pin from each chrome zip in known-good-versions-with-downloads.json, at PreviewBrowser.VERSION:
+// the browser's --user-agent names that version in both modes.
+const VERSION = "157.0.8103.78";
 const ARCHIVES: Partial<Record<string, { readonly bytes: number; readonly sha256: string }>> = {
   linux64: {
-    bytes: 201_329_937,
-    sha256: "b711c720f774be355197f32edf37e0651418ba036d92446ee2da19ac017540a7",
+    bytes: 203_266_906,
+    sha256: "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb",
   },
   "linux-arm64": {
-    bytes: 200_722_708,
-    sha256: "1f496a826c9ba4d6a5f5bf2de686145fe718528c2cc3dbeb96b5893b89653724",
+    bytes: 203_144_198,
+    sha256: "f354d666822a11d8fe99e923c44be77dd226fab2750c5b5947e6318818bf10f1",
   },
   win32: {
-    bytes: 188_578_294,
-    sha256: "191a656d22c7ebd345bf13c20f04100bd37ed35170e9070dc0ddfd425109ac66",
+    bytes: 190_974_375,
+    sha256: "313261468c4b205198778b112c9ac6e44dff0ff501085b0f9336d7feae2b3715",
   },
   win64: {
-    bytes: 208_152_768,
-    sha256: "16edb57d6107bf1c48a7c149b8d78b155fe614410093796dd72441fd6640540f",
+    bytes: 209_854_321,
+    sha256: "5f6ec40206407112702e163bf694d07f9fdc8ccbd346c70ce61fa62f716493f9",
   },
 };
 

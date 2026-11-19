@@ -298,9 +298,6 @@ export function WorkspaceBrowserPreview(props: {
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
-<<<<<<< 9ccd86b34f7ca50ba02dae96ef6f33dfec5febdb
-      readingKey={{ environmentId: props.environmentId, absolutePath: props.absolutePath }}
-=======
       pdfActions={
         <WorkspacePdfSaveAction
           environmentId={props.environmentId}
@@ -308,7 +305,7 @@ export function WorkspaceBrowserPreview(props: {
           name={props.title}
         />
       }
->>>>>>> 9a26f217ac85cdb49b55283135625ada48187abf
+      readingKey={{ environmentId: props.environmentId, absolutePath: props.absolutePath }}
     />
   );
 }
