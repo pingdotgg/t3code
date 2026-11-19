@@ -251,7 +251,7 @@ const terminalDrawerSessionsFamily = Atom.family((key: string) => {
       snapshotId,
     };
   }).pipe(
-    Atom.withEquality(
+    Atom.withEquality<TerminalDrawerSessions | null>(
       (left, right) => left?.sessions === right?.sessions && left?.snapshotId === right?.snapshotId,
     ),
     Atom.withLabel(`web-terminal-drawer-sessions:${key}`),
