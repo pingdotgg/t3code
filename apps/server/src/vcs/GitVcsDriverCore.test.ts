@@ -2407,6 +2407,23 @@ describe("rejected git refs", () => {
       reason: "push_rejected_non_fast_forward" as const,
       detail: "Pull or rebase",
     },
+    {
+      label: "a full disk",
+      stderr: [
+        "Preparing worktree (new branch 'private-branch')",
+        "fatal: cannot create directory at '/home/me/secret-repo/src': No space left on device",
+      ],
+      reason: "disk_full" as const,
+      detail: "The disk is full.",
+    },
+    {
+      label: "a folder Git may not write to",
+      stderr: [
+        "fatal: could not create leading directories of '/home/me/secret-repo/.git': Permission denied",
+      ],
+      reason: "permission_denied" as const,
+      detail: "Git was denied access",
+    },
   ])("names $label without quoting stderr", ({ stderr, reason, detail }) =>
     Effect.gen(function* () {
       const error = yield* failWith(stderr.join("\n"));
@@ -2679,6 +2696,38 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.deepEqual(locales, ["C"]);
           assert.notProperty(error, "stderr");
           assert.notProperty(error, "args");
+        }),
+    );
+
+    // regression: #38935 an unwritable worktree location reported only "git worktree add failed"
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+      "names a worktree location Git may not write to",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const readOnlyParent = yield* makeTmpDir("git-worktrees-");
+          yield* fs.chmod(readOnlyParent, 0o555);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+
+          const error = yield* driver
+            .createWorktree({
+              cwd,
+              refName: "HEAD",
+              newRefName: "private/new-branch",
+              path: path.join(readOnlyParent, "nested", "worktree"),
+            })
+            .pipe(
+              Effect.ensuring(fs.chmod(readOnlyParent, 0o755).pipe(Effect.ignore)),
+              Effect.flip,
+            );
+
+          assert.deepInclude(error, { _tag: "GitCommandError", reason: "permission_denied" });
+          assert.include(error.message, "Git was denied access");
+          assert.notInclude(error.message, readOnlyParent);
+          assert.notInclude(error.message, "private/new-branch");
         }),
     );
 
