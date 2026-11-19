@@ -126,6 +126,26 @@ it.each([
   expect(onClose).toHaveBeenCalledOnce();
 });
 
+it.each([
+  { action: "confirm", clickIndex: -1 },
+  { action: "cancel", clickIndex: -2 },
+])("ignores a late $action click from a replaced confirmation", ({ clickIndex }) => {
+  const { container } = mountHost();
+  const onConfirm = vi.fn();
+  const onCancel = vi.fn();
+  act(() =>
+    Dialog.confirm({ title: "Remove project", confirmText: "Remove", onConfirm, onCancel }),
+  );
+  const lateClick = renderedClicks.at(clickIndex)!;
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+
+  act(() => lateClick());
+
+  expect(onConfirm).not.toHaveBeenCalled();
+  expect(onCancel).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain("Newer");
+});
+
 it("ignores a late action from a dialog that a newer one replaced", () => {
   const { container } = mountHost();
   const olderAction = vi.fn();
