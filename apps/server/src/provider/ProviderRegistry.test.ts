@@ -1486,6 +1486,14 @@ it.layer(
         undefined,
       );
       assert.strictEqual(merge(failedOnce, readyProvider).modelsRetained, undefined);
+      const customOnly = {
+        ...readyProvider,
+        models: [{ slug: "bailian", name: "bailian", isCustom: true, capabilities: null }],
+      } satisfies ServerProvider;
+      assert.strictEqual(
+        merge(customOnly, { ...failedProvider, models: customOnly.models }).modelsRetained,
+        true,
+      );
       assert.strictEqual(
         merge(readyProvider, { ...failedProvider, installed: false }).modelsRetained,
         undefined,

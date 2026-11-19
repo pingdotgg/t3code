@@ -111,6 +111,10 @@ describe("isProviderInstancePickerReady", () => {
     ]);
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+    expect(
+      entry && isProviderInstancePickerReady({ ...entry, models: [model("bailian", true)] }),
+    ).toBe(true);
+    expect(entry && isProviderInstancePickerReady({ ...entry, models: [] })).toBe(false);
   });
 
   it("offers a failed provider's models only while the server marks them retained", () => {

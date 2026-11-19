@@ -331,7 +331,7 @@ const retainsReadyCatalog = (
   nextProvider.installed &&
   (status === "error" || status === "warning") &&
   nextProvider.auth.status !== "unauthenticated" &&
-  models.some((model) => !model.isCustom) &&
+  models.length > 0 &&
   (previousProvider.status === "ready" ||
     // Usage and metadata updates republish the same check.
     (previousProvider.modelsRetained === true &&

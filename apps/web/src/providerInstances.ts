@@ -77,7 +77,7 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
     entry.status === "warning" &&
     entry.installed &&
     auth.status === "authenticated" &&
-    entry.models.some((model) => !model.isCustom)
+    entry.models.length > 0
   );
 }
 
