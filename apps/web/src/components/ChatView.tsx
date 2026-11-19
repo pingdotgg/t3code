@@ -1,6 +1,6 @@
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -188,11 +188,13 @@ import {
   useThreadPreviewCanvasSource,
 } from "./preview/ThreadPreviewMiniPlayer";
 import { createChatCanvasStore, resolveChatCanvasModel } from "./chat/canvasStore";
+import { isRunUsingComputer, selectLatestComputerUse } from "./preview/computerUsePreview";
 import { usePreviewSession } from "./preview/usePreviewSession";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 
 import {
   previewMiniPlayerSourceKey,
+  COMPUTER_MINI_PLAYER_SOURCE,
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
@@ -207,6 +209,8 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
 import { cn } from "~/lib/utils";
+import { MonitorIcon } from "lucide-react";
+import { Button } from "./ui/button";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
@@ -223,6 +227,7 @@ import {
   shouldShowInstanceBadge,
 } from "../providerInstances";
 import {
+  getClientSettings,
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
@@ -2020,6 +2025,21 @@ export default function ChatView(props: ChatViewProps) {
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
+  // A computer use call floats the driven window over chat the way an agent-opened device does.
+  // Each new call reopens a card the user closed; a browser or device already floating stays.
+  const computerUse = selectLatestComputerUse(serverProjection?.turnItems ?? []);
+  const lastShownComputerUseItemId = useRef<string | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Floats the computer card when the shown thread's projection reports a new computer use call.
+  useEffect(() => {
+    if (!activeThreadRef || !computerUse?.inProgress || shouldUsePlanSidebarSheet) return;
+    if (lastShownComputerUseItemId.current === computerUse.itemId) return;
+    lastShownComputerUseItemId.current = computerUse.itemId;
+    if (!getClientSettings().browserAutoShowFloatingPreview) return;
+    const current =
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
+    if (current && current.source.kind !== "computer") return;
+    usePreviewMiniPlayerStore.getState().open(activeThreadRef, COMPUTER_MINI_PLAYER_SOURCE);
+  }, [activeThreadRef, computerUse, shouldUsePlanSidebarSheet]);
   // The thread's own change request, placed against the project it belongs to. Without a
   // project there is nothing to resolve it against, so the caller falls back to the browser.
   const activeProjectRepository = sourceControlClients.repositorySelector(
@@ -2632,6 +2652,22 @@ export default function ChatView(props: ChatViewProps) {
           messages,
         )
       : null;
+  const usingComputer = isRunUsingComputer(serverProjection?.turnItems ?? [], activeRunningTurnId);
+  const computerUseBannerItems: ComposerBannerStackItem[] = usingComputer
+    ? [
+        {
+          id: "computer-use",
+          variant: "info",
+          icon: <MonitorIcon />,
+          title: gt("Using your computer"),
+          actions: (
+            <Button size="xs" variant="ghost" onClick={() => void onInterrupt()}>
+              <T context="verb, stops the agent using the computer">Stop</T>
+            </Button>
+          ),
+        },
+      ]
+    : [];
   const composerBannerItems = (() => {
     const fallbackSelection = draftFallback?.selection;
     const defaultSelection =
@@ -2695,6 +2731,7 @@ export default function ChatView(props: ChatViewProps) {
         : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
+        ...computerUseBannerItems,
         ...feedbackBannerItems,
         ...fallbackItems,
         ...limitRecoveryItems,
@@ -2706,6 +2743,7 @@ export default function ChatView(props: ChatViewProps) {
       ];
     }
     return [
+      ...computerUseBannerItems,
       ...feedbackBannerItems,
       ...fallbackItems,
       ...limitRecoveryItems,
@@ -3919,6 +3957,7 @@ export default function ChatView(props: ChatViewProps) {
                 key={`${activeThreadKey}:${previewMiniPlayerSourceKey(shownPreviewMiniPlayer.source)}`}
                 threadRef={activeThreadRef}
                 miniPlayer={shownPreviewMiniPlayer}
+                computerUse={computerUse}
               />
             ) : null}
 
