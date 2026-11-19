@@ -1114,6 +1114,99 @@ describe("makeManagedServerProvider", () => {
           const unverified = yield* provider.refresh;
           assert.strictEqual(unverified.auth.email, "d@example.com");
           assert.deepStrictEqual(unverified.usageLimits, unverifiedFailed);
+
+          // Unfingerprinted providers retain valid limits when a failed probe first discovers email.
+          const unfingerprintedLimits = {
+            checkedAt: "2026-04-10T00:00:06.000Z",
+            windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 45 }],
+          } as const;
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated" },
+            usageLimits: unfingerprintedLimits,
+          });
+          assert.deepStrictEqual((yield* provider.refresh).usageLimits, unfingerprintedLimits);
+
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated", email: "claude@example.com" },
+            usageLimits: {
+              checkedAt: "2026-04-10T00:00:07.000Z",
+              windows: [],
+              unavailable: { reason: "probeFailed" },
+            },
+          });
+          const firstEmailFailure = yield* provider.refresh;
+          assert.strictEqual(firstEmailFailure.auth.email, "claude@example.com");
+          assert.deepStrictEqual(firstEmailFailure.usageLimits, unfingerprintedLimits);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
+
+  it.effect(
+    "clears published usage limits when enrichment publishes an unauthenticated reset",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const limits = {
+            checkedAt: "2026-04-10T00:00:01.000Z",
+            windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 30 }],
+          } as const;
+          const publishEnrichedDeferred =
+            yield* Deferred.make<(snapshot: ServerProvider) => Effect.Effect<void>>();
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Effect.succeed({
+              ...refreshedSnapshot,
+              auth: { status: "authenticated", email: "a@example.com" },
+              usageLimits: limits,
+            }),
+            enrichSnapshot: ({ publishSnapshot }) =>
+              Deferred.succeed(publishEnrichedDeferred, publishSnapshot).pipe(Effect.asVoid),
+            refreshOnInterval: false,
+          });
+          const publishEnriched = yield* Deferred.await(publishEnrichedDeferred);
+          yield* provider.applyUsageLimits({ ...limits, complete: true, authLabel: "Pro" });
+
+          // Ordinary authenticated enrichment keeps published limits and auth label.
+          const authEnrichedFiber = yield* provider.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.models.length > 0),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* publishEnriched({
+            ...enrichedSnapshot,
+            auth: { status: "authenticated", email: "a@example.com" },
+          });
+          const authEnriched = Array.from(yield* Fiber.join(authEnrichedFiber))[0];
+          assert.deepStrictEqual(authEnriched?.usageLimits, limits);
+          assert.strictEqual(authEnriched?.auth.label, "Pro");
+
+          // Unauthenticated reset enrichment clears published limits and auth label immediately.
+          const signedOutFiber = yield* provider.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.auth.status === "unauthenticated"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          yield* publishEnriched({
+            ...refreshedSnapshot,
+            status: "warning",
+            auth: { status: "unauthenticated" },
+            usageLimits: undefined,
+          });
+          const signedOut = Array.from(yield* Fiber.join(signedOutFiber))[0];
+          assert.strictEqual(signedOut?.auth.status, "unauthenticated");
+          assert.strictEqual(signedOut?.auth.email, undefined);
+          assert.strictEqual(signedOut?.auth.label, undefined);
+          assert.strictEqual(signedOut?.usageLimits, undefined);
         }),
       ).pipe(Effect.provide(layerAlwaysRunTest)),
   );

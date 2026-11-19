@@ -97,20 +97,30 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       if (state.enrichmentGeneration !== generation) {
         return [null, state] as const;
       }
-      // Enrichment must not revert usage updates newer than its input snapshot.
+      // Enrichment must not revert usage updates newer than its input snapshot, except when
+      // signing out or clearing authentication drops the previous account's limits together.
+      const clearUsageForSignOut =
+        nextSnapshot.auth.status === "unauthenticated" && nextSnapshot.usageLimits === undefined;
       const merged = withUsageLimits(
-        state.usageAuthLabel === undefined
+        clearUsageForSignOut || state.usageAuthLabel === undefined
           ? nextSnapshot
           : {
               ...nextSnapshot,
               auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
             },
-        state.snapshot.usageLimits,
+        clearUsageForSignOut ? undefined : state.snapshot.usageLimits,
       );
       if (Equal.equals(state.snapshot, merged)) {
         return [null, state] as const;
       }
-      return [merged, { ...state, snapshot: merged }] as const;
+      return [
+        merged,
+        {
+          ...state,
+          snapshot: merged,
+          ...(clearUsageForSignOut ? { usageAuthLabel: undefined } : {}),
+        },
+      ] as const;
     });
     if (snapshotToPublish === null) {
       return;
@@ -210,9 +220,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const switchedAccount =
           differs(probedEmail, previousEmail) ||
           differs(probedFingerprint, previousFingerprint) ||
-          (!sameFingerprint &&
-            ((probedEmail !== undefined && probedEmail !== previousEmail) ||
-              (previousFingerprint !== undefined && probedEmail !== previousEmail))) ||
+          (previousFingerprint !== undefined &&
+            !sameFingerprint &&
+            probedEmail !== previousEmail) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount
