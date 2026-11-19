@@ -1,4 +1,5 @@
 import { expect } from "e2e";
+import { EnvironmentHttpApi } from "@t3tools/contracts";
 
 import { startSecondServer } from "./second-server.ts";
 import { test, WEB } from "./t3.ts";
@@ -13,7 +14,8 @@ test(
     const releasePairing = Promise.withResolvers<void>();
     try {
       const { host, token } = await server.ready;
-      await browser.route(`${host}/.well-known/t3/environment`, async (route) => {
+      const descriptorPath = EnvironmentHttpApi.groups.metadata.endpoints.descriptor.path;
+      await browser.route(`${host}${descriptorPath}`, async (route) => {
         pairingStarted.resolve();
         await releasePairing.promise;
         await route.continue();
