@@ -68,18 +68,22 @@ const isUrlFunction = (name: string) =>
     .toLowerCase() === "url";
 
 /**
- * The declarations whose text could load a remote file, each as its own source. A browser hides a
- * var() shorthand's text once a later declaration overrides one of its longhands, so the client
- * parses each alone. Brackets are tracked as the CSS parser does; an unsure split is left out, so
- * one candidate can hold several declarations or rules.
+ * The CSS without the declarations that `drop` refuses, asked only for text that could load a
+ * remote file. A browser hides a var() shorthand's text once a later declaration overrides one of
+ * its longhands, so only the source has it. Brackets are tracked as the CSS parser does; an unsure
+ * split is left out, so one candidate can hold several declarations or rules.
  */
-export function themeCssFetchCandidates(css: string): string[] {
-  const candidates: string[] = [];
+export function themeCssWithoutDeclarations(
+  css: string,
+  drop: (candidate: string) => boolean,
+): string {
+  let kept = "";
   const open: string[] = [];
   let start = 0;
   const cut = (end: number) => {
     const text = css.slice(start, end);
-    if (text.includes("\\") || fetchesOutsideStrings(text)) candidates.push(text);
+    const candidate = text.includes("\\") || fetchesOutsideStrings(text);
+    kept += (candidate && drop(text) ? "" : text) + css.slice(end, end + 1);
     start = end + 1;
   };
   BLOCK_TOKENS.lastIndex = 0;
@@ -100,7 +104,7 @@ export function themeCssFetchCandidates(css: string): string[] {
     }
   }
   cut(css.length);
-  return candidates;
+  return kept;
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
