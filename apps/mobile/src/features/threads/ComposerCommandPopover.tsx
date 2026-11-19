@@ -37,7 +37,7 @@ export type ComposerCommandItem =
       readonly id: string;
       readonly type: "path";
       readonly path: string;
-      readonly kind: "file" | "directory";
+      readonly pathKind: "file" | "directory";
       readonly label: string;
       readonly description: string;
     }
@@ -198,7 +198,7 @@ const CommandRow = memo(function CommandRow(props: {
       style={{ borderBottomWidth: props.isLast ? 0 : StyleSheet.hairlineWidth }}
     >
       {props.item.type === "path" ? (
-        <PierreEntryIcon path={props.item.path} kind={props.item.kind} size={16} />
+        <PierreEntryIcon path={props.item.path} kind={props.item.pathKind} size={16} />
       ) : props.item.type === "model" ? (
         <ProviderIcon
           iconUrl={props.item.option.providerIconUrl}

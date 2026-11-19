@@ -150,15 +150,15 @@ export function matchComposerEnvironmentItems(
  * machines, threads with a word starting with it, files starting with it, and the rest.
  */
 export function rankComposerMentionItems<
-  T extends { readonly type: string; readonly label: string },
+  T extends { readonly type: string; readonly label: string; readonly pathKind?: string },
 >(items: ReadonlyArray<T>, rawQuery: string): T[] {
   const query = foldSearchQuery(rawQuery);
   if (query.length === 0) return [...items];
-  const rank = ({ type, label }: T) => {
+  const rank = ({ type, label, pathKind }: T) => {
     if (type === "environment") return 1;
     if (type === "thread") return startsSearchWord(label, query) ? 2 : 4;
     const name = foldSearchQuery(label);
-    if (name === query || name.startsWith(`${query}.`)) return 0;
+    if (pathKind === "file" && (name === query || name.startsWith(`${query}.`))) return 0;
     return name.startsWith(query) ? 3 : 5;
   };
   // Hermes lacks toSorted.
