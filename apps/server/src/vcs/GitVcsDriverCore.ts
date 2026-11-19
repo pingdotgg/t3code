@@ -1459,6 +1459,12 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--",
       remoteName,
     ];
+    // Git leaves the partial pack of a failed or timed-out fetch in the shared object store,
+    // and each retry downloads the backlog again, so a failed attempt removes the ones it created.
+    const packDir = path.join(gitCommonDir, "objects", "pack");
+    const listTempPacks = fileSystem
+      .readDirectory(packDir)
+      .pipe(Effect.map((names) => names.filter((name) => name.startsWith("tmp_pack_"))));
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1472,12 +1478,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const fetch = executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
-          env: STATUS_UPSTREAM_REFRESH_ENV,
-          fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
-          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+        const fetch = Effect.gen(function* () {
+          const existing = yield* listTempPacks.pipe(Effect.option);
+          yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
+            env: STATUS_UPSTREAM_REFRESH_ENV,
+            fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
+            timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
+          }).pipe(
+            Effect.onExit((exit) =>
+              Exit.isSuccess(exit) || Option.isNone(existing)
+                ? Effect.void
+                : listTempPacks.pipe(
+                    Effect.flatMap((names) =>
+                      Effect.forEach(
+                        names.filter((name) => !existing.value.includes(name)),
+                        (name) => fileSystem.remove(path.join(packDir, name)).pipe(Effect.ignore),
+                        { discard: true },
+                      ),
+                    ),
+                    Effect.ignore,
+                  ),
+            ),
+          );
         }).pipe(
-          Effect.asVoid,
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);

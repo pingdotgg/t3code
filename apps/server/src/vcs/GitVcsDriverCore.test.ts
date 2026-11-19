@@ -5573,6 +5573,59 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      "removes the partial pack a failed background upstream fetch leaves",
+      () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const tools = yield* makeTmpDir("git-vcs-driver-upload-pack-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+
+          yield* git(updater, ["clone", remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          // Hashed numbers barely compress, so the pack outgrows the cut-off transfer below.
+          yield* writeTextFile(
+            updater,
+            "large.txt",
+            Array.from({ length: 20_000 }, (_, index) =>
+              ((index * 2_654_435_761) >>> 0).toString(36),
+            ).join("\n"),
+          );
+          yield* git(updater, ["add", "large.txt"]);
+          yield* git(updater, ["commit", "-m", "large commit"]);
+          yield* git(updater, ["push", "origin", initialBranch]);
+
+          const uploadPack = pathService.join(tools, "upload-pack.sh");
+          yield* writeTextFile(
+            tools,
+            "upload-pack.sh",
+            '#!/bin/sh\ngit upload-pack "$@" | dd bs=1 count=50000 2>/dev/null\n',
+          );
+          yield* fileSystem.chmod(uploadPack, 0o755);
+          yield* git(cwd, ["config", "remote.origin.uploadpack", uploadPack]);
+          // Keeps this small download a pack, as Git does for any fetch of over 100 objects.
+          yield* git(cwd, ["config", "fetch.unpackLimit", "1"]);
+          const packDir = pathService.join(cwd, ".git", "objects", "pack");
+          yield* fileSystem.writeFileString(pathService.join(packDir, "tmp_pack_existing"), "");
+          const tempPacks = fileSystem
+            .readDirectory(packDir)
+            .pipe(Effect.map((names) => names.filter((name) => name.startsWith("tmp_pack_"))));
+
+          const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+
+          assert.equal(status.behindCount, 0);
+          assert.deepEqual(yield* tempPacks, ["tmp_pack_existing"]);
+        }),
+    );
+
     it.effect("leaves FETCH_HEAD to the user's own pulls in background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
