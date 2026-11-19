@@ -180,8 +180,8 @@ using a proxy through `ANTHROPIC_AUTH_TOKEN`.
 
 ## Connect a CLIProxyAPI hub
 
-To see pooled accounts, open **Settings → Providers → Usage providers → Add hub**. Choose the
-environment that will connect to the hub and enter its URL and management key.
+To see pooled accounts, open **Settings → Providers → Usage providers → Add source**. Choose the
+environment that will connect to the hub, select CLIProxyAPI, and enter its URL and management key.
 
 The hub's Codex, Claude, xAI (shown as Grok) and Antigravity accounts appear under **Usage → Limits**;
 accounts for other providers are not read. Codex accounts show banked reset credits; select an
@@ -190,6 +190,19 @@ account and choose **Use reset** to redeem one. No hub plugin is required.
 This connection supplies usage information; configure
 the provider separately to send agent requests through the hub. Remove the hub from the same
 settings section when you no longer need it.
+
+## MiniMax usage
+
+On web or desktop, open **Settings → Providers → Usage providers → Add source**, select
+**MiniMax Coding Plan**, and enter your Coding Plan API key. Session and weekly quota windows
+appear under **Usage → Limits** when MiniMax reports them. The key is stored on the selected server.
+
+MiniMax token history is read from Hermes’s `state.db` on the server (`HERMES_HOME`, or `~/.hermes`).
+The Usage dashboard includes each recorded MiniMax model, including auxiliary tasks. Hermes stores
+cumulative per-model totals, so activity is attributed to its first recorded timestamp; hourly timing
+is approximate. Costs are priced at MiniMax’s first-party rates unless Hermes reports an actual
+charge; models MiniMax does not publish token prices for, such as image models, stay unpriced.
+These estimates do not represent the cost of your subscription.
 
 ## Subscription usage widget
 

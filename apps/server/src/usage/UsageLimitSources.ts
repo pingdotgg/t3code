@@ -21,6 +21,7 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
@@ -28,6 +29,7 @@ import * as SecretResolverLayer from "../secrets/SecretResolver.ts";
 import { resolveSettingsSecrets } from "../secrets/settingsSecretValue.ts";
 import * as Settings from "../serverSettings.ts";
 import { windowLimitsModel } from "../provider/claudeUsageLimits.ts";
+import { readMiniMaxQuota } from "./minimaxQuota.ts";
 import { makeCliproxyApi } from "./cliproxyApi.ts";
 
 export class UsageLimitSources extends Context.Service<
@@ -88,6 +90,10 @@ function keepLastGoodReadings(
 }
 
 function missingManagementKey(config: UsageLimitSourceConfig): string {
+  if (config.kind === "minimax")
+    return typeof config.managementKey === "string"
+      ? "No Coding Plan API key configured."
+      : "Could not read the Coding Plan API key from its secret provider.";
   return typeof config.managementKey === "string"
     ? "No management key configured."
     : "Could not read the management key from its secret provider.";
@@ -96,6 +102,7 @@ function missingManagementKey(config: UsageLimitSourceConfig): string {
 /** @public */
 export const make = Effect.gen(function* () {
   const api = yield* makeCliproxyApi;
+  const client = yield* HttpClient.HttpClient;
   const settingsService = yield* Settings.ServerSettingsService;
   const secrets = yield* SecretResolver.SecretResolver;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -133,9 +140,11 @@ export const make = Effect.gen(function* () {
     if (managementKey.length === 0) {
       return { ...base, accounts: [], error: missingManagementKey(config) };
     }
-    const accounts = yield* api
-      .readAccounts({ url: config.url, managementKey })
-      .pipe(Effect.result);
+    const accounts = yield* (
+      config.kind === "minimax"
+        ? readMiniMaxQuota(managementKey).pipe(Effect.provideService(HttpClient.HttpClient, client))
+        : api.readAccounts({ url: config.url, managementKey })
+    ).pipe(Effect.result);
     if (accounts._tag === "Failure") {
       yield* Effect.logDebug("usage limit source read failed", { id, cause: accounts.failure });
       return { ...base, accounts: [], error: accounts.failure.detail };
@@ -182,6 +191,10 @@ export const make = Effect.gen(function* () {
         detail: "The usage limit source is missing or disabled.",
       });
     }
+    if (config.kind === "minimax")
+      return yield* new UsageLimitSourceError({
+        detail: "MiniMax does not support reset credits.",
+      });
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
       return yield* new UsageLimitSourceError({ detail: missingManagementKey(config) });

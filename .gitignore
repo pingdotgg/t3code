@@ -39,6 +39,7 @@ artifacts/app-store/screenshots/
 artifacts/mobile-e2e/
 artifacts/mobile-behavior/
 scripts/.e2e/
+artifacts/minimax/
 .github/pr-assets/
 native/**/target/
 node_modules/

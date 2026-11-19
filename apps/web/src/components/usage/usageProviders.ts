@@ -42,6 +42,11 @@ export const PROVIDER_PRESENTATION = {
     color: "#4d9f8a",
     driverKind: ProviderDriverKind.make("pi"),
   },
+  minimax: {
+    label: "MiniMax (Hermes)",
+    color: "#e65365",
+    driverKind: ProviderDriverKind.make("acpRegistry"),
+  },
   muse: {
     label: "Muse Code",
     color: "#0866ff",

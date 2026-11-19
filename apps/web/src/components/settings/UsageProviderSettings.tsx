@@ -45,13 +45,13 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              <T>Add hub</T>
+              <T>Add source</T>
             </Button>
           ) : null
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title={gt("No hubs configured.")} />
+          <SettingsRow title={gt("No usage sources configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;
@@ -62,8 +62,15 @@ export function UsageProviderSettings({
                 description={
                   <span className="break-all">
                     {source.enabled
-                      ? CLI_PROXY_NAME
-                      : gt("{name} · Disabled", { name: CLI_PROXY_NAME })}
+                      ? source.kind === "minimax"
+                        ? gt("MiniMax")
+                        : CLI_PROXY_NAME
+                      : gt("{name} · Disabled", {
+                          name:
+                            source.kind === "minimax"
+                              ? gt("MiniMax")
+                              : CLI_PROXY_NAME,
+                        })}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
                 }
