@@ -35,6 +35,7 @@ import * as GitManager from "../git/GitManager.ts";
 import { PullRequestProviderError } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { isTerminalRunStatus } from "./ThreadManagementService.ts";
@@ -716,7 +717,10 @@ export const make = Effect.gen(function* () {
     Effect.suspend(() => {
       if (scope === "requested") requestedSweepQueued = false;
       return pullRequests.withSharedProjectReads(sweep(scope));
-    }).pipe(Effect.catchCause(logSkipped("pull request sync sweep failed", {}))),
+    }).pipe(
+      Effect.provideService(VcsProcess.Background, true),
+      Effect.catchCause(logSkipped("pull request sync sweep failed", {})),
+    ),
   );
 
   // Threads that ran a close command this run, with the commands already read for.

@@ -728,6 +728,18 @@ export interface ProjectionStoreV2Shape {
     ProjectionRecords<"runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts">,
     ProjectionStoreV2Error
   >;
+  /** `getRunProviderRecords` and the thread's cards of one type, read together. */
+  readonly getRunCardRecords: (
+    threadId: ThreadId,
+    runId: RunId,
+    nodeId: NodeId,
+    cardType: "secret_request" | "link_request",
+  ) => Effect.Effect<
+    ProjectionRecords<
+      "runs" | "nodes" | "providerThreads" | "providerTurns" | "attempts" | "turnItems"
+    >,
+    ProjectionStoreV2Error
+  >;
   readonly isNodeStored: (
     node: OrchestrationV2ExecutionNode,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -6678,6 +6690,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
     );
 
+    const getRunCardRecords: ProjectionStoreV2Shape["getRunCardRecords"] = Effect.fn(
+      "ProjectionStore.getRunCardRecords",
+    )(
+      function* (threadId, runId, nodeId, cardType) {
+        const records = yield* getRunProviderRecords(threadId, runId, nodeId);
+        const { turnItems } = yield* getThreadRecords(threadId, ["turnItems"], {
+          turnItemTypes: [cardType],
+        });
+        return { ...records, turnItems };
+      },
+      (effect, threadId) =>
+        sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getThreadSnapshot: ProjectionStoreV2Shape["getThreadSnapshot"] = (threadId) =>
       sql
         .withTransaction(
@@ -9488,6 +9514,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       hasUnpairedRunInterruptRequest: readOnReader(hasUnpairedRunInterruptRequest),
       hasRunInterruptRequest: readOnReader(hasRunInterruptRequest),
       getRunProviderRecords: readOnReader(getRunProviderRecords),
+      getRunCardRecords: readOnReader(getRunCardRecords),
       isNodeStored: readOnReader(isNodeStored),
       getMessageCount: readOnReader(getMessageCount),
       getTranscriptByteFloor: readOnReader(getTranscriptByteFloor),
