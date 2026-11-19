@@ -288,7 +288,7 @@ it.effect("keeps manual Issues refresh intent through an overlapping write", () 
     } as unknown as RpcSession.RpcSession;
     const { runtime } = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
     const issues = createIssueEnvironmentAtoms(runtime);
-    const listings = createMergedIssueListAtoms(issues.list, String);
+    const listings = createMergedIssueListAtoms(issues, String);
     const target = {
       environmentId: QUERY_ENVIRONMENT.environmentId,
       input: { state: "all" },

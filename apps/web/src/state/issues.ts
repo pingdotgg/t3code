@@ -38,10 +38,7 @@ export function useLinkedIssueDetail(
   ).data;
 }
 
-const mergedIssueLists = createMergedIssueListAtoms(
-  issueEnvironment.list,
-  formatEnvironmentQueryError,
-);
+const mergedIssueLists = createMergedIssueListAtoms(issueEnvironment, formatEnvironmentQueryError);
 
 /** The same listing read across every connected environment, as the pull-request page does. */
 export function useIssueList(targets: ReadonlyArray<IssueListTarget>): MergedIssueList & {

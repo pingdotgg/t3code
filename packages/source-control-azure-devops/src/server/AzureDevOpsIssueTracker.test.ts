@@ -373,10 +373,12 @@ describe("AzureDevOpsIssueTracker", () => {
           cause: "workflow metadata unavailable",
         }),
       );
-      yield* api.listIssues({ ...firstPage, refresh: true });
+      const refreshError = yield* Effect.flip(api.listIssues({ ...firstPage, refresh: true }));
+      expect(refreshError).toMatchObject({ operation: "listIssues", reason: "failed" });
+      expect(bodies).toHaveLength(6);
       yield* api.listIssues({ ...firstPage, refresh: false });
       expect(typeReads).toBe(4);
-      expect(bodies.slice(6, 8).every((body) => body.includes("NOT IN ('done')"))).toBe(true);
+      expect(bodies[6]).toContain("NOT IN ('done')");
 
       const started = yield* Deferred.make<void>();
       const release = yield* Deferred.make<void>();
@@ -396,7 +398,8 @@ describe("AzureDevOpsIssueTracker", () => {
       expect(refreshed.nextCursor).not.toBeNull();
       yield* api.listIssues({ ...firstPage, cursor: refreshed.nextCursor ?? undefined });
       expect(typeReads).toBe(5);
-      expect(bodies.slice(8).every((body) => body.includes("NOT IN ('delivered')"))).toBe(true);
+      expect(bodies.slice(7)).toHaveLength(3);
+      expect(bodies.slice(7).every((body) => body.includes("NOT IN ('delivered')"))).toBe(true);
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 

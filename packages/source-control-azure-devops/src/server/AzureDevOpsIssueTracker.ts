@@ -620,17 +620,7 @@ export const make: Effect.Effect<
         Effect.flatMap((scope) => {
           const key = JSON.stringify([input.cwd, scope.organization, scope.project]);
           const refresh = cursor === undefined && input.refresh === true;
-          const closed = refresh
-            ? Cache.getSuccess(listClosedStates, key).pipe(
-                Effect.flatMap((previous) =>
-                  Cache.get(workflowReads, key).pipe(
-                    Effect.catch((error) =>
-                      Effect.fromOption(previous).pipe(Effect.mapError(() => error)),
-                    ),
-                  ),
-                ),
-              )
-            : Cache.get(listClosedStates, key);
+          const closed = refresh ? Cache.get(workflowReads, key) : Cache.get(listClosedStates, key);
           return closed.pipe(Effect.map((closed) => ({ scope, closed })));
         }),
         Effect.flatMap(({ scope, closed }) =>
