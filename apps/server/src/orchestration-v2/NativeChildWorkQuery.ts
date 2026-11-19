@@ -73,12 +73,23 @@ const make = Effect.gen(function* () {
         ["runs", "providerThreads"],
         { runIds: [subagent.runId, ...others.flatMap((other) => other.runId ?? [])] },
       );
+      const { attempts } = yield* threads.getThreadRecords(parentThreadId, ["attempts"], {
+        attemptIds: runs.flatMap((run) => run.activeAttemptId ?? []),
+      });
       const providerThreadOf = (runId: string | null) => {
         const providerThreadId = runs.find((run) => run.id === runId)?.providerThreadId;
         return providerThreads.find((candidate) => candidate.id === providerThreadId);
       };
+      // Rollback moves the provider thread to a fresh session; a batch's records stay where it ran.
+      const sessionOf = (runId: string | null) => {
+        const attemptId = runs.find((run) => run.id === runId)?.activeAttemptId;
+        return (
+          attempts.find((attempt) => attempt.id === attemptId)?.nativeThreadId ??
+          providerThreadOf(runId)?.nativeThreadRef?.nativeId
+        );
+      };
       const providerThread = providerThreadOf(subagent.runId);
-      const rootSessionId = providerThread?.nativeThreadRef?.nativeId;
+      const rootSessionId = sessionOf(subagent.runId);
       if (!rootSessionId || providerThread?.providerInstanceId !== subagent.providerInstanceId) {
         return NO_CHILDREN;
       }
@@ -94,7 +105,7 @@ const make = Effect.gen(function* () {
         // Only batches from the same agent session can share its records.
         siblings: others.flatMap((other) => {
           const id = other.nativeTaskRef?.nativeId;
-          return id && providerThreadOf(other.runId)?.nativeThreadRef?.nativeId === rootSessionId
+          return id && sessionOf(other.runId) === rootSessionId
             ? [{ nativeTaskId: id, title: other.title, prompt: other.prompt }]
             : [];
         }),

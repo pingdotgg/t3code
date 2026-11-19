@@ -3,12 +3,14 @@ import type {
   AgentOptions,
   InteractionUpdate,
   Run,
+  RunRecord,
   RunResult,
   SDKUserMessage,
   SendOptions,
   SteerAckOutcome,
 } from "@cursor/sdk";
 import {
+  NonNegativeInt,
   type OrchestrationV2ProviderSession,
   ProviderDriverKind,
   type ThreadId,
@@ -17,6 +19,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
@@ -94,6 +97,8 @@ export interface CursorAgentSdkSendInput<Error> {
   readonly onDelta?: (update: InteractionUpdate) => Effect.Effect<void, Error>;
   /** Runs `agent.summarize()` instead, which takes no message or options. */
   readonly summarize?: boolean;
+  /** Runs `agent.resume()`: Cursor's ResumeAction from the latest checkpoint, with no message. */
+  readonly resume?: boolean;
 }
 
 export interface CursorAgentSdkRun {
@@ -105,12 +110,38 @@ export interface CursorAgentSdkRun {
   readonly steer?: (text: string) => Effect.Effect<SteerAckOutcome, CursorAgentSdkRunnerError>;
 }
 
+export interface CursorContextUsage {
+  readonly usedTokens: number;
+  readonly maxTokens: number;
+}
+
+// The SDK types a checkpoint as `unknown`; Cursor keeps the conversation's context fill on it.
+const CursorCheckpoint = Schema.Struct({
+  tokenDetails: Schema.Struct({ usedTokens: NonNegativeInt, maxTokens: NonNegativeInt }),
+});
+const decodeCursorCheckpoint = Schema.decodeUnknownOption(CursorCheckpoint);
+
 export interface CursorAgentSdkSession {
   readonly agentId: string;
   readonly send: <Error>(
     input: CursorAgentSdkSendInput<Error>,
   ) => Effect.Effect<CursorAgentSdkRun, CursorAgentSdkRunnerError>;
   readonly listMessages: Effect.Effect<ReadonlyArray<AgentMessage>, CursorAgentSdkRunnerError>;
+  /** Context fill at the latest checkpoint, if Cursor saved one. Absent on test doubles. */
+  readonly readContextUsage?: Effect.Effect<
+    CursorContextUsage | undefined,
+    CursorAgentSdkRunnerError
+  >;
+  /**
+   * Whether a run (the latest when omitted) saved a checkpoint of its own. Cursor keeps a stopped
+   * run only from its first checkpoint on; before that the conversation lacks the run's request.
+   */
+  readonly runCheckpointed?: (runId?: string) => Effect.Effect<boolean, CursorAgentSdkRunnerError>;
+  /**
+   * Rewinds the conversation to just before the run after `runId`, as `cursor-agent` /rewind does.
+   * The open agent keeps its old conversation in memory, so reopen it before the next send.
+   */
+  readonly rewindAfterRun?: (runId: string) => Effect.Effect<void, CursorAgentSdkRunnerError>;
   readonly close: Effect.Effect<void, CursorAgentSdkRunnerError>;
 }
 
@@ -184,6 +215,14 @@ export type CursorAgentSdkProtocolLogEvent =
       };
     }
   | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "run.resume";
+        readonly options: CursorAgentSdkLoggedSendOptions;
+      };
+    }
+  | {
       readonly direction: "incoming";
       readonly stage: "decoded";
       readonly payload: {
@@ -241,6 +280,15 @@ export type CursorAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "agent.messages.list";
         readonly agentId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "agent.rewind";
+        readonly agentId: string;
+        readonly afterRunId: string;
       };
     }
   | {
@@ -496,20 +544,31 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
         ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
+      const storeView = async () =>
+        storePlatform ??
+        (await createAgentPlatform({
+          ...(cwd === undefined ? {} : { workspaceRef: cwd }),
+          ...(input.options.local?.store === undefined
+            ? {}
+            : { localStore: input.options.local.store }),
+        }));
 
       return {
         agentId: agent.agentId,
         send: Effect.fn("CursorAgentSdkSession.send")(function* (sendInput) {
           const context = yield* Effect.context();
-          yield* log({
-            direction: "outgoing",
-            stage: "decoded",
-            payload: {
-              type: "run.start",
-              message: sendInput.message,
-              options: loggedCursorSendOptions(sendInput.options),
-            },
-          });
+          const options = loggedCursorSendOptions(sendInput.options);
+          yield* sendInput.resume === true
+            ? log({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: { type: "run.resume", options },
+              })
+            : log({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: { type: "run.start", message: sendInput.message, options },
+              });
 
           let callbacksReady = false;
           const pendingUpdates: Array<InteractionUpdate> = [];
@@ -542,20 +601,26 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
 
           const startRun = () =>
             Effect.tryPromise({
-              try: () =>
-                sendInput.summarize === true
-                  ? agent.summarize()
-                  : agent.send(sendInput.message, {
-                      ...sendInput.options,
-                      onDelta: async ({ update }) => {
-                        if (!callbacksReady) {
-                          pendingUpdates.push(update);
-                          return;
-                        }
-                        await dispatchUpdate(update);
-                      },
-                    }),
-              catch: (cause) => runnerError(cause, "run.start"),
+              try: () => {
+                if (sendInput.summarize === true) return agent.summarize();
+                const options: SendOptions = {
+                  ...sendInput.options,
+                  onDelta: async ({ update }) => {
+                    if (!callbacksReady) {
+                      pendingUpdates.push(update);
+                      return;
+                    }
+                    await dispatchUpdate(update);
+                  },
+                };
+                if (sendInput.resume !== true) return agent.send(sendInput.message, options);
+                if (agent.resume === undefined) {
+                  throw new Error("This Cursor SDK agent cannot resume.");
+                }
+                return agent.resume(options);
+              },
+              catch: (cause) =>
+                runnerError(cause, sendInput.resume === true ? "run.resume" : "run.start"),
             });
           const run = yield* startRun().pipe(
             Effect.catchIf(
@@ -748,6 +813,97 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
             }),
           ),
         ),
+        readContextUsage: Effect.tryPromise({
+          try: async () => (await storeView()).checkpointStore.loadLatest(agent.agentId),
+          catch: (cause) => runnerError(cause, "agent.checkpoint.load"),
+        }).pipe(
+          Effect.map((checkpoint) => {
+            const usage = Option.getOrUndefined(decodeCursorCheckpoint(checkpoint))?.tokenDetails;
+            // An unset protobuf message reads as zeros.
+            return usage === undefined || usage.maxTokens === 0 ? undefined : usage;
+          }),
+        ),
+        runCheckpointed: (runId) =>
+          Effect.tryPromise({
+            try: async () => {
+              const { store } = await storeView();
+              let run: RunRecord | null | undefined;
+              if (runId !== undefined) {
+                run = await store.getRun(agent.agentId, runId);
+              } else {
+                let cursor: string | undefined;
+                do {
+                  const page = await store.listRuns(
+                    agent.agentId,
+                    cursor === undefined ? {} : { cursor },
+                  );
+                  for (const candidate of page.items) {
+                    if (!run || candidate.turnNumber >= run.turnNumber) run = candidate;
+                  }
+                  cursor = page.nextCursor;
+                } while (cursor !== undefined);
+              }
+              const checkpoint = run?.latestCheckpointRef?.blobId;
+              return checkpoint !== undefined && checkpoint !== run?.startCheckpointRef?.blobId;
+            },
+            catch: (cause) => runnerError(cause, "agent.run.get"),
+          }),
+        rewindAfterRun: (runId) =>
+          log({
+            direction: "outgoing",
+            stage: "decoded",
+            payload: { type: "agent.rewind", agentId: agent.agentId, afterRunId: runId },
+          }).pipe(
+            Effect.andThen(
+              Effect.tryPromise({
+                try: async () => {
+                  const { store, checkpointStore } = await storeView();
+                  const runs: Array<RunRecord> = [];
+                  let cursor: string | undefined;
+                  do {
+                    const page = await store.listRuns(
+                      agent.agentId,
+                      cursor === undefined ? {} : { cursor },
+                    );
+                    runs.push(...page.items);
+                    cursor = page.nextCursor;
+                  } while (cursor !== undefined);
+                  const kept = runs.find((candidate) => candidate.runId === runId);
+                  if (kept === undefined) {
+                    throw new Error(`Cursor agent ${agent.agentId} has no run ${runId}.`);
+                  }
+                  const unwound = runs
+                    .filter((candidate) => candidate.turnNumber > kept.turnNumber)
+                    .toSorted((a, b) => a.turnNumber - b.turnNumber)[0];
+                  if (unwound === undefined) return;
+                  const anchor = unwound.startCheckpointRef?.blobId;
+                  if (anchor === undefined) {
+                    throw new Error(`Cursor run ${unwound.runId} has no starting checkpoint.`);
+                  }
+                  const blobStore = await checkpointStore.getBlobStore(agent.agentId);
+                  const getBlob =
+                    typeof blobStore === "object" && blobStore !== null
+                      ? Reflect.get(blobStore, "getBlob")
+                      : undefined;
+                  if (typeof getBlob !== "function") {
+                    throw new Error("Cursor's checkpoint store cannot read blobs.");
+                  }
+                  const bytes: unknown = await getBlob.call(
+                    blobStore,
+                    undefined,
+                    Buffer.from(anchor, "hex"),
+                  );
+                  if (!(bytes instanceof Uint8Array)) {
+                    throw new Error(`Cursor checkpoint ${anchor} is missing.`);
+                  }
+                  // Checkpoints are content-addressed, so re-saving the anchor's bytes moves the
+                  // agent's head back to that exact root, like cursor-agent's latestRootBlobId reset.
+                  await checkpointStore.saveCheckpoint(agent.agentId, { toBinary: () => bytes });
+                },
+                catch: (cause) => runnerError(cause, "agent.rewind"),
+              }),
+            ),
+          ),
         close: log({
           direction: "outgoing",
           stage: "decoded",
