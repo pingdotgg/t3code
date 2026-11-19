@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 /** Match Python os.path.expanduser: USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere. */
@@ -43,6 +44,7 @@ const SKILL_READ_CHUNK_BYTES = 1024;
 const SkillFrontmatter = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
+  "disable-model-invocation": Schema.optional(Schema.Unknown),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const decodePluginPreferences = Schema.decodeUnknownOption(
@@ -103,10 +105,28 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
     const description = frontmatter.description?.trim();
     // Native names are not trimmed. Do not rename one to fit the picker contract.
     if (!name || name !== name.trim()) return undefined;
-    return { name, ...(description ? { description } : {}) };
+    return {
+      name,
+      ...(description ? { description } : {}),
+      ...(frontmatter["disable-model-invocation"] === true ? { userInvocationOnly: true } : {}),
+    };
   } catch {
     return undefined;
   }
+}
+
+/** Enabled skills the text mentions, once each, in mention order. */
+export function antigravityMentionedSkills(
+  text: string,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  const byName = new Map(skills.flatMap((skill) => (skill.enabled ? [[skill.name, skill]] : [])));
+  const mentioned = new Set<ServerProviderSkill>();
+  for (const match of text.matchAll(SKILL_MENTION_PATTERN)) {
+    const skill = byName.get(match[2] ?? "");
+    if (skill !== undefined) mentioned.add(skill);
+  }
+  return [...mentioned];
 }
 
 /** The native loader orders child paths with Go's URL.EscapedPath encoding. */
@@ -175,7 +195,7 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
-  /** The instance's GEMINI_HOME, where agy loads plugins from. */
+  /** The instance's GEMINI_HOME, where agy loads plugins and user skills from. */
   readonly profileDirectory: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
@@ -188,10 +208,17 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     path,
     path.join(input.userHome, ".gemini"),
   );
+  // Usually links to the ~/.gemini folders above; a real folder holds skills only agy sees.
+  const [profileConfigSkills, profileCliSkills] = antigravityUserSkillDirectories(
+    path,
+    input.profileDirectory,
+  );
   const roots = [
     { directory: configSkills, scope: "user" },
+    { directory: profileConfigSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
+    { directory: profileCliSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
     { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
   ];

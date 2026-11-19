@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -47,6 +48,7 @@ import {
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
+import { antigravityMentionedSkills } from "../../provider/Drivers/AntigravitySkills.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -101,6 +103,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly discoverSkills?: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 /**
@@ -222,6 +225,26 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
+    // Antigravity expands a native `/name` only at the start of a prompt and keeps user-only skills
+    // out of the model's catalog. Inline the file: client reads outside the cwd are refused.
+    rewriteUserText: Effect.fnUntraced(function* (text, turnInput) {
+      const cwd = turnInput.runtimePolicy.cwd;
+      // Mentions in inline handoff history were invoked on an earlier turn.
+      const ownText = text.slice(turnInput.inlineContextLength ?? 0);
+      if (options.discoverSkills === undefined || !cwd || !ownText.includes("$")) return text;
+      const mentioned = antigravityMentionedSkills(ownText, yield* options.discoverSkills(cwd));
+      const blocks = (yield* Effect.forEach(mentioned, (skill) =>
+        options.fileSystem.readFileString(skill.path).pipe(
+          Effect.map((contents) => [
+            `<skill name="${skill.name}" path="${skill.path}">\n${contents.trim()}\n</skill>`,
+          ]),
+          Effect.orElseSucceed(() => []),
+        ),
+      )).flat();
+      return blocks.length === 0
+        ? text
+        : `${text}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+    }),
     buildAttachmentPrompt: ({
       text,
       attachments,
