@@ -9341,6 +9341,8 @@
   "ec53702aae463f49": "Webhooks no longer held",
   "ef6f413836ef83bb": "T3 Connect keeps webhook requests for up to 24 hours while this environment is offline.",
   "805fc4acf3323143": "Requests to an offline environment now fail. Anything already held is still delivered.",
+  "ac74760038213b4d": "Turning on T3 Connect…",
+  "92c8ab0de54049da": "Turning off T3 Connect…",
   "6c576ef0c1ad7c76": "Sign in to make this environment available to your other devices through T3 Connect.",
   "2faecab811917795": "This environment was removed from T3 Connect. Turn it on to link it again.",
   "ae3971c4379c262f": "T3 Connect is on, but other devices cannot reach this environment.",

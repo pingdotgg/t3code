@@ -40,6 +40,7 @@ import {
 import { usePreparedConnection } from "~/state/session";
 import { EnvironmentRow, environmentTransportLabel } from "./EnvironmentRow";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -478,21 +479,32 @@ function CloudLinkSwitch({
   disabledReason,
   onCheckedChange,
   ariaLabel,
+  pending = false,
 }: {
   readonly checked: boolean;
   readonly disabled: boolean;
   readonly disabledReason: string | null;
   readonly onCheckedChange?: (enabled: boolean) => void;
   readonly ariaLabel?: string;
+  readonly pending?: boolean;
 }) {
   const gt = useGT();
-  const control = (
+  const toggle = (
     <Switch
       aria-label={ariaLabel ?? gt("Enable T3 Connect")}
+      aria-busy={pending || undefined}
       checked={checked}
       disabled={disabled}
       {...(onCheckedChange ? { onCheckedChange } : {})}
     />
+  );
+  const control = pending ? (
+    <span className="inline-flex items-center gap-2">
+      <Spinner size="sm" tone="muted" />
+      {toggle}
+    </span>
+  ) : (
+    toggle
   );
   return disabledReason ? (
     <Tooltip>
@@ -596,7 +608,9 @@ function ConfiguredCloudLinkRow({
   const turnOn = useT3ConnectTurnOn(environmentId);
   // Turning on links from this desktop's own backend only; turning off works from anywhere.
   const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
-  const [isUpdating, setIsUpdating] = useState(false);
+  // The managed tunnel state being applied, shown on the switch until the relay settles.
+  const [pendingManagedTunnel, setPendingManagedTunnel] = useState<boolean | null>(null);
+  const isUpdating = pendingManagedTunnel !== null;
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = canManageRelay
@@ -659,7 +673,7 @@ function ConfiguredCloudLinkRow({
 
   const updateManagedTunnel = async (enabled: boolean) => {
     if (!readEnvironmentScope(environmentId, AuthRelayWriteScope)) return;
-    setIsUpdating(true);
+    setPendingManagedTunnel(enabled);
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
       toastManager.add({
@@ -676,7 +690,7 @@ function ConfiguredCloudLinkRow({
             : gt("This environment is no longer available through T3 Connect."),
       });
     }
-    setIsUpdating(false);
+    setPendingManagedTunnel(null);
   };
 
   const updatePublishAgentActivity = async (enabled: boolean) => {
@@ -724,29 +738,35 @@ function ConfiguredCloudLinkRow({
         <SettingsRow
           title={setting("t3-connect").title}
           description={
-            connectDenial !== undefined && !managedTunnelActive
-              ? connectDenial
-              : signedOut
-                ? gt(
-                    "Sign in to make this environment available to your other devices through T3 Connect.",
-                  )
-                : linkRevoked
-                  ? gt("This environment was removed from T3 Connect. Turn it on to link it again.")
-                  : managedTunnelActive
-                    ? reachability?.status === "unreachable"
-                      ? gt("T3 Connect is on, but other devices cannot reach this environment.")
-                      : reachability?.status === "reachable"
+            pendingManagedTunnel !== null
+              ? pendingManagedTunnel
+                ? gt("Turning on T3 Connect…")
+                : gt("Turning off T3 Connect…")
+              : connectDenial !== undefined && !managedTunnelActive
+                ? connectDenial
+                : signedOut
+                  ? gt(
+                      "Sign in to make this environment available to your other devices through T3 Connect.",
+                    )
+                  : linkRevoked
+                    ? gt(
+                        "This environment was removed from T3 Connect. Turn it on to link it again.",
+                      )
+                    : managedTunnelActive
+                      ? reachability?.status === "unreachable"
+                        ? gt("T3 Connect is on, but other devices cannot reach this environment.")
+                        : reachability?.status === "reachable"
+                          ? gt(
+                              "This environment is available to your other devices through T3 Connect.",
+                            )
+                          : gt("T3 Connect is on. Reachability has not been checked yet.")
+                      : managedTunnelOutOfSync
                         ? gt(
-                            "This environment is available to your other devices through T3 Connect.",
+                            "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it.",
                           )
-                        : gt("T3 Connect is on. Reachability has not been checked yet.")
-                    : managedTunnelOutOfSync
-                      ? gt(
-                          "T3 Connect is out of sync. This environment is linked only to publish agent activity, so other devices cannot connect. Turn T3 Connect on to repair it.",
-                        )
-                      : gt(
-                          "Make this environment available to your other devices through T3 Connect.",
-                        )
+                        : gt(
+                            "Make this environment available to your other devices through T3 Connect.",
+                          )
           }
           status={operationError ?? cloudLinkState.error ?? reachabilityStatus}
           managed={managedTunnelActive ? undefined : connectDenial}
@@ -755,7 +775,8 @@ function ConfiguredCloudLinkRow({
               signInButton
             ) : (
               <CloudLinkSwitch
-                checked={managedTunnelActive}
+                checked={pendingManagedTunnel ?? managedTunnelActive}
+                pending={pendingManagedTunnel !== null}
                 disabled={switchDisabled || tunnelNeedsConfigure}
                 disabledReason={disabledReason ?? (tunnelNeedsConfigure ? configureReason : null)}
                 onCheckedChange={(enabled) => void updateManagedTunnel(enabled)}
