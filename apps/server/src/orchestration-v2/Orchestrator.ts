@@ -956,7 +956,7 @@ function delegatedCompletionWakeDetail(
       const label =
         task === undefined
           ? `Delegated task ${taskId} reached a terminal state`
-          : `Delegated task ${task.title == null ? "" : `"${task.title.replace(/\s+/g, " ")}" `}[${task.status}] (…${taskId.slice(-4)})`;
+          : `Delegated task ${task.title == null ? "" : `"${task.title.replace(/\s+/g, " ").trim()}" `}[${task.status}] (…${taskId.slice(-4)})`;
       if (task?.result != null) {
         const detail = `${label}:\n${task.result}`;
         const bytes = Buffer.byteLength(detail);
