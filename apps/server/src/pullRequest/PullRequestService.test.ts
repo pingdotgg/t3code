@@ -3369,6 +3369,113 @@ it.effect("reuses a quiet repository's own read until its project or the listing
   }),
 );
 
+// Two checkouts of acme/docs: the list keeps one of them for the repository.
+const sharedDocsWorkspace = (input: {
+  readonly reads: Array<string>;
+  readonly pages?: Array<ReadonlyArray<ReturnType<typeof batchedChangeRequest>>>;
+  readonly failAfterFirstSlice?: boolean;
+}) =>
+  makeService({
+    projects: [
+      project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+      project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      project({ id: "p3", title: "docs worktree", workspaceRoot: "/c", repository: "acme/docs" }),
+    ],
+    providers: [
+      fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+        listChangeRequests: ({ repository, cursor }) => {
+          input.reads.push(cursor === undefined ? repository : `${repository} (continued)`);
+          if (cursor !== undefined && input.failAfterFirstSlice) return Effect.fail(requestFailed);
+          return Effect.succeed({
+            items: [changeRequest(cursor === undefined ? 7 : 6, "2026-06-01T00:00:00Z")],
+            truncated: input.failAfterFirstSlice === true && cursor === undefined,
+            continues: input.failAfterFirstSlice === true && cursor === undefined,
+          });
+        },
+        listChangeRequestsAcross: () => {
+          const extra = input.pages?.shift() ?? [];
+          return Effect.succeed({
+            items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z"), ...extra],
+            truncated: true,
+            unresolved: extra.length > 0 ? [] : ["acme/docs"],
+            quiet: extra.length > 0 ? [] : ["acme/docs"],
+          });
+        },
+      }),
+    ],
+  });
+
+it.effect("a reused read belongs to the project the listing chose", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* sharedDocsWorkspace({ reads });
+
+    yield* service.list({ ...everyListing, projectIds: ["p1", "p2"] as Array<ProjectId> });
+    yield* afterListingCache;
+    const other = yield* service.list({
+      ...everyListing,
+      projectIds: ["p1", "p3"] as Array<ProjectId>,
+    });
+    assert.deepStrictEqual(reads, ["acme/docs", "acme/docs"]);
+    assert.deepStrictEqual(
+      other.entries.filter((entry) => entry.number === 7).map((entry) => entry.projectId),
+      ["p3" as ProjectId],
+    );
+  }),
+);
+
+it.effect("a turn in another checkout of the repository ends the reuse", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* sharedDocsWorkspace({ reads });
+
+    yield* service.list(everyListing);
+    yield* service.refreshAfterTurn("p3" as ProjectId);
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/docs", "acme/docs"]);
+  }),
+);
+
+it.effect("search rows from a quiet repository end the reuse of its earlier read", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* sharedDocsWorkspace({
+      reads,
+      pages: [[], [batchedChangeRequest(8, "acme/docs", "2026-07-04T00:00:00Z")], []],
+    });
+
+    yield* service.list(everyListing);
+    yield* afterListingCache;
+    const fresh = yield* service.list(everyListing);
+    assert.include(
+      fresh.entries.map((entry) => entry.number),
+      8,
+    );
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/docs", "acme/docs"], "read again once quiet again");
+  }),
+);
+
+it.effect("a read whose later slice failed is not kept", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* sharedDocsWorkspace({ reads, failAfterFirstSlice: true });
+    const filtered = { ...everyListing, filters: { draft: "hide" as const } };
+
+    yield* service.list(filtered);
+    yield* afterListingCache;
+    yield* service.list(filtered);
+    assert.deepStrictEqual(reads, [
+      "acme/docs",
+      "acme/docs (continued)",
+      "acme/docs",
+      "acme/docs (continued)",
+    ]);
+  }),
+);
+
 it.effect("reads a silent repository every time unless search vouches it quiet", () =>
   Effect.gen(function* () {
     const reads: string[] = [];

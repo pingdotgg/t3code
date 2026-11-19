@@ -361,6 +361,8 @@ const LABEL_CHANGE_REFUSAL = "You need triage access on this repository to chang
 export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
+  /** Every workspace project of this repository, `project` included; the list keeps one. */
+  readonly projectIds: ReadonlyArray<ProjectId>;
   readonly api: PullRequestProviderApi;
   readonly repository: string;
   readonly host: string;
@@ -391,6 +393,8 @@ interface RepositoryBatch {
   readonly errors: ReadonlyArray<PullRequestListProjectError>;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
+  /** A later slice failed: the rows stand for this answer but are not kept for reuse. */
+  readonly incomplete?: true;
 }
 
 interface ListCursor extends ProviderListCursor {
@@ -978,9 +982,10 @@ export const make = Effect.gen(function* () {
         const viewerRoots = new Map<string, string[]>();
         const refinedProjectIdsByHost = new Map<string, ProjectId[]>();
         const seen = new Set<string>();
+        // Every project of a repository, whatever this listing selects: a turn in any of them can
+        // change what the repository holds.
+        const projectIdsByKey = new Map<string, ProjectId[]>();
         for (const project of projects) {
-          if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
-          if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           const identity = project.repositoryIdentity;
           let kind = identity?.provider;
           const repository = sourceControlDefinitions.repositorySelector(
@@ -994,6 +999,16 @@ export const make = Effect.gen(function* () {
               : remoteHosts.get(remoteHostKey(recognized, identity.locator.remoteUrl));
           kind = remote?.kind ?? kind;
           const host = remote?.host ?? sourceControlDefinitions.changeRequestHost(identity, kind);
+          const registered = registry.get(kind);
+          const api = registered?.servesHost?.(host) === false ? null : registered;
+          const repositoryKey =
+            api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
+          const key = listCursorKey(host, repositoryKey ?? repository);
+          const sharing = projectIdsByKey.get(key);
+          if (sharing === undefined) projectIdsByKey.set(key, [project.id]);
+          else sharing.push(project.id);
+          if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
+          if (filter.projectIds !== undefined && !filter.projectIds.includes(project.id)) continue;
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
             continue;
           }
@@ -1002,16 +1017,11 @@ export const make = Effect.gen(function* () {
             if (projectIds === undefined) refinedProjectIdsByHost.set(host, [project.id]);
             else projectIds.push(project.id);
           }
-          const registered = registry.get(kind);
-          const api = registered?.servesHost?.(host) === false ? null : registered;
           if (api !== null) {
             const roots = viewerRoots.get(host);
             if (roots === undefined) viewerRoots.set(host, [project.workspaceRoot]);
             else if (!roots.includes(project.workspaceRoot)) roots.push(project.workspaceRoot);
           }
-          const repositoryKey =
-            api?.repositoryKey?.({ canonicalKey: identity.canonicalKey }) ?? null;
-          const key = listCursorKey(host, repositoryKey ?? repository);
           if (seen.has(key)) continue;
           seen.add(key);
           if (api === null) {
@@ -1023,6 +1033,7 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
+            projectIds: projectIdsByKey.get(key)!,
             api: withRateLimitBackoff(api, host, rateLimits),
             repository,
             host,
@@ -1100,6 +1111,7 @@ export const make = Effect.gen(function* () {
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
+                      projectIds: [selected.value.id],
                       api: withRateLimitBackoff(api, host, rateLimits),
                       repository,
                       host,
@@ -1378,11 +1390,18 @@ export const make = Effect.gen(function* () {
     };
   };
 
-  // Reads of quiet repositories, reused by `quietRead` while their epoch holds.
+  // Reads of quiet repositories, reused by `quietRead` while their epoch holds, and how many times
+  // search has returned rows of each repository (a repository with newer rows is not quiet).
   const quietReads = new Map<
     string,
-    { readonly at: number; readonly epoch: number; readonly batch: RepositoryBatch }
+    {
+      readonly at: number;
+      readonly epoch: number;
+      readonly searched: number;
+      readonly batch: RepositoryBatch;
+    }
   >();
+  const quietSearchedRows = new Map<string, number>();
 
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
     "PullRequestService.listUncached",
@@ -1577,7 +1596,7 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((next) =>
             // A slice that failed keeps the cursor before it, so the reader can try again.
             next.errors.length > 0
-              ? Effect.succeed(batch)
+              ? Effect.succeed({ ...batch, incomplete: true as const })
               : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
           ),
         );
@@ -1586,14 +1605,14 @@ export const make = Effect.gen(function* () {
     };
 
     // A quiet repository has nothing newer than the search page, which shows any newer row, so its
-    // own read is reused rather than repeated on every refresh. A push, PR action or refresh through
-    // T3 and a turn in its project end the reuse; other edits to its older rows wait QUIET_READ_TTL.
+    // own read is reused rather than repeated on every refresh. Search rows from it, a push, PR
+    // action or refresh through T3, and a turn in any of its projects end the reuse.
     const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
       project: SupportedProject,
     ) {
       const key = encodeQuietReadKey([
-        project.host,
-        project.repository.trim().toLowerCase(),
+        project.cursorKey,
+        project.project.id,
         input.state,
         involvement,
         viewers[project.host] ?? null,
@@ -1601,28 +1620,33 @@ export const make = Effect.gen(function* () {
         input.query ?? null,
         input.filters ?? null,
       ]);
-      const epoch = Math.max(
-        listingsEpoch,
-        projectEpochs.get(project.project.id) ?? projectEpochFloor,
-      );
+      const epochOf = () =>
+        Math.max(
+          listingsEpoch,
+          ...project.projectIds.map((id) => projectEpochs.get(id) ?? projectEpochFloor),
+        );
+      const epoch = epochOf();
+      const searched = quietSearchedRows.get(project.cursorKey) ?? 0;
       const now = yield* Clock.currentTimeMillis;
       const held = quietReads.get(key);
       if (
         held !== undefined &&
         held.epoch === epoch &&
+        held.searched === searched &&
         now - held.at <= Duration.toMillis(QUIET_READ_TTL)
       ) {
         return { ...held.batch, key: project.cursorKey };
       }
       const batch = yield* readRepository(project);
-      // Only a clean read is kept, and only if nothing moved its epoch while it was read.
-      const epochAfter = Math.max(
-        listingsEpoch,
-        projectEpochs.get(project.project.id) ?? projectEpochFloor,
-      );
-      if (batch.errors.length === 0 && epochAfter === epoch) {
+      // Kept only whole, and only if nothing ended the reuse while it was read.
+      if (
+        batch.errors.length === 0 &&
+        batch.incomplete !== true &&
+        epochOf() === epoch &&
+        (quietSearchedRows.get(project.cursorKey) ?? 0) === searched
+      ) {
         quietReads.delete(key);
-        quietReads.set(key, { at: now, epoch, batch });
+        quietReads.set(key, { at: now, epoch, searched, batch });
         while (quietReads.size > QUIET_READ_CAPACITY) {
           const oldest = quietReads.keys().next().value;
           if (oldest === undefined) break;
@@ -1692,6 +1716,12 @@ export const make = Effect.gen(function* () {
             (project): Effect.Effect<RepositoryBatch> => {
               const key = project.repository.trim().toLowerCase();
               const fetched = rows.get(key) ?? [];
+              if (fetched.length > 0) {
+                quietSearchedRows.set(
+                  project.cursorKey,
+                  (quietSearchedRows.get(project.cursorKey) ?? 0) + 1,
+                );
+              }
               if (fetched.length === 0 && unresolved.has(key)) {
                 return quiet.has(key) && cursorOf(project) === undefined
                   ? quietRead(project)
