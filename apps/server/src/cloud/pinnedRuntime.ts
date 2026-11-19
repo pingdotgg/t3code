@@ -206,6 +206,7 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
         );
         const total = Number.isFinite(length) && length > 0 ? length : undefined;
         onProgress?.({ stage: "download", received, total });
+        const attemptStart = received;
         yield* response.stream.pipe(
           Stream.timeoutOrElse({
             duration: PINNED_RUNTIME_DOWNLOAD_STALL_TIMEOUT,
@@ -219,6 +220,22 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
             }),
           ),
         );
+        // A server may end a 206 before the declared total; a retry asks for the rest.
+        if (
+          resume &&
+          contentRange !== null &&
+          total !== undefined &&
+          received > attemptStart &&
+          received < total
+        ) {
+          return yield* new HttpClientError.HttpClientError({
+            reason: new HttpClientError.DecodeError({
+              request: response.request,
+              response,
+              description: "partial content ended before the declared total",
+            }),
+          });
+        }
         if (total === undefined && received > 0) {
           onProgress?.({ stage: "download", received, total: received });
         }

@@ -238,7 +238,12 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
   it.effect.each([
     { name: "body fails after the host answered", first: "body fails", honorsRange: true },
-    { name: "body stalls", first: "body stalls", honorsRange: true },
+    {
+      name: "body stalls and its resume ends early",
+      first: "body stalls",
+      honorsRange: true,
+      shortResume: true,
+    },
     { name: "body stalls on a host that ignores Range", first: "body stalls", honorsRange: false },
     { name: "response headers stall", first: "headers stall", honorsRange: true },
     {
@@ -257,6 +262,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     Effect.gen(function* () {
       const { first, honorsRange } = row;
       const held = "held" in row ? row.held : "prefix";
+      const shortResume = "shortResume" in row;
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
@@ -266,6 +272,7 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       const progress: PinnedRuntimeProgress[] = [];
       const checksumsRequested = yield* Deferred.make<void>();
       const archiveRequested = yield* Deferred.make<void>();
+      const shortResumeRequested = yield* Deferred.make<void>();
       const total = archiveBytes.length;
       const heldBytes =
         held === "prefix"
@@ -305,20 +312,29 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           ranges.push(range);
           if (ranges.length > 1) {
             const start = honorsRange ? Number(/^bytes=(\d+)-$/.exec(range ?? "")?.[1] ?? 0) : 0;
-            return Effect.succeed(
-              HttpClientResponse.fromWeb(
-                request,
-                start >= total
-                  ? new Response("", {
-                      status: 416,
-                      headers: { "content-range": `bytes */${total}` },
+            // A short resume stops one byte early; the next retry asks for that byte.
+            const end = shortResume && ranges.length === 2 ? total - 1 : total;
+            const response = HttpClientResponse.fromWeb(
+              request,
+              start >= total
+                ? new Response("", {
+                    status: 416,
+                    headers: { "content-range": `bytes */${total}` },
+                  })
+                : start > 0
+                  ? new Response(archiveBytes.slice(start, end), {
+                      status: 206,
+                      headers: { "content-range": `bytes ${start}-${end - 1}/${total}` },
                     })
-                  : start > 0
-                    ? new Response(archiveBytes.slice(start), {
-                        status: 206,
-                        headers: { "content-range": `bytes ${start}-${total - 1}/${total}` },
-                      })
-                    : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+                  : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+            );
+            if (end === total) return Effect.succeed(response);
+            Deferred.doneUnsafe(shortResumeRequested, Effect.void);
+            // An Effect stream keeps the body, and so the retry wait after it, on the test clock.
+            const body = Stream.make(archiveBytes.slice(start, end));
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: body } }),
               ),
             );
           }
@@ -354,11 +370,17 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       yield* Deferred.await(archiveRequested);
       // The one-minute stall bound, then the first two-second retry backoff.
       yield* TestClock.adjust(Duration.seconds(first === "body fails" ? 3 : 63));
+      if (shortResume) {
+        yield* Deferred.await(shortResumeRequested);
+        // Its one-second delay, then the second, four-second backoff.
+        yield* TestClock.adjust(Duration.seconds(5));
+      }
       const result = yield* Fiber.join(install).pipe(Effect.result);
       assert.deepEqual(checksumRanges, [undefined, undefined]);
       assert.deepEqual(ranges, [
         undefined,
         first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,
+        ...(shortResume ? [`bytes=${total - 1}-`] : []),
       ]);
       if (held === "wrong") {
         assert.equal(result._tag, "Failure");
