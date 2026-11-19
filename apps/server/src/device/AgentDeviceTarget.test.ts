@@ -202,9 +202,9 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       }
       expect(
         yield* Effect.promise(() =>
-          launch(shared, ["snapshot", "--config=/h.json", "--session=t3-a"]),
+          launch(shared, ["snapshot", "--config=/h.json", "--session=t3-unbound"]),
         ),
-      ).toEqual(["snapshot", "--config=/h.json", "--session=t3-a"]);
+      ).toEqual(["snapshot", "--config=/h.json", "--session=t3-unbound"]);
       yield* Effect.promise(() =>
         expect(
           launch(shared, ["fill", "@e5", "--", "--config", "/h.json", "--session", "t3-a"]),
@@ -352,6 +352,22 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           "/b/App.app",
         ]);
         expect(installed).toBe(opened);
+        const shared = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
+        expect(
+          yield* launchFrom(
+            "other",
+            [
+              "install",
+              "com.example.app",
+              "/b/App.app",
+              "--config",
+              "/h.json",
+              "--session",
+              "t3-a",
+            ],
+            path.join(shared, "agent-device"),
+          ),
+        ).toBe(opened);
         // A Simlock lease opened its claim from the thread's workspace, so its launcher runs there.
         const workspace = path.join(dir, "workspace");
         yield* fs.makeDirectory(workspace);

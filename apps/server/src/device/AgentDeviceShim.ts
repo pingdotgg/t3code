@@ -189,11 +189,12 @@ const launcherSource = (
   entryPath: string,
   boundArgs: ReadonlyArray<string>,
   cwd: string | undefined,
+  targetsDir: string | undefined,
 ) =>
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 const entry = ${JSON.stringify(entryPath)};
 const workspace = ${JSON.stringify(cwd ?? null)};
@@ -203,6 +204,15 @@ const managed = ["connect", "disconnect", "auth", "daemon"];
 const args = process.argv.slice(2);
 const end = args.indexOf("--");
 const options = end < 0 ? args : args.slice(0, end);
+// The unbound launcher hands a bound session to its own launcher, so both run in one workspace.
+const targets = ${JSON.stringify(targetsDir ?? null)};
+const sessionAt = options.indexOf("--session");
+const session = options.find(arg => arg.startsWith("--session="))?.slice(10) ?? (sessionAt >= 0 ? options[sessionAt + 1] : undefined);
+const delegate = targets && session && /^[\\w.-]+$/.test(session) && !/^\\.+$/.test(session) ? join(targets, session, "agent-device-launcher.mjs") : undefined;
+if (delegate && existsSync(delegate)) {
+  const child = spawn(process.execPath, [delegate, ...args], { stdio: "inherit" });
+  process.exit(await new Promise(done => { child.on("error", error => { console.error(error.message); done(1); }); child.on("exit", code => done(code ?? 1)); }));
+}
 const valued = new Set(${JSON.stringify(VALUE_FLAGS)});
 let name = "";
 for (let index = 0; index < args.length; index++) {
@@ -297,6 +307,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   readonly entryPath: string;
   readonly boundArgs: ReadonlyArray<string>;
   readonly cwd?: string;
+  readonly targetsDir?: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -306,7 +317,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   const launcherPath = path.join(input.dir, "agent-device-launcher.mjs");
   yield* fs.writeFileString(
     launcherPath,
-    launcherSource(node, input.entryPath, input.boundArgs, input.cwd),
+    launcherSource(node, input.entryPath, input.boundArgs, input.cwd, input.targetsDir),
   );
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
@@ -328,7 +339,12 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
 }) {
   const path = yield* Path.Path;
   const shimDir = path.join(input.stateDir, SHIM_DIR);
-  yield* writeLauncher({ dir: shimDir, entryPath: input.entryPath, boundArgs: [] });
+  yield* writeLauncher({
+    dir: shimDir,
+    entryPath: input.entryPath,
+    boundArgs: [],
+    targetsDir: path.join(input.stateDir, TARGETS_DIR),
+  });
   return shimDir;
 });
 
