@@ -594,21 +594,25 @@ function getReasoningEffortOptionValue(
   return typeof value === "string" ? value : undefined;
 }
 
+/** The select a saved reasoning effort applies to; agent editors list its levels. */
+export function findReasoningEffortDescriptor(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+): Extract<ProviderOptionDescriptor, { type: "select" }> | undefined {
+  const selects = descriptors?.filter(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select",
+  );
+  return (
+    selects?.find((descriptor) => descriptor.role === "reasoning") ??
+    selects?.find((descriptor) => REASONING_EFFORT_OPTION_IDS.has(descriptor.id))
+  );
+}
+
 /**
  * Applies a provider-neutral thinking level (an agent's `reasoningEffort`) under
  * the option id the selected model actually reads. Without an explicit effort,
  * an existing effort-like option is re-keyed so it still reaches the adapter.
  */
-/** The select a saved reasoning effort applies to; agent editors list its levels. */
-export function findReasoningEffortDescriptor(
-  descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
-): Extract<ProviderOptionDescriptor, { type: "select" }> | undefined {
-  return descriptors?.find(
-    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
-      descriptor.type === "select" && REASONING_EFFORT_OPTION_IDS.has(descriptor.id),
-  );
-}
-
 export function withReasoningEffortOption(
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
   effort: string | undefined,
@@ -618,7 +622,32 @@ export function withReasoningEffortOption(
   if (value === undefined) return options;
   const id = findReasoningEffortDescriptor(descriptors)?.id ?? "reasoningEffort";
   return [
-    ...(options ?? []).filter((option) => !REASONING_EFFORT_OPTION_IDS.has(option.id)),
+    ...(options ?? []).filter(
+      (option) => option.id !== id && !REASONING_EFFORT_OPTION_IDS.has(option.id),
+    ),
     { id, value },
   ];
+}
+
+/**
+ * Models a saved model label names: a slug or name, else `<slug>-<level>` for one of that model's
+ * own effort levels, since some agents also list each thinking level as a model of its own.
+ */
+export function matchModelLabel<
+  M extends {
+    readonly slug: string;
+    readonly name: string;
+    readonly capabilities?: ModelCapabilities | null | undefined;
+  },
+>(
+  models: ReadonlyArray<M>,
+  label: string,
+): ReadonlyArray<{ readonly model: M; readonly effort?: string }> {
+  const exact = models.filter((model) => model.slug === label || model.name === label);
+  if (exact.length > 0) return exact.map((model) => ({ model }));
+  return models.flatMap((model) => {
+    const effort = label.startsWith(`${model.slug}-`) ? label.slice(model.slug.length + 1) : "";
+    const levels = findReasoningEffortDescriptor(model.capabilities?.optionDescriptors)?.options;
+    return levels?.some((level) => level.id === effort) ? [{ model, effort }] : [];
+  });
 }
