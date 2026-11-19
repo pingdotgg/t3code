@@ -48,7 +48,7 @@ describe("orchestration V2 contracts", () => {
       retryable: false,
     };
     const encoded = Schema.encodeSync(codec)(failure);
-    expect(Schema.decodeUnknownSync(codec)(encoded)).toEqual(failure);
+    expect(Schema.decodeSync(codec)(encoded)).toEqual(failure);
   });
 
   it("decodes thread event types from a newer server as skippable items", () => {

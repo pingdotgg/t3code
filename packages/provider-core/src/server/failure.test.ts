@@ -63,6 +63,7 @@ it("preserves oversized request diagnostics while marking them as not retryable"
     "413 <html>\n<head><title>413 Request Entity Too Large</title></head>\n<body>\n<center><h1>413 Request Entity Too Large</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>",
     "unexpected status 413 Payload Too Large: request body exceeds the limit",
     'API Error: 413 {"type":"error","error":{"type":"request_too_large"}}',
+    `provider=synthetic status=413 request_id=req-large\nPayload Too Large\n${"detail ".repeat(1024)}diagnostic tail`,
   ]) {
     const failure = makeProviderFailure({ message, class: "provider_error", retryable: true });
 
@@ -84,13 +85,6 @@ it("preserves oversized request diagnostics while marking them as not retryable"
 it("preserves the full provider diagnostic beyond 4096 characters", () => {
   const message = `provider=synthetic status=503 request_id=req-full\n${"a".repeat(8192)}🚀diagnostic tail`;
   assert.equal(makeProviderFailure({ message }).message, message);
-});
-
-it("preserves a complete enriched HTTP 413 diagnostic beyond 4096 characters", () => {
-  const message = `provider=synthetic status=413 request_id=req-large\nPayload Too Large\n${"detail ".repeat(1024)}diagnostic tail`;
-  const failure = makeProviderFailure({ message, retryable: true });
-  assert.equal(failure.message, message);
-  assert.equal(failure.retryable, false);
 });
 
 it("does not expose arbitrary cause messages and preserves explicit messages", () => {
