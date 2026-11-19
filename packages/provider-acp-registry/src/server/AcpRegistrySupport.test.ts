@@ -538,6 +538,7 @@ describe("AcpRegistrySupport", () => {
         ...toolchain.environment,
         HOME: userHome,
         FAKE_NPM_PREFIX: systemPrefix,
+        NPM_CONFIG_PREFIX: systemPrefix,
       };
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,

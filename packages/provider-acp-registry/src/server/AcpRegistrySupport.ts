@@ -323,6 +323,16 @@ function withPreferredPath(
   };
 }
 
+// Windows env keys are case-insensitive and a child gets one spelling, so drop inherited ones.
+function withNpmPrefix(environment: NodeJS.ProcessEnv, prefix: string): NodeJS.ProcessEnv {
+  return {
+    ...Object.fromEntries(
+      Object.entries(environment).filter(([key]) => key.toLowerCase() !== "npm_config_prefix"),
+    ),
+    npm_config_prefix: prefix,
+  };
+}
+
 export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManagedBinaryDirectories")(
   function* (input: {
     readonly cacheDir: string;
@@ -1250,7 +1260,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
     const packageEnvironment =
       distribution === "npx"
-        ? { ...environment, npm_config_prefix: packageRoot }
+        ? withNpmPrefix(environment, packageRoot)
         : {
             ...environment,
             UV_TOOL_DIR: packageRoot,
