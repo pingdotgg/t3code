@@ -3,6 +3,7 @@ import { StackActions, useNavigation, type StaticScreenProps } from "@react-navi
 import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
+import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import type {
   IssueComment,
   IssueEvent,
@@ -37,8 +38,10 @@ import { NativeLayoutObserver } from "../../native/NativeLayoutObserver";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useDeviceType, useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { issueEnvironment, refreshIssueLists } from "../../state/issues";
 import { useEnvironmentQuery } from "../../state/query";
+import { environmentThreadShells } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { usePullToRefresh } from "../../state/use-pull-to-refresh";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -290,6 +293,75 @@ function LinkedPullRequests(props: {
                   ? ` · ${gt("closes", { $context: "the pull request closes this issue" })}`
                   : ""}
               </Text>
+            </View>
+            <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+/** The threads this issue is linked to, most recently active first; hidden while there are none. */
+function LinkedThreads(props: { readonly params: IssueParams; readonly host: string }) {
+  const gt = useGT();
+  const navigation = useNavigation();
+  const { environmentId, input } = issueTarget(props.params);
+  const listsThreads =
+    useEnvironmentServerConfig(environmentId)?.environment.capabilities.issueLinkedThreads === true;
+  const relations = useEnvironmentQuery(
+    listsThreads
+      ? issueEnvironment.linkedThreads({
+          environmentId,
+          input: { tracker: input.tracker, host: props.host, scope: input.scope, key: input.key },
+        })
+      : null,
+  );
+  const hiddenKeys = useAtomValue(environmentThreadShells.hiddenThreadKeysAtom);
+  const hidingAnywhere = useAtomValue(environmentThreadShells.anyEnvironmentHidingAtom);
+  const loadedThreadRefs = useAtomValue(
+    environmentThreadShells.environmentThreadRefsAtom(environmentId),
+  );
+  const threads = visibleLinkedThreads(
+    relations.data?.threads ?? [],
+    environmentId,
+    loadedThreadRefs,
+    hiddenKeys,
+    hidingAnywhere,
+  );
+  if (threads.length === 0) return null;
+  return (
+    <View className="gap-2">
+      <PullRequestSectionHeading>
+        <T>Linked threads</T>
+      </PullRequestSectionHeading>
+      {threads.map((thread) => {
+        const title = thread.title || gt("Untitled thread");
+        return (
+          <Pressable
+            key={thread.id}
+            accessibilityRole="button"
+            accessibilityLabel={gt("Open thread {title}", { title })}
+            onPress={() =>
+              navigation.dispatch(
+                StackActions.push("Thread", {
+                  environmentId: props.params.environmentId,
+                  threadId: thread.id,
+                }),
+              )
+            }
+            className="flex-row items-center gap-2 rounded-2xl bg-grouped-card p-3 active:opacity-70"
+          >
+            <SymbolView name="bubble.left" size={15} tintColorClassName="accent-icon-muted" />
+            <View className="min-w-0 flex-1">
+              <Text className="text-sm" numberOfLines={2}>
+                {title}
+              </Text>
+              {thread.archivedAt !== null ? (
+                <Text className="text-2xs text-foreground-muted" numberOfLines={1}>
+                  <T>Archived thread</T>
+                </Text>
+              ) : null}
             </View>
             <SymbolView name="chevron.right" size={12} tintColorClassName="accent-icon-muted" />
           </Pressable>
@@ -620,6 +692,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                     {detail.linkedPullRequests.length > 0 ? (
                       <LinkedPullRequests params={params} links={detail.linkedPullRequests} />
                     ) : null}
+                    <LinkedThreads params={params} host={detail.host} />
                     <View className="gap-3">
                       <PullRequestSectionHeading>
                         {detail.commentCount > 0
