@@ -64,21 +64,24 @@ interface Invocation {
 /**
  * Answers `fx` invocations keyed by `FX_PROVIDER` and arguments, such as
  * `codex status --json`; the unscoped status is ` status --json`. HOME holds
- * an fx profile whose settings define `profileProviders`.
+ * an fx profile whose settings define `profileProviders`, or `FX_HOME` does
+ * when `profileInFxHome` is set.
  */
 const check = (
   outputs: Record<string, string>,
   profileProviders: ReadonlyArray<string> = [],
   versionDelay: Duration.Input = 0,
   versionSpawned?: Deferred.Deferred<void>,
+  profileInFxHome = false,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-fx-status-" });
-    yield* fileSystem.makeDirectory(path.join(home, ".fx"));
+    const profile = path.join(home, profileInFxHome ? "fx-home" : ".fx");
+    yield* fileSystem.makeDirectory(profile);
     yield* fileSystem.writeFileString(
-      path.join(home, ".fx", "settings.json"),
+      path.join(profile, "settings.json"),
       JSON.stringify({
         providers: Object.fromEntries(profileProviders.map((id) => [id, { protocol: "x" }])),
       }),
@@ -104,9 +107,10 @@ const check = (
         );
       });
     });
-    const draft = yield* checkFxProviderStatus(settings, { HOME: home }).pipe(
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
+    const draft = yield* checkFxProviderStatus(
+      settings,
+      profileInFxHome ? { HOME: home, FX_HOME: profile } : { HOME: home },
+    ).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
     return { draft, invoked };
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
@@ -216,6 +220,30 @@ describe("checkFxProviderStatus", () => {
         { name: "local", unavailableReason: "The configured provider credential is unavailable." },
       ]);
       assert.isDefined(draft.versionAdvisory);
+    }),
+  );
+
+  it.effect("reads configured backends from the profile `FX_HOME` names", () =>
+    Effect.gen(function* () {
+      const { draft } = yield* check(
+        {
+          " status --json": status("fx login"),
+          "gateway status --json": status("fx login"),
+          "gateway models --json": GATEWAY_MODELS,
+          "codex status --json": status("missing"),
+          "grok status --json": status("missing"),
+          "local status --json": status("fx login"),
+          "local models --json": models([]),
+        },
+        ["local"],
+        0,
+        undefined,
+        true,
+      );
+      assert.deepEqual(
+        draft.subProviders?.map((subProvider) => subProvider.name),
+        ["Vercel AI Gateway", "Codex subscription", "Grok subscription", "local"],
+      );
     }),
   );
 

@@ -220,12 +220,15 @@ const fxStatusBackend = (modelSource: string | undefined) => {
 const readFxConfiguredBackends = Effect.fn("readFxConfiguredBackends")(function* (
   environment: NodeJS.ProcessEnv,
 ) {
-  const home = environment.HOME?.trim();
-  if (!home) return [];
-  const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  // fx keeps its profile in `FX_HOME` when set, else `~/.fx`.
+  const fxHome = environment.FX_HOME?.trim();
+  const home = environment.HOME?.trim();
+  const profile = fxHome ? fxHome : home ? path.join(home, ".fx") : undefined;
+  if (profile === undefined) return [];
+  const fileSystem = yield* FileSystem.FileSystem;
   const text = yield* fileSystem
-    .readFileString(path.join(home, ".fx", "settings.json"))
+    .readFileString(path.join(profile, "settings.json"))
     .pipe(Effect.orElseSucceed(() => ""));
   const providers = Option.getOrUndefined(decodeFxProfileSettings(text))?.providers ?? {};
   // fx's own id rule; the built-in names are reserved.
