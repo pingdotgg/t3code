@@ -742,7 +742,9 @@ const findOnPath = Effect.fnUntraced(function* (
     for (const candidate of commandCandidates) {
       if (listing?.names && !listing.names.has(candidate.toLowerCase())) continue;
       const candidatePath = path.join(pathEntry, candidate);
-      if (yield* isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+      // Probe where the listing looked, even if the process changes directory meanwhile.
+      const probePath = typeof cwd === "string" ? path.join(directory, candidate) : candidatePath;
+      if (yield* isExecutableFile(probePath, platform, windowsPathExtensions)) {
         const match =
           anchorsCwd && pathEntry === "." ? path.join(directory, candidate) : candidatePath;
         matches.push(match);

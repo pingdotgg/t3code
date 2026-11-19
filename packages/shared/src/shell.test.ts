@@ -627,6 +627,34 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "probes a relative PATH entry in the directory its search recorded",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-relative-probe-" });
+        const command = "t3-relative-probe-cli";
+        yield* fs.writeFileString(path.join(dir, command), "#!/bin/sh\n", { mode: 0o755 });
+        const relative = path.relative(process.cwd(), dir);
+        const probed: Array<string> = [];
+        const resolved = yield* resolveCommandPath(command, { env: { PATH: relative } }).pipe(
+          Effect.provideService(CommandResolutionCache, new Map()),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            stat: (file) => {
+              probed.push(file);
+              return fs.stat(file);
+            },
+          }),
+        );
+        // The result keeps its PATH spelling; the probe is absolute, so a later chdir can't move it.
+        expect(resolved).toBe(path.join(relative, command));
+        expect(probed).toContain(path.join(path.resolve(relative), command));
+        expect(probed.filter((file) => !path.isAbsolute(file))).toEqual([]);
+      }),
+  );
+
   it.effect("probes only listed PATH names and relists a directory that changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

@@ -452,9 +452,11 @@ export const make = Effect.gen(function* () {
           ...(owned ? [] : ["--collect"]),
         ],
       };
-      // systemd-run does not search the caller's cwd for an empty PATH component.
+      // systemd-run does not search the caller's cwd for an empty PATH component. An absolute
+      // path stays as spelled: collapsing ".." would skip a symlinked parent directory.
+      const executable = path.isAbsolute(resolved) ? resolved : path.resolve(resolved);
       return {
-        ...agentScopeCommand({ command: path.resolve(resolved), args, scope: systemdScope }),
+        ...agentScopeCommand({ command: executable, args, scope: systemdScope }),
         unit,
       };
     }),
