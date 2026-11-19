@@ -4,6 +4,7 @@ import type { ThreadFindMatch } from "./threadFind";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
+const FIND_SCROLL_VIEWPORT_SELECTOR = "pre, [data-thread-find-scroll-viewport]";
 
 type FindEntries = readonly { readonly id: string }[];
 
@@ -124,10 +125,15 @@ function revealThreadFindMatch(
     return;
   }
 
-  const horizontalViewport = range.startContainer.parentElement?.closest(
-    'pre, .chat-markdown-table-container [data-slot="scroll-area-viewport"]',
-  );
-  if (horizontalViewport) {
+  for (
+    let horizontalViewport = range.startContainer.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    );
+    horizontalViewport;
+    horizontalViewport = horizontalViewport.parentElement?.closest<HTMLElement>(
+      FIND_SCROLL_VIEWPORT_SELECTOR,
+    )
+  ) {
     const rect = range.getBoundingClientRect();
     const viewport = horizontalViewport.getBoundingClientRect();
     if (rect.left < viewport.left) horizontalViewport.scrollLeft += rect.left - viewport.left - 16;

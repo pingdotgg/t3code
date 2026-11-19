@@ -1889,6 +1889,51 @@ describe("MessagesTimeline thread find", () => {
     expect(sibling.scrollLeft).toBe(siblingOffset);
   });
 
+  it("reveals a match in a nested table clipped by the outer table", async () => {
+    setup();
+    const columns = Array.from({ length: 12 }, (_, index) => `<td>DiagnosticsColumn${index}</td>`);
+    const entry = message(
+      `<table><tbody><tr>${columns.join("")}<td><table><tbody><tr><td>needle</td></tr></tbody></table></td></tr></tbody></table>`,
+      { role: "assistant" },
+    );
+    const props = {
+      ...baseProps(),
+      timelineEntries: [entry],
+      liveFollowEnabled: false,
+      findOpen: true,
+      findExpanded: true,
+      findQuery: "needle",
+    };
+    await using screen = await renderElement(<MessagesTimeline {...props} />);
+    const outerViewport = await vi.waitFor(() => {
+      const viewport = screen.container.querySelector(
+        '.chat-markdown-table-container [data-slot="scroll-area-viewport"]',
+      );
+      const nestedCell = viewport?.querySelector("table table td");
+      expect(nestedCell?.textContent).toBe("needle");
+      expect(nestedCell!.getBoundingClientRect().left).toBeGreaterThan(
+        viewport!.getBoundingClientRect().right,
+      );
+      return viewport!;
+    });
+
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        activeFindMatch={{ entryId: entry.id, runId: null, occurrence: 0 }}
+        findNavigationId={1}
+      />,
+    );
+    await vi.waitFor(() => {
+      const [match] = CSS.highlights.get("t3-thread-find-active") ?? [];
+      if (!(match instanceof Range)) throw new Error("Missing active match range");
+      const bounds = match.getBoundingClientRect();
+      const clip = outerViewport.getBoundingClientRect();
+      expect(bounds.left).toBeGreaterThanOrEqual(clip.left - 1);
+      expect(bounds.right).toBeLessThanOrEqual(clip.right + 1);
+    });
+  });
+
   it("releases follow once when it starts showing a thread whose find is open", async () => {
     setup();
     const { navigations, element } = renderObserved();
