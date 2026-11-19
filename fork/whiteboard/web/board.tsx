@@ -23,7 +23,7 @@ import "tldraw/tldraw.css";
 import "katex/dist/katex.min.css";
 import "@benrbray/prosemirror-math/dist/prosemirror-math.css";
 import { mathTextOptions } from "./mathtag";
-import { onBoardView, type BoardView } from "./bridge";
+import { boardReady, onBoardView, onBoardVisible, type BoardView } from "./bridge";
 import { markPresence, REGION_TOOL, RefsLayer, RegionTool } from "./refs";
 import { CollaboratorCursors, NoCollaboratorHint } from "./cursors";
 import { cameraAt, viewCenter } from "./camera";
@@ -148,6 +148,8 @@ function CameraMemory({ id }: { id: string }) {
     const stop = react("camera memory", () => {
       const camera = editor.getCamera();
       const view = editor.getViewportScreenBounds();
+      // A board whose frame is hidden has an empty viewport; its center is not where the user looked.
+      if (view.w <= 1 || view.h <= 1) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         localStorage.setItem(
@@ -245,9 +247,16 @@ const RELOAD_DELAY_MS = 3000;
 function SyncError({ error }: { error: Error }) {
   const outdated = error instanceof TLRemoteSyncError && VERSION_MISMATCH.includes(error.reason);
   useEffect(() => {
-    if (!outdated) return;
-    const timer = window.setTimeout(() => location.reload(), RELOAD_DELAY_MS);
-    return () => window.clearTimeout(timer);
+    if (outdated) {
+      const timer = window.setTimeout(() => location.reload(), RELOAD_DELAY_MS);
+      return () => window.clearTimeout(timer);
+    }
+    // T3 then shows this error instead of its loading text, and a board it keeps loaded in a
+    // hidden tab retries when the tab is shown again, as a new frame would.
+    boardReady();
+    onBoardVisible((visible) => {
+      if (visible) location.reload();
+    });
   }, [outdated]);
   return (
     <div className="loading">

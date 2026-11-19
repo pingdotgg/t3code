@@ -9,6 +9,7 @@ import {
   isBoardOffered,
   isFromBoardFrame,
   keepPendingFor,
+  liveBoardsToKeep,
 } from "./boardChannel.logic";
 
 const OWN = "https://board.example.com";
@@ -101,5 +102,39 @@ describe("hoverOriginInFrame", () => {
     expect(
       hoverOriginInFrame({ left: 120, top: 400, height: 20 }, { left: 700, top: 48, height: 900 }),
     ).toEqual({ x: -580, y: 362 });
+  });
+});
+
+describe("liveBoardsToKeep", () => {
+  const board = (id: string, shown: boolean, listed: boolean) => ({ id, shown, listed });
+
+  it.each([
+    {
+      name: "the shown board, even when its tab is no longer listed",
+      boards: [board("a", true, false)],
+      kept: ["a"],
+    },
+    {
+      name: "a hidden board while its tab is listed",
+      boards: [board("a", true, true), board("b", false, true)],
+      kept: ["a", "b"],
+    },
+    {
+      name: "not a hidden board whose tab closed",
+      boards: [board("a", true, true), board("b", false, false)],
+      kept: ["a"],
+    },
+    {
+      name: "the most recently shown boards up to the bound",
+      boards: [board("a", true, true), board("b", false, true), board("c", false, true)],
+      kept: ["a", "b"],
+    },
+    {
+      name: "two hidden boards when none is shown",
+      boards: [board("a", false, true), board("b", false, true), board("c", false, true)],
+      kept: ["a", "b"],
+    },
+  ])("keeps $name", ({ boards, kept }) => {
+    expect(liveBoardsToKeep(boards, 2).map((entry) => entry.id)).toEqual(kept);
   });
 });

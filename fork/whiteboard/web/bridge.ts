@@ -10,6 +10,7 @@ let chatListener: Listener | undefined;
 let highlightListener: Listener | undefined;
 let hoverListener: HoverListener | undefined;
 let readyListener: (() => void) | undefined;
+let visibleListener: ((visible: boolean) => void) | undefined;
 let latestChatRef: string | undefined;
 // ?room=<slug> opens that room directly, which is how the wb tools and links to a project board arrive.
 // Otherwise the page starts on the room the chat last reported, which is usually the one it reports again.
@@ -70,4 +71,13 @@ export function boardReady(): void {
 
 export function onBoardReady(cb: () => void): void {
   readyListener = cb;
+}
+
+// T3 keeps a panel board loaded while its tab is hidden, and says when it is shown or hidden.
+export function setBoardVisible(visible: boolean): void {
+  visibleListener?.(visible);
+}
+
+export function onBoardVisible(cb: (visible: boolean) => void): void {
+  visibleListener = cb;
 }

@@ -20,7 +20,7 @@ export function isBoardOffered(input: {
   );
 }
 
-/** A message is the board's only from this origin and from the registered frame's window. */
+/** A message is the board's only from this origin and from that board frame's window. */
 export function isFromBoardFrame(input: {
   readonly origin: string;
   readonly ownOrigin: string;
@@ -55,7 +55,7 @@ export function deliverableHighlight(
     : null;
 }
 
-/** A frame mounting or unmounting for one thread drops a highlight waiting for another. */
+/** Showing a board for one thread drops a highlight waiting for another. */
 export function keepPendingFor(
   pending: PendingHighlight | null,
   threadKey: string,
@@ -98,4 +98,16 @@ interface RectLike {
 /** Where the hover arrow starts, in the frame's viewport: the chip's left edge at mid height. */
 export function hoverOriginInFrame(chip: RectLike, frame: RectLike): { x: number; y: number } {
   return { x: chip.left - frame.left, y: chip.top + chip.height / 2 - frame.top };
+}
+
+/**
+ * The live boards to keep, given most recently shown first: the shown board always, and a hidden
+ * one while its thread still lists the Whiteboard tab, `max` boards in all.
+ */
+export function liveBoardsToKeep<B extends { readonly shown: boolean; readonly listed: boolean }>(
+  mostRecentFirst: ReadonlyArray<B>,
+  max: number,
+): B[] {
+  let room = max - mostRecentFirst.filter((board) => board.shown).length;
+  return mostRecentFirst.filter((board) => board.shown || (board.listed && room-- > 0));
 }

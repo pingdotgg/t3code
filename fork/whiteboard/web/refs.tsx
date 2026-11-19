@@ -11,7 +11,14 @@ import {
   type Editor,
   type TLPageId,
 } from "tldraw";
-import { boardReady, onHighlight, onHover, sendRefToChat, type HoverOrigin } from "./bridge";
+import {
+  boardReady,
+  onBoardVisible,
+  onHighlight,
+  onHover,
+  sendRefToChat,
+  type HoverOrigin,
+} from "./bridge";
 import { cameraForRegion } from "./camera";
 
 type Region = { x: number; y: number; w: number; h: number };
@@ -29,6 +36,23 @@ export function markPresence() {
 }
 let highlightTimer: number | undefined;
 let areaNumber = 0; // Session-local names restart at Area 1 after a page refresh.
+
+// tldraw 5.3.2 has no public way to stop its draw loop, which runs every animation frame while
+// mounted; its private tick manager drives it. The store and sync schedule their own frames and
+// keep running, so a hidden board still saves and receives edits.
+type TickManager = { isPaused: boolean; start: () => void; cancelRaf?: (() => void) | null };
+function setDrawing(editor: Editor, on: boolean) {
+  const ticks = (editor as unknown as { _tickManager?: TickManager })._tickManager;
+  if (ticks === undefined) {
+    console.warn("whiteboard: tldraw has no _tickManager; a hidden board keeps drawing");
+    return;
+  }
+  if (on && ticks.isPaused) ticks.start();
+  if (!on) {
+    ticks.isPaused = true;
+    ticks.cancelRaf?.();
+  }
+}
 
 export const REGION_TOOL = "region-ref";
 // A region on a page other than the first names its page: board://p/<page id without "page:">/r/x,y,w,h.
@@ -105,6 +129,9 @@ export function RefsLayer() {
       if (!region) return;
       const page = refPage(editor, region);
       if (editor.getPage(page) && page !== editor.getCurrentPageId()) editor.setCurrentPage(page);
+      // tldraw refreshes its viewport size on a throttle; a board just shown in a pane of another
+      // size would frame the region for the old size.
+      editor.updateViewportScreenBounds(editor.getContainer());
       editor.setCamera(cameraForRegion(region, editor.getViewportScreenBounds(), 80), {
         animation: { duration: 250 },
       });
@@ -118,10 +145,24 @@ export function RefsLayer() {
       const here = region && refPage(editor, region) === editor.getCurrentPageId();
       hoverMark.set(here ? { ...region, mode: "hover", origin } : null);
     });
-    return react("board ready", () => {
+    let visible = true;
+    onBoardVisible((next) => {
+      visible = next;
+      setDrawing(editor, visible);
+    });
+    // The editor's own startup frame restarts the loop, possibly after a hide; pause it again.
+    const keepPaused = () => {
+      if (!visible) setDrawing(editor, false);
+    };
+    editor.on("tick", keepPaused);
+    const stopReady = react("board ready", () => {
       const view = editor.getViewportScreenBounds();
       if (view.w > 0 && view.h > 0) boardReady();
     });
+    return () => {
+      editor.off("tick", keepPaused);
+      stopReady();
+    };
   }, [editor]);
   const view = editor.getViewportScreenBounds();
   const toScreen = (region: Region) => {

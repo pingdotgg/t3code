@@ -4,6 +4,7 @@ import {
   hoverRegion,
   onBoardReady,
   onRefToChat,
+  setBoardVisible,
   type HoverOrigin,
 } from "./bridge";
 
@@ -28,6 +29,8 @@ export function startPanelHost(): void {
     pendingHighlight = undefined;
     toParent({ type: "wb-ready" });
   });
+  // A reload (such as after a board code change) must make T3 wait for this page's next wb-ready.
+  window.addEventListener("pagehide", () => toParent({ type: "wb-unload" }));
 
   window.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (
@@ -38,13 +41,22 @@ export function startPanelHost(): void {
       event.data === null
     )
       return;
-    const { type, ref, origin } = event.data as { type?: unknown; ref?: unknown; origin?: unknown };
+    const { type, ref, origin, visible } = event.data as {
+      type?: unknown;
+      ref?: unknown;
+      origin?: unknown;
+      visible?: unknown;
+    };
     if (type === "wb-highlight" && typeof ref === "string") {
       if (ready) highlightRegion(ref);
       else pendingHighlight = ref;
     }
     if (type === "wb-hover" && (typeof ref === "string" || ref === null))
       hoverRegion(ref, isOrigin(origin) ? origin : undefined);
+    if (type === "wb-visible" && typeof visible === "boolean") {
+      if (!visible) hoverRegion(null);
+      setBoardVisible(visible);
+    }
   });
 
   onRefToChat((ref) => toParent({ type: "wb-insert-ref", ref }));

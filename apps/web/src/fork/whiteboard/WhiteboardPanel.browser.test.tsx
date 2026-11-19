@@ -169,4 +169,65 @@ describe("WhiteboardPanel", () => {
       closeWhiteboardTab(threadRef);
     },
   );
+
+  it("shows its board again when its sheet reopens before it is removed", async () => {
+    const threadRef = setup("reopen");
+    await using screen = await render(<Panes at="left" threadRef={threadRef} sheet />, {
+      router: false,
+    });
+    const board = await loadedBoard(screen.container);
+    useRightPanelStore.getState().close(threadRef);
+    expect(shownFrame(screen.container)).toBeNull();
+    useRightPanelStore.getState().open(threadRef, "whiteboard");
+    expect(shownFrame(screen.container)?.contentWindow).toBe(board);
+    closeWhiteboardTab(threadRef);
+  });
+
+  it("leaves its board unloaded when the sheet opens again after its last tab closed", async () => {
+    const threadRef = setup("evicted");
+    await using screen = await render(<Panes at="left" threadRef={threadRef} sheet />, {
+      router: false,
+    });
+    const frame = shownFrame(screen.container)!;
+    await loadedBoard(screen.container);
+    closeWhiteboardTab(threadRef);
+    useRightPanelStore.getState().toggleVisibility(threadRef);
+    expect(frame.isConnected).toBe(false);
+  });
+
+  it("holds a link for a board page that reloads until that page is ready again", async () => {
+    const threadRef = setup("reload");
+    await using screen = await render(<Panes at="left" threadRef={threadRef} />, { router: false });
+    const board = await loadedBoard(screen.container);
+    await expect.element(screen.getByText("Loading board...")).not.toBeInTheDocument();
+    (board as Window & { eval: (code: string) => void }).eval(
+      'parent.postMessage({ type: "wb-unload" }, location.origin)',
+    );
+    await expect.element(screen.getByText("Loading board...")).toBeInTheDocument();
+    showBoardRef("board://r/5,6,7,8", threadRef);
+    // Messages from one window arrive in order, so a highlight sent now would arrive before this.
+    board.postMessage({ type: "probe" }, location.origin);
+    await vi.waitFor(() => expect(board.received).toContainEqual({ type: "probe" }));
+    expect(board.received!.filter(isNotAHoverEnd)).toEqual([{ type: "probe" }]);
+    board.received = [];
+
+    (board as Window & { eval: (code: string) => void }).eval(
+      'parent.postMessage({ type: "wb-ready" }, location.origin)',
+    );
+    await vi.waitFor(() =>
+      expect(board.received).toEqual([{ type: "wb-highlight", ref: "board://r/5,6,7,8" }]),
+    );
+    closeWhiteboardTab(threadRef);
+  });
+
+  it("unloads its board when the Whiteboard tab closes", async () => {
+    const threadRef = setup("close");
+    await using screen = await render(<Panes at="left" threadRef={threadRef} />, { router: false });
+    const frame = shownFrame(screen.container)!;
+    await loadedBoard(screen.container);
+    await screen.rerender(<Panes at={null} threadRef={threadRef} />);
+
+    closeWhiteboardTab(threadRef);
+    expect(frame.isConnected).toBe(false);
+  });
 });
