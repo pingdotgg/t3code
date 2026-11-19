@@ -39,12 +39,6 @@ export function deviceHostConnectionKey(host: SshDeviceHostConfig) {
   return JSON.stringify([host.target.trim(), host.port, host.identityFile?.trim() || undefined]);
 }
 
-export function hasPendingDeviceHostChecks(
-  results: Readonly<Record<string, DeviceHostCheck>> | undefined,
-) {
-  return Object.values(results ?? {}).some((check) => check.status === "pending");
-}
-
 export async function checkDeviceHostConnections(
   targets: ReadonlyArray<DeviceHostCheckTarget>,
   host: SshDeviceHostConfig,

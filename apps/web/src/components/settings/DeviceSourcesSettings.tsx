@@ -32,7 +32,6 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { incompleteListings } from "../device/DeviceSetup";
-import { deviceHostConnectionKey, hasPendingDeviceHostChecks } from "./deviceHostConnectionChecks";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import {
   updateDeviceHosts,
@@ -171,9 +170,6 @@ export function DeviceSourcesSettings(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [editing, setEditing] = useState<Editing | null>(null);
   const [busy, setBusy] = useState(false);
-  const [checkingRows, setCheckingRows] = useState<
-    ReadonlyMap<string, ReadonlyMap<EnvironmentId, string>>
-  >(() => new Map());
   const label = (environment: (typeof environments)[number]) =>
     settingsScopeEnvironmentLabel(environment, environments);
   const targets = environments.map((environment) => ({
@@ -181,7 +177,7 @@ export function DeviceSourcesSettings(props: {
     label: label(environment),
     connected: environment.connection.phase === "connected",
   }));
-  const { checks, testConnection } = useHostConnectionChecks(targets);
+  const { testConnection } = useHostConnectionChecks(targets);
   const ids = connectedEnvironments.map((environment) => environment.environmentId);
   const results = useAtomValue(deviceHostStatesAtom(environmentIdsKey(ids)));
   const members = connectedEnvironments.map((environment, index) => {
@@ -328,19 +324,20 @@ export function DeviceSourcesSettings(props: {
       gt("Simlock host not removed everywhere"),
     );
 
+  const [testingHosts, setTestingHosts] = useState<ReadonlySet<string>>(new Set());
   const testSsh = async ({ host, members }: DeviceHostGroup) => {
     const check = testConnection(host);
     if (!check) return;
-    const connectionKey = deviceHostConnectionKey(host);
-    const savedHosts = new Map(members.map((member) => [member.environmentId, member.host.id]));
-    setCheckingRows((current) => new Map(current).set(connectionKey, savedHosts));
-    const checked = await check.finally(() => {
-      setCheckingRows((current) => {
-        const next = new Map(current);
-        next.delete(connectionKey);
+    // Every member's id, so the row that remains after an environment drops out stays pending.
+    const ids = members.map((member) => member.host.id);
+    setTestingHosts((current) => new Set([...current, ...ids]));
+    const checked = await check.finally(() =>
+      setTestingHosts((current) => {
+        const next = new Set(current);
+        for (const id of ids) next.delete(id);
         return next;
-      });
-    });
+      }),
+    );
     const failed = targets.filter((target) => checked[target.environmentId]?.status === "failed");
     toastManager.add({
       type: failed.length ? "error" : "success",
@@ -442,31 +439,12 @@ export function DeviceSourcesSettings(props: {
         members: [{ environmentId: member.environmentId, label: member.label, host }],
       })),
     );
-  const testingGroups = new Set<DeviceHostGroup>();
-  for (const [connectionKey, savedHosts] of checkingRows) {
-    if (!hasPendingDeviceHostChecks(checks[connectionKey])) continue;
-    // If a group splits, follow the first surviving saved host from the initiating row.
-    for (const [environmentId, hostId] of savedHosts) {
-      const group = sshGroups.find(
-        (candidate) =>
-          deviceHostConnectionKey(candidate.host) === connectionKey &&
-          candidate.members.some(
-            (member) => member.environmentId === environmentId && member.host.id === hostId,
-          ),
-      );
-      if (group) {
-        testingGroups.add(group);
-        break;
-      }
-    }
-  }
   for (const group of sshGroups) {
     const host = group.host;
     const holders = new Set(group.members.map((member) => member.environmentId));
-    const rowKey = `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`;
-    const testing = testingGroups.has(group);
+    const testing = group.members.some((member) => testingHosts.has(member.host.id));
     rows.push({
-      key: rowKey,
+      key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
       title: host.label,
       kind: "SSH",
