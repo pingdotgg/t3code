@@ -627,6 +627,33 @@ describe("AssetAccess", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  // Agents on Windows copy paths from Git Bash, which prints `C:\x` as `/c/x`.
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "resolves a Git Bash drive media path on Windows",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-media-gitbash-" });
+        const canonicalFile = path.join(yield* fs.realPath(workspaceRoot), "shot.png");
+        yield* fs.writeFile(canonicalFile, screenshotPng);
+        const gitBashPath = `/${canonicalFile[0]!.toLowerCase()}${canonicalFile.slice(2).replaceAll("\\", "/")}`;
+
+        for (const resource of [
+          { _tag: "media-file", threadId: ThreadId.make("thread-1"), path: gitBashPath },
+          { _tag: "draft-workspace-file", cwd: workspaceRoot, path: gitBashPath },
+        ] as const) {
+          const result = yield* issueAssetUrl({ resource, workspaceRoot });
+          expect(result.imageDimensions).toEqual({ width: 390, height: 844 });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const separator = suffix.indexOf("/");
+          expect(
+            yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1)),
+          ).toMatchObject({ kind: "file", path: canonicalFile, mimeType: "image/png" });
+        }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   // Resolving `file://attacker.test/share/cat.jpg` from an agent's markdown sent the
   // Windows user's NTLM credentials to attacker.test.
   it.effect("never resolves a network media path outside the thread's project", () =>
@@ -1059,10 +1086,12 @@ describe("AssetAccess", () => {
       expect(yield* resolveAsset(token, "report.html")).toEqual({
         kind: "file",
         path: canonicalHtmlPath,
+        renderIntent: "file-preview",
       });
       expect(yield* resolveAsset(token, "report.css")).toEqual({
         kind: "file",
         path: canonicalCssPath,
+        renderIntent: "file-preview",
       });
       yield* fileSystem.makeDirectory(path.join(root, "clips"));
       for (const mediaName of ["clips/clip.mp4", "clips/clip.webm", "clips/clip.mp3"]) {
@@ -1087,6 +1116,7 @@ describe("AssetAccess", () => {
           expect(yield* resolveAsset(suffix.slice(0, suffix.indexOf("/")), fontName)).toEqual({
             kind: "file",
             path: canonicalFontPath,
+            renderIntent: "file-preview",
           });
         }
       }

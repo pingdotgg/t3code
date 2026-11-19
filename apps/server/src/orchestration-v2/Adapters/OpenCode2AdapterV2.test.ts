@@ -330,6 +330,7 @@ const resumed = (
     readonly lastRunOrdinal?: number;
     readonly pendingBackgroundTasks?: OrchestrationV2ProviderThread["pendingBackgroundTasks"];
     readonly goal?: OrchestrationV2ProviderThread["goal"];
+    readonly contextUsage?: OrchestrationV2ProviderThread["contextUsage"];
     readonly external?: boolean;
     readonly supervised?: boolean;
     readonly processExit?: Effect.Effect<void>;
@@ -398,6 +399,7 @@ const resumed = (
           ? {}
           : { lastRunOrdinal: options.lastRunOrdinal }),
         ...(options?.goal === undefined ? {} : { goal: options.goal }),
+        ...(options?.contextUsage === undefined ? {} : { contextUsage: options.contextUsage }),
         ...(options?.pendingBackgroundTasks === undefined
           ? {}
           : { pendingBackgroundTasks: options.pendingBackgroundTasks }),
@@ -506,6 +508,52 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         }),
       );
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+    }),
+  );
+
+  it.effect("drops context usage carried over from before a completed compaction", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+          promptAccepted,
+          event("session.step.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            finish: "stop",
+            cost: 0,
+            tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+          }),
+          event("session.compaction.started", { sessionID: SESSION, reason: "manual", recent: "" }),
+          event("session.compaction.ended", {
+            sessionID: SESSION,
+            reason: "manual",
+            text: "Summary",
+            recent: "",
+          }),
+          event("session.execution.succeeded", { sessionID: SESSION }),
+        ],
+        { contextUsage: { usedTokens: 150_000, maxTokens: 160_000 } },
+      );
+      assert.equal(thread.contextUsage?.usedTokens, 150_000);
+      const collected = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const seen = yield* Fiber.join(collected);
+      const usage = seen.flatMap((event) =>
+        event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
+      );
+      assert.isNull(usage.at(-1));
+      const settled = seen.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
+      );
     }),
   );
 
@@ -3554,6 +3602,38 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
+  // regression: #39120 a live owned server failed after five stalled event subscriptions
+  it.effect("keeps owned work through more than five stalled event subscriptions", () =>
+    Effect.gen(function* () {
+      let subscriptions = 0;
+      const [exit, ...restored] = reconnected({}, "succeeded");
+      const { runtime, thread } = yield* resumed(
+        [
+          out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+          promptAccepted,
+          exit!,
+          ...Array.from({ length: 5 }, () => out("event.subscribe")),
+          ...restored,
+        ],
+        {
+          beforeResponse: (path) =>
+            path === "/api/event"
+              ? Effect.suspend(() => {
+                  subscriptions += 1;
+                  return subscriptions >= 2 && subscriptions <= 6 ? Effect.never : Effect.void;
+                })
+              : Effect.void,
+        },
+      );
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn(turnInput(thread));
+      // Each stalled subscription waits out its 10s deadline before the next attempt.
+      for (let attempt = 0; attempt < 8; attempt++) yield* TestClock.adjust("15 seconds");
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
+      assert.equal(subscriptions, 7);
+    }),
+  );
+
   it.effect("reconciles a session deleted after the active snapshot", () =>
     Effect.gen(function* () {
       const otherId = "ses_other_stalled_session";
@@ -4721,7 +4801,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             event("session.execution.succeeded", { sessionID: SESSION }),
             { type: "runtime_exit", status: "success" },
           ],
-          { borrowers },
+          // A live owned server is retried until it answers; only an external one runs out of attempts.
+          { borrowers, external: true },
         );
         const events = yield* runtime.events.pipe(Stream.runCollect, Effect.forkScoped);
         yield* runtime.startTurn(withLineage(thread));

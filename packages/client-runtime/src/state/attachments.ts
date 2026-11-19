@@ -7,6 +7,8 @@ import {
   type EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -203,18 +205,31 @@ export function clampFileAttachmentUploadBytes(advertisedMaxUploadBytes: number)
   return Math.min(advertisedMaxUploadBytes, PROVIDER_SEND_TURN_MAX_FILE_BYTES);
 }
 
-export function formatAttachmentSize(sizeBytes: number): string {
+export function formatAttachmentSize(
+  sizeBytes: number,
+  resolve: MFunctionType = mFallback,
+): string {
   const kilobytes = Math.max(1, Math.ceil(sizeBytes / 1024));
   // Pick the unit after rounding, so 1023.5 KB reads "1.0 MB", not "1024 KB".
-  return kilobytes >= 1024 ? `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB` : `${kilobytes} KB`;
+  return kilobytes >= 1024
+    ? resolve(msg("{size} MB", { size: (sizeBytes / (1024 * 1024)).toFixed(1) }))
+    : resolve(msg("{size} KB", { size: kilobytes }));
 }
 
-export function fileAttachmentTooLargeMessage(name: string, maxUploadBytes: number): string {
-  const maxUploadSize =
+export function fileAttachmentTooLargeMessage(
+  name: string,
+  maxUploadBytes: number,
+  resolve: MFunctionType = mFallback,
+): string {
+  const size =
     maxUploadBytes >= 1024 * 1024 && maxUploadBytes % (1024 * 1024) === 0
-      ? `${maxUploadBytes / (1024 * 1024)} MB`
+      ? resolve(msg("{count} MB", { count: maxUploadBytes / (1024 * 1024) }))
       : maxUploadBytes >= 1024 && maxUploadBytes % 1024 === 0
-        ? `${maxUploadBytes / 1024} KB`
-        : `${maxUploadBytes} ${maxUploadBytes === 1 ? "byte" : "bytes"}`;
-  return `'${name}' exceeds the ${maxUploadSize} attachment limit.`;
+        ? resolve(msg("{count} KB", { count: maxUploadBytes / 1024 }))
+        : resolve(
+            msg("{count, plural, one {{count} byte} other {{count} bytes}}", {
+              count: maxUploadBytes,
+            }),
+          );
+  return resolve(msg("''{name}'' exceeds the {size} attachment limit.", { name, size }));
 }
