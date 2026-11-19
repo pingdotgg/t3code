@@ -11,6 +11,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -30,6 +31,7 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import * as ModelManifest from "./ModelManifest.ts";
 import { applyProviderCompatibility } from "./providerCompatibility.ts";
 import * as ServerConfig from "../config.ts";
+import { refreshWindowsPath } from "../os-jank.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderInstanceRegistryMutator from "./ProviderInstanceRegistryMutator.ts";
 import {
@@ -262,8 +264,16 @@ const mergeProviderModels = (
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const unavailableSubProviders = new Set(
+    provider.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [] : [subProvider.name],
+    ),
+  );
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+    (model) =>
+      !model.isCustom &&
+      !updateRequiredSlugs.has(model.slug) &&
+      !unavailableSubProviders.has(model.subProvider ?? ""),
   );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
@@ -699,6 +709,25 @@ export const layer = Layer.effect(
     });
 
     type RefreshAllCompletion = Deferred.Deferred<ReadonlyArray<ServerProvider>>;
+    // A refresh is how a user asks T3 to see a CLI installed since launch; a burst shares one probe.
+    // Drivers copy the environment when built, so instances still missing their CLI are rebuilt
+    // on the new PATH. They cannot have live sessions, and installed ones keep theirs.
+    const refreshHostPath = yield* refreshWindowsPath().pipe(
+      Effect.flatMap((changed) =>
+        changed
+          ? Ref.get(providersRef).pipe(
+              Effect.flatMap((providers) =>
+                instanceRegistryMutator.rebuild(
+                  providers
+                    .filter((provider) => provider.enabled && !provider.installed)
+                    .map((provider) => provider.instanceId),
+                ),
+              ),
+            )
+          : Effect.void,
+      ),
+      Effect.cachedWithTTL(Duration.seconds(10)),
+    );
     const refreshAllInFlightRef = yield* Ref.make<Option.Option<RefreshAllCompletion>>(
       Option.none(),
     );
@@ -707,6 +736,7 @@ export const layer = Layer.effect(
     const probedManifestUpdatedAt = yield* Ref.make(initialManifest.updatedAt);
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
+      yield* refreshHostPath;
       const claimed = yield* Ref.modify(
         refreshAllInFlightRef,
         (
@@ -754,16 +784,13 @@ export const layer = Layer.effect(
       if (provider === undefined) {
         return yield* refreshAll();
       }
-      const instance = (yield* Ref.get(liveSubsRef)).get(defaultInstanceIdForDriver(provider));
-      if (!instance) {
-        return yield* Ref.get(providersRef);
-      }
-      return yield* refreshOneSource(instance);
+      return yield* refreshInstance(defaultInstanceIdForDriver(provider));
     });
 
     const refreshInstance = Effect.fn("refreshInstance")(function* (
       instanceId: ProviderInstanceId,
     ) {
+      yield* refreshHostPath;
       yield* syncLiveSourcesAndContinue;
       const instance = (yield* Ref.get(liveSubsRef)).get(instanceId);
       if (!instance) {

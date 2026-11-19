@@ -23,14 +23,15 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
-import type * as Tracer from "effect/Tracer";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Statement from "effect/sql/Statement";
 import {
@@ -1251,19 +1252,35 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     });
     const parent = yield* projections.getThreadProjection(parentThreadId);
     const parentRun = parent.runs[0]!;
-    yield* orchestrator.dispatch({
-      type: "delegated_task.request",
-      commandId: CommandId.make("delegate-parent-pr"),
-      parentThreadId,
-      parentRunId: parentRun.id,
-      parentNodeId: parentRun.rootNodeId!,
-      task: "Review the changes",
-      modelSelection,
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      createdBy: "agent",
-      creationSource: "mcp",
+    const failedSpans: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (Exit.isFailure(exit)) failedSpans.push(span.name);
+        };
+        return span;
+      },
     });
+    yield* orchestrator
+      .dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate-parent-pr"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Review the changes",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+      })
+      .pipe(Effect.withTracer(tracer));
+    // The child thread is created by this command; a failed span here reads as an error in traces.
+    assert.deepEqual(failedSpans, []);
     const updatedParent = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(updatedParent.subagents[0]!.modelSelection, modelSelection);
     const childThreadId = updatedParent.subagents[0]!.childThreadId!;
@@ -1880,7 +1897,21 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
         ref: { driver: adapter.driver, nativeId: "native-original", strength: "strong" },
       },
     } as const;
-    yield* orchestrator.dispatch(create);
+    const failedSpans: Array<string> = [];
+    const tracer = Tracer.make({
+      span(options) {
+        const span = new Tracer.NativeSpan(options);
+        const end = span.end.bind(span);
+        span.end = (time, exit) => {
+          end(time, exit);
+          if (Exit.isFailure(exit)) failedSpans.push(span.name);
+        };
+        return span;
+      },
+    });
+    yield* orchestrator.dispatch(create).pipe(Effect.withTracer(tracer));
+    // The id check expects a miss; a failed span there reads as an error in Tempo.
+    assert.deepEqual(failedSpans, []);
     if (deleted) {
       yield* orchestrator.dispatch({
         type: "thread.delete",
@@ -2119,6 +2150,166 @@ it.effect("starts and finishes a delegated task without reading the parent's his
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
     assert.isAtMost(readSteps(), shortSteps * 1.1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("records a secret and a link card without reading the thread's history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:long-cards");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-cards"),
+      threadId,
+      projectId: ProjectId.make("project:long-cards"),
+      title: "Cards",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-long-cards"),
+      threadId,
+      messageId: MessageId.make("message:long-cards"),
+      text: "Ask for a token and a link",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:long-cards");
+    yield* projections.apply({
+      id: EventId.make("event:long-cards:provider-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
+    const cardSpans = [
+      "orchestrationV2.dispatch.secretRequestRecord",
+      "orchestrationV2.dispatch.linkRequestRecord",
+    ];
+    const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const recordStatements = Effect.provideService(
+      Statement.CurrentTransformer,
+      (statement, _make, _fiber, span) => {
+        for (
+          let parent = Option.some<Tracer.AnySpan>(span);
+          Option.isSome(parent) && parent.value._tag === "Span";
+          parent = parent.value.parent
+        ) {
+          if (cardSpans.includes(parent.value.name)) {
+            statements.push(statement.compile());
+            break;
+          }
+        }
+        return Effect.succeed(statement);
+      },
+    );
+    const card = {
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      reason: "Needed for the work",
+    };
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "secret_request.record",
+        commandId: CommandId.make("record-long-cards:secret"),
+        turnItemId: TurnItemId.make("item:long-cards:secret"),
+        label: "Token",
+        secretStatus: "pending",
+      })
+      .pipe(recordStatements);
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "link_request.record",
+        commandId: CommandId.make("record-long-cards:link"),
+        turnItemId: TurnItemId.make("item:long-cards:link"),
+        url: "https://example.test",
+        linkStatus: "pending",
+      })
+      .pipe(recordStatements);
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["secret_request", "link_request"],
+    });
+    assert.deepEqual(
+      turnItems.map((item) => [item.type, item.providerTurnId]),
+      [
+        ["secret_request", providerTurnId],
+        ["link_request", providerTurnId],
+      ],
+    );
+
+    // A card reads its own run, so the rows and VM steps of its reads, which are deterministic,
+    // must stay flat on a copy where the thread has thousands of older runs.
+    const copyPath = "file:/card-reads?vfs=memdb";
+    using copy = new NodeSqlite.DatabaseSync(copyPath);
+    yield* sql`VACUUM INTO ${copyPath}`;
+    const replay = () =>
+      statements
+        .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
+        .reduce(
+          (total, [query, params]) => {
+            const statement = copy.prepare(query);
+            const rows = statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+            return {
+              rows: total.rows + rows.length,
+              steps: total.steps + statement.stat("vmStep"),
+            };
+          },
+          { rows: 0, steps: 0 },
+        );
+    const short = replay();
+    const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+      ["runs", "run_id", []],
+      ["run_attempts", "attempt_id", ["run_id"]],
+      ["nodes", "node_id", ["run_id"]],
+      ["provider_turns", "provider_turn_id", ["run_attempt_id"]],
+    ];
+    for (const [table, key, renamed] of history) {
+      const name = `orchestration_v2_projection_${table}`;
+      const columns = copy
+        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
+        .all()
+        .map((column) => String(column.name));
+      const values = columns.map((column) =>
+        column === key || renamed.includes(column)
+          ? `${column} || ':history:' || history.n`
+          : column === "ordinal"
+            ? "ordinal + history.n"
+            : column,
+      );
+      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 2000)
+        INSERT INTO ${name} (${columns.join(", ")})
+        SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
+    }
+    const long = replay();
+    assert.equal(long.rows, short.rows);
+    assert.isAtMost(long.steps, short.steps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 

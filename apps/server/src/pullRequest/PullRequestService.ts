@@ -1092,10 +1092,12 @@ export const make = Effect.gen(function* () {
                   !readable.readsPublicHostWithoutCheckout &&
                   readable.servesHost?.(host) !== false
                 ) {
-                  return yield* new PullRequestUnavailableError({
-                    reason: "repository-without-project",
-                    repository,
-                  });
+                  // Without repository keys, any checkout on the host routes the read.
+                  return yield* new PullRequestUnavailableError(
+                    readable.repositoryKey === undefined
+                      ? { reason: "repository-without-project", host }
+                      : { reason: "repository-without-project", repository },
+                  );
                 }
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
@@ -1926,6 +1928,10 @@ export const make = Effect.gen(function* () {
             updatedAt: changeRequest.updatedAt,
             observedAt,
             mergedAt: changeRequest.mergedAt,
+            ...(changeRequest.mergeCommitSha
+              ? { mergeCommitSha: changeRequest.mergeCommitSha }
+              : {}),
+            ...(changeRequest.mergedBy ? { mergedBy: changeRequest.mergedBy } : {}),
             closedAt: changeRequest.closedAt,
             reviewers: changeRequest.reviewers,
             labels: changeRequest.labels,

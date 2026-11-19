@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as TestClock from "effect/testing/TestClock";
 
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
@@ -42,17 +43,28 @@ it.layer(NodeServices.layer)("makeKimiPromptOutcomeWatch", (it) => {
       // An earlier turn's failure is history, not this prompt's outcome.
       yield* fileSystem.writeFileString(wire, failedTurn(0));
       const append = (text: string) => fileSystem.writeFileString(wire, text, { flag: "a" });
-      const watch = yield* makeKimiPromptOutcomeWatch(home);
+      // Signals once a poll has closed the log, so the check is already waiting for its next poll.
+      const polls = yield* Queue.unbounded<void>();
+      const watch = yield* makeKimiPromptOutcomeWatch(home).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          open: (path, options) =>
+            Effect.addFinalizer(() => Queue.offer(polls, undefined)).pipe(
+              Effect.andThen(fileSystem.open(path, options)),
+            ),
+        }),
+      );
 
       const completed = yield* watch(SESSION_ID);
       yield* append(completedTurn(1));
       assert.isUndefined(yield* completed(endTurn));
+      yield* Queue.take(polls);
 
       // Kimi answers the prompt before `turn.ended` reaches disk.
       const failed = yield* watch(SESSION_ID);
-      const pending = yield* failed(endTurn).pipe(Effect.forkChild);
       yield* append(failedTurn(2).slice(0, 40));
-      yield* TestClock.adjust("50 millis");
+      const pending = yield* failed(endTurn).pipe(Effect.forkChild);
+      yield* Queue.take(polls);
       yield* append(failedTurn(2).slice(40));
       yield* TestClock.adjust("50 millis");
       assert.deepStrictEqual(yield* Fiber.join(pending), {

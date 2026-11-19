@@ -76,6 +76,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         deletions: 0,
         changedFiles: 0,
         mergedAt: null,
+        mergeCommit: null,
+        mergedBy: null,
         closedAt: null,
         isCrossRepository: false,
         maintainerCanModify: true,
@@ -2166,6 +2168,60 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect("lists the repository when GitHub's search answers with a bad gateway", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          matches(call, "PullRequestSearch")
+            ? output('{"message":"Server Error"}', false, false, {}, 502)
+            : output(listedPullRequests(2, 1)),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
+    }),
+  );
+
+  it.effect("fails a text search GitHub answers with a bad gateway, not with unfiltered rows", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          matches(call, "PullRequestSearch")
+            ? output('{"message":"Server Error"}', false, false, {}, 502)
+            : output(listedPullRequests(2, 1)),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const error = yield* Effect.flip(
+        cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: "all",
+          viewer: "bilal",
+          limit: 10,
+          query: "flaky",
+        }),
+      );
+
+      expect(error).toMatchObject({ _tag: "GitHubApiResponseError", status: 502 });
+      assert.isFalse(mockedExecute.mock.calls.some(([call]) => matches(call, "PullRequestList")));
+    }),
+  );
+
   it.effect("keeps state and involvement filters on the search-free fallback", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
@@ -3133,7 +3189,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       expect(diff.patch).toContain("diff --git a/src/file2.ts b/src/file2.ts");
       assert.strictEqual(callAt(1).host, "github.acme.dev");
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
     }),
   );
 
@@ -3167,7 +3223,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("hands back a cursor for the next page rather than walking on by itself", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(30, 0))));
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
 
       const diff = yield* cli.getPullRequestDiff({
@@ -3222,7 +3278,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       assert.strictEqual(
         pathAt(0),
-        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=100&page=1",
+        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=30&page=1",
       );
     }),
   );
@@ -4047,7 +4103,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
         number: 7,
       });
 
-      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=100&page=1");
+      assert.strictEqual(pathAt(1), "repos/acme/web/pulls/7/files?per_page=30&page=1");
       expect(slice.patch).toContain("src/file1.ts");
       expect(slice.patch).not.toContain("diff --git a/a b/a");
       assert.isTrue(slice.withheldFilesReadable);

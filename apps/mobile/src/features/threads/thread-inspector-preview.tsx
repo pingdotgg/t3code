@@ -1,10 +1,12 @@
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { useGT } from "gt-react-native";
 import { type ReactNode } from "react";
 import { View } from "react-native";
 
 import { AppBar } from "../../components/ui/AppBar";
 import { SheetHeader } from "../../components/ui/SheetHeader";
+import { LocalPreviewScreen } from "../browser/LocalPreviewRouteScreen";
 import { DevicePreviewScreen } from "../devices/DevicePreviewRouteScreen";
 import {
   WorkspaceContentWidthContext,
@@ -24,6 +26,7 @@ export type ThreadInspectorPresentation =
 export function ThreadInspectorHeader(
   props: ThreadInspectorPresentation & { readonly title: string; readonly subtitle?: string },
 ) {
+  const gt = useGT();
   if ("onMaximize" in props) {
     return (
       <AppBar
@@ -31,7 +34,7 @@ export function ThreadInspectorHeader(
         subtitle={props.subtitle}
         actions={[
           {
-            accessibilityLabel: "Maximize thread",
+            accessibilityLabel: gt("Maximize thread"),
             icon: "arrow.up.left.and.arrow.down.right",
             onPress: props.onMaximize,
           },
@@ -44,7 +47,7 @@ export function ThreadInspectorHeader(
       title={props.title}
       subtitle={props.subtitle}
       onClose={props.onClose}
-      accessibilityLabel="Close thread"
+      accessibilityLabel={gt("Close thread")}
     />
   );
 }
@@ -85,7 +88,21 @@ export function ThreadInspectorPreview(props: {
   return (
     <ThreadInspectorNavigationContext value={props.onOpen}>
       <InspectorContentScope>
-        {target.type === "device" ? (
+        {target.type === "localPreview" && target.url ? (
+          <LocalPreviewScreen
+            key={`${target.environmentId}:${target.url}`}
+            environmentId={EnvironmentId.make(target.environmentId)}
+            url={target.url}
+            onClose={props.onClose}
+            onMaximize={(url) => {
+              props.onOpen({ ...target, url });
+              navigation.navigate("ThreadLocalPreview", {
+                environmentId: target.environmentId,
+                url,
+              });
+            }}
+          />
+        ) : target.type === "device" ? (
           <DevicePreviewScreen
             key={`${target.environmentId}:${target.threadId}`}
             environmentId={EnvironmentId.make(target.environmentId)}
