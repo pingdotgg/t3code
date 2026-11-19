@@ -6,8 +6,9 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { autoUpdater } from "electron-updater";
+import { autoUpdater, NsisUpdater } from "electron-updater";
 import type * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeModule from "node:module";
 import { vi } from "vite-plus/test";
 
@@ -45,6 +46,91 @@ const childProcess = NodeModule.createRequire(import.meta.url)("node:child_proce
     options: NodeChildProcess.SpawnOptions,
   ) => NodeChildProcess.ChildProcess;
 };
+
+describe("ElectronUpdater NSIS install", () => {
+  it.effect("marks only the installer it spawns directly, not the elevate.exe retry", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const resourcesPath = path.join("app", "resources");
+      const installerPath = path.join("updater", "pending", "T3-Code-Setup.exe");
+      const installDirectory = path.join("Program Files", "T3 Code");
+
+      const previousResourcesPath = Object.getOwnPropertyDescriptor(process, "resourcesPath");
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          Object.defineProperty(process, "resourcesPath", {
+            value: resourcesPath,
+            configurable: true,
+          }),
+        ),
+        () =>
+          Effect.sync(() => {
+            if (previousResourcesPath) {
+              Object.defineProperty(process, "resourcesPath", previousResourcesPath);
+            } else {
+              Reflect.deleteProperty(process, "resourcesPath");
+            }
+          }),
+      );
+
+      // The direct spawn fails the way a blocked installer does, so electron-updater retries it
+      // through elevate.exe. Neither launch starts a real process.
+      const spawns: Array<{ readonly command: string; readonly args: ReadonlyArray<string> }> = [];
+      const retried = yield* Deferred.make<void>();
+      const realSpawn = childProcess.spawn;
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          childProcess.spawn = (command, args) => {
+            spawns.push({ command, args: [...args] });
+            const direct = spawns.length === 1;
+            const child = Object.assign(new NodeEvents.EventEmitter(), {
+              pid: direct ? undefined : 4242,
+              unref: () => undefined,
+            });
+            if (direct) {
+              process.nextTick(() =>
+                child.emit("error", Object.assign(new Error("spawn EACCES"), { code: "EACCES" })),
+              );
+            } else {
+              Deferred.doneUnsafe(retried, Effect.void);
+            }
+            return child as unknown as NodeChildProcess.ChildProcess;
+          };
+          NodeModule.syncBuiltinESMExports();
+        }),
+        () =>
+          Effect.sync(() => {
+            childProcess.spawn = realSpawn;
+            NodeModule.syncBuiltinESMExports();
+          }),
+      );
+
+      const updater = new NsisUpdater();
+      updater.logger = null;
+      updater.installDirectory = installDirectory;
+      Object.assign(updater, {
+        downloadedUpdateHelper: {
+          file: installerPath,
+          packageFile: null,
+          downloadedFileInfo: { isAdminRightsRequired: false },
+        },
+      });
+      updater.quitAndInstall(true, true);
+      yield* Deferred.await(retried);
+
+      assert.deepStrictEqual(spawns, [
+        {
+          command: installerPath,
+          args: ["--updated", "--t3-direct-spawn", "/S", "--force-run", `/D=${installDirectory}`],
+        },
+        {
+          command: path.join(resourcesPath, "elevate.exe"),
+          args: [installerPath, "--updated", "/S", "--force-run", `/D=${installDirectory}`],
+        },
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
 
 describe.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "ElectronUpdater AppImage install",

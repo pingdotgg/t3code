@@ -1,3 +1,18 @@
+diff --git a/out/NsisUpdater.js b/out/NsisUpdater.js
+index 6fb70b4275a59741d28aecc389c2736909130a3e..026b18e1b7279a2355ad6fa96417dcfd346f8e06 100644
+--- a/out/NsisUpdater.js
++++ b/out/NsisUpdater.js
+@@ -128,7 +128,9 @@ class NsisUpdater extends BaseUpdater_1.BaseUpdater {
+             callUsingElevation();
+             return true;
+         }
+-        this.spawnLog(installerPath, args).catch((e) => {
++        // Only this direct child inherits the app's own token, so only it carries --t3-direct-spawn;
++        // the elevate.exe retry and the ENOENT shell route stay unmarked.
++        this.spawnLog(installerPath, [args[0], "--t3-direct-spawn", ...args.slice(1)]).catch((e) => {
+             // https://github.com/electron-userland/electron-builder/issues/1129
+             // Node 8 sends errors: https://nodejs.org/dist/latest-v8.x/docs/api/errors.html#errors_common_system_errors
+             const errorCode = e.code;
 diff --git a/out/electronHttpExecutor.js b/out/electronHttpExecutor.js
 index 0ae9e1126e1dc136977914ef1bfd46709fc9db1b..c298ffe7808c421c29e16f1e2ba8510f0cd31142 100644
 --- a/out/electronHttpExecutor.js

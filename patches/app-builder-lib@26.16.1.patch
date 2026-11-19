@@ -13,6 +13,23 @@ index 8a3462b185b078a260483635e6d774e2ece6e269..105778c145ab63a26444179215c643a7
              try {
                  await nsisUtil_1.UninstallerReader.exec(installerPath, uninstallerPath);
              }
+diff --git a/templates/nsis/common.nsh b/templates/nsis/common.nsh
+index 5050279d483a72410f4845502291bc8645272d17..8189846deacd9c49604a1c89c904a16ce100a52e 100644
+--- a/templates/nsis/common.nsh
++++ b/templates/nsis/common.nsh
+@@ -128,7 +128,11 @@ Name "${PRODUCT_NAME}" "${DoubleAmpersand}"
+     StrCpy $startAppArgs ""
+   ${endif}
+ 
+-  ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$startAppArgs"
++  !ifmacrodef customStartApp
++    !insertmacro customStartApp
++  !else
++    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$startAppArgs"
++  !endif
+ !macroend
+ 
+ !define LogSet "!insertmacro LogSetMacro"
 diff --git a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 --- a/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
 +++ b/templates/nsis/include/allowOnlyOneInstallerInstance.nsh
