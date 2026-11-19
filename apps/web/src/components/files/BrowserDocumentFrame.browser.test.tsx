@@ -307,6 +307,104 @@ it("keeps the chat in place when a label far from its hidden radio is clicked", 
   expect(scroller.scrollTop).toBe(scrollTop);
 });
 
+const scrollIntoViewPage = injectHtmlRenderBootstrap(`<!doctype html><html><head><style>
+  .fill { height: 1400px; }
+  .panel { height: 200px; overflow: auto; }
+  .card { height: 100px; overflow: hidden; }
+  .gap { height: 600px; }
+  .card .gap { height: 300px; }
+</style></head><body>
+  <nav id="top">Index</nav>
+  <div class="fill"></div>
+  <div class="panel" id="panel"><div class="gap"></div>
+    <div class="card" id="card"><div class="gap"></div><p id="deep">Deep</p></div>
+  </div>
+<script>
+  addEventListener("message", function(event) {
+    if (event.data?.type !== "scroll-into-view") return;
+    document.getElementById(event.data.id).scrollIntoView({ block: "nearest" });
+    parent.postMessage({
+      type: "scrolled",
+      id: event.data.id,
+      card: document.getElementById("card").scrollTop,
+      panel: document.getElementById("panel").scrollTop,
+      page: document.scrollingElement.scrollTop,
+    }, "*");
+  });
+</script></body></html>`);
+
+// Inline chat frames are fitted and contained; the expanded view keeps native scrolling, since
+// its dialog scroller is how the page's own navigation reaches a section.
+it.each([
+  { name: "a fitted inline frame", containScroll: true, fitted: true },
+  { name: "a fitted expanded frame", containScroll: false, fitted: true },
+  { name: "a capped inline frame", containScroll: true, fitted: false },
+])(
+  "scrolls only what it should when a page script scrolls into view in $name",
+  async (frameCase) => {
+    const src = URL.createObjectURL(new Blob([scrollIntoViewPage], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    const scroller = document.createElement("div");
+    scroller.style.cssText = "height: 400px; overflow: auto; width: 728px;";
+    const scrolled = vi.fn();
+    const messages = new AbortController();
+    using _messages = { [Symbol.dispose]: () => messages.abort() };
+    window.addEventListener(
+      "message",
+      (event) => {
+        if (event.data?.type === "scrolled") scrolled(event.data);
+      },
+      { signal: messages.signal },
+    );
+    const contentHeight = vi.fn((height: number) => {
+      if (frameCase.fitted) scroller.style.setProperty("--content-height", `${height}px`);
+    });
+    await using screen = await render(
+      <>
+        <style>{`iframe[title="Index"] {
+        display: block; width: 100%; height: var(--content-height, 300px); border: 0;
+      }`}</style>
+        <div style={{ height: 600 }} />
+        <HtmlRenderDocument
+          src={src}
+          title="Index"
+          containScroll={frameCase.containScroll}
+          onContentHeight={contentHeight}
+        />
+        <div style={{ height: 100 }} />
+      </>,
+      { container: scroller },
+    );
+
+    const frame = screen.getByTitle("Index").element() as HTMLIFrameElement;
+    await vi.waitFor(() => expect(contentHeight).toHaveBeenCalled());
+    if (frameCase.fitted) {
+      await vi.waitFor(() => expect(frame.getBoundingClientRect().height).toBeGreaterThan(1400));
+    }
+    scroller.scrollTop = scroller.scrollHeight;
+    const scrollTop = scroller.scrollTop;
+
+    frame.contentWindow?.postMessage({ type: "scroll-into-view", id: "deep" }, "*");
+    await vi.waitFor(() =>
+      expect(scrolled).toHaveBeenCalledWith(expect.objectContaining({ id: "deep" })),
+    );
+    const deep = scrolled.mock.lastCall?.[0];
+    // Every scroller inside the page moves, as the browser would: the clipped card, its panel,
+    // and in a capped frame the page itself.
+    expect(deep.card).toBeGreaterThan(0);
+    expect(deep.panel).toBeGreaterThan(0);
+    if (!frameCase.fitted) expect(deep.page).toBeGreaterThan(0);
+    expect(scroller.scrollTop).toBe(scrollTop);
+
+    frame.contentWindow?.postMessage({ type: "scroll-into-view", id: "top" }, "*");
+    await vi.waitFor(() =>
+      expect(scrolled).toHaveBeenCalledWith(expect.objectContaining({ id: "top" })),
+    );
+    if (frameCase.containScroll) expect(scroller.scrollTop).toBe(scrollTop);
+    else expect(scroller.scrollTop).toBeLessThan(scrollTop);
+  },
+);
+
 it("keeps the first and last selected card rings inside the fitted renderer frame", async () => {
   const html = injectHtmlRenderBootstrap(`<!doctype html><html><head><style>
     main { display: grid; gap: 12px; }

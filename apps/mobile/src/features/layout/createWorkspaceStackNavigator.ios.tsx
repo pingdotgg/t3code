@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import {
   createNavigatorFactory,
   NavigationContext,
@@ -224,6 +225,7 @@ function EmptyDetailHeader(props: { readonly onCompose: (() => void) | undefined
 function WorkspaceColumns(
   props: ViewProps & { readonly primary: Route; readonly detail: Route[] },
 ) {
+  const gt = useGT();
   const {
     layout,
     setPrimarySidebarVisible,
@@ -414,8 +416,9 @@ function WorkspaceColumns(
       showInspector={inspector.visible}
       onInspectorHide={hideInspector}
       columnMetrics={{
-        minimumPrimaryColumnWidth: 280,
-        maximumPrimaryColumnWidth: Math.max(380, primaryColumnWidth),
+        minimumPrimaryColumnWidth: layout.variant === "medium" ? primaryColumnWidth : 280,
+        maximumPrimaryColumnWidth:
+          layout.variant === "medium" ? primaryColumnWidth : Math.max(380, primaryColumnWidth),
         preferredPrimaryColumnWidthOrFraction: primaryColumnWidth,
         minimumSecondaryColumnWidth: NATIVE_INSPECTOR_MIN_MAIN_WIDTH,
         // UIKit can retain its automatic width despite a new preference; constrain both edges.
@@ -504,7 +507,7 @@ function WorkspaceColumns(
                     pointerEvents="box-none"
                   >
                     <WorkspacePaneDivider
-                      accessibilityLabel="Resize inspector"
+                      accessibilityLabel={gt("Resize inspector")}
                       currentWidth={inspectorWidth}
                       resizeDirection={-1}
                       onResizeStart={() => {

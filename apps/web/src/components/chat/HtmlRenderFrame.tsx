@@ -5,6 +5,7 @@ import {
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
+import { T, useGT, Var } from "gt-react";
 import { Maximize2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -19,6 +20,19 @@ import { HtmlRenderDialog } from "./HtmlRenderDialog";
 import { observeResize } from "~/lib/observeResize";
 
 const MIN_URL_LIFE_MS = 5 * 60_000;
+const MAX_MEASURED_CONTENT_HEIGHTS = 200;
+
+// The height each render's page last reported, so a remounted frame opens at it before its page loads.
+const measuredContentHeights = new Map<string, number>();
+
+function rememberContentHeight(attachmentId: string, height: number) {
+  measuredContentHeights.delete(attachmentId);
+  measuredContentHeights.set(attachmentId, height);
+  if (measuredContentHeights.size > MAX_MEASURED_CONTENT_HEIGHTS) {
+    const oldest = measuredContentHeights.keys().next().value;
+    if (oldest !== undefined) measuredContentHeights.delete(oldest);
+  }
+}
 
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
@@ -26,6 +40,7 @@ export function HtmlRenderFrame(props: {
   readonly threadRef: ScopedThreadRef | undefined;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
+  const gt = useGT();
   const { attachmentId, title } = props.htmlRender;
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   const observeBox = (box: HTMLDivElement) => {
@@ -35,7 +50,9 @@ export function HtmlRenderFrame(props: {
     });
   };
   // Client fonts can exceed the server-measured height and cause nested scrolling.
-  const [contentHeight, setContentHeight] = useState<number>();
+  const [contentHeight, setContentHeight] = useState(() =>
+    measuredContentHeights.get(attachmentId),
+  );
   const height = htmlRenderFrameHeight(props.htmlRender, width, contentHeight);
   const fileName = htmlRenderFileName(title);
   // Inline stays mounted under the fullscreen viewer, so each live document keeps its own input.
@@ -78,7 +95,11 @@ export function HtmlRenderFrame(props: {
             threadRef={props.threadRef}
             formStateKey={formStateKey}
             className="block size-full"
-            onContentHeight={setContentHeight}
+            containScroll
+            onContentHeight={(height) => {
+              rememberContentHeight(attachmentId, height);
+              setContentHeight(height);
+            }}
             onFullscreenChange={onFullscreenChange}
           />
           <div className="absolute end-2 top-2 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
@@ -86,7 +107,7 @@ export function HtmlRenderFrame(props: {
               <TooltipTrigger
                 render={
                   <Button
-                    aria-label="Open full screen"
+                    aria-label={gt("Open full screen")}
                     size="icon-xs"
                     variant="glass"
                     onClick={async () => {
@@ -98,8 +119,8 @@ export function HtmlRenderFrame(props: {
                       else
                         toastManager.add({
                           type: "error",
-                          title: "Page unavailable",
-                          description: "Reconnect to the environment and try again.",
+                          title: gt("Page unavailable"),
+                          description: gt("Reconnect to the environment and try again."),
                         });
                     }}
                   />
@@ -107,7 +128,9 @@ export function HtmlRenderFrame(props: {
               >
                 <Maximize2Icon className="size-3.5" />
               </TooltipTrigger>
-              <TooltipPopup side="left">Open full screen</TooltipPopup>
+              <TooltipPopup side="left">
+                <T>Open full screen</T>
+              </TooltipPopup>
             </Tooltip>
           </div>
           {expandedSrc !== null ? (
@@ -122,7 +145,9 @@ export function HtmlRenderFrame(props: {
         </>
       ) : failed ? (
         <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-          Unable to load {title}
+          <T>
+            Unable to load <Var>{title}</Var>
+          </T>
         </p>
       ) : null}
     </div>

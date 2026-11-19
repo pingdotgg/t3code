@@ -595,7 +595,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readFileString(selected.executablePath)).toBe(serverContents);
       expect(yield* fs.readFileString(selected.harnessPath!)).toBe(harnessContents);
       expect(yield* fs.readDirectory(path.join(installation.managedDirectory, "versions"))).toEqual(
-        expect.arrayContaining([previousReleaseId, (yield* releaseAsset()).sha256]),
+        [(yield* releaseAsset()).sha256],
       );
       expect(requests).toEqual([(yield* releaseAsset()).url]);
     }),
@@ -1066,8 +1066,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
         const baseDir = yield* fs
           .makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" })
           .pipe(Effect.flatMap((directory) => fs.realPath(directory)));
-        const cliDirectory = path.join(baseDir, "cli");
+        const cliDirectory = path.join(baseDir, 'cli" ');
         yield* fs.makeDirectory(cliDirectory);
+        const siblingDirectory = path.join(baseDir, 'cli"');
+        yield* fs.makeDirectory(siblingDirectory);
+        yield* fs.writeFileString(path.join(siblingDirectory, "agy"), "other cli", { mode: 0o755 });
         const cli = path.join(cliDirectory, "antigravity");
         const alias = path.join(cliDirectory, "agy");
         const other = path.join(cliDirectory, "custom-acp");
@@ -1115,7 +1118,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
           const windowsDirectory = path.join(baseDir, `windows-${name}`);
           yield* fs.makeDirectory(windowsDirectory);
           yield* fs.writeFileString(path.join(windowsDirectory, name), "cli");
-          const selected = yield* windows.resolve("agy", { PATH: windowsDirectory });
+          const selected = yield* windows.resolve("agy", { PATH: `"${windowsDirectory}"` });
           expect(selected.harnessPath).toBeNull();
           expect((yield* fs.realPath(selected.executablePath)).toLowerCase()).toBe(
             (yield* fs.realPath(path.join(windowsDirectory, name))).toLowerCase(),
@@ -1214,7 +1217,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     Effect.gen(function* () {
       const manifestEntered = yield* Deferred.make<void>();
       const releaseManifest = yield* Deferred.make<void>();
-      const { installation, fs, stagingReleased } = yield* makeHarness({
+      const { installation, fs, baseDir, stagingReleased } = yield* makeHarness({
         native: true,
         platform: "win32",
         archive: Buffer.from(serverContents),
@@ -1239,6 +1242,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       expect(yield* fs.readFileString(oldExecutable.executablePath)).toBe(serverContents);
       expect(yield* installation.remove().pipe(Effect.flip)).toMatchObject({ operation: "remove" });
       yield* Scope.close(processScope, Exit.void);
+      yield* makeHarness({ native: true, platform: "win32", baseDir });
+      expect(yield* fs.exists(oldExecutable.managedVersionDirectory!)).toBe(false);
+      expect(yield* fs.readFileString(current.executablePath)).toBe(serverContents);
       yield* installation.remove();
       expect(yield* fs.exists(installation.managedDirectory)).toBe(false);
     }),

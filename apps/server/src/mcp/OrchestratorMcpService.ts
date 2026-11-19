@@ -93,6 +93,7 @@ import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterReg
 import {
   subagentResultForRun,
   delegatedTaskProgress,
+  delegatedTaskReportRuns,
 } from "@t3tools/provider-core/server/subagentProjection";
 import {
   DispatchModeLimit,
@@ -239,13 +240,13 @@ export class OrchestratorMcpService extends Context.Service<
   OrchestratorMcpServiceShape
 >()("t3/mcp/OrchestratorMcpService") {}
 
-const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
+export const isThreadManagementError = Schema.is(ThreadManagementService.ThreadManagementError);
 
 function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
   return new OrchestratorMcpFailure({ code, message });
 }
 
-function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
+export function threadManagementFailure(error: unknown): OrchestratorMcpFailure {
   if (!isThreadManagementError(error)) return failure("orchestration_error", errorMessage(error));
   switch (error._tag) {
     case "ThreadManagementThreadNotFoundError":
@@ -932,6 +933,14 @@ function threadStatus(
   if (settledStatus === "failed") return settledStatus;
   return backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? []) ? "waiting" : settledStatus;
 }
+
+const LIVE_LISTED_THREAD_STATUSES: ReadonlySet<OrchestratorMcpThreadListItem["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
 
 function listedThreadStatus(shell: OrchestrationV2ThreadShell) {
   return threadStatus(shell.activityRunStatus, shell.status, shell.pendingBackgroundTasks);
@@ -1756,9 +1765,16 @@ const make = Effect.gen(function* () {
       childRun,
       heldForRestart ? taskResultRun : undefined,
     );
+    // Only the task's own result looks back for its report, and only among its own runs.
+    const reportRuns =
+      task.result === null && taskResultRun !== undefined
+        ? delegatedTaskReportRuns(childControls, taskResultRun)
+        : [];
     const resultRunIds = [
       ...new Set(
-        [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
+        [taskResultRun?.id, terminalRun?.id, ...reportRuns.map((run) => run.id)].filter(
+          (id): id is RunId => id !== undefined,
+        ),
       ),
     ];
     const resultRecords = yield* threadManagement
@@ -1774,6 +1790,11 @@ const make = Effect.gen(function* () {
       messages: [...childControls.messages, ...resultRecords.messages],
       turnItems: resultRecords.turnItems,
     };
+    const resultText = (run: OrchestrationV2Run) =>
+      subagentResultForRun(
+        { ...childProjection, runs: run.id === taskResultRun?.id ? reportRuns : [] },
+        run,
+      ).text;
     const workState =
       task.result !== null ? "result_available" : heldForRestart ? "working" : taskWorkState;
     const runStatus = taskStatusForRun(taskResultRun ?? childRun);
@@ -1799,7 +1820,7 @@ const make = Effect.gen(function* () {
       task.result !== null
         ? task.result
         : taskResultRun !== undefined && isTerminalTaskStatus(status)
-          ? subagentResultForRun(childProjection, taskResultRun).text
+          ? resultText(taskResultRun)
           : null;
     const resultTransfers = childControls.contextTransfers.filter(
       (transfer) =>
@@ -1820,7 +1841,7 @@ const make = Effect.gen(function* () {
     const latestTerminalSummary = canExposeTaskRunResult(terminalRun)
       ? terminalRun.id === childRun?.id
         ? derivedResult
-        : subagentResultForRun(childProjection, terminalRun).text
+        : resultText(terminalRun)
       : null;
     const resultContextTransferId = resultTransfer?.id ?? null;
     const latestTerminalResultContextTransferId = resultTransferForRun(terminalRun)?.id ?? null;
@@ -3267,7 +3288,21 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      // A live status needs a source the index's mayBeLive covers, so a live-only filter
+      // skips building shells for every thread that cannot match.
+      const mayBeLiveIds =
+        statuses !== null &&
+        [...statuses].every((status) => LIVE_LISTED_THREAD_STATUSES.has(status))
+          ? new Set(
+              (yield* threadManagement
+                .listActiveShellIndex()
+                .pipe(Effect.mapError(listFailure))).flatMap((entry) =>
+                entry.mayBeLive ? [entry.id] : [],
+              ),
+            )
+          : null;
       const candidates = projectThreads
+        .filter((thread) => mayBeLiveIds === null || mayBeLiveIds.has(thread.id))
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,
