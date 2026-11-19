@@ -3,7 +3,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
-import { deriveServerPaths } from "../../apps/server/src/config.ts";
 import { T3_HOME } from "../e2e.config.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
@@ -16,9 +15,7 @@ test(
   WEB,
   async ({ t3, app, screen }) => {
     await t3.project("settings-restore");
-    const { settingsPath } = await runPromise(
-      deriveServerPaths(T3_HOME, undefined, { baseDirIsExplicit: true }),
-    );
+    const settingsPath = `${T3_HOME}/userdata/settings.json`;
     const active = `${T3_HOME}/active-settings`;
     const previous = `${T3_HOME}/old-settings`;
     const restored = `${T3_HOME}/restored-settings`;
