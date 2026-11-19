@@ -5,12 +5,15 @@ description: Preserve a separate private macOS certificate so privacy grants sur
 tags: [desktop, macos, signing, fork]
 status: stable
 generated:
-  by: opencode/gpt-6.1-sol
-  at: 2026-10-16T15:46:35+00:00
+  by: codex/gpt-6.2-astra
+  at: 2026-11-19T22:21:12+00:00
 verified:
-  - by: opencode/gpt-6.1-sol
-    at: 2026-10-16T15:46:35+00:00
+  - by: codex/gpt-6.2-astra
+    at: 2026-11-19T22:21:12+00:00
 sources:
+  - id: fork-install-policy
+    resource: ../AGENTS.md#pull-requests
+    title: Fork merge and local desktop installation workflow
   - id: local-signing-policy
     resource: ../docs/operations/development.md#local-macos-signing
     title: Private macOS build and permission migration procedure
@@ -31,12 +34,16 @@ syncs, branding changes, or worktree setup: macOS privacy grants match signing
 requirements, not just the app's name or bundle ID. Differently signed copies with
 the same bundle ID can overwrite each other's grants.[^local-signing-policy]
 
-Use the [local build procedure](../docs/operations/development.md#local-macos-signing),
-not the unsigned artifact command, for Nicholas's daily-driver app. Local signing
+The daily-driver app in `/Applications` links to the signed build from the
+primary checkout. Fast-forward that checkout to the merged fork PR before
+building so the installed app can be reproduced from fork `main`.[^fork-install-policy]
+Use the [local build procedure](../docs/operations/development.md#local-macos-signing). Local signing
 fails closed and does not change release signing, notarization, passkey provisioning,
 system trust, or the running installation. The private key is imported only into a
 temporary keychain; a native test verifies that changed app contents retain the same
 certificate-bound designated requirement.[^local-signing-implementation][^local-signing-test]
+
+[^fork-install-policy]: Fork PR workflow and installation from the primary checkout.
 
 [^local-signing-policy]: Private macOS signing policy and one-time privacy-grant migration.
 
