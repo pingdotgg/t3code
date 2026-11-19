@@ -35,7 +35,10 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravityCliSessionMode,
+  makeAntigravityAcpRuntime,
+} from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -1826,6 +1829,130 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         ["default"],
       );
     }),
+  );
+
+  it.effect("keeps a Supervised downgrade after leaving plan mode", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let liveRuntime: RuntimeService | undefined;
+      const instanceId = ProviderInstanceId.make("antigravity-plan-downgrade-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                T3_ACP_AVAILABLE_MODES: "default,accept-edits,auto,plan",
+              },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => {
+              const wrapped: RuntimeService = {
+                ...runtime,
+                setMode: (modeId) =>
+                  runtime.getModeState.pipe(
+                    Effect.flatMap((modeState) =>
+                      runtime.setMode(
+                        antigravityCliSessionMode(
+                          modeId,
+                          modeState?.availableModes.map((mode) => mode.id),
+                        ),
+                      ),
+                    ),
+                  ),
+              };
+              liveRuntime = wrapped;
+              return wrapped;
+            }),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-plan-downgrade");
+      const baseSelection = { instanceId, model: "gemini-test-low" };
+      const policy = (
+        runtimeMode: "full-access" | "approval-required",
+        interactionMode: "default" | "plan",
+      ) =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode,
+          interactionMode,
+          cwd: process.cwd(),
+        });
+      const session = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-plan-downgrade"),
+        modelSelection: baseSelection,
+        runtimePolicy: policy("full-access", "default"),
+      });
+      const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+      yield* session.events.pipe(
+        Stream.runForEach((event) => Queue.offer(events, event)),
+        Effect.forkScoped,
+      );
+      const providerThread = yield* session.ensureThread({
+        threadId,
+        modelSelection: baseSelection,
+        runtimePolicy: policy("full-access", "default"),
+      });
+      const now = yield* DateTime.now;
+      const runTurn = (
+        ordinal: number,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+        modelSelection: typeof baseSelection & {
+          readonly options?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+        } = baseSelection,
+      ) =>
+        Effect.gen(function* () {
+          yield* session.startTurn(
+            makeTurnInput({
+              threadId,
+              providerThread,
+              instanceId,
+              modelSelection,
+              runtimePolicy,
+              now,
+              ordinal,
+            }),
+          );
+          yield* Stream.fromQueue(events).pipe(
+            Stream.filter((event) => event.type === "turn.terminal"),
+            Stream.runHead,
+          );
+          return (yield* liveRuntime!.getModeState)?.currentModeId;
+        });
+
+      assert.strictEqual((yield* liveRuntime!.getModeState)?.currentModeId, "auto");
+      assert.strictEqual(yield* runTurn(1, policy("full-access", "plan")), "plan");
+      assert.strictEqual(yield* runTurn(2, policy("approval-required", "plan")), "plan");
+      // Leaving plan mode after downgrading to Supervised must stay in `default`, not restore `auto`.
+      assert.strictEqual(yield* runTurn(3, policy("approval-required", "default")), "default");
+
+      // When the permission policy is unchanged, leaving plan mode still restores a picked build mode.
+      const pickedAcceptEdits = {
+        ...baseSelection,
+        options: [{ id: "_t3/session-mode", value: "accept-edits" }],
+      };
+      assert.strictEqual(
+        yield* runTurn(4, policy("approval-required", "plan"), pickedAcceptEdits),
+        "plan",
+      );
+      assert.strictEqual(yield* runTurn(5, policy("approval-required", "default")), "accept-edits");
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
 
