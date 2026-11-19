@@ -2989,6 +2989,8 @@ it.effect(
     Effect.scoped(
       Effect.gen(function* () {
         const browser = yield* ServerBrowser.ServerBrowser;
+        // Lets the browser subscribe to manager events, as `ready` does.
+        yield* Effect.yieldNow;
         const first = yield* Scope.make();
         const { tabId, viewer } = yield* openDesktopViewer.pipe(Scope.provide(first));
         yield* viewer.input({ type: "resize", width: 1200, height: 900 });

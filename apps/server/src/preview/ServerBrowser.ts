@@ -366,6 +366,8 @@ interface ServerTab {
   } | null;
   dialog: Dialog | null;
   setting: PreviewViewportSetting;
+  /** The setting a desktop tab was last sized for; `setting` may run ahead of it. */
+  desktopSetting: PreviewViewportSetting;
   colorScheme: PreviewAppearancePreference;
   zoomFactor: number;
   /** Last usable CSS size measured on the desktop. */
@@ -936,6 +938,7 @@ const make = Effect.gen(function* () {
       .filter((requested) => requested !== null)
       .sort((left, right) => right.order - left.order)[0];
     if (tab.desktop) {
+      tab.desktopSetting = setting;
       await offerViewerSize(tab, setting._tag === "fill" ? (latest ?? null) : null);
       return;
     }
@@ -1186,6 +1189,7 @@ const make = Effect.gen(function* () {
       fileChooser: null,
       dialog: null,
       setting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
+      desktopSetting: snapshot.viewport ?? FILL_PREVIEW_VIEWPORT,
       colorScheme: "system",
       zoomFactor: 1,
       desktopViewport: null,
@@ -2969,14 +2973,11 @@ const make = Effect.gen(function* () {
       if (event.type === "resized") {
         const setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
         // Desktop tabs record the setting at once, so status need not wait behind an agent action.
-        // The desktop still hears about a changed setting in turn.
-        const desktopChanged = tab.desktop && !viewportSettingsEqual(setting, tab.setting);
         if (tab.desktop) tab.setting = setting;
         await tab.control
           .system(async () => {
-            if (desktopChanged || !viewportSettingsEqual(setting, tab.setting)) {
-              await applySetting(tab, setting);
-            }
+            const applied = tab.desktop ? tab.desktopSetting : tab.setting;
+            if (!viewportSettingsEqual(setting, applied)) await applySetting(tab, setting);
             await applyRendering(tab, event.snapshot);
             const request = event.request;
             if (request?.clear === "cookies") await tab.cdp.send("Network.clearBrowserCookies");
