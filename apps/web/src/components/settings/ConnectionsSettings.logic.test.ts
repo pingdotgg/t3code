@@ -1,7 +1,12 @@
-import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
+import {
+  type DesktopWslState,
+  EnvironmentId,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  hasExternallyManagedPrimary,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
   resolveAccessEnvironmentId,
@@ -237,4 +242,17 @@ describe("isServerNetworkAccessible", () => {
   ] as const)("$authPolicy with $directEndpoints.length endpoints", (row) => {
     expect(isServerNetworkAccessible(row)).toBe(row.expected);
   });
+});
+
+it("exposes desktop network controls only for the primary backend it started", () => {
+  const primary = {
+    id: PRIMARY_LOCAL_ENVIRONMENT_ID,
+    label: "Local",
+    httpBaseUrl: null,
+    wsBaseUrl: null,
+  };
+  const wsl = { ...primary, id: "wsl:Ubuntu" };
+  expect(hasExternallyManagedPrimary([{ ...wsl, externallyManaged: true }])).toBe(false);
+  expect(hasExternallyManagedPrimary([primary, wsl])).toBe(false);
+  expect(hasExternallyManagedPrimary([{ ...primary, externallyManaged: true }, wsl])).toBe(true);
 });

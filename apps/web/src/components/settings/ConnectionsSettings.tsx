@@ -126,6 +126,7 @@ import {
   toDesktopClientSessionRecord,
   selectPairingEndpoint,
   isServerNetworkAccessible,
+  hasExternallyManagedPrimary,
   isTailscaleHttpsEndpoint,
   endpointDefaultPreferenceKey,
 } from "./ConnectionsSettings.logic";
@@ -253,7 +254,12 @@ function ConnectionsSettingsContent({
   readonly accessEnvironmentId: EnvironmentId | null;
   readonly accessEnvironmentPicker?: ReactNode;
 }) {
-  const desktopBridge = window.desktopBridge;
+  const [desktopBridge] = useState(() => {
+    const bridge = window.desktopBridge;
+    return bridge && !hasExternallyManagedPrimary(bridge.getLocalEnvironmentBootstraps())
+      ? bridge
+      : undefined;
+  });
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const peerLinkHosts = usePeerLinkHosts();
@@ -1202,7 +1208,8 @@ function ConnectionsSettingsContent({
           <SettingsSection
             {...searchableSetting("connections-environment")}
             title={
-              accessEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
+              accessEnvironment?.label ??
+              (window.desktopBridge ? "This machine" : "Primary environment")
             }
             icon={
               <EnvironmentMachineIcon
@@ -1674,7 +1681,7 @@ function ConnectionsSettingsContent({
 
   return (
     <SettingsPageContainer>
-      {desktopBridge ? (
+      {window.desktopBridge ? (
         <SettingsSection id="this-app" title="This app">
           <LocalEnvironmentSetting />
         </SettingsSection>

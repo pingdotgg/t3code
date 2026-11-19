@@ -384,6 +384,7 @@ export interface DesktopEnvironmentBootstrap {
   httpBaseUrl: string | null;
   wsBaseUrl: string | null;
   bootstrapToken?: string;
+  externallyManaged?: true;
 }
 
 export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
@@ -393,6 +394,7 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
   httpBaseUrl: Schema.NullOr(Schema.String),
   wsBaseUrl: Schema.NullOr(Schema.String),
   bootstrapToken: Schema.optionalKey(Schema.String),
+  externallyManaged: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";

@@ -93,8 +93,11 @@ export const layer = Layer.effect(
     const startNew = Effect.fn("desktop.wslBackend.startNew")(function* (input: {
       readonly distro: string | null;
     }) {
-      const primaryConfig = yield* serverExposure.backendConfig;
-      const port = yield* scanForWslPort(primaryConfig.port + 1).pipe(
+      const attached = yield* pool.attachedHomeOwner;
+      const primaryPort = Option.isSome(attached)
+        ? attached.value.port
+        : (yield* serverExposure.backendConfig).port;
+      const port = yield* scanForWslPort(primaryPort + 1).pipe(
         Effect.provideService(NetService.NetService, net),
         Effect.asSome,
         Effect.catch((error) =>

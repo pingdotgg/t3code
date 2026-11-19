@@ -154,9 +154,22 @@ export const getLocalEnvironmentBootstraps = DesktopIpc.makeSyncIpcMethod({
     const pool = yield* DesktopBackendPool.DesktopBackendPool;
     const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
     const instances = yield* pool.list;
+    const attached = yield* pool.attachedHomeOwner;
     const bootstraps: DesktopEnvironmentBootstrap[] = [];
     for (const instance of instances) {
       const isPrimary = instance.id === PRIMARY_LOCAL_ENVIRONMENT_ID;
+      if (isPrimary && Option.isSome(attached)) {
+        const httpBaseUrl = new URL(`http://127.0.0.1:${attached.value.port}/`);
+        bootstraps.push({
+          id: instance.id,
+          label: yield* instance.label,
+          runningDistro: null,
+          externallyManaged: true,
+          httpBaseUrl: httpBaseUrl.href,
+          wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
+        });
+        continue;
+      }
       const config = yield* instance.currentConfig;
       const snapshot = yield* instance.snapshot;
       if (Option.isNone(config) || Option.isSome(config.value.preflightFailure)) {
@@ -211,6 +224,8 @@ export const getLocalEnvironmentBearerToken = DesktopIpc.makeIpcMethod({
   payload: Schema.Void,
   result: Schema.String,
   handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBearerToken")(function* () {
+    const attached = yield* (yield* DesktopBackendPool.DesktopBackendPool).attachedHomeOwner;
+    if (Option.isSome(attached)) return attached.value.token;
     const localAuth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
     return yield* localAuth.getBearerToken;
   }),

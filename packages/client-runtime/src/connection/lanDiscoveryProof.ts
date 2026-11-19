@@ -37,14 +37,33 @@ export function parseLanDiscoveryCandidate(candidate: string): URL | null {
   return url;
 }
 
-export async function verifyLanDiscoveryProof(input: {
+interface DiscoveryChallenge {
   readonly token: string;
   readonly nonce: string;
   readonly environmentId: string;
-  readonly candidate: string;
   readonly fetchProof: (url: string, init: RequestInit) => Promise<Response>;
   readonly signal?: AbortSignal;
-}): Promise<boolean> {
+}
+
+export function verifyLanDiscoveryProof(
+  input: DiscoveryChallenge & { readonly candidate: string },
+) {
+  return verifyDiscoveryProof(input, parseLanDiscoveryCandidate(input.candidate));
+}
+
+export function verifyLoopbackDiscoveryProof(
+  input: DiscoveryChallenge & { readonly port: number },
+) {
+  const port = input.port;
+  const url =
+    Number.isInteger(port) && port > 0 && port <= 65535
+      ? new URL(`http://127.0.0.1:${port}`)
+      : null;
+  return verifyDiscoveryProof(input, url);
+}
+
+async function verifyDiscoveryProof(input: DiscoveryChallenge, url: URL | null): Promise<boolean> {
+  if (url === null) return false;
   const parts = input.token.split(".");
   if (
     parts.length !== 2 ||
@@ -55,8 +74,6 @@ export async function verifyLanDiscoveryProof(input: {
     return false;
   const key = Result.getOrUndefined(Base64Url.decode(parts[1]!));
   if (key?.length !== 32) return false;
-  const url = parseLanDiscoveryCandidate(input.candidate);
-  if (url === null) return false;
   const address = url.hostname;
   const port = Number(url.port || 80);
   try {

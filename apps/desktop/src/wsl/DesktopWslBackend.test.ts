@@ -115,6 +115,8 @@ describe("DesktopWslBackend", () => {
           });
           return registeredWsl;
         }),
+      attachedHomeOwner: Effect.succeedNone,
+      connectToHomeOwner: Effect.die("unexpected home owner"),
       unregister: () =>
         Effect.sync(() => {
           registeredWsl = undefined;
