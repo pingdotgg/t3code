@@ -32,7 +32,6 @@ import {
   MoreHorizontalIcon,
   TagIcon,
   UserPlusIcon,
-  UsersIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useContext, useState, type ReactNode } from "react";
@@ -126,12 +125,14 @@ function IssueLabelPicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -186,6 +187,7 @@ function IssueLabelPicker({
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
       label={gt("Change labels")}
+      text={text}
       popupWidth="labels"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -246,12 +248,14 @@ function IssueAssigneePicker({
   detail,
   allowed,
   disabledReason,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: IssueRef;
   detail: IssueDetail;
   allowed: boolean;
   disabledReason: string;
+  text?: string | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -305,6 +309,7 @@ function IssueAssigneePicker({
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
       label={gt("Change assignees")}
+      text={text}
       popupWidth="reviewers"
       allowed={allowed}
       disabledReason={disabledReason}
@@ -346,6 +351,35 @@ function IssueAssigneePicker({
         </>
       )}
     </PullRequestCandidatePicker>
+  );
+}
+
+/**
+ * Labels and assignees as one block under the description: each fact's name, then its values and
+ * the control that adds to them. A wide pane sets the two side by side.
+ */
+function IssueFacts({ labels, assignees }: { labels: ReactNode; assignees: ReactNode }) {
+  const gt = useGT();
+  if (labels === null && assignees === null) return null;
+  return (
+    <div className="@container/issue-facts mt-3">
+      <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-4 gap-y-1 text-meta @xl/issue-facts:grid-cols-[auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+        {labels === null ? null : (
+          <>
+            <dt className="flex h-6 items-center text-muted-foreground">{gt("Labels")}</dt>
+            <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-1">{labels}</dd>
+          </>
+        )}
+        {assignees === null ? null : (
+          <>
+            <dt className="flex h-6 items-center text-muted-foreground">{gt("Assignees")}</dt>
+            <dd className="flex min-h-6 min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+              {assignees}
+            </dd>
+          </>
+        )}
+      </dl>
+    </div>
   );
 }
 
@@ -696,7 +730,23 @@ export function IssueDetailPanel({
           </div>
         ) : null}
 
-        <PullRequestSection key={`description:${detail.url}`} title={gt("Description")} keepMounted>
+        <PullRequestSection
+          key={`description:${detail.url}`}
+          title={gt("Description")}
+          keepMounted
+          // With none yet, the description's reaction control waits in its heading instead of
+          // taking a row of its own; the first reaction moves it under the text with its chips.
+          actions={
+            detail.reactions !== undefined && detail.reactions.length === 0 && canReact ? (
+              <IssueReactionBar
+                reactions={detail.reactions}
+                canReact={canReact}
+                environmentId={environmentId}
+                reference={reference}
+              />
+            ) : undefined
+          }
+        >
           <div className="group">
             {editingBody ? (
               <PullRequestMarkdownEditor
@@ -733,7 +783,7 @@ export function IssueDetailPanel({
               </div>
             )}
           </div>
-          {detail.reactions !== undefined ? (
+          {detail.reactions !== undefined && detail.reactions.length > 0 ? (
             <div className="mt-2 flex">
               <IssueReactionBar
                 reactions={detail.reactions}
@@ -743,65 +793,75 @@ export function IssueDetailPanel({
               />
             </div>
           ) : null}
-          {/* Labels and assignees ride under the description, as a pull request's labels do. */}
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
-            <TagIcon aria-label={gt("Labels")} className="mr-0.5 size-3.5 text-muted-foreground" />
-            {detail.labels.length === 0 && !detail.capabilities.labels ? (
-              <span className="text-muted-foreground">
-                <T context="no labels">None</T>
-              </span>
-            ) : null}
-            {detail.labels.map((label) => (
-              <PullRequestLabelChip
-                key={label.name}
-                label={label}
-                size="default"
-                className="max-w-48"
-                focusable
-              />
-            ))}
-            {detail.capabilities.labels ? (
-              <IssueLabelPicker
-                environmentId={environmentId}
-                reference={reference}
-                detail={detail}
-                allowed={canLabel}
-                disabledReason={
-                  blocked ?? gt("Changing labels needs triage access on this tracker.")
-                }
-              />
-            ) : null}
-          </div>
-          <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-1.5 text-meta">
-            <UsersIcon
-              aria-label={gt("Assignees")}
-              className="mr-0.5 size-3.5 text-muted-foreground"
-            />
-            {detail.assignees.length === 0 ? (
-              <span className="text-muted-foreground">
-                <T context="no assignees">None</T>
-              </span>
-            ) : (
-              detail.assignees.map((actor) => (
-                <PullRequestActorLabel
-                  key={actor.login}
-                  actor={actor}
-                  profileUrl={profileUrl(actor)}
-                />
-              ))
-            )}
-            {detail.capabilities.assignees ? (
-              <IssueAssigneePicker
-                environmentId={environmentId}
-                reference={reference}
-                detail={detail}
-                allowed={canAssign}
-                disabledReason={
-                  blocked ?? gt("Changing assignees needs triage access on this tracker.")
-                }
-              />
-            ) : null}
-          </div>
+          <IssueFacts
+            labels={
+              detail.labels.length > 0 || detail.capabilities.labels ? (
+                <>
+                  {detail.labels.map((label) => (
+                    <PullRequestLabelChip
+                      key={label.name}
+                      label={label}
+                      size="default"
+                      className="max-w-48"
+                      focusable
+                    />
+                  ))}
+                  {detail.labels.length === 0 && !canLabel ? (
+                    <span className="text-muted-foreground">
+                      <T>No labels</T>
+                    </span>
+                  ) : null}
+                  {canLabel ? (
+                    // The written control lines its icon up with the values a filled row starts with.
+                    <span className={cn("flex", detail.labels.length === 0 && "-ml-1.75")}>
+                      <IssueLabelPicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canLabel}
+                        disabledReason={
+                          blocked ?? gt("Changing labels needs triage access on this tracker.")
+                        }
+                        text={detail.labels.length === 0 ? gt("Add labels") : undefined}
+                      />
+                    </span>
+                  ) : null}
+                </>
+              ) : null
+            }
+            assignees={
+              detail.assignees.length > 0 || detail.capabilities.assignees ? (
+                <>
+                  {detail.assignees.map((actor) => (
+                    <PullRequestActorLabel
+                      key={actor.login}
+                      actor={actor}
+                      profileUrl={profileUrl(actor)}
+                    />
+                  ))}
+                  {detail.assignees.length === 0 && !canAssign ? (
+                    <span className="text-muted-foreground">
+                      <T>No one assigned</T>
+                    </span>
+                  ) : null}
+                  {canAssign ? (
+                    <span className={cn("flex", detail.assignees.length === 0 && "-ml-1.75")}>
+                      <IssueAssigneePicker
+                        environmentId={environmentId}
+                        reference={reference}
+                        detail={detail}
+                        allowed={canAssign}
+                        disabledReason={
+                          blocked ?? gt("Changing assignees needs triage access on this tracker.")
+                        }
+                        text={detail.assignees.length === 0 ? gt("Add assignees") : undefined}
+                      />
+                    </span>
+                  ) : null}
+                </>
+              ) : null
+            }
+          />
         </PullRequestSection>
 
         {detail.linkedPullRequests.length > 0 ? (
