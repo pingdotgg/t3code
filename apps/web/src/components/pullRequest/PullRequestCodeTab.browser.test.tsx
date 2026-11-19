@@ -341,6 +341,29 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
+it("keeps a hidden test file folded when all shown files expand", async () => {
+  setup({ paged: true });
+  using _hidden = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+    },
+  };
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  // Files keep their order, so the second header is early-1.test.ts while tests are shown.
+  const testFileToggle = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1);
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
+  const filter = screen.getByRole("button", { name: "Hide test files" });
+  await filter.click();
+  await expect.element(filter).toHaveAttribute("aria-pressed", "true");
+
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "true");
+  await filter.click();
+
+  await expect.element(filter).toHaveAttribute("aria-pressed", "false");
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
+});
+
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
   setup({ paged: false });
   const container = document.createElement("div");
