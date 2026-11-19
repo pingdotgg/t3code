@@ -13,40 +13,81 @@ use serde_json::Value;
 
 /// The positions in `items` that are visible, in order.
 pub(crate) fn visible_items(runs: &[Value], attempts: &[Value], items: &[Value]) -> Vec<usize> {
-    // The last row for a run id wins, as T3 builds its map.
-    let mut statuses: HashMap<&str, &str> = HashMap::new();
-    for run in runs {
-        let (Some(id), Some(status)) = (run["id"].as_str(), run["status"].as_str()) else {
-            continue;
-        };
-        if matches!(status, "rolled_back" | "cancelled" | "queued") {
-            statuses.insert(id, status);
-        } else {
-            statuses.remove(id);
+    let mut rule = Visibility::new(runs, attempts);
+    if rule.needs_interrupts() {
+        rule.set_interrupted(
+            items
+                .iter()
+                .filter(|item| item["type"] == "run_interrupt_request")
+                .filter_map(|item| item["runId"].as_str())
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| rule.shows(item))
+        .map(|(at, _)| at)
+        .collect()
+}
+
+/// The visibility rule of one thread, so a reader can test turn items one at a time.
+pub(crate) struct Visibility {
+    /// Runs whose status hides items: `rolled_back`, `cancelled`, `queued`.
+    statuses: HashMap<String, String>,
+    /// `(runId, rootNodeId)` of superseded attempts.
+    superseded: HashSet<(String, String)>,
+    /// Runs with a `run_interrupt_request` item (the user's Stop).
+    interrupted: HashSet<String>,
+}
+
+impl Visibility {
+    pub(crate) fn new(runs: &[Value], attempts: &[Value]) -> Self {
+        // The last row for a run id wins, as T3 builds its map.
+        let mut statuses = HashMap::new();
+        for run in runs {
+            let (Some(id), Some(status)) = (run["id"].as_str(), run["status"].as_str()) else {
+                continue;
+            };
+            if matches!(status, "rolled_back" | "cancelled" | "queued") {
+                statuses.insert(id.to_owned(), status.to_owned());
+            } else {
+                statuses.remove(id);
+            }
+        }
+        let mut superseded = HashSet::new();
+        for attempt in attempts {
+            if attempt["status"] != "superseded" {
+                continue;
+            }
+            if let (Some(run), Some(root)) =
+                (attempt["runId"].as_str(), attempt["rootNodeId"].as_str())
+            {
+                superseded.insert((run.to_owned(), root.to_owned()));
+            }
+        }
+        Self {
+            statuses,
+            superseded,
+            interrupted: HashSet::new(),
         }
     }
-    let mut superseded: HashSet<(&str, &str)> = HashSet::new();
-    for attempt in attempts {
-        if attempt["status"] != "superseded" {
-            continue;
-        }
-        if let (Some(run), Some(root)) = (attempt["runId"].as_str(), attempt["rootNodeId"].as_str())
-        {
-            superseded.insert((run, root));
-        }
+
+    /// Whether [`Visibility::shows`] needs the runs with a Stop request.
+    pub(crate) fn needs_interrupts(&self) -> bool {
+        !self.superseded.is_empty()
     }
-    let interrupted: HashSet<&str> = if superseded.is_empty() {
-        HashSet::new()
-    } else {
-        items
-            .iter()
-            .filter(|item| item["type"] == "run_interrupt_request")
-            .filter_map(|item| item["runId"].as_str())
-            .collect()
-    };
-    let visible = |item: &Value| {
+
+    pub(crate) fn set_interrupted(&mut self, runs: HashSet<String>) {
+        self.interrupted = runs;
+    }
+
+    pub(crate) fn shows(&self, item: &Value) -> bool {
         let run = item["runId"].as_str();
-        let status = run.and_then(|run| statuses.get(run).copied());
+        let status = run
+            .and_then(|run| self.statuses.get(run))
+            .map(String::as_str);
         if status == Some("rolled_back") {
             return false;
         }
@@ -60,15 +101,9 @@ pub(crate) fn visible_items(runs: &[Value], attempts: &[Value], items: &[Value])
             return true;
         };
         !(item["type"] == "run_interrupt_result"
-            && superseded.contains(&(run, node))
-            && !interrupted.contains(run))
-    };
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| visible(item))
-        .map(|(at, _)| at)
-        .collect()
+            && self.superseded.contains(&(run.to_owned(), node.to_owned()))
+            && !self.interrupted.contains(run))
+    }
 }
 
 #[cfg(test)]

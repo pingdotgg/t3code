@@ -4991,3 +4991,187 @@ async fn mcp_apps_calls_only_the_source_session_and_stores_context_without_a_ses
         "App requests never open sessions"
     );
 }
+
+/// `GET /api/orchestration/threads/:threadId/transcript`: the thread snapshot cut down, and a
+/// read that stops at the first row past the limit.
+#[tokio::test(flavor = "current_thread")]
+async fn a_transcript_is_the_visible_rows_and_stops_at_the_limit() {
+    let db = TempDb::new("transcript");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    for (command, text) in [("c2", "first"), ("c3", "second")] {
+        dispatch(&engine, message("t1", command, text)).await;
+        until_run_ends(&mut thread).await;
+    }
+    let read = |limit: u64| engine.thread_transcript("t1".into(), "env".into(), limit);
+    let crate::ThreadTranscript::Body(body) = read(u64::MAX).await.unwrap() else {
+        panic!("no transcript");
+    };
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    let snapshot = engine.thread_snapshot("t1".into()).await.unwrap().unwrap();
+    let projection = &snapshot["projection"];
+    assert_eq!(
+        body,
+        json!({"threadId": "t1", "title": projection["thread"]["title"],
+            "updatedAt": projection["updatedAt"], "items": projection["visibleTurnItems"]})
+    );
+    let items = body["items"].as_array().unwrap();
+    assert!(items.len() >= 4, "{body}");
+
+    // The file: the header line, then one line per row.
+    let header = crate::transcript::header_bytes([
+        body["title"].as_str().unwrap(),
+        "env",
+        "t1",
+        body["updatedAt"].as_str().unwrap(),
+    ]);
+    let line = |row: &Value| serde_json::to_vec(row).unwrap().len() as u64 + 1;
+    let file = header + items.iter().map(line).sum::<u64>();
+    assert!(matches!(
+        read(file).await.unwrap(),
+        crate::ThreadTranscript::Body(_)
+    ));
+    assert_eq!(
+        read(file - 1).await.unwrap(),
+        crate::ThreadTranscript::TooLarge
+    );
+    assert_eq!(
+        read(header - 1).await.unwrap(),
+        crate::ThreadTranscript::TooLarge
+    );
+    assert_eq!(
+        engine
+            .thread_transcript("nope".into(), "env".into(), u64::MAX)
+            .await
+            .unwrap(),
+        crate::ThreadTranscript::NotFound
+    );
+
+    // A row after the second one that SQLite stores but serde_json refuses (a lone
+    // surrogate): a whole read fails on it, a read whose limit ends at the second row answers
+    // too large without reaching it.
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    conn.execute(
+        r#"INSERT INTO entities (thread_id, kind, id, first_seq, seq, ordinal, body)
+         VALUES ('t1', 'turnItems', 'zz-broken', 999999, 999999, 999999999,
+                 '{"text":"\ud800"}')"#,
+        [],
+    )
+    .unwrap();
+    assert!(read(u64::MAX).await.is_err());
+    let two_rows = header + line(&items[0]) + line(&items[1]);
+    assert_eq!(
+        read(two_rows).await.unwrap(),
+        crate::ThreadTranscript::TooLarge
+    );
+}
+
+/// T3's `buildVisibleTurnItems` for a run fork: before its first message, a fork's transcript is
+/// the source's rows through the fork run, then the synthetic marker. A side chat shows only
+/// its own rows.
+#[tokio::test(flavor = "current_thread")]
+async fn a_fork_transcript_inherits_the_source_history_through_the_fork_run() {
+    let db = TempDb::new("transcript-fork");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    for (command, text) in [("c2", "first"), ("c3", "second")] {
+        dispatch(&engine, message("t1", command, text)).await;
+        until_run_ends(&mut thread).await;
+    }
+    let fork = |target: &str, command: &str, side_chat: bool| {
+        json!({
+            "type": "thread.fork", "commandId": command, "sourceThreadId": "t1",
+            "targetThreadId": target, "sourcePoint": {"type": "run", "runId": "run:t1:1"},
+            "sideChat": side_chat, "createdBy": "user", "creationSource": "web",
+        })
+    };
+    dispatch(&engine, fork("t2", "f1", false)).await;
+    dispatch(&engine, fork("t3", "f2", true)).await;
+    let read = |thread: &str| engine.thread_transcript(thread.into(), "env".into(), u64::MAX);
+    let body = |transcript| match transcript {
+        crate::ThreadTranscript::Body(body) => serde_json::from_slice::<Value>(&body).unwrap(),
+        other => panic!("{other:?}"),
+    };
+
+    let source = engine.thread_snapshot("t1".into()).await.unwrap().unwrap();
+    let mut expected: Vec<Value> = source["projection"]["visibleTurnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["item"]["runId"] == "run:t1:1")
+        .map(|row| {
+            let mut row = row.clone();
+            row["visibility"] = json!("inherited");
+            row
+        })
+        .collect();
+    assert!(!expected.is_empty());
+    let fork_view = projection(&engine, "t2").await;
+    let created_at = fork_view["thread"]["createdAt"].clone();
+    expected.push(json!({
+        "visibility": "synthetic", "sourceThreadId": "t1", "sourceItemId": "turn-item:fork:t2",
+        "item": {
+            "id": "turn-item:fork:t2", "threadId": "t2", "runId": null, "nodeId": null,
+            "providerTurnId": null, "nativeItemRef": null, "parentItemId": null, "ordinal": 0,
+            "status": "completed", "title": "Forked from conversation", "startedAt": null,
+            "completedAt": created_at, "updatedAt": created_at, "type": "fork",
+            "source": {"type": "run", "threadId": "t1", "runId": "run:t1:1"},
+            "targetThreadId": "t2",
+        },
+    }));
+    for (position, row) in expected.iter_mut().enumerate() {
+        row["position"] = json!(position);
+    }
+    assert_eq!(body(read("t2").await.unwrap())["items"], json!(expected));
+    assert_eq!(body(read("t3").await.unwrap())["items"], json!([]));
+
+    // Deleting the source keeps the fork's inherited history, as in T3.
+    dispatch(
+        &engine,
+        json!({"type": "thread.delete", "commandId": "d1", "threadId": "t1"}),
+    )
+    .await;
+    assert_eq!(body(read("t2").await.unwrap())["items"], json!(expected));
+
+    // The inherited rows count against the limit too.
+    assert_eq!(
+        engine
+            .thread_transcript("t2".into(), "env".into(), 1000)
+            .await
+            .unwrap(),
+        crate::ThreadTranscript::TooLarge
+    );
+}
+
+/// The transcript reads rows through indexes: no sort of the whole timeline before the first
+/// row, and no scan of every item body for Stop requests.
+#[test]
+fn transcript_queries_use_their_indexes() {
+    let db = TempDb::new("transcript-plans");
+    drop(open(&db));
+    let conn = rusqlite::Connection::open(db.path()).unwrap();
+    let plan = |sql: &str| {
+        let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+        stmt.query_map(["t1"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+            .join("; ")
+    };
+    let items = plan(crate::store::TRANSCRIPT_ITEMS_SQL);
+    assert!(items.contains("USING INDEX turn_items_in_order"), "{items}");
+    assert!(!items.contains("TEMP B-TREE"), "{items}");
+    let interrupts = plan(crate::store::TRANSCRIPT_INTERRUPTS_SQL);
+    assert!(interrupts.contains("turn_item_interrupts"), "{interrupts}");
+    assert!(!interrupts.contains("TEMP B-TREE"), "{interrupts}");
+}

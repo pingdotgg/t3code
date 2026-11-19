@@ -1389,6 +1389,22 @@ impl Engine for SqliteEngine {
         })
     }
 
+    fn thread_transcript(
+        &self,
+        thread_id: ThreadId,
+        environment_id: String,
+        limit: u64,
+    ) -> BoxFuture<'_, Result<crate::ThreadTranscript, EngineError<GetThreadProjectionError>>> {
+        Box::pin(async move {
+            self.inner
+                .db(move |store| {
+                    store.thread_transcript(thread_id.as_str(), &environment_id, limit)
+                })
+                .await
+                .map_err(EngineError::Internal)
+        })
+    }
+
     fn thread_snapshot(
         &self,
         thread_id: ThreadId,

@@ -22,12 +22,12 @@ pinned pair.
 
 | Target | Methods to build | `/mcp` tools to build | HTTP routes to build | Rough size [estimate] |
 | --- | --- | --- | --- | --- |
-| (a) Orbit container only | **0** of 67 needed (all served); 1 useful method remains | **0** needed or useful | **0** needed; 4 useful routes remain | Profile remainder not re-estimated; Orbit additions about 2 to 4 k (section 4) |
-| (b) Container and host, what the client really uses | **15** needed (51 with the useful ones the rip-out list keeps) | **9** needed (17 with the useful ones) | **1** needed (12 with the useful ones) | Remaining work not re-estimated |
-| (c) Full parity with the T3 server | **68**, including 1 unclassified method | **17** | **39** | Remaining work not re-estimated |
+| (a) Orbit container only | **0** of 67 needed (all served); 1 useful method remains | **0** needed or useful | **0** needed; 3 useful routes remain | Profile remainder not re-estimated; Orbit additions about 2 to 4 k (section 4) |
+| (b) Container and host, what the client really uses | **15** needed (51 with the useful ones the rip-out list keeps) | **9** needed (17 with the useful ones) | **0** needed (11 with the useful ones) | Remaining work not re-estimated |
+| (c) Full parity with the T3 server | **68**, including 1 unclassified method | **17** | **38** | Remaining work not re-estimated |
 
 The dated size basis is about 140 k lines of Rust [measured on 2026-11-14, `wc -l` over
-`crates/*/src`]. Current coverage is 169 of 237 methods, 70 of 87 tools and 18 of 57 HTTP
+`crates/*/src`]. Current coverage is 169 of 237 methods, 70 of 87 tools and 19 of 57 HTTP
 contract routes, plus seven endpoints outside that HTTP contract. The original size
 estimates are not estimates of the remaining work. Section 2 gives the current gaps;
 section 3 keeps the dated binary measurements.
@@ -55,7 +55,7 @@ Five points carry the rest of the document:
    Gateway signs, which ends pairing, hourly renewal and vault round trips; start-up from
    files Orbit writes, which ends the `t3` CLI calls in `clone-t3`; and Swamp on `/mcp`
    with a service credential, which ends the CLI and WebSocket workaround for task turns.
-4. **Maintenance.** The host target (b) still needs 15 methods, 9 tools and one HTTP
+4. **Maintenance.** The host target (b) still needs 15 methods and 9 tools, and no HTTP
    route; their size has not been re-estimated. After that there is one server kind, and
    the contract is ours to change for Orbit. Orbit's workarounds go away. The upkeep becomes merges by
    choice plus a watch on the provider layer: 783 upstream commits and 58 k changed lines in
@@ -291,7 +291,9 @@ in the `server` area.
 - **Container:** all 67 needed methods are served. One useful method is not:
   `provider.consumeResetCredit`.
 - **Host:** 152 are needed, and 15 of them are not served: `device.*` (10),
-  `peerLinks.*` (4), and `preview.stopLocalServer`.
+  `peerLinks.*` (4), and `preview.stopLocalServer`. The last stops only a server that
+  the port scan (`subscribeDiscoveredLocalServers`, useful, not served) listed; it comes with
+  that scan.
 - **Not needed anywhere: 16 methods.** These are T3 Connect (`cloud.*`, `guestShare`), the
   ACP registry's download and install (9; Nick ruled out installs), the Electron tab relay
   (`preview.desktop*`, 3) and `server.commitDesktopUpdate`.
@@ -308,14 +310,14 @@ in the `server` area.
   (`t3_environment_link/links/unlink/preferences_update`, 4) and `write_pull_request_guides`
   (no review guide generator yet). PR watching and guide reads are served since 2026-11-19.
 
-### HTTP routes (57 contract routes; 18 served) [measured counts]
+### HTTP routes (57 contract routes; 19 served) [measured counts]
 
 | | N | U | X |
 | --- | --- | --- | --- |
-| Container | 11 (all served) | 10 (6 served) | 36 (1 served) |
-| Host | 14 (13 served) | 16 (5 served) | 27 (none served) |
+| Container | 11 (all served) | 10 (7 served) | 36 (1 served) |
+| Host | 14 (all served) | 16 (5 served) | 27 (none served) |
 
-- The needed host gap is `threads/:id/transcript` (context import in the composer).
+- Every needed route is served. `threads/:id/transcript` (context import in the composer),
   `POST /api/pull-requests/diff` and all four webhook routes are served.
 - Appendix C also lists seven served endpoints outside `EnvironmentHttpApi`; these do not
   add gaps or C/H verdicts to the profile.
@@ -342,10 +344,10 @@ in the `server` area.
 | | Methods | Tools | Routes |
 | --- | --- | --- | --- |
 | (a) container: needed, not served | 0 | 0 | 0 |
-| (a) container: needed or useful, not served | 1 | 0 | 4 |
-| (b) container or host: needed, not served | 15 | 9 | 1 |
-| (b) container or host: needed or useful, minus what section 11 hides or removes | 51 | 17 | 12 |
-| (c) full parity: not served | 68 | 17 | 39 |
+| (a) container: needed or useful, not served | 1 | 0 | 3 |
+| (b) container or host: needed, not served | 15 | 9 | 0 |
+| (b) container or host: needed or useful, minus what section 11 hides or removes | 51 | 17 | 11 |
+| (c) full parity: not served | 68 | 17 | 38 |
 
 Remaining work by area. Estimates for unchanged gaps retain the original research basis;
 implemented areas have no remaining-size estimate.
@@ -357,7 +359,7 @@ implemented areas have no remaining-size estimate.
 | Devices | 10 methods, 4 tools | 5 to 7 k (T3's `device/` was about 8,400 lines) |
 | Peer links, linked environments, MCP OAuth | 4 methods, 4 tools, 8 useful routes | 3 to 5 k |
 | Provider sign-in | 6 methods | 1.5 to 2.5 k |
-| The rest | transcript route and useful features in appendices A to C | Not re-estimated |
+| The rest | useful features in appendices A to C | Not re-estimated |
 
 **What full parity still adds beyond (b):** 16 methods and 27 routes that the section 11
 list removes (T3 Connect, voice, guest share, ACP registry installs, Electron relay), plus
@@ -617,7 +619,7 @@ What moves out:
 
 What is new to maintain:
 
-- The host target (b): 15 needed methods, 9 tools and one HTTP route remain; size not re-estimated.
+- The host target (b): 15 needed methods and 9 tools remain, and no HTTP route; size not re-estimated.
 - A pinned client–server pair, and its release.
 - **Version skew:** a new client against an old container image. Orbit upgrades the agent
   bundle fleet-wide with a symlink flip and `try-restart` [code, `DROP-IN.md` §1,
@@ -1026,7 +1028,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `preview.reportProfiles` | yes | X | U |  |  |
 | `preview.reportStatus` | yes | X | N |  | agent browser and preview tabs; container previews go through the app Route |
 | `preview.resize` | yes | X | N |  | agent browser and preview tabs; container previews go through the app Route |
-| `preview.stopLocalServer` | no | X | N | L | agent browser and preview tabs; container previews go through the app Route |
+| `preview.stopLocalServer` | no | X | N | L | stops a server that `subscribeDiscoveredLocalServers` found; unreachable without that port scan, which stays unregistered |
 | `projectClone.cancel` | no | X | U | M | clone from the client; Orbit clones containers |
 | `projectClone.retry` | no | X | U | M | clone from the client; Orbit clones containers |
 | `projectClone.start` | no | X | U | M | clone from the client; Orbit clones containers |
@@ -1323,7 +1325,7 @@ counted as a separate profile row.
 | `GET /api/orchestration/threads/:threadId` | yes | N | N |  | Gateway's thread index; thread snapshot |
 | `GET /api/orchestration/threads/:threadId/bounded` | no | U | U | M | long threads; the client falls back to the socket snapshot |
 | `GET /api/orchestration/threads/:threadId/history` | no | U | U | M | long threads; the client falls back to the socket snapshot |
-| `GET /api/orchestration/threads/:threadId/transcript` | no | U | N | S | import a thread's context into the composer |
+| `GET /api/orchestration/threads/:threadId/transcript` | yes | U | N |  | import a thread's context into the composer |
 | `GET /api/projects` | no | U | U | S | `t3 project add` reads it; not needed once projects come from boot files |
 | `POST /api/projects/mutate` | yes | N | U |  | `t3 project add` |
 | `POST /api/pull-requests/diff` | yes | X | N |  | PR code tab |

@@ -21,6 +21,47 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Thread transcript route (2026-11-19)
+
+- **Served:** `GET /api/orchestration/threads/:threadId/transcript`, the composer's "import a
+  thread's context". As T3: the protocol header (400), a bearer with `orchestration:read`
+  (401, 403), `{threadId, title, updatedAt, items}` with the whole visible turn items (not cut
+  for transport), `thread_transcript_too_large` (400) when the header line plus one JSON line
+  per item passes `PROVIDER_SEND_TURN_MAX_FILE_BYTES`, `thread_not_found` as
+  `EnvironmentResourceNotFoundError` (404), at most two exports at once. The engine reads
+  the visible rows one at a time off the runtime thread, writes the body as it reads, and
+  stops at the first row past the limit; the handler sends the prepared bytes. Peak memory is
+  the body (at most 50 MiB) plus one row, never the whole thread.
+  Two partial indexes serve the reads (`turn_items_in_order` for the timeline,
+  `turn_item_interrupts` for Stop requests); a test checks both query plans (no temporary
+  sort, no scan of item bodies). A run fork that is not a side chat starts with the history it
+  inherits, as T3's `buildVisibleTurnItems`: the source's rows through the fork run (forks of
+  forks recursively), then the synthetic fork marker, all counted against the limit. A deleted
+  source keeps its rows in the fork, as in T3. The
+  thread snapshot does not carry inherited rows yet; that is an engine gap of the thread view. The limit and the
+  header text are generated (`tools/gen-upstream.mjs`). Not on the managed ingress: its
+  reader profile has no composer.
+- **Proof:** `idle-diff` reads the route on both servers in six thread states (two completed
+  turns, an approval, a question, a stop, a failed turn, a subagent with a wake turn) and four
+  refusals. It fails on status, content type, refusal body, top-level keys, a body the
+  contract's JSON codec does not decode, or a body that is not the server's own thread
+  snapshot cut down (T3's snapshot passed through `projectTurnItemForWire`). A `fork`
+  scenario forks a completed run over `/ws` and compares the fork's transcript before its
+  first message and again after its source is deleted: row outline (position, visibility,
+  type, owner) and the fork marker. 36 comparisons, no failure. An engine test proves the early stop: a row past the limit that the reader
+  cannot parse fails a whole read but not a read that stops before it.
+- **Known differences (info):** the items differ where the two engines record a turn
+  differently, as in the thread view: no "Workspace ready" item, no `providerThreadId` on the
+  first user message, ordinals that do not restart per run, no title on a provider error
+  item, "Stopped by an agent." with a full stop. Without the protocol header T3 answers an
+  empty 400; the client always sends it. Size near the limit: T3 counts its in-memory rows,
+  this server the JSON it sends.
+- **`preview.stopLocalServer` stays unregistered.** Its one caller, the thread Servers panel,
+  lists only servers that `subscribeDiscoveredLocalServers` found and offers Stop only when the
+  environment advertises `localServerStop`. Neither is served or advertised, so no client can
+  reach it. Serving it means T3's port scan first (`PortScanner.ts`, about 1,240 lines:
+  socket owners, process groups, terminal and agent attribution); not small.
+
 ## PR watching and review guides (2026-11-19)
 
 Served: `watch_pull_request`, `unwatch_pull_request` and `read_pull_request_guide` (70 of 87
@@ -761,7 +802,7 @@ The fixture replay passes 50 of 159 variants: Grok 9 of 15 (was 1), Claude 24 of
   the handoff through Codex `thread/inject_items` and Claude's `inlineContextLength`, both
   provider-crate changes that other workers own); prepared runs and setup scripts; a workspace
   strategy for delegated tasks; the other refused commands; bounded snapshots and the
-  `/history`, `/bounded`, `/transcript` routes; NFC and T3's search ranking (`paletteSearch.ts`,
+  `/history` and `/bounded` routes (`/transcript` is served since 2026-11-19); NFC and T3's search ranking (`paletteSearch.ts`,
   about 1,300 lines). Commands stay 43 of 56.
 
 ## ACP provider, part 3 (2026-11-14)
@@ -1977,8 +2018,8 @@ T3 Code.
    the replay gate in the ACP stub with `finish_held_run` (4 Grok variants, which also need
    Grok background tasks), Grok subagents, Claude's background wakes.
 5. **Engine.** Merge-back and the portable fork path (both need T3's `ContextHandoffService`);
-   prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history`, `/bounded` and
-   `/transcript` routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
+   prepared runs and setup scripts in a `setup-<id>` terminal; bounded thread snapshots and the `/history` and `/bounded`
+   routes (a full snapshot of a long thread peaks at about 13 bytes per byte of
    JSON); a workspace strategy for delegated tasks; search details (no NFC normalization, the
    old snippet rule); titles through a text generator or Codex (Claude as the title model keeps
    the seed title until the Claude provider implements `generate_text`; no fork source or

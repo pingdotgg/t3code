@@ -28,7 +28,9 @@ mod upstream;
 
 pub use generated::*;
 pub use ids::*;
-pub use upstream::T3_SERVER_VERSION;
+pub use upstream::{
+    PROVIDER_SEND_TURN_MAX_FILE_BYTES, T3_SERVER_VERSION, THREAD_TRANSCRIPT_HEADER_PARTS,
+};
 
 /// `ORCHESTRATION_PROTOCOL_VERSION` in `packages/contracts/src/environment.ts`. `/ws` answers
 /// 426 unless the `orchestrationProtocol` query param equals it.

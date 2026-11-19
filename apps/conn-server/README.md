@@ -92,7 +92,7 @@ CI path filters and sync triggers are listed in [`docs/upkeep.md`](docs/upkeep.m
 | Text generation     | `node crates/conn-server/tools/textgen-diff.mjs target/release/examples/text_generation` | Text generator requests and answers, title prompts, contexts and titles equal T3's own code, on a loopback stub |
 | Registry            | `node crates/conn-source-control/tools/registry-diff.mjs target/release/examples/registry_cases` | GitHub and unknown-host fallback match T3's core registry with its GitHub definition, on every GitHub test literal and a fixed grid (8,901 cases) |
 | MCP parity          | `node crates/conn-mcp/tools/parity.mjs target/release/examples/replay_server`                                                   | `/mcp` answers as the T3 server's does, on the same calls                                            |
-| Orbit idle check    | `node crates/conn-server/tools/idle-diff.mjs target/release/conn-server` | `/api/orchestration/shell` as Orbit's idle sleep and thread index read it equals the T3 server's in 14 states (no thread to a restart mid-turn) and 5 refusals; Codex on the conformance stub; differences listed in its `KNOWN` must stay exactly those |
+| Orbit idle check    | `node crates/conn-server/tools/idle-diff.mjs target/release/conn-server` | `/api/orchestration/shell` as Orbit's idle sleep and thread index read it equals the T3 server's in 14 states (no thread to a restart mid-turn) and 5 refusals; `/transcript` matches in status, refusals and decode, and is each server's own thread snapshot cut down, in 6 states and 4 refusals, and a run fork's transcript matches T3's outline and fork marker; Codex on the conformance stub; differences listed in its `KNOWN` must stay exactly those |
 | Provider sign-in    | `node crates/conn-server/tools/provider-auth-diff.mjs target/release/conn-server` | every `provider.auth.*` reply for `claudeAgent`, `codex`, `grok` and an unknown id equals the T3 server's, and neither server runs a CLI for them (recording stubs) |
 | Codex instructions  | `node crates/conn-provider-codex/tools/gen-instructions.mjs --check`                                                             | T3's Codex `additionalContext` text is current, byte for byte                                         |
 | Codex conformance   | `node crates/conn-provider-codex/tools/conformance.mjs`                                                                         | Codex argv, environment, every stdin frame and shutdown equal the T3 server's, on a stub `codex`; also the `codex mcp list` and `codex exec` runs of a thread title |
@@ -424,8 +424,10 @@ client send `omit*` shell flags and call methods we would then need.
 `x-t3-orchestration-protocol: 2` (else 400) and a bearer with `orchestration:read` (else 401 or
 403). The shell route ignores its query and always sends the full snapshot. An unknown thread
 is a plain 404, never `EnvironmentResourceNotFoundError`, which would make the client mark the
-thread deleted. `/bounded`, `/history` and `/transcript` are not routed; the client falls back
-to the socket.
+thread deleted. `/transcript` is served as T3 serves it: the whole visible turn items, the
+same header and bearer, `thread_transcript_too_large` past `PROVIDER_SEND_TURN_MAX_FILE_BYTES`,
+and T3's structured `thread_not_found`. `/bounded` and `/history` are not routed; the client
+falls back to the socket.
 
 ### Opt-in flags
 

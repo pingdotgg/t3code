@@ -14,7 +14,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use conn_engine::{Engine, EngineError};
+use conn_engine::{Engine, EngineError, ThreadTranscript};
 
 use conn_support::time::iso_from_ms;
 
@@ -78,6 +78,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/orchestration/threads/{thread_id}",
             get(thread_snapshot),
+        )
+        .route(
+            "/api/orchestration/threads/{thread_id}/transcript",
+            get(thread_transcript),
         )
         .route("/ws", get(ws))
         .merge(crate::routes::router())
@@ -529,6 +533,64 @@ async fn thread_snapshot(
     match engine.thread_snapshot(thread_id.into()).await {
         Ok(Some(snapshot)) => Json(snapshot).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => snapshot_failed("orchestration_thread_snapshot_failed", error),
+    }
+}
+
+/// Full-thread exports at once, as T3's `transcriptExportPermits`: each holds a whole
+/// projection in memory.
+static TRANSCRIPT_EXPORTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+/// `GET /api/orchestration/threads/:threadId/transcript` (`OrchestrationV2ThreadTranscript`):
+/// the thread's visible turn items for the composer's context import. As T3's
+/// `getThreadTranscript`, the items are the stored ones, not cut for transport. A transcript
+/// whose file (header line plus one JSON line per item) would pass
+/// `PROVIDER_SEND_TURN_MAX_FILE_BYTES` is refused with `thread_transcript_too_large`; the
+/// engine stops reading at that row (`Engine::thread_transcript`). An
+/// unknown thread is T3's `EnvironmentResourceNotFoundError`: the caller is a command, not the
+/// thread view.
+async fn thread_transcript(
+    State(state): State<AppState>,
+    Path(thread_id): Path<String>,
+    headers: HeaderMap,
+) -> Response {
+    let engine = match orchestration_access(&state, &headers) {
+        Ok(engine) => engine,
+        Err(response) => return *response,
+    };
+    let Ok(_permit) = TRANSCRIPT_EXPORTS.acquire().await else {
+        return internal_reason("orchestration_thread_snapshot_failed");
+    };
+    let environment_id = state.descriptor["environmentId"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    let limit = conn_contract::PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+    // The engine reads and encodes off the runtime thread, and stops at the limit.
+    match engine
+        .thread_transcript(thread_id.into(), environment_id, limit)
+        .await
+    {
+        Ok(ThreadTranscript::Body(body)) => (
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/json"),
+            )],
+            body,
+        )
+            .into_response(),
+        Ok(ThreadTranscript::NotFound) => error(
+            StatusCode::NOT_FOUND,
+            "EnvironmentResourceNotFoundError",
+            "not_found",
+            "thread_not_found",
+        ),
+        Ok(ThreadTranscript::TooLarge) => error(
+            StatusCode::BAD_REQUEST,
+            "EnvironmentRequestInvalidError",
+            "invalid_request",
+            "thread_transcript_too_large",
+        ),
         Err(error) => snapshot_failed("orchestration_thread_snapshot_failed", error),
     }
 }
@@ -1056,6 +1118,21 @@ mod tests {
         // An unknown thread is a plain 404, never the structured not-found error.
         let (status, body) = get("/api/orchestration/threads/nope", &[header, &bearer]).await;
         assert_eq!((status, body.as_str()), (404, ""));
+        // The transcript route answers T3's structured not-found error, and needs the same
+        // header and bearer.
+        let transcript = "/api/orchestration/threads/nope/transcript";
+        assert_eq!(get(transcript, &[&bearer]).await.0, 400);
+        assert_eq!(get(transcript, &[header]).await.0, 401);
+        let (status, body) = get(transcript, &[header, &bearer]).await;
+        let body: Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(
+            (status, &body["_tag"], &body["reason"]),
+            (
+                404,
+                &json!("EnvironmentResourceNotFoundError"),
+                &json!("thread_not_found")
+            )
+        );
 
         // `project add` on a running server: an operate-scoped bearer adds the project now.
         let root = dir.to_string_lossy().into_owned();

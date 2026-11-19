@@ -16,7 +16,9 @@
 //   tools/bump-report.mjs compares it with the routes this server serves.
 // - crates/conn-contract/src/upstream.rs: `T3_SERVER_VERSION`, the `version` of
 //   apps/server/package.json. Clients compare it with their own; the Codex provider sends it
-//   as its client version. Every crate reads it as `conn_contract::T3_SERVER_VERSION`.
+//   as its client version. Every crate reads it as `conn_contract::T3_SERVER_VERSION`. Also
+//   `PROVIDER_SEND_TURN_MAX_FILE_BYTES` and the fixed text of `threadTranscriptHeader`, which
+//   size the thread transcript route.
 // - crates/conn-server/src/settings/generated.rs: the settings fields that hold a secret, per
 //   group, as apps/server/src/settingsSecrets.ts finds them with `secretSettingsFields`
 //   (provider configs by driver, source control hosts by kind, usage limit sources, text
@@ -344,6 +346,29 @@ const serverPackage = JSON.parse(NodeFS.readFileSync(inMonorepo("apps/server/pac
 if (typeof serverPackage.version !== "string" || serverPackage.version === "") {
   throw new Error("apps/server/package.json has no version");
 }
+// The thread transcript's header line (`threadTranscriptHeader`, packages/shared): its fixed
+// text between the four JSON-encoded values, found with stand-in values.
+const transcriptShared = await importSource("packages/shared/src/threadTranscript.ts");
+const SharedDateTime = await packageImporter("packages/shared")("effect/DateTime");
+const transcriptStandIns = ["T3_TITLE", "T3_ENVIRONMENT", "T3_THREAD", "2000-01-02T03:04:05.006Z"];
+const transcriptHeader = transcriptShared.threadTranscriptHeader(transcriptStandIns[1], {
+  title: transcriptStandIns[0],
+  threadId: transcriptStandIns[2],
+  updatedAt: SharedDateTime.makeUnsafe(transcriptStandIns[3]),
+});
+const transcriptHeaderParts = [];
+let transcriptRest = transcriptHeader;
+for (const standIn of transcriptStandIns) {
+  const at = transcriptRest.indexOf(str(standIn));
+  if (at === -1) throw new Error(`threadTranscriptHeader changed shape: ${standIn} not found`);
+  transcriptHeaderParts.push(transcriptRest.slice(0, at));
+  transcriptRest = transcriptRest.slice(at + str(standIn).length);
+}
+transcriptHeaderParts.push(transcriptRest);
+const chatAttachment = await importSource("packages/contracts/src/chatAttachment.ts");
+const maxFileBytes = chatAttachment.PROVIDER_SEND_TURN_MAX_FILE_BYTES;
+if (!Number.isSafeInteger(maxFileBytes)) throw new Error("PROVIDER_SEND_TURN_MAX_FILE_BYTES moved");
+
 const upstreamRs = rustfmt(
   [
     ...HEADER,
@@ -352,6 +377,13 @@ const upstreamRs = rustfmt(
     "/// version this server stands in for. Clients compare it with their own version; the Codex",
     "/// provider sends it as its client version, as the T3 server does.",
     `pub const T3_SERVER_VERSION: &str = ${str(serverPackage.version)};`,
+    "",
+    "/// `PROVIDER_SEND_TURN_MAX_FILE_BYTES` (packages/contracts/src/chatAttachment.ts).",
+    `pub const PROVIDER_SEND_TURN_MAX_FILE_BYTES: u64 = ${maxFileBytes};`,
+    "",
+    "/// `threadTranscriptHeader` (packages/shared/src/threadTranscript.ts): the fixed text around",
+    "/// its four JSON-encoded values, in order: title, environment id, thread id, `updatedAt`.",
+    `pub const THREAD_TRANSCRIPT_HEADER_PARTS: [&str; 5] = [${transcriptHeaderParts.map(str).join(", ")}];`,
     "",
   ].join("\n"),
 );

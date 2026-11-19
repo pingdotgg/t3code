@@ -52,6 +52,12 @@ ON entities(thread_id, json_extract(body, '$.updatedAt') DESC, id DESC)
 WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'secret_request'
   AND json_extract(body, '$.status') = 'waiting';
 CREATE INDEX IF NOT EXISTS mcp_app_items ON entities(id, thread_id) WHERE kind='turnItems';
+-- A thread's turn items in timeline order, read row by row (the transcript, projections).
+CREATE INDEX IF NOT EXISTS turn_items_in_order ON entities(thread_id, ordinal, id)
+WHERE kind = 'turnItems';
+-- The runs with a Stop request, for the visibility rule.
+CREATE INDEX IF NOT EXISTS turn_item_interrupts ON entities(thread_id, json_extract(body, '$.runId'))
+WHERE kind = 'turnItems' AND json_extract(body, '$.type') = 'run_interrupt_request';
 CREATE TABLE IF NOT EXISTS projects (
   id             TEXT PRIMARY KEY,
   workspace_root TEXT NOT NULL UNIQUE,
@@ -96,6 +102,51 @@ CREATE TABLE IF NOT EXISTS pending_rollbacks (
   snapshot   TEXT
 );
 ";
+
+/// A thread's turn items in timeline order; served by `turn_items_in_order`.
+pub(crate) const TRANSCRIPT_ITEMS_SQL: &str =
+    "SELECT body FROM entities WHERE thread_id = ?1 AND kind = 'turnItems' ORDER BY ordinal, id";
+/// The runs of a thread with a Stop request; served by `turn_item_interrupts`.
+pub(crate) const TRANSCRIPT_INTERRUPTS_SQL: &str = "SELECT DISTINCT json_extract(body, '$.runId')
+     FROM entities WHERE thread_id = ?1 AND kind = 'turnItems'
+     AND json_extract(body, '$.type') = 'run_interrupt_request'
+     AND json_extract(body, '$.runId') IS NOT NULL";
+
+/// `inheritedRunFork`: the source thread and run of a run fork that is not a side chat.
+fn inherited_run_fork(thread: &Value) -> Option<(String, String)> {
+    let forked = &thread["forkedFrom"];
+    if forked["type"] != "run" || thread["lineage"]["sideChat"] == true {
+        return None;
+    }
+    Some((
+        forked["threadId"].as_str()?.to_owned(),
+        forked["runId"].as_str()?.to_owned(),
+    ))
+}
+
+/// `makeForkMarkerTurnItem`: the synthetic "Forked from conversation" item of a fork.
+fn fork_marker(thread: &Value, source_id: &str, run_id: &str) -> Value {
+    let id = thread["id"].as_str().unwrap_or_default();
+    let created_at = thread["createdAt"].clone();
+    json!({
+        "id": format!("turn-item:fork:{id}"),
+        "threadId": id,
+        "runId": null,
+        "nodeId": null,
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": 0,
+        "status": "completed",
+        "title": "Forked from conversation",
+        "startedAt": null,
+        "completedAt": created_at,
+        "updatedAt": created_at,
+        "type": "fork",
+        "source": {"type": "run", "threadId": source_id, "runId": run_id},
+        "targetThreadId": id,
+    })
+}
 
 /// A rollback a previous process left pending (`pending_rollbacks`).
 pub(crate) struct PendingRollback {
@@ -530,6 +581,233 @@ impl Store {
         projection.insert("visibleTurnItems".into(), Value::Array(visible));
         projection.insert("updatedAt".into(), Value::String(activity_at));
         Ok(Some((Value::Object(projection), omitted)))
+    }
+
+    /// `GET /api/orchestration/threads/:threadId/transcript`, encoded: the thread's visible
+    /// turn items read one at a time in timeline order, written straight into the JSON body.
+    /// It stops at the first row that would make the file the client builds (the header line
+    /// plus one line per item, T3's `getThreadTranscript`) pass `limit` bytes, so a long
+    /// thread never sits in memory whole. Only runs and attempts are read as a whole.
+    ///
+    /// A run fork that is not a side chat starts with the history it inherits, as T3's
+    /// `buildVisibleTurnItems`: the source's rows through the fork run (recursively for a fork
+    /// of a fork), then the synthetic fork marker, then its own rows.
+    pub(crate) fn thread_transcript(
+        &self,
+        thread_id: &str,
+        environment_id: &str,
+        limit: u64,
+    ) -> StoreResult<crate::ThreadTranscript> {
+        use crate::ThreadTranscript;
+        let Some((thread, updated_at)) = self.live_thread(thread_id)? else {
+            return Ok(ThreadTranscript::NotFound);
+        };
+        let (Some(id), Some(title)) = (thread["id"].as_str(), thread["title"].as_str()) else {
+            return Err(format!("store: thread {thread_id} has no id or title"));
+        };
+        let header = crate::transcript::header_bytes([title, environment_id, id, &updated_at]);
+        let mut out = crate::transcript::Rows::new(header, limit);
+        if !out.fits() {
+            return Ok(ThreadTranscript::TooLarge);
+        }
+        if let Some((source, run)) = inherited_run_fork(&thread) {
+            let created_at = thread["createdAt"].as_str().unwrap_or_default();
+            let mut seen = vec![thread_id.to_owned()];
+            if !self.transcript_inherited(&source, &run, created_at, &mut seen, &mut out)? {
+                return Ok(ThreadTranscript::TooLarge);
+            }
+            let marker = fork_marker(&thread, &source, &run);
+            let marker_id = marker["id"].clone();
+            if !out.push("synthetic", json!(source), marker_id, marker)? {
+                return Ok(ThreadTranscript::TooLarge);
+            }
+        }
+        let runs = entities(&self.conn, thread_id, "runs")?;
+        let attempts = entities(&self.conn, thread_id, "attempts")?;
+        let rule = self.visibility(thread_id, &runs, &attempts)?;
+        if !self.transcript_rows(thread_id, "local", &mut out, |item| rule.shows(item))? {
+            return Ok(ThreadTranscript::TooLarge);
+        }
+        Ok(ThreadTranscript::Body(out.finish(
+            id,
+            title,
+            &updated_at,
+        )?))
+    }
+
+    /// The thread record and `activity_at` of a thread that is not deleted.
+    fn live_thread(&self, thread_id: &str) -> StoreResult<Option<(Value, String)>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT thread, activity_at, deleted FROM threads WHERE id = ?1",
+                [thread_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, bool>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(err)?;
+        match row {
+            Some((thread, activity_at, false)) => Ok(Some((parse(thread)?, activity_at))),
+            _ => Ok(None),
+        }
+    }
+
+    /// The thread record, deleted or not: a fork inherits from a deleted source.
+    fn stored_thread(&self, thread_id: &str) -> StoreResult<Option<Value>> {
+        self.conn
+            .query_row(
+                "SELECT thread FROM threads WHERE id = ?1",
+                [thread_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(err)?
+            .map(parse)
+            .transpose()
+    }
+
+    /// The visibility rule of a thread, with its Stop requests when the rule needs them.
+    fn visibility(
+        &self,
+        thread_id: &str,
+        runs: &[Value],
+        attempts: &[Value],
+    ) -> StoreResult<crate::visibility::Visibility> {
+        let mut rule = crate::visibility::Visibility::new(runs, attempts);
+        if rule.needs_interrupts() {
+            let mut stmt = self.conn.prepare(TRANSCRIPT_INTERRUPTS_SQL).map_err(err)?;
+            let runs = stmt
+                .query_map([thread_id], |row| row.get::<_, String>(0))
+                .map_err(err)?
+                .collect::<rusqlite::Result<_>>()
+                .map_err(err)?;
+            rule.set_interrupted(runs);
+        }
+        Ok(rule)
+    }
+
+    /// Writes a thread's turn items that `keep` accepts, in timeline order, one at a time.
+    /// `false` when the limit stopped it.
+    fn transcript_rows(
+        &self,
+        thread_id: &str,
+        visibility: &str,
+        out: &mut crate::transcript::Rows,
+        keep: impl Fn(&Value) -> bool,
+    ) -> StoreResult<bool> {
+        let mut stmt = self.conn.prepare(TRANSCRIPT_ITEMS_SQL).map_err(err)?;
+        let mut rows = stmt.query([thread_id]).map_err(err)?;
+        while let Some(row) = rows.next().map_err(err)? {
+            let text = row
+                .get_ref(0)
+                .map_err(err)?
+                .as_str()
+                .map_err(|e| format!("store: a stored row is not text: {e}"))?;
+            let item: Value = serde_json::from_str(text)
+                .map_err(|e| format!("store: a stored row is not JSON: {e}"))?;
+            if !keep(&item) {
+                continue;
+            }
+            // The stored text is the item's compact JSON; its line in the file is longer. A
+            // row that cannot fit is refused before it is encoded.
+            if !out.has_room(text.len() as u64) {
+                return Ok(false);
+            }
+            let source_thread = item["threadId"].clone();
+            let source_item = item["id"].clone();
+            if !out.push(visibility, source_thread, source_item, item)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// `visibleTurnItemsThroughRun`: what a fork of `source` at `run_id`, made at
+    /// `fork_created_at`, inherits. `seen` guards against a cycle, as T3's `seenThreadIds`.
+    /// `false` when the limit stopped it.
+    fn transcript_inherited(
+        &self,
+        source_id: &str,
+        run_id: &str,
+        fork_created_at: &str,
+        seen: &mut Vec<String>,
+        out: &mut crate::transcript::Rows,
+    ) -> StoreResult<bool> {
+        // A deleted source keeps its rows, and T3 still shows them in the fork.
+        let Some(source) = self.stored_thread(source_id)? else {
+            return Ok(true);
+        };
+        let runs = entities(&self.conn, source_id, "runs")?;
+        let Some(cutoff) = runs
+            .iter()
+            .find(|run| run["id"] == run_id)
+            .and_then(|run| run["ordinal"].as_u64())
+        else {
+            return Ok(true);
+        };
+        // The source's own inherited rows and its marker come first.
+        if let Some((parent, parent_run)) = inherited_run_fork(&source)
+            && !seen.contains(&parent)
+        {
+            seen.push(source_id.to_owned());
+            let created_at = source["createdAt"].as_str().unwrap_or_default();
+            if !self.transcript_inherited(&parent, &parent_run, created_at, seen, out)? {
+                return Ok(false);
+            }
+            let marker = fork_marker(&source, &parent, &parent_run);
+            let marker_id = marker["id"].clone();
+            if !out.push("inherited", json!(parent), marker_id, marker)? {
+                return Ok(false);
+            }
+        }
+        // `createInheritedTurnItemVisibility`: a later rollback does not hide inherited
+        // history; a rolled-back run with a cancelled attempt counts as cancelled.
+        let attempts = entities(&self.conn, source_id, "attempts")?;
+        let cancelled: std::collections::HashSet<&str> = attempts
+            .iter()
+            .filter(|attempt| attempt["status"] == "cancelled")
+            .filter_map(|attempt| attempt["runId"].as_str())
+            .collect();
+        let inherited_runs: Vec<Value> = runs
+            .iter()
+            .filter_map(|run| {
+                if run["status"] != "rolled_back" {
+                    return Some(run.clone());
+                }
+                let id = run["id"].as_str()?;
+                cancelled.contains(id).then(|| {
+                    let mut run = run.clone();
+                    run["status"] = json!("cancelled");
+                    run
+                })
+            })
+            .collect();
+        let rule = self.visibility(source_id, &inherited_runs, &attempts)?;
+        // `forkInheritedRunOrdinals`: runs rolled back before the fork are not inherited.
+        let ordinals: std::collections::HashMap<&str, u64> = runs
+            .iter()
+            .filter(|run| {
+                !(run["status"] == "rolled_back"
+                    && run["completedAt"]
+                        .as_str()
+                        .is_some_and(|at| at < fork_created_at))
+            })
+            .filter_map(|run| Some((run["id"].as_str()?, run["ordinal"].as_u64()?)))
+            .collect();
+        let v1_import = source["historyOrigin"] == "v1_import";
+        self.transcript_rows(source_id, "inherited", out, |item| {
+            let at_or_before = match item["runId"].as_str() {
+                None => v1_import,
+                Some(run) => ordinals.get(run).is_some_and(|ordinal| *ordinal <= cutoff),
+            };
+            at_or_before && rule.shows(item)
+        })
     }
 
     /// Stored events of one thread after `after`, at most `limit`, as `(sequence, event)`.
