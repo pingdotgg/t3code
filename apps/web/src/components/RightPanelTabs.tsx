@@ -42,6 +42,7 @@ import {
   ChevronRight,
   Eye,
   NotebookPen,
+  Gamepad2Icon,
   FileDiff,
   Files,
   Globe2,
@@ -623,6 +624,8 @@ function surfaceTitle(
       return "Agent Eyes";
     case "iwe":
       return "Notes";
+    case "game-dev":
+      return "Game Development";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -692,6 +695,8 @@ function SurfaceIcon({
       return <Eye className="size-3 shrink-0" />;
     case "iwe":
       return <NotebookPen className="size-3 shrink-0" />;
+    case "game-dev":
+      return <Gamepad2Icon className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":

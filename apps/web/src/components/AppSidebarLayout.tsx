@@ -1,3 +1,5 @@
+import { lazy, Suspense } from "react";
+import { useEntertainmentStore } from "./entertainment/entertainmentStore";
 import { useAtomValue } from "@effect/atom-react";
 import { VideoBackgroundLayer } from "./videoBackground/VideoBackgroundLayer";
 import * as Schema from "effect/Schema";
@@ -412,6 +414,12 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 }
 
+const EntertainmentCenter = lazy(() =>
+  import("./entertainment/EntertainmentCenter").then((module) => ({
+    default: module.EntertainmentCenter,
+  })),
+);
+
 export function AppSidebarLayout({
   children,
   showSidebar = true,
@@ -419,6 +427,9 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
+  const entertainmentOpen = useEntertainmentStore((state) => state.open);
+  const entertainmentDock = useEntertainmentStore((state) => state.dock);
+  const entertainmentWidth = useEntertainmentStore((state) => state.width);
   const sidebarArea = workspaceAreaProps("sidebar", 0, "Threads");
   const [sidebarRouteReveal] = useState<SidebarRouteReveal>(() => ({
     observedKey: null,
@@ -456,6 +467,11 @@ export function AppSidebarLayout({
   const sidebarProviderStyle = {
     "--sidebar-width": `${clampThreadSidebarWidth(sidebarWidth, sidebarMinimumWidth, sidebarMaximumWidth)}px`,
     "--panel-animation-duration": `${panelAnimationDurationMs}ms`,
+    ...(showSidebar && entertainmentOpen && entertainmentDock === "right"
+      ? {
+          "--workspace-controls-right": `calc(var(--workspace-controls-right-base) + min(${entertainmentWidth}px, 55vw))`,
+        }
+      : {}),
     ...windowControlsInsetStyle,
   } as CSSProperties;
 
@@ -493,6 +509,11 @@ export function AppSidebarLayout({
               <SidebarRail onDoubleClick={resetSidebarWidth} />
             </Sidebar>
           </>
+        ) : null}
+        {showSidebar && entertainmentOpen ? (
+          <Suspense fallback={null}>
+            <EntertainmentCenter dock={entertainmentDock} />
+          </Suspense>
         ) : null}
         {children}
         <BackgroundThreadAnnouncer />

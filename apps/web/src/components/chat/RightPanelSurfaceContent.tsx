@@ -12,6 +12,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { lazy, Suspense } from "react";
 import SideChatPane from "./SideChatPane";
 import { AgentEyesPanel } from "../agentEyes/AgentEyesPanel";
+import { GameDevelopmentPanel } from "../gameDev/GameDevelopmentPanel";
 import { IweNotesPanel } from "../iwe/IweNotesPanel";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
@@ -77,6 +78,7 @@ export function RightPanelSurfaceContent(props: {
     annotation: PreviewAnnotationPayload,
     image: ComposerImageAttachment | null,
   ) => void;
+  readonly onUseGameRecipe: (prompt: string) => void;
   readonly onCloseSurface: (surface: RightPanelSurface) => void;
   readonly terminal: RightPanelTerminalProps;
   readonly pullRequest: RightPanelPullRequestProps;
@@ -180,6 +182,15 @@ export function RightPanelSurfaceContent(props: {
       return <AgentEyesPanel threadRef={threadRef} visible={visible} />;
     case "iwe":
       return <IweNotesPanel threadRef={threadRef} />;
+    case "game-dev":
+      return (
+        <GameDevelopmentPanel
+          threadRef={threadRef}
+          projectRoot={props.files.workspaceRoot}
+          visible={visible}
+          onUseRecipe={props.onUseGameRecipe}
+        />
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

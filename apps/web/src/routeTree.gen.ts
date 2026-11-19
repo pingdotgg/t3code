@@ -37,6 +37,7 @@ import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settin
 import { Route as ChatSettingsProviderUpdatesRouteImport } from './routes/_chat.settings.provider-updates'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOpenSourceLicensesRouteImport } from './routes/_chat.settings.open-source-licenses'
+import { Route as ChatSettingsMobileAccessRouteImport } from './routes/_chat.settings.mobile-access'
 import { Route as ChatSettingsMemoryVaultsRouteImport } from './routes/_chat.settings.memory-vaults'
 import { Route as ChatSettingsMaintenanceRouteImport } from './routes/_chat.settings.maintenance'
 import { Route as ChatSettingsLocalModelsRouteImport } from './routes/_chat.settings.local-models'
@@ -44,6 +45,7 @@ import { Route as ChatSettingsLabsRouteImport } from './routes/_chat.settings.la
 import { Route as ChatSettingsKeybindingsRouteImport } from './routes/_chat.settings.keybindings'
 import { Route as ChatSettingsIntegrationsRouteImport } from './routes/_chat.settings.integrations'
 import { Route as ChatSettingsGeneralRouteImport } from './routes/_chat.settings.general'
+import { Route as ChatSettingsGameDevelopmentRouteImport } from './routes/_chat.settings.game-development'
 import { Route as ChatSettingsDiffsRouteImport } from './routes/_chat.settings.diffs'
 import { Route as ChatSettingsDiagnosticsRouteImport } from './routes/_chat.settings.diagnostics'
 import { Route as ChatSettingsDevicesRouteImport } from './routes/_chat.settings.devices'
@@ -203,6 +205,12 @@ const ChatSettingsOpenSourceLicensesRoute =
     path: '/open-source-licenses',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsMobileAccessRoute =
+  ChatSettingsMobileAccessRouteImport.update({
+    id: '/mobile-access',
+    path: '/mobile-access',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsMemoryVaultsRoute =
   ChatSettingsMemoryVaultsRouteImport.update({
     id: '/memory-vaults',
@@ -240,6 +248,12 @@ const ChatSettingsGeneralRoute = ChatSettingsGeneralRouteImport.update({
   path: '/general',
   getParentRoute: () => ChatSettingsRoute,
 } as any)
+const ChatSettingsGameDevelopmentRoute =
+  ChatSettingsGameDevelopmentRouteImport.update({
+    id: '/game-development',
+    path: '/game-development',
+    getParentRoute: () => ChatSettingsRoute,
+  } as any)
 const ChatSettingsDiffsRoute = ChatSettingsDiffsRouteImport.update({
   id: '/diffs',
   path: '/diffs',
@@ -333,6 +347,7 @@ export interface FileRoutesByFullPath {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/settings/game-development': typeof ChatSettingsGameDevelopmentRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -340,6 +355,7 @@ export interface FileRoutesByFullPath {
   '/settings/local-models': typeof ChatSettingsLocalModelsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
+  '/settings/mobile-access': typeof ChatSettingsMobileAccessRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
@@ -382,6 +398,7 @@ export interface FileRoutesByTo {
   '/settings/devices': typeof ChatSettingsDevicesRoute
   '/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/settings/game-development': typeof ChatSettingsGameDevelopmentRoute
   '/settings/general': typeof ChatSettingsGeneralRoute
   '/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -389,6 +406,7 @@ export interface FileRoutesByTo {
   '/settings/local-models': typeof ChatSettingsLocalModelsRoute
   '/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
+  '/settings/mobile-access': typeof ChatSettingsMobileAccessRoute
   '/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
@@ -433,6 +451,7 @@ export interface FileRoutesById {
   '/_chat/settings/devices': typeof ChatSettingsDevicesRoute
   '/_chat/settings/diagnostics': typeof ChatSettingsDiagnosticsRoute
   '/_chat/settings/diffs': typeof ChatSettingsDiffsRoute
+  '/_chat/settings/game-development': typeof ChatSettingsGameDevelopmentRoute
   '/_chat/settings/general': typeof ChatSettingsGeneralRoute
   '/_chat/settings/integrations': typeof ChatSettingsIntegrationsRoute
   '/_chat/settings/keybindings': typeof ChatSettingsKeybindingsRoute
@@ -440,6 +459,7 @@ export interface FileRoutesById {
   '/_chat/settings/local-models': typeof ChatSettingsLocalModelsRoute
   '/_chat/settings/maintenance': typeof ChatSettingsMaintenanceRoute
   '/_chat/settings/memory-vaults': typeof ChatSettingsMemoryVaultsRoute
+  '/_chat/settings/mobile-access': typeof ChatSettingsMobileAccessRoute
   '/_chat/settings/open-source-licenses': typeof ChatSettingsOpenSourceLicensesRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/provider-updates': typeof ChatSettingsProviderUpdatesRoute
@@ -484,6 +504,7 @@ export interface FileRouteTypes {
     | '/settings/devices'
     | '/settings/diagnostics'
     | '/settings/diffs'
+    | '/settings/game-development'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -491,6 +512,7 @@ export interface FileRouteTypes {
     | '/settings/local-models'
     | '/settings/maintenance'
     | '/settings/memory-vaults'
+    | '/settings/mobile-access'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/provider-updates'
@@ -533,6 +555,7 @@ export interface FileRouteTypes {
     | '/settings/devices'
     | '/settings/diagnostics'
     | '/settings/diffs'
+    | '/settings/game-development'
     | '/settings/general'
     | '/settings/integrations'
     | '/settings/keybindings'
@@ -540,6 +563,7 @@ export interface FileRouteTypes {
     | '/settings/local-models'
     | '/settings/maintenance'
     | '/settings/memory-vaults'
+    | '/settings/mobile-access'
     | '/settings/open-source-licenses'
     | '/settings/projects'
     | '/settings/provider-updates'
@@ -583,6 +607,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/devices'
     | '/_chat/settings/diagnostics'
     | '/_chat/settings/diffs'
+    | '/_chat/settings/game-development'
     | '/_chat/settings/general'
     | '/_chat/settings/integrations'
     | '/_chat/settings/keybindings'
@@ -590,6 +615,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/local-models'
     | '/_chat/settings/maintenance'
     | '/_chat/settings/memory-vaults'
+    | '/_chat/settings/mobile-access'
     | '/_chat/settings/open-source-licenses'
     | '/_chat/settings/projects'
     | '/_chat/settings/provider-updates'
@@ -817,6 +843,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsOpenSourceLicensesRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/settings/mobile-access': {
+      id: '/_chat/settings/mobile-access'
+      path: '/mobile-access'
+      fullPath: '/settings/mobile-access'
+      preLoaderRoute: typeof ChatSettingsMobileAccessRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
     '/_chat/settings/memory-vaults': {
       id: '/_chat/settings/memory-vaults'
       path: '/memory-vaults'
@@ -864,6 +897,13 @@ declare module '@tanstack/react-router' {
       path: '/general'
       fullPath: '/settings/general'
       preLoaderRoute: typeof ChatSettingsGeneralRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/game-development': {
+      id: '/_chat/settings/game-development'
+      path: '/game-development'
+      fullPath: '/settings/game-development'
+      preLoaderRoute: typeof ChatSettingsGameDevelopmentRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/diffs': {
@@ -972,6 +1012,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsDevicesRoute: typeof ChatSettingsDevicesRoute
   ChatSettingsDiagnosticsRoute: typeof ChatSettingsDiagnosticsRoute
   ChatSettingsDiffsRoute: typeof ChatSettingsDiffsRoute
+  ChatSettingsGameDevelopmentRoute: typeof ChatSettingsGameDevelopmentRoute
   ChatSettingsGeneralRoute: typeof ChatSettingsGeneralRoute
   ChatSettingsIntegrationsRoute: typeof ChatSettingsIntegrationsRoute
   ChatSettingsKeybindingsRoute: typeof ChatSettingsKeybindingsRoute
@@ -979,6 +1020,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsLocalModelsRoute: typeof ChatSettingsLocalModelsRoute
   ChatSettingsMaintenanceRoute: typeof ChatSettingsMaintenanceRoute
   ChatSettingsMemoryVaultsRoute: typeof ChatSettingsMemoryVaultsRoute
+  ChatSettingsMobileAccessRoute: typeof ChatSettingsMobileAccessRoute
   ChatSettingsOpenSourceLicensesRoute: typeof ChatSettingsOpenSourceLicensesRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProviderUpdatesRoute: typeof ChatSettingsProviderUpdatesRoute
@@ -1007,6 +1049,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsDevicesRoute: ChatSettingsDevicesRoute,
   ChatSettingsDiagnosticsRoute: ChatSettingsDiagnosticsRoute,
   ChatSettingsDiffsRoute: ChatSettingsDiffsRoute,
+  ChatSettingsGameDevelopmentRoute: ChatSettingsGameDevelopmentRoute,
   ChatSettingsGeneralRoute: ChatSettingsGeneralRoute,
   ChatSettingsIntegrationsRoute: ChatSettingsIntegrationsRoute,
   ChatSettingsKeybindingsRoute: ChatSettingsKeybindingsRoute,
@@ -1014,6 +1057,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsLocalModelsRoute: ChatSettingsLocalModelsRoute,
   ChatSettingsMaintenanceRoute: ChatSettingsMaintenanceRoute,
   ChatSettingsMemoryVaultsRoute: ChatSettingsMemoryVaultsRoute,
+  ChatSettingsMobileAccessRoute: ChatSettingsMobileAccessRoute,
   ChatSettingsOpenSourceLicensesRoute: ChatSettingsOpenSourceLicensesRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProviderUpdatesRoute: ChatSettingsProviderUpdatesRoute,

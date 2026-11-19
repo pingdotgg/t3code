@@ -3,7 +3,15 @@ import { redactSecrets } from "@t3tools/shared/secretRedaction";
 
 type TurnItem = ThreadStructure["turnItems"][number];
 
-export type AgentEyesKind = "edit" | "command" | "test" | "browser" | "search" | "memory" | "tool";
+export type AgentEyesKind =
+  | "edit"
+  | "command"
+  | "test"
+  | "browser"
+  | "game"
+  | "search"
+  | "memory"
+  | "tool";
 export type AgentEyesDetail = "summary" | "standard" | "full";
 
 /** One thing the agent did, ready to show. Every string here has had secrets redacted. */
@@ -21,6 +29,7 @@ export interface AgentEyesEvent {
   /** The body the stage shows: a diff, command output, search results, or tool input. */
   readonly body: string;
   readonly at: string | null;
+  readonly captureId?: string;
 }
 
 export const AGENT_EYES_KIND_LABELS: Record<AgentEyesKind, string> = {
@@ -28,6 +37,7 @@ export const AGENT_EYES_KIND_LABELS: Record<AgentEyesKind, string> = {
   command: "Commands",
   test: "Tests",
   browser: "Browser",
+  game: "Game Development",
   search: "Search",
   memory: "Memory",
   tool: "Tools",
@@ -176,11 +186,16 @@ export function deriveAgentEyesEvents(
           item.toolSurface === "browser" ||
           item.toolSource?.kind === "browser" ||
           BROWSER_TOOL.test(name);
+        const game = /(?:^|__)continuum_(?:game|asset)_/.test(name);
         const memory = name.includes("continuum_memory");
         const output = item.outputOmitted ? "(Output is not loaded here.)" : stringify(item.output);
+        const captureId = game
+          ? /captureId\\?"\s*:\s*\\?"(cap_[a-z0-9-]+)\\?"/i.exec(output)?.[1]
+          : undefined;
         events.push({
           ...base,
-          kind: memory ? "memory" : browser ? "browser" : "tool",
+          kind: game ? "game" : memory ? "memory" : browser ? "browser" : "tool",
+          ...(captureId === undefined ? {} : { captureId }),
           title: name,
           status: statusOf(item, false),
           summary: memory

@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import { ENTERTAINMENT_PARTITION } from "@t3tools/shared/entertainment";
 import { DesktopSnapShotId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -21,6 +22,7 @@ vi.mock("electron", async (importOriginal) => ({
     fromPartition: vi.fn(() => ({
       getUserAgent: vi.fn(() => "Mozilla/5.0 Electron/41.5.0 t3code/1.2.3"),
       setPermissionRequestHandler: vi.fn(),
+      setPermissionCheckHandler: vi.fn(),
       setUserAgent: vi.fn(),
     })),
   },
@@ -1448,6 +1450,51 @@ describe("DesktopWindow", () => {
           assert.deepEqual(webPreferences.additionalArguments, expected);
         }).pipe(Effect.provide(layer));
       }),
+  );
+
+  it.effect("attaches Entertainment guests without the desktop preload or preview bridge", () =>
+    Effect.gen(function* () {
+      const fakeWindow = makeFakeBrowserWindow();
+      const layer = layerTest({
+        window: fakeWindow.window,
+        createCount: yield* Ref.make(0),
+        mainWindow: yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none()),
+        previewPasskeyBridgeEnabled: true,
+      });
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+        const attach = fakeWindow.webContentsListeners.get("will-attach-webview");
+        assert.isDefined(attach);
+        const preventDefault = vi.fn();
+        const webPreferences: Electron.WebPreferences = {
+          preload: "/desktop/preload.js",
+          nodeIntegration: true,
+          contextIsolation: false,
+          additionalArguments: [PASSKEY_BRIDGE_ARGUMENT],
+        };
+        const params = {
+          partition: ENTERTAINMENT_PARTITION,
+          src: "https://www.youtube.com/",
+          preload: "/desktop/preload.js",
+        };
+        attach!({ preventDefault }, webPreferences, params);
+        assert.lengthOf(preventDefault.mock.calls, 0);
+        assert.isUndefined(params.preload);
+        assert.isUndefined(webPreferences.preload);
+        assert.isTrue(webPreferences.contextIsolation);
+        assert.isTrue(webPreferences.sandbox);
+        assert.isFalse(webPreferences.nodeIntegration);
+        assert.deepEqual(webPreferences.additionalArguments, []);
+
+        attach!(
+          { preventDefault },
+          {},
+          { partition: ENTERTAINMENT_PARTITION, src: "file:///private.html" },
+        );
+        assert.isTrue(preventDefault.mock.calls.length === 1);
+      }).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("opens safe off-origin renderer navigations in the system browser", () =>

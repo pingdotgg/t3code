@@ -48,6 +48,15 @@ function improvedThreadId(requestId: string): ThreadId {
   return ThreadId.make(`improve:${requestId}`);
 }
 
+function interruptedJob(job: ImproveJob): ImproveJob {
+  return {
+    ...job,
+    phase: "failed",
+    failedStep: job.improvedPrompt === null ? "rewrite" : "launch",
+    error: "The request was interrupted. Retry to continue.",
+  };
+}
+
 const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -56,26 +65,36 @@ const make = Effect.gen(function* () {
   const providers = yield* ProviderRegistry.ProviderRegistry;
   const textGeneration = yield* TextGeneration.TextGeneration;
   const file = NodePath.join(config.stateDir, "improve-jobs.json");
-  const lock = yield* Semaphore.make(1);
+  const writeLock = yield* Semaphore.make(1);
   const jobs = new Map<string, ImproveJob>();
+  const running = new Set<string>();
 
   yield* Effect.promise(async () => {
     try {
       const stored = JSON.parse(await NodeFSP.readFile(file, "utf8")) as { jobs?: ImproveJob[] };
-      for (const job of stored.jobs ?? []) jobs.set(job.requestId, job);
+      for (const job of stored.jobs ?? []) {
+        jobs.set(
+          job.requestId,
+          job.phase === "rewriting" || job.phase === "launching" ? interruptedJob(job) : job,
+        );
+      }
     } catch {
       // No jobs yet.
     }
   });
 
-  const save = Effect.promise(async () => {
-    const list = [...jobs.values()]
-      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      .slice(-KEEP_JOBS);
-    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
-    await NodeFSP.writeFile(`${file}.tmp`, JSON.stringify({ version: 1, jobs: list }, null, 2));
-    await NodeFSP.rename(`${file}.tmp`, file);
-  });
+  const save = writeLock
+    .withPermits(1)(
+      Effect.promise(async () => {
+        const list = [...jobs.values()]
+          .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          .slice(-KEEP_JOBS);
+        await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+        await NodeFSP.writeFile(`${file}.tmp`, JSON.stringify({ version: 1, jobs: list }, null, 2));
+        await NodeFSP.rename(`${file}.tmp`, file);
+      }),
+    )
+    .pipe(Effect.uninterruptible);
 
   const put = Effect.fn("ImproveService.put")(function* (job: ImproveJob) {
     const updated = { ...job, updatedAt: new Date().toISOString() };
@@ -95,11 +114,16 @@ const make = Effect.gen(function* () {
 
   const failure = (message: string) => new ImproveError({ message });
 
-  const sourceContext = Effect.fn("ImproveService.sourceContext")(function* (threadId: ThreadId) {
+  const sourceThread = Effect.fn("ImproveService.sourceThread")(function* (threadId: ThreadId) {
     const shell = yield* threads
       .getThreadShell(threadId)
       .pipe(Effect.mapError(() => failure("Could not read the session.")));
     if (shell === null) return yield* failure("That session no longer exists.");
+    return shell;
+  });
+
+  const sourceContext = Effect.fn("ImproveService.sourceContext")(function* (threadId: ThreadId) {
+    const shell = yield* sourceThread(threadId);
     const { projection } = yield* threads
       .getThreadSnapshotWindow(threadId, { rowLimit: 80 })
       .pipe(Effect.mapError(() => failure("Could not read the session's messages.")));
@@ -136,7 +160,7 @@ const make = Effect.gen(function* () {
   });
 
   const launch = Effect.fn("ImproveService.launch")(function* (job: ImproveJob) {
-    const { shell } = yield* sourceContext(job.sourceThreadId);
+    const shell = yield* sourceThread(job.sourceThreadId);
     const text = buildHandoffMessage({
       improvedPrompt: job.improvedPrompt!,
       originalPrompt: job.originalPrompt,
@@ -149,7 +173,6 @@ const make = Effect.gen(function* () {
         // One request id is one session: a retry replays this launch's receipt.
         commandId: CommandId.make(`improve:${job.requestId}:launch`),
         threadId,
-        reuseExistingThread: true,
         projectId: shell.projectId,
         title: `Improved: ${shell.title}`.slice(0, 120),
         generateTitle: true,
@@ -181,7 +204,7 @@ const make = Effect.gen(function* () {
     return threadId;
   });
 
-  const runFrom = Effect.fn("ImproveService.runFrom")(function* (
+  const execute = Effect.fn("ImproveService.execute")(function* (
     job: ImproveJob,
     step: "rewrite" | "launch",
   ): Effect.fn.Return<ImproveJob, ImproveError> {
@@ -209,42 +232,56 @@ const make = Effect.gen(function* () {
     return yield* put({ ...current, phase: "launched", newThreadId: threadId });
   });
 
+  const runFrom = Effect.fn("ImproveService.runFrom")(function* (
+    job: ImproveJob,
+    step: "rewrite" | "launch",
+  ) {
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => {
+        if (running.has(job.requestId)) return false;
+        running.add(job.requestId);
+        return true;
+      }),
+      (acquired) =>
+        acquired
+          ? execute(job, step).pipe(
+              Effect.onInterrupt(() => {
+                const last = jobs.get(job.requestId);
+                return last && (last.phase === "rewriting" || last.phase === "launching")
+                  ? put(interruptedJob(last))
+                  : Effect.void;
+              }),
+            )
+          : failure("This request is already running."),
+      (acquired) =>
+        Effect.sync(() => {
+          if (acquired) running.delete(job.requestId);
+        }),
+    );
+  });
+
   return ImproveService.of({
-    start: (input) =>
-      lock
-        .withPermits(1)(
-          Effect.sync(() => {
-            const existing = jobs.get(input.requestId);
-            // The same request id never opens a second session.
-            if (existing) return existing;
-            const now = new Date().toISOString();
-            const job: ImproveJob = {
-              requestId: input.requestId,
-              sourceThreadId: input.sourceThreadId,
-              originalPrompt: input.prompt,
-              improvedPrompt: null,
-              contextSummary: null,
-              improver: input.improver,
-              destination: input.destination,
-              phase: "rewriting",
-              failedStep: null,
-              error: null,
-              newThreadId: null,
-              createdAt: now,
-              updatedAt: now,
-            };
-            jobs.set(job.requestId, job);
-            return job;
-          }),
-        )
-        .pipe(
-          Effect.flatMap((job) => {
-            const fresh =
-              job.phase === "rewriting" && job.improvedPrompt === null && job.newThreadId === null;
-            return fresh ? runFrom(job, "rewrite") : Effect.succeed(job);
-          }),
-          Effect.withSpan("ImproveService.start"),
-        ),
+    start: Effect.fn("ImproveService.start")(function* (input) {
+      const existing = jobs.get(input.requestId);
+      if (existing) return existing;
+      const now = new Date().toISOString();
+      const job: ImproveJob = {
+        requestId: input.requestId,
+        sourceThreadId: input.sourceThreadId,
+        originalPrompt: input.prompt,
+        improvedPrompt: null,
+        contextSummary: null,
+        improver: input.improver,
+        destination: input.destination,
+        phase: "rewriting",
+        failedStep: null,
+        error: null,
+        newThreadId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      return yield* runFrom(job, "rewrite");
+    }),
     retry: Effect.fn("ImproveService.retry")(function* (input) {
       const job = jobs.get(input.requestId);
       if (!job)
@@ -265,8 +302,8 @@ const make = Effect.gen(function* () {
           .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       ),
     dismiss: Effect.fn("ImproveService.dismiss")(function* (requestId) {
-      jobs.delete(requestId);
-      yield* save;
+      if (running.has(requestId)) return;
+      if (jobs.delete(requestId)) yield* save;
     }),
   });
 });

@@ -602,6 +602,10 @@
     "./entertainment": {
       "types": "./src/entertainment.ts",
       "import": "./src/entertainment.ts"
+    },
+    "./gameDevRecipes": {
+      "types": "./src/gameDevRecipes.ts",
+      "import": "./src/gameDevRecipes.ts"
     }
   },
   "scripts": {

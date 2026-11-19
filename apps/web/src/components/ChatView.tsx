@@ -1,5 +1,5 @@
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import { NotebookPen } from "lucide-react";
+import { Gamepad2Icon, NotebookPen } from "lucide-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -34,6 +34,7 @@ import { useTimelineRewind } from "./chat/useTimelineRewind";
 import { useThreadLifecycle } from "./chat/useThreadLifecycle";
 import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
+import { ImprovePromptDialog } from "./chat/ImprovePromptDialog";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
@@ -2954,6 +2955,10 @@ export default function ChatView(props: ChatViewProps) {
     scrollToEnd,
     setThreadError,
   });
+  const [improvePrompt, setImprovePrompt] = useState<{
+    readonly threadId: ThreadId;
+    readonly text: string;
+  } | null>(null);
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -2967,6 +2972,8 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
+    onImprove: (text) =>
+      setImprovePrompt(activeThread ? { threadId: activeThread.id, text } : null),
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -3271,6 +3278,11 @@ export default function ChatView(props: ChatViewProps) {
       workspaceMutationId={workspaceMutationId}
       getShortcutContext={getShortcutContextStable}
       onSendAnnotation={sendPreviewAnnotationStable}
+      onUseGameRecipe={(prompt) => {
+        if (composerRef.current?.insertTextAtEnd(prompt, { ensureLeadingBoundary: true })) {
+          scheduleComposerFocusStable();
+        }
+      }}
       onCloseSurface={closeRightPanelSurface}
       sideChatParentPanel={sideChatParentPanel}
       terminal={{
@@ -3437,6 +3449,24 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
+            {activeThreadRef && improvePrompt?.threadId === activeThreadRef.threadId ? (
+              <ImprovePromptDialog
+                threadRef={activeThreadRef}
+                initialPrompt={improvePrompt.text}
+                providers={providerInstanceEntries}
+                activeModel={activeThread.modelSelection}
+                onClose={() => setImprovePrompt(null)}
+                onOpenThread={(nextThreadId) => {
+                  setImprovePrompt(null);
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(
+                      scopeThreadRef(activeThreadRef.environmentId, nextThreadId),
+                    ),
+                  });
+                }}
+              />
+            ) : null}
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
               environmentId={activeThread.environmentId}
@@ -4083,6 +4113,18 @@ export default function ChatView(props: ChatViewProps) {
                     shortcut: "N",
                     onClick: () => useRightPanelStore.getState().open(activeThreadRef, "iwe"),
                   },
+                  ...(activeProject === null
+                    ? []
+                    : [
+                        {
+                          label: "Game Development",
+                          description: "Connect an editor, run playtests, and manage assets.",
+                          icon: Gamepad2Icon,
+                          shortcut: "G",
+                          onClick: () =>
+                            useRightPanelStore.getState().open(activeThreadRef, "game-dev"),
+                        },
+                      ]),
                 ]
               : undefined
           }

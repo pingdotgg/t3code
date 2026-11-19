@@ -1,4 +1,8 @@
-import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import {
+  isClearComposerCommand,
+  parseImproveCommand,
+  parseSideChatCommand,
+} from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -178,6 +182,7 @@ interface ComposerSendInput {
   readonly activeProjectDefaultModelSelection: ModelSelection | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
+  readonly onImprove: (prompt: string) => void;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
@@ -278,6 +283,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
+    onImprove,
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -388,6 +394,27 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
+    const improve =
+      !directAnnotation && !queuedRunEdit.isEditing ? parseImproveCommand(promptAtSend) : null;
+    if (improve && !activePendingProgress) {
+      if (!isServerThread || !activeThread || draftHasNonPromptContent(composerDraftTarget)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Improve prompt",
+            description: !isServerThread
+              ? "Start a thread before using /improve."
+              : "Remove attachments and other draft context before using /improve.",
+          }),
+        );
+        return;
+      }
+      onImprove(improve.prompt);
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&

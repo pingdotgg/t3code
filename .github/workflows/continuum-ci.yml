@@ -10,6 +10,11 @@ on:
       - main
       - "continuum/**"
   workflow_dispatch:
+    inputs:
+      platform_smoke:
+        description: Run the stock Android pairing and iOS simulator source build
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -141,3 +146,49 @@ jobs:
           test -f release/Continuum-IDE-amd64.deb
           dpkg-deb --field release/Continuum-IDE-amd64.deb Package Version Maintainer
           test "$(dpkg-deb --field release/Continuum-IDE-amd64.deb Package)" = "continuum-ide"
+
+  stock-android:
+    name: Pair stock Android beta with Continuum
+    if: inputs.platform_smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install and pair stock beta APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          script: bash scripts/continuum-android-smoke.sh
+
+  ios-simulator-source:
+    name: Build the iOS simulator client from source
+    if: inputs.platform_smoke
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      T3_NATIVE_CLIENT_CACHE: "off"
+      T3_NATIVE_CLIENT_BUILD: local
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+      - uses: ./.github/actions/setup-ci-deps
+      - name: Build the native simulator app
+        run: |
+          set -euo pipefail
+          xcrun --find xcodebuild
+          pod --version
+          result="$(vp run mobile:install ios --prepare | tail -1)"
+          echo "$result" | jq -e '.status == "ready" and .source == "build"'
+          fingerprint="$(echo "$result" | jq -r '.fingerprint')"
+          app="$HOME/.cache/t3code/native-clients/artifacts/ios/development/$fingerprint/T3CodeDev.app"
+          test -f "$app/Info.plist"
+          xcrun vtool -show-build "$app/T3CodeDev" | grep -qi IOSSIMULATOR

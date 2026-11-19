@@ -68,6 +68,24 @@ describe("deriveAgentEyesEvents", () => {
     expect(events[1]!.summary).toBe("Ran `pnpm test auth`, which exited with code 1.");
   });
 
+  it("classifies game and asset MCP calls and takes captures only from game tool output", () => {
+    const capture = { captureId: "cap_viewport" };
+    const events = deriveAgentEyesEvents([
+      item({
+        type: "dynamic_tool",
+        toolName: "mcp__t3-code__continuum_game_capture",
+        output: [{ text: JSON.stringify(capture) }],
+      }),
+      item({ type: "dynamic_tool", toolName: "mcp__t3-code__continuum_asset_list" }),
+      item({ type: "dynamic_tool", toolName: "other_tool", output: capture }),
+    ]);
+    expect(events.map(({ kind, captureId }) => [kind, captureId])).toEqual([
+      ["game", "cap_viewport"],
+      ["game", undefined],
+      ["tool", undefined],
+    ]);
+  });
+
   it("never carries an earlier turn's message into a new turn", () => {
     ordinal = 0;
     const events = deriveAgentEyesEvents([

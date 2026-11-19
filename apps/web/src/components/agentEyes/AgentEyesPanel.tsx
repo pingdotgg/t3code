@@ -28,6 +28,9 @@ import {
   turnItemDetailRevision,
   turnItemNeedsDetailFetch,
 } from "@t3tools/client-runtime/work-log/item-detail";
+import { gameDevEnvironment } from "../../state/gameDev";
+import { useEnvironmentQuery } from "../../state/query";
+import { GameCaptureImage } from "../gameDev/GameDevelopmentPanel";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -304,10 +307,20 @@ function AgentEyesBody({
     undefined,
   );
   const loaded = fetched.data?.item;
-  const fullBody =
+  const fullEvent =
     loaded && loaded.type === wireItem?.type
-      ? (deriveAgentEyesEvents([loaded])[0]?.body ?? event.body)
-      : event.body;
+      ? (deriveAgentEyesEvents([loaded])[0] ?? event)
+      : event;
+  const fullBody = fullEvent.body;
+  const captureId = fullEvent.captureId ?? null;
+  const capture = useEnvironmentQuery(
+    captureId === null
+      ? null
+      : gameDevEnvironment.capture({
+          environmentId: threadRef.environmentId,
+          input: { captureId },
+        }),
+  );
   const body = bodyForDetail(fullBody, detail);
   const scrollRef = useRef<HTMLPreElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the newest output in view as a running command streams
@@ -315,6 +328,13 @@ function AgentEyesBody({
     const element = scrollRef.current;
     if (element && event.kind !== "edit" && body !== "") element.scrollTop = element.scrollHeight;
   }, [body, event.kind]);
+  if (capture.data) {
+    return (
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        <GameCaptureImage capture={capture.data} label="Captured game viewport" />
+      </div>
+    );
+  }
   if (body.trim() === "") {
     return <p className="px-3 py-2 text-xs text-muted-foreground">No output to show.</p>;
   }

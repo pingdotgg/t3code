@@ -120,14 +120,16 @@ jobs:
         env:
           T3CODE_DESKTOP_UPDATE_REPOSITORY: ${{ github.repository }}
           T3CODE_TELEMETRY_CHANNEL: dev
-        run: >-
-          vp run dist:desktop:artifact
-          --platform linux
-          --target rpm
-          --arch x64
-          --build-version ${{ steps.version.outputs.version }}
-          --skip-build
-          --verbose
+        run: |
+          set -euo pipefail
+          manifest=release/latest-linux.yml
+          saved="$RUNNER_TEMP/continuum-appimage-update.yml"
+          if [ -f "$manifest" ]; then cp "$manifest" "$saved"; fi
+          # Electron Builder's second packaging pass writes the same updater manifest for RPM.
+          trap 'if [ -f "$saved" ]; then mv "$saved" "$manifest"; else rm -f "$manifest"; fi' EXIT
+          vp run dist:desktop:artifact \
+            --platform linux --target rpm --arch x64 \
+            --build-version "${{ steps.version.outputs.version }}" --skip-build --verbose
         continue-on-error: true
 
       - name: Verify the Linux packages are Continuum's
@@ -152,6 +154,36 @@ jobs:
           ls -l release
           test -f release/Continuum-IDE-Setup-x64.exe
           if [ -f release/latest.yml ]; then grep -q "Continuum-IDE-Setup-x64.exe" release/latest.yml; fi
+
+      - name: Install and launch the Windows package
+        if: matrix.platform == 'win'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $target = Join-Path $env:RUNNER_TEMP 'ContinuumInstall'
+          $env:T3CODE_HOME = Join-Path $env:RUNNER_TEMP 'continuum-windows-smoke'
+          $installer = Resolve-Path 'release/Continuum-IDE-Setup-x64.exe'
+          $setup = Start-Process $installer.Path -ArgumentList '/S', "/D=$target" -PassThru -Wait
+          if ($setup.ExitCode -ne 0) { throw "NSIS exited with code $($setup.ExitCode)" }
+          $app = Get-ChildItem $target -Filter 'Continuum IDE*.exe' -File | Select-Object -First 1
+          if (!$app) { throw 'Continuum executable missing after Windows installation' }
+          $process = Start-Process $app.FullName -ArgumentList '--remote-debugging-port=9224' -PassThru
+          try {
+            for ($attempt = 0; $attempt -lt 60; $attempt++) {
+              if ($process.HasExited) { throw "Continuum exited with code $($process.ExitCode)" }
+              try {
+                $pages = Invoke-RestMethod 'http://127.0.0.1:9224/json/list' -TimeoutSec 2
+                if ($pages | Where-Object { $_.type -eq 'page' -and $_.title -like '*Continuum*' }) {
+                  Write-Output 'Windows installer installed and launched the Continuum renderer.'
+                  exit 0
+                }
+              } catch {}
+              Start-Sleep -Seconds 1
+            }
+            throw 'Packaged Continuum renderer did not become ready'
+          } finally {
+            if (!$process.HasExited) { Stop-Process -Id $process.Id }
+          }
 
       # Installs this build through the same Homebrew cask users get (pointed at the local
       # file), launches it with `contin`, and uninstalls it. A failure blocks publishing.
@@ -213,17 +245,16 @@ jobs:
           set -euo pipefail
           cd dist
           if [ -f latest-mac-arm64.yml ] && [ -f latest-mac-x64.yml ]; then
-            node -e '
-              const fs = require("fs");
+            node <<'NODE'
+              const fs = require("node:fs");
               const read = (f) => fs.readFileSync(f, "utf8");
-              const files = (text) => text.split("\n").filter((l) => /^  [- ] /.test(l) || /^  - /.test(l));
               const arm = read("latest-mac-arm64.yml");
               const head = arm.split("\nfiles:\n")[0];
               const tail = arm.split("\nfiles:\n")[1].split("\npath:")[1];
               const armFiles = arm.split("\nfiles:\n")[1].split("\npath:")[0];
               const x64Files = read("latest-mac-x64.yml").split("\nfiles:\n")[1].split("\npath:")[0];
               fs.writeFileSync("latest-mac.yml", `${head}\nfiles:\n${armFiles}\n${x64Files}\npath:${tail}`);
-            '
+          NODE
             rm latest-mac-arm64.yml latest-mac-x64.yml
             cat latest-mac.yml
           fi
@@ -231,7 +262,7 @@ jobs:
       - name: Write checksums
         run: |
           cd dist
-          sha256sum * > SHA256SUMS
+          sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create release

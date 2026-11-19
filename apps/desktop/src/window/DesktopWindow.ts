@@ -16,6 +16,12 @@ import {
   DEFAULT_CLIENT_SETTINGS,
 } from "@t3tools/contracts";
 
+import {
+  ENTERTAINMENT_PARTITION,
+  normalizeEntertainmentUrl,
+  shouldOpenExternally,
+} from "@t3tools/shared/entertainment";
+
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopPrimaryPaste from "../app/DesktopPrimaryPaste.ts";
@@ -648,7 +654,35 @@ export const make = Effect.gen(function* () {
       yield* electronWindow.destroyAll;
       return Option.none();
     }
+    let entertainmentSession: Electron.Session | null = null;
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (params.partition === ENTERTAINMENT_PARTITION) {
+        if (!params.src || !normalizeEntertainmentUrl(params.src)) {
+          event.preventDefault();
+          return;
+        }
+        delete webPreferences.preload;
+        delete params.preload;
+        webPreferences.sandbox = true;
+        webPreferences.contextIsolation = true;
+        webPreferences.nodeIntegration = false;
+        webPreferences.nodeIntegrationInSubFrames = false;
+        webPreferences.nodeIntegrationInWorker = false;
+        webPreferences.webSecurity = true;
+        webPreferences.allowRunningInsecureContent = false;
+        webPreferences.disableHtmlFullscreenWindowResize = true;
+        webPreferences.additionalArguments = [];
+        if (!entertainmentSession) {
+          entertainmentSession = Electron.session.fromPartition(ENTERTAINMENT_PARTITION);
+          entertainmentSession.setPermissionRequestHandler((_contents, permission, resolve) =>
+            resolve(permission === "fullscreen"),
+          );
+          entertainmentSession.setPermissionCheckHandler(
+            (_contents, permission) => permission === "fullscreen",
+          );
+        }
+        return;
+      }
       if (
         typeof params.partition !== "string" ||
         !previewManager.isBrowserPartition(params.partition)
@@ -766,6 +800,29 @@ export const make = Effect.gen(function* () {
     };
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
+      if (contents.session === entertainmentSession) {
+        const handleExternal = (url: string) => {
+          if (
+            normalizeEntertainmentUrl(url) &&
+            shouldOpenExternally(url) &&
+            Option.isSome(ElectronShell.parseSafeExternalUrl(url))
+          ) {
+            void runPromise(electronShell.openExternal(url));
+          }
+        };
+        const handleNavigation = (event: Electron.Event, url: string) => {
+          if (normalizeEntertainmentUrl(url) && !shouldOpenExternally(url)) return;
+          event.preventDefault();
+          handleExternal(url);
+        };
+        contents.on("will-navigate", handleNavigation);
+        contents.on("will-redirect", handleNavigation);
+        contents.setWindowOpenHandler(({ url }) => {
+          handleExternal(url);
+          return { action: "deny" };
+        });
+        return;
+      }
       installContextMenu(window, contents);
       void runPromise(previewManager.prepareWebview(contents));
     });
