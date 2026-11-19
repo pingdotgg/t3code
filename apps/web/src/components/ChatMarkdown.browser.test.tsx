@@ -785,20 +785,6 @@ describe("ChatMarkdown copy", () => {
       text: "2. Configure\n3. Deploy",
     },
     {
-      source: "1. [ ] Install\n2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
-      from: "Configure",
-      to: "Deploy",
-      text: "2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
-      htmlText: "2. Configure\n3. Test\n4. Deploy",
-    },
-    {
-      source:
-        "1. First\n2. [x] Outer\n   1. [ ] Setup\n   2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
-      from: "Configure",
-      text: "2. [x] 2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
-      htmlText: "2. 2. Configure\n   3. Deploy\n\nAfter.",
-    },
-    {
       source: "1. A\n2. B\n7. C\n8. D",
       from: "B",
       to: "C",
@@ -813,7 +799,7 @@ describe("ChatMarkdown copy", () => {
     },
   ])(
     "copies $text with the markers its list shows",
-    async ({ source, from, to, userMessage, text, htmlText = text }) => {
+    async ({ source, from, to, userMessage, text }) => {
       setup();
       await using screen = await renderText(
         source,
@@ -822,12 +808,54 @@ describe("ChatMarkdown copy", () => {
       const itemText = (shown: string) =>
         [...screen.container.querySelectorAll("li")]
           .flatMap((item) => [...item.childNodes])
-          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === shown)!;
+          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
       const end = to
         ? itemText(to)
         : [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
       const range = document.createRange();
+      range.setStart(itemText(from), 0);
+      range.setEnd(end, end.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      // Rich paste reads back as the same list.
+      expect(
+        serializeRenderedMarkdownFragment(
+          new DOMParser().parseFromString(payload!.html, "text/html").body,
+        ),
+      ).toBe(text);
+    },
+  );
+
+  it.each([
+    {
+      source: "1. [ ] Install\n2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
+      from: "Configure",
+      to: "Deploy",
+      text: "2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
+      htmlText: "2. Configure\n3. Test\n4. Deploy",
+    },
+    {
+      source:
+        "1. First\n2. [x] Outer\n   1. [ ] Setup\n   2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
+      from: "Configure",
+      text: "2. [x] 2. [ ] Configure\n   3. [x] Deploy\n\nAfter.",
+      htmlText: "2. 2. Configure\n   3. Deploy\n\nAfter.",
+    },
+  ])(
+    "copies task items with the markers its list shows: $text",
+    async ({ source, from, to, text, htmlText }) => {
+      setup();
+      await using screen = await renderText(source);
+      const itemText = (label: string) =>
+        [...screen.container.querySelectorAll("li")]
+          .flatMap((item) => [...item.childNodes])
+          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === label)!;
       const start = itemText(from);
+      const end = to ? itemText(to) : screen.container.querySelector("p")!.firstChild!;
+      const range = document.createRange();
       range.setStart(start, start.textContent!.indexOf(from));
       range.setEnd(end, end.textContent!.length);
       const selection = window.getSelection()!;
@@ -835,7 +863,7 @@ describe("ChatMarkdown copy", () => {
       selection.addRange(range);
       const payload = chatMarkdownClipboardPayload(selection);
       expect(payload?.text).toBe(text);
-      // Rich paste keeps the list structure. HTML sanitization strips form controls.
+      // HTML sanitization strips form controls.
       expect(
         serializeRenderedMarkdownFragment(
           new DOMParser().parseFromString(payload!.html, "text/html").body,
