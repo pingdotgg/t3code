@@ -162,6 +162,16 @@ describe("JiraIssueTracker", () => {
       );
       expect(refused.reason).toBe("unauthenticated");
       expect(requests).toHaveLength(3);
+      const { tracker: missing } = fakeJira(
+        { "GET /myself": () => new Response("", { status: 404 }) },
+        null,
+      );
+      const unknownSite = yield* Effect.flip(
+        (yield* missing).probeCredential(
+          JSON.stringify({ site: "acme", email: "a@b.c", token: "t" }),
+        ),
+      );
+      expect(unknownSite.detail).toBe("acme.atlassian.net is not a Jira site.");
     }),
   );
 
@@ -237,6 +247,16 @@ describe("JiraIssueTracker", () => {
           });
           return { startAt, total: 51, comments: [comment(startAt + 2), comment(startAt + 1)] };
         },
+        "GET /rest/dev-status/latest/issue/summary": () => ({
+          summary: {
+            pullrequest: { byInstanceType: { GitHub: { count: 1 }, stash: { count: 0 } } },
+          },
+        }),
+        "GET /rest/dev-status/latest/issue/detail": (seen) => {
+          expect(seen.params.get("applicationType")).toBe("GitHub");
+          const pull = { name: "Fix", url: "https://github.com/acme/web/pull/7", status: "MERGED" };
+          return { detail: [{ pullRequests: [pull, pull] }] };
+        },
       });
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-1" });
@@ -244,6 +264,17 @@ describe("JiraIssueTracker", () => {
       expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "c2"]);
       expect(detail.commentsCursor).toBe("2");
       expect(detail.states.map((state) => state.name)).toEqual(["In Progress", "Done"]);
+      expect(detail.linkedPullRequests).toEqual([
+        {
+          repository: "acme/web",
+          number: 7,
+          title: "Fix",
+          url: "https://github.com/acme/web/pull/7",
+          state: "merged",
+          isDraft: false,
+          closesIssue: false,
+        },
+      ]);
       expect(detail.events.map((event) => [event.kind, event.detail])).toEqual([
         ["state-changed", "In Progress"],
         ["labeled", "bug"],

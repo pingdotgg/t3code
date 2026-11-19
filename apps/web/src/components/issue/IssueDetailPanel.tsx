@@ -1,5 +1,9 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { issueEventSentence, issueWriteAccess } from "@t3tools/client-runtime/issue-presentation";
+import {
+  issueEventSentence,
+  issueLinksOpenInApp,
+  issueWriteAccess,
+} from "@t3tools/client-runtime/issue-presentation";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import {
   issueAssigneeHeld,
@@ -781,7 +785,7 @@ export function IssueDetailPanel({
                   link={link}
                   scope={detail.scope}
                   onSelect={
-                    onSelectPullRequest
+                    onSelectPullRequest && issueLinksOpenInApp(detail.tracker)
                       ? () =>
                           onSelectPullRequest({
                             projectId: reference.projectId,

@@ -571,6 +571,7 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
         Schema.Struct({
           key: TrimmedNonEmptyString,
           label: TrimmedNonEmptyString,
+          placeholder: Schema.optional(TrimmedNonEmptyString),
           secret: Schema.Boolean,
         }),
       ),

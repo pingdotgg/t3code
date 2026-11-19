@@ -11,6 +11,7 @@ import type {
   IssueCapabilities,
   IssueComment,
   IssueEvent,
+  IssueLinkedPullRequest,
   IssueState,
   IssueViewerPermissions,
   StandaloneIssueTrackerDescriptor,
@@ -35,14 +36,14 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
     label: "Personal API token",
     helpUrl: "https://id.atlassian.com/manage-profile/security/api-tokens",
     fields: [
-      { key: "site", label: "Site (example.atlassian.net)", secret: false },
-      { key: "email", label: "Email", secret: false },
-      { key: "token", label: "API token (without scopes)", secret: true },
+      { key: "site", label: "Site", placeholder: "example.atlassian.net", secret: false },
+      { key: "email", label: "Email", placeholder: "you@example.com", secret: false },
+      { key: "token", label: "API token", placeholder: "Without scopes", secret: true },
     ],
   },
 };
 
-/** Reactions and templates have no public Jira Cloud API; linked PRs live in a private one. */
+/** Reactions and templates have no Jira Cloud API an API token can reach. */
 const CAPABILITIES: IssueCapabilities = {
   create: true,
   edit: true,
@@ -51,7 +52,7 @@ const CAPABILITIES: IssueCapabilities = {
   assignees: true,
   reactions: false,
   templates: false,
-  linkedPullRequests: false,
+  linkedPullRequests: true,
   events: true,
   search: true,
 };
@@ -105,6 +106,38 @@ function toActor(user: JiraApi.JiraUser): IssueActor {
 
 /** Jira Cloud account ids: 24 hex digits, or `<n>:<uuid>`. */
 const ACCOUNT_ID = /^(?:[0-9a-z]{24}|\d+:[0-9a-f-]{36})$/i;
+
+/** `<host>/<repository>/pull/1`, as GitHub, GitLab (`-/merge_requests`) or Bitbucket write it. */
+const PULL_REQUEST_URL =
+  /^https:\/\/[^/]+\/(.+?)\/(?:pull|-\/merge_requests|pull-requests)\/(\d+)\/?(?:[?#]|$)/u;
+
+function toLinkedPullRequests(
+  pulls: ReadonlyArray<JiraApi.JiraPullRequest>,
+): IssueLinkedPullRequest[] {
+  const seen = new Set<string>();
+  return pulls.flatMap((pull) => {
+    const match = PULL_REQUEST_URL.exec(pull.url);
+    if (match === null || seen.has(pull.url)) return [];
+    seen.add(pull.url);
+    const status = pull.status?.toUpperCase();
+    return [
+      {
+        repository: match[1]!,
+        number: Number(match[2]),
+        title: pull.name.trim() || pull.url,
+        url: pull.url,
+        state:
+          status === "MERGED"
+            ? "merged"
+            : status === "OPEN" || status === "DRAFT"
+              ? "open"
+              : "closed",
+        isDraft: status === "DRAFT",
+        closesIssue: false,
+      } as const,
+    ];
+  });
+}
 
 const issueUrl = (site: string, key: string) => `https://${site}.atlassian.net/browse/${key}`;
 
@@ -382,7 +415,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
           ),
         ]);
         if (issue === null) return yield* notFound("getIssue");
-        const comments = yield* commentsPage(key, 0);
+        const [comments, pulls] = yield* Effect.all(
+          [
+            commentsPage(key, 0),
+            // An undocumented API: when it moves or refuses, the issue still opens.
+            jira.pullRequests(issue.id).pipe(Effect.orElseSucceed(() => [])),
+          ],
+          { concurrency: "unbounded" },
+        );
         // A transition's target is a state the issue can move to; the current one is listed too.
         const states = [issue.fields.status, ...(issue.transitions ?? []).map((t) => t.to)];
         const seen = new Set<string>();
@@ -397,7 +437,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, JiraApi.JiraA
           comments: comments.page.comments,
           commentsCursor: comments.page.nextCursor,
           events: toEvents(issue.changelog?.histories ?? []),
-          linkedPullRequests: [],
+          linkedPullRequests: toLinkedPullRequests(pulls),
         };
       }),
 

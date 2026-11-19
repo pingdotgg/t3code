@@ -161,6 +161,30 @@ const Labels = Schema.Struct({
 
 const Created = Schema.Struct({ key: Schema.String });
 
+/** Jira's development panel: which connected tools (GitHub, GitLab, Bitbucket) hold PRs. */
+const DevelopmentSummary = Schema.Struct({
+  summary: Schema.Struct({
+    pullrequest: Schema.optional(
+      Schema.Struct({
+        byInstanceType: Schema.Record(Schema.String, Schema.Struct({ count: Schema.Number })),
+      }),
+    ),
+  }),
+});
+
+export const JiraPullRequest = Schema.Struct({
+  name: Schema.String,
+  url: Schema.String,
+  status: Schema.optional(Schema.String),
+});
+export type JiraPullRequest = typeof JiraPullRequest.Type;
+
+const DevelopmentDetail = Schema.Struct({
+  detail: Schema.Array(
+    Schema.Struct({ pullRequests: Schema.optional(Schema.Array(JiraPullRequest)) }),
+  ),
+});
+
 const SUMMARY_FIELDS = [
   "summary",
   "status",
@@ -208,6 +232,13 @@ export class JiraApi extends Context.Service<
       readonly startAt: number;
       readonly limit: number;
     }) => Effect.Effect<JiraCommentPage, IssueTrackerError>;
+    /**
+     * The pull requests Jira's development panel shows for an issue, from every connected tool.
+     * Jira serves these from an undocumented API, so callers treat a failure as none.
+     */
+    readonly pullRequests: (
+      issueId: string,
+    ) => Effect.Effect<ReadonlyArray<JiraPullRequest>, IssueTrackerError>;
     readonly createIssue: (fields: JiraFields) => Effect.Effect<string, IssueTrackerError>;
     readonly updateIssue: (
       key: string,
@@ -316,7 +347,9 @@ export const make = Effect.gen(function* () {
   >(input: {
     readonly operation: string;
     readonly method: "GET" | "POST" | "PUT";
+    /** Under the REST API root, unless `api` names another of the site's APIs. */
     readonly path: string;
+    readonly api?: string | undefined;
     readonly params?: Record<string, string> | undefined;
     readonly body?: unknown;
     /** Null for a call that answers with no body. */
@@ -325,7 +358,7 @@ export const make = Effect.gen(function* () {
   }): Effect.fn.Return<S["Type"] | null, IssueTrackerError> {
     yield* Effect.annotateCurrentSpan({ "jira.operation": input.operation });
     const { site, email, token } = yield* credential(input.operation, input.credential);
-    const url = `https://${site}.atlassian.net/rest/api/3${input.path}`;
+    const url = `https://${site}.atlassian.net${input.api ?? "/rest/api/3"}${input.path}`;
     let request = HttpClientRequest.make(input.method)(url).pipe(
       HttpClientRequest.acceptJson,
       HttpClientRequest.basicAuth(email, token),
@@ -372,7 +405,16 @@ export const make = Effect.gen(function* () {
 
   const probe: JiraApi["Service"]["probe"] = Effect.fn("JiraApi.probe")(function* (given) {
     const { site } = yield* credential("probe", given);
-    const user = yield* myself("probe", given);
+    // A site name that is no Jira site answers 404, which would read as a missing issue.
+    const user = yield* myself("probe", given).pipe(
+      Effect.catchIf(
+        (error) => error.reason === "not-found",
+        () =>
+          Effect.fail(
+            fail("probe", "unauthenticated", `${site}.atlassian.net is not a Jira site.`),
+          ),
+      ),
+    );
     const projects: Array<{ readonly key: string; readonly name: string }> = [];
     // shortcut: stops at MAX_PROJECTS, page the picker itself if sites outgrow it.
     while (projects.length < MAX_PROJECTS) {
@@ -486,6 +528,37 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const pullRequests: JiraApi["Service"]["pullRequests"] = Effect.fn("JiraApi.pullRequests")(
+    function* (issueId) {
+      const api = "/rest/dev-status/latest";
+      const { summary } = yield* read({
+        operation: "pullRequests",
+        method: "GET",
+        api,
+        path: "/issue/summary",
+        params: { issueId },
+        schema: DevelopmentSummary,
+      });
+      const tools = Object.entries(summary.pullrequest?.byInstanceType ?? {})
+        .filter(([, tool]) => tool.count > 0)
+        .map(([applicationType]) => applicationType);
+      const details = yield* Effect.forEach(
+        tools,
+        (applicationType) =>
+          read({
+            operation: "pullRequests",
+            method: "GET",
+            api,
+            path: "/issue/detail",
+            params: { issueId, applicationType, dataType: "pullrequest" },
+            schema: DevelopmentDetail,
+          }),
+        { concurrency: "unbounded" },
+      );
+      return details.flatMap(({ detail }) => detail.flatMap((entry) => entry.pullRequests ?? []));
+    },
+  );
+
   const issueTypes: JiraApi["Service"]["issueTypes"] = Effect.fn("JiraApi.issueTypes")(
     function* (project) {
       const types = yield* read({
@@ -533,6 +606,7 @@ export const make = Effect.gen(function* () {
     search,
     getIssue,
     getComments,
+    pullRequests,
     createIssue,
     updateIssue,
     addComment,

@@ -380,8 +380,9 @@ Linear takes an API key. Jira takes your site (`example.atlassian.net`), your ac
 [API token](https://id.atlassian.com/manage-profile/security/api-tokens) created with **Create API
 token**, not a token with scopes. Jira issues move between statuses through your workflow's
 transitions. For Jira, "mentioning you" lists the issues you watch. A Jira description with
-attachments, mentions or other Jira-only content is edited in Jira. Jira reactions and linked pull
-requests are not shown.
+attachments, mentions or other Jira-only content is edited in Jira. Jira's linked pull requests come
+from the tools connected to its Development panel. Linear's and Jira's linked pull requests open in
+the browser. Jira reactions are not shown, because Jira Cloud has no API for them.
 
 Select an issue to open it beside the list: description, comments, state changes, linked pull
 requests, labels, assignees, and reactions. Linked pull requests open in the same panel. You can

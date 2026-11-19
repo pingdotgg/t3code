@@ -196,21 +196,30 @@ export function IssueTrackerCredentialForm(props: {
     <View className="gap-3 p-4">
       {fields.map((field) =>
         field.secret ? (
-          <SecretTextInput
-            key={field.key}
-            accessibilityLabel={field.label}
-            placeholder={
-              tracker.connected ? gt("Saved. Enter a new value to replace it") : field.label
-            }
-            value={drafts[field.key] ?? ""}
-            onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
-            onSubmitEditing={send}
-            editable={!locked}
-          />
+          <View key={field.key} className="gap-1.5">
+            {tracker.credential.fields ? (
+              <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+                {field.label}
+              </Text>
+            ) : null}
+            <SecretTextInput
+              accessibilityLabel={field.label}
+              placeholder={
+                tracker.connected
+                  ? gt("Saved. Enter a new value to replace it")
+                  : (field.placeholder ?? field.label)
+              }
+              value={drafts[field.key] ?? ""}
+              onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
+              onSubmitEditing={send}
+              editable={!locked}
+            />
+          </View>
         ) : (
           <ConnectionFormField
             key={field.key}
             label={field.label}
+            placeholder={field.placeholder}
             autoCapitalize="none"
             autoCorrect={false}
             value={drafts[field.key] ?? ""}

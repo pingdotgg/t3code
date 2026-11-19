@@ -1,7 +1,9 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
-import { issueEventSentence } from "@t3tools/client-runtime/issue-presentation";
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  issueEventSentence,
+  issueLinksOpenInApp,
+} from "@t3tools/client-runtime/issue-presentation";
 import { createIssueCommentPager } from "@t3tools/client-runtime/state/issues";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import type {
@@ -249,8 +251,7 @@ function LinkedPullRequests(props: {
 }) {
   const gt = useGT();
   const navigation = useNavigation();
-  // Only a git host's tracker shares its host with the change request it links.
-  const sameHost = sourceControlClients.find(props.params.tracker) !== undefined;
+  const sameHost = issueLinksOpenInApp(props.params.tracker);
   return (
     <View className="gap-2">
       <PullRequestSectionHeading>

@@ -1,7 +1,7 @@
 import type { IssueDetail, IssueState } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { issueWriteAccess } from "./issuePresentation.ts";
+import { issueLinksOpenInApp, issueWriteAccess } from "./issuePresentation.ts";
 
 const workflow: ReadonlyArray<IssueState> = [
   { category: "open", name: "Backlog" },
@@ -39,4 +39,10 @@ describe("issueWriteAccess", () => {
     expect(issueWriteAccess(issue({}), false).states).toEqual([]);
     expect(issueWriteAccess(issue({ states: [] }), true).states).toEqual([]);
   });
+});
+
+it("opens linked pull requests in the app only for a git host's own tracker", () => {
+  expect(issueLinksOpenInApp("github")).toBe(true);
+  expect(issueLinksOpenInApp("jira")).toBe(false);
+  expect(issueLinksOpenInApp("linear")).toBe(false);
 });

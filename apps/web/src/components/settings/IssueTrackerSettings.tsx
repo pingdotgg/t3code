@@ -6,7 +6,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
 import { ChevronDownIcon, ExternalLinkIcon, XIcon } from "lucide-react";
-import { useState, type ElementType } from "react";
+import { useState, type ElementType, type ReactNode } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
@@ -133,6 +133,37 @@ function TrackerRow({
   const usable = tracker.connected && tracker.account !== null;
   const summary = issueTrackerSummary(tracker, bindings, messages);
 
+  const description = (
+    <>
+      <T>Stored on the server.</T>
+      {tracker.credential.helpUrl ? (
+        <>
+          {" "}
+          <InlineButton
+            render={
+              <a href={tracker.credential.helpUrl} target="_blank" rel="noreferrer noopener" />
+            }
+          >
+            <T>Create one</T>
+            <ExternalLinkIcon aria-hidden className="size-3" />
+          </InlineButton>
+        </>
+      ) : null}
+      {failure ? <span className="block text-destructive">{failure}</span> : null}
+    </>
+  );
+  const disconnect = tracker.connected ? (
+    <Button
+      type="button"
+      size="icon-sm"
+      variant="ghost-destructive"
+      onClick={() => void submit(null)}
+      aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
+    >
+      <XIcon className="size-3.5" />
+    </Button>
+  ) : null;
+
   return (
     <div className="first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20">
       <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
@@ -176,41 +207,21 @@ function TrackerRow({
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
             <div className="px-3 pb-4 pt-1 sm:px-4">
-              <SettingsRow
-                title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-                description={
-                  <>
-                    <T>Stored on the server.</T>
-                    {tracker.credential.helpUrl ? (
-                      <>
-                        {" "}
-                        <InlineButton
-                          render={
-                            <a
-                              href={tracker.credential.helpUrl}
-                              target="_blank"
-                              rel="noreferrer noopener"
-                            />
-                          }
-                        >
-                          <T>Create one</T>
-                          <ExternalLinkIcon aria-hidden className="size-3" />
-                        </InlineButton>
-                      </>
-                    ) : null}
-                    {failure ? <span className="block text-destructive">{failure}</span> : null}
-                  </>
-                }
-                control={
-                  <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
-                    {tracker.credential.fields ? (
-                      <CredentialFields
-                        id={inputId}
-                        fields={tracker.credential.fields}
-                        connected={tracker.connected}
-                        onSubmit={submit}
-                      />
-                    ) : (
+              {tracker.credential.fields ? (
+                <CredentialFields
+                  idPrefix={inputId}
+                  fields={tracker.credential.fields}
+                  connected={tracker.connected}
+                  description={description}
+                  disconnect={disconnect}
+                  onSubmit={submit}
+                />
+              ) : (
+                <SettingsRow
+                  title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+                  description={description}
+                  control={
+                    <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
                       <SecretInput
                         id={inputId}
                         size="sm"
@@ -221,21 +232,11 @@ function TrackerRow({
                           if (next.trim()) void submit(next.trim());
                         }}
                       />
-                    )}
-                    {tracker.connected ? (
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost-destructive"
-                        onClick={() => void submit(null)}
-                        aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
-                      >
-                        <XIcon className="size-3.5" />
-                      </Button>
-                    ) : null}
-                  </div>
-                }
-              />
+                      {disconnect}
+                    </div>
+                  }
+                />
+              )}
               {usable ? (
                 <ProjectBindings
                   environmentId={environmentId}
@@ -251,55 +252,74 @@ function TrackerRow({
   );
 }
 
-/** One input per part of the credential; the parts are sent together once all are filled. */
+/**
+ * One row per part of the credential, laid out like a single-token tracker's row. The parts are
+ * sent together on Enter or when a field is left, once all are filled.
+ */
 function CredentialFields({
-  id,
+  idPrefix,
   fields,
   connected,
+  description,
+  disconnect,
   onSubmit,
 }: {
-  readonly id: string;
+  readonly idPrefix: string;
   readonly fields: NonNullable<IssueTrackerConnection["credential"]["fields"]>;
   readonly connected: boolean;
+  readonly description: ReactNode;
+  readonly disconnect: ReactNode;
   readonly onSubmit: (token: string) => Promise<boolean>;
 }) {
   const gt = useGT();
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
+  // The last credential sent, so moving between fields does not resend one that just failed.
+  // Enter always sends, so a failed attempt can be retried as it is.
+  const [sent, setSent] = useState<string | null>(null);
   const token = issueTrackerFieldsToken(fields, drafts);
-  return (
-    <form
-      className="grid min-w-0 flex-1 gap-2"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (token === null) return;
-        void onSubmit(token).then((connected) => {
-          if (connected) setDrafts({});
-        });
-      }}
-    >
-      {fields.map((field) => (
-        <Input
-          key={field.key}
-          id={field.secret ? id : undefined}
-          size="sm"
-          type={field.secret ? "password" : "text"}
-          autoComplete="off"
-          spellCheck={false}
-          aria-label={field.label}
-          placeholder={
-            connected && field.secret
-              ? gt("Stored secret, enter a new value to replace")
-              : field.label
-          }
-          value={drafts[field.key] ?? ""}
-          onChange={(event) => setDrafts({ ...drafts, [field.key]: event.target.value })}
-        />
-      ))}
-      <Button type="submit" size="xs" variant="outline" disabled={token === null}>
-        {connected ? <T>Replace</T> : <T>Connect</T>}
-      </Button>
-    </form>
-  );
+  const send = (retry: boolean) => {
+    if (token === null || (!retry && token === sent)) return;
+    setSent(token);
+    void onSubmit(token).then((connected) => {
+      if (!connected) return;
+      setDrafts({});
+      setSent(null);
+    });
+  };
+  return fields.map((field) => {
+    const id = `${idPrefix}-${field.key}`;
+    return (
+      <SettingsRow
+        key={field.key}
+        title={<label htmlFor={id}>{field.label}</label>}
+        description={field.secret ? description : undefined}
+        control={
+          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+            <Input
+              id={id}
+              size="sm"
+              className="min-w-0 flex-1"
+              type={field.secret ? "password" : "text"}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={
+                connected && field.secret
+                  ? gt("Stored secret, enter a new value to replace")
+                  : field.placeholder
+              }
+              value={drafts[field.key] ?? ""}
+              onChange={(event) => setDrafts({ ...drafts, [field.key]: event.target.value })}
+              onBlur={() => send(false)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) send(true);
+              }}
+            />
+            {field.secret ? disconnect : null}
+          </div>
+        }
+      />
+    );
+  });
 }
 
 /** One picker per project of this environment: which of the tracker's scopes it reads, if any. */

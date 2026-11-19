@@ -2,6 +2,8 @@ import type { IssueDetail, IssueEvent } from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
+import { sourceControlClients } from "./sourceControlClients.ts";
+
 /** "completed" → "Completed"; a reason the tracker spells with a dash reads as words. */
 function issueCloseReasonLabel(reason: string): string {
   const words = reason.replace(/[-_]+/g, " ").trim();
@@ -79,4 +81,12 @@ export function issueWriteAccess(
       ? detail.states.filter((state) => state.name !== detail.state.name)
       : [],
   };
+}
+
+/**
+ * Whether a tracker's linked pull requests open in the app: only a git host's own tracker shares
+ * its host with them. A standalone tracker's links (Linear, Jira) open in the browser.
+ */
+export function issueLinksOpenInApp(tracker: string): boolean {
+  return sourceControlClients.find(tracker) !== undefined;
 }
