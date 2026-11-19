@@ -252,6 +252,20 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     return entries.filter((entry) => DEFINITION_FILE.test(entry)).toSorted();
   });
 
+  /** A fresh engine for these definitions in its own scope, or the failure that stopped it. */
+  const build = Effect.fn("WorkflowRuntime.build")(function* (
+    definitions: ReadonlyArray<WorkflowDefinition>,
+  ) {
+    const scope = yield* Scope.fork(outer);
+    const layerEngine = yield* engine;
+    const built = yield* Effect.suspend(() =>
+      Layer.buildWithScope(layerEngine(definitions), scope),
+    ).pipe(Effect.provideContext(services), Effect.exit);
+    if (Exit.isFailure(built)) yield* Scope.close(scope, Exit.void);
+    else engineScope = scope;
+    return built;
+  });
+
   const boot = Effect.fn("WorkflowRuntime.boot")(function* (
     definitions: ReadonlyArray<WorkflowDefinition>,
   ) {
@@ -265,30 +279,26 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       yield* Deferred.succeed(next, Workflows.disabled);
       return null;
     }
-    engineScope = yield* Scope.fork(outer);
-    const layerEngine = yield* engine;
-    const scope = engineScope;
-    const built = yield* Effect.suspend(() =>
-      Layer.buildWithScope(layerEngine(definitions), scope),
-    ).pipe(Effect.provideContext(services), Effect.exit);
-    if (Exit.isFailure(built)) {
-      const problem = `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
-      // What ran before comes back, so definitions that cannot start take nothing down.
-      if (previous.length > 0) yield* boot(previous);
-      // Nobody may be left waiting on an engine that never came up.
-      yield* Deferred.succeed(
-        next,
-        running.length > 0 ? yield* Deferred.await(ready) : Workflows.disabled,
-      );
-      return problem;
+    const built = yield* build(definitions);
+    if (Exit.isSuccess(built)) {
+      running = definitions;
+      yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
+      yield* Effect.logInfo("Workflows registered", {
+        directory,
+        workflows: definitions.map(engineTag),
+      });
+      return null;
     }
-    running = definitions;
-    yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
-    yield* Effect.logInfo("Workflows registered", {
-      directory,
-      workflows: definitions.map(engineTag),
-    });
-    return null;
+    // What ran before comes back, so definitions that cannot start take nothing down.
+    const restored = previous.length === 0 ? undefined : yield* build(previous);
+    if (restored !== undefined && Exit.isSuccess(restored)) {
+      running = previous;
+      yield* Deferred.succeed(next, Context.get(restored.value, Workflows.Workflows));
+    } else {
+      // Nobody may be left waiting on an engine that never came up.
+      yield* Deferred.succeed(next, Workflows.disabled);
+    }
+    return `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
   });
 
   const unfinished = Effect.suspend(() =>
@@ -314,6 +324,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       .toSorted(([left], [right]) => left.localeCompare(right))
       .map(([name, definitions]) => ({ name, definitions }));
 
+  // Set once `reload` exists, which it schedules again; the indirection keeps its type inferred.
+  let retryLater: Effect.Effect<void> = Effect.void;
   /** Take in what changed in the folder, and run the result unless something is wrong with it. */
   const reload = Effect.fn("WorkflowRuntime.reload")(function* () {
     const listed = yield* Effect.option(names);
@@ -321,19 +333,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       yield* Effect.logWarning(
         "The workflows folder could not be read; its workflows stay as they are",
       );
-      if (!retrying) {
-        retrying = true;
-        yield* Effect.suspend(() => {
-          retrying = false;
-          return lock.withPermits(1)(reload());
-        }).pipe(
-          Effect.delay(LIST_RETRY),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Reloading workflow definitions failed", Cause.pretty(cause)),
-          ),
-          Effect.forkIn(outer),
-        );
-      }
+      yield* retryLater;
       return;
     }
     const present = listed.value;
@@ -370,6 +370,22 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     const failed = yield* boot(files.flatMap((file) => file.definitions));
     between = failed === null ? [] : [{ message: failed }];
     yield* report;
+  });
+
+  retryLater = Effect.suspend(() => {
+    if (retrying) return Effect.void;
+    retrying = true;
+    return Effect.suspend(() => {
+      retrying = false;
+      return lock.withPermits(1)(reload());
+    }).pipe(
+      Effect.delay(LIST_RETRY),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Reloading workflow definitions failed", Cause.pretty(cause)),
+      ),
+      Effect.forkIn(outer),
+      Effect.asVoid,
+    );
   });
 
   yield* lock.withPermits(1)(reload());
