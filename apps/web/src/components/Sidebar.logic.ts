@@ -2,7 +2,10 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
-import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  backgroundWorkHoldsCompletion,
+  isPullRequestWatchTask,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { msg } from "gt-react";
@@ -1283,6 +1286,16 @@ export function resolveThreadStatusPill(input: {
       label: msg("Completed"),
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
+  // Unawaited commands do not hold the thread, but a row with live work must not read as idle.
+  if ((thread.pendingBackgroundTasks ?? []).some((task) => !isPullRequestWatchTask(task))) {
+    return {
+      label: msg("Background", { $context: "thread status: work still running in the background" }),
+      colorClass: "text-sidebar-muted-foreground",
+      dotClass: "bg-sidebar-muted-foreground",
       pulse: false,
     };
   }
