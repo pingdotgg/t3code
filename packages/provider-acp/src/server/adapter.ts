@@ -8905,10 +8905,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ? undefined
                 : yield* flavor.watchPromptOutcome(requestedSessionId);
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
-            context.promptUsageBaseline =
-              flavor.readSessionPromptUsage === undefined
-                ? undefined
-                : (sessionPromptUsage.get(requestedSessionId) ?? null);
             const promptOptions = {
               dispatched: context.promptDispatched,
               released: context.foregroundIdle,
@@ -8926,9 +8922,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : undefined;
             yield* (
               compactSession === undefined
-                ? sendPromptWhenIdle(context, () =>
-                    runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                  )
+                ? sendPromptWhenIdle(context, () => {
+                    // A busy wait can span another turn's usage update, so the totals are read per send.
+                    context.promptUsageBaseline =
+                      flavor.readSessionPromptUsage === undefined
+                        ? undefined
+                        : (sessionPromptUsage.get(requestedSessionId) ?? null);
+                    return runtime.prompt({ prompt: promptParts!.prompt }, promptOptions);
+                  })
                 : Deferred.succeed(context.promptDispatched, undefined).pipe(
                     Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                     Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),

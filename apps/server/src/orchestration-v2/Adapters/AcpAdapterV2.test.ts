@@ -633,6 +633,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
+  readonly readSessionPromptUsage?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => EffectAcpSchema.Usage | undefined;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -644,6 +647,9 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
       capabilities: AcpProviderCapabilitiesV2,
       promptInactivityTimeout: "15 minutes",
       ...(input.followAgentWorkState === true ? { followAgentWorkState: true } : {}),
+      ...(input.readSessionPromptUsage === undefined
+        ? {}
+        : { readSessionPromptUsage: input.readSessionPromptUsage }),
       makeRuntime: makeMockRuntime({
         childProcessSpawner,
         mockAgentPath: yield* bundledMockAgentPath,
@@ -5212,18 +5218,34 @@ describe("AcpAdapterV2", () => {
       const rejected = yield* Deferred.make<void>();
       const harness = yield* makePromptInactivityHarness({
         environment: () => ({}),
+        readSessionPromptUsage: ({ update }) =>
+          update.sessionUpdate === "usage_update"
+            ? {
+                inputTokens: update.used,
+                outputTokens: update.used / 10,
+                totalTokens: update.used + update.used / 10,
+              }
+            : undefined,
         // pi-agent-core based agents (oh-my-pi) end a turn but keep background work running.
         wrapPrompt: (prompt) => (payload, options) => {
           promptCalls += 1;
-          return promptCalls === 2
-            ? Deferred.succeed(rejected, undefined).pipe(
-                Effect.andThen(
-                  Effect.fail(
-                    EffectAcpErrors.AcpRequestError.internalError(
-                      "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
-                    ),
+          if (promptCalls === 2) {
+            return Deferred.succeed(rejected, undefined).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  EffectAcpErrors.AcpRequestError.internalError(
+                    "Agent is already processing. Use steer() or followUp() to queue messages, or wait for completion.",
                   ),
                 ),
+              ),
+            );
+          }
+          return promptCalls === 3
+            ? prompt(payload, options).pipe(
+                Effect.map((result) => ({
+                  ...result,
+                  usage: { inputTokens: 400, outputTokens: 40, totalTokens: 440 },
+                })),
               )
             : prompt(payload, options);
         },
@@ -5231,14 +5253,41 @@ describe("AcpAdapterV2", () => {
       yield* harness.startTurn(1);
       const [first] = yield* harness.terminals(1);
       assert.equal(first?.status, "completed");
+      yield* harness.emitUpdate({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "usage_update", used: 100, size: 1000 },
+      });
 
-      const followUp = yield* harness.terminals(1).pipe(Effect.forkScoped);
+      const followUp = yield* harness.runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
       yield* harness.startTurn(2);
       yield* Deferred.await(rejected);
+      yield* harness.emitUpdate({
+        sessionId: "mock-session-1",
+        update: { sessionUpdate: "usage_update", used: 250, size: 1000 },
+      });
       yield* TestClock.adjust("1 minute");
-      const [delivered] = yield* Fiber.join(followUp);
-      assert.equal(delivered?.status, "completed");
+      const events = Array.from(yield* Fiber.join(followUp));
+      const delivered = events.at(-1);
+      assert.equal(delivered?.type === "turn.terminal" ? delivered.status : null, "completed");
       assert.equal(promptCalls, 3);
+      const completed = events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        completed?.type === "provider_turn.updated" ? completed.providerTurn.turnTokenUsage : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          inputTokens: 150,
+          outputTokens: 15,
+        },
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 
