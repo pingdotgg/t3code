@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as PlatformError from "effect/PlatformError";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -1068,6 +1069,14 @@ describe("PiAdapterV2", () => {
         );
         assert.deepInclude(runtime.providerSession, { extensionStatuses: [] });
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  // Session release interrupts open tool calls, such as a worktree handoff's, only with this flag.
+  it.effect("declares that its tool calls end with its process", () =>
+    Effect.gen(function* () {
+      const { runtime } = yield* openRuntime(yield* makeFakePi);
+      assert.isTrue(runtime.backgroundTasksEndWithProcess);
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
   it.effect("keeps native image bytes and the saved path in the prompt", () =>
@@ -7172,6 +7181,51 @@ process.stdout.write('{"type":"ready"}\\n');
 
         const cues = (yield* fileSystem.readFileString(cuesPath)).split("\n").filter(Boolean);
         assert.deepEqual(cues, ["SIGTERM"]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "returns once the pi process group exits instead of waiting out the grace",
+    () =>
+      Effect.gen(function* () {
+        const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const childExit = yield* Deferred.make<
+          ChildProcessSpawner.ExitCode,
+          PlatformError.PlatformError
+        >();
+        const spawner = ChildProcessSpawner.make((command) =>
+          realSpawner
+            .spawn(command)
+            .pipe(
+              Effect.tap((handle) =>
+                handle.exitCode.pipe(Deferred.into(childExit), Effect.forkDetach),
+              ),
+            ),
+        );
+        const scope = yield* Scope.make();
+        const connection = yield* makePiRpcConnection({
+          command: process.execPath,
+          args: [
+            "-e",
+            'process.on("SIGTERM",()=>process.exit(0));process.stdin.resume();' +
+              'process.stdout.write(\'{"type":"ready"}\\n\');',
+          ],
+          cwd: undefined,
+          env: {},
+        }).pipe(
+          Scope.provide(scope),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        assert.equal((yield* Queue.take(connection.events))["type"], "ready");
+
+        const closing = yield* Scope.close(scope, Exit.void).pipe(Effect.forkChild);
+        yield* Deferred.await(childExit);
+        yield* TestClock.adjust(Duration.millis(999));
+        const closedBeforeGrace = closing.pollUnsafe() !== undefined;
+
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Fiber.join(closing);
+        assert.isTrue(closedBeforeGrace);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

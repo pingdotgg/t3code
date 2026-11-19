@@ -69,7 +69,7 @@ type CopilotToolIdentity =
   | { readonly kind: "mcp"; readonly server: string; readonly tool: string }
   | { readonly kind: "search" };
 
-const COPILOT_SEARCH_TOOLS = new Set(["glob", "grep"]);
+const COPILOT_SEARCH_TOOLS = new Set(["glob", "grep", "rg"]);
 
 interface CopilotSessionAttribution {
   delta: { readonly kind: string; readonly text: string; readonly task?: string } | undefined;

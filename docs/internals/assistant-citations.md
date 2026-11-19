@@ -12,7 +12,12 @@ refer to rendered text after whitespace normalization, measured in UTF-16 units.
 They cannot be applied to raw Markdown. The original excerpt keeps its whitespace;
 normalization is only for locating it. Repeated text needs an unambiguous context
 match, even if one occurrence still sits at the saved offsets. Guessing could
-highlight the wrong claim.
+highlight the wrong claim. Mobile's native selection reports only text, so when a
+passage repeats within its block the user picks the occurrence, and mobile saves
+that occurrence's offsets and context like any other selector.
+
+Released servers and clients reject a citation link with an unknown query key and
+send or show it unexpanded. Adding a field to the link needs a new link version.
 
 Navigation owns the highlight's lifetime across virtual-row remounts. The source
 row must be fetched, unfolded, mounted, and measured before quote positioning

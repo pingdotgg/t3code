@@ -2,6 +2,8 @@ import { useAtomValue } from "@effect/atom-react";
 import { type AtomCommandSuccess, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { htmlRenderFromToolItem, sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import { Atom, type AtomRegistry } from "effect/reactivity";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import type { TimelineEntry } from "../../session-logic";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { toastManager } from "../ui/toast";
@@ -36,18 +38,21 @@ type HistoryPageResult = AtomCommandSuccess<
 >;
 
 const MAX_CITATION_PAGES = 20;
+const HISTORY_COMMAND_LABEL = "load cited thread history";
+const HISTORY_LOAD_ERROR = "Could not load history.";
 
 const COULD_NOT_LOAD = {
   _tag: "failed",
-  title: "Could not load the cited response",
-  description:
+  title: msg("Could not load the cited response"),
+  description: msg(
     "Load earlier turns, then click the citation to try again. Your saved quote is unchanged.",
+  ),
 } as const;
 
 const UNAVAILABLE = {
   _tag: "failed",
-  title: "The cited response is unavailable",
-  description: "It may have been removed. The selected text is still saved in your citation.",
+  title: msg("The cited response is unavailable"),
+  description: msg("It may have been removed. The selected text is still saved in your citation."),
 } as const;
 
 /**
@@ -69,8 +74,8 @@ export async function loadCitedHistory(input: {
     if (thread.message === "other") {
       return {
         _tag: "failed",
-        title: "The citation does not refer to an assistant response",
-        description: "The selected text is still saved in your citation.",
+        title: msg("The citation does not refer to an assistant response"),
+        description: msg("The selected text is still saved in your citation."),
       };
     }
     if (!thread.hasMoreHistory) return UNAVAILABLE;
@@ -216,19 +221,19 @@ const citedHistoryAtom = Atom.family(
             get.registry,
             threadEnvironment.loadEarlierHistory,
             { environmentId, input: { threadId, throughEntryId: messageId } },
-            { label: "load cited thread history", reportFailure: false },
+            { label: HISTORY_COMMAND_LABEL, reportFailure: false },
           );
           return result._tag === "Success"
             ? result.value
-            : { _tag: "error", message: "Could not load history." };
+            : { _tag: "error", message: HISTORY_LOAD_ERROR };
         },
       }).then((outcome) => {
         if (outcome._tag === "aborted") return;
         if (outcome._tag === "failed") {
           toastManager.add({
             type: "warning",
-            title: outcome.title,
-            description: outcome.description,
+            title: m(outcome.title),
+            description: m(outcome.description),
           });
         }
         get.setSelf({ _tag: outcome._tag });
