@@ -1969,8 +1969,6 @@ export default function ChatView(props: ChatViewProps) {
   } = useProjectScriptEditing({
     environmentId,
     project: activeProject,
-    scripts: activeProjectScripts,
-    settings,
   });
   const canOperatePreview = useEnvironmentScope(
     activeThreadRef?.environmentId ?? null,

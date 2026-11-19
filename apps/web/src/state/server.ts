@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  WS_METHODS,
   type EnvironmentId,
   type EnvironmentTheme,
   type ServerConfig,
@@ -15,6 +16,7 @@ import {
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
+import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
@@ -35,6 +37,10 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
+});
+export const readEnvironmentSettings = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:server:read-settings",
+  tag: WS_METHODS.serverGetSettings,
 });
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",
