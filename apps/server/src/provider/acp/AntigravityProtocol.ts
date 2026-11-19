@@ -497,28 +497,55 @@ function withAntigravityEditPatches(
 }
 
 /**
- * 1.5 runtimes announce `edit_file` already running, with its arguments and no diff. The write
- * may have happened by then, so the file cannot place the edit: it shows as an unplaced snippet.
+ * The file as it was before a running `edit_file`, which the runtime may already have applied.
+ * Undefined when the file does not say which: the target and the replacement can each be part of
+ * the other, or already be in the file elsewhere.
  */
-function announcedEditDiff(data: Record<string, unknown>) {
+function preEditFileOfRunningEdit(
+  file: string | undefined,
+  edit: { readonly Target: string; readonly Replacement: string },
+): string | undefined {
+  const target = edit.Target.replaceAll("\r\n", "\n");
+  const replacement = edit.Replacement.replaceAll("\r\n", "\n");
+  if (file === undefined || target === "" || replacement === "") return undefined;
+  const text = file.replaceAll("\r\n", "\n");
+  const targets = text.split(target).length - 1;
+  const replacements = text.split(replacement).length - 1;
+  const unwritten = targets === 1 && (replacements === 0 || target.includes(replacement));
+  if (unwritten) return text;
+  const written =
+    replacements === 1 &&
+    (replacement.includes(target) ? targets === 1 : targets === 0 && !target.includes(replacement));
+  return written ? text.replace(replacement, () => target) : undefined;
+}
+
+/**
+ * 1.5 runtimes announce `edit_file` already running, with its arguments and no diff. An edit
+ * the file cannot place shows as an unplaced snippet.
+ */
+function announcedEditDiff(
+  data: Record<string, unknown>,
+  readFile: ((path: string) => string | undefined) | undefined,
+) {
   const omitted = { type: "diff", patch: { format: "omitted" } };
   const location: unknown = Array.isArray(data.locations) ? data.locations[0] : undefined;
   const path = Predicate.isObject(location) ? location.path : undefined;
   const edit = Option.getOrUndefined(decodeEditFileInput(data.rawInput));
   if (typeof path !== "string" || edit === undefined || hasTruncatedText(edit)) return omitted;
+  const preEditFile = preEditFileOfRunningEdit(readFile?.(path), edit);
   const text = antigravityEditPatch({
     path,
     rawInput: { TargetContent: edit.Target, ReplacementContent: edit.Replacement },
+    readPreEditFile: preEditFile === undefined ? undefined : () => preEditFile,
   });
-  return typeof text !== "string" || text.length > TOOL_TEXT_LIMIT
-    ? omitted
-    : {
-        type: "diff",
-        path,
-        oldText: edit.Target,
-        newText: edit.Replacement,
-        patch: { format: "snippet", text },
-      };
+  if (typeof text !== "string" || text.length > TOOL_TEXT_LIMIT) return omitted;
+  return {
+    type: "diff",
+    path,
+    oldText: edit.Target,
+    newText: edit.Replacement,
+    patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
+  };
 }
 
 export function normalizeAntigravityToolCall(
@@ -571,7 +598,10 @@ export function normalizeAntigravityToolCall(
           toolCall.status === "pending" ? readPreEditFile : undefined,
           wholeFilePatches,
         )
-      : [...content, announcedEditDiff(data)];
+      : [
+          ...content,
+          announcedEditDiff(data, toolCall.status === "inProgress" ? readPreEditFile : undefined),
+        ];
   }
   if (kind === "execute") {
     data.item = {

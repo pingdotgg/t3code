@@ -452,7 +452,7 @@ describe("Antigravity tool results", () => {
     expect(snippetDiff.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
   });
 
-  it("shows a 1.5 edit_file edit while it runs and places it from the completion's whole-file texts", () => {
+  it("places a 1.5 edit_file edit while it runs and from the completion's whole-file texts", () => {
     const path = "/workspace/app.ts";
     // An insert above its anchor: the target still matches once in the written file, a line late.
     const rawInput = {
@@ -491,20 +491,23 @@ describe("Antigravity tool results", () => {
         },
       }) satisfies EffectAcpSchema.SessionNotification;
     // Whole-file texts over 8 KB are cut to their tails, which no longer hold the line.
-    for (const lines of [5, 400]) {
-      // The runtime does not wait for T3, so the file may already be written when T3 could read it.
-      const readWrittenFile = () => fileOf(lines, rawInput.Replacement);
+    // The runtime does not wait for T3, so the file may or may not be written when T3 reads it.
+    for (const [lines, written] of [
+      [5, false],
+      [5, true],
+      [400, true],
+    ] as const) {
+      const readFile = () => fileOf(lines, written ? rawInput.Replacement : rawInput.Target);
       let toolCall = normalizeAntigravityToolCall(
         parseToolUpdate(frame(lines, "in_progress")).toolCall,
-        readWrittenFile,
+        readFile,
       );
-      expect(acpToolCallSnippetEdit(toolCall.data.content)).toEqual({
-        oldStr: rawInput.Target,
-        newStr: rawInput.Replacement,
-      });
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(
+        `--- ${path}\n+++ ${path}\n@@ -${lines - 2},1 +${lines - 2},2 @@\n+import w from 'w';\n import x from 'x';\n`,
+      );
       toolCall = normalizeAntigravityToolCall(
         mergeToolCallState(toolCall, parseToolUpdate(frame(lines, "completed")).toolCall),
-        readWrittenFile,
+        readFile,
       );
       expect(acpToolCallSnippetEdit(toolCall.data.content)).toBeUndefined();
       const context = Math.min(3, lines - 3);
@@ -514,6 +517,18 @@ describe("Antigravity tool results", () => {
       expect(acpToolCallDiffPatch(toolCall.data.content)).toContain(
         `\n+import w from 'w';\n import x from 'x';\n`,
       );
+    }
+    // A file that does not say whether the edit was written leaves the edit unplaced.
+    const twoAnchors = `${rawInput.Target}\nconst between = 1;\n${rawInput.Replacement}\n`;
+    for (const readFile of [() => undefined, () => twoAnchors]) {
+      const unplaced = normalizeAntigravityToolCall(
+        parseToolUpdate(frame(5, "in_progress")).toolCall,
+        readFile,
+      );
+      expect(acpToolCallSnippetEdit(unplaced.data.content)).toEqual({
+        oldStr: rawInput.Target,
+        newStr: rawInput.Replacement,
+      });
     }
   });
 
