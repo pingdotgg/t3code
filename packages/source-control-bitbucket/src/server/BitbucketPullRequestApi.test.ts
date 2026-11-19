@@ -153,8 +153,13 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("narrows by author and draft state in the same query", () =>
+  it.effect("narrows by author nickname and draft state in the same query", () =>
     Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(JSON.stringify({ uuid: "{u}", nickname: "viewer", display_name: 'ana"' })),
+        ),
+      );
       mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
@@ -166,9 +171,71 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         draft: false,
       });
 
-      expect(filterOfCall(0)).toBe(
-        '(author.nickname = "ana\\"" OR author.display_name = "ana\\"") AND draft = false',
-      );
+      expect(filterOfCall(1)).toBe('author.nickname = "ana\\"" AND draft = false');
+    }),
+  );
+
+  it.effect("filters the viewer by uuid because display names cannot be filtered", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      const cases: ReadonlyArray<readonly [nickname: string | null | undefined, author: string]> = [
+        [undefined, "Max B"],
+        [null, "Max B"],
+        ["  ", "max b"],
+        [" max ", "max"],
+      ];
+      for (const [nickname, author] of cases) {
+        const callIndex = mockedRequest.mock.calls.length;
+        mockedRequest.mockReturnValueOnce(
+          Effect.succeed(
+            response(JSON.stringify({ uuid: " {u-1} ", nickname, display_name: " Max B " })),
+          ),
+        );
+        mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
+
+        yield* api.listPullRequests({
+          repository: "acme/web",
+          state: "open",
+          limit: 50,
+          author,
+        });
+
+        expect(filterOfCall(callIndex + 1)).toBe('author.uuid = "{u-1}"');
+      }
+    }),
+  );
+
+  it.effect("falls back to nickname when the viewer identity is unavailable", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+
+      for (const lookup of [
+        Effect.succeed(response(JSON.stringify({ nickname: "ana", uuid: null }))),
+        Effect.succeed(response(JSON.stringify({ nickname: "ana", uuid: "  " }))),
+        Effect.succeed(response("{}")),
+        Effect.succeed(response("invalid json")),
+        Effect.fail(
+          new BitbucketApi.BitbucketResponseError({
+            operation: "request",
+            status: 403,
+            responseBodyLength: 0,
+          }),
+        ),
+      ]) {
+        const callIndex = mockedRequest.mock.calls.length;
+        mockedRequest.mockReturnValueOnce(lookup);
+        mockedRequest.mockReturnValueOnce(Effect.succeed(response(page(0, 1))));
+
+        yield* api.listPullRequests({
+          repository: "acme/web",
+          state: "open",
+          limit: 50,
+          author: "ana",
+        });
+
+        expect(filterOfCall(callIndex + 1)).toBe('author.nickname = "ana"');
+      }
     }),
   );
 
@@ -176,12 +243,16 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     Effect.gen(function* () {
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
-      const error = yield* Effect.flip(
-        api.listPullRequests({ repository: "acme/team/web", state: "open", limit: 50 }),
-      );
+      mockedRequest.mockReturnValue(Effect.succeed(response("{}")));
 
-      assert.strictEqual(error._tag, "BitbucketRepositoryUnsupportedError");
-      assert.strictEqual(mockedRequest.mock.calls.length, 0);
+      for (const author of [undefined, "ana"]) {
+        const error = yield* Effect.flip(
+          api.listPullRequests({ repository: "acme/team/web", state: "open", limit: 50, author }),
+        );
+
+        assert.strictEqual(error._tag, "BitbucketRepositoryUnsupportedError");
+        assert.strictEqual(mockedRequest.mock.calls.length, 0);
+      }
     }),
   );
 
