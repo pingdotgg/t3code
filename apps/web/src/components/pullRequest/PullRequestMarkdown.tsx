@@ -128,6 +128,7 @@ function PullRequestBodySegmentView({
         lineBreaks={lineBreaks}
         sourceControlMedia
         sourceControlMediaRepository={repository}
+        workspaceFileLinksOnly
         onTaskListChange={
           onTaskListChange && segment.kind === "markdown"
             ? ({ markerOffset, checked }) =>
