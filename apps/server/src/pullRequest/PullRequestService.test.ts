@@ -422,6 +422,9 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       result.entries.map(({ host, number }) => [host, number]),
       [["code.example.test", 42]],
     );
+    // Agents get the forge tools only where the host is one T3 reads.
+    assert.isTrue(yield* service.servesProject("p1" as ProjectId));
+    assert.isFalse(yield* service.servesProject("p2" as ProjectId));
   }),
 );
 
@@ -1426,6 +1429,30 @@ it.effect(
       }
       assert.deepStrictEqual(asked, [true, undefined]);
     }),
+);
+
+it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
+  Effect.gen(function* () {
+    const pinned: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () =>
+            Effect.succeed({ ...hostedChangeRequest("Body"), headSha: "new-head" }),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-09-03T00:00:00Z")),
+          runAction: (input) => Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "reviewed-head" }),
+    );
+    assert.include(refused.message, "new-head");
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "new-head" });
+    assert.deepStrictEqual(pinned, ["new-head"]);
+  }),
 );
 
 it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
