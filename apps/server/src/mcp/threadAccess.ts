@@ -299,7 +299,7 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
           : unavailable(),
       ),
     );
-  return { ...context, projection };
+  return { ...context, shell, projection };
 });
 
 export const newCommandId = Effect.fn("mcp.newCommandId")(function* () {

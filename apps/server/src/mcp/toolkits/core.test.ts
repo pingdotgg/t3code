@@ -1333,14 +1333,13 @@ it.effect(
 );
 
 it.effect.each([
-  ["t3_thread_configure", "default", true, "full-access/default"],
-  ["t3_thread_send", "default", true, "full-access/default"],
-  ["t3_thread_send_attachments", "default", true, "full-access/default"],
-  ["t3_thread_send", "default", false, "runtime_mode_escalation_denied"],
-  ["t3_thread_configure", "plan", true, "interaction_mode_escalation_denied"],
+  ["default", "idle", true, "provider.switch full-access/default"],
+  ["default", "usage-limited", true, "message.dispatch run:limited full-access/default"],
+  ["default", "idle", false, "runtime_mode_escalation_denied"],
+  ["plan", "idle", true, "interaction_mode_escalation_denied"],
 ] as const)(
-  "%s from an Auto/%s parent to its Full-access child (delegated: %s) gives %s",
-  ([toolName, interactionMode, delegated, expected]) => {
+  "t3_thread_configure from an Auto/%s parent moving its %s Full-access child (delegated: %s) gives %s",
+  ([interactionMode, childState, delegated, expected]) => {
     const childId = ThreadId.make("mcp-core-own-child");
     const parent = McpToolAccessTestkit.liveThreadShell(threadId, {
       runtimeMode: "auto",
@@ -1348,92 +1347,67 @@ it.effect.each([
     });
     const child = {
       ...McpToolAccessTestkit.liveThreadShell(childId),
+      ...(childState === "usage-limited"
+        ? {
+            status: "failed" as const,
+            activeRunId: null,
+            latestRunId: RunId.make("run:limited"),
+            lastErrorClass: "usage_limit" as const,
+          }
+        : {}),
       lineage: {
         rootThreadId: threadId,
         parentThreadId: threadId,
         relationshipToParent: "subagent" as const,
       },
     };
-    const sent = { type: "image", id: "sent", name: "a.png", mimeType: "image/png", sizeBytes: 1 };
-    // The limit the orchestrator rechecks the child against under its lock.
-    const dispatchLimit = DispatchModeLimit.pipe(
-      Effect.map((limit) => `${limit?.runtimeMode}/${limit?.interactionMode}`),
-    );
-    let limit: string | undefined;
+    let dispatched: string | undefined;
     return Effect.gen(function* () {
       const server = yield* McpServer.McpServer;
       const result = yield* server
         .callTool({
-          name: toolName,
+          name: "t3_thread_configure",
           arguments: {
             threadId: childId,
-            ...(toolName === "t3_thread_configure"
-              ? { modelSelection: { instanceId: "codex-b", model: "gpt-5" } }
-              : toolName === "t3_thread_send"
-                ? { message: "Go." }
-                : { attachments: [sent] }),
+            modelSelection: { instanceId: "codex-b", model: "gpt-5" },
           },
         })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
           Effect.provideService(McpSchema.McpServerClient, client),
         );
-      expect(declaredFailure(result)?.code ?? limit).toBe(expected);
+      expect(declaredFailure(result)?.code ?? dispatched).toBe(expected);
     }).pipe(
       Effect.provide(
-        Layer.mergeAll(
-          layerThreadToolkit,
-          layerOrchestratorToolkit,
-          McpHttpServer.layerAttachmentToolkit,
-        ).pipe(
+        layerThreadToolkit.pipe(
           Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
           Layer.provide(
-            Layer.mergeAll(
-              Layer.mock(ThreadManagement.ThreadManagementService)({
-                getThreadShell: (id) => Effect.succeed(id === childId ? child : parent),
-                getThreadRecords: () =>
-                  Effect.succeed(McpToolAccessTestkit.idleThreadProjection(parent) as never),
-                getProjectThreadRecords: () =>
-                  Effect.succeed({
-                    ...McpToolAccessTestkit.idleThreadProjection(child),
-                    messages: [{ attachments: [sent] }],
-                  } as never),
-                listAppOwnedChildThreadIds: () => Effect.succeed(delegated ? [childId] : []),
-                dispatch: () =>
-                  dispatchLimit.pipe(
-                    Effect.map((seen) => {
-                      limit = seen;
-                      return { sequence: 1, storedEvents: [] };
-                    }),
-                  ),
-                sendToThread: () =>
-                  dispatchLimit.pipe(
-                    Effect.map((seen) => {
-                      limit = seen;
-                      return {
-                        run: { id: RunId.make("run:own-child"), status: "running" },
-                        message: { attachments: [] },
-                        delivery: "started",
-                      } as never;
-                    }),
-                  ),
-              }),
-              ServerSettings.layerTest(),
-              Layer.mock(ProviderRegistry.ProviderRegistry)({}),
-              Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
-              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-              Layer.mock(ProjectService.ProjectService)({}),
-              Layer.mock(SecretRequests.SecretRequests)({}),
-              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-              Layer.mock(PeerForwarding.PeerForwarding)({}),
-              Layer.mock(PeerLinkRequests.PeerLinkRequests)({}),
-              Layer.mock(PeerLinks.PeerLinks)({}),
-              Layer.mock(DocumentText.DocumentText)({}),
-              AssetSigner.layer.pipe(Layer.provideMerge(ServerSecretStore.layer)),
-            ),
+            Layer.mock(ThreadManagement.ThreadManagementService)({
+              getThreadShell: (id) => Effect.succeed(id === childId ? child : parent),
+              getProjectThreadRecords: () =>
+                Effect.succeed(McpToolAccessTestkit.idleThreadProjection(child) as never),
+              listAppOwnedChildThreadIds: () => Effect.succeed(delegated ? [childId] : []),
+              // Records the command and the limit the orchestrator rechecks it against under its lock.
+              dispatch: (command) =>
+                DispatchModeLimit.pipe(
+                  Effect.map((limit) => {
+                    const resumes =
+                      command.type === "message.dispatch" ? command.manualContinuationOfRunId : "";
+                    dispatched = [
+                      command.type,
+                      resumes,
+                      `${limit?.runtimeMode}/${limit?.interactionMode}`,
+                    ]
+                      .filter(Boolean)
+                      .join(" ");
+                    return { sequence: 1, storedEvents: [] };
+                  }),
+                ),
+            }),
           ),
-          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-own-child-" })),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+          Layer.provide(NodeCrypto.layer),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import {
   type CommandId,
+  MessageId,
   type RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
@@ -239,13 +240,38 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     writesOwnChildThread((input) =>
       Effect.gen(function* () {
         const modelSelection = yield* required(input.modelSelection, "modelSelection");
-        const {
-          threads,
-          projection: { thread },
-        } = yield* readThread(input.threadId);
-        const type = modelSelectionCommandType(thread.providerInstanceId, modelSelection);
+        const { threads, shell } = yield* readThread(input.threadId);
+        const commandId = yield* newCommandId();
+        // A thread a usage limit stopped resumes on the instance it moves to, as the clients' Resume does.
+        const limitedRunId =
+          shell.status === "failed" &&
+          shell.lastErrorClass === "usage_limit" &&
+          modelSelection.instanceId !== shell.providerInstanceId
+            ? shell.latestRunId
+            : null;
         const result = yield* threads
-          .dispatch({ type, threadId: thread.id, commandId: yield* newCommandId(), modelSelection })
+          .dispatch(
+            limitedRunId === null
+              ? {
+                  type: modelSelectionCommandType(shell.providerInstanceId, modelSelection),
+                  threadId: shell.id,
+                  commandId,
+                  modelSelection,
+                }
+              : {
+                  type: "message.dispatch",
+                  createdBy: "agent",
+                  creationSource: "mcp",
+                  commandId,
+                  threadId: shell.id,
+                  messageId: MessageId.make(commandId),
+                  text: "Continue where you left off.",
+                  attachments: [],
+                  modelSelection,
+                  manualContinuationOfRunId: limitedRunId,
+                  dispatchMode: { type: "start_immediately" },
+                },
+          )
           .pipe(Effect.mapError(dispatchFailure));
         return { sequence: result.sequence };
       }),
