@@ -235,6 +235,15 @@ describe("WorkflowRunsView", () => {
     expect(select).toHaveBeenCalledWith(null);
   });
 
+  it("says a linked run is not here where nothing has run yet", async () => {
+    setup({ runs: [], questions: [] });
+    const select = vi.fn();
+    await using screen = await render(page("gone", { select }));
+    await expect.element(screen.getByText("This run is not here")).toBeVisible();
+    await screen.getByRole("button", { name: "Back to the runs" }).click();
+    expect(select).toHaveBeenCalledWith(null);
+  });
+
   it("turns the answers off for a session that may not operate", async () => {
     setup({
       runs: [run({ runId: "ship", title: "Release 1.2", status: "waiting" })],

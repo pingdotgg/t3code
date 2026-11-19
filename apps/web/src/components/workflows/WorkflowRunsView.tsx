@@ -103,6 +103,27 @@ export function WorkflowRunsView({
       </p>
     );
   }
+  const notHere = (
+    <WorkflowsEmpty
+      title={gt("This run is not here")}
+      description={
+        <T>
+          This environment has no run with that link.{" "}
+          <button
+            type="button"
+            className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+            onClick={() => onSelect(null)}
+          >
+            Back to the runs
+          </button>
+        </T>
+      }
+    />
+  );
+  // A link to a run says it is not here, even where nothing has run at all.
+  if (snapshot.runs.length === 0 && snapshot.workflows.length === 0 && selectedRunId !== null) {
+    return notHere;
+  }
   if (snapshot.runs.length === 0 && snapshot.workflows.length === 0) {
     return (
       <WorkflowsEmpty
@@ -283,21 +304,7 @@ export function WorkflowRunsView({
         >
           {shown === null ? (
             selectedRunId === null ? null : (
-              <WorkflowsEmpty
-                title={gt("This run is not here")}
-                description={
-                  <T>
-                    This environment has no run with that link.{" "}
-                    <button
-                      type="button"
-                      className="cursor-pointer underline underline-offset-2 hover:text-foreground"
-                      onClick={() => onSelect(null)}
-                    >
-                      Back to the runs
-                    </button>
-                  </T>
-                }
-              />
+              notHere
             )
           ) : (
             <WorkflowRunFeed
