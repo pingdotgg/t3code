@@ -9972,6 +9972,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
               ),
           ),
+          // The held turn already waits on these commands; their tool calls carry no task id,
+          // so any id matches while one runs on this thread.
+          ...(flavor.toolOutlivesPrompt === undefined
+            ? {}
+            : {
+                awaitBackgroundTasks: Effect.fn("AcpAdapterV2.awaitBackgroundTasks")(function* ({
+                  providerThread,
+                  taskIds,
+                }) {
+                  const outlives = flavor.toolOutlivesPrompt;
+                  const context = yield* Ref.get(activeTurn);
+                  const holdsCommand =
+                    outlives !== undefined &&
+                    defersFinalizeForBackgroundWork &&
+                    context !== null &&
+                    !context.finalized &&
+                    context.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                    [...context.tools.values()].some(
+                      (tool) => toolStatus(tool.status) === "running" && outlives(tool),
+                    );
+                  return { matched: holdsCommand ? [...new Set(taskIds)] : [] };
+                }),
+              }),
           interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
             function* (turnInput: ProviderAdapter.ProviderAdapterV2InterruptInput) {
               return yield* Effect.uninterruptibleMask((restore) =>
