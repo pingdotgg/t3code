@@ -422,9 +422,10 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
 );
 
 it.effect.each([
-  { status: "failed", error: "Weekly usage limit reached" },
-  { status: "interrupted", error: "The run was stopped." },
-  { status: "cancelled", error: "The run was cancelled." },
+  { status: "failed", error: "Weekly usage limit reached", heldWarning: false },
+  { status: "failed", error: "Weekly usage limit reached", heldWarning: true },
+  { status: "interrupted", error: "The run was stopped.", heldWarning: false },
+  { status: "cancelled", error: "The run was cancelled.", heldWarning: false },
 ] as const)("a run that ends $status after its message was accepted records it", (outcome) =>
   Effect.gen(function* () {
     const projectId = ProjectId.make("project:test");
@@ -495,9 +496,15 @@ it.effect.each([
         interactionMode: "default",
       });
       yield* service.runNow({ id: task.id });
+      if (outcome.heldWarning) {
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE scheduled_tasks SET last_run_status = 'failed',
+          last_run_error = 'A previous occurrence is held in the thread queue. Resume or remove it to run this task again.'
+          WHERE task_id = ${task.id}`;
+      }
       const failed = yield* service.subscribeList().pipe(
         Stream.map(({ tasks }) => tasks.find((candidate) => candidate.id === task.id)),
-        Stream.filter((current) => current?.lastRunStatus === "failed"),
+        Stream.filter((current) => current?.lastRunError === outcome.error),
         Stream.runHead,
         Effect.forkChild,
       );
