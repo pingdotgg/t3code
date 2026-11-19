@@ -236,6 +236,8 @@ interface ActiveTurn {
   readonly texts: Map<string, OpenBlock>;
   /** The last assistant text this turn completed. */
   answer: string | undefined;
+  /** The completed text no tool has followed yet, which ends the turn unless a steer lands. */
+  closingText: OpenBlock | undefined;
   readonly tools: Map<string, { readonly name: string; input: Record<string, unknown> }>;
   readonly startedAt: Map<string, DateTime.Utc>;
   readonly ordinals: Map<string, number>;
@@ -1050,9 +1052,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         input: { sessionID: state.sessionId },
       });
       const goal = yield* decodeGoal(result.output);
-      yield* lock.withPermit(
+      return yield* lock.withPermit(
         Effect.gen(function* () {
-          if (state.goalRevision === revision) yield* updateGoal(state, goal);
+          if (state.goalRevision !== revision) return false;
+          yield* updateGoal(state, goal);
+          return true;
         }),
       );
     });
@@ -1145,6 +1149,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       kind: "text" | "reasoning",
       update: (current: string) => string,
       completed = "text" in data,
+      phase?: "final_answer",
     ) {
       const nativeId = `${data.assistantMessageID}:${kind}:${data.ordinal}`;
       const updatedAt = yield* DateTime.now;
@@ -1158,7 +1163,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       if (completed) turn.texts.delete(nativeId);
       else turn.texts.set(nativeId, entry);
       if (entry.text.length === 0) return;
-      if (completed && kind === "text") turn.answer = entry.text;
+      if (completed && kind === "text") {
+        turn.answer = entry.text;
+        turn.closingText = entry;
+      }
       const status = completed ? "completed" : "running";
       const completedAt = completed ? updatedAt : null;
       const nodeKind = kind === "text" ? "assistant_message" : "reasoning";
@@ -1200,6 +1208,35 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           messageId,
           text: entry.text,
           streaming: !completed,
+          ...(phase === undefined ? {} : { phase }),
+        },
+      });
+    });
+
+    // Background reports delivered into a running turn never reach a wake, so show them here.
+    const emitDeliveredReport = Effect.fnUntraced(function* (
+      state: ThreadState,
+      turn: ActiveTurn,
+      inboxId: string,
+      report: BackgroundWorkReport,
+    ) {
+      // A report can land right after the answer; the reply to it must not fold the answer away.
+      const answer = turn.closingText;
+      if (answer !== undefined) {
+        const nativeId = `${answer.block.assistantMessageID}:text:${answer.block.ordinal}`;
+        turn.texts.set(nativeId, answer);
+        yield* emitText(state, turn, answer.block, "text", (text) => text, true, "final_answer");
+        turn.closingText = undefined;
+      }
+      const now = yield* DateTime.now;
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem: {
+          ...itemBase(state, turn, inboxId, "completed", now, now, now),
+          nodeId: turn.input.rootNodeId,
+          type: "notification",
+          ...backgroundWorkNotification([report]),
         },
       });
     });
@@ -1462,6 +1499,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
@@ -1549,6 +1596,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       providerTurn,
       texts: new Map(),
       answer: undefined,
+      closingText: undefined,
       tools: new Map(),
       startedAt: new Map(),
       ordinals: new Map(),
@@ -2746,6 +2794,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           );
         }
         case "session.tool.input.started":
+          turn.closingText = undefined;
           if (event.data.name === "question") return;
           if (event.data.name === "subagent") return yield* startCall(state, turn, event.data.id);
           turn.tools.set(event.data.id, { name: event.data.name, input: {} });
@@ -3145,6 +3194,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     ) {
       if (end.status === "completed" && (turn.steers.size > 0 || goalHoldsTurn(state))) {
         turn.heldEnd = end;
+        // OpenCode can pause a goal without telling this server, such as another process's
+        // restart sweep, so confirm the goal is still active before waiting on it.
+        if (goalHoldsTurn(state) && !state.goalRefreshing) yield* refreshGoal(state);
         return;
       }
       yield* finishTurn(state, end);
@@ -3154,6 +3206,33 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       turn.heldEnd !== undefined && turn.steers.size === 0 && !goalHoldsTurn(state)
         ? finishTurn(state, turn.heldEnd)
         : Effect.void;
+
+    // Holds a goal turn until OpenCode's goal is read again; a failed read releases it.
+    const refreshGoal = Effect.fnUntraced(function* (state: ThreadState) {
+      state.goalFresh = false;
+      state.goalRefreshing = true;
+      state.goalRevision += 1;
+      const revision = state.goalRevision;
+      yield* Effect.forkIn(
+        readGoal(state).pipe(
+          Effect.timeout(INVENTORY_TIMEOUT),
+          Effect.catch(() =>
+            Effect.logWarning("Could not refresh OpenCode goal state.").pipe(Effect.as(false)),
+          ),
+          Effect.flatMap((applied) =>
+            lock.withPermit(
+              Effect.gen(function* () {
+                if (state.goalRevision === revision) state.goalRefreshing = false;
+                // A newer goal event or a reconnect's read owns settlement now.
+                else if (!applied) return;
+                if (state.active !== undefined) yield* endIfSettled(state, state.active);
+              }),
+            ),
+          ),
+        ),
+        sessionScope,
+      );
+    });
 
     const handleEvent = Effect.fnUntraced(function* (event: OpenCode2Client.OpenCode2StreamEvent) {
       if (event.type === "shell.created") {
@@ -3316,33 +3395,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (!supportsNativeGoals()) return;
         const goal = yield* decodeGoal(event.data["goal"]).pipe(Effect.result);
         if (goal._tag === "Failure") {
-          state.goalFresh = false;
-          state.goalRefreshing = true;
-          state.goalRevision += 1;
-          const revision = state.goalRevision;
           yield* Effect.logWarning(
             "Could not decode an OpenCode goal update; refreshing its state.",
           );
-          yield* Effect.forkIn(
-            readGoal(state).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.catch(() =>
-                Effect.logWarning(
-                  "Could not refresh OpenCode goal state after an unreadable update.",
-                ),
-              ),
-              Effect.ensuring(
-                lock.withPermit(
-                  Effect.gen(function* () {
-                    if (state.goalRevision === revision) state.goalRefreshing = false;
-                    if (state.active !== undefined) yield* endIfSettled(state, state.active);
-                  }),
-                ),
-              ),
-            ),
-            sessionScope,
-          );
-          return;
+          return yield* refreshGoal(state);
         }
         yield* updateGoal(state, goal.success);
         if (state.active !== undefined) yield* endIfSettled(state, state.active);
@@ -3367,6 +3423,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         return yield* onReport(state, event.data.inboxID, event.data.item.payload);
       }
       if (event.type === "session.inbox.cancelled" || event.type === "session.inbox.delivered") {
+        const report = state.reports.get(event.data.inboxID);
         state.reports.delete(event.data.inboxID);
         const external = state.externalPrompts.get(event.data.inboxID);
         state.externalPrompts.delete(event.data.inboxID);
@@ -3380,6 +3437,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           turn !== undefined
         ) {
           yield* emitExternalPrompt(state, turn, event.data.inboxID, external.text);
+        } else if (
+          event.type === "session.inbox.delivered" &&
+          report !== undefined &&
+          turn !== undefined
+        ) {
+          yield* emitDeliveredReport(state, turn, event.data.inboxID, report.report);
         }
         return;
       }
@@ -3513,6 +3576,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                 continue;
               }
               if (part.type !== "tool") continue;
+              turn.closingText = undefined;
               if (!turn.tools.has(part.id)) {
                 turn.tools.set(part.id, { name: part.name, input: {} });
                 turn.startedAt.set(part.id, yield* DateTime.now);

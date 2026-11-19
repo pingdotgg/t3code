@@ -7,7 +7,17 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -54,12 +64,18 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
+  importContextFragment,
+  literalText = false,
+  disabled = false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  literalText?: boolean;
+  disabled?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -70,7 +86,7 @@ function Composer({
       richTextEnabled={richTextEnabled}
       contextRecords={new Map()}
       skills={skills}
-      disabled={false}
+      disabled={disabled}
       placeholder=""
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
@@ -78,6 +94,8 @@ function Composer({
       }}
       onPaste={() => {}}
       onCommandKeyDown={onCommandKeyDown}
+      importContextFragment={importContextFragment}
+      literalText={literalText}
     />
   );
 }
@@ -481,6 +499,55 @@ it.each([
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
+
+it.each([
+  { literalText: false, imports: 1 },
+  { literalText: true, imports: 0 },
+])(
+  "imports a copied snapshot's context over its image file: %o",
+  async ({ literalText, imports }) => {
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: ComposerContextId.make("image_snapshot"),
+      label: "shot.png",
+      attachmentId: "snapshot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } satisfies ComposerContextRecord;
+    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    await using screen = await render(
+      <Composer
+        value=""
+        richTextEnabled
+        skills={[]}
+        literalText={literalText}
+        importContextFragment={importContextFragment}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(
+        new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      );
+      clipboardData.setData("text/plain", formatComposerContextReference(record));
+      clipboardData.setData(
+        COMPOSER_CONTEXT_CLIPBOARD_MIME,
+        encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("snapshot-source") },
+          records: [record],
+        })!,
+      );
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+  },
+);
 
 it.each(["x\r\n\r\ny", "x\r\ry"])(
   "pastes %j with the same blank line as x\\n\\ny",
@@ -1014,3 +1081,50 @@ describe("an Arabic line", () => {
     );
   });
 });
+
+it.each([true, false])(
+  "restores the caret after dictation unlocks the editor (rich text: %s)",
+  async (richTextEnabled) => {
+    const ui = (disabled: boolean) => (
+      <Composer value="Draft" richTextEnabled={richTextEnabled} skills={[]} disabled={disabled} />
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => {
+      editor.commands.setTextSelection(3);
+      editor.view.focus();
+    });
+    await screen.rerender(ui(true));
+    await screen.rerender(ui(false));
+    await vi.waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true);
+      expect(editor.view.dom.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+    });
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(editor.getText()).toBe("DrXaft"));
+  },
+);
+
+it.each(["other field", "document body"])(
+  "does not reclaim focus when it moves away during dictation and ends on the %s",
+  async (focusTarget) => {
+    const ui = (disabled: boolean) => (
+      <>
+        <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
+        <input aria-label="Other field" />
+      </>
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => editor.view.focus());
+    await screen.rerender(ui(true));
+    const other = screen.container.querySelector("input")!;
+    other.focus();
+    await vi.waitFor(() => expect(document.activeElement).toBe(other));
+    if (focusTarget === "document body") other.blur();
+    await screen.rerender(ui(false));
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(focusTarget === "document body" ? document.body : other),
+    );
+  },
+);
