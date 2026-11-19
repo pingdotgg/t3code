@@ -1390,6 +1390,8 @@ describe("extractMcpToolCallIdentity", () => {
       't3-code__delegate_task: {"mode":"async"}',
       "delegate_task_t3-code",
       "t3-code/delegate_task",
+      // Antigravity 1.5 titles MCP permission requests "Run mcp_<server>_<tool>".
+      "Run mcp_t3-code_delegate_task",
       "delegate_task",
       'delegate_task: {"mode":"async"}',
       // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
