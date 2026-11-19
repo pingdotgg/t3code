@@ -794,6 +794,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
   --color-destructive: var(--destructive);
+  /* Text only; named themes set --destructive-text and --primary-text. */
+  --text-color-destructive: var(--destructive-text, var(--destructive));
   --color-destructive-fill-foreground: var(--destructive-fill-foreground);
   --color-accent-foreground: var(--contrast-accent-foreground);
   --color-accent: var(--accent);
@@ -816,6 +818,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --text-color-primary: var(--primary-text, var(--primary));
   --color-popover-foreground: var(--contrast-popover-foreground);
   --color-popover: var(--popover);
   --color-card: var(--card);
@@ -3138,6 +3141,23 @@ html[data-theme-id]:not([data-theme-id=""]) {
   /* The default light primary is near-black, so its keycap shows no box. */
   @variant light {
     --kbd-lit-fill: transparent;
+  }
+}
+
+/* --primary and --destructive are fills in named themes; their text keeps the
+   hue at a readable lightness. Re-resolved where a subtree redefines --primary. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  &,
+  & [data-chrome-scope],
+  & [data-app-sidebar] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
   }
 }
 
