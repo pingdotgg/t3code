@@ -206,6 +206,7 @@ const make = Effect.gen(function* () {
       const deliveryUsers = yield* links.listDeliveryUsersForEnvironment({
         environmentId: input.environmentId,
         environmentPublicKey: input.environmentPublicKey,
+        fromReplica: true,
       });
       const now = yield* DateTime.now;
       const deliveriesByUser = yield* Effect.forEach(

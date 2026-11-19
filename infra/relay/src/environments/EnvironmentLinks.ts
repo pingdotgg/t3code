@@ -112,6 +112,8 @@ export class EnvironmentLinks extends Context.Service<
     readonly listDeliveryUsersForEnvironment: (input: {
       readonly environmentId: string;
       readonly environmentPublicKey: string;
+      /** Publish fan-out only; a link or preference change can miss a few ms of it. */
+      readonly fromReplica?: boolean;
     }) => Effect.Effect<
       ReadonlyArray<AgentAwarenessDeliveryUserRecord>,
       EnvironmentLinkUserListPersistenceError
@@ -261,8 +263,7 @@ const make = Effect.gen(function* () {
       "relay.environment_links.list_delivery_users_for_environment",
     )(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-      // A link or preference change can miss the next few milliseconds of fan-out.
-      return yield* readDb
+      return yield* (input.fromReplica ? readDb : db)
         .select({
           userId: relayEnvironmentLinks.userId,
           notificationsEnabled: relayEnvironmentLinks.notificationsEnabled,

@@ -7,7 +7,7 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { and, eq, exists, isNull, ne, notExists } from "drizzle-orm";
+import { and, eq, exists, isNull, ne, notExists, sql } from "drizzle-orm";
 import { QueryBuilder } from "drizzle-orm/pg-core";
 
 import * as RelayDb from "../db.ts";
@@ -189,7 +189,7 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      const lookup = (source: RelayDb.RelayDb["Service"]) =>
+      const lookup = (source: RelayDb.RelayDb["Service"], replica: boolean) =>
         source
           .select({
             credentialId: relayEnvironmentCredentials.credentialId,
@@ -201,6 +201,11 @@ const make = Effect.gen(function* () {
             and(
               eq(relayEnvironmentCredentials.credentialHash, credentialHash),
               isNull(relayEnvironmentCredentials.revokedAt),
+              // Bounds how long a revocation can lag: a replica further behind answers
+              // nothing, which sends the lookup to the primary.
+              replica
+                ? sql`now() - pg_last_xact_replay_timestamp() < interval '5 seconds'`
+                : undefined,
               exists(
                 new QueryBuilder()
                   .select({ userId: relayEnvironmentLinks.userId })
@@ -233,8 +238,8 @@ const make = Effect.gen(function* () {
           );
       // A host can present a credential the instant it is minted, before the
       // replicas have it, so a replica miss is confirmed on the primary.
-      const replicaRows = yield* lookup(readDb);
-      const rows = replicaRows.length > 0 || readDb === db ? replicaRows : yield* lookup(db);
+      const replicaRows = yield* lookup(readDb, readDb !== db);
+      const rows = replicaRows.length > 0 || readDb === db ? replicaRows : yield* lookup(db, false);
       const row = rows[0];
       if (row) {
         yield* Effect.annotateCurrentSpan({ "relay.environment_id": row.environmentId });
