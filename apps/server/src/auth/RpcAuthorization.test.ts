@@ -43,6 +43,15 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("lets any thread-reading client manage its own push registration, and nothing broader", () => {
+    for (const method of [
+      WS_METHODS.notificationsRegisterDevice,
+      WS_METHODS.notificationsUnregisterDevice,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+    }
+  });
+
   it("separates passive terminal observation from operations that can change a shell", () => {
     for (const method of [
       WS_METHODS.terminalObserve,

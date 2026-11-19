@@ -64,6 +64,11 @@ jobs:
               echo "Skipping $patch_commit; its behavior is carried by portable-nightly-fixes.patch."
               continue
             fi
+            # This commit is the fork-source copy of direct-apns-push.patch, which is re-anchored for upstream.
+            if [[ "$patch_commit" == "a165c53a2b"* || "$patch_commit" == "4291a714e5"* ]]; then
+              echo "Skipping $patch_commit; its behavior is carried by direct-apns-push.patch."
+              continue
+            fi
             has_source_changes=false
             while IFS= read -r changed_path; do
               case "$changed_path" in
@@ -100,7 +105,10 @@ jobs:
           remote_delegate_patch="$RUNNER_TEMP/remote-delegate-worktree.patch"
           git show "$WORKFLOW_SHA:.github/patches/remote-delegate-worktree.patch" > "$remote_delegate_patch"
           remote_delegate_patch_sha="$(sha256sum "$remote_delegate_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; printf '%s\n' "$remote_delegate_patch_sha"; } \
+          direct_apns_patch="$RUNNER_TEMP/direct-apns-push.patch"
+          git show "$WORKFLOW_SHA:.github/patches/direct-apns-push.patch" > "$direct_apns_patch"
+          direct_apns_patch_sha="$(sha256sum "$direct_apns_patch" | cut -d' ' -f1)"
+          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; printf '%s\n' "$remote_delegate_patch_sha"; printf '%s\n' "$direct_apns_patch_sha"; } \
             | sha256sum | cut -c1-16)"
 
           dry_run=false
@@ -195,6 +203,8 @@ jobs:
           git apply "$fork_config_patch"
           git apply --check "$remote_delegate_patch"
           git apply "$remote_delegate_patch"
+          git apply --check "$direct_apns_patch"
+          git apply "$direct_apns_patch"
           git add -A
           git commit -m "patch: apply portable fork fixes to upstream nightly"
           if [[ "$dry_run" == "true" ]]; then
@@ -226,6 +236,7 @@ jobs:
           ### Mobile
           - Show Mark unread in the mobile thread hold menu instead of under More.
           - Keep mobile thread rows on three lines: project, title, then branch and machine.
+          - Send iOS push alerts straight from the T3 server to APNs for the fork's bundle ID, without the relay.
 
           ### Desktop
           - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
