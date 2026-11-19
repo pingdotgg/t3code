@@ -119,15 +119,31 @@ newer server starts, so a version rollback must use a backup made before that st
 
 ## Replace the client distributions
 
-The repository's `.env.example` contains the production T3 relay URL. Do not use that value in
-fork builds that are meant to run without T3 Connect.
+The repository's `.env.example` contains the production T3 relay URL. Do not copy it into a fork
+build. On revisions supporting `T3CODE_STANDALONE`, set it to `1` for each client build and set
+`GITHUB_REPOSITORY` or `T3CODE_DESKTOP_UPDATE_REPOSITORY` to your `owner/repo`. The build rejects
+T3-operated relay, diagnostics, hosted-app, and mobile legal-site URLs, T3's Expo project ID, and
+an upstream release repository. A build made without this switch retains the official defaults.
 
-| Surface           | Required for strict independence                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Web               | Host the fork's static app at an HTTPS origin you control. Set `VITE_HOSTED_APP_URL` for the web build and `T3CODE_HOSTED_APP_URL` for server-generated links and approval pages. Leave relay and Clerk build values unset if T3 Connect is unused. Configure the browser's own tracing values to your receiver or leave them unset. Do not use `app.t3.codes` for the final acceptance test.                                                             |
-| Desktop           | Build and sign the fork's app under an identity you control. Disable automatic updates with `T3CODE_DISABLE_AUTO_UPDATE=true` until a feed you operate is available, or set the managed policy's `updates.feedUrl` to that feed. The packaged `app-update.yml` otherwise names the upstream release feed. Check fallback download and support links in the UI.                                                                                            |
-| CLI and SSH hosts | Distribute the fork's server/CLI archive with its checksums. `T3CODE_RELEASE_BASE_URL` or a managed update mirror can redirect archive downloads, but the ordinary `t3 update` release-index path still refers to the upstream repository. Do not use `t3 update`, `npx t3`, the official install scripts, or desktop-managed SSH installation as a fork delivery mechanism until their full release path is redirected and tested.                       |
-| Mobile            | Build and distribute a forked iOS/Android app with your own signing, identifiers, and deep-link configuration. Leave `T3CODE_RELAY_URL`, Clerk, and OTLP tracing values unset for direct-only use. The official mobile binaries can still send crash reports or relay traces to T3-operated services even when they connect directly. Re-pair the new app to each environment; verify what local client state transfers before removing the official app. |
+- **Web:** host the fork's static app at an HTTPS origin you control. Set
+  `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
+  you host it. With no hosted app, clients use direct pairing and native thread links. Leave
+  relay, Clerk, and browser tracing values unset for direct-only use.
+- **Desktop:** build and sign the fork's app under an identity you control. Set the fork release
+  repository at build time. Disable automatic updates with `T3CODE_DISABLE_AUTO_UPDATE=true`
+  until your feed is ready, or point the managed `updates.feedUrl` at your feed. The bundled
+  server still needs the runtime settings above; the client build switch alone does not set them.
+- **CLI and SSH hosts:** distribute the fork's server/CLI archive with its checksums.
+  `T3CODE_RELEASE_BASE_URL` or a managed update mirror can redirect archive downloads, but the
+  ordinary `t3 update` release-index path still refers to upstream. Do not use `t3 update`,
+  `npx t3`, official install scripts, or desktop-managed SSH installation as a fork delivery
+  mechanism until their release paths are redirected and tested.
+- **Mobile:** build and distribute forked iOS/Android apps with your signing and identifiers.
+  Set `T3CODE_EAS_PROJECT_ID` and `T3CODE_EAS_OWNER` only for an Expo project you operate;
+  without them, standalone builds disable OTA updates. Set `EXPO_PUBLIC_MARKETING_SITE_URL`
+  only for your legal site. Leave `T3CODE_RELAY_URL`, Clerk, and OTLP tracing values unset for
+  direct-only use. Re-pair the new app to each environment and verify which local client state
+  transfers before removing the official app.
 
 The [release runbook](./release.md) describes the upstream signing, archive, and update-feed
 formats. Reusing its workflow in a fork requires replacing upstream credentials, domains,
@@ -143,9 +159,10 @@ These paths need configuration, implementation, or an egress test before declari
 - **Updates and installers:** make the CLI release index, desktop feed, npm launcher, installer
   scripts, and SSH runtime downloads use the fork's release source. Until then, keep automatic
   updates off and use controlled builds.
-- **Links and fallbacks:** audit default `app.t3.codes`, `t3.codes` download/legal links, issue
-  links, MCP approval redirects, prompt/thread links, and crash recovery. Configure the available
-  hosted-app origins and replace remaining hard-coded fallbacks where they can be reached.
+- **Links and fallbacks:** a standalone client build removes the ordinary hosted-app,
+  download/legal, issue, prompt/thread, and crash-recovery links to T3. Audit less common routes
+  such as T3 Connect account pages, the `t3.json` schema URL, MCP approval redirects, and
+  provider sign-in return origins before using them.
 - **Telemetry and diagnostics:** verify that the server, desktop, web, and mobile builds have no
   T3 ingest, relay tracing, or mobile Observe endpoint. Server opt-out alone does not control
   separate browser or mobile clients.
