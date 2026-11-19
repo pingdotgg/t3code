@@ -89,7 +89,8 @@ const openedId = (
     readonly query?: string;
   },
 ) =>
-  `${kind}:${options.project}:${options.labels?.toSorted().join(",") ?? ""}:${options.query ?? ""}`;
+  // A tuple, so no label or query can be read as part of another.
+  JSON.stringify([kind, options.project, options.labels?.toSorted() ?? [], options.query ?? ""]);
 
 /**
  * A run for each issue opened in the project's tracker from now on, with the issue as its

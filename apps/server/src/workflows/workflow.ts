@@ -274,16 +274,17 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
         const early = yield* run.store.mailNext(addresses);
         if (early === undefined) break;
         const checked = yield* checkOutput(schema, early.valueJson);
-        if (Result.isSuccess(checked)) {
-          yield* run.store.waitSignalled(run.runId, name);
-          yield* run.store.signalDelivered(early.signalId);
-          yield* DurableDeferred.succeed(wake, {
-            token,
-            value: { expired: false, value: checked.success },
-          });
+        if (Result.isFailure(checked)) {
+          yield* run.store.mailDelete(early.signalId);
+          continue;
         }
-        yield* run.store.mailDelete(early.signalId);
-        if (Result.isSuccess(checked)) break;
+        const woke = { expired: false, value: checked.success };
+        const outcome = yield* run.store.mailDeliver(early.signalId, run.runId, name, woke);
+        // Another wait on the same key took that one; there may be a next.
+        if (outcome === "gone") continue;
+        // Claimed here or before a crash here: either way the wake is this wait's to make.
+        yield* DurableDeferred.succeed(wake, { token, value: woke });
+        break;
       }
     }),
   });
@@ -393,6 +394,7 @@ export const invoke = Effect.fn("workflow.invoke")(function* <P, A>(
     { returns: Schema.String },
     Effect.flatMap(Runs, (runs) =>
       runs.start(workflow.name, payload, {
+        version: workflow.version,
         idempotencyKey: options?.key ?? `${run.runId}/${name}`,
         parent: { runId: run.runId, wait: name },
       }),

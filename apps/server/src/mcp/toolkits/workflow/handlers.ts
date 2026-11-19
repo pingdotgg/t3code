@@ -23,7 +23,6 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
         if (input.action === "questions") return { questions: yield* workflows.questions };
-        if (input.action === "hooks") return { hooks: yield* workflows.hooks };
         if (input.action === "store") return { entries: yield* workflows.stored(input.key ?? "") };
         if (input.action === "list") {
           return {
@@ -37,6 +36,8 @@ export const layer = McpToolAccess.toLayer(WorkflowToolkit, {
     McpToolAccess.writes((input) =>
       Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
+        // A hook's path holds its secret, and posting to it starts a run.
+        if (input.action === "hooks") return { hooks: yield* workflows.hooks };
         if (input.action === "start") {
           const name = yield* required(input.workflow, "workflow");
           const idempotencyKey = yield* required(input.idempotencyKey, "idempotencyKey");

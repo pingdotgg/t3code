@@ -425,11 +425,15 @@ export function WorkflowRunFeed({
             className="min-w-0 flex-1 @2xl/feed:sticky @2xl/feed:top-4"
           >
             {shownBeat !== undefined ? (
-              <div data-step={shownBeat.name}>{beatCard(shownBeat)}</div>
+              // Keyed by the step: a reason typed for one question must not follow to the next.
+              <div key={shownBeat.name} data-step={shownBeat.name}>
+                {beatCard(shownBeat)}
+              </div>
             ) : shownQuick !== undefined && shownQuick.kind === "quick" ? (
               <WorkflowQuickStepsCard row={shownQuick} />
             ) : shownQuestion !== undefined ? (
               <WorkflowQuestionCard
+                key={shownQuestion.name}
                 environmentId={environmentId}
                 question={shownQuestion}
                 onOpenThread={onOpenThread}

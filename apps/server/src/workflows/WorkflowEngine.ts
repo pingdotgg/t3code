@@ -19,7 +19,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import { DurableDeferred, type WorkflowEngine } from "effect/workflow";
 
-import { checkOutput } from "../orchestration-v2/runOutput.ts";
+import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
 import { constantTimeEquals } from "../scheduledTasks/webhookVerification.ts";
 import {
@@ -160,7 +160,13 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
 
   const start: Workflows["Service"]["start"] = Effect.fn("Workflows.start")(
     function* (name, input, options) {
-      const found = latest(name);
+      // A parent written against one version of a child must not get another one's payload.
+      const found =
+        (options.version === undefined
+          ? undefined
+          : registered.find(
+              ([candidate]) => candidate.name === name && candidate.version === options.version,
+            )) ?? latest(name);
       if (found === undefined) return yield* new WorkflowNotRegisteredError({ workflow: name });
       const [definition, engine] = found;
       const payloadCodec = Schema.toCodecJson(definition.payload);
@@ -174,8 +180,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
       const payload = { idempotencyKey: options.idempotencyKey, input: encoded as Schema.Json };
-      const runId = yield* withEngine(engine.execute(payload, { discard: true }));
-      // Listed at once: the run's own first step writes the same row when it gets to run.
+      // The row is written first, with who waits for it: the run's own first step writes the same
+      // row without that, and whichever write lands first is the one that stays.
+      const runId = yield* engine.executionId(payload);
       yield* store.runStarted({
         runId,
         workflow: definition.name,
@@ -185,6 +192,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         input: payload.input,
         parent: options.parent,
       });
+      yield* withEngine(engine.execute(payload, { discard: true }));
       if (options.parent !== undefined) {
         // The key named a run that someone else started: it would never tell this parent.
         const row = yield* store.run(runId);
@@ -261,6 +269,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
           trigger.kind === "issues"
             ? forge.issues.list({
                 project: trigger.project,
+                // Closed ones too: an item can open and close between two looks.
+                state: "all",
                 sort: "created",
                 limit: LOOK_AT_MOST,
                 labels: trigger.labels,
@@ -268,15 +278,24 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
               })
             : forge.pullRequests.list({
                 project: trigger.project,
+                state: "all",
                 limit: LOOK_AT_MOST,
                 query: trigger.query,
               });
         yield* found.pipe(
           Effect.flatMap(
             Effect.fnUntraced(function* (entries: ReadonlyArray<Issue | PullRequest>) {
+              // From the mark on, not after it: two items can share a moment, and the key below
+              // makes the one already started the same run again.
               const fresh = entries
-                .filter((entry) => entry.createdAt > since)
+                .filter((entry) => entry.createdAt >= since)
                 .toSorted((a, b) => a.createdAt.localeCompare(b.createdAt));
+              if (entries.length >= LOOK_AT_MOST && fresh.length === entries.length) {
+                yield* Effect.logWarning(
+                  "More new items than one look reads; older ones among them start no run",
+                  { trigger: id, read: entries.length },
+                );
+              }
               for (const entry of fresh) {
                 // The key is the address, so an issue seen twice is still one run.
                 yield* start(definition.name, entry, {
@@ -294,6 +313,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
   });
 
+  const noChecksSince = new Map<string, number>();
   /** End each wait on a pull request that has got where the wait wanted it. */
   const fireWatches = Effect.gen(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -309,11 +329,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         Effect.flatMap(
           Effect.fnUntraced(function* (detail) {
             const standing = standingOf(detail);
-            const waited = now - DateTime.toEpochMillis(DateTime.makeUnsafe(wait.opened_at));
-            if (!isSettled(watch.until, standing, waited)) return;
-            if (!(yield* store.waitSignalled(wait.run_id, wait.name))) return;
+            // How long the host has listed no checks, not how long the wait is open: a push can
+            // clear the list for a moment in the middle of a long wait.
+            if (standing.checks !== "none") noChecksSince.delete(id);
+            else if (!noChecksSince.has(id)) noChecksSince.set(id, now);
+            const without = now - (noChecksSince.get(id) ?? now);
+            if (!isSettled(watch.until, standing, without)) return;
+            const woke = { expired: false, value: standing };
+            if (!(yield* store.waitSignalled(wait.run_id, wait.name, woke))) return;
             lookedAt.delete(id);
-            yield* wake(wait, { expired: false, value: standing });
+            noChecksSince.delete(id);
+            yield* wake(wait, woke);
           }),
         ),
         // The wait's own timeout is what ends a wait on something that cannot be read.
@@ -433,9 +459,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
 
   const sweep: Workflows["Service"]["sweep"] = Effect.gen(function* () {
     for (const wait of yield* store.waitsPastDeadline) {
-      if (yield* store.waitSignalled(wait.run_id, wait.name)) {
-        yield* wake(wait, { expired: true, value: null });
-      }
+      const woke = { expired: true, value: null };
+      if (yield* store.waitSignalled(wait.run_id, wait.name, woke)) yield* wake(wait, woke);
+    }
+    // A claim whose wake a crash swallowed: the wake is made again. Waking twice is harmless.
+    for (const wait of yield* store.waitsToWake) {
+      if (wait.woke_json === null) continue;
+      yield* wake(wait, WorkflowStore.jsonValue(wait.woke_json) as typeof Woke.Type);
+    }
+    // A cancel that was cut short before it reached what the run had invoked.
+    for (const child of yield* store.orphans) {
+      yield* Effect.ignore(cancel(child.run_id, "the run that invoked it was cancelled"));
     }
     yield* store.mailExpire;
     yield* fireSchedules;
@@ -444,7 +478,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
     for (const row of yield* store.runs("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
-    for (const row of yield* store.runs("paused")) {
+    for (const row of yield* store.pausedRuns) {
       const due = resumesAt(row);
       if (due === undefined || DateTime.isLessThan(at, due)) continue;
       yield* Effect.ignore(resume(row.run_id));
@@ -538,13 +572,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         const checked = yield* checkOutput(schema, valueJson);
         if (Result.isFailure(checked)) {
           return yield* new WorkflowInputError({
-            problem: `The value does not fit what ${wait.name} waits for:\n${checked.failure}`,
+            problem: `The value does not fit what ${wait.name} waits for. ${rejectionText(checked.failure)}`,
           });
         }
         // One signal per wait: a second one for the same key is for the next run that waits on it.
-        if (yield* store.waitSignalled(wait.run_id, wait.name)) {
+        const woke = { expired: false, value };
+        if (yield* store.waitSignalled(wait.run_id, wait.name, woke)) {
           yield* store.signalDelivered(options.id);
-          yield* wake(wait, { expired: false, value });
+          yield* wake(wait, woke);
           return "delivered" as const;
         }
       }
@@ -555,6 +590,20 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         ),
       );
       yield* store.mailPut({ signalId: options.id, address, valueJson, expiresAt });
+      // The wait may have opened and looked for mail between the look above and this write.
+      const late = yield* store.waitAt(address);
+      if (late !== undefined) {
+        const schema = WorkflowStore.jsonValue(late.schema_json) as Record<string, Schema.Json>;
+        if (Result.isSuccess(yield* checkOutput(schema, valueJson))) {
+          const woke = { expired: false, value };
+          if (
+            (yield* store.mailDeliver(options.id, late.run_id, late.name, woke)) === "delivered"
+          ) {
+            yield* wake(late, woke);
+            return "delivered" as const;
+          }
+        }
+      }
       return "buffered" as const;
     },
   );
@@ -568,8 +617,9 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
       // A wait this value does not fit was not waiting for it; the others are still woken.
       if (Result.isFailure(yield* checkOutput(schema, valueJson))) continue;
-      if (!(yield* store.waitSignalled(wait.run_id, wait.name))) continue;
-      yield* wake(wait, { expired: false, value });
+      const woke = { expired: false, value };
+      if (!(yield* store.waitSignalled(wait.run_id, wait.name, woke))) continue;
+      yield* wake(wait, woke);
       woken++;
     }
     return woken;

@@ -68,7 +68,10 @@ const isDefinition = (value: unknown): value is WorkflowDefinition =>
   value !== null &&
   typeof (value as WorkflowDefinition).name === "string" &&
   typeof (value as WorkflowDefinition).version === "number" &&
-  typeof (value as WorkflowDefinition).body === "function";
+  typeof (value as WorkflowDefinition).body === "function" &&
+  // The engine walks these at start, and a file can export an object that only looks like one.
+  Array.isArray((value as WorkflowDefinition).triggers) &&
+  Array.isArray((value as WorkflowDefinition).resumeAfter);
 
 // The API is handed to a file as globals, which the whole process shares, so files load one at
 // a time: each load's `T3.workflow` must register with that load and no other.
@@ -100,7 +103,7 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
       ? []
       : Array.isArray(exported)
         ? exported
-        : registered.includes(exported)
+        : isDefinition(exported)
           ? [exported]
           : undefined;
   if (listed === undefined) {

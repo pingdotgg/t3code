@@ -89,7 +89,7 @@ const listCommand = Command.make("list", {
   ...projectLocationFlags,
   status: Flag.String("status").pipe(
     Flag.withDescription(
-      "Only runs in this state, such as paused or waiting. Skipped runs are listed only with `skipped`.",
+      "Only runs in this state, such as paused or waiting. A skipped run is listed only with `skipped`, unless another run invoked it.",
     ),
     Flag.optional,
   ),

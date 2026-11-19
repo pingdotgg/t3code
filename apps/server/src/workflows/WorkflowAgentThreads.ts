@@ -303,6 +303,7 @@ const make = Effect.gen(function* () {
             `workflow:interrupt:${thread}:${yield* Clock.currentTimeMillis}`,
           ),
           reason: "Its workflow run was cancelled",
+          ...(target.turnId === undefined ? {} : { runId: target.turnId as RunId }),
         })
         .pipe(Effect.mapError(failed("Could not stop the thread")));
     }),

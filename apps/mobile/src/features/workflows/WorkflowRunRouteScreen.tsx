@@ -381,13 +381,22 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
   const stop = (beat: WorkflowBeat) => {
     const asked = questionOf(beat);
     if (asked !== null) return question(asked);
-    if (beat.status === "failed" && run.status === "paused") return pause;
-    return (
+    const failedHere = beat.status === "failed" && run.status === "paused";
+    const flowNode = (
       <FlowNode
         beat={beat}
         child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
         onPress={() => openStep(beat.name)}
       />
+    );
+    // The step stays open to a tap beside the pause, for what it said and its transcript.
+    return failedHere ? (
+      <View className="gap-2">
+        {flowNode}
+        {pause}
+      </View>
+    ) : (
+      flowNode
     );
   };
   const ended = run.endedAt !== null;

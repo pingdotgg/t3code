@@ -51,7 +51,7 @@ workflow(
     });
     if (audit.value.outdated.length === 0) return yield* stop("nothing is outdated");
 
-    const answer = yield* ask("upgrade", {
+    const answer = yield* ask("approve-upgrade", {
       title: `Upgrade ${audit.value.outdated.length} dependencies?`,
       choices: ["upgrade", "skip"],
       data: audit.value,
@@ -399,7 +399,7 @@ t3 workflow show <run>                    # one run and its steps, with the reas
 t3 workflow resume <run>                  # run a paused run's failed step again
 t3 workflow cancel <run>
 t3 workflow questions                     # what runs are asking a person
-t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait upgrade   # answer a question
+t3 workflow signal '{"choice":"upgrade"}' --run <run> --wait approve-upgrade   # answer a question
 t3 workflow signal '<json>' --workflow <name> --key <key>              # wake a keyed wait
 t3 workflow hooks                         # webhook URL paths
 t3 workflow store list [prefix]           # what workflows keep between runs

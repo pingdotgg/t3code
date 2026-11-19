@@ -44,9 +44,9 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
   const beat = feed
     .flatMap((row) => (row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row]))
     .find((candidate) => candidate.name === route.params.step);
-  // A pill of quick steps is named by its first one.
+  // A pill of quick steps is opened by its first one, and a step can join a pill once it ends.
   const quick = feed.find(
-    (row) => row.kind === "quick" && row.steps[0]?.name === route.params.step,
+    (row) => row.kind === "quick" && row.steps.some((step) => step.name === route.params.step),
   );
   const quickSteps = quick?.kind === "quick" ? quick.steps : [];
   // A thread or a run replaces the leaf sheet so workspace back navigation still works.

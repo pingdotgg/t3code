@@ -99,21 +99,22 @@ export const standingOf = (
   const pending = counted.some((check) => check.status === "pending");
   return {
     state: detail.state,
-    checks: counted.length === 0 ? "none" : failing ? "failing" : pending ? "pending" : "passing",
+    // Pending first: the wait is for none of them still running, even once one has failed.
+    checks: counted.length === 0 ? "none" : pending ? "pending" : failing ? "failing" : "passing",
     mergeability: detail.mergeability,
     url: detail.url,
   };
 };
 
-/** Whether a wait `until` this is over, having waited `waitedMs`. */
+/** Whether a wait `until` this is over, the host having listed no checks for `withoutChecksMs`. */
 export const isSettled = (
   until: PullRequestUntil,
   standing: PullRequestStanding,
-  waitedMs: number,
+  withoutChecksMs: number,
 ): boolean => {
   if (standing.state !== "open") return true;
   if (until !== "checks") return false;
-  if (standing.checks === "none") return waitedMs >= NO_CHECKS_AFTER_MS;
+  if (standing.checks === "none") return withoutChecksMs >= NO_CHECKS_AFTER_MS;
   return standing.checks !== "pending";
 };
 

@@ -86,6 +86,8 @@ export class WorkflowAgents extends Context.Service<
     readonly interrupt: (thread: {
       readonly threadId: string;
       readonly environment?: string | undefined;
+      /** The step's own turn. With it, a turn of someone else's on the same thread is left alone. */
+      readonly turnId?: string | undefined;
     }) => Effect.Effect<void, WorkflowAgentError>;
   }
 >()("t3/workflows/WorkflowAgents") {}

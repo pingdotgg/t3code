@@ -66,6 +66,8 @@ export interface WaitRow {
   readonly watch_json: string | null;
   readonly deadline: string | null;
   readonly opened_at: string;
+  /** What it was woken with, once it has been. */
+  readonly woke_json: string | null;
 }
 
 // Rows keep JSON as text. Everything stored was a JSON value when it was written.
@@ -73,14 +75,19 @@ export const jsonText = (value: Schema.Json): string => JSON.stringify(value);
 export const jsonValue = (text: string): Schema.Json => JSON.parse(text) as Schema.Json;
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
+// A wake is one write away from its claim. A claim this old without its run moving had none.
+const WAKE_REDONE_AFTER = Duration.seconds(30);
 // Long enough for a sender's retries, short enough that the table stays small.
 // Enough to read what a step said; the page that shows it is not a place for a whole report.
 const STEP_RESULT_KEPT = 8_000;
 const SIGNAL_IDS_KEPT = Duration.days(7);
+// A tuple, so no name or key can be read as part of the other.
 const mailAddress = (address: SignalAddress) =>
-  "runId" in address
-    ? `run:${address.runId}:${address.wait}`
-    : `key:${address.workflow}:${address.key}`;
+  JSON.stringify(
+    "runId" in address
+      ? ["run", address.runId, address.wait]
+      : ["key", address.workflow, address.key],
+  );
 
 export class WorkflowStore extends Context.Service<
   WorkflowStore,
@@ -140,7 +147,31 @@ export class WorkflowStore extends Context.Service<
     }) => Effect.Effect<void>;
     readonly waitClosed: (runId: string, name: string) => Effect.Effect<void>;
     /** Takes the wait for one signal. False when another signal already has it. */
-    readonly waitSignalled: (runId: string, name: string) => Effect.Effect<boolean>;
+    /**
+     * Claims an open wait for one wake and keeps what it is woken with. False when something else
+     * already claimed it.
+     */
+    readonly waitSignalled: (
+      runId: string,
+      name: string,
+      woke: Schema.Json,
+    ) => Effect.Effect<boolean>;
+    /** Waits claimed a while ago whose runs are still not past them: their wake is redone. */
+    readonly waitsToWake: Effect.Effect<ReadonlyArray<WaitRow>>;
+    /**
+     * Hands one buffered signal to one wait, or to none: the claim and the removal happen
+     * together. `gone` when another wait took the signal, `claimed` when the wait was already woken.
+     */
+    readonly mailDeliver: (
+      signalId: string,
+      runId: string,
+      name: string,
+      woke: Schema.Json,
+    ) => Effect.Effect<"delivered" | "gone" | "claimed">;
+    /** Runs that were not ended while the run that invoked them was cancelled. */
+    readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
+    /** Every paused run, however many: the sweep decides which are due. */
+    readonly pausedRuns: Effect.Effect<ReadonlyArray<RunRow>>;
     readonly signalDelivered: (signalId: string) => Effect.Effect<void>;
     /** Whether a signal with this id already woke a wait. */
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
@@ -222,7 +253,7 @@ const make = Effect.gen(function* () {
   // healthy run, so a database that cannot take it is a defect of the process instead.
   const write = <A, E>(runId: string, effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
-  const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at`;
+  const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
 
   return WorkflowStore.of({
     changes,
@@ -368,15 +399,62 @@ const make = Effect.gen(function* () {
         sql`DELETE FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}`,
       );
     }),
-    waitSignalled: Effect.fn("WorkflowStore.waitSignalled")(function* (runId, name) {
+    waitSignalled: Effect.fn("WorkflowStore.waitSignalled")(function* (runId, name, woke) {
       const at = yield* now;
       const taken = yield* sql`
-        UPDATE workflow_waits SET signalled_at = ${at}
+        UPDATE workflow_waits SET signalled_at = ${at}, woke_json = ${jsonText(woke)}
         WHERE run_id = ${runId} AND name = ${name} AND signalled_at IS NULL
         RETURNING name
       `.pipe(Effect.orDie);
       return taken.length > 0;
     }),
+    waitsToWake: Effect.gen(function* () {
+      const before = DateTime.formatIso(
+        DateTime.subtractDuration(yield* DateTime.now, WAKE_REDONE_AFTER),
+      );
+      return yield* sql<WaitRow>`
+        SELECT ${waitColumns} FROM workflow_waits
+        WHERE woke_json IS NOT NULL AND signalled_at <= ${before}
+          AND run_id IN (SELECT run_id FROM workflow_runs WHERE ended_at IS NULL)
+      `.pipe(Effect.orDie);
+    }),
+    mailDeliver: Effect.fn("WorkflowStore.mailDeliver")(function* (signalId, runId, name, woke) {
+      const at = yield* now;
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const claimed = yield* sql`
+              UPDATE workflow_waits SET signalled_at = ${at}, woke_json = ${jsonText(woke)}
+              WHERE run_id = ${runId} AND name = ${name} AND signalled_at IS NULL
+              RETURNING name
+            `;
+            if (claimed.length === 0) return "claimed" as const;
+            const taken = yield* sql`
+              DELETE FROM workflow_mail WHERE signal_id = ${signalId} RETURNING signal_id
+            `;
+            // Failing undoes the claim: the wait stays open for a signal that is still there.
+            if (taken.length === 0) return yield* Effect.fail("gone" as const);
+            yield* sql`
+              INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
+              ON CONFLICT (signal_id) DO NOTHING
+            `;
+            return "delivered" as const;
+          }),
+        )
+        .pipe(
+          Effect.catchIf(
+            (error) => error === "gone",
+            () => Effect.succeed("gone" as const),
+          ),
+          Effect.orDie,
+        );
+    }),
+    orphans: sql<RunRow>`
+      SELECT c.* FROM workflow_runs c
+      JOIN workflow_runs p ON p.run_id = c.parent_run_id
+      WHERE c.ended_at IS NULL AND p.status = 'cancelled'
+    `.pipe(Effect.orDie),
+    pausedRuns: sql<RunRow>`SELECT * FROM workflow_runs WHERE status = 'paused'`.pipe(Effect.orDie),
     signalDelivered: Effect.fn("WorkflowStore.signalDelivered")(function* (signalId) {
       const at = yield* now;
       yield* sql`
@@ -578,7 +656,22 @@ const make = Effect.gen(function* () {
     runs: Effect.fn("WorkflowStore.runs")(function* (status) {
       return yield* (
         status === undefined
-          ? sql<RunRow>`SELECT * FROM workflow_runs ORDER BY started_at DESC LIMIT 500`
+          ? // Skipped runs are counted apart, so a trigger that skips most of what it brings does
+            // not push the runs that did something out of the list.
+            sql<RunRow>`
+              SELECT * FROM (
+                SELECT * FROM workflow_runs
+                WHERE NOT (status = 'skipped' AND parent_run_id IS NULL)
+                ORDER BY started_at DESC LIMIT 500
+              )
+              UNION ALL
+              SELECT * FROM (
+                SELECT * FROM workflow_runs
+                WHERE status = 'skipped' AND parent_run_id IS NULL
+                ORDER BY started_at DESC LIMIT 500
+              )
+              ORDER BY started_at DESC
+            `
           : sql<RunRow>`
               SELECT * FROM workflow_runs WHERE status = ${status}
               ORDER BY started_at DESC LIMIT 500

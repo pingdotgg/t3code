@@ -8,7 +8,7 @@ import * as Workflows from "../../../workflows/Workflows.ts";
 import { WorkflowRun, WorkflowRunStatus, WorkflowStep } from "../../../workflows/WorkflowStore.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
-export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "hooks", "store"] as const;
+export const WORKFLOW_READ_ACTIONS = ["list", "read", "questions", "store"] as const;
 
 const WorkflowTool = Tool.make("t3_workflow", {
   description:
@@ -16,6 +16,7 @@ const WorkflowTool = Tool.make("t3_workflow", {
   parameters: Schema.Struct({
     action: Schema.Literals([
       ...WORKFLOW_READ_ACTIONS,
+      "hooks",
       "start",
       "signal",
       "resume",

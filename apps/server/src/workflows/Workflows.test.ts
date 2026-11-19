@@ -1285,6 +1285,7 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
         assert.deepStrictEqual(forge.comments, ["2: Looking at Issue 2."]);
         assert.deepStrictEqual(forge.asked.at(-1), {
           project: PROJECT,
+          state: "all",
           sort: "created",
           limit: 100,
           labels: ["bug"],

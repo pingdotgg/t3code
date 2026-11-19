@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
 
 import Migration0099 from "../persistence/Migrations/099_Workflows.ts";
 import Migration0100 from "../persistence/Migrations/100_WorkflowTriggers.ts";
@@ -129,6 +130,70 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
         threadId: "thread-2",
         environmentId: "env-b",
       });
+    }),
+  ),
+);
+
+it.effect("one buffered signal goes to one wait, and a claimed wait keeps what woke it", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const open = (runId: string) =>
+        Effect.andThen(
+          store.runStarted({
+            runId,
+            workflow: "gate",
+            version: 1,
+            engineTag: "gate@1",
+            idempotencyKey: runId,
+            input: {},
+          }),
+          store.waitOpened({
+            runId,
+            name: "go",
+            workflow: "gate",
+            key: "ready",
+            token: `token-${runId}`,
+            schemaJson: "{}",
+            requestJson: null,
+            watchJson: null,
+            deadline: null,
+          }),
+        );
+      yield* open("r1");
+      yield* open("r2");
+      // The parts of an address are kept apart: this one is for another workflow's other key.
+      yield* store.mailPut({
+        signalId: "other",
+        address: { workflow: "gate:ready", key: "x" },
+        valueJson: "1",
+        expiresAt: "2999-01-01T00:00:00.000Z",
+      });
+      assert.isUndefined(yield* store.mailNext([{ workflow: "gate", key: "ready:x" }]));
+
+      yield* store.mailPut({
+        signalId: "s1",
+        address: { workflow: "gate", key: "ready" },
+        valueJson: '"yes"',
+        expiresAt: "2999-01-01T00:00:00.000Z",
+      });
+      const woke = { expired: false, value: "yes" };
+      assert.equal(yield* store.mailDeliver("s1", "r1", "go", woke), "delivered");
+      // The second wait finds the signal gone and stays open for the next one.
+      assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
+      assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
+      assert.isTrue(yield* store.signalSeen("s1"));
+      // A wait that is already claimed takes no second wake.
+      assert.equal(yield* store.mailDeliver("other", "r1", "go", woke), "claimed");
+
+      // Its wake is redone once the claim has gone unanswered for a while.
+      assert.deepStrictEqual(yield* store.waitsToWake, []);
+      yield* TestClock.adjust("1 minute");
+      const again = yield* store.waitsToWake;
+      assert.deepStrictEqual(
+        again.map((wait) => [wait.run_id, wait.woke_json]),
+        [["r1", JSON.stringify(woke)]],
+      );
     }),
   ),
 );

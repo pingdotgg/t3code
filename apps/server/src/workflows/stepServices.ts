@@ -74,7 +74,12 @@ export class Signals extends Context.Service<
 export type StartRun = (
   workflow: string,
   input: unknown,
-  options: { readonly idempotencyKey: string; readonly parent?: RunParent },
+  options: {
+    readonly idempotencyKey: string;
+    readonly parent?: RunParent;
+    /** The version the caller was written against. Without it, the newest registered. */
+    readonly version?: number;
+  },
 ) => Effect.Effect<{ readonly runId: string }, WorkflowError>;
 
 export type CancelRun = (runId: string, reason: string) => Effect.Effect<void, WorkflowError>;
@@ -308,7 +313,7 @@ export const start = <P>(
   options: { readonly key: string },
 ) =>
   Effect.flatMap(Runs, (runs) =>
-    runs.start(workflow.name, payload, { idempotencyKey: options.key }),
+    runs.start(workflow.name, payload, { idempotencyKey: options.key, version: workflow.version }),
   );
 
 /**
