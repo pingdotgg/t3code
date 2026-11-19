@@ -591,10 +591,9 @@ describe("environment query lifecycle", () => {
         const session = { ...QUERY_RPC_SESSION, client };
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some(session));
         const atoms = createTerminalEnvironmentAtoms(harness.runtime);
-        const atom = atoms.metadata({
-          environmentId: QUERY_ENVIRONMENT.environmentId,
-          input: null,
-        });
+        const target = { environmentId: QUERY_ENVIRONMENT.environmentId, input: null };
+        const atom = atoms.metadata(target);
+        const feed = atoms.metadataFeed(target);
         const registry = AtomRegistry.make();
         const observed: Array<ReadonlyArray<TerminalSummary>> = [];
         const unsubscribe = registry.subscribe(
@@ -621,6 +620,8 @@ describe("environment query lifecycle", () => {
         yield* Queue.offer(events, { type: "snapshot", terminals: [checkout] });
         yield* Deferred.await(receivedCheckout);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([checkout]);
+        const initialSnapshotId = selectEnvironmentQueryData(registry.get(feed))?.snapshotId;
+        expect(initialSnapshotId).toBeTypeOf("symbol");
 
         yield* SubscriptionRef.set(harness.supervisorSession, Option.some({ ...session }));
         yield* Queue.take(started);
@@ -633,6 +634,9 @@ describe("environment query lifecycle", () => {
         yield* Queue.offer(events, { type: "snapshot", terminals: [] });
         yield* Deferred.await(receivedEmpty);
         expect(selectEnvironmentQueryData(registry.get(atom))).toEqual([]);
+        expect(selectEnvironmentQueryData(registry.get(feed))?.snapshotId).not.toBe(
+          initialSnapshotId,
+        );
       }),
   );
 

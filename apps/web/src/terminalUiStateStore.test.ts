@@ -15,11 +15,11 @@ const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
 
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {
+    useTerminalUiStateStore.getState().removeOrphanedTerminalUiStates(new Set());
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
-      serverTerminalIdsByThreadKey: {},
     });
   });
 
@@ -200,5 +200,63 @@ describe("terminalUiStateStore actions", () => {
 
     store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
     expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-3"]);
+  });
+});
+
+describe("server terminal reconciliation", () => {
+  const layout = () =>
+    selectThreadTerminalUiState(
+      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+      THREAD_REF,
+    );
+
+  beforeEach(() => {
+    useTerminalUiStateStore.getState().removeTerminalUiState(THREAD_REF);
+  });
+
+  it("preserves a vertical split while the terminals reattach to a restarted server", () => {
+    const store = useTerminalUiStateStore.getState();
+    const firstSnapshot = Symbol();
+    const restartSnapshot = Symbol();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.splitTerminalVertical(THREAD_REF, "split");
+    const beforeRestart = layout();
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "split"], firstSnapshot);
+    store.reconcileTerminalIds(THREAD_REF, [], restartSnapshot);
+    expect(layout()).toEqual(beforeRestart);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], restartSnapshot);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "split"], restartSnapshot);
+    expect(layout()).toEqual(beforeRestart);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], restartSnapshot);
+    expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+  });
+
+  it("preserves a pending local split when another client opens a tab", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.reconcileTerminalIds(THREAD_REF, ["first"]);
+    store.splitTerminalVertical(THREAD_REF, "pending");
+
+    store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere"]);
+    store.reconcileTerminalIds(THREAD_REF, ["first", "elsewhere", "pending"]);
+
+    expect(layout().terminalGroups).toEqual([
+      { id: "group-first", terminalIds: ["first", "pending"], splitDirection: "vertical" },
+      { id: "group-elsewhere", terminalIds: ["elsewhere"] },
+    ]);
+    expect(layout().activeTerminalId).toBe("pending");
+  });
+
+  it("resets the drawer when another client closes the last terminal", () => {
+    const store = useTerminalUiStateStore.getState();
+    const defaultLayout = layout();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+
+    store.reconcileTerminalIds(THREAD_REF, []);
+
+    expect(layout()).toEqual(defaultLayout);
   });
 });

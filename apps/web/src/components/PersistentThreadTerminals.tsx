@@ -22,7 +22,7 @@ import {
 } from "../rightPanelStore";
 import { useProject, useQuietThreadShell } from "../state/entities";
 import { useEnvironmentScope } from "../state/session";
-import { useKnownTerminalSessions } from "../state/terminalSessions";
+import { useKnownTerminalSessions, useTerminalDrawerSessions } from "../state/terminalSessions";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -82,10 +82,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
   const visible = active && terminalUiState.terminalOpen;
-  const knownTerminalSessions = useKnownTerminalSessions({
-    environmentId: threadRef.environmentId,
-    threadId,
-  });
+  const metadata = useTerminalDrawerSessions(threadRef.environmentId, threadId);
+  const knownTerminalSessions = metadata?.sessions;
+  const snapshotId = metadata?.snapshotId;
   const panelSurfaces = useRightPanelStore(
     (state) => selectThreadRightPanelState(state.byThreadKey, threadRef).surfaces,
   );
@@ -132,9 +131,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- feeds the server's terminal list into the terminal UI store, which owns how local ids follow it
   useEffect(() => {
-    if (knownTerminalSessions === null) return;
-    reconcileTerminalIds(threadRef, serverOrderedTerminalIds);
-  }, [knownTerminalSessions, reconcileTerminalIds, serverOrderedTerminalIds, threadRef]);
+    if (snapshotId === undefined) return;
+    reconcileTerminalIds(threadRef, serverOrderedTerminalIds, snapshotId);
+  }, [reconcileTerminalIds, serverOrderedTerminalIds, snapshotId, threadRef]);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = launchContext !== null ? launchContext.worktreePath : worktreePath;
   const cwd =
