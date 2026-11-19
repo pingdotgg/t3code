@@ -273,6 +273,10 @@ export function pickableProjectGroups<
   return [...open.filter((group) => group.pinned), ...open.filter((group) => !group.pinned)];
 }
 
+export function isPickableProjectMember(member: Pick<EnvironmentProject, "archivedAt">): boolean {
+  return member.archivedAt == null;
+}
+
 function projectFreshnessTime(project: EnvironmentProject): number {
   const updatedAtTime = Date.parse(project.updatedAt);
   if (Number.isFinite(updatedAtTime)) {
@@ -397,7 +401,7 @@ export function buildProjectGroups<TProject extends EnvironmentProject>(
       members,
       memberProjectRefs: projectRefsByLogicalKey.get(key) ?? [],
       pinned: members.some((member) => member.project.pinnedAt != null),
-      archived: members.every((member) => member.project.archivedAt != null),
+      archived: !members.some(({ project }) => isPickableProjectMember(project)),
     };
   });
 }
