@@ -59,6 +59,7 @@ import {
 } from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import {
   pullRequestConversationThreads,
@@ -569,12 +570,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const refresh = () =>
     pullRefresh.onRefresh(async (signal) => {
       const target = requestTarget(params);
-      await composerPullRequests.invalidate
-        .run(registry, {
-          environmentId: target.environmentId,
-          input: { reference: target.input },
-        })
-        .catch(() => undefined);
+      await runAtomCommand(
+        registry,
+        composerPullRequests.invalidate,
+        { environmentId: target.environmentId, input: { reference: target.input } },
+        { reportFailure: false },
+      );
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
       stack.refresh();

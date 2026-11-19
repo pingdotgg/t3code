@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -76,9 +77,14 @@ describe("mobile preferences state", () => {
       const registry = AtomRegistry.make();
       const unmountPreferences = registry.mount(state.preferencesAtom);
 
-      const save = state.savePreferences.run(registry, {
-        collapsedProjectGroups: ["project:new"],
-      });
+      const save = yield* Effect.forkChild(
+        Effect.exit(
+          state.savePreferences.run(registry, {
+            collapsedProjectGroups: ["project:new"],
+          }),
+        ),
+        { startImmediately: true },
+      );
       pendingLoad.resolve({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:old"],
@@ -87,7 +93,7 @@ describe("mobile preferences state", () => {
       const preferences = yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
         suspendOnWaiting: true,
       });
-      const saveResult = yield* Effect.promise(() => save);
+      const saveResult = yield* Fiber.join(save);
       expect(preferences).toEqual({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:new"],
@@ -95,7 +101,7 @@ describe("mobile preferences state", () => {
       expect(savePatch).toHaveBeenCalledWith({
         collapsedProjectGroups: ["project:new"],
       });
-      expect(AsyncResult.isFailure(saveResult)).toBe(false);
+      expect(Exit.isFailure(saveResult)).toBe(false);
 
       unmountPreferences();
       registry.dispose();
