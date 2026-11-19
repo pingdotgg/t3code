@@ -358,13 +358,14 @@ it("keeps a closing speed picker's update when a project destination save is pen
 
 it("preserves pending thread speech changes until settings refresh and drops failed writes", async () => {
   mocks.preferences = {};
+  mocks.alert.mockReset();
   mocks.save.mockReset();
   mocks.update.mockReset();
   const environmentId = EnvironmentId.make("thread-speech");
   const projectId = ProjectId.make("thread-project");
   const threadRef: ScopedThreadRef = { environmentId, threadId: ThreadId.make("speech-thread") };
   const original = { environmentId, engine: "piper" as const, voice: "original" };
-  const chosen = { environmentId, engine: "piper" as const, voice: "chosen" };
+  const chosen = { environmentId, engine: "openai" as const, voice: "nova" };
   let persisted = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
     projectSettingsOverrides: {
       [projectId]: {
@@ -379,6 +380,7 @@ it("preserves pending thread speech changes until settings refresh and drops fai
     environmentId,
     serverConfig: { settings: persisted },
   } as unknown as EnvironmentPresentation;
+  mocks.readConfig.mockImplementation(() => mocks.presentation?.serverConfig);
   mocks.update.mockImplementation(
     async ({ input }: { input: { patch: Parameters<typeof applyServerSettingsPatch>[1] } }) => {
       persisted = applyServerSettingsPatch(persisted, input.patch);
@@ -389,7 +391,7 @@ it("preserves pending thread speech changes until settings refresh and drops fai
     const controls = useSpeechOutputDestination(threadRef);
     return (
       <>
-        <button onClick={() => controls.choose(chosen)}>Choose voice</button>
+        <button onClick={() => controls.choose(chosen)}>Choose destination</button>
         {([1, 1.5, 2] as const).map((rate) => (
           <button key={rate} onClick={() => controls.setPlaybackRate(rate)}>
             {`Speed ${rate}`}
@@ -413,7 +415,7 @@ it("preserves pending thread speech changes until settings refresh and drops fai
   try {
     act(() => root.render(<ThreadControls />));
     await act(async () => {
-      click("Choose voice");
+      click("Choose destination");
       click("Speed 1.5");
     });
     expect(persisted.projectSettingsOverrides[projectId]).toEqual({
@@ -440,13 +442,51 @@ it("preserves pending thread speech changes until settings refresh and drops fai
     });
 
     mocks.update.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))));
-    await act(async () => click("Choose voice"));
+    await act(async () => click("Choose destination"));
     await act(async () => click("Speed 1"));
     expect(persisted.projectSettingsOverrides[projectId]).toEqual({
       defaultAutoPull: true,
       speechPlaybackDestination: original,
       speechPlaybackRate: 1,
     });
+    for (const speedFails of [false, true]) {
+      mocks.alert.mockClear();
+      const destinationSave = Promise.withResolvers<ReturnType<typeof AsyncResult.failure>>();
+      mocks.update.mockImplementationOnce(() => destinationSave.promise);
+      if (speedFails)
+        mocks.update.mockResolvedValueOnce(
+          AsyncResult.failure(Cause.fail(new Error("speed failed"))),
+        );
+      await act(async () => {
+        click("Choose destination");
+        click("Speed 1.5");
+      });
+      persisted = applyServerSettingsPatch(persisted, {
+        projectSettingsOverrides: {
+          [projectId]: { ...persisted.projectSettingsOverrides[projectId], defaultAutoPull: false },
+        },
+      });
+      mocks.presentation = {
+        ...mocks.presentation!,
+        serverConfig: { ...mocks.presentation!.serverConfig!, settings: persisted },
+      };
+      await act(async () => {
+        destinationSave.resolve(AsyncResult.failure(Cause.fail(new Error("destination failed"))));
+      });
+      expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+        defaultAutoPull: false,
+        speechPlaybackDestination: original,
+        speechPlaybackRate: speedFails ? 1 : 1.5,
+      });
+      expect(mocks.alert).toHaveBeenCalledWith(
+        "Could not save speech output choice",
+        "Your previous destination is still selected. Please try again.",
+      );
+      await act(async () => click("Speed 1"));
+      expect(persisted.projectSettingsOverrides[projectId]?.speechPlaybackDestination).toEqual(
+        original,
+      );
+    }
     expect(mocks.save).not.toHaveBeenCalled();
   } finally {
     act(() => root.unmount());

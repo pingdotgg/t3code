@@ -2,19 +2,26 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthSettingsWriteScope,
   type ScopedThreadRef,
-  type ProjectSettingsOverrides,
   SpeechPlaybackRate,
   SpeechOutputDestination,
 } from "@t3tools/contracts";
-import type { SpeechPlaybackControls } from "@t3tools/client-runtime/voice-output";
+import {
+  createSpeechProjectSettingsWriter,
+  type SpeechPlaybackControls,
+} from "@t3tools/client-runtime/voice-output";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { createContext, useContext, useRef } from "react";
 import { useClientSettings, updateClientSettings } from "../hooks/useSettings";
 import { useQuietThreadShell } from "../state/entities";
 import { useEnvironment } from "../state/environments";
 import { useAtomCommand } from "../state/use-atom-command";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "../state/server";
 import { useEnvironmentScope } from "../state/session";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { toastManager } from "../components/ui/toast";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 import { voiceOutput } from "./voiceOutput";
 
 export const SpeechPlaybackSettingsContext = createContext<SpeechPlaybackControls | null>(null);
@@ -38,34 +45,39 @@ export function useSpeechOutputDestination(
       ? localDestination
       : effective.speechPlaybackDestination;
   const playbackRate = effective?.speechPlaybackRate ?? localRate;
-  const pending = useRef<{
-    key: string;
-    source: ProjectSettingsOverrides | undefined;
-    value: ProjectSettingsOverrides;
-  } | null>(null);
+  const writer = useRef<ReturnType<typeof createSpeechProjectSettingsWriter> | null>(null);
   const persist = (patch: {
     speechPlaybackDestination?: SpeechOutputDestination | null;
     speechPlaybackRate?: SpeechPlaybackRate;
   }) => {
-    if (!threadRef || !thread?.projectId || !settings) return false;
-    const key = `${threadRef.environmentId}:${thread.projectId}`;
-    const source = settings.projectSettingsOverrides[thread.projectId];
-    const previous = pending.current;
-    const base = previous?.key === key && previous.source === source ? previous : null;
-    const staged = { key, source, value: { ...(base?.value ?? source), ...patch } };
-    pending.current = staged;
-    void update({
-      environmentId: threadRef.environmentId,
-      input: {
-        patch: {
-          projectSettingsOverrides: {
-            [thread.projectId]: staged.value,
-          },
-        },
+    const projectId = thread?.projectId;
+    if (!threadRef || !projectId || !settings) return false;
+    if (!writer.current) writer.current = createSpeechProjectSettingsWriter();
+    void writer.current(
+      `${threadRef.environmentId}:${projectId}`,
+      patch,
+      () => {
+        const latest = appAtomRegistry.get(
+          serverEnvironment.configValueAtom(threadRef.environmentId),
+        );
+        return (latest?.settings ?? settings).projectSettingsOverrides[projectId];
       },
-    }).then((result) => {
-      if (result._tag === "Failure" && pending.current === staged) pending.current = base;
-    });
+      async (value) => {
+        const result = await update({
+          environmentId: threadRef.environmentId,
+          input: { patch: { projectSettingsOverrides: { [projectId]: value } } },
+        });
+        if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
+          toastManager.add({
+            type: "error",
+            title: m(msg("Setting not saved")),
+            description: m(msg("The save failed. Try reconnecting and saving again.")),
+          });
+        return result._tag === "Success"
+          ? (result.value.projectSettingsOverrides[projectId] ?? {})
+          : false;
+      },
+    );
     return true;
   };
   const setPlaybackRate = (rate: SpeechPlaybackRate) => {

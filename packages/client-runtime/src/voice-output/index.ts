@@ -4,7 +4,7 @@ export { VoiceOutputController, type SpeechAudioPlayer } from "./controller.ts";
 
 export type NativeSpeechRequest = { readonly text: string; readonly voice: string | null };
 
-export { speechPlaybackSelection } from "./preferences.ts";
+export { speechPlaybackSelection, createSpeechProjectSettingsWriter } from "./preferences.ts";
 
 export type SpeechPlaybackControls = {
   readonly mixedDestination?: boolean;
