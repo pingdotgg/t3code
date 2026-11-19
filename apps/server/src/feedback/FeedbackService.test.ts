@@ -32,7 +32,11 @@ import * as Projects from "../project/ProjectService.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Settings from "../serverSettings.ts";
 import * as Analytics from "../telemetry/AnalyticsService.ts";
-import { FEEDBACK_AWAITING_APPROVAL_NOTE, type FeedbackInput } from "./FeedbackReport.ts";
+import {
+  FEEDBACK_AWAITING_APPROVAL_NOTE,
+  type FeedbackInput,
+  FeedbackStorageError,
+} from "./FeedbackReport.ts";
 import { listFeedbackReports } from "./FeedbackList.ts";
 import * as Feedback from "./FeedbackService.ts";
 import * as Store from "./FeedbackStore.ts";
@@ -180,7 +184,7 @@ const harness = Effect.gen(function* () {
           Effect.gen(function* () {
             const card = command as CardRecord;
             if (card.feedbackStatus !== "pending" && (yield* Ref.get(failRecords))) {
-              return yield* Effect.fail(new Error("The card record failed."));
+              return yield* new FeedbackStorageError({ cause: "The card record failed." });
             }
             const gate = (yield* Ref.get(recordGates)).find(
               (candidate) => candidate.status === card.feedbackStatus,
