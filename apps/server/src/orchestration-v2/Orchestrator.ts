@@ -5254,10 +5254,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       ...(existing.endedWatch?.approvalAnnounced !== undefined && {
                         approvalAnnounced: existing.endedWatch.approvalAnnounced,
                       }),
-                      // A finished-checks answer may be an older head's; a fresh read decides.
-                      // Prefer the host rollup from watch_pull_request so a pending→failed race
-                      // during the immediate baseline read still wakes; endedWatch only fills
-                      // when that is absent.
+                      // The rollup read at the start wins; a finished-checks answer kept from
+                      // the last watch may be an older head's.
                       ...(command.type === "thread.pull-request.watch" &&
                       command.checksPending !== undefined
                         ? { checksPending: command.checksPending }

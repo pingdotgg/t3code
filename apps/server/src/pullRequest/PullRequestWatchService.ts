@@ -126,8 +126,7 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
-    // When CI was still running (or the rollup was unread) at watch start, seed checksPending so
-    // a failure the immediate baseline read returns is reported instead of baselined away.
+    // CI running (or unknown) now may fail before the first read, which must still report it.
     let checksPendingAtStart: boolean | undefined;
     if (watching && before?.watch === undefined) {
       checksPendingAtStart = yield* pullRequests
@@ -145,14 +144,11 @@ const make = Effect.gen(function* () {
           Effect.flatMap((summary) =>
             summary.state === "merged"
               ? Effect.fail(new PullRequestNotOpenError({ state: "merged" }))
-              : Effect.succeed(
-                  // Unknown rollup: prefer pending so a fast fail during the baseline read still wakes.
-                  summary.checksState === "pending" || summary.checksState == null,
-                ),
+              : Effect.succeed(summary.checksState === "pending" || summary.checksState == null),
           ),
           Effect.catchTags({
             // Host and transport errors can recover while the watch is active.
-            PullRequestOperationError: () => Effect.succeed(true as const),
+            PullRequestOperationError: () => Effect.succeed(true),
           }),
         );
     }

@@ -114,6 +114,7 @@ interface HarnessOptions {
   readonly project?: OrchestrationProjectShell | null;
   readonly readFailure?: PullRequestService.PullRequestError;
   readonly readState?: PullRequestSummary["state"];
+  readonly readChecksState?: PullRequestSummary["checksState"];
 }
 
 const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
@@ -144,6 +145,9 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
               title: "Pull request",
               url: `https://github.com/${input.repository}/pull/${input.number}`,
               state: options.readState ?? "open",
+              ...(options.readChecksState !== undefined && {
+                checksState: options.readChecksState,
+              }),
               headBranch: "feature",
               baseBranch: "main",
               updatedAt: "2026-08-20T00:00:00.000Z",
@@ -164,15 +168,20 @@ const makeHarness = Effect.fn("makePullRequestWatchHarness")(function* (
 describe("PullRequestWatchService", () => {
   it.effect("links an unlinked watch even while the host has a transient read failure", () =>
     Effect.gen(function* () {
-      for (const options of [
-        {},
-        {
-          readFailure: new PullRequestOperationError({
-            operation: "summary",
-            detail: "The host is temporarily unavailable.",
-          }),
-        },
-      ]) {
+      const cases: ReadonlyArray<readonly [HarnessOptions, boolean]> = [
+        [{}, true],
+        [{ readChecksState: "failing" }, false],
+        [
+          {
+            readFailure: new PullRequestOperationError({
+              operation: "summary",
+              detail: "The host is temporarily unavailable.",
+            }),
+          },
+          true,
+        ],
+      ];
+      for (const [options, checksPending] of cases) {
         const harness = yield* makeHarness(options);
         const result = yield* harness.setWatching(true, {
           url: "https://github.com/t3tools/t3code/pull/9",
@@ -183,6 +192,7 @@ describe("PullRequestWatchService", () => {
             type: "thread.pull-request.watch",
             number: 9,
             watching: true,
+            checksPending,
             link: { url: "https://github.com/t3tools/t3code/pull/9", source: "agent" },
           },
         ]);
