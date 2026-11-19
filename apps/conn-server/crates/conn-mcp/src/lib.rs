@@ -282,6 +282,16 @@ impl McpService {
         self.lock_credentials().touch(thread_id);
     }
 
+    /// Whether the credential of `provider_session_id` still works and was issued for what
+    /// `request` asks (T3's `prepareMcpSession` reuse check).
+    pub fn thread_credential_fits(
+        &self,
+        provider_session_id: &str,
+        request: &ThreadCredentialRequest,
+    ) -> bool {
+        self.lock_credentials().fits(provider_session_id, request)
+    }
+
     pub fn revoke_provider_session(&self, provider_session_id: &str) {
         self.lock_credentials()
             .revoke(|caller| caller.provider_session_id == provider_session_id);

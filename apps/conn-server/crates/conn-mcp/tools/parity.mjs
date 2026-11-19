@@ -803,7 +803,6 @@ if (noModel) {
     ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[0,1].map((n) => ({type:"file",id:`pending-00000000-0000-4000-8000-${String(n).padStart(12,"0")}-png`,name:"large.png",mimeType:"image/png",sizeBytes:50*1024*1024}))})],
     ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment],message:"hang"}), (v) => ({status:v.status})],
     ["t3_worktree_handoff", () => ({branch:"parity/handoff",startFromOrigin:true,continuationPrompt:"hang"}), (v) => ({...v,worktreePath:"<worktree>"}), (c,v) => {c.worktreePath=v.worktreePath;}],
-    ["t3_worktree_status", () => ({}), (v) => ({...v,worktreePath:v.worktreePath === null ? null : "<worktree>",projectWorkspaceRoot:"<project>"})],
   ];
   for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
     if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
@@ -840,6 +839,21 @@ if (noModel) {
     }));
     report(`calling thread ${tool}: ${canonical(values[0]) === canonical(values[1]) ? "same outcome" : JSON.stringify(values)}`, canonical(values[0]) === canonical(values[1]));
   }
+  // The handoff releases the caller's per-thread provider process, and its MCP credential goes
+  // with it (T3's releaseEntry), shortly after the call returns. A call in that window may
+  // still pass on either server, so wait until the old credential is refused on both, then
+  // compare the refusals. A server that never revokes it fails here.
+  const refusals = await Promise.all(agents.map(async (agent) => {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const reply = await agent.raw({jsonrpc:"2.0",id:agent.nextId++,method:"tools/call",params:{name:"t3_worktree_status",arguments:{}}});
+      if (reply.status >= 400) return {status:reply.status,contentType:reply.contentType,reply:reply.reply};
+      if (Date.now() > deadline) return {status:reply.status,stillAccepted:outcome(reply.reply)};
+      await new Promise((resolve) => setTimeout(resolve,50));
+    }
+  }));
+  report(`calling thread handoff revokes the old credential: ${canonical(refusals[0]) === canonical(refusals[1]) ? `both HTTP ${refusals[0].status}` : JSON.stringify(refusals)}`,
+    refusals[0].status === 401 && canonical(refusals[0]) === canonical(refusals[1]));
   await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
   for (const name of NodeFS.readdirSync(servers[0].records).filter((name) => name.endsWith(".json"))) NodeFS.unlinkSync(NodePath.join(servers[0].records,name));
   NodeFS.rmSync(servers[1].capture,{force:true});

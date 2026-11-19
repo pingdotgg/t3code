@@ -148,11 +148,18 @@ impl AppServer {
         self.lock().sessions.insert(session_id.to_owned(), inbox);
     }
 
-    /// Forgets a session; stops the process when it was the last one.
-    pub async fn remove_session(&self, session_id: &str) {
-        if let Some(process) = self.detach_session(session_id) {
+    /// Forgets a session; stops the process when it was the last one. True when a running
+    /// process keeps serving other sessions.
+    pub async fn remove_session(&self, session_id: &str) -> bool {
+        let process = self.detach_session(session_id);
+        let shared = {
+            let state = self.lock();
+            !state.sessions.is_empty() && state.live.is_some()
+        };
+        if let Some(process) = process {
             process.terminate(FORCE_KILL_AFTER).await;
         }
+        shared
     }
 
     /// Forgets a session without waiting: the sync half of [`Self::remove_session`]. Returns

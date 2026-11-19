@@ -40,6 +40,14 @@ fn fixture_with(
     host: Option<Arc<dyn conn_engine::EngineHost>>,
     provider: FakeProvider,
 ) -> Fixture {
+    fixture_with_provider(name, host, Arc::new(provider))
+}
+
+fn fixture_with_provider(
+    name: &str,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    provider: Arc<dyn conn_provider::Provider>,
+) -> Fixture {
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -50,7 +58,7 @@ fn fixture_with(
         title: "Project".into(),
         workspace_root: ROOT.into(),
     }];
-    config.providers = vec![Arc::new(provider)];
+    config.providers = vec![provider];
     config.host = host.or_else(|| Some(Arc::new(threads_handoff::FilesHost(files.clone()))));
     let engine = Arc::new(SqliteEngine::open(config).unwrap());
     let service = McpService::new(McpConfig {
@@ -2273,6 +2281,7 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
     idle_agent.ok("annotations_list", json!({})).await;
 }
 
+mod shared_runtime;
 mod threads_handoff;
 
 #[tokio::test(flavor = "current_thread")]

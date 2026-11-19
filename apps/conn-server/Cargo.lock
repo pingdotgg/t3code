@@ -233,6 +233,8 @@ dependencies = [
  "conn-features",
  "conn-files",
  "conn-preview",
+ "conn-provider",
+ "conn-provider-codex",
  "conn-source-control",
  "conn-support",
  "conn-terminal",

@@ -59,6 +59,20 @@ impl Host {
     }
 }
 
+impl Host {
+    fn credential_request(&self, session: AgentSession) -> ThreadCredentialRequest {
+        ThreadCredentialRequest {
+            preview: crate::settings::agent_browser_access(
+                &self.environment.settings.raw(),
+                session.project_id.as_deref(),
+            ),
+            thread_id: session.thread_id,
+            provider_instance_id: session.provider_instance_id,
+            subagent: session.subagent,
+        }
+    }
+}
+
 impl EngineHost for Host {
     fn provider_instance_enabled(&self, project_id: Option<&str>, instance_id: &str) -> bool {
         crate::settings::provider_instance_enabled(
@@ -79,15 +93,7 @@ impl EngineHost for Host {
         let entry = self
             .mcp
             .get()?
-            .issue_thread_credential(ThreadCredentialRequest {
-                thread_id: session.thread_id,
-                provider_instance_id: session.provider_instance_id,
-                subagent: session.subagent,
-                preview: crate::settings::agent_browser_access(
-                    &self.environment.settings.raw(),
-                    session.project_id.as_deref(),
-                ),
-            });
+            .issue_thread_credential(self.credential_request(session));
         Some(AgentTools {
             servers: vec![McpServer {
                 name: conn_mcp::SERVER_NAME.to_owned(),
@@ -95,6 +101,12 @@ impl EngineHost for Host {
                 headers: vec![("Authorization".to_owned(), entry.authorization)],
             }],
             key: entry.provider_session_id,
+        })
+    }
+
+    fn agent_tools_fit(&self, session: &AgentSession, key: &str) -> bool {
+        self.mcp.get().is_some_and(|mcp| {
+            mcp.thread_credential_fits(key, &self.credential_request(session.clone()))
         })
     }
 

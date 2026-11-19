@@ -19,10 +19,10 @@ use std::{
 
 use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    AwaitBackgroundTasksInput, BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput,
-    McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
-    RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session, SteerInput, StopTaskInput,
-    ThreadSnapshot, TurnInput,
+    AwaitBackgroundTasksInput, BoxFuture, Closed, EnsureThreadInput, ForkThreadInput,
+    InterruptInput, McpServer, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput,
+    RollbackTarget, RollbackThreadInput, RuntimePolicy, RuntimeRequestResponse, Session,
+    SteerInput, StopTaskInput, ThreadSnapshot, TurnInput,
 };
 use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, watch};
@@ -2277,7 +2277,7 @@ impl Session for ClaudeSession {
         })
     }
 
-    fn close(&self) -> BoxFuture<'_, ()> {
+    fn close(&self) -> BoxFuture<'_, Closed> {
         Box::pin(async move {
             let live = {
                 let mut state = self.inner.lock();
@@ -2298,6 +2298,8 @@ impl Session for ClaudeSession {
             let mut state = self.inner.lock();
             state.events = None;
             state.tails.clear();
+            // Each session runs its own Claude query; the SDK host holds no MCP client.
+            Closed::RuntimeStopped
         })
     }
 }

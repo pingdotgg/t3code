@@ -31,8 +31,8 @@ use conn_contract::{
     ProviderCapabilities, ProviderInstanceId, ProviderSessionId, ProviderThread, from_json,
 };
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, InterruptInput, McpServer, OpenSessionInput, OpenedSession,
-    Provider, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput,
+    BoxFuture, Closed, EnsureThreadInput, InterruptInput, McpServer, OpenSessionInput,
+    OpenedSession, Provider, ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput,
     RuntimeRequestResponse, Session, SteerInput, ThreadDisposition, TurnInput, TurnStatus,
     TurnTerminal,
 };
@@ -76,6 +76,8 @@ pub struct FakeProvider {
     /// Sessions answer `await_background_tasks`; see [`Self::without_background_wait`].
     background_wait: bool,
     close_delay: std::time::Duration,
+    /// What a session's `close` answers; see [`Self::with_shared_runtime`].
+    pub closes_as: Arc<Mutex<Closed>>,
     selection_plan: Option<conn_provider::SelectionTransitionPlan>,
     /// What `capabilities` answers: the sessions' capabilities unless a test changes them.
     capabilities: Value,
@@ -118,6 +120,7 @@ impl FakeProvider {
             steering: true,
             background_wait: true,
             close_delay: std::time::Duration::ZERO,
+            closes_as: Arc::new(Mutex::new(Closed::RuntimeStopped)),
             selection_plan: None,
             capabilities: conn_provider::testing::session_capabilities(),
             process_exit: None,
@@ -151,6 +154,13 @@ impl FakeProvider {
     /// A provider whose sessions take `delay` to close, as a process given time to exit.
     pub fn with_close_delay(mut self, delay: std::time::Duration) -> Self {
         self.close_delay = delay;
+        self
+    }
+
+    /// A provider whose sessions share one process that outlives a close, as Codex's
+    /// `app-server` does while it serves other threads.
+    pub fn with_shared_runtime(self) -> Self {
+        *crate::lock(&self.closes_as) = Closed::RuntimeShared;
         self
     }
 
@@ -226,6 +236,7 @@ struct FakeSession {
     fail_rollbacks: Arc<AtomicUsize>,
     control_delay: std::time::Duration,
     close_delay: std::time::Duration,
+    closes_as: Arc<Mutex<Closed>>,
 }
 
 impl FakeSession {
@@ -337,6 +348,7 @@ impl Provider for FakeProvider {
                     fail_rollbacks: self.fail_rollbacks.clone(),
                     control_delay: self.control_delay,
                     close_delay: self.close_delay,
+                    closes_as: self.closes_as.clone(),
                 }),
                 events: rx,
             })
@@ -1102,13 +1114,15 @@ impl Session for FakeSession {
         })
     }
 
-    fn close(&self) -> BoxFuture<'_, ()> {
+    fn close(&self) -> BoxFuture<'_, Closed> {
         self.closed.fetch_add(1, Ordering::SeqCst);
         let delay = self.close_delay;
+        let closed = *crate::lock(&self.closes_as);
         Box::pin(async move {
             if !delay.is_zero() {
                 tokio::time::sleep(delay).await;
             }
+            closed
         })
     }
 }

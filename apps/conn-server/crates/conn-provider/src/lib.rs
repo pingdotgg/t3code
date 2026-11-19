@@ -166,6 +166,17 @@ impl std::fmt::Debug for OpenedSession {
     }
 }
 
+/// What [`Session::close`] left running. T3 revokes a session's MCP credential when its
+/// process ends (`releaseEntry` in `ProviderSessionManager.ts`), and keeps it while a shared
+/// process still runs: that process's MCP client may still use it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Closed {
+    /// The session's process ended with it.
+    RuntimeStopped,
+    /// The process keeps serving other sessions (Codex's shared `app-server`).
+    RuntimeShared,
+}
+
 /// One live native session. Methods return once the provider accepted the request; results
 /// arrive as events.
 pub trait Session: Send + Sync {
@@ -238,8 +249,9 @@ pub trait Session: Send + Sync {
         input: RuntimeRequestResponse,
     ) -> BoxFuture<'_, ProviderResult<()>>;
 
-    /// Ends the native process. The event channel closes after it.
-    fn close(&self) -> BoxFuture<'_, ()>;
+    /// Ends the session. The event channel closes after it. The answer says whether the
+    /// native process ended with it, or keeps serving other sessions.
+    fn close(&self) -> BoxFuture<'_, Closed>;
 
     /// Requests use the existing provider process; they never open a session or a turn.
     fn mcp_app_request(
@@ -1106,8 +1118,8 @@ mod tests {
         ) -> BoxFuture<'_, ProviderResult<()>> {
             Box::pin(async { Ok(()) })
         }
-        fn close(&self) -> BoxFuture<'_, ()> {
-            Box::pin(async {})
+        fn close(&self) -> BoxFuture<'_, Closed> {
+            Box::pin(async { Closed::RuntimeStopped })
         }
     }
 

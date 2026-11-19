@@ -89,6 +89,25 @@ impl Credentials {
         Some(record.caller.clone())
     }
 
+    /// Whether `provider_session_id`'s token still resolves and was issued for `request`.
+    pub(crate) fn fits(
+        &self,
+        provider_session_id: &str,
+        request: &ThreadCredentialRequest,
+    ) -> bool {
+        let now = Mark::now();
+        self.records.values().any(|record| {
+            let caller = &record.caller;
+            caller.provider_session_id == provider_session_id
+                && !record.expired
+                && record.last_alive.elapsed_to(&now) <= LIVENESS
+                && caller.thread_id == request.thread_id
+                && caller.provider_instance_id == request.provider_instance_id
+                && caller.subagent == request.subagent
+                && caller.preview == request.preview
+        })
+    }
+
     pub(crate) fn touch(&mut self, thread_id: &str) {
         for record in self.records.values_mut() {
             if record.caller.thread_id == thread_id {

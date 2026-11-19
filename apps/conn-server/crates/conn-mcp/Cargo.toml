@@ -35,6 +35,9 @@ conn-support = { workspace = true, features = ["test-util"] }
 # The scheduled task tests pick UTC (workspace dependency).
 jiff.workspace = true
 conn-engine = { workspace = true, features = ["fake-provider"] }
+# A handoff on Codex's shared app-server (`src/tests/shared_runtime.rs`); already in the tree.
+conn-provider.workspace = true
+conn-provider-codex.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 # Already in the tree (conn-engine): a test breaks a stored thread row to fail a read.
 rusqlite.workspace = true

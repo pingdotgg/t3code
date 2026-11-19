@@ -2861,6 +2861,10 @@ impl crate::EngineHost for RecordingHost {
             key: format!("key:{}", session.thread_id),
         })
     }
+    fn agent_tools_fit(&self, session: &crate::AgentSession, key: &str) -> bool {
+        key == format!("key:{}", session.thread_id)
+            && !self.revoked.lock().unwrap().iter().any(|k| k == key)
+    }
     fn session_closed(&self, key: &str) {
         self.revoked.lock().unwrap().push(key.to_owned());
     }
@@ -2967,6 +2971,110 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
         )]
     );
     assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
+}
+
+/// A workspace handoff releases the per-thread provider process and revokes its MCP
+/// credential, as T3's `releaseEntry` does; the continuation's session gets a new one.
+#[tokio::test(flavor = "current_thread")]
+async fn a_workspace_handoff_revokes_the_old_session_tools() {
+    let db = TempDb::new("handoff-revokes");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    assert!(host.revoked.lock().unwrap().is_empty());
+
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "c3", "threadId": "t1",
+               "worktreePath": "/tmp/handoff-worktree", "expectedWorktreePath": null,
+               "continuation": {"messageId": "m-next", "text": "hang"}}),
+    )
+    .await;
+    timeout(Duration::from_secs(10), async {
+        while host.revoked.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the handoff revokes the old session's tools");
+    assert_eq!(*host.revoked.lock().unwrap(), ["key:t1"]);
+}
+
+/// On a process shared by several threads (Codex's `app-server`), a handoff keeps the old
+/// session's credential and the continuation reuses it, as T3 does; it is revoked once the
+/// shared process ends.
+#[tokio::test(flavor = "current_thread")]
+async fn a_handoff_on_a_shared_process_keeps_and_reuses_the_tools() {
+    let db = TempDb::new("handoff-shared");
+    let provider = Arc::new(FakeProvider::new("claudeAgent").with_shared_runtime());
+    let host = Arc::new(RecordingHost::default());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.host = Some(host.clone());
+    let engine = SqliteEngine::open(config).unwrap();
+    let mut first = Vec::new();
+    for (thread, command) in [("t1", "c1"), ("t2", "c2")] {
+        dispatch(&engine, create(thread, command)).await;
+        let mut events = engine
+            .subscribe_thread(from_json(json!({"threadId": thread})).unwrap())
+            .await
+            .unwrap();
+        next(&mut events).await;
+        dispatch(&engine, message(thread, &format!("{command}-m"), "hang")).await;
+        until_provider_turn(&mut events).await;
+        if thread == "t1" {
+            first = provider.mcp_servers.lock().unwrap().clone();
+        }
+    }
+    assert_eq!(host.sessions.lock().unwrap().len(), 2);
+
+    dispatch(
+        &engine,
+        json!({"type": "thread.metadata.update", "commandId": "c3", "threadId": "t1",
+               "worktreePath": "/tmp/handoff-worktree", "expectedWorktreePath": null,
+               "continuation": {"messageId": "m-next", "text": "go on"}}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed", "the continuation ran");
+    assert!(
+        host.revoked.lock().unwrap().is_empty(),
+        "the shared process keeps it"
+    );
+    assert_eq!(
+        host.sessions.lock().unwrap().len(),
+        2,
+        "the continuation reuses the credential"
+    );
+    assert_eq!(*provider.mcp_servers.lock().unwrap(), first);
+
+    // t1 closes while t2 keeps the process; then t2 closes and the process ends.
+    engine.inner().close_session("t1").await;
+    assert!(host.revoked.lock().unwrap().is_empty());
+    *provider.closes_as.lock().unwrap() = conn_provider::Closed::RuntimeStopped;
+    engine.inner().close_session("t2").await;
+    let mut revoked = host.revoked.lock().unwrap().clone();
+    revoked.sort();
+    assert_eq!(revoked, ["key:t1", "key:t2"]);
 }
 
 /// Two fake providers, `claudeAgent` and `codex`, as a server with both configured.

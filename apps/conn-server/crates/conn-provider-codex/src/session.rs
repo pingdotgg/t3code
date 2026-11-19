@@ -11,9 +11,9 @@ use std::{
 
 use conn_contract::{ProviderInstanceId, ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer, ProviderError,
-    ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget, RollbackThreadInput,
-    RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
+    BoxFuture, Closed, EnsureThreadInput, ForkThreadInput, InterruptInput, McpServer,
+    ProviderError, ProviderEvent, ProviderResult, ResumeThreadInput, RollbackTarget,
+    RollbackThreadInput, RuntimeRequestResponse, Session, SteerInput, ThreadSnapshot, TurnInput,
 };
 use conn_provider_support::ids::{self, Env, SystemEnv, iso_from_ms};
 use serde_json::{Value, json};
@@ -1351,7 +1351,7 @@ impl Session for CodexSession {
         })
     }
 
-    fn close(&self) -> BoxFuture<'_, ()> {
+    fn close(&self) -> BoxFuture<'_, Closed> {
         Box::pin(async move {
             let inner = &self.inner;
             let thread = {
@@ -1375,7 +1375,11 @@ impl Session for CodexSession {
             let outs = inner.lock().mapper.on_exit(true, "The session closed.");
             inner.deliver(outs).await;
             inner.lock().events = None;
-            inner.server.remove_session(&inner.id).await;
+            if inner.server.remove_session(&inner.id).await {
+                Closed::RuntimeShared
+            } else {
+                Closed::RuntimeStopped
+            }
         })
     }
 }
@@ -1602,6 +1606,55 @@ done
 
     /// A session dropped without `close` (a task ended early) still leaves the app-server, and
     /// the process stops when it was the last session.
+    /// `close` tells the engine whether the shared app-server outlived the session: T3 keeps
+    /// the MCP credential the live process holds, and revokes it once the process ends.
+    #[tokio::test(flavor = "current_thread")]
+    async fn close_reports_whether_the_app_server_keeps_running() {
+        let provider = provider();
+        let mut sessions = Vec::new();
+        for (thread, id) in [("t1", "s1"), ("t2", "s2")] {
+            let opened = provider
+                .open_session(OpenSessionInput {
+                    thread_id: thread.into(),
+                    provider_session_id: id.into(),
+                    model_selection: from_json(
+                        json!({"instanceId": "codex", "model": "gpt-6-luna"}),
+                    )
+                    .unwrap(),
+                    runtime_policy: policy(),
+                    resume_from_session: None,
+                    mcp_servers: vec![],
+                    host: None,
+                })
+                .await
+                .unwrap();
+            opened
+                .session
+                .ensure_thread(EnsureThreadInput {
+                    thread_id: thread.into(),
+                    title: None,
+                    model_selection: from_json(
+                        json!({"instanceId": "codex", "model": "gpt-6-luna"}),
+                    )
+                    .unwrap(),
+                    runtime_policy: policy(),
+                    existing_provider_thread: None,
+                })
+                .await
+                .unwrap();
+            sessions.push(opened.session);
+        }
+        let pid = provider.server.pid().expect("the app-server runs");
+        assert_eq!(sessions[0].close().await, Closed::RuntimeShared);
+        assert_eq!(
+            provider.server.pid(),
+            Some(pid),
+            "the other thread keeps it"
+        );
+        assert_eq!(sessions[1].close().await, Closed::RuntimeStopped);
+        assert_eq!(provider.server.pid(), None, "the last session stopped it");
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn a_dropped_session_leaves_the_app_server() {
         let provider = provider();

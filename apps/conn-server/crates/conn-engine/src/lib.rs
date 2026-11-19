@@ -141,6 +141,12 @@ pub trait EngineHost: Send + Sync {
         None
     }
 
+    /// Whether the tools issued under `key` are still valid and fit `session` (T3's
+    /// `prepareMcpSession` reuse check), so a shared process's next session may keep them.
+    fn agent_tools_fit(&self, _session: &AgentSession, _key: &str) -> bool {
+        false
+    }
+
     /// A provider session closed: revoke what [`EngineHost::agent_tools`] issued under `key`.
     fn session_closed(&self, _key: &str) {}
 

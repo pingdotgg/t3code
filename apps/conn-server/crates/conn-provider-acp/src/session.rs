@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use conn_contract::{ProviderSessionId, ProviderThread, from_json, to_json};
 use conn_provider::{
-    BoxFuture, EnsureThreadInput, InterruptInput, McpServer, ProviderError, ProviderEvent,
+    BoxFuture, Closed, EnsureThreadInput, InterruptInput, McpServer, ProviderError, ProviderEvent,
     ProviderResult, ResumeThreadInput, RuntimeRequestResponse, Session, TurnInput,
 };
 use conn_provider_support::ids::{Env, SystemEnv};
@@ -1296,13 +1296,13 @@ impl Session for AcpSession {
         })
     }
 
-    fn close(&self) -> BoxFuture<'_, ()> {
+    fn close(&self) -> BoxFuture<'_, Closed> {
         Box::pin(async move {
             let inner = &self.inner;
             let (connection, session_id, can_close, stop) = {
                 let mut state = inner.state.lock().await;
                 if state.closed {
-                    return;
+                    return Closed::RuntimeStopped;
                 }
                 state.closed = true;
                 state.mapper.close_background();
@@ -1331,6 +1331,8 @@ impl Session for AcpSession {
             }
             let mut state = inner.state.lock().await;
             state.events = None;
+            // One agent process per session.
+            Closed::RuntimeStopped
         })
     }
 

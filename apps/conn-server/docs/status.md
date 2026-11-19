@@ -21,6 +21,33 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## A handoff releases the caller's credential with its process (2026-11-19)
+
+A worktree handoff detaches the calling thread's provider session. T3 revokes that session's
+MCP credential when its process ends (`releaseEntry` in `ProviderSessionManager.ts`), and
+keeps it while a process shared by several threads still runs; the next session of the thread
+reuses it. Conn kept the old credential for every provider, so `t3_worktree_status` with it
+stayed `ok` here and turned into a 401 on the T3 server a few milliseconds after the handoff
+returned. That race made `parity` fail at random.
+
+Now `Session::close` answers `Closed::RuntimeStopped` or `Closed::RuntimeShared`. Claude
+(one query process per session) and ACP (one agent per session) stop; Codex stops only with
+its last session, since one `app-server` per instance serves every Codex thread. The engine
+revokes after the close when the process stopped, together with the credentials it kept for
+that instance. When the process still runs, it keeps the credential for the thread and the
+next session reuses it while it still fits (instance, subagent, browser access), as T3's
+`prepareMcpSession` does. Deleting the thread revokes a kept credential. `parity` waits until
+both servers refuse the old Claude credential (15 s limit) and compares the 401 replies.
+Proofs: engine tests `a_workspace_handoff_revokes_the_old_session_tools` and
+`a_handoff_on_a_shared_process_keeps_and_reuses_the_tools`; Codex
+`close_reports_whether_the_app_server_keeps_running`; `/mcp`
+`a_handoff_on_a_shared_codex_process_keeps_and_reuses_the_credential` (real Codex provider on a
+scripted app-server, two threads, an MCP call with the continuation's credential).
+
+Still different from T3, not changed here: archiving a thread does not close its session or
+revoke its live credential (T3 detaches with `revokeMcpCredential`). With one Codex thread,
+Conn stops the app-server on close, so its handoff revokes; T3 keeps its shared process.
+
 ## Forks show their inherited history (2026-11-19)
 
 - **Served:** a run fork that is not a side chat opens with the history it inherits, in every
@@ -291,7 +318,6 @@ Still red:
 - `round_trip`: the new `get_config` sample has `worktreeCleanup: null` in a project override.
   `optionalKey(NullOr(T))` is generated as `Option<T>`, so null is dropped. Fixing it in
   `gen-contract.mjs` changes about 2,330 fields.
-- parity: `t3_worktree_status` after a handoff is an RPC error on the T3 server and `ok` here.
 - On mini: claude conformance (`env: : No such file`, red on 2026-11-17 as well) and canary
   (writes to the decoy home from the CommandLineTools python cache).
 

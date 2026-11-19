@@ -49,11 +49,23 @@ pub(crate) struct LiveThread {
     provider_session_id: String,
     /// `backgroundTasksEndWithProcess`: releasing the session clears its threads' rosters.
     background_tasks_end_with_process: bool,
-    /// Revokes the agent tools this session got ([`crate::EngineHost::session_closed`]).
-    tools_key: Option<String>,
+    /// The agent tools this session got; revoked when its process ends
+    /// ([`crate::EngineHost::session_closed`]), kept for the thread while a shared process runs.
+    tools: Option<crate::AgentTools>,
     /// What the session last loaded for this thread (`providerThreadLoadKey` in T3's
     /// `ProviderSessionManager`): a turn start resumes the native thread when it differs.
     loaded_key: Mutex<Option<String>>,
+}
+
+/// At most this many closed sessions' tools are kept for a shared process; past it the
+/// oldest-found entry is revoked. Far above the threads one container runs.
+pub(crate) const MAX_KEPT_TOOLS: usize = 1024;
+
+/// A closed session's agent tools, kept while the shared process that holds them runs.
+pub(crate) struct KeptTools {
+    /// The provider instance whose process holds them.
+    pub(crate) instance: String,
+    pub(crate) tools: crate::AgentTools,
 }
 
 #[derive(Default)]
@@ -433,8 +445,10 @@ impl Inner {
         let provider = self.providers.resolve(instance).ok_or_else(|| {
             format!("No provider instance `{instance}` is configured on this server.")
         })?;
+        let instance_id = provider.instance_id().as_str().to_owned();
+        let mut reused = false;
         let tools = self.host.as_ref().and_then(|host| {
-            host.agent_tools(crate::AgentSession {
+            let session = crate::AgentSession {
                 thread_id: thread_id.to_owned(),
                 project_id: thread
                     .get("projectId")
@@ -442,7 +456,18 @@ impl Inner {
                     .map(str::to_owned),
                 provider_instance_id: provider.instance_id().as_str().to_owned(),
                 subagent,
-            })
+            };
+            // T3's `prepareMcpSession`: a credential the shared process still holds is reused
+            // when it still fits the session; otherwise it is revoked and a new one issued.
+            let kept = lock(&self.kept_tools).remove(thread_id);
+            if let Some(kept) = kept {
+                if kept.instance == instance_id && host.agent_tools_fit(&session, &kept.tools.key) {
+                    reused = true;
+                    return Some(kept.tools);
+                }
+                host.session_closed(&kept.tools.key);
+            }
+            host.agent_tools(session)
         });
         let opened = provider
             .open_session(OpenSessionInput {
@@ -469,7 +494,7 @@ impl Inner {
             })
             .await
             .map_err(|e| {
-                self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                self.unused_tools(thread_id, &instance_id, tools.clone(), reused);
                 e.to_string()
             })?;
         let session: Arc<dyn Session> = Arc::from(opened.session);
@@ -480,7 +505,7 @@ impl Inner {
         // that does yield never leaks a session or overwrites one.
         let raced = self.live_thread(thread_id);
         if raced.is_some() || self.shutting_down() {
-            self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+            self.unused_tools(thread_id, &instance_id, tools, reused);
             session.close().await;
             match raced {
                 Some(live) if !self.shutting_down() && live.instance == instance => Ok(Some(live)),
@@ -501,7 +526,7 @@ impl Inner {
                     .unwrap_or_default()
                     .to_owned(),
                 background_tasks_end_with_process: opened.background_tasks_end_with_process,
-                tools_key: tools.map(|t| t.key),
+                tools,
                 loaded_key: Mutex::new(None),
             });
             lock(&self.live).insert(thread_id.to_owned(), live.clone());
@@ -1877,15 +1902,72 @@ impl Inner {
         }
     }
 
+    /// Tools a session that did not open got: a reused credential goes back to the kept
+    /// ones (T3 revokes only a credential it issued for the failed open); a new one is revoked.
+    fn unused_tools(
+        &self,
+        thread_id: &str,
+        instance: &str,
+        tools: Option<crate::AgentTools>,
+        reused: bool,
+    ) {
+        match tools {
+            Some(tools) if reused && !self.shutting_down() => {
+                self.keep_tools(thread_id, instance, tools);
+            }
+            tools => self.revoke_tools(tools.as_ref().map(|t| t.key.as_str())),
+        }
+    }
+
+    /// Keeps a closed session's tools for the thread's next session while the shared
+    /// process that holds them runs.
+    fn keep_tools(&self, thread_id: &str, instance: &str, tools: crate::AgentTools) {
+        let kept = KeptTools {
+            instance: instance.to_owned(),
+            tools,
+        };
+        let (replaced, evicted) = {
+            let mut map = lock(&self.kept_tools);
+            let replaced = map.insert(thread_id.to_owned(), kept);
+            let evicted = if map.len() > MAX_KEPT_TOOLS {
+                let other = map.keys().find(|k| k.as_str() != thread_id).cloned();
+                other.and_then(|k| map.remove(&k))
+            } else {
+                None
+            };
+            (replaced, evicted)
+        };
+        for old in replaced.into_iter().chain(evicted) {
+            self.revoke_tools(Some(&old.tools.key));
+        }
+    }
+
+    /// Revokes the kept tools that `matches` (thread, instance) selects.
+    pub(crate) fn drop_kept_tools(&self, matches: impl Fn(&str, &str) -> bool) {
+        let dropped: Vec<KeptTools> = {
+            let mut map = lock(&self.kept_tools);
+            let keys: Vec<String> = map
+                .iter()
+                .filter(|(thread, kept)| matches(thread, &kept.instance))
+                .map(|(thread, _)| thread.clone())
+                .collect();
+            keys.iter().filter_map(|k| map.remove(k)).collect()
+        };
+        for kept in dropped {
+            self.revoke_tools(Some(&kept.tools.key));
+        }
+    }
+
     /// Closes every provider session, side by side, ending its process and what the process
     /// started. The server calls this before it exits. No session opens after it began.
     pub(crate) async fn close_all_sessions(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
         let closing: Vec<(String, Arc<LiveThread>)> = lock(&self.live).drain().collect();
         let mut closes = Vec::with_capacity(closing.len());
+        self.drop_kept_tools(|_, _| true);
         for (thread_id, live) in closing {
             self.command_output.finish_thread(&thread_id);
-            self.revoke_tools(live.tools_key.as_deref());
+            self.revoke_tools(live.tools.as_ref().map(|t| t.key.as_str()));
             closes.push(tokio::spawn(async move {
                 live.session.close().await;
                 live.closed.notify_one();
@@ -1900,22 +1982,32 @@ impl Inner {
         self.shutting_down.load(Ordering::SeqCst)
     }
 
+    /// Ends the thread's provider session; a workspace handoff closes it this way too. As in
+    /// T3 (`releaseEntry` in `ProviderSessionManager.ts`), the agent tools it got are revoked
+    /// once its process has ended, with those kept for other threads on that process. While a
+    /// shared process (Codex's `app-server`) still runs, its MCP client may still use them,
+    /// so they are kept for the thread's next session.
     pub(crate) async fn close_session(&self, thread_id: &str) {
-        self.close_session_inner(thread_id, true).await;
-    }
-
-    pub(crate) async fn close_workspace_session(&self, thread_id: &str) {
-        self.close_session_inner(thread_id, false).await;
-    }
-
-    async fn close_session_inner(&self, thread_id: &str, revoke_tools: bool) {
         let live = lock(&self.live).remove(thread_id);
         if let Some(live) = live {
             self.command_output.finish_thread(thread_id);
-            if revoke_tools {
-                self.revoke_tools(live.tools_key.as_deref());
+            let closed = live.session.close().await;
+            let instance = self
+                .providers
+                .resolve(&live.instance)
+                .map(|p| p.instance_id().as_str().to_owned())
+                .unwrap_or_else(|| live.instance.clone());
+            match (closed, live.tools.clone()) {
+                (conn_provider::Closed::RuntimeShared, Some(tools)) if !self.shutting_down() => {
+                    self.keep_tools(thread_id, &instance, tools);
+                }
+                (closed, tools) => {
+                    self.revoke_tools(tools.as_ref().map(|t| t.key.as_str()));
+                    if closed == conn_provider::Closed::RuntimeStopped {
+                        self.drop_kept_tools(|_, kept| kept == instance);
+                    }
+                }
             }
-            live.session.close().await;
             // `notify_one` keeps a permit, so a pump not yet waiting still sees it.
             live.closed.notify_one();
             if !self.shutting_down() {

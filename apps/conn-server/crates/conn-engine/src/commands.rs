@@ -48,11 +48,10 @@ pub(crate) enum Effect {
         thread_id: String,
         request: Value,
     },
+    /// Ends the provider session; a workspace move does this too. Its MCP credential is
+    /// revoked when the process ends, and kept for the thread's next session while a shared
+    /// process (Codex's `app-server`) still runs, as T3 does.
     CloseSession {
-        thread_id: String,
-    },
-    /// A workspace move ends the process while keeping the caller's MCP credential usable.
-    DetachWorkspace {
         thread_id: String,
     },
     /// Sends a model selection to the thread's running provider turn
@@ -92,7 +91,6 @@ impl Effect {
             | Self::StopBackgroundWork { thread_id, .. }
             | Self::Respond { thread_id, .. }
             | Self::CloseSession { thread_id }
-            | Self::DetachWorkspace { thread_id }
             | Self::ApplyModelSelection { thread_id, .. }
             | Self::CleanupHtmlAttachments { thread_id, .. }
             | Self::ThreadClosed { thread_id, .. } => Some(thread_id),
@@ -1871,7 +1869,7 @@ fn thread_metadata_update(tx: &mut Tx<'_>, command: Value) -> Outcome {
         }
         effects.insert(
             0,
-            Effect::DetachWorkspace {
+            Effect::CloseSession {
                 thread_id: thread_id.clone(),
             },
         );

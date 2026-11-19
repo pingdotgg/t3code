@@ -223,7 +223,7 @@ fn git(dir: &std::path::Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-async fn git_project(f: &Fixture) -> PathBuf {
+pub(super) async fn git_project(f: &Fixture) -> PathBuf {
     let root = f.dir.join("repo");
     let path = root.clone();
     tokio::task::spawn_blocking(move || {

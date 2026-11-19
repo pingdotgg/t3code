@@ -145,6 +145,10 @@ pub(crate) struct Inner {
     pub(crate) providers: conn_provider::ProviderSet,
     /// Threads with an open provider session. The only per-thread state kept in memory.
     pub(crate) live: Mutex<HashMap<String, Arc<LiveThread>>>,
+    /// Agent tools of closed sessions whose shared process still runs, by thread, for the
+    /// thread's next session on that instance (T3 reuses the credential). Bounded by
+    /// [`crate::runner::MAX_KEPT_TOOLS`].
+    pub(crate) kept_tools: Mutex<HashMap<String, crate::runner::KeptTools>>,
     pub(crate) home: PathBuf,
     pub(crate) titles: Option<Arc<dyn crate::TitleGenerator>>,
     pub(crate) observer: Option<Arc<dyn crate::TurnObserver>>,
@@ -283,6 +287,7 @@ impl SqliteEngine {
                     .provider_set
                     .unwrap_or_else(|| config.providers.into()),
                 live: Mutex::new(HashMap::new()),
+                kept_tools: Mutex::new(HashMap::new()),
                 thread_gates: Default::default(),
                 command_output: crate::output::CommandOutputHub::default(),
                 shutting_down: std::sync::atomic::AtomicBool::new(false),
@@ -848,7 +853,6 @@ impl Inner {
             }
             Effect::Respond { thread_id, request } => self.respond(thread_id, request).await,
             Effect::CloseSession { thread_id } => self.close_session(&thread_id).await,
-            Effect::DetachWorkspace { thread_id } => self.close_workspace_session(&thread_id).await,
             Effect::ApplyModelSelection {
                 thread_id,
                 selection,
@@ -859,6 +863,14 @@ impl Inner {
                 }
             }
             Effect::ThreadClosed { thread_id, reason } => {
+                // T3 revokes an archived or deleted thread's credentials
+                // (`revokeMcpCredential`), also one a shared process still holds.
+                if matches!(
+                    reason,
+                    crate::ThreadClose::Archived | crate::ThreadClose::Deleted
+                ) {
+                    self.drop_kept_tools(|thread, _| thread == thread_id);
+                }
                 if let Some(host) = &self.host {
                     host.thread_closed(&thread_id, reason);
                 }
