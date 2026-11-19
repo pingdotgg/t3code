@@ -4533,7 +4533,8 @@ export const awaitClaudeApprovalDecision = Effect.fn("awaitClaudeApprovalDecisio
   return yield* Effect.raceFirst(Deferred.await(decision), cancellation);
 });
 
-// The grant is offered only for a form with a session choice; a plain confirmation never gets one.
+// Servers such as Computer Use ask on every call and expect the client to remember a session
+// grant. The CLI drops a reply's `_meta.persist`, so T3 holds it, and only for a form that offers one.
 const CLAUDE_MCP_ELICITATION_OPTIONS: ReadonlyArray<ProviderApprovalOption> = [
   { decision: "cancel", label: "Cancel" },
   { decision: "decline", label: "Decline" },
