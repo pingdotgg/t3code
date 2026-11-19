@@ -3300,13 +3300,7 @@ describe("storage cleanup reports and local file policies", () => {
         yield* command(worktree, ["commit", "-am", "unpushed"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         yield* command(worktree, ["checkout", "--detach", "main"]);
-        yield* command(worktree, [
-          "-c",
-          "sequence.editor=sed -i '$abreak'",
-          "rebase",
-          "-i",
-          "--root",
-        ]);
+        yield* command(worktree, ["-c", "sequence.editor=echo break >>", "rebase", "-i", "--root"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         yield* command(worktree, ["rebase", "--abort"]);
         yield* command(worktree, ["bisect", "start"]);
