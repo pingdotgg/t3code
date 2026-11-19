@@ -1,9 +1,9 @@
 # Running a fork without T3-operated services
 
-This runbook is for moving an existing installation to a fork whose environment server, web app,
-desktop app, and mobile app are operated by their owner. It separates what works with direct
-pairing today from work still needed for a strict no-T3-network build. It is not a deployment
-recipe for the T3 Connect relay.
+This runbook is for running a fork whose environment server, web app, desktop app, and mobile app
+are operated by their owner, whether starting fresh or moving an existing installation. It
+separates what works with direct pairing today from work still needed for a strict no-T3-network
+build. It is not a deployment recipe for the T3 Connect relay.
 
 ## Choose the boundary
 
@@ -19,6 +19,12 @@ mobile client can save several directly paired environments; a central VPS is no
 project discovery across those environments. Without a relay, each client must receive a
 reachable route and pair with each environment separately.
 
+For an installation whose projects live in infrastructure you operate, place the environment on
+the host that contains those project directories. Keep its T3 home and provider CLI credentials on
+storage owned by that installation. A single host is enough to start; add another environment
+only when projects or credentials need to live on another host. A web server that serves only the
+client bundle does not run agent turns or provide access to project files.
+
 Direct pairing over LAN, a private VPN such as Tailscale, or SSH does not require T3 Connect. A
 public browser origin needs a reachable HTTPS address for the environment; hosting the web app
 alone does not provide one. See [remote access](../user/remote-access.md#pair-over-a-lan-or-private-network).
@@ -33,6 +39,22 @@ There are two distinct milestones:
 
 Provider subscriptions and their CLIs remain external services chosen by the operator. This
 runbook addresses T3-operated services, not those provider services.
+
+## Target deployment on owned infrastructure
+
+Provision the environment host and its persistent project and T3 home storage first. Run the
+forked server as a dedicated operating-system user with access to those directories and the
+chosen provider CLIs. Keep the environment's HTTP and WebSocket endpoint on a private network,
+or put an HTTPS gateway you operate in front of it. The gateway must forward WebSocket upgrades
+as well as ordinary HTTP requests. Host the forked web bundle at an HTTPS origin you control;
+the browser must be able to reach the environment endpoint from that origin. Pair each forked
+desktop and mobile installation directly with the same environment.
+
+Back up the T3 home and project directories together, protect provider credentials, and rehearse
+restoring them to an offline host before relying on the new service. Monitor process health,
+storage, failed backups, and the externally reachable route. Keep the server and clients pinned
+to tested fork revisions during cutover. If the project is new and has no official T3 state to
+preserve, start with an empty T3 home; the data-copy steps below apply only to existing state.
 
 ## Inventory before migration
 
@@ -55,13 +77,14 @@ newer server starts, so a version rollback must use a backup made before that st
    [source build example](../user/install.md#intel-macs). Keep a local copy of the build and its
    commit SHA. A source build can run the server with `node apps/server/dist/bin.mjs`; it does not
    use the official `t3` launcher or its update path.
-2. Give the replacement its own T3 home and a copy of data. A staging copy made while the
-   official server is running must use a consistent SQLite snapshot; the dev database migration
-   tool intentionally drops tasks and links, so it is a test fixture, not a complete migration.
-   For the final copy, stop the official desktop and service, confirm no server still owns the
-   database, then copy the entire userdata directory, secrets, settings, and any needed
-   `service.env` into the new home. Review copied configuration for T3 Connect and update
-   endpoints before the fork starts. Keep the original home and an offline backup unchanged.
+2. Give the replacement its own T3 home. If there is official state to preserve, make a copy of
+   that data. A staging copy made while the official server is running must use a consistent
+   SQLite snapshot; the dev database migration tool intentionally drops tasks and links, so it is
+   a test fixture, not a complete migration. For the final copy of existing state, stop the
+   official desktop and service, confirm no server still owns the database, then copy the entire
+   userdata directory, secrets, settings, and any needed `service.env` into the new home. Review
+   copied configuration for T3 Connect and update endpoints before the fork starts. Keep the
+   original home and an offline backup unchanged.
 3. Run the forked environment with product telemetry disabled:
 
    ```dotenv
