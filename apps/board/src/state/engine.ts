@@ -13,20 +13,34 @@ export const engineStateAtom = Atom.make<EngineState>((get) => {
 
 export type EngineStatus =
   | { readonly tone: "ok" | "busy" | "off"; readonly text: string; readonly detail?: string }
-  | { readonly tone: "ask" };
+  | { readonly tone: "ask"; readonly question: string; readonly accept: string };
 
-/** How the app reached the engine and where the connection to it stands. */
+/** What the footer shows for the engine T3 runs and the connection to it. */
 export function deriveEngineStatus(
   engine: EngineState,
   connection: EngineConnection,
 ): EngineStatus {
   switch (engine.phase) {
     case "starting":
-      return { tone: "busy", text: "Starting engine in WSL" };
+      return { tone: "busy", text: "Starting T3 in WSL" };
+    case "installing":
+      return { tone: "busy", text: "Installing T3 in WSL" };
+    case "updating":
+      return { tone: "busy", text: "Updating T3 in WSL" };
     case "connecting":
       return { tone: "busy", text: "Connecting" };
     case "install-needed":
-      return { tone: "ask" };
+      return {
+        tone: "ask",
+        question: "T3 is not installed in WSL. Install it now?",
+        accept: "Install",
+      };
+    case "update-needed":
+      return {
+        tone: "ask",
+        question: `T3 in WSL is ${engine.found}, which is too old for this app. Update it now?`,
+        accept: "Update",
+      };
     case "offline":
       return { tone: "off", text: "Offline", detail: engine.reason };
     case "ready":
@@ -34,10 +48,7 @@ export function deriveEngineStatus(
         return { tone: "off", text: "Offline", detail: connection.unsupportedReason };
       }
       if (connection.state.phase === "connected") {
-        return {
-          tone: "ok",
-          text: `Engine connected · ${engine.route === "env" ? "url" : engine.route}`,
-        };
+        return { tone: "ok", text: "Engine connected" };
       }
       if (connection.state.phase === "blocked") {
         return {

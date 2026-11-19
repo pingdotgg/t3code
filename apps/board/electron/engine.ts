@@ -1,7 +1,7 @@
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-import type { EngineRoute, EngineState, EngineTokenResult } from "../src/connection/engineState";
+import type { EngineState, EngineTokenResult } from "../src/connection/engineState";
 import { type LinuxHost, shellQuote } from "./wslEngine";
 
 export interface EngineConfig {
@@ -13,6 +13,8 @@ export interface EngineConfig {
   readonly t3Home: string | undefined;
   /** `AGENT_BOARD_T3_CLI`, a shell command that replaces the discovered `t3`. */
   readonly t3Cli: string | undefined;
+  /** The WSL distro, which scopes saved tokens: each distro has its own engine and sessions. */
+  readonly distro: string | undefined;
 }
 
 export interface TokenStore {
@@ -20,15 +22,17 @@ export interface TokenStore {
   readonly write: (key: string, token: string) => void;
 }
 
+export type Question = "install" | "update";
+
 export interface EngineDeps {
   readonly config: EngineConfig;
-  readonly host: LinuxHost;
+  readonly host: Pick<LinuxHost, "exec" | "shell">;
   readonly fetch: (url: string, init?: RequestInit) => Promise<Response>;
   readonly tokens: TokenStore;
   /** Whether the release a `--version` line reports connects to this client. */
   readonly runtimeCompatible: (versionText: string) => boolean;
-  /** Asks once whether to install the current T3 release in WSL. */
-  readonly confirmInstall: () => Promise<boolean>;
+  /** Asks the user once; declining leaves the app offline. */
+  readonly confirm: (question: Question) => Promise<boolean>;
   readonly log: (message: string) => void;
   readonly sleep: (ms: number) => Promise<void>;
 }
@@ -39,38 +43,44 @@ export interface Engine {
   readonly start: () => Promise<void>;
   /** A bearer the engine accepts right now, reissued once when the saved one is rejected. */
   readonly token: () => Promise<EngineTokenResult>;
-  /** Stops the engine this app booted. An engine it joined keeps running. */
-  readonly stop: () => Promise<void>;
 }
 
-// Matches SERVER_EXIT_CODE_STATE_DIR_OWNED in @t3tools/contracts, which the board does not import at runtime.
-const STATE_DIR_OWNED_EXIT_CODE = 78;
 const TOKEN_ARGS = "auth session issue --token-only --label agent-board --ttl 30d";
 const INSTALL_COMMAND = "curl -fsSL https://t3.codes/install.sh | sh";
-const BOOT_WAIT_SECONDS = 30;
-const ORIGIN_ATTEMPTS = 50;
-const JOIN_AFTER_OWNED_ATTEMPTS = 20;
-const STOP_GRACE_MS = 4_000;
+const SERVICE_ATTEMPTS = 90;
+const SERVICE_ATTEMPT_MS = 1_000;
+const COMMAND_TIMEOUT_MS = 300_000;
 
 const RuntimeRecord = Schema.Struct({ pid: Schema.Int, origin: Schema.String });
 const decodeRuntimeRecord = Schema.decodeOption(Schema.fromJsonString(RuntimeRecord));
-const parseRuntimeRecord = (text: string): typeof RuntimeRecord.Type | null =>
-  Option.getOrNull(decodeRuntimeRecord(text));
 const decodeDescriptor = Schema.decodeUnknownOption(
-  Schema.Struct({ environmentId: Schema.String }),
+  Schema.Struct({ environmentId: Schema.String, serverVersion: Schema.String }),
 );
 const decodeSession = Schema.decodeUnknownOption(Schema.Struct({ authenticated: Schema.Boolean }));
 
+/** The release number in a `t3 --version` line. */
+const releaseOf = (line: string): string => /\d+\.\d+\.\d+\S*/.exec(line)?.[0] ?? line.trim();
+
+interface RunningEngine {
+  readonly origin: string;
+  readonly version: string;
+}
+
+interface Cli {
+  readonly command: string;
+  readonly version: string;
+}
+
+/**
+ * Reaches T3's own engine, the background service in WSL. The app never runs an engine of its
+ * own and never stops one: it joins, asks T3 to start its service, installs T3, or updates it.
+ */
 export function createEngine(deps: EngineDeps): Engine {
   const { config, host, tokens, log } = deps;
   const listeners = new Set<(state: EngineState) => void>();
   let current: EngineState = { phase: "connecting" };
   let origin: string | null = null;
   let tokenKey = "";
-  let cli: string | null = null;
-  let booted: { readonly pid: number; readonly exited: Promise<number | null> } | null = null;
-  let stopping = false;
-  const tooOld: string[] = [];
 
   const setState = (next: EngineState) => {
     current = next;
@@ -80,180 +90,150 @@ export function createEngine(deps: EngineDeps): Engine {
     log(`engine offline: ${reason}`);
     setState({ phase: "offline", reason });
   };
-  const ready = (route: EngineRoute, readyOrigin: string) => {
+  const ready = (readyOrigin: string) => {
     origin = readyOrigin;
-    log(`engine ready (${route}) at ${readyOrigin}`);
-    setState({ phase: "ready", route, origin: readyOrigin });
+    log(`engine ready at ${readyOrigin}`);
+    setState({ phase: "ready", origin: readyOrigin });
   };
 
   // The script prelude names the T3 home once, so every command agrees on where state lives.
-  const prelude =
-    config.t3Home === undefined ? `T3_HOME="$HOME/.t3"` : `T3_HOME=${shellQuote(config.t3Home)}`;
+  // dev:windows forwards VITE_DEV_SERVER_URL into WSL, and T3 reads it as a switch to its dev state dir.
+  const prelude = [
+    "unset VITE_DEV_SERVER_URL",
+    config.t3Home === undefined ? `T3_HOME="$HOME/.t3"` : `T3_HOME=${shellQuote(config.t3Home)}`,
+  ].join("\n");
   const baseDirArg = config.t3Home === undefined ? "" : `--base-dir "$T3_HOME"`;
   const runtimeFile = `"$T3_HOME/userdata/server-runtime.json"`;
 
-  const answers = async (candidate: string): Promise<boolean> => {
+  const describe = async (candidate: string): Promise<string | null> => {
     try {
       const response = await deps.fetch(`${candidate}/.well-known/t3/environment`, {
         signal: AbortSignal.timeout(3_000),
       });
-      if (!response.ok) return false;
-      return Option.isSome(decodeDescriptor(await response.json()));
+      if (!response.ok) return null;
+      const descriptor = decodeDescriptor(await response.json());
+      return Option.isSome(descriptor) ? descriptor.value.serverVersion : null;
     } catch {
-      return false;
+      return null;
     }
   };
 
-  const waitForOrigin = async (candidate: string, attempts: number): Promise<boolean> => {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (await answers(candidate)) return true;
-      await deps.sleep(200);
-    }
-    return false;
-  };
-
-  const readRuntimeRecord = async (): Promise<typeof RuntimeRecord.Type | null> => {
-    const result = await host.shell(`${prelude}\ncat ${runtimeFile} 2>/dev/null\n`);
-    return result.exitCode === 0 ? parseRuntimeRecord(result.stdout) : null;
-  };
-
-  const tryJoin = async (): Promise<boolean> => {
-    const record = await readRuntimeRecord();
-    if (record === null) return false;
+  // The engine T3 runs for this home, when its recorded process is alive and its origin answers.
+  const findEngine = async (): Promise<RunningEngine | null> => {
+    const file = await host.shell(`${prelude}\ncat ${runtimeFile} 2>/dev/null\n`);
+    const record = file.exitCode === 0 ? Option.getOrNull(decodeRuntimeRecord(file.stdout)) : null;
+    if (record === null) return null;
     const alive = await host.exec(["test", "-d", `/proc/${record.pid}`]);
     if (alive.exitCode !== 0) {
       log(`server-runtime.json names pid ${record.pid}, which is gone`);
-      return false;
+      return null;
     }
-    if (!(await answers(record.origin))) return false;
-    ready("joined", record.origin);
-    return true;
+    const version = await describe(record.origin);
+    return version === null ? null : { origin: record.origin, version };
   };
 
-  // Runtimes this client can use, best first: `t3` from the login PATH, then staged runtimes by
-  // age. A candidate that prints no version, such as a stub, never counts.
-  const discoverCli = async (): Promise<string | null> => {
-    if (config.t3Cli !== undefined) return config.t3Cli;
+  const discoverCli = async (): Promise<Cli | null> => {
     const result = await host.shell(
       [
         prelude,
         `if command -v t3 >/dev/null 2>&1; then printf 'cli:t3|%s\\n' "$(t3 --version 2>/dev/null | head -n 1)"; fi`,
         `if [ -x "$HOME/.local/bin/t3" ]; then printf 'cli:%s|%s\\n' "$HOME/.local/bin/t3" "$("$HOME/.local/bin/t3" --version 2>/dev/null | head -n 1)"; fi`,
-        `for d in $(ls -1t "$T3_HOME/wsl-runtime" 2>/dev/null); do`,
-        `  e="$T3_HOME/wsl-runtime/$d/apps/server/dist/bin.mjs"`,
-        `  [ -f "$e" ] && printf 'node:%s|%s\\n' "$e" "$(node "$e" --version 2>/dev/null | head -n 1)"`,
-        `done`,
         `true`,
       ].join("\n"),
       { loginPath: true },
     );
     for (const line of result.stdout.split("\n")) {
-      const match = /^(cli|node):(.*)\|(.*?)\r?$/.exec(line);
-      if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) continue;
-      if (match[3].trim() === "") continue;
-      if (!deps.runtimeCompatible(match[3])) {
-        tooOld.push(/\d+\.\d+\.\d+\S*/.exec(match[3])?.[0] ?? match[3].trim());
-        continue;
-      }
-      return match[1] === "cli" ? shellQuote(match[2]) : `node ${shellQuote(match[2])}`;
+      const match = /^cli:(.*)\|(.*?)\r?$/.exec(line);
+      if (match?.[1] === undefined || match[2] === undefined || match[2].trim() === "") continue;
+      return { command: shellQuote(match[1]), version: releaseOf(match[2]) };
     }
     return null;
   };
 
-  const ensureCli = async (): Promise<string | null> => {
-    cli ??= await discoverCli();
-    if (cli !== null) return cli;
-    setState({ phase: "install-needed" });
-    if (!(await deps.confirmInstall())) return null;
-    setState({ phase: "starting" });
-    const installed = await host.shell(
-      `${prelude}\nexport T3CODE_HOME="$T3_HOME"\n${INSTALL_COMMAND}\n`,
-      { loginPath: true, timeoutMs: 300_000 },
-    );
-    if (installed.exitCode !== 0) {
-      throw new Error(`The T3 install script failed: ${installed.stderr.trim() || "no output"}`);
-    }
-    cli = await discoverCli();
-    if (cli === null) throw new Error("The installed T3 does not work with this app.");
-    return cli;
-  };
+  const resolveCli = async (): Promise<Cli | null> =>
+    config.t3Cli === undefined
+      ? discoverCli()
+      : { command: config.t3Cli, version: await overrideVersion(config.t3Cli) };
 
-  const bootEngine = async (): Promise<void> => {
-    setState({ phase: "starting" });
-    const command = await ensureCli();
-    if (command === null) {
-      const found = tooOld.length === 0 ? "" : ` Found ${[...new Set(tooOld)].join(", ")}.`;
-      return offline(
-        `T3 in WSL is too old or missing.${found} Installing the current release was declined.`,
-      );
-    }
-    const child = await host.start(
-      [
-        prelude,
-        `echo "pid:$$"`,
-        `exec ${command} serve --no-browser ${baseDirArg} </dev/null 2>&1`,
-      ].join("\n"),
-      { loginPath: true },
-    );
-    const pidLine = await child.firstLine;
-    const pid = pidLine?.startsWith("pid:") ? Number(pidLine.slice(4)) : Number.NaN;
-    if (!Number.isInteger(pid)) {
-      await child.exited;
-      return offline(`Could not start the engine: ${child.output().trim().slice(-300)}`);
-    }
-    booted = { pid, exited: child.exited };
-    log(`booted engine pid ${pid}`);
-    void child.exited.then((exitCode) => {
-      if (stopping || booted?.pid !== pid) return;
-      booted = null;
-      if (exitCode === STATE_DIR_OWNED_EXIT_CODE) return;
-      offline(`The engine exited with code ${exitCode}: ${child.output().trim().slice(-300)}`);
+  const overrideVersion = async (command: string): Promise<string> => {
+    const result = await host.shell(`${prelude}\n${command} --version 2>/dev/null | head -n 1\n`, {
+      loginPath: true,
     });
-
-    const waited = await host.shell(
-      [
-        prelude,
-        `i=0`,
-        `while [ $i -lt ${BOOT_WAIT_SECONDS * 5} ]; do`,
-        `  if grep -q "\\"pid\\":${pid}[,}]" ${runtimeFile} 2>/dev/null; then cat ${runtimeFile}; exit 0; fi`,
-        `  kill -0 ${pid} 2>/dev/null || exit 2`,
-        `  sleep 0.2; i=$((i+1))`,
-        `done`,
-        `exit 1`,
-      ].join("\n"),
-      { timeoutMs: (BOOT_WAIT_SECONDS + 5) * 1_000 },
-    );
-    const record = waited.exitCode === 0 ? parseRuntimeRecord(waited.stdout) : null;
-    if (record === null) {
-      const exitCode = await Promise.race([child.exited, deps.sleep(1_000).then(() => undefined)]);
-      if (exitCode === STATE_DIR_OWNED_EXIT_CODE) return joinAfterOwned();
-      if (booted?.pid === pid) {
-        booted = null;
-        void host.exec(["kill", "-TERM", String(pid)]);
-      }
-      return offline(
-        `The engine did not start: ${child.output().trim().slice(-300) || "no output"}`,
-      );
-    }
-    if (!(await waitForOrigin(record.origin, ORIGIN_ATTEMPTS))) {
-      return offline(`The engine started but ${record.origin} does not answer.`);
-    }
-    ready("booted", record.origin);
+    return releaseOf(result.stdout);
   };
 
-  // Another engine took the state folder between the join probe and the boot.
-  const joinAfterOwned = async (): Promise<void> => {
-    for (let attempt = 0; attempt < JOIN_AFTER_OWNED_ATTEMPTS; attempt += 1) {
-      if (await tryJoin()) return;
-      await deps.sleep(500);
+  const run = async (script: string, what: string): Promise<void> => {
+    const result = await host.shell(`${prelude}\n${script}\n`, {
+      loginPath: true,
+      timeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(`${what} failed: ${(result.stderr || result.stdout).trim().slice(-300)}`);
     }
-    offline("Another engine owns the T3 state folder but does not answer.");
+  };
+
+  // The service restarts while it installs or updates, so joining polls until it answers.
+  const joinService = async (): Promise<void> => {
+    for (let attempt = 0; attempt < SERVICE_ATTEMPTS; attempt += 1) {
+      const engine = await findEngine();
+      if (engine !== null) {
+        if (deps.runtimeCompatible(engine.version)) return ready(engine.origin);
+        return offline(`T3 in WSL is ${engine.version}, which is too old for this app.`);
+      }
+      await deps.sleep(SERVICE_ATTEMPT_MS);
+    }
+    offline("T3's service in WSL did not start.");
+  };
+
+  const startService = async (cli: Cli): Promise<void> => {
+    setState({ phase: "starting" });
+    await run(`${cli.command} service install ${baseDirArg} </dev/null`, "t3 service install");
+    await joinService();
+  };
+
+  const installT3 = async (): Promise<void> => {
+    setState({ phase: "install-needed" });
+    if (!(await deps.confirm("install"))) {
+      return offline("T3 is not installed in WSL. Installing it was declined.");
+    }
+    setState({ phase: "installing" });
+    await run(`export T3CODE_HOME="$T3_HOME"\n${INSTALL_COMMAND}`, "The T3 install script");
+    const cli = await resolveCli();
+    if (cli === null) throw new Error("T3 was installed but `t3` was not found in WSL.");
+    await run(`${cli.command} service install ${baseDirArg} </dev/null`, "t3 service install");
+    await joinService();
+  };
+
+  const updateT3 = async (found: string, cli: Cli | null): Promise<void> => {
+    if (cli === null) return installT3();
+    setState({ phase: "update-needed", found });
+    if (!(await deps.confirm("update"))) {
+      return offline(
+        `T3 in WSL is ${found}, which is too old for this app. Updating was declined.`,
+      );
+    }
+    setState({ phase: "updating" });
+    await run(`${cli.command} update --yes ${baseDirArg} </dev/null`, "t3 update");
+    // `t3 update` restarts only a service that is installed, so this also starts one that is not.
+    const updated = (await resolveCli()) ?? cli;
+    await run(`${updated.command} service install ${baseDirArg} </dev/null`, "t3 service install");
+    await joinService();
+  };
+
+  const discover = async (): Promise<void> => {
+    const engine = await findEngine();
+    if (engine !== null && deps.runtimeCompatible(engine.version)) return ready(engine.origin);
+    const cli = await resolveCli();
+    if (engine !== null) return updateT3(engine.version, cli);
+    if (cli === null) return installT3();
+    if (!deps.runtimeCompatible(cli.version)) return updateT3(cli.version, cli);
+    return startService(cli);
   };
 
   const mint = async (): Promise<string> => {
-    const command = await ensureCli();
-    if (command === null) throw new Error("T3 is not installed in WSL.");
-    const result = await host.shell(`${prelude}\n${command} ${TOKEN_ARGS} ${baseDirArg}\n`, {
+    const cli = await resolveCli();
+    if (cli === null) throw new Error("T3 is not installed in WSL.");
+    const result = await host.shell(`${prelude}\n${cli.command} ${TOKEN_ARGS} ${baseDirArg}\n`, {
       loginPath: true,
     });
     const token = result.stdout
@@ -317,25 +297,16 @@ export function createEngine(deps: EngineDeps): Engine {
         if (config.engineUrl !== undefined) {
           const url = new URL(config.engineUrl).origin;
           tokenKey = `url:${url}`;
-          return (await answers(url))
-            ? ready("env", url)
+          return (await describe(url)) !== null
+            ? ready(url)
             : offline(`AGENT_BOARD_ENGINE_URL ${url} does not answer.`);
         }
-        tokenKey = `home:${config.t3Home ?? "~/.t3"}`;
-        if (!(await tryJoin())) await bootEngine();
+        tokenKey = `${config.distro ?? "default"}:home:${config.t3Home ?? "~/.t3"}`;
+        await discover();
       } catch (error) {
         offline(error instanceof Error ? error.message : String(error));
       }
     },
     token: () => (issuing ??= issueToken().finally(() => (issuing = null))),
-    stop: async () => {
-      if (booted === null) return;
-      stopping = true;
-      const { pid, exited } = booted;
-      booted = null;
-      await host.exec(["kill", "-TERM", String(pid)]);
-      const settled = await Promise.race([exited, deps.sleep(STOP_GRACE_MS).then(() => "timeout")]);
-      if (settled === "timeout") await host.exec(["kill", "-KILL", String(pid)]);
-    },
   };
 }

@@ -12,7 +12,7 @@ const bridge: BoardBridge = {
     return () => void ipcRenderer.off("board:engine-state", handler);
   },
   engineToken: () => ipcRenderer.invoke("board:engine-token"),
-  answerInstall: (accepted) => ipcRenderer.send("board:install-answer", accepted),
+  answerPrompt: (accepted) => ipcRenderer.send("board:prompt-answer", accepted),
 };
 
 contextBridge.exposeInMainWorld("board", bridge);

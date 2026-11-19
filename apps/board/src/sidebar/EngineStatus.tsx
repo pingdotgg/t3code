@@ -9,18 +9,18 @@ export function EngineStatus() {
   if (status.tone === "ask") {
     return (
       <div className="flex flex-col gap-2">
-        <span>T3 in WSL is too old or missing. Install the current release?</span>
+        <span>{status.question}</span>
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => engineBridge.answerInstall(true)}
+            onClick={() => engineBridge.answerPrompt(true)}
             className="rounded-md bg-fg px-2 py-0.5 font-medium text-bg"
           >
-            Install
+            {status.accept}
           </button>
           <button
             type="button"
-            onClick={() => engineBridge.answerInstall(false)}
+            onClick={() => engineBridge.answerPrompt(false)}
             className="rounded-md border border-line px-2 py-0.5 text-fg hover:bg-hover"
           >
             Not now

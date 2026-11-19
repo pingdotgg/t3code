@@ -40,18 +40,21 @@ The plugin loads in place from this checkout, so install from a checkout that st
 
 ## The engine
 
-The app finds the T3 engine in this order and shows how it got there in the sidebar footer.
+The app uses T3's own engine, the background service in WSL that `t3 service install` sets up and `t3 update` keeps current. It never runs an engine of its own and never stops one. It finds the engine in this order and shows each step in the sidebar footer.
 
 1. `AGENT_BOARD_ENGINE_URL`, when set. `AGENT_BOARD_TOKEN` supplies its bearer; without it the app issues one.
-2. Join a running engine. The app reads `userdata/server-runtime.json` under the T3 home in WSL, and joins when that `pid` is alive and the origin answers. Quitting the app leaves a joined engine running.
-3. Boot one: `t3 serve` from the WSL login `PATH`, else the newest runtime under `<T3 home>/wsl-runtime/` that runs. The app owns that child and stops it when it quits.
-4. Install one: when WSL has no runnable T3, the footer asks once, then runs `curl -fsSL https://t3.codes/install.sh | sh` in WSL and boots it.
+2. Join a running engine. The app reads `userdata/server-runtime.json` under the T3 home in WSL, and joins when that `pid` is alive and the origin answers.
+3. Start the service. When `t3` is current but no engine runs, the app runs `t3 service install`, which also repairs a broken service, then joins.
+4. Install T3. When `t3` is missing, the footer asks once, then runs `curl -fsSL https://t3.codes/install.sh | sh` and `t3 service install` in WSL, then joins.
+5. Update T3. When `t3` or the running engine is older than this client accepts, by the rule in `@t3tools/client-runtime/connection`, the footer asks once, then runs `t3 update --yes`, then joins. Declining leaves `Offline` with the found version.
+
+While the app is open it holds one idle `wsl.exe` process so WSL does not shut down under the service, and ends it on quit.
 
 On Windows every command runs through `wsl.exe -d <distro> --cd ~ --exec`, on Linux directly. The distro is WSL's default; `AGENT_BOARD_WSL_DISTRO`, or `wslDistro` in the app's `settings.json`, picks another from `wsl.exe --list --verbose`.
 
 The app issues its bearer with `auth session issue --label agent-board --ttl 30d`, keeps it encrypted with Electron `safeStorage`, and checks it on every connection attempt. A rejected token is reissued once, then the footer shows `auth_failed`.
 
-`AGENT_BOARD_T3_HOME` replaces `~/.t3`, which is how lanes stay off the real state. `AGENT_BOARD_T3_CLI` replaces the discovered `t3` command. `dev:windows` forwards all of these to the Windows process. Two engines cannot share a T3 home: the second exits with code 78, so T3 desktop shows an error rather than starting a second engine on the folder the board booted.
+`AGENT_BOARD_T3_HOME` replaces `~/.t3`. `AGENT_BOARD_T3_CLI` replaces the discovered `t3` command. `dev:windows` forwards all of these to the Windows process. `t3 service install` always names the same `t3code.service` user unit, so `--base-dir` does not give it a unit of its own: a lane that installs the service needs its own WSL distro, such as one imported with `wsl.exe --import`.
 
 `dev:web` has no main process. Pass `AGENT_BOARD_ENGINE_URL` and `AGENT_BOARD_TOKEN` to point it at an engine.
 

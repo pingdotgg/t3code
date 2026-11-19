@@ -9,17 +9,16 @@ export interface RunResult {
 }
 
 export interface RunningProcess {
-  /** The first stdout line, or null when the process ends without printing one. */
-  readonly firstLine: Promise<string | null>;
-  readonly output: () => string;
   readonly exited: Promise<number | null>;
-  /** Stops the local process. Under wsl.exe that is the launcher, not necessarily the Linux child. */
+  /** Stops the local process. Under wsl.exe that is the launcher; its Linux child ends with its stdin. */
   readonly kill: () => void;
 }
 
 interface ProcessOptions {
   readonly stdin?: string;
   readonly cwd?: string | undefined;
+  /** Leaves stdin open, so the Linux child lives until this process is killed. */
+  readonly holdStdin?: boolean;
 }
 
 /** The only place the app touches a real process, so tests replace just this. */
@@ -35,8 +34,6 @@ export interface ProcessRunner {
     options: ProcessOptions,
   ) => RunningProcess;
 }
-
-const OUTPUT_TAIL_CHARS = 8_192;
 
 // wsl.exe's own messages (--list among them) are UTF-16LE, while the Linux side is UTF-8.
 function decode(chunks: ReadonlyArray<Buffer>): string {
@@ -58,7 +55,7 @@ function spawnPiped(
   });
   // A process that exits before reading its stdin raises EPIPE, which the exit code already reports.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.stdin ?? "");
+  if (options.holdStdin !== true) child.stdin.end(options.stdin ?? "");
   return child;
 }
 
@@ -87,30 +84,10 @@ export const nodeProcessRunner: ProcessRunner = {
   },
   start: (command, args, options) => {
     const child = spawnPiped(command, args, options);
-    // A server logs for as long as it runs, so only the tail is kept for error messages.
-    let tail = "";
-    const keep = (chunk: Buffer) => {
-      tail = (tail + decode([chunk])).slice(-OUTPUT_TAIL_CHARS);
-    };
-    const { promise: firstLine, resolve: resolveFirstLine } = Promise.withResolvers<
-      string | null
-    >();
-    let seen = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      keep(chunk);
-      if (seen.includes("\n")) return;
-      seen += chunk.toString("utf8");
-      const end = seen.indexOf("\n");
-      if (end !== -1) resolveFirstLine(seen.slice(0, end).replace(/\r$/, ""));
-    });
-    child.stderr.on("data", keep);
     const { promise: exited, resolve } = Promise.withResolvers<number | null>();
     child.on("error", () => resolve(null));
-    child.on("close", (code) => {
-      resolveFirstLine(null);
-      resolve(code);
-    });
-    return { firstLine, output: () => tail, exited, kill: () => void child.kill() };
+    child.on("close", (code) => resolve(code));
+    return { exited, kill: () => void child.kill() };
   },
 };
 
@@ -125,11 +102,8 @@ export interface LinuxHost {
     script: string,
     options?: { readonly loginPath?: boolean; readonly timeoutMs?: number },
   ) => Promise<RunResult>;
-  /** Starts a script that is expected to `exec` a long-lived command. */
-  readonly start: (
-    script: string,
-    options?: { readonly loginPath?: boolean },
-  ) => Promise<RunningProcess>;
+  /** Keeps the distro running until the returned process is killed. A no-op on Linux. */
+  readonly hold: () => RunningProcess;
 }
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -189,12 +163,13 @@ export function createLinuxHost(options: {
         timeoutMs: shellOptions?.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       });
     },
-    start: async (script, startOptions) => {
-      const { command, args, cwd } = invocation(["sh", "-s"]);
-      return runner.start(command, args, {
-        cwd,
-        stdin: await withPath(script, startOptions?.loginPath),
-      });
+    // wsl.exe shuts a distro down once nothing runs in it, which would stop T3's service under the
+    // app. `cat` on an open stdin idles until the launcher dies, then exits with its pipe.
+    hold: () => {
+      if (options.platform !== "win32")
+        return { exited: Promise.resolve(0), kill: () => undefined };
+      const { command, args } = invocation(["cat"]);
+      return runner.start(command, args, { holdStdin: true });
     },
   };
 }

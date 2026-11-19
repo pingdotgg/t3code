@@ -1,11 +1,11 @@
-/** How the app reached the engine. */
-export type EngineRoute = "env" | "joined" | "booted";
-
 export type EngineState =
   | { readonly phase: "connecting" }
   | { readonly phase: "starting" }
+  | { readonly phase: "installing" }
+  | { readonly phase: "updating" }
   | { readonly phase: "install-needed" }
-  | { readonly phase: "ready"; readonly route: EngineRoute; readonly origin: string }
+  | { readonly phase: "update-needed"; readonly found: string }
+  | { readonly phase: "ready"; readonly origin: string }
   | { readonly phase: "offline"; readonly reason: string };
 
 export type EngineTokenResult =
@@ -19,5 +19,6 @@ export interface BoardBridge {
   readonly engineState: () => Promise<EngineState>;
   readonly onEngineState: (listener: (state: EngineState) => void) => () => void;
   readonly engineToken: () => Promise<EngineTokenResult>;
-  readonly answerInstall: (accepted: boolean) => void;
+  /** Answers the install or update question the footer is asking. */
+  readonly answerPrompt: (accepted: boolean) => void;
 }

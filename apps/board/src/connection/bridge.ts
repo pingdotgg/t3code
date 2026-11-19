@@ -2,7 +2,7 @@ import type { BoardBridge, EngineState, EngineTokenResult } from "./engineState"
 
 type EngineBridge = Pick<
   BoardBridge,
-  "engineState" | "onEngineState" | "engineToken" | "answerInstall"
+  "engineState" | "onEngineState" | "engineToken" | "answerPrompt"
 >;
 
 // `dev:web` has no Electron main process, so the lane scripts pass the engine and a token directly.
@@ -10,7 +10,7 @@ function webBridge(): EngineBridge {
   const url = import.meta.env.AGENT_BOARD_ENGINE_URL;
   const token = import.meta.env.AGENT_BOARD_TOKEN;
   const state: EngineState = url
-    ? { phase: "ready", route: "env", origin: new URL(url).origin }
+    ? { phase: "ready", origin: new URL(url).origin }
     : {
         phase: "offline",
         reason: "Set AGENT_BOARD_ENGINE_URL to reach an engine from the browser.",
@@ -22,7 +22,7 @@ function webBridge(): EngineBridge {
     engineState: () => Promise.resolve(state),
     onEngineState: () => () => undefined,
     engineToken: () => Promise.resolve(result),
-    answerInstall: () => undefined,
+    answerPrompt: () => undefined,
   };
 }
 

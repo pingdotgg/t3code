@@ -8,7 +8,13 @@ import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
 
 import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createEngine, type EngineConfig, type TokenStore } from "./engine";
-import { createLinuxHost, type LinuxHost, nodeProcessRunner, resolveDistro } from "./wslEngine";
+import {
+  createLinuxHost,
+  type LinuxHost,
+  nodeProcessRunner,
+  resolveDistro,
+  type RunningProcess,
+} from "./wslEngine";
 
 // The renderer reports wall-clock time because its performance clock starts at navigation.
 // process.getCreationTime() is skewed under WSL (it once came out negative), so the clock
@@ -63,18 +69,20 @@ function createTokenStore(file: string): TokenStore {
   };
 }
 
-export function configFromEnv(env: NodeJS.ProcessEnv): EngineConfig {
+export function configFromEnv(env: NodeJS.ProcessEnv, distro: string | undefined): EngineConfig {
   return {
     engineUrl: env["AGENT_BOARD_ENGINE_URL"] || undefined,
     envToken: env["AGENT_BOARD_TOKEN"] || undefined,
     t3Home: env["AGENT_BOARD_T3_HOME"] || undefined,
     t3Cli: env["AGENT_BOARD_T3_CLI"] || undefined,
+    distro,
   };
 }
 
 export interface EngineHandle {
   readonly start: () => void;
-  readonly stop: () => Promise<void>;
+  /** Ends the idle process that keeps WSL running. T3's service keeps running. */
+  readonly release: () => void;
 }
 
 export function registerEngineIpc(options: {
@@ -91,22 +99,21 @@ export function registerEngineIpc(options: {
     platform === "win32" ? resolveDistro(nodeProcessRunner, distroSetting) : Promise.resolve(null)
   ).then((distro) => createLinuxHost({ platform, distro, runner: nodeProcessRunner }));
   hostReady.catch(() => undefined);
-  const host: LinuxHost = {
+  const host: Pick<LinuxHost, "exec" | "shell"> = {
     exec: async (argv, execOptions) => (await hostReady).exec(argv, execOptions),
     shell: async (script, shellOptions) => (await hostReady).shell(script, shellOptions),
-    start: async (script, startOptions) => (await hostReady).start(script, startOptions),
   };
 
-  let installAnswer: ((accepted: boolean) => void) | null = null;
+  let answer: ((accepted: boolean) => void) | null = null;
   const engine = createEngine({
-    config: configFromEnv(env),
+    config: configFromEnv(env, distroSetting),
     runtimeCompatible: runtimeSupportsClient,
     host,
     fetch: globalThis.fetch,
     tokens: createTokenStore(NodePath.join(userData, "engine-tokens.json")),
-    confirmInstall: () => {
+    confirm: () => {
       const { promise, resolve } = Promise.withResolvers<boolean>();
-      installAnswer = resolve;
+      answer = resolve;
       return promise;
     },
     log: (message) => console.log(`board:engine ${message}`),
@@ -120,9 +127,9 @@ export function registerEngineIpc(options: {
   });
   ipcMain.handle("board:engine-state", () => engine.state());
   ipcMain.handle("board:engine-token", () => engine.token());
-  ipcMain.on("board:install-answer", (_event, accepted) => {
-    installAnswer?.(accepted === true);
-    installAnswer = null;
+  ipcMain.on("board:prompt-answer", (_event, accepted) => {
+    answer?.(accepted === true);
+    answer = null;
   });
   ipcMain.on("board:engine-connected", (_event, epochMs) => {
     if (isEpochMs(epochMs)) console.log(`board:engine-connected ${sinceStart(epochMs)} ms`);
@@ -131,5 +138,14 @@ export function registerEngineIpc(options: {
     if (isEpochMs(epochMs)) console.log(`board:first-paint ${sinceStart(epochMs)} ms`);
   });
 
-  return { start: () => void engine.start(), stop: engine.stop };
+  let held: RunningProcess | null = null;
+  return {
+    start: () => {
+      void hostReady.then((ready) => {
+        held = ready.hold();
+      });
+      void engine.start();
+    },
+    release: () => held?.kill(),
+  };
 }

@@ -78,16 +78,7 @@ const engine = registerEngineIpc({ env: process.env, platform });
 
 app.on("window-all-closed", () => app.quit());
 
-// The engine this app booted must be gone before the process exits, so quitting waits for it.
-let engineStopped = false;
-app.on("before-quit", (event) => {
-  if (engineStopped) return;
-  event.preventDefault();
-  void engine.stop().finally(() => {
-    engineStopped = true;
-    app.quit();
-  });
-});
+app.on("before-quit", () => engine.release());
 
 void app.whenReady().then(() => {
   // macOS keeps its menu for the standard Cmd shortcuts.
