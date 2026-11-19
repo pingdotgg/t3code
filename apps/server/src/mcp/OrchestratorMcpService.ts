@@ -397,8 +397,8 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
-// Antigravity settings can retain the native ID with the thinking level appended.
-function antigravityDelegationTarget(provider: ServerProvider, model: string) {
+/** Antigravity 1.3 IDs append the thinking level (`gemini-3.8-flash-high`); the agent still accepts them. */
+function antigravitySuffixedModel(provider: ServerProvider, model: string) {
   if (provider.driver !== "antigravity" || advertisedModel(provider, model)) return;
   const separator = model.lastIndexOf("-");
   if (separator === -1) return;
@@ -407,9 +407,7 @@ function antigravityDelegationTarget(provider: ServerProvider, model: string) {
   const thinking = provider.models
     .find((candidate) => candidate.slug === family)
     ?.capabilities?.optionDescriptors?.find(
-      (descriptor) =>
-        descriptor.type === "select" &&
-        (descriptor.role === "reasoning" || descriptor.id === "thought_level"),
+      (descriptor) => descriptor.type === "select" && descriptor.role === "reasoning",
     );
   if (thinking?.type === "select" && thinking.options.some((choice) => choice.id === value)) {
     return { model: family, thinking: { id: thinking.id, value } };
@@ -1630,7 +1628,6 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
-    readonly allowAntigravityThinkingSuffix?: boolean;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
@@ -1711,9 +1708,7 @@ const make = Effect.gen(function* () {
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
     const antigravityTarget =
-      input.allowAntigravityThinkingSuffix && requestedModel !== undefined
-        ? antigravityDelegationTarget(provider, requestedModel)
-        : undefined;
+      requestedModel === undefined ? undefined : antigravitySuffixedModel(provider, requestedModel);
     const model =
       antigravityTarget?.model ??
       requestedModel ??
@@ -2830,7 +2825,6 @@ const make = Effect.gen(function* () {
         providers,
         cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
-        allowAntigravityThinkingSuffix: true,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,

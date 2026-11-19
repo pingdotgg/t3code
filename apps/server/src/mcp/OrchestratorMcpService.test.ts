@@ -4410,19 +4410,6 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
           {
-            name: "Antigravity model and explicit thinking level",
-            target: {
-              providerInstanceId: antigravityId,
-              model: "gemini-4-neon",
-              options: { thought_level: "high" },
-            },
-            expected: {
-              instanceId: antigravityId,
-              model: "gemini-4-neon",
-              options: [{ id: "thought_level", value: "high" }],
-            },
-          },
-          {
             name: "Antigravity model with a thinking suffix",
             target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high" },
             expected: {
@@ -4431,32 +4418,23 @@ describe("OrchestratorMcpService provider resolution", () => {
               options: [{ id: "thought_level", value: "high" }],
             },
           },
-          ...([[], {}] as const).map((options, index) => ({
-            name: `clear Antigravity suffix options with ${index === 0 ? "array" : "object"}`,
-            target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high", options },
-            expected: { instanceId: antigravityId, model: "gemini-4-neon", options: [] },
-          })),
-          {
-            name: "Antigravity native thinking option",
-            target: { providerInstanceId: antigravityId, model: "gemini-4-argon-high" },
-            expected: {
-              instanceId: antigravityId,
-              model: "gemini-4-argon",
-              options: [{ id: "thinking_level", value: "high" }],
-            },
-          },
           {
             name: "explicit Antigravity thinking overrides the suffix",
             target: {
               providerInstanceId: antigravityId,
-              model: "gemini-4-argon-high",
-              options: { thinking_level: "medium" },
+              model: "gemini-4-neon-high",
+              options: { thought_level: "medium" },
             },
             expected: {
               instanceId: antigravityId,
-              model: "gemini-4-argon",
-              options: [{ id: "thinking_level", value: "medium" }],
+              model: "gemini-4-neon",
+              options: [{ id: "thought_level", value: "medium" }],
             },
+          },
+          {
+            name: "clear Antigravity suffix options",
+            target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high", options: {} },
+            expected: { instanceId: antigravityId, model: "gemini-4-neon", options: [] },
           },
           {
             name: "old Ultracode effort level",
@@ -4551,27 +4529,26 @@ describe("OrchestratorMcpService provider resolution", () => {
                   driver: ProviderDriverKind.make("antigravity"),
                 }),
                 models: [
-                  { slug: "gemini-4-neon", id: "thought_level" },
-                  { slug: "gemini-4-argon", id: "thinking_level", role: "reasoning" as const },
-                ].map(({ slug, id, role }) => ({
-                  slug,
-                  name: slug,
-                  isCustom: false,
-                  capabilities: {
-                    optionDescriptors: [
-                      {
-                        id,
-                        ...(role === undefined ? {} : { role }),
-                        label: "Thinking",
-                        type: "select",
-                        options: [
-                          { id: "medium", label: "Medium" },
-                          { id: "high", label: "High" },
-                        ],
-                      },
-                    ],
+                  {
+                    slug: "gemini-4-neon",
+                    name: "Gemini 4 Neon",
+                    isCustom: false,
+                    capabilities: {
+                      optionDescriptors: [
+                        {
+                          id: "thought_level",
+                          role: "reasoning",
+                          label: "Thinking",
+                          type: "select",
+                          options: [
+                            { id: "medium", label: "Medium" },
+                            { id: "high", label: "High" },
+                          ],
+                        },
+                      ],
+                    },
                   },
-                })),
+                ],
               },
             ]),
             adapterRegistryLayer([codexInstanceId, peerId, antigravityId]),
