@@ -5614,6 +5614,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           { transfer: "cut short", unpackLimit: "1", behindCount: 0 },
           { transfer: "complete as a pack", unpackLimit: "1", behindCount: 1 },
           { transfer: "complete as loose objects", unpackLimit: "100", behindCount: 1 },
+          { transfer: "followed by a push it cannot download", unpackLimit: "1", behindCount: 0 },
+          { transfer: "followed by a push it downloads", unpackLimit: "1", behindCount: 2 },
         ] as const)(
           "leaves only finished objects after a background upstream fetch that is $transfer",
           ({ transfer, unpackLimit, behindCount }) =>
@@ -5639,15 +5641,26 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               yield* git(updater, ["add", "remote.bin"]);
               yield* git(updater, ["commit", "-m", "remote commit"]);
               yield* git(updater, ["push", "origin", initialBranch]);
+              NodeFS.writeFileSync(path.join(updater, "pushed.bin"), incompressible.reverse());
+              yield* git(updater, ["add", "pushed.bin"]);
+              yield* git(updater, ["commit", "-m", "pushed between connections"]);
+              yield* git(updater, ["push", "origin", "HEAD:refs/pending/push"]);
 
-              // Only the first transfer is whole: a download that never reached the repository
-              // cannot be fetched again by the fetch that moves the refs.
+              // The first transfer is whole and the branch may move right after it, so the fetch
+              // that moves the refs meets a remote its download did not see.
               const served = path.join(remote, "served");
               if (transfer === "cut short") NodeFS.writeFileSync(served, "");
+              const push = transfer.startsWith("followed by a push")
+                ? `git --git-dir='${remote}' update-ref refs/heads/${initialBranch} refs/pending/push;`
+                : "";
+              const later =
+                transfer === "followed by a push it downloads"
+                  ? ""
+                  : "| dd bs=1 count=50000 2>/dev/null";
               yield* git(cwd, [
                 "config",
                 "remote.origin.uploadpack",
-                `f() { if [ -e '${served}' ]; then git upload-pack "$@" | dd bs=1 count=50000 2>/dev/null; else : > '${served}'; git upload-pack "$@"; fi; }; f`,
+                `f() { if [ -e '${served}' ]; then git upload-pack "$@" ${later}; else : > '${served}'; git upload-pack "$@"; ${push} fi; }; f`,
               ]);
               yield* git(cwd, ["config", "fetch.unpackLimit", unpackLimit]);
               const objects = path.join(cwd, ".git", "objects");

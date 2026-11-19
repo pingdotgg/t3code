@@ -1517,7 +1517,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     // from another Git process's. So the download goes to a directory only this fetch writes to,
     // named like Git's own quarantine so `git gc` prunes one a crash left. A dry run downloads
     // without moving refs, which must not point at objects the repository does not hold yet.
-    const download = Effect.acquireUseRelease(
+    const isolatedFetch = Effect.acquireUseRelease(
       fileSystem.makeTempDirectory({ directory: objectsPath, prefix: "tmp_objdir-t3code-" }),
       Effect.fnUntraced(function* (privateObjects) {
         const objectDirectories = yield* runGitStdout(
@@ -1525,21 +1525,31 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fetchCwd,
           ["--git-dir", gitCommonDir, "count-objects", "-v"],
         );
+        const options = {
+          ...fetchOptions,
+          env: {
+            ...STATUS_UPSTREAM_REFRESH_ENV,
+            ...privateObjectDirectoryEnv(privateObjects, objectsPath, objectDirectories),
+          },
+        };
+        const adopt = adoptPrivateObjects(privateObjects, objectsPath);
         const { stderr } = yield* executeGit(
           "GitVcsDriver.fetchRemoteForStatus.download",
           fetchCwd,
           fetchArgs("--dry-run"),
-          {
-            ...fetchOptions,
-            env: {
-              ...STATUS_UPSTREAM_REFRESH_ENV,
-              ...privateObjectDirectoryEnv(privateObjects, objectsPath, objectDirectories),
-            },
-          },
+          options,
         );
-        yield* adoptPrivateObjects(privateObjects, objectsPath);
+        yield* adopt;
         // A dry run names each ref it would move on stderr and is silent when none would.
-        return stderr.trim() !== "";
+        if (stderr.trim() === "") return;
+        // The remote can have moved on since the dry run, so this fetch may download too. It
+        // moves refs first; however it ends, what it finished goes into the repository.
+        yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus",
+          fetchCwd,
+          fetchArgs("--quiet"),
+          options,
+        ).pipe(Effect.ensuring(Effect.ignore(adopt, { log: "Warn" })));
       }),
       (privateObjects) =>
         fileSystem
@@ -1578,16 +1588,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // Frequent poll deadlines and disconnected clients must not interrupt a
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
-        const fetch = download.pipe(
-          Effect.flatMap((refsMoved) =>
-            refsMoved
-              ? executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, fetchArgs("--quiet"), {
-                  ...fetchOptions,
-                  env: STATUS_UPSTREAM_REFRESH_ENV,
-                })
-              : Effect.void,
-          ),
-          Effect.asVoid,
+        const fetch = isolatedFetch.pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               statusRemoteRefreshFailures.delete(key);
