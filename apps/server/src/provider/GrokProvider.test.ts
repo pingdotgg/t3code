@@ -534,7 +534,12 @@ describe("Grok usage limits", () => {
   });
 
   it("does not invent allowance or reset dates when billing omits them", () => {
-    for (const response of [{}, { config: {} }, { config: { creditUsagePercent: NaN } }]) {
+    for (const response of [
+      {},
+      { config: {} },
+      { config: { creditUsagePercent: NaN } },
+      { config: { currentPeriod: weeklyPeriod, isUnifiedBillingUser: true } },
+    ]) {
       const limits = grokUsageResponseToLimits(response, checkedAt);
       expect(limits.windows).toEqual([]);
       expect(limits.unavailable).toBeUndefined();
@@ -542,6 +547,18 @@ describe("Grok usage limits", () => {
     expect(
       grokUsageResponseToLimits({ config: { creditUsagePercent: 0 } }, checkedAt).windows,
     ).toEqual([{ id: "subscription", kind: "other", label: "Subscription", usedPercent: 0 }]);
+    expect(
+      grokUsageResponseToLimits(
+        {
+          config: {
+            creditUsagePercent: 37,
+            currentPeriod: weeklyPeriod,
+            isUnifiedBillingUser: true,
+          },
+        },
+        checkedAt,
+      ).windows[0]?.usedPercent,
+    ).toBe(37);
     expect(
       grokUsageResponseToLimits(
         {
