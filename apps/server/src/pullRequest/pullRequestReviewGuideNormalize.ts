@@ -19,7 +19,7 @@ export interface ReviewGuideChange {
   readonly hunks: ReadonlyMap<string, FileHunks>;
 }
 
-const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+export const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 const hunkRange = (start: string, count: string | undefined): LineRange | null => {
   const lines = count === undefined ? 1 : Number(count);
@@ -30,7 +30,7 @@ const hunkRange = (start: string, count: string | undefined): LineRange | null =
  * Git quotes a name holding a tab, quote or backslash, and ends an unquoted name holding a space
  * with a tab, so the first literal tab is never part of what the file is called.
  */
-function headerPath(line: string, prefix: string): string | null {
+export function headerPath(line: string, prefix: string): string | null {
   const rest = line.slice(4);
   const tab = rest.indexOf("\t");
   const token = tab === -1 ? rest : rest.slice(0, tab);
