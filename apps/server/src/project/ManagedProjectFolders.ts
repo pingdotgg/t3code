@@ -363,8 +363,12 @@ const make = Effect.gen(function* () {
       const workspaceRoot = path.resolve(project.value.workspaceRoot);
       const root = scratchFolderRoot(config.baseDir, path);
       if (workspaceRoot === root) return true;
-      const target = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
-      return workspaceRoot === path.resolve(target);
+      const real = (dir: string) =>
+        fileSystem.realPath(dir).pipe(
+          Effect.map((resolved) => path.resolve(resolved)),
+          Effect.orElseSucceed(() => dir),
+        );
+      return (yield* real(workspaceRoot)) === (yield* real(root));
     },
     Effect.orElseSucceed(() => false),
   );
