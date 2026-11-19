@@ -3423,3 +3423,71 @@ it.effect("publishes edits made before the restored settings watch is registered
     }).pipe(Effect.provide(settingsLayer));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+
+it.effect("reloads edits made while a repointed settings watch is registering", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const original = path.join(dotfiles, "settings.json");
+    const newParent = path.join(dotfiles, "new");
+    const target = path.join(newParent, "active", "settings.json");
+    yield* fs.makeDirectory(path.dirname(target), { recursive: true });
+    yield* fs.writeFileString(original, `{ "responseStreamingMode": "turn" }`);
+    yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+
+    const repointed = yield* Deferred.make<FileSystem.WatchEvent>();
+    const allowRegistration = yield* Deferred.make<void>();
+    let settingsDirectory: string;
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            watch: (directory, options) =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  if (directory === newParent) yield* Deferred.await(allowRegistration);
+                  options?.onReady?.();
+                  return directory === settingsDirectory
+                    ? Stream.fromEffect(Deferred.await(repointed)).pipe(Stream.concat(Stream.never))
+                    : Stream.never;
+                }),
+              ),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      settingsDirectory = path.dirname(config.settingsPath);
+      yield* fs.symlink(original, config.settingsPath);
+      yield* service.start;
+      yield* TestClock.adjust("1 second");
+
+      const replacement = `${config.settingsPath}.replacement`;
+      yield* fs.symlink(target, replacement);
+      yield* fs.rename(replacement, config.settingsPath);
+      yield* Deferred.succeed(repointed, { _tag: "Update", path: config.settingsPath }).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      const beforeEdit = yield* service.withSettingsSnapshot(Effect.succeed);
+      assert.equal(beforeEdit.responseStreamingMode, "paragraph");
+
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+      yield* Deferred.succeed(allowRegistration, undefined).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+
+      const afterRegistration = yield* service.withSettingsSnapshot(Effect.succeed);
+      assert.equal(afterRegistration.responseStreamingMode, "turn");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);

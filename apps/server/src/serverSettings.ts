@@ -1314,23 +1314,23 @@ const make = Effect.gen(function* () {
         // Start buffering replacements before attaching to the target directory's inode.
         yield* Deferred.await(parentReady);
 
-        const fileChanges = watchFileChanges(linkTargetPath, ready).pipe(
-          Stream.ignoreCause({ log: true }),
-        );
-        const replacementChanges = Stream.unwrap(
+        const targetChanges = Stream.unwrap(
           Effect.gen(function* () {
             const registered = yield* Deferred.make<void>();
             return Stream.merge(
               watchFileChanges(linkTargetPath, registered).pipe(Stream.ignoreCause({ log: true })),
-              // Reload after registration so writes made during the handoff are picked up.
-              Stream.fromEffect(Deferred.await(registered)).pipe(
-                Stream.tap(() => Deferred.succeed(ready, undefined)),
+              // Startup reloads once ready. Later watches trigger their own reload.
+              Stream.fromEffect(
+                Deferred.await(registered).pipe(Effect.andThen(Deferred.succeed(ready, undefined))),
+              ).pipe(
+                Stream.filter((completedStartup) => !completedStartup),
+                Stream.as(undefined),
               ),
             );
           }),
         );
-        return Stream.make(fileChanges).pipe(
-          Stream.concat(Stream.fromQueue(replacements).pipe(Stream.as(replacementChanges))),
+        return Stream.make(targetChanges).pipe(
+          Stream.concat(Stream.fromQueue(replacements).pipe(Stream.as(targetChanges))),
           Stream.switchMap((changes) => changes),
         );
       }),
@@ -1368,12 +1368,9 @@ const make = Effect.gen(function* () {
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
     const initialLinkTarget = yield* watchLinkTarget;
-    // Later link targets complete these again, which does nothing.
     const settingsReady = yield* Deferred.make<void>();
     const linkTargetReady = yield* Deferred.make<void>();
-    const startupWatches = Option.isSome(initialLinkTarget)
-      ? [settingsReady, linkTargetReady]
-      : [settingsReady];
+    const startupWatches = [settingsReady, linkTargetReady];
     const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
       Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
       Stream.changes,
