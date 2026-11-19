@@ -17,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistryMock from "../../../provider/testUtils/providerRegistryMock.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -33,6 +34,7 @@ const dependencies = (
 ) =>
   Layer.mergeAll(
     ThreadCommandExecutor.layer,
+    ProviderRegistryMock.layer(),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId,
       requestNamespace: "provider:preferences",

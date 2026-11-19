@@ -2245,6 +2245,12 @@ it.layer(
             const invalidations = yield* Ref.make(0);
             const probes = yield* Ref.make(0);
             const maintenanceReads = yield* Ref.make<ReadonlyArray<boolean | "afterUpdate">>([]);
+            const models = yield* Ref.make<ServerProvider["models"]>([
+              { slug: "stale-model", name: "Stale", isCustom: false, capabilities: null },
+            ]);
+            const current = Ref.get(models).pipe(
+              Effect.map((list) => ({ ...provider, models: list })),
+            );
             const instance = {
               instanceId,
               driverKind: driver,
@@ -2264,11 +2270,21 @@ it.layer(
                       }),
                     ),
                   ),
-                getSnapshot: Effect.succeed(provider),
-                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.as(provider)),
+                getSnapshot: current,
+                refresh: Ref.update(probes, (count) => count + 1).pipe(Effect.andThen(current)),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
               },
+              refreshModels: () =>
+                Ref.get(hookFails).pipe(
+                  Effect.flatMap((fails) =>
+                    fails && name === "codex_first"
+                      ? Effect.fail(new ProviderDriverError({ driver, instanceId, detail: "hook" }))
+                      : Ref.set(models, [
+                          { slug: "new-model", name: "New", isCustom: false, capabilities: null },
+                        ]),
+                  ),
+                ),
               invalidateCaches: Ref.update(invalidations, (count) => count + 1).pipe(
                 Effect.andThen(
                   Ref.update(updateEvents, (events) => [...events, `invalidate:${name}`]),
@@ -2292,7 +2308,7 @@ it.layer(
               textGeneration: {} as ProviderInstance["textGeneration"],
             } satisfies ProviderInstance;
             const takeMaintenanceReads = Ref.getAndSet(maintenanceReads, []);
-            return { instance, invalidations, probes, takeMaintenanceReads };
+            return { instance, invalidations, probes, takeMaintenanceReads, models };
           });
         const first = yield* makeInstance("codex_first");
         const second = yield* makeInstance("codex_second");
@@ -2337,7 +2353,36 @@ it.layer(
           assert.strictEqual(yield* Ref.get(forceRefreshCalls), 0);
           assert.strictEqual(yield* Ref.get(first.invalidations), 0);
           assert.strictEqual(yield* readCachedVersion("codex_first-package"), "1.0.0");
+          const slugsOf = (providers: ReadonlyArray<ServerProvider>, instance: ProviderInstance) =>
+            providers
+              .find((provider) => provider.instanceId === instance.instanceId)
+              ?.models.map((model) => model.slug);
+          assert.deepStrictEqual(slugsOf(yield* registry.getProviders, first.instance), [
+            "stale-model",
+          ]);
           yield* first.takeMaintenanceReads;
+
+          // A failed discovery does not stop the others, and the call still reports it.
+          yield* Ref.set(hookFails, true);
+          const refreshFailure = yield* registry.refreshModels({}).pipe(Effect.flip);
+          assert.strictEqual(refreshFailure.instanceId, first.instance.instanceId);
+          const afterRefresh = yield* registry.getProviders;
+          assert.deepStrictEqual(slugsOf(afterRefresh, first.instance), ["stale-model"]);
+          assert.deepStrictEqual(slugsOf(afterRefresh, second.instance), ["new-model"]);
+          yield* Ref.set(hookFails, false);
+          assert.deepStrictEqual(
+            slugsOf(
+              yield* registry.refreshModels({ instanceId: first.instance.instanceId }),
+              first.instance,
+            ),
+            ["new-model"],
+          );
+          yield* first.takeMaintenanceReads;
+          yield* Ref.set(forceRefreshCalls, 0);
+          yield* Ref.set(first.invalidations, 0);
+          yield* Ref.set(second.invalidations, 0);
+          yield* readCachedVersion("codex_first-package", "1.0.0");
+          yield* readCachedVersion("codex_second-package", "1.0.0");
 
           yield* registry.invalidateModelCaches({ instanceId: first.instance.instanceId });
           // The instance refresh that follows resolves installer metadata fresh itself.

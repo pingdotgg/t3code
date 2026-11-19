@@ -55,6 +55,7 @@ export type T3McpToolSummaryAction =
   | "environment-link"
   | "environment-unlink"
   | "environment-update"
+  | "provider-refresh"
   | "theme-read"
   | "theme-set"
   | "attachment-prepare"
@@ -440,6 +441,10 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
+  ),
+  t3_provider_refresh: tool(
+    ["Refresh", "Refreshing", "Refreshed", "provider models"],
+    "provider-refresh",
   ),
   t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
   t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
