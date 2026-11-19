@@ -98,6 +98,7 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplatesCopy";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { getFilesystemCanonicalPaths } from "@t3tools/client-runtime/state/filesystem";
 import {
   executeAtomQuery,
   isAtomCommandInterrupted,
@@ -3357,19 +3358,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             : await pickProjectLinkMatch(
                 relativePath,
                 await Promise.all(otherRoots.map(searchRoot)),
-                async (paths) => {
-                  const metadata = await executeAtomQuery(
-                    appAtomRegistry,
-                    filesystemEnvironment.getMetadata({
-                      environmentId: props.environmentId,
-                      input: { paths, includeCanonicalPath: true },
-                    }),
-                    { ...queryOptions, refresh: true },
-                  );
-                  return metadata._tag === "Success"
-                    ? metadata.value.entries.map((entry) => entry?.canonicalPath)
-                    : [];
-                },
+                (paths) =>
+                  getFilesystemCanonicalPaths(
+                    (request) =>
+                      executeAtomQuery(
+                        appAtomRegistry,
+                        filesystemEnvironment.getMetadata(request),
+                        { ...queryOptions, refresh: true },
+                      ),
+                    props.environmentId,
+                    paths,
+                  ),
               );
       }
       if (match === null && reply !== undefined && !signal.aborted) {
