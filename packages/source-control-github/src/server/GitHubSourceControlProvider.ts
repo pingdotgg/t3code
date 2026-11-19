@@ -61,7 +61,11 @@ import {
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
-import { readSourceControlHostSettings } from "@t3tools/source-control-core/shared/definition";
+import {
+  parseGitRemoteHost,
+  readSourceControlHostSettings,
+  unknownRemoteProvider,
+} from "@t3tools/source-control-core/shared/definition";
 
 import * as GitHubClient from "../shared/definition.ts";
 import {
@@ -144,7 +148,8 @@ export function parseGitHubAuth(
       ...providerAuth({
         status: "unauthenticated",
         host: fallback.host,
-        detail: "Every GitHub host gh is signed in to is turned off in Settings → Source Control.",
+        detail:
+          "Every GitHub host gh is signed in to is turned off in Settings → Source control & issues.",
       }),
       ...accounts,
     };
@@ -295,9 +300,9 @@ export const makeDiscovery = Effect.gen(function* () {
                   status: "unauthenticated",
                   host: "github.com",
                   detail: savedToken
-                    ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source Control."
+                    ? "GitHub refused the token saved in Settings. Replace or remove it in Settings → Source control & issues."
                     : signedIn
-                      ? `GitHub refused the ${appName} sign-in. Sign in again in Settings → Source Control.`
+                      ? `GitHub refused the ${appName} sign-in. Sign in again in Settings → Source control & issues.`
                       : `GitHub refused the token in ${tokenSource}. Replace it, or unset it to use \`gh auth login\`.`,
                 })),
           ...accounts,
@@ -338,6 +343,30 @@ class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure",
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
+// A gh login confirms a GitHub Enterprise Server whose hostname does not identify its provider.
+const refineRepositoryIdentity: NonNullable<
+  SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
+> = Effect.fn("GitHubSourceControlProvider.refineRepositoryIdentity")(function* ({
+  identity,
+  resolveContext,
+}) {
+  if (!identity.rootPath || (identity.provider !== undefined && identity.provider !== "unknown"))
+    return identity;
+  const remote = parseGitRemoteHost(identity.locator.remoteUrl);
+  if (remote === null) return identity;
+  const context = yield* resolveContext({
+    cwd: identity.rootPath,
+    context: {
+      provider: unknownRemoteProvider(remote),
+      remoteName: identity.locator.remoteName,
+      remoteUrl: identity.locator.remoteUrl,
+    },
+  });
+  return context?.provider.kind === "github"
+    ? { ...identity, provider: SourceControlProviderKind.make("github") }
+    : identity;
+});
+
 const PULL_REQUEST_NOT_FOUND = "Pull request not found. Check the PR number or URL and try again.";
 const REPOSITORY_NOT_FOUND = "Repository not found. Check the owner and name and try again.";
 
@@ -369,6 +398,7 @@ function fromGitHubApiError(
     case "GitHubApiNotFoundError":
       return failure(notFound, error);
     case "GitHubCliFailedError":
+    case "GitHubCliTimeoutError":
     case "GitHubAppSessionError":
     case "GitHubApiResponseError":
     case "GitHubApiRequestError":
@@ -822,7 +852,16 @@ export const make = Effect.gen(function* () {
         if (known !== null) return known;
         const [owner, name] = headNameWithOwner.split("/");
         const fork = yield* readRepository({ host: base.host, owner: owner!, name: name! });
-        const originUrl = yield* git.readConfigValue(input.cwd, "remote.origin.url");
+        // Git fetches from a remote's first URL; `config --get` returns the last of several, and
+        // `git remote -v` applies `insteadOf` rewrites.
+        const originUrl = yield* runGit(input.cwd, "readOriginUrl", [
+          "config",
+          "--get-all",
+          "remote.origin.url",
+        ]).pipe(
+          Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null),
+          Effect.orElseSucceed(() => null),
+        );
         return yield* git.ensureRemote({
           cwd: input.cwd,
           preferredName: headOwner ?? "fork",
@@ -958,14 +997,15 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("github"),
+    refineRepositoryIdentity,
     resolveRemoteWebHost: Effect.fn("GitHubSourceControlProvider.resolveRemoteWebHost")(
       ({ context }) => Effect.succeed(gitHubApiHostForRemote(context.remoteUrl)),
     ),
     // GitHub matches bare heads; read a full page to disambiguate forks by owner. A default branch
     // collides with most forks, so its owner-qualified lookup has GitHub filter by owner instead.
-    headBranchProbe: ({ headSelectors, defaultBranchHeadSelector }) => ({
-      headSelectors: defaultBranchHeadSelector
-        ? [defaultBranchHeadSelector]
+    headBranchProbe: ({ headSelectors, ownerHeadSelector }) => ({
+      headSelectors: ownerHeadSelector
+        ? [ownerHeadSelector]
         : headSelectors.filter((selector) => !selector.includes(":")),
       limit: 100,
     }),
