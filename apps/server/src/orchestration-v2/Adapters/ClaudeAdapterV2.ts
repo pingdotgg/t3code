@@ -5691,7 +5691,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
   const owedWakeMessageId = (wake: ClaudeOwedWake) =>
     MessageId.make(`message:claude-owed-wake:${wake.threadId}:${wake.taskId}:${wake.attempt}`);
   const owedWakesMatching = (matches: (wake: ClaudeOwedWake) => boolean) =>
-    [...owedWakes.values()].filter(matches);
+    owedWakes.size === 0 ? [] : [...owedWakes.values()].filter(matches);
   // Compare-and-set: session closes and process exits run outside the SDK message lock.
   const replaceOwedWake = (expected: ClaudeOwedWake, next: ClaudeOwedWake | null) => {
     const key = owedWakeKey(expected);
@@ -5704,6 +5704,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
     Effect.sync(() => {
       for (const wake of owedWakesMatching(matches)) replaceOwedWake(wake, null);
     });
+  const retireAnsweredOwedWakes = (nativeThreadId: string) =>
+    retireOwedWakes((wake) => wake.nativeThreadId === nativeThreadId && wake.turnStarted);
+  const markOwedWakesTurnStarted = (matches: (wake: ClaudeOwedWake) => boolean) => {
+    for (const wake of owedWakesMatching((wake) => !wake.turnStarted && matches(wake))) {
+      replaceOwedWake(wake, { ...wake, turnStarted: true });
+    }
+  };
   const deliverOwedWake = (wake: ClaudeOwedWake): Effect.Effect<void> =>
     Effect.suspend(() => {
       const offered = { ...wake, offered: true, bufferedRun: null };
@@ -5720,7 +5727,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         onRunEndedWithoutStarting: () => redeliverOwedWake(offered),
       });
     });
-  // A cancelled delivery never reached the agent; offer it again under a new message id.
   const redeliverOwedWake = (offered: ClaudeOwedWake): Effect.Effect<void> =>
     Effect.suspend(() => {
       const current = owedWakes.get(owedWakeKey(offered));
@@ -5739,7 +5745,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
       const next = { ...current, attempt: current.attempt + 1, offered: false };
       return replaceOwedWake(current, next) ? deliverOwedWake(next) : Effect.void;
     });
-  // Delivers each owed wake once; one a buffered continuation covers waits for that run instead.
   const deliverOwedWakesOnClose = (matches: (wake: ClaudeOwedWake) => boolean) =>
     Effect.suspend(() =>
       Effect.forEach(
@@ -5752,7 +5757,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         { discard: true },
       ),
     );
-  // The buffered continuation ended unstarted: if its session already closed, nothing else will.
   const releaseOwedWakesFromBufferedRun = (token: symbol) =>
     Effect.suspend(() =>
       Effect.forEach(
@@ -10171,15 +10175,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           if (isClaudeRootTurnFrame(message)) {
-            for (const wake of owedWakesMatching(
-              (wake) => wake.nativeThreadId === wakeInput.nativeThreadId && !wake.turnStarted,
-            )) {
-              replaceOwedWake(wake, { ...wake, turnStarted: true });
-            }
+            markOwedWakesTurnStarted((wake) => wake.nativeThreadId === wakeInput.nativeThreadId);
           } else if (message.type === "result" && !isClaudeEmptyTaskNotificationSuccess(message)) {
-            yield* retireOwedWakes(
-              (wake) => wake.nativeThreadId === wakeInput.nativeThreadId && wake.turnStarted,
-            );
+            yield* retireAnsweredOwedWakes(wakeInput.nativeThreadId);
           }
           const retired = (yield* Ref.get(requestedContinuations)).get(
             wakeInput.nativeThreadId,
@@ -12173,9 +12171,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!isClaudeProviderContinuationTurn(context.input)) {
               yield* markAbsorbedWake(liveQuery.nativeThreadId);
             } else if (!isClaudeEmptyTaskNotificationSuccess(message)) {
-              yield* retireOwedWakes(
-                (wake) => wake.nativeThreadId === liveQuery.nativeThreadId && wake.turnStarted,
-              );
+              yield* retireAnsweredOwedWakes(liveQuery.nativeThreadId);
             }
             const usageLimited =
               context.authenticationFailureMessage === undefined &&
@@ -13820,15 +13816,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       : [],
                   ),
                 );
-                // Only the wake turn's result answers them, replayed here or arriving live.
-                for (const wake of owedWakesMatching(
+                markOwedWakesTurnStarted(
                   (wake) =>
-                    wake.nativeThreadId === nativeThreadId &&
-                    drainedTaskIds.has(wake.taskId) &&
-                    !wake.turnStarted,
-                )) {
-                  replaceOwedWake(wake, { ...wake, turnStarted: true });
-                }
+                    wake.nativeThreadId === nativeThreadId && drainedTaskIds.has(wake.taskId),
+                );
                 // Replay results last to avoid rebuffering later frames. An empty turn's result must not settle a newer running turn.
                 const lastResultIndex = drained.findLastIndex((entry) => entry.type === "result");
                 const tailResult = drained[lastResultIndex];
