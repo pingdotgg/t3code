@@ -25,20 +25,40 @@ interface CursorFetchRange {
 export function isCursorCacheFresh(
   cache: CursorAccountCache | undefined,
   nowMs: number,
+  retentionStartMs: number,
 ): cache is CursorAccountCache {
-  return cache !== undefined && nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS;
+  return (
+    cache !== undefined &&
+    cache.sinceMs <= retentionStartMs &&
+    nowMs - cache.fetchedAtMs < CURSOR_ACCOUNT_TTL_MS
+  );
 }
 
+/** Narrowest read a refresh falls back to after failed reads of wider ranges. */
+export const CURSOR_MIN_FETCH_SPAN_MS = 60 * 1000;
+
+/**
+ * The next range to read, at most `maxSpanMs` wide unless it only tops up a complete cache:
+ * the newest history first, then older history down to the retention start.
+ */
 export function cursorFetchRange(
   cache: CursorAccountCache | undefined,
   retentionStartMs: number,
   nowMs: number,
+  maxSpanMs = Number.POSITIVE_INFINITY,
 ): CursorFetchRange {
-  return cache === undefined ||
-    cache.sinceMs > retentionStartMs ||
-    cache.untilMs - REFETCH_OVERLAP_MS < retentionStartMs
-    ? { sinceMs: retentionStartMs, untilMs: nowMs }
-    : { sinceMs: cache.untilMs - REFETCH_OVERLAP_MS, untilMs: nowMs };
+  if (cache === undefined || cache.untilMs - REFETCH_OVERLAP_MS < retentionStartMs) {
+    return { sinceMs: Math.max(retentionStartMs, nowMs - maxSpanMs), untilMs: nowMs };
+  }
+  if (cache.untilMs < nowMs || cache.sinceMs <= retentionStartMs) {
+    // Overlap at most half the span so a narrow read still moves forward.
+    const sinceMs = cache.untilMs - Math.min(REFETCH_OVERLAP_MS, maxSpanMs / 2);
+    return { sinceMs, untilMs: Math.min(nowMs, sinceMs + maxSpanMs) };
+  }
+  return {
+    sinceMs: Math.max(retentionStartMs, cache.sinceMs - maxSpanMs),
+    untilMs: cache.sinceMs,
+  };
 }
 
 export function mergeCursorFetch(
@@ -51,7 +71,12 @@ export function mergeCursorFetch(
 ) {
   const inRange = (record: UsageRecord) =>
     record.timestampMs >= range.sinceMs && record.timestampMs <= range.untilMs;
-  const previous = cache?.records ?? [];
+  const base =
+    cache !== undefined && range.sinceMs <= cache.untilMs && range.untilMs >= cache.sinceMs
+      ? cache
+      : undefined;
+  const older = base !== undefined && range.untilMs <= base.sinceMs;
+  const previous = base?.records ?? [];
   const added = fetched.filter(inRange);
   const replacedKeys = new Set<string | null>();
   let pruned = false;
@@ -60,21 +85,24 @@ export function mergeCursorFetch(
     else if (record.timestampMs < retentionStartMs) pruned = true;
   }
   const changed =
-    cache === undefined ||
+    base === undefined ||
+    base.sinceMs > retentionStartMs ||
     pruned ||
     replacedKeys.size !== added.length ||
     added.some((record) => !replacedKeys.has(record.dedupeKey));
-  const records = !changed
-    ? previous
-    : previous
-        .filter((record) => !inRange(record) && record.timestampMs >= retentionStartMs)
-        .concat(added);
+  let records = previous;
+  if (changed) {
+    const kept = previous.filter(
+      (record) => !inRange(record) && record.timestampMs >= retentionStartMs,
+    );
+    records = older ? added.concat(kept) : kept.concat(added);
+  }
   return {
     changed,
     cache: {
       accountKey,
-      sinceMs: retentionStartMs,
-      untilMs: range.untilMs,
+      sinceMs: Math.max(retentionStartMs, Math.min(base?.sinceMs ?? range.sinceMs, range.sinceMs)),
+      untilMs: older ? base.untilMs : range.untilMs,
       fetchedAtMs: nowMs,
       records,
     } satisfies CursorAccountCache,
@@ -82,8 +110,8 @@ export function mergeCursorFetch(
 }
 
 /** Versioned files isolate caches for different server versions sharing a state directory. */
-export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v1.json";
-const CURSOR_ACCOUNT_CACHE_VERSION = 1;
+export const CURSOR_ACCOUNT_CACHE_FILE_NAME = "usage-cursor-account-cache-v2.json";
+const CURSOR_ACCOUNT_CACHE_VERSION = 2;
 
 type SerializedRecord = readonly [
   timestampMs: number,
