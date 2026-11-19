@@ -20,7 +20,6 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2DomainEvent,
-  withMessageSenderNote,
 } from "@t3tools/contracts";
 import {
   expandAssistantCitationsForProvider,
@@ -2429,14 +2428,7 @@ it.effect("steers a promoted scheduled delivery with the thread's current select
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
         assert.deepEqual(steered, [
-          withMessageSenderNote(
-            {
-              createdBy: "user",
-              creationSource: "web",
-              scheduledTaskId: ScheduledTaskId.make("task:scheduled"),
-            },
-            "scheduled",
-          ),
+          '[T3 Code: scheduled task "task:scheduled" sent this prompt, not the user typing in this chat.]\n\nscheduled',
         ]);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
       }).pipe(Effect.provide(layer));
@@ -3194,8 +3186,9 @@ it.effect("starts a restart that stops the running turn ahead of an older held q
           queue: ["queued"],
           started: [
             "first",
-            ...["second", "do this instead"].map((text) =>
-              withMessageSenderNote({ createdBy: "agent", creationSource: "mcp" }, text),
+            ...["second", "do this instead"].map(
+              (text) =>
+                `[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\n${text}`,
             ),
           ],
         },
@@ -3318,7 +3311,9 @@ it.effect("replays an accepted steer after its target turn completes", () =>
         .pipe(Effect.flip);
       assert.equal(fresh._tag, "ThreadManagementNoSteerableRunError");
       yield* worker.drain();
-      assert.deepEqual(steered, [withMessageSenderNote(input, input.text)]);
+      assert.deepEqual(steered, [
+        `[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\n${input.text}`,
+      ]);
       assert.lengthOf(started, 1);
     }).pipe(
       Effect.provide(

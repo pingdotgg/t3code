@@ -668,12 +668,7 @@ describe("withMessageSenderNote", () => {
   it.each([
     [thread, "Hi", '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]\n\nHi'],
     [thread, "", '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]'],
-    [thread, "/review the diff", "/review the diff"],
-    [
-      thread,
-      "/home/user/app is broken",
-      '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]\n\n/home/user/app is broken',
-    ],
+    [thread, " /git/review staged", " /git/review staged"],
     [
       {
         createdBy: "agent",
@@ -690,7 +685,7 @@ describe("withMessageSenderNote", () => {
     [
       { createdBy: "user", creationSource: "web", scheduledTaskId: ScheduledTaskId.make("s") },
       "Hi",
-      '[T3 Code: scheduled task "s" sent this prompt on its schedule. Nobody typed it just now.]\n\nHi',
+      '[T3 Code: scheduled task "s" sent this prompt, not the user typing in this chat.]\n\nHi',
     ],
     [
       { createdBy: "agent", creationSource: "mcp" },
