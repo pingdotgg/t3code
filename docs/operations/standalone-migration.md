@@ -14,6 +14,10 @@ that VPS. See [remote architecture](../internals/remote.md).
 On a different machine, the saved absolute project paths and provider credentials must also be
 made available there; copying the database alone does not move them. A copied home retains the
 environment identity, so never run both copies online at the same time.
+For projects on several machines, run one environment on each machine. A forked web, desktop, or
+mobile client can save several directly paired environments; a central VPS is not required for
+project discovery across those environments. Without a relay, each client must receive a
+reachable route and pair with each environment separately.
 
 Direct pairing over LAN, a private VPN such as Tailscale, or SSH does not require T3 Connect. A
 public browser origin needs a reachable HTTPS address for the environment; hosting the web app
@@ -56,7 +60,8 @@ newer server starts, so a version rollback must use a backup made before that st
    tool intentionally drops tasks and links, so it is a test fixture, not a complete migration.
    For the final copy, stop the official desktop and service, confirm no server still owns the
    database, then copy the entire userdata directory, secrets, settings, and any needed
-   `service.env` into the new home. Keep the original home and an offline backup unchanged.
+   `service.env` into the new home. Review copied configuration for T3 Connect and update
+   endpoints before the fork starts. Keep the original home and an offline backup unchanged.
 3. Run the forked environment with product telemetry disabled:
 
    ```dotenv
@@ -69,6 +74,16 @@ newer server starts, so a version rollback must use a backup made before that st
    [telemetry](../user/telemetry.md) and [service environment](../user/background-service.md#configure-the-service-environment).
    Turn off provider update checks in the server settings until the model manifest is served by
    the fork: the current check fetches `model-manifest.json` from `pingdotgg/t3code` on GitHub.
+
+   For a foreground staging server built from this source tree, use an absolute path to a copied,
+   isolated home:
+
+   ```sh
+   T3CODE_HOME=/absolute/path/to/staging-home \
+     T3CODE_TELEMETRY_ENABLED=false \
+     T3CODE_OTEL_SDK_DISABLED=true \
+     node apps/server/dist/bin.mjs serve --lan
+   ```
 
 4. Give the environment a private or HTTPS route that the receiving device can reach. Pair each
    client directly with a new one-time code; do not reuse T3 Connect sessions. Test project
