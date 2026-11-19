@@ -1950,6 +1950,80 @@ describe("OrchestratorMcpService provider resolution", () => {
     }),
   );
 
+  it.effect("opens a new secret card when a later run reuses a clientRequestId", () =>
+    Effect.gen(function* () {
+      const activeRunId = yield* Ref.make(parentRunId);
+      const cards = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+      const receipts = yield* Ref.make<ReadonlySet<string>>(new Set());
+      const recorded = yield* Queue.unbounded<string>();
+      const dependencies = Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () =>
+            Effect.gen(function* () {
+              const runId = yield* Ref.get(activeRunId);
+              const parent = parentProjection([]);
+              return {
+                ...parent,
+                runs: parent.runs.map((run) => ({ ...run, id: runId })),
+                turnItems: [...(yield* Ref.get(cards))].map(([id, secretStatus]) => ({
+                  id,
+                  type: "secret_request",
+                  secretStatus,
+                })),
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
+          dispatch: (command) =>
+            command.type !== "secret_request.record"
+              ? Effect.die("Unexpected command")
+              : Effect.gen(function* () {
+                  // A repeated command id replays its receipt and records nothing.
+                  if (!(yield* Ref.get(receipts)).has(command.commandId)) {
+                    yield* Ref.update(receipts, (ids) => new Set([...ids, command.commandId]));
+                    yield* Ref.update(
+                      cards,
+                      (items) => new Map([...items, [command.turnItemId, command.secretStatus]]),
+                    );
+                  }
+                  yield* Queue.offer(recorded, command.secretStatus);
+                  return {} as never;
+                }),
+        }),
+        ServerSettings.layerTest(),
+        providerRegistryLayer([]),
+        adapterRegistryLayer([]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const ask = service
+          .requestSecret(scope, {
+            label: "Token",
+            reason: "Connect the account.",
+            clientRequestId: "router-key",
+            timeoutMs: 1_000,
+          })
+          .pipe(Effect.forkChild);
+        const first = yield* ask;
+        assert.strictEqual(yield* Queue.take(recorded), "pending");
+        yield* TestClock.adjust(Duration.millis(1_000));
+        assert.include(yield* Fiber.join(first), { status: "timed_out" });
+        assert.strictEqual(yield* Queue.take(recorded), "cancelled");
+
+        yield* Ref.set(activeRunId, RunId.make("run:mcp-providers-later"));
+        const second = yield* ask;
+        assert.strictEqual(yield* Queue.take(recorded), "pending");
+        yield* TestClock.adjust(Duration.millis(1_000));
+        assert.include(yield* Fiber.join(second), { status: "timed_out" });
+        assert.strictEqual((yield* Ref.get(cards)).size, 2);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+    }),
+  );
+
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
     () =>
