@@ -4,6 +4,7 @@ import {
   buildTailscaleHttpsBaseUrl,
   disableTailscaleServe,
   ensureTailscaleServe,
+  readTailscaleServeRootHolder,
   readTailscaleStatus,
   type TailscaleCommandError,
   type TailscaleServeHttpsDisabledError,
@@ -61,7 +62,7 @@ export class TailnetNameMissingError extends Schema.TaggedError<TailnetNameMissi
 export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>()(
   "DevServeFailedError",
   {
-    stage: Schema.Literals(["clear-existing", "serve"]),
+    stage: Schema.Literals(["read-existing", "clear-existing", "serve"]),
     webPort: Schema.Number,
     explanation: Schema.optional(Schema.String),
     cause: Schema.optional(Schema.Defect()),
@@ -70,9 +71,11 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
   override get message(): string {
     const port = String(this.webPort);
     const base =
-      this.stage === "clear-existing"
-        ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
-        : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
+      this.stage === "read-existing"
+        ? `could not read the existing mapping for port ${port}, so it was left alone`
+        : this.stage === "clear-existing"
+          ? `could not clear the existing mapping for port ${port}. Run \`tailscale serve --https=${port} --set-path=/ off\` and retry`
+          : `could not serve port ${port} on the tailnet (it is no longer served; any previous mapping for it was cleared before this attempt)`;
     return this.explanation ? `${base}: ${this.explanation}` : base;
   }
 
@@ -81,10 +84,24 @@ export class DevServeFailedError extends Schema.TaggedError<DevServeFailedError>
   }
 }
 
+export class DevServePortTakenError extends Schema.TaggedError<DevServePortTakenError>()(
+  "DevServePortTakenError",
+  { webPort: Schema.Number },
+) {
+  override get message(): string {
+    return `tailnet port ${String(this.webPort)} already serves another running server, so it was left alone`;
+  }
+
+  get hint(): string {
+    return `Pick another port with T3CODE_PORT_OFFSET, or remove that mapping with \`tailscale serve --https=${String(this.webPort)} --set-path=/ off\` if nothing needs it.`;
+  }
+}
+
 export type DevShareError =
   | TailscaleUnavailableError
   | TailnetNameMissingError
-  | DevServeFailedError;
+  | DevServeFailedError
+  | DevServePortTakenError;
 
 /** Finalizer cleanup must be uninterruptible or cancellation can leave stale mappings. */
 export const unshareDevServer = (
@@ -138,6 +155,27 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
     return yield* new TailnetNameMissingError();
   }
 
+  const target = input.localTarget ?? { port: input.webPort, host: "localhost" };
+  // A mapping left by an earlier run, or one dialing a dead loopback port, is safe to replace.
+  const holder = yield* readTailscaleServeRootHolder(input.webPort, {
+    port: target.port,
+    host: target.host.replace(/^\[|\]$/gu, ""),
+  }).pipe(
+    Effect.mapError((error) => {
+      const explanation =
+        error._tag === "TailscaleStatusParseError" ? undefined : explainCommandFailure(error);
+      return new DevServeFailedError({
+        stage: "read-existing",
+        webPort: input.webPort,
+        ...(explanation !== undefined ? { explanation } : {}),
+        cause: error,
+      });
+    }),
+  );
+  if (holder === "other") {
+    return yield* new DevServePortTakenError({ webPort: input.webPort });
+  }
+
   const cleared = yield* unshareDevServer(input.webPort);
   if (!cleared.cleared) {
     // Refuse stale routes: the page could load while /ws and /api still point at a dead backend.
@@ -151,9 +189,9 @@ export const shareDevServer = Effect.fn("devShare.shareDevServer")(function* (in
 
   // Vite's localhost can bind only ::1; a 127.0.0.1 proxy target would return 502.
   yield* ensureTailscaleServe({
-    localPort: input.localTarget?.port ?? input.webPort,
+    localPort: target.port,
     servePort: input.webPort,
-    localHost: input.localTarget?.host ?? "localhost",
+    localHost: target.host,
   }).pipe(
     Effect.mapError((error) => {
       const explanation = explainCommandFailure(error);

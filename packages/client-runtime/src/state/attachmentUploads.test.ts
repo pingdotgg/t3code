@@ -210,8 +210,16 @@ describe("attachment upload registry", () => {
       reason: "Server unavailable",
     });
     expect(progress).toEqual([0, 0.1, 1]);
-    upload.mockImplementationOnce(async () => "uploaded");
+    upload.mockImplementationOnce(async (_request, _signal, report) => {
+      report(0.5);
+      return "uploaded";
+    });
     queue.retry(uploadKey(environmentId, "file"));
+    expect(states[uploadKey(environmentId, "file")]).toEqual({
+      status: "uploading",
+      progress: 0.5,
+      retrying: true,
+    });
     await queue.settled();
     expect(states[uploadKey(environmentId, "file")]).toEqual({ status: "ready" });
     queue.dispose();
@@ -251,18 +259,24 @@ describe("attachment upload registry", () => {
   );
   it.effect("restarts a failed upload when a send joins it instead of rejoining the failure", () =>
     Effect.gen(function* () {
+      const replacement = Promise.withResolvers<string>();
       const upload = vi
         .fn()
         .mockRejectedValueOnce(new Error("Server unavailable"))
-        .mockResolvedValue("uploaded-2");
+        .mockImplementationOnce(() => replacement.promise);
       const queue = createQueue({ upload, onChange: () => {} });
       const local = request("photo");
-      queue.sync([local]);
+      const key = uploadKey(environmentId, local.attachment.id);
+      const release = queue.hold(local);
       yield* Effect.promise(() => queue.settled());
-      expect(queue.status(uploadKey(environmentId, "photo"))?.status).toBe("failed");
+      expect(queue.status(key)?.status).toBe("failed");
 
-      expect(yield* queue.upload(local)).toBe("uploaded-2");
+      const sent = yield* Effect.forkChild(queue.upload(local), { startImmediately: true });
+      expect(queue.status(key)).toEqual({ status: "uploading", progress: 0, retrying: true });
+      replacement.resolve("uploaded-2");
+      expect(yield* Fiber.join(sent)).toBe("uploaded-2");
       expect(upload).toHaveBeenCalledTimes(2);
+      release();
       queue.dispose();
     }),
   );
