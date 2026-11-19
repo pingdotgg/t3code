@@ -141,8 +141,11 @@ export function WorkflowRunsView({
   const lists = workflowRunLists(groups);
   const all = allWorkflowRunNodes(groups);
   const section = groups.workflows.find((candidate) => candidate.name === workflow) ?? null;
+  // A run the address names is that run or none: another one's buttons would act on the wrong run.
   const shownRunId =
-    all.find((node) => node.run.runId === selectedRunId)?.run.runId ?? defaultWorkflowRunId(groups);
+    selectedRunId === null
+      ? defaultWorkflowRunId(groups)
+      : (all.find((node) => node.run.runId === selectedRunId)?.run.runId ?? null);
   const shown = all.find((node) => node.run.runId === shownRunId) ?? null;
   // A run that another invoked is not in the list itself; the one it is part of stands for it.
   const listedFor = (node: WorkflowRunNode | null): string | null => {
@@ -278,7 +281,25 @@ export function WorkflowRunsView({
             selectedRunId === null ? "hidden md:block" : "block",
           )}
         >
-          {shown === null ? null : (
+          {shown === null ? (
+            selectedRunId === null ? null : (
+              <WorkflowsEmpty
+                title={gt("This run is not here")}
+                description={
+                  <T>
+                    This environment has no run with that link.{" "}
+                    <button
+                      type="button"
+                      className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+                      onClick={() => onSelect(null)}
+                    >
+                      Back to the runs
+                    </button>
+                  </T>
+                }
+              />
+            )
+          ) : (
             <WorkflowRunFeed
               key={shown.run.runId}
               environmentId={environmentId}

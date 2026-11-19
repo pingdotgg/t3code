@@ -25,6 +25,7 @@ import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { diskChange, staleAfterSave } from "./WorkflowDefinitionEditor.logic";
 import { WorkflowsEmpty } from "./WorkflowRunsView";
 
 type DefinitionEditor = Editor<"file", undefined, undefined>;
@@ -126,7 +127,9 @@ function Surface({
   const [edited, setEdited] = useState<string | null>(draft ?? null);
   const [problems, setProblems] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
   const [failure, setFailure] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  // The text a save in flight is writing, so its own echo from disk is told from a real change.
+  const [savingText, setSavingText] = useState<string | null>(null);
+  const saving = savingText !== null;
   const [savedOnce, setSavedOnce] = useState(false);
   const editorRef = useRef<DefinitionEditor | null>(null);
   const dirty = edited !== null && edited !== baseline;
@@ -140,10 +143,9 @@ function Surface({
   if (source !== seen) {
     setSeen(source);
     // With nothing of the person's own in the editor, it follows the file.
-    if (source !== baseline) {
-      if (dirty) setStaleAt(source);
-      else adopt();
-    }
+    const change = diskChange({ source, baseline, dirty, saving: savingText });
+    if (change === "stale") setStaleAt(source);
+    else if (change === "follow") adopt();
   }
   const { ready: editable, onPostRender } = useEditableAfterHighlight(shown);
 
@@ -152,10 +154,10 @@ function Surface({
     // Saving over a change on disk that was already shown is a choice. One that lands while this
     // save is out is not, and stays shown.
     const overwrote = staleAt;
-    setSaving(true);
+    setSavingText(edited);
     setFailure(null);
     const result = await save({ environmentId, input: { name, source: edited } });
-    setSaving(false);
+    setSavingText(null);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) setFailure(String(squashAtomCommandFailure(result)));
       return;
@@ -163,7 +165,7 @@ function Surface({
     setProblems(result.value.problems);
     if (result.value.problems.length > 0) return;
     setBaseline(edited);
-    setStaleAt((now) => (now === overwrote ? null : now));
+    setStaleAt((now) => staleAfterSave(now, overwrote));
     setSavedOnce(true);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -234,7 +236,7 @@ function Surface({
           <span className="min-w-0 flex-1 text-muted-foreground">
             <T>The file changed on disk while you were editing. Saving replaces that change.</T>
           </span>
-          <Button size="xs" variant="outline" onClick={adopt}>
+          <Button size="xs" variant="outline" disabled={saving} onClick={adopt}>
             <T>Load the file and drop my changes</T>
           </Button>
         </div>
