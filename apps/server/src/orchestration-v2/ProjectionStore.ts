@@ -103,6 +103,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
+import { DELEGATED_TASK_MESSAGE_CONDITION } from "./delegatedTaskMessage.ts";
 import {
   DEFERRED_COMMAND_MESSAGE_CONDITION,
   JAVASCRIPT_TRIM_WHITESPACE,
@@ -375,7 +376,7 @@ export interface ProjectionRecordFilter {
   readonly attemptIds?: ReadonlyArray<RunAttemptId>;
   readonly messageRoles?: ReadonlyArray<OrchestrationV2ConversationMessage["role"]>;
   readonly monitorNotificationsOnly?: boolean;
-  /** Monitor notifications and delegated-completion wakes: what `delegatedTaskRuns` and `delegatedTaskProgress` read. */
+  /** User messages that are monitor notifications or delegated-completion wakes, through their partial index. */
   readonly delegatedTaskMessagesOnly?: true;
   readonly turnItemRunId?: RunId;
   readonly messageIds?: ReadonlyArray<MessageId>;
@@ -818,6 +819,20 @@ export interface ProjectionStoreV2Shape {
     threadId: ThreadId,
     runId: RunId,
   ) => Effect.Effect<OrchestrationV2Run | undefined, ProjectionStoreV2Error>;
+  /**
+   * One snapshot: the `windowSize` runs that ended last, unfinished runs, the runs of `taskIds` and
+   * their wakes. `runsFloor` is set when older runs were left out; every run that ran after it is
+   * in `runs`.
+   */
+  readonly getDelegatedChildControls: (
+    threadId: ThreadId,
+    input: { readonly taskIds: ReadonlyArray<NodeId>; readonly windowSize: number },
+  ) => Effect.Effect<
+    ProjectionRecords<"runs" | "messages" | "subagents" | "providerThreads"> & {
+      readonly runsFloor: OrchestrationV2Run | undefined;
+    },
+    ProjectionStoreV2Error
+  >;
   readonly canStartQueuedRun: (
     threadId: ThreadId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
@@ -4439,7 +4454,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${filter?.messageIds === undefined ? sql`` : sql`AND message_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageIds)}))`}
                   ${filter?.messageRoles === undefined ? sql`` : sql`AND role IN (SELECT value FROM json_each(${encodeIdList(filter.messageRoles)}))`}
                   ${filter?.monitorNotificationsOnly === true ? sql`AND json_extract(payload_json, '$.notification.source.kind') = 'monitor'` : sql``}
-                  ${filter?.delegatedTaskMessagesOnly === true ? sql`AND (json_extract(payload_json, '$.notification.source.kind') = 'monitor' OR json_extract(payload_json, '$.delegatedCompletion') IS NOT NULL)` : sql``}
+                  ${filter?.delegatedTaskMessagesOnly === true ? sql`AND ${sql.literal(DELEGATED_TASK_MESSAGE_CONDITION)}` : sql``}
                   ${filter?.messageRunIds === undefined ? sql`` : sql`AND run_id IN (SELECT value FROM json_each(${encodeIdList(filter.messageRunIds)}))`}
                 ORDER BY created_at ASC, message_id ASC
               `
@@ -6451,6 +6466,83 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             return rows[0] === undefined
               ? undefined
               : yield* decodeMessagePayload(rows[0].payload_json);
+          }),
+        )
+        .pipe(Effect.mapError(controlReadError(threadId)));
+
+    const getDelegatedChildControls: ProjectionStoreV2Shape["getDelegatedChildControls"] = (
+      threadId,
+      { taskIds, windowSize },
+    ) =>
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const records = yield* getThreadRecords(
+              threadId,
+              ["messages", "subagents", "providerThreads"],
+              { messageRoles: ["user"], delegatedTaskMessagesOnly: true },
+            );
+            // Spells migration 84's order and predicate so the window walks that index.
+            const windowRows = yield* sql<PayloadRow & { readonly completed_at: string | null }>`
+              SELECT payload_json, completed_at FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+                AND status <> 'queued'
+                AND NOT (status = 'cancelled' AND json_extract(payload_json, '$.startedAt') IS NULL)
+              ORDER BY (completed_at IS NULL) DESC, completed_at DESC, ordinal DESC, run_id DESC
+              LIMIT ${windowSize}
+            `;
+            const window = yield* decodeRows(decodeRunPayload, threadId)(windowRows);
+            const last = window.length < windowSize ? undefined : window.at(-1);
+            const floorCompletedAt = windowRows.at(-1)?.completed_at ?? null;
+            // A window ending in unfinished runs bounds nothing, so read the whole thread.
+            const floor = floorCompletedAt === null ? undefined : last;
+            const rest = yield* (
+              last !== undefined && floor === undefined
+                ? sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}`
+                : sql<PayloadRow>`
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId}
+                AND status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+              UNION
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND json_valid(payload_json)
+                AND json_extract(payload_json, '$.delegatedTaskId') IS NOT NULL
+                AND json_extract(payload_json, '$.delegatedTaskId')
+                  IN (SELECT value FROM json_each(${encodeIdList(taskIds)}))
+              UNION
+              -- Unstarted cancelled runs are outside the window's index.
+              SELECT payload_json FROM orchestration_v2_projection_runs
+              WHERE thread_id = ${threadId} AND status = 'cancelled'
+                ${floor === undefined ? sql`` : sql`AND (completed_at IS NULL OR completed_at >= ${floorCompletedAt})`}`
+            ).pipe(Effect.flatMap(decodeRows(decodeRunPayload, threadId)));
+            const runs = new Map([...window, ...rest].map((run) => [run.id, run]));
+            const requested = new Set<RunId>();
+            for (;;) {
+              const wakeRunIds = [
+                ...new Set(
+                  records.messages.flatMap((message) =>
+                    message.runId !== null &&
+                    message.delegatedCompletion !== undefined &&
+                    runs.has(message.delegatedCompletion.parentRunId) &&
+                    !runs.has(message.runId) &&
+                    !requested.has(message.runId)
+                      ? [message.runId]
+                      : [],
+                  ),
+                ),
+              ];
+              if (wakeRunIds.length === 0) break;
+              for (const id of wakeRunIds) requested.add(id);
+              const wakes = yield* getThreadRecords(threadId, ["runs"], { runIds: wakeRunIds });
+              for (const run of wakes.runs) runs.set(run.id, run);
+            }
+            return {
+              ...records,
+              runs: [...runs.values()].toSorted((a, b) => a.ordinal - b.ordinal),
+              runsFloor: floor,
+            };
           }),
         )
         .pipe(Effect.mapError(controlReadError(threadId)));
@@ -9649,6 +9741,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getCheckpointCaptureContext: readOnReader(getCheckpointCaptureContext),
       getCheckpointRollbackContext: readOnReader(getCheckpointRollbackContext),
       getRunMessage: readOnReader(getRunMessage),
+      getDelegatedChildControls: readOnReader(getDelegatedChildControls),
       getRun: readOnReader(getRun),
       canStartQueuedRun: readOnReader(canStartQueuedRun),
       getHeldQueuedRuns: readOnReader(getHeldQueuedRuns),

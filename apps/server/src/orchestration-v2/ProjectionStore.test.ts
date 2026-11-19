@@ -1475,6 +1475,55 @@ it.effect("record reads filter notification sources without dropping matching me
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("reads a delegated child's recent, unfinished and task runs without its history", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("delegated-child-runs");
+    const first = (yield* store.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const at = (minutes: number) => DateTime.add(first.requestedAt, { minutes: minutes + 60 });
+    const id = (ordinal: number) => RunId.make(`run:delegated-child-runs:${ordinal}`);
+    const unstartedCancel = { status: "cancelled", startedAt: null } as const;
+    for (const [ordinal, patch] of [
+      [3, { status: "running", completedAt: null }],
+      // Unstarted cancelled runs are outside the window's index: one ends after the floor.
+      [4, { ...unstartedCancel, completedAt: at(20) }],
+      [5, { ...unstartedCancel, completedAt: at(1) }],
+      ...[2, 6, 7, 8, 9, 10, 11, 12].map((ordinal) => [ordinal, {}] as const),
+    ] as const) {
+      yield* store.apply({
+        id: EventId.make(`event:delegated-child-runs:${ordinal}`),
+        type: "run.created",
+        threadId,
+        runId: id(ordinal),
+        occurredAt: first.requestedAt,
+        payload: {
+          ...first,
+          id: id(ordinal),
+          ordinal,
+          status: "completed",
+          startedAt: at(ordinal),
+          completedAt: at(ordinal),
+          delegatedTaskId: NodeId.make(`node:delegated-child-runs:task:${ordinal}`),
+          ...patch,
+        },
+      });
+    }
+    const taskIds = [NodeId.make("node:delegated-child-runs:task:2")];
+    const bounded = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 3 });
+    assert.equal(bounded.runsFloor?.id, id(11));
+    assert.deepEqual(
+      bounded.runs.map((run) => run.id),
+      [2, 3, 4, 11, 12].map(id),
+    );
+    const whole = yield* store.getDelegatedChildControls(threadId, { taskIds, windowSize: 100 });
+    assert.isUndefined(whole.runsFloor);
+    assert.deepEqual(
+      whole.runs.map((run) => run.id),
+      (yield* store.getThreadRecords(threadId, ["runs"])).runs.map((run) => run.id),
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("shells flag a latest run triggered by a provider background wake", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
