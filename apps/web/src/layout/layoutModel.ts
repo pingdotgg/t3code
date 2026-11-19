@@ -25,8 +25,11 @@ export const THREAD_TERMINAL_SURFACE_ID = "thread-terminal";
  */
 export const LEGACY_PANEL_SURFACE_ID = "legacy-panel";
 
-/** Pull requests always shows as a workspace tab; Settings and Usage open as modals. */
-export type LayoutPageContent = { kind: "settings" | "usage" | "pull-requests"; href?: string };
+/** Pull requests and Issues always show as workspace tabs; Settings and Usage open as modals. */
+export type LayoutPageContent = {
+  kind: "settings" | "usage" | "pull-requests" | "issues";
+  href?: string;
+};
 
 export type LayoutTabContent =
   | { kind: "chat"; target: ThreadRouteTarget }
@@ -47,7 +50,10 @@ export type LayoutTabContent =
 
 export function isLayoutPageContent(content: LayoutTabContent): content is LayoutPageContent {
   return (
-    content.kind === "settings" || content.kind === "usage" || content.kind === "pull-requests"
+    content.kind === "settings" ||
+    content.kind === "usage" ||
+    content.kind === "pull-requests" ||
+    content.kind === "issues"
   );
 }
 
@@ -2175,7 +2181,12 @@ function isRouteTarget(target: unknown): target is ThreadRouteTarget {
 
 function isTabContent(value: unknown): value is LayoutTabContent {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
-  if (value.kind === "settings" || value.kind === "usage" || value.kind === "pull-requests") {
+  if (
+    value.kind === "settings" ||
+    value.kind === "usage" ||
+    value.kind === "pull-requests" ||
+    value.kind === "issues"
+  ) {
     if (value.href === undefined) return true;
     if (typeof value.href !== "string") return false;
     const pathname = value.href.split(/[?#]/, 1)[0];

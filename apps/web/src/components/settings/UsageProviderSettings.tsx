@@ -1,6 +1,6 @@
 import type { EnvironmentId, UnifiedSettings } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
-import { PlusIcon } from "lucide-react";
+import { GaugeIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -17,7 +17,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { useSearchableSetting } from "./settingsSearch";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsEmptyState, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const CLI_PROXY_NAME = "CLI Proxy";
 
@@ -52,7 +52,15 @@ export function UsageProviderSettings({
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title={gt("No usage providers configured.")} />
+          <div className="py-8">
+            <SettingsEmptyState
+              icon={<GaugeIcon />}
+              title={gt("No usage providers configured.")}
+              description={gt(
+                "Add a CLIProxyAPI hub to show the quota of every account it pools next to your providers.",
+              )}
+            />
+          </div>
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;

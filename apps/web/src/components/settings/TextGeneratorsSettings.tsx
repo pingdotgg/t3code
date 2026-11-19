@@ -11,7 +11,7 @@ import { pickModelSelection } from "@t3tools/shared/model";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { MoreVertical, PlusIcon, ServerIcon } from "lucide-react";
+import { MoreVertical, PenLineIcon, PlusIcon, ServerIcon } from "lucide-react";
 import { useState } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 
@@ -63,7 +63,7 @@ import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup, WizardSteps } from "../ui/wizard";
 import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { useSearchableSetting } from "./settingsSearch";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsEmptyState, SettingsRow, SettingsSection } from "./settingsLayout";
 import { SettingsGroup } from "./SettingsGroup";
 import { SettingsModelPicker } from "./SettingsModelPicker";
 
@@ -111,12 +111,15 @@ export function TextGeneratorsSettings({
         }
       >
         {generators.length === 0 ? (
-          <SettingsRow
-            title={gt("No text generators yet")}
-            description={gt(
-              "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
-            )}
-          />
+          <div className="py-8">
+            <SettingsEmptyState
+              icon={<PenLineIcon />}
+              title={gt("No text generators yet")}
+              description={gt(
+                "Add a model API to write thread titles, commit messages, and other short text without starting a coding agent.",
+              )}
+            />
+          </div>
         ) : null}
         {generators.map(([id, config]) => {
           const name = textGeneratorDisplayName(config, messages);

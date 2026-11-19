@@ -12613,6 +12613,57 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           }),
         );
         yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+        // Claude moves a long foreground command to the background mid-turn.
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_foreground_command",
+              type: "message",
+              role: "assistant",
+              content: [
+                {
+                  type: "tool_use",
+                  id: "toolu_moved_build",
+                  name: "Bash",
+                  input: { command: "vp run build" },
+                },
+              ],
+            },
+            parent_tool_use_id: null,
+            uuid: "foreground-command-launch",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "moved-build",
+            tool_use_id: "toolu_moved_build",
+            description: "vp run build",
+            is_backgrounded: false,
+            task_type: "local_bash",
+            uuid: "00000000-0000-4000-8000-000000000205",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "background_tasks_changed",
+            tasks: [
+              { task_id: WAKE_TASK_ID, task_type: "local_bash", description: "Audit" },
+              { task_id: "moved-build", task_type: "local_bash", description: "vp run build" },
+            ],
+            uuid: "00000000-0000-4000-8000-000000000206",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
         yield* Queue.offer(harness.sdkMessages, turnOneResult);
         yield* harness.awaitTerminal(1);
 
@@ -12637,6 +12688,18 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           itemId: command.turnItem.id,
         };
         assert.deepInclude(afterStart.at(-1)?.providerThread.pendingBackgroundTasks?.[0], details);
+        const movedCommand = harness.events.find(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "toolu_moved_build",
+        );
+        assert.equal(movedCommand?.type, "turn_item.updated");
+        if (movedCommand?.type !== "turn_item.updated") return;
+        assert.deepInclude(afterStart.at(-1)?.providerThread.pendingBackgroundTasks?.[1], {
+          taskId: "moved-build",
+          command: "vp run build",
+          itemId: movedCommand.turnItem.id,
+        });
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
@@ -18433,6 +18496,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000952",
           bashToolUseId: STRADDLING_BASH,
         }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: TASK_ID, task_type: "local_agent", description: "Audit" }],
+          uuid: "00000000-0000-4000-8000-000000000961",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000953",
           result: "Auditing in the background.",
@@ -18475,6 +18545,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "subagent.updated" &&
             event.subagent.progress === "Reading the last commits",
         ),
+      );
+      // The subagent backgrounds that shell; Claude names it by its command alone.
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "idle-shell",
+          tool_use_id: IDLE_BASH,
+          description: "git log -5",
+          is_backgrounded: true,
+          parent_task_id: TASK_ID,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000960",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.pendingBackgroundTasks?.some(
+              (task) => task.taskId === "idle-shell",
+            ) === true,
+        ),
+      );
+      const idleShell = latestToolItem(IDLE_BASH);
+      assert.deepInclude(
+        harness.events
+          .findLast((event) => event.type === "provider_thread.updated")
+          ?.providerThread.pendingBackgroundTasks?.find((task) => task.taskId === "idle-shell"),
+        {
+          command: "git log -5",
+          itemId: idleShell?.type === "turn_item.updated" ? idleShell.turnItem.id : undefined,
+        },
       );
       const routing = subagentRouting(harness.events, [STRADDLING_BASH, IDLE_BASH]);
       assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["Still auditing."]);

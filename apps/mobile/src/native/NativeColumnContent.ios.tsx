@@ -1,7 +1,12 @@
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { use, useState, type ReactNode } from "react";
 import { View, type ColorValue } from "react-native";
-import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
+import {
+  SafeAreaProvider,
+  SafeAreaView,
+  useSafeAreaFrame,
+  useSafeAreaInsets,
+} from "react-native-safe-area-context";
 import { NativeColumnLayoutMetricsContext } from "./native-layout-metrics";
 import type { NativeLayoutMetrics } from "../lib/reserved-regions";
 import { NativeLayoutObserver } from "./NativeLayoutObserver";
@@ -30,6 +35,18 @@ export function NativeColumnContent(props: {
   };
   const metrics =
     measured ?? (props.column === undefined ? null : (shared?.byColumn.get(props.column) ?? null));
+  // Until the body measures itself, its provider would hand down the window's insets. A native
+  // scroll view given that top inset and then 0 is left scrolled down by the difference.
+  const windowInsets = useSafeAreaInsets();
+  const bodyMetrics = {
+    frame: useSafeAreaFrame(),
+    insets: {
+      top: props.insetTop === false ? windowInsets.top : 0,
+      bottom: windowInsets.bottom,
+      left: props.insetHorizontally === false ? windowInsets.left : 0,
+      right: props.insetHorizontally === false ? windowInsets.right : 0,
+    },
+  };
   return (
     <View className={props.primary ? "flex-1 bg-drawer" : "flex-1 bg-header"}>
       <SafeAreaProvider style={{ flex: 1 }}>
@@ -50,7 +67,7 @@ export function NativeColumnContent(props: {
             }
           >
             {/* Descendants measure the inset body so they don't reserve the native bar twice. */}
-            <SafeAreaProvider style={{ flex: 1 }}>
+            <SafeAreaProvider initialMetrics={bodyMetrics} style={{ flex: 1 }}>
               <NativeLayoutObserver onChange={onMetrics} />
               <NativeColumnLayoutMetricsContext value={metrics}>
                 <HeaderHeightContext value={metrics?.safeArea.top ?? undefined}>

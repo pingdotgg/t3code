@@ -9,6 +9,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   type EnvironmentId,
+  type PullRequestActor,
   type PullRequestComment,
   type PullRequestDetailView,
   type PullRequestRef,
@@ -110,6 +111,26 @@ import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 import { changeRequestTermKind } from "./changeRequestTerm";
 
+/** Who wrote a comment and when, the time linking to it on the host. */
+export function WorkItemCommentIdentity({
+  actor,
+  profileUrl,
+  createdAt,
+  url,
+}: {
+  actor: PullRequestActor | null;
+  profileUrl: string | null;
+  createdAt: string;
+  url: string | null;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
+      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      <PullRequestCommentTime createdAt={createdAt} url={url} />
+    </div>
+  );
+}
+
 function CommentIdentity({
   comment,
   detail,
@@ -122,10 +143,51 @@ function CommentIdentity({
     ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
     : null;
   return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <PullRequestCommentTime createdAt={comment.createdAt} url={comment.url} />
-    </div>
+    <WorkItemCommentIdentity
+      actor={actor}
+      profileUrl={profileUrl}
+      createdAt={comment.createdAt}
+      url={comment.url}
+    />
+  );
+}
+
+/**
+ * One comment's card on a pull request or an issue: who and when with its actions on the first
+ * line, then whatever the comment holds, then its reactions.
+ */
+export function WorkItemCommentCard({
+  linkTarget = false,
+  header,
+  actions,
+  reactions,
+  footer,
+  children,
+}: {
+  /** The comment a followed link points at, outlined until the reader moves on. */
+  linkTarget?: boolean;
+  header: ReactNode;
+  actions?: ReactNode;
+  reactions: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <article
+      data-pr-link-target={linkTarget || undefined}
+      tabIndex={linkTarget ? -1 : undefined}
+      className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+    >
+      <div className="flex flex-wrap items-center gap-1.5 px-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
+          {header}
+        </div>
+        {actions}
+      </div>
+      {children}
+      <div className="mt-2 flex px-3">{reactions}</div>
+      {footer}
+    </article>
   );
 }
 
@@ -255,26 +317,6 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
         </span>
       </span>
     </Button>
-  );
-}
-
-export function PullRequestMetaRow({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-meta sm:min-h-6">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
   );
 }
 
@@ -730,44 +772,48 @@ export function PullRequestSummaryTab({
     // A reply goes with its conversation, from the card that heads it.
     const chat = reply ? null : chatSubject(comment, thread);
     return (
-      <article
+      <WorkItemCommentCard
         key={`${detail.url}:${comment.id}`}
-        data-pr-link-target={matchesLink(comment.url) || undefined}
-        tabIndex={matchesLink(comment.url) ? -1 : undefined}
-        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
-      >
-        <div className="flex flex-wrap items-center gap-1.5 px-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
+        linkTarget={matchesLink(comment.url)}
+        header={
+          <>
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
               <span>{reviewStateLabel(comment.reviewState, resolve)}</span>
             ) : null}
-          </div>
-          {onFixFinding && finding ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
-              onClick={() => onFixFinding(finding)}
-            >
-              <span className="inline-flex items-baseline gap-1">
-                <HammerIcon className="size-3 self-center" />
-                <span>
-                  {pendingFinding === pullRequestFindingKey(finding)
-                    ? gt("Preparing...")
-                    : fixFindingLabel}
+          </>
+        }
+        actions={
+          <>
+            {onFixFinding && finding ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pendingFinding !== null && pendingFinding !== undefined}
+                onClick={() => onFixFinding(finding)}
+              >
+                <span className="inline-flex items-baseline gap-1">
+                  <HammerIcon className="size-3 self-center" />
+                  <span>
+                    {pendingFinding === pullRequestFindingKey(finding)
+                      ? gt("Preparing...")
+                      : fixFindingLabel}
+                  </span>
                 </span>
-              </span>
-            </Button>
-          ) : null}
-          {resolveButtonFor(thread)}
-          {onAddToChat && chat !== null ? (
-            <AddToChatButton onClick={() => onAddToChat(chat)} />
-          ) : null}
-        </div>
+              </Button>
+            ) : null}
+            {resolveButtonFor(thread)}
+            {onAddToChat && chat !== null ? (
+              <AddToChatButton onClick={() => onAddToChat(chat)} />
+            ) : null}
+          </>
+        }
+        reactions={reactionBarFor(comment)}
+        footer={footer}
+      >
         {reply ? null : (
           <div className="px-3">
             <CommentLocation comment={comment} thread={thread} />
@@ -781,9 +827,7 @@ export function PullRequestSummaryTab({
             editing={commentEditing}
           />
         )}
-        <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
-        {footer}
-      </article>
+      </WorkItemCommentCard>
     );
   };
 

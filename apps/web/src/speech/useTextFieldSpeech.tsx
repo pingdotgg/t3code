@@ -4,7 +4,6 @@ import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
 import { ComposerSpeechButton } from "~/components/chat/ComposerSpeechButton";
-import { VoiceInputErrorPill } from "~/components/chat/VoiceInputErrorPill";
 import { VoiceInputSetup } from "~/components/chat/VoiceInputSetup";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useDictationShortcut } from "./useDictationShortcut";
@@ -102,17 +101,7 @@ export function TextFieldSpeechControls({
   const showsMic = speech.available || speech.unavailableReason !== null;
   return (
     <>
-      {speech.state.phase === "error" ? (
-        <VoiceInputErrorPill
-          size="compact"
-          error={speech.state.error}
-          errorAction={speech.state.errorAction}
-          disabled={disabled}
-          cancelShortcutLabel="Esc"
-          onRetry={() => void speech.start()}
-          onDismiss={speech.cancel}
-        />
-      ) : showsMic ? (
+      {showsMic ? (
         <ComposerSpeechButton
           state={speech.state}
           size="compact"

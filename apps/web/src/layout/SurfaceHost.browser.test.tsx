@@ -312,9 +312,43 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
     Math.abs(joinOffset(strip) - tabOffset(strip, active.dataset.layoutPaneTab!)),
   ).toBeLessThanOrEqual(1);
 
-  await userEvent.wheel(header.querySelector('button[aria-label="New tab"]')!, {
-    delta: { x: -140 },
+  const closed = strip.querySelector<HTMLElement>("[data-layout-pane-tab]")!;
+  const joinedAt = joinOffset(strip);
+  useLayoutStore.getState().closeTab(closed.dataset.layoutPaneTab!);
+  await vi.waitFor(() => expect(joinOffset(strip)).not.toBe(joinedAt));
+  expect(strip.scrollLeft).toBe(140);
+
+  const overflowEnd = strip.style.getPropertyValue("--strip-overflow-end");
+  strip.style.maxWidth = `${strip.offsetWidth - 40}px`;
+  await vi.waitFor(() =>
+    expect(strip.style.getPropertyValue("--strip-overflow-end")).not.toBe(overflowEnd),
+  );
+  expect(strip.scrollLeft).toBe(140);
+  strip.style.removeProperty("max-width");
+
+  const tabIds = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")].map(
+    (tab) => tab.dataset.layoutPaneTab!,
+  );
+  const middle = tabIds[Math.floor(tabIds.length / 2)]!;
+  useLayoutStore.getState().focusTab(middle);
+  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, middle)));
+  const held = Number.parseFloat(tabOffset(strip, middle)) - 100;
+  strip.scrollLeft = held;
+  await vi.waitFor(() =>
+    expect(strip.style.getPropertyValue("--strip-overflow-start")).toBe(`${held}px`),
+  );
+  useLayoutStore.getState().closeTab(middle);
+  await vi.waitFor(() => {
+    const next = focusedTabId()!;
+    expect(next).not.toBe(middle);
+    expect(joinOffset(strip)).toBe(tabOffset(strip, next));
   });
+  expect(strip.scrollLeft).toBe(held);
+
+  await userEvent.wheel(
+    strip.closest("[data-pane-header]")!.querySelector('button[aria-label="New tab"]')!,
+    { delta: { x: -held } },
+  );
   await vi.waitFor(() => expect(strip.scrollLeft).toBe(0));
   const tabs = [...strip.querySelectorAll<HTMLElement>("[data-layout-pane-tab]")];
   for (const tab of tabs) {

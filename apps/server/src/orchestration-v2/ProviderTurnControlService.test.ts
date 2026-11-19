@@ -134,7 +134,6 @@ function layerProjectionStore(
     ProjectionStore.ProjectionStoreV2.of({
       apply: () => Effect.void,
       carryProviderTurnContextUsage: () => Effect.die("unused carryProviderTurnContextUsage"),
-      countArchivedThreadMessages: () => Effect.die("unused countArchivedThreadMessages"),
       getLimitRecoveryCandidates: () => Effect.die("unused getLimitRecoveryCandidates"),
       getLimitRecoveryWakeAt: () => Effect.die("unused getLimitRecoveryWakeAt"),
       getOpenRemoteDelegatedTasks: Effect.die("unused getOpenRemoteDelegatedTasks"),
@@ -142,6 +141,7 @@ function layerProjectionStore(
       getShellSnapshot: () => Effect.die("unused getShellSnapshot"),
       listActiveSubagentThreadIds: () => Effect.die("unused listActiveSubagentThreadIds"),
       countThreads: () => Effect.die("unused countThreads"),
+      countArchivedThreadMessages: () => Effect.die("unused countArchivedThreadMessages"),
       listActiveShellIndex: () => Effect.die("unused listActiveShellIndex"),
       listActiveThreads: () => Effect.die("unused listActiveThreads"),
       listOlderSettledThreads: () => Effect.die("unused listOlderSettledThreads"),
@@ -163,6 +163,7 @@ function layerProjectionStore(
       hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
       hasRunInterruptRequest: () => Effect.die("unused stop read"),
       getRunProviderRecords: () => Effect.die("unused run provider read"),
+      getRunCardRecords: () => Effect.die("unused run card read"),
       getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
       searchThread: () => Effect.die("unused"),
       searchThreadStream: () => Stream.empty,
