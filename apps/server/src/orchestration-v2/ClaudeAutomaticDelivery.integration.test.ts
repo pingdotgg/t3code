@@ -169,6 +169,7 @@ it.effect.each(deliveries)(
               setModel: () => Effect.void,
               applyFlagSettings: () => Effect.void,
               setPermissionMode: () => Effect.void,
+              renameSession: () => Effect.void,
               backgroundTasks: () => Effect.succeed(false),
               mcpServerStatus: Effect.succeed([]),
               readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -518,6 +519,7 @@ it.effect("applies an effort change to the running Claude query without waiting 
                 flagSettings.push(flags);
               }),
             setPermissionMode: () => Effect.void,
+            renameSession: () => Effect.void,
             backgroundTasks: () => Effect.succeed(false),
             mcpServerStatus: Effect.succeed([]),
             readMcpResource: () => Effect.die("unexpected MCP resource read"),
@@ -603,6 +605,153 @@ it.effect("applies an effort change to the running Claude query without waiting 
       ),
     ),
   ),
+);
+
+const renamedClaudeSessionTitles = (options: { readonly renameDuringStartup: boolean }) =>
+  Effect.gen(function* () {
+    const cwd = yield* checkpointWorkspace("claude-live-rename");
+    const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+    const renames: string[] = [];
+    const startupEntered = yield* Deferred.make<void>();
+    const startupReleased = yield* Deferred.make<void>();
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: modelSelection.instanceId,
+      settings,
+      environment: {},
+      attachmentsDir: cwd,
+      fileSystem: yield* FileSystem.FileSystem,
+      path: yield* Path.Path,
+      random: yield* SecureRandom.SecureRandom,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.succeed(sessionId),
+        open: () =>
+          Effect.succeed({
+            messages: Stream.fromQueue(sdkMessages),
+            offer: () => Effect.void,
+            setModel: () => Effect.void,
+            applyFlagSettings: () => Effect.void,
+            setPermissionMode: () => Effect.void,
+            renameSession: (title) =>
+              Effect.sync(() => {
+                renames.push(title);
+              }),
+            backgroundTasks: () => Effect.succeed(false),
+            mcpServerStatus: Effect.succeed([]),
+            readMcpResource: () => Effect.die("unexpected MCP resource read"),
+            callMcpTool: () => Effect.die("unexpected MCP tool call"),
+            listPermissionRules: Effect.die("unexpected permission rules read"),
+            stopTask: () => Effect.void,
+            interrupt: Effect.die("a rename must not interrupt the turn"),
+            close: Effect.void,
+          }),
+        forkSession: () => Effect.die("unused"),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    return yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadId = ThreadId.make("thread:live-rename");
+      const running = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create"),
+        threadId,
+        projectId: ProjectId.make("project:live-rename"),
+        title: "Seed title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: cwd,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("first"),
+        threadId,
+        messageId: MessageId.make("first"),
+        text: "Keep working.",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const rename = orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("rename"),
+        threadId,
+        title: "Renamed title",
+      });
+      if (options.renameDuringStartup) {
+        const starting = yield* worker.drain().pipe(Effect.forkScoped);
+        yield* Deferred.await(startupEntered);
+        yield* rename;
+        yield* Deferred.succeed(startupReleased, undefined);
+        yield* Fiber.join(starting);
+        yield* Fiber.join(running);
+      } else {
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        assert.deepEqual(renames, []);
+        yield* rename;
+      }
+      yield* worker.drain();
+      return renames;
+    }).pipe(
+      Effect.provide(
+        ProviderReplayHarness.layerWithRegistry(
+          { name: "claude-live-rename" },
+          ProviderAdapterRegistry.layerSingle({
+            ...adapter,
+            openSession: (input) =>
+              options.renameDuringStartup
+                ? Deferred.succeed(startupEntered, undefined).pipe(
+                    Effect.andThen(Deferred.await(startupReleased)),
+                    Effect.andThen(adapter.openSession(input)),
+                  )
+                : adapter.openSession(input),
+          }),
+          { runEffectWorker: false },
+        ),
+      ),
+    );
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        IdAllocator.layer,
+        McpProviderSessions.layer,
+        NodeServices.layer,
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+
+it.effect("renames the running Claude session when the thread is renamed mid-turn", () =>
+  Effect.gen(function* () {
+    assert.deepEqual(yield* renamedClaudeSessionTitles({ renameDuringStartup: false }), [
+      "Renamed title",
+    ]);
+  }),
+);
+
+it.effect("renames the Claude session when the thread is renamed while it starts", () =>
+  Effect.gen(function* () {
+    assert.deepEqual(yield* renamedClaudeSessionTitles({ renameDuringStartup: true }), [
+      "Renamed title",
+    ]);
+  }),
 );
 
 const backgroundTaskStarted = (taskId: string) =>
@@ -712,6 +861,7 @@ it.effect("offers a continuation for a later wake after a queued continuation is
                 setModel: () => Effect.void,
                 applyFlagSettings: () => Effect.void,
                 setPermissionMode: () => Effect.void,
+                renameSession: () => Effect.void,
                 backgroundTasks: () => Effect.succeed(false),
                 mcpServerStatus: Effect.succeed([]),
                 readMcpResource: () => Effect.die("unexpected MCP resource read"),

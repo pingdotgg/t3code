@@ -107,6 +107,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     threadId: Schema.optional(ThreadId),
     providerTurn: OrchestrationV2ProviderTurn,
+    /** Questions the adapter keeps open after this turn ends; the rest of the turn's are dismissed. */
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
     type: Schema.Literal("node.updated"),
@@ -184,6 +186,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     failure: Schema.Null,
     reason: Schema.optional(Schema.String),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
     type: Schema.Literal("turn.terminal"),
@@ -199,6 +202,7 @@ export const ProviderAdapterV2Event = Schema.Union([
     threadDisposition: Schema.Literals(["reusable", "broken"]),
     /** Child turns outlive root failure and report their own terminals; otherwise open children settle. */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
+    retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
 ]);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
@@ -277,6 +281,15 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
 /**
  * The user sent `/compact` to a driver whose session has no native compaction.
  */
+export class ProviderResumeUnsupportedError extends Schema.TaggedError<ProviderResumeUnsupportedError>()(
+  "ProviderResumeUnsupportedError",
+  { driver: ProviderDriverKind, providerThreadId: ProviderThreadId },
+) {
+  override get message(): string {
+    return "This provider cannot resume without a new message. Send a message to continue.";
+  }
+}
+
 export class ProviderCompactionUnsupportedError extends Schema.TaggedError<ProviderCompactionUnsupportedError>()(
   "ProviderCompactionUnsupportedError",
   {
@@ -439,6 +452,10 @@ export class ProviderAdapterEventStreamError extends Schema.TaggedError<Provider
   {
     driver: ProviderDriverKind,
     providerSessionId: ProviderSessionId,
+    /** Set when T3 closed the session because this thread detached from it, not the provider. */
+    detachedThreadId: Schema.optional(ThreadId),
+    /** Set when T3 raised this itself; unset when the adapter reported its runtime failing. */
+    raisedByT3: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
@@ -489,6 +506,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterRollbackThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterTurnStartError,
+  ProviderResumeUnsupportedError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
   ProviderAdapterSteerDeclinedError,
@@ -531,13 +549,34 @@ export interface ProviderAdapterV2TurnInput {
   readonly nativeThreadHasTurns?: boolean;
   readonly providerTurnOrdinal: number;
   readonly restartContinuationOfRunId?: RunId;
+  readonly resume?: true;
   readonly attemptId: RunAttemptId;
   readonly rootNodeId: NodeId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly message: ProviderAdapterV2TurnMessage;
+  /** Leading characters of `message.text` that are inline handoff context, not the user's words. */
+  readonly inlineContextLength?: number;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
   readonly appContext?: ReadonlyArray<{ readonly key: string; readonly text: string }>;
+}
+
+export type ProviderAdapterV2ResumeTurnInput = Omit<
+  ProviderAdapterV2TurnInput,
+  "message" | "resume"
+> & {
+  readonly messageId: MessageId;
+};
+
+export function resumeTurnInput(
+  input: ProviderAdapterV2ResumeTurnInput,
+): ProviderAdapterV2TurnInput {
+  const { messageId, ...turn } = input;
+  return {
+    ...turn,
+    resume: true,
+    message: { messageId, text: "", attachments: [], createdBy: "user", creationSource: "server" },
+  };
 }
 
 export interface ProviderAdapterV2SteerInput {
@@ -548,6 +587,8 @@ export interface ProviderAdapterV2SteerInput {
   readonly message: ProviderAdapterV2TurnMessage;
   /** The selection sent with the message when it differs from the running turn's. */
   readonly modelSelection?: ModelSelection;
+  /** The thread's MCP app notes; the adapter sends those the agent has not seen yet. */
+  readonly appContext?: ProviderAdapterV2TurnInput["appContext"];
 }
 
 export interface ProviderAdapterV2InterruptInput {
@@ -693,6 +734,8 @@ export interface ProviderAdapterV2SessionRuntime {
     readonly threadId?: ThreadId;
     readonly modelSelection?: ModelSelection;
     readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+    /** The native session is the only copy of the thread's imported history: fail when it is gone. */
+    readonly importedNativeSession?: boolean;
   }) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
   /** False means the native protocol explicitly does not support history injection. */
   readonly injectHistory?: (
@@ -702,6 +745,9 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  readonly resumeTurn?: (
+    input: ProviderAdapterV2ResumeTurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly compactThread?: (
     input: ProviderAdapterV2TurnInput,
@@ -713,6 +759,11 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly applyModelSelection?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** Renames the provider's native session while its process is running; otherwise the next turn does. */
+  readonly applyThreadTitle?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly title: string;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly stopTask?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
