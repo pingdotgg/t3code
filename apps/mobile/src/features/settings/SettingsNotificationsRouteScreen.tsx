@@ -51,6 +51,7 @@ import {
 import { connectionAtomRuntime } from "../../connection/runtime";
 import {
   CloudEnvironmentLinkError,
+  linkEnvironmentToCloudWithPreference,
   updateLinkedEnvironmentLiveActivityPreference,
 } from "../cloud/linkEnvironment";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
@@ -71,8 +72,19 @@ const updateLiveActivityPreference = createEnvironmentCommand(connectionAtomRunt
   execute: updateLinkedEnvironmentLiveActivityPreference,
 });
 
+const linkLiveActivityEnvironment = createEnvironmentCommand(connectionAtomRuntime, {
+  label: "linkLiveActivityEnvironment",
+  execute: linkEnvironmentToCloudWithPreference,
+});
+
 const isLiveActivityEnvironmentUpdateError = Schema.is(LiveActivityEnvironmentUpdateError);
 const isCloudEnvironmentLinkError = Schema.is(CloudEnvironmentLinkError);
+
+function toCloudEnvironmentLinkError(cause: unknown, message: string) {
+  return isCloudEnvironmentLinkError(cause)
+    ? cause
+    : new CloudEnvironmentLinkError({ message, cause });
+}
 
 const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(function* (
   environmentId: EnvironmentId,
@@ -82,15 +94,24 @@ const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(fun
     updateLiveActivityPreference.run(appAtomRegistry, { environmentId, input: enabled }),
   );
   if (result._tag === "Success") return result.value;
-  const cause = squashAtomCommandFailure(result);
-  return yield* isCloudEnvironmentLinkError(cause)
-    ? cause
-    : new CloudEnvironmentLinkError({
-        message: resolveMessage(
-          msg("Could not update the environment's Live Activity preference."),
-        ),
-        cause,
-      });
+  return yield* toCloudEnvironmentLinkError(
+    squashAtomCommandFailure(result),
+    resolveMessage(msg("Could not update the environment's Live Activity preference.")),
+  );
+});
+
+const linkEnvironmentWithPreference = Effect.fn("linkEnvironmentWithPreference")(function* (
+  environmentId: EnvironmentId,
+  input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
+) {
+  const result = yield* Effect.promise(() =>
+    linkLiveActivityEnvironment.run(appAtomRegistry, { environmentId, input }),
+  );
+  if (result._tag === "Success") return;
+  return yield* toCloudEnvironmentLinkError(
+    squashAtomCommandFailure(result),
+    resolveMessage(msg("Could not configure environment relay access.")),
+  );
 });
 
 /**
@@ -362,7 +383,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
-          canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
+          linkEnvironment: linkEnvironmentWithPreference,
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
@@ -457,7 +481,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       runtime.runPromiseExit(
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
-          canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
+          linkEnvironment: linkEnvironmentWithPreference,
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: false,
           previousEnabled: liveActivitiesPreferenceEnabled,

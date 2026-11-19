@@ -82,9 +82,12 @@ devices working and lists them for review, including any that got in before.
 See `issueConnectCredential` in the
 [environment auth service](../../apps/server/src/auth/EnvironmentAuth.ts).
 
-Managed tunnels expose only a validated loopback HTTP origin. Link proof checks
-reject forwarded authority headers, and the relay resolves endpoints from its
-own managed allocations rather than a caller-supplied URL. Health and mint
+Managed tunnels expose only this server's own loopback HTTP origin. The link
+proof signs that origin from the server's listening address and ignores the
+caller's, so any client holding `relay:configure`, local or remote, can link
+without being able to point the tunnel at another service on the host. The
+relay resolves endpoints from its own managed allocations rather than a
+caller-supplied URL. Health and mint
 requests must not follow redirects. These restrictions keep endpoint discovery
 from turning into arbitrary relay egress or exposing another service on the
 environment host.

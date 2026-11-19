@@ -1,15 +1,15 @@
 // Must stay first: the render counter and behavior probe wrap the DevTools hook before any React commit.
 import "./src/features/development/render-counter-entry";
 import "./src/features/development/behavior-probe-entry";
-// Next, so errors thrown while the rest of the app loads are recorded too.
+// Crash reporting loads preferences, which can load GT and capture Hermes's Intl constructors.
+import "./src/i18n/intl-polyfills";
+// Record errors thrown while the rest of the app loads.
 import "./src/features/observability/observe";
 import { registerRootComponent } from "expo";
 import "react-native-gesture-handler";
 import { LogBox } from "react-native";
 import { featureFlags } from "react-native-screens";
 
-// Before any GT module initializes: GT validates locales with Intl APIs that Hermes lacks.
-import "./src/i18n/intl-polyfills";
 // Conn: before App, so module-level messages read the brand name.
 import "./src/lib/installAppName";
 import App from "./src/App";

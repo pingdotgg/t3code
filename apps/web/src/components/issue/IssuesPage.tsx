@@ -231,7 +231,7 @@ export function IssuesPage() {
   // Refreshing a list still loading would cancel it and start over, losing the scopes already read.
   useLiveRefresh(
     () => {
-      if (!list.isPending) list.refresh();
+      if (!list.isPending) list.reload();
     },
     { key: JSON.stringify(targets) },
   );
