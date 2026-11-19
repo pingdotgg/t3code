@@ -44,10 +44,10 @@ interface AntigravityChildLaunch {
   readonly prompt: string;
 }
 
+const LaunchEntry = Schema.Struct({ Role: Schema.String, Prompt: Schema.String });
+// Older runtimes send a `Subagents` batch; agy 1.5.x sends one flat launch per call.
 const decodeLaunchInput = Schema.decodeUnknownOption(
-  Schema.Struct({
-    Subagents: Schema.NonEmptyArray(Schema.Struct({ Role: Schema.String, Prompt: Schema.String })),
-  }),
+  Schema.Union([Schema.Struct({ Subagents: Schema.NonEmptyArray(LaunchEntry) }), LaunchEntry]),
 );
 
 /** `invoke_subagent` arguments, from the permission prompt or the persisted record. */
@@ -56,7 +56,10 @@ export function antigravitySubagentLaunches(
 ): ReadonlyArray<AntigravityChildLaunch> | undefined {
   return Option.getOrUndefined(
     Option.map(decodeLaunchInput(input), (decoded) =>
-      decoded.Subagents.map((entry) => ({ role: entry.Role, prompt: entry.Prompt })),
+      ("Subagents" in decoded ? decoded.Subagents : [decoded]).map((entry) => ({
+        role: entry.Role,
+        prompt: entry.Prompt,
+      })),
     ),
   );
 }
