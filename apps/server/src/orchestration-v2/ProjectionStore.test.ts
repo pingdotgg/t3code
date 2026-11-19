@@ -10278,8 +10278,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         .getShellSnapshot({ projectId, includeItemCounts: false })
         .pipe(Effect.withTracer(lightweightRead.tracer));
       assert.isNotEmpty(lightweightRead.statements);
-      assert.isFalse(
-        lightweightRead.statements.some((query) => query.includes("AS rolled_back_at")),
+      assert.deepEqual(
+        lightweightRead.statements.filter(
+          (query) =>
+            query.includes("AS rolled_back_at") ||
+            query.includes("orchestration_v2_projection_turn_item_counts"),
+        ),
+        [],
       );
       const forkShell = withoutItemCounts.threads.find((thread) => thread.id === targetThreadId);
       assert.equal(forkShell?.visibleItemCount, 0);
