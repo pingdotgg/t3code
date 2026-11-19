@@ -86,7 +86,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
         }),
       });
       const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
+        Promise.reject(
+          new TypeError("fetch failed", {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          }),
+        );
 
       const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
         Effect.provideService(FetchHttpClient.Fetch, unreachable),
