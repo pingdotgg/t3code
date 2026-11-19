@@ -34,6 +34,11 @@ interface ChatTerminalDrawersProps {
   readonly onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
+function drawerKeyOf(threadKey: string | null): string | null {
+  const threadRef = threadKey === null ? null : parseScopedThreadKey(threadKey);
+  return threadRef ? panelScopeKey(threadRef) : null;
+}
+
 /**
  * Keeps terminal drawers mounted for recently open threads, so switching back
  * to one finds its sessions as they were. Every thread's terminal and draft
@@ -65,12 +70,29 @@ export function ChatTerminalDrawers(props: ChatTerminalDrawersProps) {
     panelAnimationDurationMs,
   );
   const [mountedTerminalThreadKeys, setMountedTerminalThreadKeys] = useState<string[]>([]);
+  const activeDrawerKey = drawerKeyOf(activeThreadKey);
+  // One mounted thread per drawer, so threads sharing a drawer take one hidden slot.
+  const mountedDrawerOwnerKeys = mountedTerminalThreadKeys.filter(
+    (threadKey, index) =>
+      threadKey === activeThreadKey ||
+      (drawerKeyOf(threadKey) !== activeDrawerKey &&
+        !mountedTerminalThreadKeys
+          .slice(index + 1)
+          .some((laterKey) => drawerKeyOf(laterKey) === drawerKeyOf(threadKey))),
+  );
   const existingOpenTerminalThreadKeys = (() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
-    return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
+    const openDrawerKeys = new Set(openTerminalThreadKeys);
+    // Open state is stored under the drawer's key, which a shared drawer does not share with a thread.
+    return mountedDrawerOwnerKeys.filter((threadKey) => {
+      const drawerKey = drawerKeyOf(threadKey);
+      return (
+        existingThreadKeys.has(threadKey) && drawerKey !== null && openDrawerKeys.has(drawerKey)
+      );
+    });
   })();
   const reconciledMountedTerminalThreadKeys = reconcileMountedTerminalThreadIds({
-    currentThreadIds: mountedTerminalThreadKeys,
+    currentThreadIds: mountedDrawerOwnerKeys,
     openThreadIds: existingOpenTerminalThreadKeys,
     activeThreadId: activeThreadKey,
     activeThreadTerminalOpen: activeTerminalDrawerPresence.present,
