@@ -731,13 +731,17 @@ const make = Effect.gen(function* () {
     if (head === null) return true;
     // Removal keeps branches but drops a detached HEAD, so only commits held elsewhere are safe.
     if (head.exitCode !== 0) {
-      // A paused rebase or bisect also detaches HEAD; removal would discard its progress.
+      // A paused rebase, merge or bisect would lose its progress (and any autostash) on removal.
       const operations = yield* read([
         "rev-parse",
         "--git-path",
         "rebase-merge",
         "--git-path",
         "rebase-apply",
+        "--git-path",
+        "MERGE_HEAD",
+        "--git-path",
+        "MERGE_AUTOSTASH",
         "--git-path",
         "BISECT_LOG",
       ]);

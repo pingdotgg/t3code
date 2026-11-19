@@ -3303,6 +3303,15 @@ describe("storage cleanup reports and local file policies", () => {
         yield* command(worktree, ["-c", "sequence.editor=echo break >>", "rebase", "-i", "--root"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         yield* command(worktree, ["rebase", "--abort"]);
+        yield* command(worktree, ["checkout", "-b", "topic", "main"]);
+        yield* command(worktree, ["commit", "--allow-empty", "-m", "topic"]);
+        yield* command(worktree, ["checkout", "--detach", "main"]);
+        yield* fs.writeFileString(`${worktree}/tracked.txt`, "autostashed\n");
+        yield* command(worktree, ["merge", "--autostash", "--no-ff", "--no-commit", "topic"]);
+        expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
+        yield* command(worktree, ["merge", "--abort"]);
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("autostashed\n");
+        yield* command(worktree, ["checkout", "--", "tracked.txt"]);
         yield* command(worktree, ["bisect", "start"]);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "kept" });
         yield* command(worktree, ["bisect", "reset"]);
