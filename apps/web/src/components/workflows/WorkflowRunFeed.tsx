@@ -652,17 +652,20 @@ function WorkflowFlow({
                 type="button"
                 aria-current={focus === key}
                 className={cn(
-                  "max-w-[85%] cursor-pointer truncate rounded-full border bg-background px-2 py-0.5 text-2xs text-muted-foreground hover:text-foreground",
+                  "flex max-w-[85%] cursor-pointer items-center gap-1 rounded-full border bg-background py-0.5 ps-1.5 pe-2 text-2xs text-muted-foreground hover:text-foreground",
                   focus === key ? "border-primary text-foreground" : "border-border",
                 )}
                 onClick={() => onPick(key)}
               >
-                {names.length <= 2
-                  ? names.join(" · ")
-                  : gt("{names} and {count} more", {
-                      names: names.slice(0, 2).join(" · "),
-                      count: names.length - 2,
-                    })}
+                <CheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
+                <span className="min-w-0 truncate">
+                  {names.length <= 2
+                    ? names.join(" · ")
+                    : gt("{names} and {count} more", {
+                        names: names.slice(0, 2).join(" · "),
+                        count: names.length - 2,
+                      })}
+                </span>
               </button>
             </div>
           );

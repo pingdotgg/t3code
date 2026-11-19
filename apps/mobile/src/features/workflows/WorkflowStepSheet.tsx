@@ -1,6 +1,7 @@
 import {
   allWorkflowRunNodes,
   groupWorkflowRuns,
+  workflowResultLines,
   type WorkflowBeat,
 } from "@t3tools/client-runtime/workflows";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -14,7 +15,7 @@ import { ScreenContent } from "../../components/ui/ScreenContent";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
-import { BeatCard, workflowRunFeedOf } from "./WorkflowStepCard";
+import { BeatCard, Card, Facts, workflowRunFeedOf } from "./WorkflowStepCard";
 
 export type WorkflowStepParams = {
   readonly environmentId: string;
@@ -39,14 +40,15 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
           groupWorkflowRuns(live.data.workflows, live.data.runs, live.data.questions),
         ).find((candidate) => candidate.run.runId === route.params.runId);
   const steps = detail.data?.steps;
-  const beat =
-    node === undefined || steps === undefined
-      ? undefined
-      : workflowRunFeedOf(node, steps)
-          .flatMap((row) =>
-            row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row],
-          )
-          .find((candidate) => candidate.name === route.params.step);
+  const feed = node === undefined || steps === undefined ? [] : workflowRunFeedOf(node, steps);
+  const beat = feed
+    .flatMap((row) => (row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row]))
+    .find((candidate) => candidate.name === route.params.step);
+  // A pill of quick steps is named by its first one.
+  const quick = feed.find(
+    (row) => row.kind === "quick" && row.steps[0]?.name === route.params.step,
+  );
+  const quickSteps = quick?.kind === "quick" ? quick.steps : [];
   // A thread or a run replaces the leaf sheet so workspace back navigation still works.
   const openThread = (thread: NonNullable<WorkflowBeat["thread"]>) =>
     navigation.dispatch(
@@ -59,7 +61,14 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
     navigation.dispatch(StackActions.replace("WorkflowRun", { environmentId, runId }));
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader title={route.params.step} onClose={() => navigation.goBack()} />
+      <SheetHeader
+        title={
+          quickSteps.length > 1
+            ? quickSteps.map((step) => step.name).join(" · ")
+            : route.params.step
+        }
+        onClose={() => navigation.goBack()}
+      />
       <ScreenContent>
         <ScrollView
           nestedScrollEnabled
@@ -68,7 +77,30 @@ export function WorkflowStepSheet({ route }: StaticScreenProps<WorkflowStepParam
           contentContainerClassName="px-4 pt-2"
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 16) + 8 }}
         >
-          {beat === undefined ? (
+          {quickSteps.length > 0 ? (
+            <Card>
+              {quickSteps.map((step) => {
+                const lines = workflowResultLines(step.result);
+                return (
+                  <View key={step.name} className="gap-1">
+                    <Text className="font-t3-medium text-sm text-foreground">{step.name}</Text>
+                    <Facts
+                      facts={lines.flatMap((line) =>
+                        line.label === null ? [] : [{ label: line.label, value: line.value }],
+                      )}
+                    />
+                    {lines
+                      .filter((line) => line.label === null)
+                      .map((line) => (
+                        <Text key={line.value} className="text-sm text-foreground-secondary">
+                          {line.value}
+                        </Text>
+                      ))}
+                  </View>
+                );
+              })}
+            </Card>
+          ) : beat === undefined ? (
             <Text className="pt-6 text-center text-sm text-foreground-muted">
               {detail.error ?? live.error ?? gt("Loading the step…")}
             </Text>
