@@ -3084,7 +3084,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --provider-mark: var(--muted-foreground);
   --code-gutter: var(--dim-foreground);
   --search-line-number: var(--dim-foreground);
-  --kbd-lit-foreground: color-mix(in oklab, var(--primary-foreground) 55%, var(--primary));
+  /* A theme's action fill leaves no room to dim the hint below its label. */
+  --kbd-lit-foreground: var(--primary-foreground);
   --sidebar-settled-title: color-mix(in oklab, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --sidebar-settled-label: color-mix(in oklab, var(--sidebar-muted-foreground) 75%, var(--sidebar));
   --sidebar-settled-meta: color-mix(in oklab, var(--sidebar-muted-foreground) 65%, var(--sidebar));
@@ -3132,6 +3133,11 @@ html[data-theme-id]:not([data-theme-id=""]) {
     );
     --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
     --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
+  }
+
+  /* The default light primary is near-black, so its keycap shows no box. */
+  @variant light {
+    --kbd-lit-fill: transparent;
   }
 }
 
@@ -3343,6 +3349,33 @@ html[data-theme-id] [data-app-sidebar] {
 
 html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
   --dim-foreground: var(--sidebar-muted-foreground);
+}
+
+/* Theme row fills are mid-tone accents, so meta on the active or selected row
+   leans toward the sidebar text to keep the default's contrast. */
+html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
+  [data-app-sidebar]
+  :is(.bg-sidebar-row-active, .surface-sidebar-row-selected) {
+  --secondary-label: color-mix(
+    in oklab,
+    var(--app-theme-secondary-label) 40%,
+    var(--sidebar-foreground)
+  );
+  --dim-foreground: color-mix(
+    in oklab,
+    var(--sidebar-muted-foreground) 55%,
+    var(--sidebar-foreground)
+  );
+  --contrast-secondary-label: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--secondary-label) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-dim-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--dim-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
 }
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
