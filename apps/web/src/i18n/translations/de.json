@@ -12372,10 +12372,12 @@
   "c0ba3f6756b09f30": "Ungespeicherte Änderungen",
   "6914e22d357f0ad6": "Gespeichert und aktiv",
   "aff389354a031d6f": "Die Datei auf der Festplatte lässt sich nicht laden. Die letzte funktionierende Version läuft weiter.",
+  "858effde748ab563": "Gespeichert, läuft aber noch nicht.",
   "ddb37138df660942": "Nicht gespeichert. Auf dem Server hat sich nichts geändert.",
   "6ef4db489e40e39e": "Speichern fehlgeschlagen",
   "3dcedb736d20aae5": "Die Workflow-Dateien konnten nicht gelesen werden",
   "b09f4df8d76ae8ea": "{file} löschen? Die darin definierten Workflows können dann nicht mehr gestartet werden.",
+  "b54c78d85fd942ea": "Gelöscht, aber was läuft, ist noch nicht nachgezogen.",
   "407c228d7da0b7df": "Nicht gelöscht. Auf dem Server hat sich nichts geändert.",
   "1a6aa10f3cc14fff": "Diese Dateien passen nicht zusammen. Was bisher lief, läuft weiter.",
   "259312516a1dbe6f": "Dateiname",
@@ -12555,6 +12557,7 @@
   "c3f0119b8d6231f8": "Es läuft nichts.",
   "33028dfc1229eaa6": "Noch keine Ausführungen.",
   "5459bf696a187c26": "Workflow-Ausführungen konnten nicht geladen werden",
+  "d57c35d43b0f163a": "Diesen Lauf gibt es hier nicht",
   "b9aae2f7cdb1a379": "Noch keine Workflow-Ausführungen",
   "8f15f66e545af7c0": "Welche Ausführungen",
   "b6409289e0c9a4dd": "Workflow",
@@ -12563,8 +12566,16 @@
   "1c635faa2fb45b8b": "Noch nie gelaufen.",
   "156ff7b625287a1e": "Übersprungene ausblenden",
   "69b985b97ab45e6b": "{count} übersprungene anzeigen",
-  "d57c35d43b0f163a": "Diesen Lauf gibt es hier nicht",
   "2400254d362de84d": "Workflow-Ausführungen werden geladen…",
+  "145e1f7503ba3b2c": [
+    "Diese Umgebung hat keinen Lauf mit diesem Link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Zurück zu den Läufen"
+    }
+  ],
   "783e616cb0476c17": [
     "Ein Workflow verbindet Agenten, Code, Zeitpläne und Fragen an dich zu einer Ausführung, die Neustarts übersteht. Schreib einen unter",
     " ",
@@ -12592,15 +12603,6 @@
   ],
   "ed8ce6ebc73dc12d": "Datei öffnen",
   "5d8d278ff828102d": "Alle Workflows",
-  "145e1f7503ba3b2c": [
-    "Diese Umgebung hat keinen Lauf mit diesem Link.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Zurück zu den Läufen"
-    }
-  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Als vollständigen Thread öffnen",
   "7783d914a4670f44": "Transkript schließen",

@@ -12378,10 +12378,12 @@
   "c0ba3f6756b09f30": "Osparade ändringar",
   "6914e22d357f0ad6": "Sparad och körs",
   "aff389354a031d6f": "Filen på disken går inte att läsa in. Den senaste versionen som gick att läsa in körs vidare.",
+  "858effde748ab563": "Sparad, men den körs inte än.",
   "ddb37138df660942": "Inte sparad. Inget ändrades på servern.",
   "6ef4db489e40e39e": "Kunde inte spara",
   "3dcedb736d20aae5": "Kunde inte läsa arbetsflödesfilerna",
   "b09f4df8d76ae8ea": "Ta bort {file}? Arbetsflödena som den definierar kan inte längre startas.",
+  "b54c78d85fd942ea": "Borttagen, men det som körs har inte hunnit ikapp än.",
   "407c228d7da0b7df": "Inte borttagen. Inget ändrades på servern.",
   "1a6aa10f3cc14fff": "De här filerna passar inte ihop. Det som kördes förut körs vidare.",
   "259312516a1dbe6f": "Filnamn",
@@ -12561,6 +12563,7 @@
   "c3f0119b8d6231f8": "Inget körs.",
   "33028dfc1229eaa6": "Inga körningar än.",
   "5459bf696a187c26": "Kunde inte läsa in arbetsflödeskörningarna",
+  "d57c35d43b0f163a": "Den här körningen finns inte här",
   "b9aae2f7cdb1a379": "Inga arbetsflödeskörningar än",
   "8f15f66e545af7c0": "Vilka körningar",
   "b6409289e0c9a4dd": "Arbetsflöde",
@@ -12569,8 +12572,16 @@
   "1c635faa2fb45b8b": "Har inte körts än.",
   "156ff7b625287a1e": "Dölj överhoppade",
   "69b985b97ab45e6b": "Visa överhoppade ({count})",
-  "d57c35d43b0f163a": "Den här körningen finns inte här",
   "2400254d362de84d": "Läser in arbetsflödeskörningar…",
+  "145e1f7503ba3b2c": [
+    "Den här miljön har ingen körning med den länken.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Tillbaka till körningarna"
+    }
+  ],
   "783e616cb0476c17": [
     "Ett arbetsflöde knyter ihop agenter, kod, scheman och frågor till dig i en enda körning som överlever omstarter. Skriv ett under",
     " ",
@@ -12598,15 +12609,6 @@
   ],
   "ed8ce6ebc73dc12d": "Öppna filen",
   "5d8d278ff828102d": "Alla arbetsflöden",
-  "145e1f7503ba3b2c": [
-    "Den här miljön har ingen körning med den länken.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Tillbaka till körningarna"
-    }
-  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Öppna som en hel tråd",
   "7783d914a4670f44": "Stäng transkriptet",

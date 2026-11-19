@@ -12370,10 +12370,12 @@
   "c0ba3f6756b09f30": "Modifications non enregistrées",
   "6914e22d357f0ad6": "Enregistré et en service",
   "aff389354a031d6f": "Le fichier sur le disque ne se charge pas. La dernière version valide continue de s’exécuter.",
+  "858effde748ab563": "Enregistré, mais il ne s’exécute pas encore.",
   "ddb37138df660942": "Non enregistré. Rien n’a changé sur le serveur.",
   "6ef4db489e40e39e": "Impossible d’enregistrer",
   "3dcedb736d20aae5": "Impossible de lire les fichiers de workflow",
   "b09f4df8d76ae8ea": "Supprimer {file} ? Les workflows qu’il définit ne pourront plus être démarrés.",
+  "b54c78d85fd942ea": "Supprimé, mais ce qui s’exécute n’a pas encore suivi.",
   "407c228d7da0b7df": "Non supprimé. Rien n’a changé sur le serveur.",
   "1a6aa10f3cc14fff": "Ces fichiers ne sont pas cohérents entre eux. Ce qui s’exécutait avant continue de s’exécuter.",
   "259312516a1dbe6f": "Nom du fichier",
@@ -12553,6 +12555,7 @@
   "c3f0119b8d6231f8": "Rien n’est en cours.",
   "33028dfc1229eaa6": "Aucune exécution pour l’instant.",
   "5459bf696a187c26": "Impossible de charger les exécutions de workflow",
+  "d57c35d43b0f163a": "Cette exécution n’est pas ici",
   "b9aae2f7cdb1a379": "Aucune exécution de workflow pour l’instant",
   "8f15f66e545af7c0": "Quelles exécutions",
   "b6409289e0c9a4dd": "Workflow",
@@ -12561,8 +12564,16 @@
   "1c635faa2fb45b8b": "Pas encore exécuté.",
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
-  "d57c35d43b0f163a": "Cette exécution n’est pas ici",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
+  "145e1f7503ba3b2c": [
+    "Cet environnement n’a aucune exécution avec ce lien.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Retour aux exécutions"
+    }
+  ],
   "783e616cb0476c17": [
     "Un workflow réunit agents, code, planifications et questions qui vous sont posées en une seule exécution qui survit aux redémarrages. Écrivez-en un dans",
     " ",
@@ -12590,15 +12601,6 @@
   ],
   "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
-  "145e1f7503ba3b2c": [
-    "Cet environnement n’a aucune exécution avec ce lien.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Retour aux exécutions"
-    }
-  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Ouvrir comme fil complet",
   "7783d914a4670f44": "Fermer la transcription",

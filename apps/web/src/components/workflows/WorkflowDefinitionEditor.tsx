@@ -126,6 +126,8 @@ function Surface({
   const [shown, setShown] = useState(() => fileOf(path, draft ?? source, revision));
   const [edited, setEdited] = useState<string | null>(draft ?? null);
   const [problems, setProblems] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
+  // The last save wrote the file, so its problems are why it does not run, not why it was refused.
+  const [written, setWritten] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   // The text a save in flight is writing, so its own echo from disk is told from a real change.
   const [savingText, setSavingText] = useState<string | null>(null);
@@ -163,7 +165,8 @@ function Surface({
       return;
     }
     setProblems(result.value.problems);
-    if (result.value.problems.length > 0) return;
+    setWritten(result.value.changed);
+    if (!result.value.changed) return;
     setBaseline(edited);
     setStaleAt((now) => staleAfterSave(now, overwrote));
     setSavedOnce(true);
@@ -248,7 +251,14 @@ function Surface({
         />
       ) : null}
       {problems.length > 0 ? (
-        <ProblemList title={gt("Not saved. Nothing changed on the server.")} problems={problems} />
+        <ProblemList
+          title={
+            written
+              ? gt("Saved, but it does not run yet.")
+              : gt("Not saved. Nothing changed on the server.")
+          }
+          problems={problems}
+        />
       ) : null}
       {failure === null ? null : (
         <ProblemList title={gt("Could not save")} problems={[{ message: failure }]} />
@@ -317,6 +327,8 @@ export default function WorkflowDefinitionEditor({
   const gt = useGT();
   const [naming, setNaming] = useState<string | null>(null);
   const [refusal, setRefusal] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
+  // The last delete took the file away, though what runs may not have followed yet.
+  const [deleted, setDeleted] = useState(false);
   if (query.error) {
     return (
       <WorkflowsEmpty title={gt("Could not read the workflow files")} description={query.error} />
@@ -346,18 +358,22 @@ export default function WorkflowDefinitionEditor({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         setRefusal([{ message: String(squashAtomCommandFailure(result)) }]);
+        setDeleted(false);
       }
       return;
     }
     setRefusal(result.value.problems);
-    if (result.value.problems.length === 0) onOpen(null);
+    setDeleted(result.value.changed);
+    if (result.value.changed) onOpen(null);
   };
   const between =
     problems.length + refusal.length === 0 ? null : (
       <ProblemList
         title={
           refusal.length > 0
-            ? gt("Not deleted. Nothing changed on the server.")
+            ? deleted
+              ? gt("Deleted, but what runs has not caught up yet.")
+              : gt("Not deleted. Nothing changed on the server.")
             : gt("These files do not fit together. What ran before keeps running.")
         }
         problems={refusal.length > 0 ? refusal : problems}

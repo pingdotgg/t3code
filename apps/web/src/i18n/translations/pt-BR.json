@@ -12370,10 +12370,12 @@
   "c0ba3f6756b09f30": "Alterações não salvas",
   "6914e22d357f0ad6": "Salvo e em execução",
   "aff389354a031d6f": "O arquivo no disco não carrega. A última versão que carregou continua em execução.",
+  "858effde748ab563": "Salvo, mas ainda não está em execução.",
   "ddb37138df660942": "Não salvo. Nada mudou no servidor.",
   "6ef4db489e40e39e": "Não foi possível salvar",
   "3dcedb736d20aae5": "Não foi possível ler os arquivos de workflow",
   "b09f4df8d76ae8ea": "Excluir {file}? Os workflows que ele define não poderão mais ser iniciados.",
+  "b54c78d85fd942ea": "Excluído, mas o que está em execução ainda não foi atualizado.",
   "407c228d7da0b7df": "Não excluído. Nada mudou no servidor.",
   "1a6aa10f3cc14fff": "Estes arquivos não são compatíveis entre si. O que rodava antes continua em execução.",
   "259312516a1dbe6f": "Nome do arquivo",
@@ -12553,6 +12555,7 @@
   "c3f0119b8d6231f8": "Nada em execução.",
   "33028dfc1229eaa6": "Nenhuma execução ainda.",
   "5459bf696a187c26": "Não foi possível carregar as execuções de workflow",
+  "d57c35d43b0f163a": "Esta execução não está aqui",
   "b9aae2f7cdb1a379": "Nenhuma execução de workflow ainda",
   "8f15f66e545af7c0": "Quais execuções",
   "b6409289e0c9a4dd": "Workflow",
@@ -12561,8 +12564,16 @@
   "1c635faa2fb45b8b": "Ainda não foi executado.",
   "156ff7b625287a1e": "Ocultar puladas",
   "69b985b97ab45e6b": "Mostrar puladas ({count})",
-  "d57c35d43b0f163a": "Esta execução não está aqui",
   "2400254d362de84d": "Carregando execuções de workflow…",
+  "145e1f7503ba3b2c": [
+    "Este ambiente não tem nenhuma execução com esse link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Voltar às execuções"
+    }
+  ],
   "783e616cb0476c17": [
     "Um workflow reúne agentes, código, agendamentos e perguntas para você em uma única execução que sobrevive a reinicializações. Escreva um em",
     " ",
@@ -12590,15 +12601,6 @@
   ],
   "ed8ce6ebc73dc12d": "Abrir o arquivo",
   "5d8d278ff828102d": "Todos os workflows",
-  "145e1f7503ba3b2c": [
-    "Este ambiente não tem nenhuma execução com esse link.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Voltar às execuções"
-    }
-  ],
   "39459da07479f482": "Agente",
   "1e25265f2758fce3": "Abrir como thread completa",
   "7783d914a4670f44": "Fechar transcrição",

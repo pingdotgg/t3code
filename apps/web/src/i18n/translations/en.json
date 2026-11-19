@@ -12380,10 +12380,12 @@
   "c0ba3f6756b09f30": "Unsaved changes",
   "6914e22d357f0ad6": "Saved and running",
   "aff389354a031d6f": "The file on disk does not load. The last version that did keeps running.",
+  "858effde748ab563": "Saved, but it does not run yet.",
   "ddb37138df660942": "Not saved. Nothing changed on the server.",
   "6ef4db489e40e39e": "Could not save",
   "3dcedb736d20aae5": "Could not read the workflow files",
   "b09f4df8d76ae8ea": "Delete {file}? The workflows it defines can no longer be started.",
+  "b54c78d85fd942ea": "Deleted, but what runs has not caught up yet.",
   "407c228d7da0b7df": "Not deleted. Nothing changed on the server.",
   "1a6aa10f3cc14fff": "These files do not fit together. What ran before keeps running.",
   "259312516a1dbe6f": "File name",
@@ -12563,6 +12565,7 @@
   "c3f0119b8d6231f8": "Nothing is running.",
   "33028dfc1229eaa6": "No runs yet.",
   "5459bf696a187c26": "Could not load workflow runs",
+  "d57c35d43b0f163a": "This run is not here",
   "b9aae2f7cdb1a379": "No workflow runs yet",
   "8f15f66e545af7c0": "Which runs",
   "b6409289e0c9a4dd": "Workflow",
@@ -12571,8 +12574,16 @@
   "1c635faa2fb45b8b": "Has not run yet.",
   "156ff7b625287a1e": "Hide skipped",
   "69b985b97ab45e6b": "Show {count} skipped",
-  "d57c35d43b0f163a": "This run is not here",
   "2400254d362de84d": "Loading workflow runs…",
+  "145e1f7503ba3b2c": [
+    "This environment has no run with that link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Back to the runs"
+    }
+  ],
   "783e616cb0476c17": [
     "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one under",
     " ",
@@ -12600,15 +12611,6 @@
   ],
   "ed8ce6ebc73dc12d": "Open the file",
   "5d8d278ff828102d": "All workflows",
-  "145e1f7503ba3b2c": [
-    "This environment has no run with that link.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Back to the runs"
-    }
-  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Open as a full thread",
   "7783d914a4670f44": "Close transcript",

@@ -12365,10 +12365,12 @@
   "c0ba3f6756b09f30": "Cambios sin guardar",
   "6914e22d357f0ad6": "Guardado y en ejecución",
   "aff389354a031d6f": "El archivo en disco no se carga. Sigue en ejecución la última versión que sí cargó.",
+  "858effde748ab563": "Guardado, pero todavía no se ejecuta.",
   "ddb37138df660942": "No se guardó. No cambió nada en el servidor.",
   "6ef4db489e40e39e": "No se pudo guardar",
   "3dcedb736d20aae5": "No se pudieron leer los archivos de flujos de trabajo",
   "b09f4df8d76ae8ea": "¿Eliminar {file}? Los flujos de trabajo que define ya no se podrán iniciar.",
+  "b54c78d85fd942ea": "Eliminado, pero lo que se ejecuta aún no se ha actualizado.",
   "407c228d7da0b7df": "No se eliminó. No cambió nada en el servidor.",
   "1a6aa10f3cc14fff": "Estos archivos no encajan entre sí. Lo que se ejecutaba antes sigue en ejecución.",
   "259312516a1dbe6f": "Nombre del archivo",
@@ -12548,6 +12550,7 @@
   "c3f0119b8d6231f8": "No hay nada en ejecución.",
   "33028dfc1229eaa6": "Aún no hay ejecuciones.",
   "5459bf696a187c26": "No se pudieron cargar las ejecuciones de flujos de trabajo",
+  "d57c35d43b0f163a": "Esta ejecución no está aquí",
   "b9aae2f7cdb1a379": "Aún no hay ejecuciones de flujos de trabajo",
   "8f15f66e545af7c0": "Qué ejecuciones",
   "b6409289e0c9a4dd": "Flujo de trabajo",
@@ -12556,8 +12559,16 @@
   "1c635faa2fb45b8b": "Aún no se ha ejecutado.",
   "156ff7b625287a1e": "Ocultar omitidos",
   "69b985b97ab45e6b": "Mostrar {count} omitidos",
-  "d57c35d43b0f163a": "Esta ejecución no está aquí",
   "2400254d362de84d": "Cargando ejecuciones de flujos de trabajo…",
+  "145e1f7503ba3b2c": [
+    "Este entorno no tiene ninguna ejecución con ese enlace.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Volver a las ejecuciones"
+    }
+  ],
   "783e616cb0476c17": [
     "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en",
     " ",
@@ -12585,15 +12596,6 @@
   ],
   "ed8ce6ebc73dc12d": "Abrir el archivo",
   "5d8d278ff828102d": "Todos los flujos de trabajo",
-  "145e1f7503ba3b2c": [
-    "Este entorno no tiene ninguna ejecución con ese enlace.",
-    " ",
-    {
-      "t": "button",
-      "i": 1,
-      "c": "Volver a las ejecuciones"
-    }
-  ],
   "39459da07479f482": "Agente",
   "1e25265f2758fce3": "Abrir como hilo completo",
   "7783d914a4670f44": "Cerrar transcripción",
