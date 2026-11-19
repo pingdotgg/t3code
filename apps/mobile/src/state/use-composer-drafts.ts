@@ -2075,13 +2075,15 @@ export function retargetNewTaskDraft(
   });
 }
 
-/** Retargets a saved draft once drafts load; an absent one is not created. */
+/** Retargets a saved draft after loading. Returns false if absent or cancelled before the write. */
 export async function retargetSavedNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  signal?: AbortSignal,
 ): Promise<boolean> {
   await waitForComposerDraftsLoaded();
-  if (appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined) return false;
+  if (signal?.aborted || appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined)
+    return false;
   retargetNewTaskDraft(draftKey, project);
   return true;
 }
