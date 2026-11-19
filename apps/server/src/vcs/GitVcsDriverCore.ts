@@ -1459,12 +1459,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "--",
       remoteName,
     ];
-    // Git leaves the partial pack of a failed or timed-out fetch in the shared object store,
-    // and each retry downloads the backlog again, so a failed attempt removes the ones it created.
+    // Git leaves the partial pack of a failed fetch in the shared object store, and each retry
+    // downloads the backlog again. Another fetch into the same store may be writing a pack too,
+    // so the next attempt removes only the packs a failure left that have not changed since.
     const packDir = path.join(gitCommonDir, "objects", "pack");
     const listTempPacks = fileSystem
       .readDirectory(packDir)
       .pipe(Effect.map((names) => names.filter((name) => name.startsWith("tmp_pack_"))));
+    const stampTempPack = (name: string) =>
+      fileSystem.stat(path.join(packDir, name)).pipe(
+        Effect.map((info) => ({
+          name,
+          stamp: `${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`,
+        })),
+      );
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1479,25 +1487,42 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         // healthy writer. A separate safety limit prevents a hung transport from
         // occupying its worker slot indefinitely.
         const fetch = Effect.gen(function* () {
+          yield* Effect.forEach(
+            statusRemoteRefreshFailures.get(key)?.tempPacks ?? [],
+            (left) =>
+              stampTempPack(left.name).pipe(
+                Effect.flatMap((current) =>
+                  current.stamp === left.stamp
+                    ? fileSystem.remove(path.join(packDir, left.name))
+                    : Effect.void,
+                ),
+                Effect.ignore,
+              ),
+            { discard: true },
+          );
           const existing = yield* listTempPacks.pipe(Effect.option);
           yield* executeGit("GitVcsDriver.fetchRemoteForStatus", fetchCwd, args, {
             env: STATUS_UPSTREAM_REFRESH_ENV,
             fallbackErrorDetail: "Background Git fetch exited with a non-zero status.",
             timeoutMs: Duration.toMillis(STATUS_UPSTREAM_FETCH_TIMEOUT),
           }).pipe(
-            Effect.onExit((exit) =>
-              Exit.isSuccess(exit) || Option.isNone(existing)
-                ? Effect.void
-                : listTempPacks.pipe(
-                    Effect.flatMap((names) =>
-                      Effect.forEach(
-                        names.filter((name) => !existing.value.includes(name)),
-                        (name) => fileSystem.remove(path.join(packDir, name)).pipe(Effect.ignore),
-                        { discard: true },
-                      ),
-                    ),
-                    Effect.ignore,
-                  ),
+            Effect.tapError(() =>
+              Effect.gen(function* () {
+                const before = Option.getOrUndefined(existing);
+                const tempPacks =
+                  before === undefined
+                    ? []
+                    : yield* listTempPacks.pipe(
+                        Effect.flatMap((names) =>
+                          Effect.forEach(
+                            names.filter((name) => !before.includes(name)),
+                            stampTempPack,
+                          ),
+                        ),
+                        Effect.orElseSucceed(() => []),
+                      );
+                yield* recordStatusRemoteRefreshFailure(key, tempPacks);
+              }),
             ),
           );
         }).pipe(
@@ -1506,7 +1531,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               statusRemoteRefreshFailures.delete(key);
             }),
           ),
-          Effect.tapError(() => recordStatusRemoteRefreshFailure(key)),
           Effect.tapCause((cause) => Effect.logWarning("Background Git fetch failed", cause)),
         );
         const started = yield* Effect.raceFirst(
@@ -1765,7 +1789,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
   });
 
-  const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
+  const statusRemoteRefreshFailures = new Map<
+    string,
+    {
+      readonly count: number;
+      readonly retryAt: number;
+      readonly tempPacks: ReadonlyArray<{ readonly name: string; readonly stamp: string }>;
+    }
+  >();
   const untrackedTotalsFailures = new Map<
     string,
     {
@@ -1789,13 +1820,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
     "GitVcsDriver.recordStatusRemoteRefreshFailure",
-  )(function* (key: string) {
+  )(function* (
+    key: string,
+    tempPacks: ReadonlyArray<{ readonly name: string; readonly stamp: string }>,
+  ) {
     const nextCount = (statusRemoteRefreshFailures.get(key)?.count ?? 0) + 1;
     const now = yield* Clock.currentTimeMillis;
     statusRemoteRefreshFailures.delete(key);
     statusRemoteRefreshFailures.set(key, {
       count: nextCount,
       retryAt: now + Duration.toMillis(statusUpstreamRefreshFailureCooldown(nextCount)),
+      tempPacks,
     });
     if (statusRemoteRefreshFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
       const oldestKey = statusRemoteRefreshFailures.keys().next().value;
