@@ -207,6 +207,28 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("marks disable-model-invocation skills as user-invoked only", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const skillPath = yield* writeSkill(
+        path.join(input.userHome, ".gemini", "config", "skills", "ship"),
+        "---\nname: ship\ndescription: Ship it.\ndisable-model-invocation: true\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        {
+          name: "ship",
+          description: "Ship it.",
+          path: skillPath,
+          scope: "user",
+          enabled: true,
+          userInvocationOnly: true,
+        },
+      ]);
+    }),
+  );
+
   it.effect("ignores invalid files and deeper directories but keeps native hidden skills", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
