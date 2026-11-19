@@ -73,6 +73,7 @@ function acpCanonicalPathForContainment(path: string): string | undefined {
 interface AcpPolicyOperation {
   readonly kind: string | null | undefined;
   readonly locations: ReadonlyArray<{ readonly path: string }> | null | undefined;
+  readonly isT3McpCall?: boolean;
 }
 
 function acpPolicyRequiresApproval(runtimePolicy: AcpRuntimePolicy): boolean {
@@ -177,7 +178,9 @@ function acpOperationDisposition(
       if (
         runtimePolicy.runtimeMode === "auto-accept-edits" &&
         runtimePolicy.approvalPolicy === undefined &&
-        !isAcpMutationKind(toolKind)
+        !isAcpMutationKind(toolKind) &&
+        // T3's MCP endpoint enforces scope itself, as for MCP approval elicitations.
+        !(operation.isT3McpCall === true && toolKind !== "execute")
       ) {
         return "ask";
       }
@@ -195,20 +198,15 @@ export function acpPermissionDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionDisposition {
-  const kind = request.toolCall.kind ?? "other";
   const toolCall = parsePermissionRequest(request).toolCall;
-  if (
-    kind !== "execute" &&
-    !isAcpMutationKind(kind) &&
-    toolCall !== undefined &&
-    extractMcpToolCallIdentity(toolCall)?.server === "t3-code"
-  ) {
-    // Same rule as MCP approval elicitations: T3's MCP endpoint enforces scope itself.
-    return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
-  }
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
+    // Only a title naming T3's server counts; a bare tool name could come from any server.
+    isT3McpCall:
+      /t3[-_ ]?code/i.test(request.toolCall.title ?? "") &&
+      toolCall !== undefined &&
+      extractMcpToolCallIdentity(toolCall)?.server === "t3-code",
   });
 }
 

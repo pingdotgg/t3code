@@ -1261,6 +1261,7 @@ export function parsePermissionRequest(
       rawOutput: params.toolCall.rawOutput,
       content: params.toolCall.content,
       locations: params.toolCall.locations,
+      _meta: params.toolCall._meta,
     },
     { fallbackStatus: "pending" },
   );
