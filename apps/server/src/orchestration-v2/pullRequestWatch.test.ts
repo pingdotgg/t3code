@@ -190,6 +190,51 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  it("reports failures on the first read only when CI was pending at the start", () => {
+    const red = detail({ checks: [check("lint", "failure"), check("test", "pending")] });
+    const pending = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      red,
+      noRemarks,
+    );
+    assert.deepEqual(pending.changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        pending.next,
+        detail({ checks: [check("lint", "failure"), check("test", "success")] }),
+        noRemarks,
+      ).changes,
+      [],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all", checksPending: false }),
+        red,
+        noRemarks,
+      ).changes,
+      [],
+    );
+
+    // A read the host could not finish keeps the baseline and must keep the seed with it.
+    const placeholder = { ...check("Workflow approval status", "pending"), placeholder: true };
+    const incomplete = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      detail({ checks: [check("lint", "success"), placeholder] }),
+      noRemarks,
+    );
+    assert.deepEqual(incomplete.changes, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        incomplete.next,
+        detail({ checks: [check("lint", "success"), check("gated", "failure")] }),
+        noRemarks,
+      ).changes,
+      [{ kind: "checks-failed", failed: [check("gated", "failure")] }],
+    );
+  });
+
   it("baselines checks already awaiting approval", () => {
     const gated = detail({ checks: [{ ...check("CI", "action-required"), url: run(1) }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), gated, noRemarks);
