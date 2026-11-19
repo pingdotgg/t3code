@@ -179,12 +179,13 @@ function StopGenerationButton({
   onStopDictation?: (() => void) | undefined;
   stopDictationShortcutLabel?: string | null;
 }) {
+  const gt = useGT();
   const isStopDisabled = stopPhase === "pending";
   const stopLabel = onStopDictation
-    ? "Stop voice input"
+    ? gt("Stop voice input")
     : stopPhase === "pending"
-      ? "Stopping"
-      : "Stop generation";
+      ? gt("Stopping")
+      : gt("Stop generation");
   return (
     <ComposerSendPill className={cn(insidePendingAction && "sm:h-7")}>
       {leading}
@@ -217,10 +218,12 @@ function StopGenerationButton({
         </TooltipTrigger>
         <TooltipPopup>
           {onStopDictation
-            ? `${stopLabel}${stopDictationShortcutLabel ? ` (${stopDictationShortcutLabel})` : ""}`
+            ? stopDictationShortcutLabel
+              ? gt("Stop voice input ({shortcut})", { shortcut: stopDictationShortcutLabel })
+              : stopLabel
             : stopPhase === "pending"
-              ? "Stopping…"
-              : "Interrupt"}
+              ? gt("Stopping…")
+              : gt("Interrupt", { $context: "verb, stops the running agent" })}
         </TooltipPopup>
       </Tooltip>
     </ComposerSendPill>
@@ -512,7 +515,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       ) : isQueuing ? (
         <>
           <ListPlusIcon className="size-3.5" aria-hidden="true" />
-          Queue
+          {gt("Queue", { $context: "verb, queues the message" })}
         </>
       ) : isRunning ? (
         <CornerUpRightIcon className="size-3.5" aria-hidden="true" />
@@ -552,7 +555,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               variant="pill"
               {...pointerFocusProps}
               aria-pressed={!keepFullHistory}
-              aria-label={`Compact ${compactTokens} tokens of history before sending`}
+              aria-label={gt("Compact {tokens} tokens of history before sending", {
+                tokens: compactTokens,
+              })}
               disabled={!canOperateThread}
               onClick={onToggleKeepFullHistory}
             />
@@ -560,17 +565,21 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         >
           <Minimize2Icon aria-hidden="true" className={compactTone} />
           <span className={cn("@max-[480px]/composer-surface:hidden", compactTone)}>
-            {keepFullHistory ? "Full" : "Compact"}
+            {keepFullHistory
+              ? gt("Full", { $context: "keep full history instead of compacting" })
+              : gt("Compact", { $context: "verb, compact history before sending" })}
           </span>
           <span className={cn("tabular-nums", compactTone)}>{compactTokens}</span>
         </TooltipTrigger>
         <TooltipPopup>
           <div>
             {keepFullHistory
-              ? `Next send keeps all ${compactTokens} tokens.`
-              : `Next send compacts ${compactTokens} tokens first.`}
+              ? gt("Next send keeps all {tokens} tokens.", { tokens: compactTokens })
+              : gt("Next send compacts {tokens} tokens first.", { tokens: compactTokens })}
           </div>
-          <div>{keepFullHistory ? "Click to compact first" : "Click to keep full history"}</div>
+          <div>
+            {keepFullHistory ? gt("Click to compact first") : gt("Click to keep full history")}
+          </div>
         </TooltipPopup>
       </Tooltip>
       {children}

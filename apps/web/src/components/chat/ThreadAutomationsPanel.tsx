@@ -155,7 +155,7 @@ export function ThreadAutomationsPanel(props: {
       {boundTasks.length === 0 && tasksQuery.error === null ? (
         <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
           <CalendarClockIcon className="size-4" />
-          No automations scheduled
+          <T>No automations scheduled</T>
         </div>
       ) : null}
       <div className="max-h-[13.5rem] overflow-y-auto">

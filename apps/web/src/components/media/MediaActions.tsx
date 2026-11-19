@@ -135,7 +135,7 @@ export function useMediaByteAction(source: MediaActionSource) {
       await (action === "save" ? save() : copyImage());
       toastManager.update(progressToast, {
         type: "success",
-        title: action === "save" ? "Download started" : "Image copied",
+        title: action === "save" ? m(msg("Download started")) : m(msg("Image copied")),
       });
     } catch (error) {
       toastManager.update(

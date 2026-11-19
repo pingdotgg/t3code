@@ -53,7 +53,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   rightPanelAvailable,
   rightPanelOpen,
   rightPanelShortcutLabel,
-  rightPanelUnavailableLabel = "Right panel is unavailable",
+  rightPanelUnavailableLabel,
   onToggleTerminal,
   onToggleThreadPanel,
   onToggleRightPanel,
@@ -100,7 +100,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
               onPressedChange={onToggleTerminal}
-              aria-label="Toggle terminal drawer"
+              aria-label={gt("Toggle terminal drawer")}
               variant="ghost"
               size="sm"
               disabled={!terminalAvailable}
@@ -110,8 +110,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {terminalAvailable
-              ? `Toggle terminal drawer${terminalShortcutLabel ? ` (${terminalShortcutLabel})` : ""}`
-              : "Terminal drawer is unavailable"}
+              ? terminalShortcutLabel
+                ? gt("Toggle terminal drawer ({shortcut})", { shortcut: terminalShortcutLabel })
+                : gt("Toggle terminal drawer")
+              : gt("Terminal drawer is unavailable")}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -122,7 +124,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
               onPressedChange={onToggleRightPanel}
-              aria-label="Toggle right panel"
+              aria-label={gt("Toggle right panel")}
               data-right-panel-toggle
               variant="ghost"
               size="sm"
@@ -133,8 +135,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             {rightPanelAvailable
-              ? `Toggle right panel${rightPanelShortcutLabel ? ` (${rightPanelShortcutLabel})` : ""}`
-              : rightPanelUnavailableLabel}
+              ? rightPanelShortcutLabel
+                ? gt("Toggle right panel ({shortcut})", { shortcut: rightPanelShortcutLabel })
+                : gt("Toggle right panel")
+              : (rightPanelUnavailableLabel ?? gt("Right panel is unavailable"))}
           </TooltipPopup>
         </Tooltip>
       ) : null}

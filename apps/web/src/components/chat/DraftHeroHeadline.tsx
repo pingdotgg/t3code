@@ -223,7 +223,11 @@ export function DraftHeroHeadline({
                   <Button
                     variant="ghost-muted"
                     size="icon-micro"
-                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
+                    aria-label={
+                      pinned
+                        ? gt("Unpin {name}", { name: group.displayName })
+                        : gt("Pin {name}", { name: group.displayName })
+                    }
                     aria-pressed={pinned}
                     onClick={() => toggleProjectGroupPin(group)}
                   />
@@ -231,7 +235,7 @@ export function DraftHeroHeadline({
               >
                 {pinned ? <PinOffIcon /> : <PinIcon />}
               </TooltipTrigger>
-              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
+              <TooltipPopup side="top">{pinned ? gt("Unpin") : gt("Pin")}</TooltipPopup>
             </Tooltip>
           ) : null
         }
@@ -270,20 +274,22 @@ export function DraftHeroHeadline({
       >
         {pinnedEntries.length > 0 ? (
           <>
-            <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel>
+            <DraftProjectGroupLabel>{gt("Pinned")}</DraftProjectGroupLabel>
             {pinnedEntries.map(renderProjectRow)}
           </>
         ) : null}
         {recentEntries.length > 0 ? (
           <>
-            <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel>
+            <DraftProjectGroupLabel>
+              {gt("Recent", { $context: "recently used projects" })}
+            </DraftProjectGroupLabel>
             {recentEntries.map(renderProjectRow)}
           </>
         ) : null}
         {menuEntries.length > 0 ? (
           <DraftProjectRow
             icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="All projects…"
+            label={gt("All projects…")}
             detail={String(menuEntries.length)}
             onSelect={openAllProjects}
           />
@@ -293,16 +299,16 @@ export function DraftHeroHeadline({
           <DraftProjectRow
             selected={isScratchDraft}
             icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
-            label="No project"
-            detail="Its own folder, no git"
+            label={gt("No project")}
+            detail={gt("Its own folder, no git")}
             shortcut={noProjectShortcut}
             onSelect={() => void startScratch()}
           />
         )}
         <DraftProjectRow
           icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="Add project…"
-          detail="Open a folder or clone a repository"
+          label={gt("Add project…")}
+          detail={gt("Open a folder or clone a repository")}
           onSelect={openAddProject}
         />
       </div>

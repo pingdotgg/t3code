@@ -6,6 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import { CopyIcon, TextQuoteIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -225,7 +226,7 @@ export function AssistantSelectionToolbar({
       }
     })();
     const done = () => {
-      toastManager.add({ type: "success", title: "Copied to clipboard" });
+      toastManager.add({ type: "success", title: m(msg("Copied to clipboard")) });
       dismiss();
     };
     if (copied) {

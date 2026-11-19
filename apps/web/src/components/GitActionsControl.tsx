@@ -1258,7 +1258,9 @@ export default function GitActionsControl({
               {showChanges ? (
                 <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
                   <FileDiffIcon />
-                  <MenuItemLabel>View changes</MenuItemLabel>
+                  <MenuItemLabel>
+                    <T>View changes</T>
+                  </MenuItemLabel>
                   {changesSummary}
                 </MenuItem>
               ) : null}
@@ -1311,7 +1313,9 @@ export default function GitActionsControl({
           {!showChanges || quietEmptyDraft ? null : (
             <ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges}>
               <FileDiffIcon aria-hidden />
-              <MenuItemLabel>View changes</MenuItemLabel>
+              <MenuItemLabel>
+                    <T>View changes</T>
+                  </MenuItemLabel>
               {!showActions ? changesSummary : null}
               {keybindings && (
                 <MenuShortcut>

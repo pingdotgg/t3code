@@ -22,7 +22,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { useMessages } from "gt-react";
+import { T, useMessages, Var } from "gt-react";
 import {
   CheckIcon,
   ExternalLinkIcon,
@@ -174,7 +174,7 @@ function PendingSecretRequestForm(props: {
           className="ms-auto flex min-w-0 items-center gap-1 text-meta text-muted-foreground"
         >
           <ShieldCheckIcon className="size-3 shrink-0" aria-hidden />
-          {secretRequestPrivacyNote(item)}
+          {secretRequestPrivacyNote(item, messages)}
         </p>
       </div>
       {link !== null ? (
@@ -184,7 +184,9 @@ function PendingSecretRequestForm(props: {
             size="sm"
             render={<a href={link.href} target="_blank" rel="noopener noreferrer" />}
           >
-            Open {link.host}
+            <T>
+              Open <Var>{link.host}</Var>
+            </T>
             <ExternalLinkIcon aria-hidden />
           </Button>
           {/* A link found in the reason is already shown there. */}
@@ -250,7 +252,7 @@ function PendingSecretRequestForm(props: {
             )}
           </div>
           <Button type="submit" disabled={submitting || draft.trim().length === 0}>
-            Save securely
+            <T>Save securely</T>
           </Button>
           <Button
             type="button"
@@ -259,7 +261,7 @@ function PendingSecretRequestForm(props: {
             disabled={submitting}
             onClick={() => void send({ type: "decline" })}
           >
-            Decline
+            <T>Decline</T>
           </Button>
         </div>
         {error !== null ? (

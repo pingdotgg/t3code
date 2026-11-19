@@ -808,14 +808,14 @@ export function WorktreeCleanupSection({ title }: { title?: string }) {
                   />
                 )}
               <SettingsRow
-                title="Delete unchanged worktrees"
+                title={gt("Delete unchanged worktrees")}
                 status={ruleStatus("worktreeUnchanged")}
                 managedPaths={lockablePath("worktreeUnchanged")}
-                description="No commits beyond the default branch."
+                description={gt("No commits beyond the default branch.")}
                 serverScoped={!isProjectScope}
                 control={
                   <Switch
-                    aria-label="Delete unchanged worktrees"
+                    aria-label={gt("Delete unchanged worktrees")}
                     checked={settings.worktreeUnchanged}
                     onCheckedChange={(worktreeUnchanged) => updateWorktree({ worktreeUnchanged })}
                   />

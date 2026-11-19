@@ -742,7 +742,7 @@ function QueuedMessage(props: {
                   />
                 }
               >
-                Open automation
+                <T>Open automation</T>
               </InlineButton>
             ) : null}
             <span className="sr-only">

@@ -231,7 +231,7 @@ export const ChatHeader = memo(function ChatHeader({
             <input
               autoFocus
               dir="auto"
-              aria-label="Thread title"
+              aria-label={gt("Thread title")}
               className="min-w-24 max-w-full bg-transparent outline-none [field-sizing:content]"
               defaultValue={renamingTitle}
               onBlur={(event) => {
@@ -256,7 +256,7 @@ export const ChatHeader = memo(function ChatHeader({
                 isServerThread ? (
                   <PaneTabButton
                     type="button"
-                    aria-label={`Thread actions for ${activeThreadTitle}`}
+                    aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
                     onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}

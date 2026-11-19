@@ -347,7 +347,9 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
       >
         {showRunOn && availableEnvironments && availableEnvironments.length > 0 ? (
           <MenuGroup>
-            <MenuGroupLabel>Run on</MenuGroupLabel>
+            <MenuGroupLabel>
+              <T>Run on</T>
+            </MenuGroupLabel>
             <MenuRadioGroup
               value={autoEnvironmentLabel ? "auto" : environmentId}
               onValueChange={(value) =>
@@ -372,9 +374,13 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                     />
                     <span className="min-w-0 flex-1 truncate">{env.label}</span>
                     {env.isPrimary ? null : connectedEnvironmentIds.includes(env.environmentId) ? (
-                      <Badge variant="success">Online</Badge>
+                      <Badge variant="success">
+                        <T>Online</T>
+                      </Badge>
                     ) : (
-                      <Badge variant="unavailable">Offline</Badge>
+                      <Badge variant="unavailable">
+                        <T>Offline</T>
+                      </Badge>
                     )}
                   </span>
                 </MenuRadioItem>
@@ -393,9 +399,9 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                       className="size-4 shrink-0 text-muted-foreground"
                       aria-hidden="true"
                     />
-                    <span className="shrink-0">{autoEnvironmentLabel ?? "Auto balance"}</span>
+                    <span className="shrink-0">{autoEnvironmentLabel ?? gt("Auto balance")}</span>
                     <span className="min-w-0 truncate text-meta text-dim-foreground">
-                      Least busy machine
+                      <T>Least busy machine</T>
                     </span>
                   </span>
                 </MenuRadioItem>
@@ -406,7 +412,9 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
                 <MenuSubTrigger>
                   <span className={ADD_TO_MACHINE_LABEL_CLASS}>
                     <PlusIcon className="size-3" />
-                    <span className="min-w-0 truncate">Add to another machine</span>
+                    <span className="min-w-0 truncate">
+                      <T>Add to another machine</T>
+                    </span>
                   </span>
                 </MenuSubTrigger>
                 <MenuSubPopup {...composerFloatingLayerProps}>
@@ -882,7 +890,11 @@ const RunContextSelector = memo(function RunContextSelector({
         onContextMenu={handleContextMenu}
         aria-label={
           isPanel
-            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            ? gt("Run context: {context}", {
+                context: [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel]
+                  .filter(Boolean)
+                  .join(", "),
+              })
             : undefined
         }
         data-composer-context-control
@@ -907,7 +919,11 @@ const RunContextSelector = memo(function RunContextSelector({
         }
         aria-label={
           isPanel
-            ? `Run context: ${[autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel].filter(Boolean).join(", ")}`
+            ? gt("Run context: {context}", {
+                context: [autoEnvironmentLabel ?? activeEnvironment?.label, workspaceLabel]
+                  .filter(Boolean)
+                  .join(", "),
+              })
             : undefined
         }
         data-composer-context-control

@@ -916,15 +916,17 @@ export function ThreadRelationshipsPanel(props: {
         </span>
         <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
           {isParent ? (
-            "Parent"
+            gt("Parent", { $context: "noun, the parent thread" })
           ) : !isSubagent ? (
             edge.kind === "transfer" ? (
               relationship
             ) : (
-              "Fork"
+              gt("Fork", { $context: "noun, a forked thread" })
             )
           ) : failed ? (
-            <span className="text-destructive-foreground">Failed</span>
+            <span className="text-destructive-foreground">
+              <T context="agent status">Failed</T>
+            </span>
           ) : (
             <>
               {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
@@ -933,7 +935,11 @@ export function ThreadRelationshipsPanel(props: {
                 threadRelationshipStatusLabel(rowStatus, m)
               )}
               {rowStatus === "running" || rowStatus === "in_progress" ? (
-                <Spinner size="xs" tone="muted" aria-label="Running" />
+                <Spinner
+                  size="xs"
+                  tone="muted"
+                  aria-label={gt("Running", { $context: "agent status" })}
+                />
               ) : null}
             </>
           )}

@@ -287,7 +287,7 @@ export function ComposerSpeechButton(props: {
       <TooltipPopup side="top">
         {unavailable ?? label}
         {showsShortcut && props.shortcutLabel ? ` (${props.shortcutLabel})` : ""}
-        {phase !== "idle" && !isRecording ? " (Esc cancels)" : ""}
+        {phase !== "idle" && !isRecording ? ` ${gt("(Esc cancels)")}` : ""}
       </TooltipPopup>
     </Tooltip>
   );
