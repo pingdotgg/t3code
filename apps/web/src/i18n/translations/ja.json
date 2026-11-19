@@ -11717,6 +11717,7 @@
     " に切り替え"
   ],
   "86beb6c9c15d2391": "使用量のプロバイダーが設定されていません。",
+  "c665240c833491b0": "Add a CLIProxyAPI hub to show the quota of every account it pools next to your providers.",
   "3c98c35d600e6738": "使用量のプロバイダーを追加",
   "1d1e9cda847bd398": "ハブの管理キーはこのサーバーから削除されます。そのアカウントは「上限」ビューから消えますが、ハブ自体には影響しません。元に戻すには、URL とキーで再度追加してください。",
   "c9bee4f93481b77a": "ハブを削除",
