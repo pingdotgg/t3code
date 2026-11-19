@@ -240,6 +240,28 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(dialog.getByText(message)).not.toBeInTheDocument();
   });
 
+  it("confirms a dismissed SSH connection without closing the reopened dialog", async () => {
+    using _bridge = setup();
+    const connection = Promise.withResolvers<AtomCommandResult<void, Error>>();
+    mocks.connectSshEnvironment.mockReturnValueOnce(connection.promise);
+    await using _screen = await render(
+      <ToastProvider>
+        <Owner />
+      </ToastProvider>,
+    );
+
+    await openDialogOnSsh();
+    const dialog = page.getByRole("dialog");
+    await userEvent.fill(dialog.getByPlaceholder("Search hosts or type devbox"), "devbox");
+    await userEvent.click(dialog.getByRole("button", { name: "Add environment" }));
+    await userEvent.keyboard("{Escape}");
+    await expectDefaultModeAfterReopen();
+
+    connection.resolve(AsyncResult.success(undefined));
+    await expect.element(page.getByText("Environment connected")).toBeInTheDocument();
+    await expect.element(dialog.getByRole("button", { name: "Add environment" })).toBeEnabled();
+  });
+
   it.each([
     { outcome: "succeeds", result: AsyncResult.success(undefined) },
     {
@@ -307,6 +329,9 @@ describe("AddEnvironmentDialog", () => {
       registration.resolve(result);
       if (result._tag === "Success") {
         await expect.element(page.getByText("Route added", { exact: true })).toBeInTheDocument();
+      } else {
+        await expect.element(page.getByText("Could not add the route.")).toBeInTheDocument();
+        await expect.element(page.getByText("Route registration failed")).toBeInTheDocument();
       }
       await expect.element(dialog.getByRole("button", { name: "Add environment" })).toBeEnabled();
       await expect.element(dialog.getByText("Route registration failed")).not.toBeInTheDocument();

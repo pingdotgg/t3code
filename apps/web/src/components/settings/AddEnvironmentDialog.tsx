@@ -468,13 +468,21 @@ export function AddEnvironmentDialog({
     );
     setIsAddingSavedBackend(false);
     if (result._tag === "Failure") {
-      if (session === savedBackendSessionRef.current && !isAtomCommandInterrupted(result)) {
+      if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        onErrorChange(
-          error instanceof Error
-            ? (thrownErrorMessage(error, m) ?? error.message)
-            : gt("Could not add the route."),
-        );
+        const message =
+          error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : undefined;
+        if (session === savedBackendSessionRef.current) {
+          onErrorChange(message ?? gt("Could not add the route."));
+        } else {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: gt("Could not add the route."),
+              description: message,
+            }),
+          );
+        }
       }
       return;
     }
