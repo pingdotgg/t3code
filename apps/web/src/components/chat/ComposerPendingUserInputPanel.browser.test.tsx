@@ -114,13 +114,13 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
   },
 );
 
-it.each<{ keys: string; toggles: boolean }>([
-  { keys: "{Alt>}1{/Alt}", toggles: true },
-  { keys: "1", toggles: false },
+it.each<{ keys: string; toggles: boolean; text?: string }>([
+  { keys: "{Alt>}1{/Alt}", toggles: true, text: "" },
+  { keys: "1", toggles: false, text: "1" },
   { keys: "{Meta>}1{/Meta}", toggles: false },
   { keys: "{Alt>}{Shift>}1{/Shift}{/Alt}", toggles: false },
   { keys: "{Alt>}2{/Alt}", toggles: false },
-])("$keys in the answer box toggles an option: $toggles", async ({ keys, toggles }) => {
+])("$keys in the answer box toggles an option: $toggles", async ({ keys, toggles, text }) => {
   const onToggleOption = vi.fn();
   await using screen = await render(
     <>
@@ -144,7 +144,7 @@ it.each<{ keys: string; toggles: boolean }>([
   await userEvent.keyboard(keys);
 
   expect(onToggleOption.mock.calls).toEqual(toggles ? [["question", "Incremental"]] : []);
-  if (toggles) {
-    await expect.element(screen.getByLabelText("Answer")).toHaveTextContent("");
+  if (text !== undefined) {
+    await expect.element(screen.getByLabelText("Answer")).toHaveTextContent(text);
   }
 });
