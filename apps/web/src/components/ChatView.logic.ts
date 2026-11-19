@@ -1260,22 +1260,35 @@ export function threadErrorIsServerRuntime(input: {
 }
 
 /**
- * The run a thread's error banner is keyed by. The latest failed run owns the error until a later
- * run completes; after that, or when nothing failed, the latest completed run owns it, so a
- * session error that repeats after a later run is a new one.
+ * Which failure a thread's error banner shows: a run failure is the presented latest run's, and a
+ * session error belongs to the run that last failed or completed, so a newer run starting keeps
+ * it. The failure time tells a repeated failure of a retried run apart.
  */
-export function threadErrorBannerRunId(
-  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">>,
-): RunId | null {
-  let failed: (typeof runs)[number] | null = null;
-  let completed: (typeof runs)[number] | null = null;
-  for (const run of runs) {
-    if (run.status === "failed" && (failed === null || endedAfter(run, failed))) failed = run;
-    if (run.status === "completed" && (completed === null || endedAfter(run, completed)))
-      completed = run;
+export function threadErrorBannerSource(input: {
+  readonly runtime: {
+    readonly lastError: string | null;
+    readonly lastErrorClass?: string | null;
+  } | null;
+  readonly latestRun: { readonly runId: RunId; readonly completedAt: string | null } | null;
+  readonly runs: ReadonlyArray<
+    Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">
+  >;
+}): string | null {
+  if (!input.runtime?.lastError) return null;
+  // A failure class means the error is the presented run's own failure.
+  if (input.runtime.lastErrorClass) {
+    return input.latestRun === null
+      ? null
+      : `${input.latestRun.runId}@${input.latestRun.completedAt ?? ""}`;
   }
-  if (failed !== null && (completed === null || !endedAfter(completed, failed))) return failed.id;
-  return completed?.id ?? null;
+  let ended: (typeof input.runs)[number] | null = null;
+  for (const run of input.runs) {
+    if (run.status !== "failed" && run.status !== "completed") continue;
+    if (ended === null || endedAfter(run, ended)) ended = run;
+  }
+  return ended === null
+    ? null
+    : `${ended.id}@${ended.completedAt === null ? "" : DateTime.formatIso(ended.completedAt)}`;
 }
 
 // runRanAfter ranks a run without completedAt as still running, which a finished run is not.

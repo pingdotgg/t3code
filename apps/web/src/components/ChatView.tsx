@@ -44,7 +44,7 @@ import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
 import {
   isThreadEnvironmentLocked,
   resolveDraftHeroState,
-  threadErrorBannerRunId,
+  threadErrorBannerSource,
   threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import { useQueuedRunEdit } from "./chat/useQueuedRunEdit";
@@ -992,7 +992,11 @@ export default function ChatView(props: ChatViewProps) {
       localServerError,
       runtimeError: serverRuntime?.lastError ?? null,
     })
-      ? threadErrorBannerRunId(serverProjection?.runs ?? [])
+      ? threadErrorBannerSource({
+          runtime: serverRuntime,
+          latestRun: serverLatestRun,
+          runs: serverProjection?.runs ?? [],
+        })
       : null,
   );
   const visibleThreadError = shouldShowThreadErrorBanner(

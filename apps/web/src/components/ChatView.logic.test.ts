@@ -22,7 +22,7 @@ import {
   isThreadEnvironmentLocked,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
-  threadErrorBannerRunId,
+  threadErrorBannerSource,
   threadErrorIsServerRuntime,
 } from "./ChatView.logic";
 import {
@@ -1683,7 +1683,7 @@ describe("threadErrorIsServerRuntime", () => {
   });
 });
 
-describe("threadErrorBannerRunId", () => {
+describe("threadErrorBannerSource", () => {
   const run = (
     id: string,
     status: OrchestrationV2RunStatus,
@@ -1695,63 +1695,73 @@ describe("threadErrorBannerRunId", () => {
     ordinal,
     completedAt: completedAt === null ? null : DateTime.makeUnsafe(completedAt),
   });
+  const sessionError = (runs: ReadonlyArray<ReturnType<typeof run>>) =>
+    threadErrorBannerSource({
+      runtime: { lastError: "E", lastErrorClass: null },
+      latestRun: null,
+      runs,
+    });
+  const runFailure = (runId: string, completedAt: string) =>
+    threadErrorBannerSource({
+      runtime: { lastError: "E", lastErrorClass: "provider_error" },
+      latestRun: { runId: runId as RunId, completedAt },
+      runs: [run("run-a", "failed", 1, "2026-11-16T00:09:00Z")],
+    });
 
   it("keys a session error by the completed run that followed a failure, so the failure's dismissal does not hide it", () => {
     expect(
-      threadErrorBannerRunId([
+      sessionError([
+        run("run-0", "failed", 0),
         run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
         run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
       ]),
-    ).toBe("run-b");
+    ).toBe("run-b@2026-11-16T00:02:00.000Z");
   });
 
-  it("keys by a later failed run even when an earlier failed run has no completion time", () => {
-    expect(
-      threadErrorBannerRunId([
-        run("run-a", "failed", 1),
-        run("run-b", "failed", 2, "2026-11-16T00:02:00Z"),
-      ]),
-    ).toBe("run-b");
+  it("keys a run failure by the presented run and its failure time, not a queued run that failed later", () => {
+    const first = runFailure("run-b", "2026-11-16T00:02:00.000Z");
+    expect(first).toBe("run-b@2026-11-16T00:02:00.000Z");
+    expect(runFailure("run-b", "2026-11-16T00:05:00.000Z")).not.toBe(first);
   });
 
   it("keys a repeated session error by a later completed run, so its earlier dismissal does not hide it", () => {
     expect(
-      threadErrorBannerRunId([
+      sessionError([
         run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
         run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
         run("run-c", "completed", 3, "2026-11-16T00:03:00Z"),
       ]),
-    ).toBe("run-c");
+    ).toBe("run-c@2026-11-16T00:03:00.000Z");
   });
 
   it("keeps a failed run's key when the completed run finished before it failed", () => {
     expect(
-      threadErrorBannerRunId([
+      sessionError([
         run("run-b", "completed", 1, "2026-11-16T00:01:00Z"),
         run("run-a", "failed", 2, "2026-11-16T00:02:00Z"),
       ]),
-    ).toBe("run-a");
+    ).toBe("run-a@2026-11-16T00:02:00.000Z");
   });
 
   it("keeps the failed run's key while a later run starts, so its dismissed error stays hidden", () => {
-    expect(threadErrorBannerRunId([run("run-a", "failed", 1), run("run-b", "starting", 2)])).toBe(
-      "run-a",
-    );
-  });
-
-  it("moves to a later run once that run fails", () => {
     expect(
-      threadErrorBannerRunId([
-        run("run-a", "failed", 1),
-        run("run-b", "running", 2),
-        run("run-c", "failed", 3),
+      sessionError([
+        run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
+        run("run-b", "starting", 2),
       ]),
-    ).toBe("run-c");
+    ).toBe(runFailure("run-a", "2026-11-16T00:01:00.000Z"));
   });
 
-  it("keys by the latest completed run when no run has failed, and has no key without runs", () => {
-    expect(threadErrorBannerRunId([])).toBeNull();
-    expect(threadErrorBannerRunId([run("run-a", "completed", 1)])).toBe("run-a");
-    expect(threadErrorBannerRunId([run("run-a", "starting", 1)])).toBeNull();
+  it("has no key without an error or an ended run", () => {
+    expect(
+      threadErrorBannerSource({
+        runtime: { lastError: null, lastErrorClass: null },
+        latestRun: null,
+        runs: [run("run-a", "completed", 1)],
+      }),
+    ).toBeNull();
+    expect(sessionError([])).toBeNull();
+    expect(sessionError([run("run-a", "completed", 1)])).toBe("run-a@");
+    expect(sessionError([run("run-a", "starting", 1)])).toBeNull();
   });
 });

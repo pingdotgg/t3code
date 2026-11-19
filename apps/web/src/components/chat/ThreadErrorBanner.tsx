@@ -54,9 +54,9 @@ export function getThreadErrorBannerMessage(error: string): string {
 export function getThreadErrorBannerKey(
   threadKey: string,
   error: string | null,
-  runId: string | null = null,
+  source: string | null = null,
 ): string | null {
-  return error === null ? null : `${threadKey}\u0000${runId ?? ""}\u0000${error}`;
+  return error === null ? null : `${threadKey}\u0000${source ?? ""}\u0000${error}`;
 }
 
 export function shouldShowThreadErrorBanner(
