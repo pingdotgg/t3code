@@ -1218,7 +1218,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       }
       // The platform's offline report can stay wrong after the network is back,
       // so an explicit retry, or every OFFLINE_RECHECK_MS, still tries once.
-      const ignoreOffline = replacing || retryRequested || offlineRecheckDue;
+      const ignoreOffline =
+        replacing || retryRequested || (offlineRecheckDue && currentIntent.network === "offline");
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
         yield* setState(offlineState(currentIntent, generation, failureCount + 1, latestFailure));
