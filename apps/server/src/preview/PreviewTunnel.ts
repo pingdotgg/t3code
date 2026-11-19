@@ -69,8 +69,11 @@ export class PreviewTunnel extends Context.Service<
       PreviewTunnelDisabledError | PreviewTunnelPortRefusedError | PreviewTunnelConnectError,
       Scope.Scope
     >;
-    /** Completes when the tunnel is switched off, so open tunnels close with it. */
-    readonly turnedOff: Effect.Effect<void>;
+    /**
+     * Subscribes now, before `connect` reads the setting, so a switch-off during dialling isn't
+     * missed. The returned effect completes once the tunnel is switched off.
+     */
+    readonly watchTurnedOff: Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
   }
 >()("t3/preview/PreviewTunnel") {}
 
@@ -84,11 +87,15 @@ const make = Effect.gen(function* () {
     Effect.map(allowedBy),
     Effect.orElseSucceed(() => false),
   );
-  const turnedOff = serverSettings.streamChanges.pipe(
-    Stream.filter((settings) => !allowedBy(settings)),
-    Stream.runHead,
-    // A change stream that ends without switching the tunnel off never does.
-    Effect.flatMap((change) => (Option.isSome(change) ? Effect.void : Effect.never)),
+  const watchTurnedOff = serverSettings.subscribeChanges.pipe(
+    Effect.map((changes) =>
+      changes.pipe(
+        Stream.filter((settings) => !allowedBy(settings)),
+        Stream.runHead,
+        // A change stream that ends without switching the tunnel off never does.
+        Effect.flatMap((change) => (Option.isSome(change) ? Effect.void : Effect.never)),
+      ),
+    ),
   );
 
   const dial = Effect.fnUntraced(function* (host: string, port: number) {
@@ -111,7 +118,7 @@ const make = Effect.gen(function* () {
     },
   );
 
-  return PreviewTunnel.of({ connect, turnedOff });
+  return PreviewTunnel.of({ connect, watchTurnedOff });
 });
 
 export const layer = Layer.effect(PreviewTunnel, make);
@@ -165,6 +172,7 @@ const handler = Effect.gen(function* () {
   const connection = NodeHttpServerRequest.toIncomingMessage(request).socket;
   const servedPort = connection.localPort;
   return yield* Effect.gen(function* () {
+    const turnedOff = yield* tunnel.watchTurnedOff;
     // Dialled before the upgrade so a dead port fails the handshake instead of an open socket.
     const upstream = yield* tunnel.connect({ port, servedPort });
     const client = yield* request.upgrade;
@@ -179,7 +187,7 @@ const handler = Effect.gen(function* () {
       ),
       Effect.raceFirst(
         sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
-        tunnel.turnedOff,
+        turnedOff,
       ),
     ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();

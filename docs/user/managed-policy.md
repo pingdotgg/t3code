@@ -251,7 +251,7 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
-- `previewTunnel: false`: other devices cannot open this machine's `localhost` through T3 Code.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
   Browser tabs stream from it instead, and port forwarding and **Open on this device** are
   unavailable. This wins over the user's
   [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).

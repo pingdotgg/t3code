@@ -4198,6 +4198,7 @@
   "075398ac562d74b0": "Disconnect agent session",
   "1d2025060ba3d1c3": "Could not forward port {port}",
   "086ecbb6f4c2e959": "Unable to open in browser",
+  "112173d046bfc910": "localhost:{port} runs on another machine, and port forwarding isn't available for it right now.",
   "51052c00ab1ac8cc": "Unable to open preview",
   "0ccd37739f9cf2b6": "Could not stop server",
   "a610a81c4061bb4c": "Servers",

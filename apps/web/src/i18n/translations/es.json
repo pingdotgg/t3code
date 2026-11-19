@@ -4196,6 +4196,7 @@
   "075398ac562d74b0": "Desconectar la sesión del agente",
   "1d2025060ba3d1c3": "No se pudo reenviar el puerto {port}",
   "086ecbb6f4c2e959": "No se puede abrir en el navegador",
+  "112173d046bfc910": "localhost:{port} se ejecuta en otro equipo y el reenvío de puertos no está disponible para él ahora.",
   "51052c00ab1ac8cc": "No se puede abrir la vista previa",
   "0ccd37739f9cf2b6": "No se pudo detener el servidor",
   "a610a81c4061bb4c": "Servidores",

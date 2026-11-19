@@ -4197,6 +4197,7 @@
   "075398ac562d74b0": "Koppla från agentsession",
   "1d2025060ba3d1c3": "Kunde inte vidarebefordra port {port}",
   "086ecbb6f4c2e959": "Det gick inte att öppna i webbläsaren",
+  "112173d046bfc910": "localhost:{port} körs på en annan dator, och portvidarebefordring är inte tillgänglig för den just nu.",
   "51052c00ab1ac8cc": "Det gick inte att öppna förhandsvisningen",
   "0ccd37739f9cf2b6": "Kunde inte stoppa servern",
   "a610a81c4061bb4c": "Servrar",

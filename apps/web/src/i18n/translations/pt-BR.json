@@ -4196,6 +4196,7 @@
   "075398ac562d74b0": "Desconectar a sessão do agente",
   "1d2025060ba3d1c3": "Não foi possível encaminhar a porta {port}",
   "086ecbb6f4c2e959": "Não foi possível abrir no navegador",
+  "112173d046bfc910": "localhost:{port} roda em outra máquina, e o encaminhamento de portas não está disponível para ela agora.",
   "51052c00ab1ac8cc": "Não foi possível abrir a pré-visualização",
   "0ccd37739f9cf2b6": "Não foi possível parar o servidor",
   "a610a81c4061bb4c": "Servidores",

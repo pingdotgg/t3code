@@ -4197,6 +4197,7 @@
   "075398ac562d74b0": "Déconnecter la session de l’agent",
   "1d2025060ba3d1c3": "Impossible de rediriger le port {port}",
   "086ecbb6f4c2e959": "Impossible d’ouvrir dans le navigateur",
+  "112173d046bfc910": "localhost:{port} tourne sur une autre machine, et la redirection de ports n’est pas disponible pour elle pour le moment.",
   "51052c00ab1ac8cc": "Impossible d’ouvrir l’aperçu",
   "0ccd37739f9cf2b6": "Impossible d’arrêter le serveur",
   "a610a81c4061bb4c": "Serveurs",

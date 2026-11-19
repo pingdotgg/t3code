@@ -4199,6 +4199,7 @@
   "075398ac562d74b0": "Agentensitzung trennen",
   "1d2025060ba3d1c3": "Port {port} konnte nicht weitergeleitet werden",
   "086ecbb6f4c2e959": "Kann nicht im Browser geöffnet werden",
+  "112173d046bfc910": "localhost:{port} läuft auf einem anderen Rechner, und Portweiterleitung ist dafür gerade nicht verfügbar.",
   "51052c00ab1ac8cc": "Vorschau kann nicht geöffnet werden",
   "0ccd37739f9cf2b6": "Server konnte nicht gestoppt werden",
   "a610a81c4061bb4c": "Server",

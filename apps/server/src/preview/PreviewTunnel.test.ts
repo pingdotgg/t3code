@@ -51,21 +51,32 @@ const listen = (onConnection: (socket: NodeNet.Socket) => void) =>
 const makeSettings = Effect.fn(function* (
   enablePreviewTunnel = true,
   managedPolicy?: ManagedPolicySummary,
+  /** Applied right after the first read, as a change landing while a tunnel dials. */
+  afterFirstRead?: Partial<ServerSettings>,
 ) {
   const current = yield* Ref.make<ServerSettings>({
     ...DEFAULT_SERVER_SETTINGS,
     enablePreviewTunnel,
   });
   const changes = yield* PubSub.unbounded<ServerSettings>();
+  const set = (patch: Partial<ServerSettings>) =>
+    Ref.updateAndGet(current, (settings) => ({ ...settings, ...patch })).pipe(
+      Effect.flatMap((settings) => PubSub.publish(changes, settings)),
+    );
+  let pendingChange = afterFirstRead;
   return {
-    set: (patch: Partial<ServerSettings>) =>
-      Ref.updateAndGet(current, (settings) => ({ ...settings, ...patch })).pipe(
-        Effect.flatMap((settings) => PubSub.publish(changes, settings)),
-      ),
+    set,
     layer: Layer.mock(ServerSettingsService, {
       managedPolicy,
-      getSettings: Ref.get(current),
+      getSettings: Ref.get(current).pipe(
+        Effect.tap(() => {
+          const change = pendingChange;
+          pendingChange = undefined;
+          return change ? set(change) : Effect.void;
+        }),
+      ),
       streamChanges: Stream.fromPubSub(changes),
+      subscribeChanges: PubSub.subscribe(changes).pipe(Effect.map(Stream.fromSubscription)),
     }),
   };
 });
@@ -268,6 +279,18 @@ it.effect("closes an open tunnel when the setting turns it off", () =>
     yield* Effect.promise(() => new Promise((resolve) => client.once("open", resolve)));
     const clientClosed = new Promise((resolve) => client.once("close", resolve));
     yield* settings.set({ enablePreviewTunnel: false });
+    yield* Effect.promise(() => Promise.all([clientClosed, upstreamClosed.promise]));
+  }),
+);
+
+it.effect("closes a tunnel the setting turns off while it is still dialling", () =>
+  Effect.gen(function* () {
+    const settings = yield* makeSettings(true, undefined, { enablePreviewTunnel: false });
+    const upstreamClosed = Promise.withResolvers<void>();
+    const upstream = yield* listen((socket) => socket.on("close", () => upstreamClosed.resolve()));
+    const tunnel = yield* serveTunnel(Effect.never, settings.layer);
+    const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${upstream.port}`);
+    const clientClosed = new Promise((resolve) => client.once("close", resolve));
     yield* Effect.promise(() => Promise.all([clientClosed, upstreamClosed.promise]));
   }),
 );
