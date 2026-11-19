@@ -149,15 +149,15 @@ const mockHttp = Layer.effect(
   HttpClient.HttpClient,
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const read = (name: string) =>
-      fs.readFileString(`${import.meta.dirname}/../../schema/${name}.graphql`).pipe(
+    const read = (path: string) =>
+      fs.readFileString(`${import.meta.dirname}/../../${path}`).pipe(
         Effect.map((sdl) => buildSchema(sdl)),
         Effect.orDie,
       );
-    const gitHub = yield* read("github");
+    const gitHub = yield* read("schema/github.graphql");
     // From https://docs.github.com/public/ghes-3.19/schema.docs-enterprise.graphql, the oldest
     // Enterprise Server that GitHub publishes a schema for.
-    const enterpriseServer = yield* read("github-enterprise-3.19");
+    const enterpriseServer = yield* read("test/fixtures/github-enterprise-3.19.graphql");
     return HttpClient.make((request) =>
       Effect.gen(function* () {
         const host = new URL(request.url).hostname.replace(/^api\./, "");
