@@ -1,6 +1,8 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { type ReactNode, useSyncExternalStore } from "react";
 
+import type { MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom } from "~/state/server";
@@ -44,15 +46,26 @@ function useUpdateRunMachineViews(run: UpdateEverythingRun): ReadonlyArray<Updat
   }));
 }
 
-function localStatusLabel(run: UpdateEverythingRun, local: UpdateRunLocalState, now: number) {
+function localStatusLabel(
+  run: UpdateEverythingRun,
+  local: UpdateRunLocalState,
+  now: number,
+  resolve: MessageResolver,
+) {
   if (run.phase === "countdown" && run.restartAt !== null) {
-    return `restarts in ${Math.max(0, Math.ceil((run.restartAt - now) / 1000))}s`;
+    return resolve(
+      msg("restarts in {seconds}s", {
+        seconds: Math.max(0, Math.ceil((run.restartAt - now) / 1000)),
+      }),
+    );
   }
-  if (run.phase === "installing") return "restarting";
+  if (run.phase === "installing") return resolve(msg("restarting"));
   if (local?.status === "downloading") {
-    return `downloading${local.percent === null ? "" : ` ${Math.floor(local.percent)}%`}`;
+    return local.percent === null
+      ? resolve(msg("downloading"))
+      : resolve(msg("downloading {percent}%", { percent: Math.floor(local.percent) }));
   }
-  return "restarts after the servers";
+  return resolve(msg("restarts after the servers"));
 }
 
 export function SidebarUpdateCapsule({
@@ -71,7 +84,9 @@ export function SidebarUpdateCapsule({
     ({ status }) => status !== "done" && status !== "failed" && status !== "waiting",
   );
   const now = useNow(run.phase === "countdown" ? 1_000 : hasActiveMachine ? 30_000 : null);
-  const view = describeUpdateCapsule(run, machines, local, now);
+  const gt = useGT();
+  const m = useMessages();
+  const view = describeUpdateCapsule(run, machines, local, now, m);
   const updateServer = useServerUpdate();
   const failed = machines.some(({ status }) => status === "failed");
   const settled = !hasActiveMachine && run.localVersion === null;
@@ -81,7 +96,7 @@ export function SidebarUpdateCapsule({
       : null;
 
   const actionLabel =
-    view.action === "later" ? "Later" : view.action === "retry" ? "Retry" : "Dismiss";
+    view.action === "later" ? gt("Later") : view.action === "retry" ? gt("Retry") : gt("Dismiss");
   const runAction = () => {
     if (view.action === "later") postponeUpdateRestart();
     else if (view.action === "retry") retryFailedUpdateRunServers(updateServer);
@@ -138,16 +153,20 @@ export function SidebarUpdateCapsule({
         <div className="flex flex-col gap-1 text-xs">
           {run.localVersion !== null ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>
+                <T>This app</T>
+              </span>
               <span className="text-muted-foreground tabular-nums">
-                {localStatusLabel(run, local, now)}
+                {localStatusLabel(run, local, now, m)}
               </span>
             </div>
           ) : onRestart ? (
             <div className="flex items-center justify-between gap-3">
-              <span>This app</span>
+              <span>
+                <T>This app</T>
+              </span>
               <Button size="xs" variant="outline" onClick={() => void onRestart()}>
-                Restart to update
+                <T>Restart to update</T>
               </Button>
             </div>
           ) : null}
@@ -161,9 +180,9 @@ export function SidebarUpdateCapsule({
                     status === "failed" ? "text-destructive" : "text-muted-foreground",
                   )}
                 >
-                  {RUN_STATUS_LABELS[status]}
+                  {m(RUN_STATUS_LABELS[status])}
                   {status !== "done" && status !== "failed" && status !== "waiting"
-                    ? ` ${formatUpdateElapsed(now - machine.startedAt)}`
+                    ? ` ${formatUpdateElapsed(now - machine.startedAt, m)}`
                     : ""}
                 </span>
               </div>
@@ -179,7 +198,7 @@ export function SidebarUpdateCapsule({
               </Button>
               {settled && failed && view.action !== "dismiss" ? (
                 <Button size="xs" variant="ghost" onClick={dismissSettledUpdateRunMachines}>
-                  Dismiss
+                  <T>Dismiss</T>
                 </Button>
               ) : null}
             </div>
