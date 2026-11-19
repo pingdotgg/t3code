@@ -800,6 +800,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("enter return command ctrl multiline prompt new line composer")],
   },
   {
+    id: "large-paste-threshold",
+    title: msg("Large paste threshold"),
+    to: "/settings/chat",
+    searchTerms: [msg("paste clipboard long text file attachment fold size limit composer")],
+  },
+  {
     id: "follow-up-behavior",
     title: msg("Follow-up behavior"),
     to: "/settings/chat",

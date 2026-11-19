@@ -306,6 +306,8 @@
   "1b659e38a50d9bc5": "{started, plural, one {Intentó iniciar {started} guía de revisión, {failed} con errores} other {Intentó iniciar {started} guías de revisión, {failed} con errores}}",
   "672850007e49cfb6": "{started, plural, one {Inició {started} guía de revisión} other {Inició {started} guías de revisión}}",
   "5dce4a54eaffeccf": "{started, plural, one {Intentó iniciar {started} guía de revisión} other {Intentó iniciar {started} guías de revisión}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} caracteres)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} caracteres)",
   "420bea546d5f8802": "Hilo copiado",
   "2efb2dd3bf170f67": "No se pudo copiar el hilo",
   "6c03545936b55e0b": "Enlace de la PR copiado",
@@ -3239,7 +3241,11 @@
   "00b1b3b0bf010b1d": "Tu mensaje espera y se ejecuta cuando termina el turno actual.",
   "79e87310525279f8": "Redirigir",
   "a1e23f7b109d5925": "Tu mensaje llega al agente al instante y cambia aquello en lo que está trabajando.",
+  "12fbffef5c5d01d6": "La mayoría de los registros, trazas de pila y fragmentos de código se convierten en archivos.",
+  "6f73933b65186db1": "Los registros y documentos largos se convierten en archivos; los fragmentos siguen como texto.",
+  "ac160279d6fd62ea": "Predeterminado. Solo los pegados muy grandes se convierten en archivos.",
   "683838755eb7fe37": "Mientras el agente trabaja",
+  "e0b70d25f7b2238d": "Adjuntar el texto pegado como archivo a partir de",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Mantén pulsado el botón de enviar para usar la otra opción con un solo mensaje. Con un teclado físico, mantén ",
@@ -3249,6 +3255,15 @@
       "v": "v"
     },
     " al enviar."
+  ],
+  "ac88b5819c86bc5b": [
+    "Los pegados más cortos entran en el mensaje como texto si caben. El texto no latino y los emojis ocupan más bytes por carácter, así que alcanzan el límite antes. Con un teclado físico, pulsa ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para pegar un bloque largo como texto."
   ],
   "95ee62a0d6968b89": "Enviar mensaje",
   "1ad8b2750f0d2b17": "{returnKey} envía el mensaje. {shiftReturn} inserta una línea nueva.",
@@ -3825,6 +3840,9 @@
   "4c2495d10dfbf72f": "cola",
   "4ebe2aa17b91e168": "redirigir",
   "48f04bb3132077ef": "mientras el agente trabaja",
+  "1481b12232710e91": "pegados grandes",
+  "715a3f6de78e8e6d": "adjunto",
+  "f4da8226929a4a4c": "archivo de texto",
   "ffb1ded95eb81974": "archivar",
   "3d5aeb06f2128b12": "archivados",
   "2a34f68d985e9fde": "restaurar",

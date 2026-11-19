@@ -306,6 +306,8 @@
   "1b659e38a50d9bc5": "{started, plural, one {Försökte starta {started} granskningsguide, {failed} misslyckades} other {Försökte starta {started} granskningsguider, {failed} misslyckades}}",
   "672850007e49cfb6": "{started, plural, one {Startade {started} granskningsguide} other {Startade {started} granskningsguider}}",
   "5dce4a54eaffeccf": "{started, plural, one {Försökte starta {started} granskningsguide} other {Försökte starta {started} granskningsguider}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} tecken)",
+  "c62d732adb53f0ab": "{kilobytes} kB (~{characters, number} tecken)",
   "420bea546d5f8802": "Tråden kopierades",
   "2efb2dd3bf170f67": "Det gick inte att kopiera tråden",
   "6c03545936b55e0b": "PR-länken kopierades",
@@ -3245,7 +3247,11 @@
   "00b1b3b0bf010b1d": "Ditt meddelande väntar och körs när den aktuella omgången är klar.",
   "79e87310525279f8": "Styr om",
   "a1e23f7b109d5925": "Ditt meddelande når agenten direkt och ändrar det den arbetar med.",
+  "12fbffef5c5d01d6": "De flesta loggar, stackspårningar och kodsnuttar blir filer.",
+  "6f73933b65186db1": "Långa loggar och dokument blir filer; kodsnuttar förblir text.",
+  "ac160279d6fd62ea": "Standard. Bara mycket stora inklistringar blir filer.",
   "683838755eb7fe37": "Medan agenten körs",
+  "e0b70d25f7b2238d": "Bifoga inklistringar som filer från",
   "afda415d2d75a5d3": "Chatt",
   "85163bc64c8c56a1": [
     "Tryck länge på skicka-knappen för att använda det andra alternativet för ett enskilt meddelande. Med ett fysiskt tangentbord håller du ned ",
@@ -3255,6 +3261,15 @@
       "v": "v"
     },
     " när du skickar."
+  ],
+  "ac88b5819c86bc5b": [
+    "Kortare inklistringar hamnar som text i meddelandet om de får plats. Icke-latinsk text och emojier tar fler byte per tecken och når gränsen därför tidigare. Med ett fysiskt tangentbord trycker du på ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " för att klistra in ett långt block som text i stället."
   ],
   "95ee62a0d6968b89": "Skicka meddelande",
   "1ad8b2750f0d2b17": "{returnKey} skickar meddelandet. {shiftReturn} infogar en ny rad.",
@@ -3831,6 +3846,9 @@
   "4c2495d10dfbf72f": "köa",
   "4ebe2aa17b91e168": "styr om",
   "48f04bb3132077ef": "medan agenten körs",
+  "1481b12232710e91": "stora inklistringar",
+  "715a3f6de78e8e6d": "bilaga",
+  "f4da8226929a4a4c": "textfil",
   "ffb1ded95eb81974": "arkivera",
   "3d5aeb06f2128b12": "arkiverade",
   "2a34f68d985e9fde": "återställ",

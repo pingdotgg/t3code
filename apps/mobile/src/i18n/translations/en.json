@@ -306,6 +306,8 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tried to start {started} review guide, {failed} failed} other {Tried to start {started} review guides, {failed} failed}}",
   "672850007e49cfb6": "{started, plural, one {Started {started} review guide} other {Started {started} review guides}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tried to start {started} review guide} other {Tried to start {started} review guides}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} chars)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} chars)",
   "420bea546d5f8802": "Thread copied",
   "2efb2dd3bf170f67": "Failed to copy thread",
   "6c03545936b55e0b": "PR link copied",
@@ -3245,7 +3247,11 @@
   "00b1b3b0bf010b1d": "Your message waits and runs after the current turn finishes.",
   "79e87310525279f8": "Steer",
   "a1e23f7b109d5925": "Your message reaches the agent right away, changing what it is working on.",
+  "12fbffef5c5d01d6": "Most logs, stack traces, and code snippets become files.",
+  "6f73933b65186db1": "Long logs and documents become files; snippets stay as text.",
+  "ac160279d6fd62ea": "Default. Only very large pastes become files.",
   "683838755eb7fe37": "While the agent is running",
+  "e0b70d25f7b2238d": "Attach pastes as files from",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Long-press the send button to use the other option for a single message. With a hardware keyboard, hold ",
@@ -3255,6 +3261,16 @@
       "v": "v"
     },
     " while sending."
+  ],
+  "ac88b5819c86bc5b": [
+    "Shorter pastes go into the message as text when they fit. Non-Latin text and emoji use more bytes per character, so they reach the limit sooner. With a hardware keyboard, press",
+    " ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " to paste a long block as text instead."
   ],
   "95ee62a0d6968b89": "Send message",
   "1ad8b2750f0d2b17": "{returnKey} sends the message. {shiftReturn} inserts a new line.",
@@ -3831,6 +3847,9 @@
   "4c2495d10dfbf72f": "queue",
   "4ebe2aa17b91e168": "steer",
   "48f04bb3132077ef": "while the agent is running",
+  "1481b12232710e91": "large pastes",
+  "715a3f6de78e8e6d": "attachment",
+  "f4da8226929a4a4c": "text file",
   "ffb1ded95eb81974": "archive",
   "3d5aeb06f2128b12": "archived",
   "2a34f68d985e9fde": "restore",

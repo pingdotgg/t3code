@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD } from "@t3tools/contracts/settings";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { expect, it, vi } from "vite-plus/test";
 import { AsyncResult } from "effect/reactivity";
@@ -86,6 +87,7 @@ it("prepares a repeated paste without a tile, and still keeps a different image"
     questionAttachmentTarget: null,
     attachmentTargetKey: target,
     fileStagingLimit: null,
+    pastedTextAttachmentThreshold: DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD,
     promptRef: { current: "" },
     composerImagesRef,
     composerFilesRef: { current: [] },
@@ -171,6 +173,7 @@ it.each(["thread", "session"] as const)(
       questionAttachmentTarget: null,
       attachmentTargetKey: targetKey,
       fileStagingLimit: null,
+      pastedTextAttachmentThreshold: DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD,
       promptRef: { current: "half-written prompt" },
       composerImagesRef: { current: [] },
       composerFilesRef: { current: [] },
@@ -215,5 +218,55 @@ it.each(["thread", "session"] as const)(
     const restored = useComposerDraftStore.getState().getComposerDraft(target);
     expect(restored?.prompt).toBe("half-written prompt");
     expect(restored?.images).toEqual([]);
+  },
+);
+
+it.each([
+  { thresholdBytes: 1_000, folds: true },
+  { thresholdBytes: DEFAULT_PASTED_TEXT_ATTACHMENT_THRESHOLD, folds: false },
+])(
+  "a 4,600-byte paste at a $thresholdBytes-byte threshold folds: $folds",
+  async ({ thresholdBytes, folds }) => {
+    const attachedNames: string[] = [];
+    const input = {
+      activeThreadId: ThreadId.make("thread"),
+      activePendingProgress: null,
+      activePendingIsResponding: false,
+      pendingUserInputs: [],
+      supportsQuestionAttachments: false,
+      isLiteralPendingAnswer: false,
+      projectSelectionRequired: false,
+      questionAttachmentTarget: null,
+      attachmentTargetKey: DraftId.make("intake-paste-threshold"),
+      fileStagingLimit: 1_000_000,
+      pastedTextAttachmentThreshold: thresholdBytes,
+      promptRef: { current: "" },
+      composerImagesRef: { current: [] },
+      composerFilesRef: { current: [] },
+      composerEditorRef: { current: null },
+      isRevertingCheckpointRef: { current: false },
+      setThreadError: () => {},
+      countReservedAttachments: () => 0,
+      addComposerImage: () => [],
+      addComposerImagesToDraft: () => [],
+      addComposerFilesToDraft: (files) => {
+        attachedNames.push(...files.map((file) => file.name));
+        return [];
+      },
+      removeComposerImageFromDraft: () => {},
+      insertAttachmentReferences: () => false,
+    } satisfies IntakeInput;
+    let intake!: Intake;
+    await using _screen = await render(
+      <Harness
+        input={input}
+        ready={(value) => {
+          intake = value;
+        }}
+      />,
+    );
+
+    expect(intake.foldPastedText("x".repeat(4_600), false)).toBe(folds);
+    expect(attachedNames).toEqual(folds ? ["pasted-text.txt"] : []);
   },
 );

@@ -306,6 +306,8 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tentative de lancer {started} guide de revue, {failed} en échec} other {Tentative de lancer {started} guides de revue, {failed} en échec}}",
   "672850007e49cfb6": "{started, plural, one {{started} guide de revue lancé} other {{started} guides de revue lancés}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tentative de lancer {started} guide de revue} other {Tentative de lancer {started} guides de revue}}",
+  "de2c541d89da7d2d": "{kibibytes} Kio (~{characters, number} caractères)",
+  "c62d732adb53f0ab": "{kilobytes} Ko (~{characters, number} caractères)",
   "420bea546d5f8802": "Fil copié",
   "2efb2dd3bf170f67": "Échec de la copie du fil",
   "6c03545936b55e0b": "Lien de la PR copié",
@@ -3239,7 +3241,11 @@
   "00b1b3b0bf010b1d": "Votre message attend et s’exécute une fois le tour actuel terminé.",
   "79e87310525279f8": "Réorienter",
   "a1e23f7b109d5925": "Votre message parvient immédiatement à l’agent et modifie ce sur quoi il travaille.",
+  "12fbffef5c5d01d6": "La plupart des journaux, traces de pile et extraits de code deviennent des fichiers.",
+  "6f73933b65186db1": "Les longs journaux et documents deviennent des fichiers ; les extraits restent du texte.",
+  "ac160279d6fd62ea": "Par défaut. Seuls les très longs collages deviennent des fichiers.",
   "683838755eb7fe37": "Pendant que l’agent travaille",
+  "e0b70d25f7b2238d": "Joindre les collages en fichier à partir de",
   "afda415d2d75a5d3": "Discussion",
   "85163bc64c8c56a1": [
     "Appuyez longuement sur le bouton d’envoi pour utiliser l’autre option pour un seul message. Avec un clavier physique, maintenez ",
@@ -3249,6 +3255,15 @@
       "v": "v"
     },
     " pendant l’envoi."
+  ],
+  "ac88b5819c86bc5b": [
+    "Les collages plus courts sont insérés dans le message sous forme de texte s’ils y tiennent. Les textes non latins et les émojis occupent plus d’octets par caractère et atteignent donc la limite plus tôt. Avec un clavier physique, appuyez sur ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " pour coller un long bloc en tant que texte."
   ],
   "95ee62a0d6968b89": "Envoyer le message",
   "1ad8b2750f0d2b17": "{returnKey} envoie le message. {shiftReturn} insère une nouvelle ligne.",
@@ -3825,6 +3840,9 @@
   "4c2495d10dfbf72f": "file d’attente",
   "4ebe2aa17b91e168": "réorienter",
   "48f04bb3132077ef": "pendant que l’agent travaille",
+  "1481b12232710e91": "longs collages",
+  "715a3f6de78e8e6d": "pièce jointe",
+  "f4da8226929a4a4c": "fichier texte",
   "ffb1ded95eb81974": "archiver",
   "3d5aeb06f2128b12": "archivés",
   "2a34f68d985e9fde": "restaurer",

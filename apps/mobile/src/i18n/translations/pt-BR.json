@@ -306,6 +306,8 @@
   "1b659e38a50d9bc5": "{started, plural, one {Tentou iniciar {started} guia de revisão, {failed} com falha} other {Tentou iniciar {started} guias de revisão, {failed} com falha}}",
   "672850007e49cfb6": "{started, plural, one {Iniciou {started} guia de revisão} other {Iniciou {started} guias de revisão}}",
   "5dce4a54eaffeccf": "{started, plural, one {Tentou iniciar {started} guia de revisão} other {Tentou iniciar {started} guias de revisão}}",
+  "de2c541d89da7d2d": "{kibibytes} KiB (~{characters, number} caracteres)",
+  "c62d732adb53f0ab": "{kilobytes} KB (~{characters, number} caracteres)",
   "420bea546d5f8802": "Thread copiada",
   "2efb2dd3bf170f67": "Falha ao copiar a thread",
   "6c03545936b55e0b": "Link do PR copiado",
@@ -3239,7 +3241,11 @@
   "00b1b3b0bf010b1d": "Sua mensagem aguarda e é executada depois que o turno atual termina.",
   "79e87310525279f8": "Direcionar",
   "a1e23f7b109d5925": "Sua mensagem chega ao agente imediatamente, mudando o que ele está fazendo.",
+  "12fbffef5c5d01d6": "A maioria dos logs, stack traces e trechos de código vira arquivo.",
+  "6f73933b65186db1": "Logs e documentos longos viram arquivos; trechos continuam como texto.",
+  "ac160279d6fd62ea": "Padrão. Só colagens muito grandes viram arquivos.",
   "683838755eb7fe37": "Enquanto o agente está em execução",
+  "e0b70d25f7b2238d": "Anexar colagens como arquivo a partir de",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Mantenha pressionado o botão de enviar para usar a outra opção em uma única mensagem. Com um teclado físico, segure ",
@@ -3249,6 +3255,15 @@
       "v": "v"
     },
     " ao enviar."
+  ],
+  "ac88b5819c86bc5b": [
+    "Colagens mais curtas entram na mensagem como texto se couberem. Texto não latino e emojis usam mais bytes por caractere, então chegam ao limite antes. Com um teclado físico, pressione ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " para colar um bloco longo como texto."
   ],
   "95ee62a0d6968b89": "Enviar mensagem",
   "1ad8b2750f0d2b17": "{returnKey} envia a mensagem. {shiftReturn} insere uma nova linha.",
@@ -3825,6 +3840,9 @@
   "4c2495d10dfbf72f": "fila",
   "4ebe2aa17b91e168": "direcionar",
   "48f04bb3132077ef": "enquanto o agente está em execução",
+  "1481b12232710e91": "colagens grandes",
+  "715a3f6de78e8e6d": "anexo",
+  "f4da8226929a4a4c": "arquivo de texto",
   "ffb1ded95eb81974": "arquivar",
   "3d5aeb06f2128b12": "arquivadas",
   "2a34f68d985e9fde": "restaurar",

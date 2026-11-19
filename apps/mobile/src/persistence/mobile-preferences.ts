@@ -14,6 +14,7 @@ import {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  PastedTextAttachmentThreshold,
   type ProviderInstanceId,
   PullRequestMergeMethod,
   type SidebarProjectGroupingMode,
@@ -31,6 +32,7 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
 const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const isPastedTextAttachmentThreshold = Schema.is(PastedTextAttachmentThreshold);
 
 export const PullRequestListControls = Schema.Struct({
   state: PullRequestListState,
@@ -162,6 +164,7 @@ export interface Preferences {
   /** Hardware-keyboard Return behavior in the composer. */
   readonly composerEnterBehavior?: ComposerEnterBehavior;
   readonly followUpBehavior?: FollowUpBehavior;
+  readonly pastedTextAttachmentThreshold?: PastedTextAttachmentThreshold;
   /** The client `language` setting: a locale code or "system". Unset means English. */
   readonly language?: string;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
@@ -253,6 +256,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     dismissedDatabaseStorageNotices?: readonly string[];
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
+    pastedTextAttachmentThreshold?: PastedTextAttachmentThreshold;
     language?: string;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
@@ -367,6 +371,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (parsed.followUpBehavior === "queue" || parsed.followUpBehavior === "steer") {
     preferences.followUpBehavior = parsed.followUpBehavior;
+  }
+  if (isPastedTextAttachmentThreshold(parsed.pastedTextAttachmentThreshold)) {
+    preferences.pastedTextAttachmentThreshold = parsed.pastedTextAttachmentThreshold;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
   if (Array.isArray(parsed.microphones)) {
