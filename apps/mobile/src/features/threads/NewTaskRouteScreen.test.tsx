@@ -186,7 +186,16 @@ it.each(["backing out and reopening", "waiting for the saved draft to load"])(
     } else {
       await act(async () => opening.resolve({ _tag: "Success", value: scratch }));
     }
+    const scratchSignal = vi
+      .mocked(retargetSavedNewTaskDraft)
+      .mock.calls.find(([, target]) => target.projectId === scratch.id)?.[2];
+    if (scenario === "waiting for the saved draft to load") {
+      expect(scratchSignal?.aborted).toBe(false);
+    }
     await act(async () => row("app").click());
+    if (scenario === "waiting for the saved draft to load") {
+      expect(scratchSignal?.aborted).toBe(true);
+    }
     await act(async () => {
       opening.resolve({ _tag: "Success", value: scratch });
       retargeting.resolve(true);
