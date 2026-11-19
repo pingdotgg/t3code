@@ -9,14 +9,9 @@ import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFie
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import {
-  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
-  ComposerSendPill,
-} from "../chat/ComposerPrimaryActions";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { Spinner } from "../ui/spinner";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 
 /** The thread composer's card, floating over the issue's timeline, with a comment as its message. */
@@ -73,16 +68,16 @@ export function IssueCommentComposer({
       <ComposerSurface.Shell className="pointer-events-auto">
         <ComposerSurface.Host>
           <form
-            className="relative z-10 flex flex-col px-0.5 pt-1.5 text-prompt text-foreground"
+            className="relative z-10 flex flex-col"
             onSubmit={(event) => {
               event.preventDefault();
               submitAfterDictation();
             }}
           >
-            <Textarea
-              unstyled
+            <textarea
               ref={textareaRef}
               rows={2}
+              className="field-sizing-content max-h-64 min-h-[2lh] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-base text-foreground outline-none wrap-anywhere placeholder:text-muted-foreground/70 disabled:opacity-64 sm:text-sm"
               aria-label={gt("Add a comment")}
               placeholder={blocked ?? gt("Leave a comment")}
               value={body}
@@ -100,24 +95,22 @@ export function IssueCommentComposer({
             />
             <div className="flex flex-wrap items-center justify-end gap-2 px-2.5 pb-2.5">
               <TextFieldSpeechControls speech={speech} disabled={locked} />
-              <ComposerSendPill>
-                <button
-                  type="submit"
-                  className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                  disabled={submitDisabled}
-                  aria-label={
-                    submitting
-                      ? gt("Posting comment")
-                      : gt("Comment", { $context: "verb, posts the comment" })
-                  }
-                >
-                  {submitting ? (
-                    <Spinner size="sm" aria-hidden />
-                  ) : (
-                    <ArrowUpIcon aria-hidden className="size-4" />
-                  )}
-                </button>
-              </ComposerSendPill>
+              <button
+                type="submit"
+                className="flex size-8 items-center justify-center rounded-full bg-message-action text-message-action-foreground shadow-xs transition-all duration-150 enabled:cursor-pointer enabled:shadow-message-action/24 enabled:inset-shadow-control-highlight hover:scale-105 hover:bg-message-action-hover active:shadow-none active:inset-shadow-control-pressed disabled:pointer-events-none disabled:bg-foreground/12 disabled:text-muted-foreground disabled:shadow-none"
+                disabled={submitDisabled}
+                aria-label={
+                  submitting
+                    ? gt("Posting comment")
+                    : gt("Comment", { $context: "verb, posts the comment" })
+                }
+              >
+                {submitting ? (
+                  <Spinner size="sm" aria-hidden />
+                ) : (
+                  <ArrowUpIcon aria-hidden className="size-4" />
+                )}
+              </button>
             </div>
           </form>
         </ComposerSurface.Host>
