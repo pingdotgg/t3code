@@ -9,7 +9,7 @@ import {
 import {
   type AtomCommand,
   type AtomCommandResult,
-  runAtomCommand,
+  reportAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadFamilyRead, type ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -708,7 +708,14 @@ const deliveryCommand = <W, A, E>(
   command: AtomCommand<W, A, E>,
   input: W,
 ): Effect.Effect<AtomCommandResult<A, E>> =>
-  Effect.promise(() => runAtomCommand(appAtomRegistry, command, input, { reportFailure: false }));
+  command.run(appAtomRegistry, input).pipe(
+    Effect.exit,
+    Effect.map((exit) => {
+      const result = AsyncResult.fromExit(exit);
+      reportAtomCommandResult(result, { label: command.label, reportFailure: false });
+      return result;
+    }),
+  );
 
 function reportCommandFailure(
   queuedMessage: QueuedThreadMessage,

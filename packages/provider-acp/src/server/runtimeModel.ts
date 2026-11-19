@@ -820,6 +820,8 @@ function canonicalItemTypeFromAcpToolKind(kind: string | undefined): ToolLifecyc
   }
 }
 
+const TOOL_FALLBACK_SUMMARY = "Tool";
+
 function makeToolCallState(
   input: {
     readonly toolCallId: string;
@@ -908,14 +910,19 @@ function makeToolCallState(
         title,
         detail: fallbackDetail,
         data,
-        fallbackSummary: title ?? "Tool",
+        fallbackSummary: title ?? TOOL_FALLBACK_SUMMARY,
       })
     : undefined;
+  // A titleless update omits an unchanged title; the generic fallback must not replace it.
+  const presentationTitle =
+    title === undefined && presentation?.summary === TOOL_FALLBACK_SUMMARY
+      ? undefined
+      : presentation?.summary;
   const status = normalizeToolCallStatus(input.status, options?.fallbackStatus);
   return {
     toolCallId,
     ...(kind ? { kind } : {}),
-    ...(presentation?.summary ? { title: presentation.summary } : {}),
+    ...(presentationTitle ? { title: presentationTitle } : {}),
     ...(status ? { status } : {}),
     ...(command ? { command } : {}),
     ...(presentation?.detail ? { detail: presentation.detail } : {}),
@@ -1028,12 +1035,19 @@ function toolCallContentTexts(state: AcpToolCallState): string {
     .join("\u0000");
 }
 
+function toolCallLocationsChanged(previous: AcpToolCallState, next: AcpToolCallState): boolean {
+  const before = previous.data.locations;
+  const after = next.data.locations;
+  return before !== after && JSON.stringify(before) !== JSON.stringify(after);
+}
+
 export function toolCallVisibleOutputChanged(
   previous: AcpToolCallState,
   next: AcpToolCallState,
 ): boolean {
   return (
     previous.detail !== next.detail ||
+    toolCallLocationsChanged(previous, next) ||
     toolCallContentTexts(previous) !== toolCallContentTexts(next) ||
     JSON.stringify(previous.data.rawOutput) !== JSON.stringify(next.data.rawOutput)
   );
@@ -1046,7 +1060,12 @@ export function decideToolCallUpdateEmission(
   if (next.status === "completed" || next.status === "failed") {
     return { emit: true, skippedSinceEmit: 0 };
   }
-  if (previous === undefined || previous.title !== next.title || previous.status !== next.status) {
+  if (
+    previous === undefined ||
+    previous.title !== next.title ||
+    previous.status !== next.status ||
+    toolCallLocationsChanged(previous, next)
+  ) {
     return { emit: true, skippedSinceEmit: 0 };
   }
   if (previous.detail === next.detail && toolCallOutputUnchanged(previous, next)) {
@@ -1587,11 +1606,19 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
         title: "Compact context",
         kind: "think",
         status,
-        rawOutput: (upd.error ?? summary) || undefined,
+        rawOutput: upd.summary === undefined ? undefined : summary || null,
         _meta: upd._meta,
       });
       if (toolCall !== undefined) {
-        events.push({ _tag: "ToolCallUpdated", toolCall, rawPayload: params });
+        // Summary and error are independent patches; null clears only its own field.
+        events.push({
+          _tag: "ToolCallUpdated",
+          toolCall:
+            upd.error === undefined
+              ? toolCall
+              : { ...toolCall, data: { ...toolCall.data, compactionError: upd.error } },
+          rawPayload: params,
+        });
       }
       break;
     }
