@@ -1424,6 +1424,24 @@ it.effect("merge-back rejects a second fork's context until the first is consume
     const second = yield* forkAndRun("second");
 
     yield* mergeBack("merge-back-guard-first", first);
+    const refusedFresh = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("merge-back-guard-fresh-send"),
+        threadId: parentId,
+        messageId: MessageId.make("merge-back-guard-fresh-send"),
+        text: "Start over",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        freshContext: true,
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(
+      String(refusedFresh.cause),
+      "Send a message without /clear to apply the merged context first.",
+    );
     const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
     assert.include(String(rejected.cause), "pending context from another side chat or fork");
     yield* mergeBack("merge-back-guard-first-again", first);
