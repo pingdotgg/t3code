@@ -119,7 +119,9 @@ function Surface({
   // The file as this editor last took note of it, so only a real change on disk is acted on: after
   // a save, `source` is still the old text until the server's answer is read again.
   const [seen, setSeen] = useState(source);
-  const [stale, setStale] = useState(false);
+  // The disk text that changed under the person's edits, until they settle it.
+  const [staleAt, setStaleAt] = useState<string | null>(null);
+  const stale = staleAt !== null;
   const [shown, setShown] = useState(() => fileOf(path, draft ?? source, revision));
   const [edited, setEdited] = useState<string | null>(draft ?? null);
   const [problems, setProblems] = useState<ReadonlyArray<WorkflowDefinitionProblem>>([]);
@@ -133,13 +135,13 @@ function Surface({
     setShown(fileOf(path, source, revision));
     setEdited(null);
     setProblems([]);
-    setStale(false);
+    setStaleAt(null);
   };
   if (source !== seen) {
     setSeen(source);
     // With nothing of the person's own in the editor, it follows the file.
     if (source !== baseline) {
-      if (dirty) setStale(true);
+      if (dirty) setStaleAt(source);
       else adopt();
     }
   }
@@ -149,7 +151,7 @@ function Surface({
     if (!dirty || saving || !canSave || edited === null) return;
     // Saving over a change on disk that was already shown is a choice. One that lands while this
     // save is out is not, and stays shown.
-    const overwrote = stale;
+    const overwrote = staleAt;
     setSaving(true);
     setFailure(null);
     const result = await save({ environmentId, input: { name, source: edited } });
@@ -161,7 +163,7 @@ function Surface({
     setProblems(result.value.problems);
     if (result.value.problems.length > 0) return;
     setBaseline(edited);
-    setStale((now) => now && !overwrote);
+    setStaleAt((now) => (now === overwrote ? null : now));
     setSavedOnce(true);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
