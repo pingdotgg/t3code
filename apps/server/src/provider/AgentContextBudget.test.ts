@@ -159,7 +159,6 @@ it.effect("agent context matches the committed budget", () =>
       ),
     };
 
-    console.log("MEASURED_BUDGET " + JSON.stringify(measured));
     expect(
       measured,
       "Set agentContextBudget.json to the measured values. Before you cut text to fit, run the evals that cover it (evals/README.md).",
