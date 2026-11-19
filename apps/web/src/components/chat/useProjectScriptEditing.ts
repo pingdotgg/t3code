@@ -33,7 +33,7 @@ import {
   saveProjectScriptToList,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { readEnvironmentConfig, serverEnvironment } from "../../state/server";
+import { readEnvironmentKeybindings, serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readProject, readProjects } from "../../state/entities";
@@ -49,7 +49,7 @@ export function useProjectScriptEditing(input: {
 }) {
   const { environmentId, project } = input;
   const readSettings = useAtomCommand(serverEnvironment.readSettings, { reportFailure: false });
-  const readConfig = useAtomCommand(readEnvironmentConfig, { reportFailure: false });
+  const readKeybindings = useAtomCommand(readEnvironmentKeybindings, { reportFailure: false });
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
@@ -68,7 +68,6 @@ export function useProjectScriptEditing(input: {
     keybindingCommand: KeybindingCommand | null;
   }): Promise<AtomCommandResult<void, unknown>> => {
     const { settings } = input;
-    const serverConfig = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
     const scriptId = input.keybindingCommand
       ? projectScriptIdFromCommand(input.keybindingCommand)
       : null;
@@ -81,12 +80,12 @@ export function useProjectScriptEditing(input: {
       (requestedKeybinding !== null ||
         input.previousScripts.some((script) => script.id === scriptId));
     // The config stream can lag an acknowledged shortcut update too.
-    const configResult = shouldReadKeybindings
-      ? await readConfig({ environmentId, input: {} })
+    const keybindingsResult = shouldReadKeybindings
+      ? await readKeybindings({ environmentId, input: {} })
       : null;
-    if (configResult?._tag === "Failure")
-      return mapAtomCommandResult(configResult, () => undefined);
-    const keybindings = configResult?.value.keybindings ?? [];
+    if (keybindingsResult?._tag === "Failure")
+      return mapAtomCommandResult(keybindingsResult, () => undefined);
+    const keybindings = keybindingsResult?.value.keybindings ?? [];
     const changesKeybinding =
       shouldReadKeybindings &&
       requestedKeybinding !== keybindingValueForCommand(keybindings, input.keybindingCommand);
@@ -110,21 +109,9 @@ export function useProjectScriptEditing(input: {
       await updateProjectScriptSettings({
         environmentId,
         input: {
-          patch:
-            serverConfig?.environment.capabilities.projectSettingsOverrides === true
-              ? {
-                  projectSettingsOverrides: {
-                    [input.projectId]: {
-                      ...settings.projectSettingsOverrides[input.projectId],
-                      defaultProjectScripts: input.nextScripts,
-                    },
-                  },
-                }
-              : {
-                  projectScriptOverrides: {
-                    [input.projectId]: input.nextScripts,
-                  },
-                },
+          patch: {
+            projectScriptOverrides: { [input.projectId]: input.nextScripts },
+          },
         },
       }),
       () => undefined,
