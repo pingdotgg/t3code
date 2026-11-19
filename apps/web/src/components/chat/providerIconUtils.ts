@@ -35,21 +35,6 @@ export function getDisplayModelName(
   return stripLeadingQualifier(name, model.subProvider);
 }
 
-export function getProviderRowLabel(
-  providerDisplayName: string,
-  subProvider: string | undefined,
-): string {
-  const provider = providerDisplayName.trim();
-  const sub = subProvider?.trim();
-  if (!sub) {
-    return providerDisplayName;
-  }
-  if (provider && new RegExp(`^${escapeRegExp(provider)}\\s+\\S`, "i").test(sub)) {
-    return sub;
-  }
-  return `${providerDisplayName} · ${sub}`;
-}
-
 export function getTriggerDisplayModelName(
   model: ModelEsque,
   driverKind: ProviderDriverKind | null | undefined,

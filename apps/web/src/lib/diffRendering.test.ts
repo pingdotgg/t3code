@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
   buildFileDiffContentVersion,
+  buildFileDiffEntries,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   getDiffLineStat,
@@ -219,9 +220,97 @@ describe("getRenderablePatch", () => {
     if (parsed?.kind !== "files") return;
     expect(parsed.files[0]?.hunks[0]?.unifiedLineStart).toBe(47);
   });
+
+  it("keeps whitespace at the end of the last hunk", () => {
+    const patch = (lastLines: string[]) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        ...lastLines,
+        "",
+      ].join("\n");
+
+    const trailing = getRenderablePatch(patch(["@@ -1 +1 @@", "-a", "+  b \t"]), "review");
+    expect(trailing?.kind).toBe("files");
+    if (trailing?.kind !== "files") return;
+    expect(trailing.files[0]?.additionLines).toEqual(["  b \t\n"]);
+
+    const blankContext = getRenderablePatch(patch(["@@ -1,2 +1,2 @@", "-a", "+b", " "]), "review");
+    expect(blankContext?.kind).toBe("files");
+    if (blankContext?.kind !== "files") return;
+    expect(blankContext.files[0]?.additionLines).toEqual(["b\n", "\n"]);
+    expect(blankContext.files[0]?.hunks[0]?.unifiedLineCount).toBe(3);
+
+    expect(getRenderablePatch(" \n\t\n", "review")).toBeNull();
+  });
+
+  it("caches patches that differ only in trailing whitespace separately", () => {
+    const patch = (added: string) =>
+      [
+        "diff --git a/example.ts b/example.ts",
+        "--- a/example.ts",
+        "+++ b/example.ts",
+        "@@ -1 +1 @@",
+        "-a",
+        `+${added}`,
+        "",
+      ].join("\n");
+
+    const plain = getRenderablePatch(patch("b"), "review");
+    const tabbed = getRenderablePatch(patch("b\t"), "review");
+    expect(plain?.kind).toBe("files");
+    expect(tabbed?.kind).toBe("files");
+    if (plain?.kind !== "files" || tabbed?.kind !== "files") return;
+    expect(tabbed.files[0]?.cacheKey).not.toBe(plain.files[0]?.cacheKey);
+  });
 });
 
 describe("diff file reconciliation", () => {
+  it("retains repeated blocks and their keys when content changes or other files appear", () => {
+    const parse = (blocks: [string, string][]) => {
+      const parsed = getRenderablePatch(
+        blocks
+          .map(([path, content]) =>
+            [
+              `diff --git a/${path} b/${path}`,
+              `--- a/${path}`,
+              `+++ b/${path}`,
+              "@@ -1 +1 @@",
+              "-before",
+              `+${content}`,
+              "",
+            ].join("\n"),
+          )
+          .join(""),
+      );
+      if (parsed?.kind !== "files") throw new Error("Expected file diffs");
+      return parsed.files;
+    };
+    const files = parse([
+      ["same.ts", "first"],
+      ["same.ts", "second"],
+    ]);
+    const before = buildFileDiffEntries([...files, files[1]!]);
+    expect(before.map((entry) => entry.fileDiff)).toEqual([...files, files[1]]);
+    expect(new Set(before.map((entry) => entry.fileKey)).size).toBe(3);
+    expect(before[0]?.fileKey).toBe(buildFileDiffIdentityKey(files[0]!));
+    expect(buildFileDiffEntries([...files, files[1]!])).toEqual(before);
+
+    const after = buildFileDiffEntries(
+      parse([
+        ["unrelated.ts", "new"],
+        ["same.ts", "first"],
+        ["same.ts", "updated second"],
+        ["same.ts", "second"],
+      ]),
+    ).slice(1);
+    expect(after.map((entry) => entry.fileKey)).toEqual(before.map((entry) => entry.fileKey));
+    expect(after[0]?.fileVersion).toBe(before[0]?.fileVersion);
+    expect(after[1]?.fileVersion).not.toBe(before[1]?.fileVersion);
+    expect(after[2]?.fileVersion).toBe(before[2]?.fileVersion);
+  });
+
   it("keeps Pierre's render key stable when a partial diff hydrates", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",

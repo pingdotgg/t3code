@@ -1,16 +1,27 @@
 import { beforeEach, vi } from "vite-plus/test";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Layer from "effect/Layer";
 import { EnvironmentId } from "@t3tools/contracts";
 import { RelayMobileClientId } from "@t3tools/contracts/relay";
+import {
+  EnvironmentSupervisor,
+  AVAILABLE_CONNECTION_STATE,
+  PrimaryConnectionTarget,
+  type PreparedConnection,
+} from "@t3tools/client-runtime/connection";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
-import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
+import { layerRemoteHttpClient, type RpcSession } from "@t3tools/client-runtime/rpc";
 import { HttpClient } from "effect/http";
 
 import * as MobileStorage from "../../persistence/mobile-storage";
 
-import { linkEnvironmentToCloudWithPreference } from "./linkEnvironment";
+import {
+  linkEnvironmentToCloudWithPreference,
+  updateLinkedEnvironmentLiveActivityPreference,
+} from "./linkEnvironment";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -145,6 +156,33 @@ describe("mobile cloud link environment client", () => {
     vi.restoreAllMocks();
     createProofMock.mockClear();
   });
+
+  it.effect("skips Live Activity updates when the environment has no prepared connection", () =>
+    Effect.gen(function* () {
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: new PrimaryConnectionTarget({
+          environmentId: savedConnection.environmentId,
+          label: savedConnection.environmentLabel,
+          httpBaseUrl: savedConnection.httpBaseUrl,
+          wsBaseUrl: savedConnection.wsBaseUrl,
+        }),
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      });
+      const result = yield* updateLinkedEnvironmentLiveActivityPreference(true).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make(() => Effect.die("unexpected HTTP request")),
+        ),
+      );
+      expect(result).toBe("disconnected");
+    }),
+  );
 
   it.effect(
     "rejects relay link credentials for a different environment before persisting relay config",

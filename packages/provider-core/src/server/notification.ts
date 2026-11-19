@@ -25,9 +25,14 @@ const LABEL_MAX_LENGTH = 80;
 export function reportLabel(label: string | undefined): string | undefined {
   const firstLine = label?.trim().split("\n")[0]?.trim();
   if (firstLine === undefined || firstLine.length === 0) return undefined;
-  return firstLine.length > LABEL_MAX_LENGTH
-    ? `${firstLine.slice(0, LABEL_MAX_LENGTH - 1)}…`
-    : firstLine;
+  if (firstLine.length <= LABEL_MAX_LENGTH) return firstLine;
+  let end = LABEL_MAX_LENGTH - 1;
+  const previous = firstLine.charCodeAt(end - 1);
+  const next = firstLine.charCodeAt(end);
+  if (previous >= 0xd800 && previous <= 0xdbff && next >= 0xdc00 && next <= 0xdfff) {
+    end -= 1;
+  }
+  return `${firstLine.slice(0, end)}…`;
 }
 
 const KIND_NOUN: Record<BackgroundWork["kind"], readonly [string, string]> = {
@@ -66,11 +71,26 @@ function exitSuffix(report: BackgroundWorkReport): string {
     : "";
 }
 
-function namedReport(report: BackgroundWorkReport, capitalize: boolean): string {
+function namedReport(report: BackgroundWorkReport, capitalize: boolean, verb?: string): string {
   const noun = KIND_NOUN[report.kind][0];
   const label = reportLabel(report.label);
   const named = `${capitalize ? noun : noun.toLowerCase()}${label === undefined ? "" : ` "${label}"`}`;
-  return `${named}${exitSuffix(report)}`;
+  return `${named}${verb === undefined ? "" : ` ${verb}`}${exitSuffix(report)}`;
+}
+
+const OUTCOME_GROUPS = ["failed", "cancelled", "updated", "completed"] as const;
+
+function groupVerb(group: (typeof OUTCOME_GROUPS)[number], count: number): string {
+  switch (group) {
+    case "failed":
+      return "failed";
+    case "cancelled":
+      return count === 1 ? "was stopped" : "were stopped";
+    case "updated":
+      return "updated";
+    case "completed":
+      return "finished";
+  }
 }
 
 function joinNames(names: ReadonlyArray<string>): string {
@@ -80,7 +100,6 @@ function joinNames(names: ReadonlyArray<string>): string {
 
 function reportsSummary(
   reports: readonly [BackgroundWorkReport, ...ReadonlyArray<BackgroundWorkReport>],
-  outcome: NotificationOutcome,
 ): string {
   const [first] = reports;
   if (reports.length === 1) {
@@ -88,20 +107,30 @@ function reportsSummary(
     const noun = KIND_NOUN[first.kind][0];
     return `${noun}${label === undefined ? "" : ` "${label}"`} ${outcomeVerb(first.kind, first.outcome)}${exitSuffix(first)}`;
   }
-  const verb =
-    outcome === "failed"
-      ? "failed"
-      : outcome === "cancelled"
-        ? "were stopped"
-        : outcome === "updated"
-          ? "updated"
-          : "finished";
+  const groups = OUTCOME_GROUPS.flatMap((group) => {
+    const count = reports.filter(
+      (report) => (report.outcome === "unknown" ? "completed" : report.outcome) === group,
+    ).length;
+    return count === 0 ? [] : [{ group, count }];
+  });
   if (reports.length > 3 || reports.every((report) => reportLabel(report.label) === undefined)) {
     const kinds = new Set(reports.map((report) => report.kind));
-    const noun = kinds.size === 1 ? KIND_NOUN[first.kind][1] : "background tasks";
-    return `${reports.length} ${noun} ${verb}`;
+    const [noun, nouns] = kinds.size === 1 ? KIND_NOUN[first.kind] : KIND_NOUN.background_task;
+    return joinNames(
+      groups.map(
+        ({ group, count }, index) =>
+          `${count}${index === 0 ? ` ${count === 1 ? noun.toLowerCase() : nouns}` : ""} ${groupVerb(group, count)}`,
+      ),
+    );
   }
-  return `${joinNames(reports.map((report, index) => namedReport(report, index === 0)))} ${verb}`;
+  if (groups.length > 1) {
+    return joinNames(
+      reports.map((report, index) =>
+        namedReport(report, index === 0, outcomeVerb(report.kind, report.outcome)),
+      ),
+    );
+  }
+  return `${joinNames(reports.map((report, index) => namedReport(report, index === 0)))} ${groupVerb(groups[0]!.group, reports.length)}`;
 }
 
 function reportsSource(
@@ -136,7 +165,7 @@ export function backgroundWorkNotification(
   return {
     source: reportsSource([first, ...rest]),
     outcome,
-    summary: reportsSummary([first, ...rest], outcome),
+    summary: reportsSummary([first, ...rest]),
   };
 }
 
@@ -217,6 +246,7 @@ export function notificationTurnItem(
     createdBy: _createdBy,
     creationSource: _creationSource,
     scheduledTaskId: _scheduledTaskId,
+    modelSwitch: _modelSwitch,
     ...base
   } = item;
   return { ...base, type: "notification", ...notification };

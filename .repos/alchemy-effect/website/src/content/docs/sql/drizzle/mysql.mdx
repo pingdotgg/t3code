@@ -3,29 +3,16 @@ title: MySQL
 description: Provider-neutral MySQL schemas, Effect-native Drizzle queries, and connection configuration.
 ---
 
-import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+import PackageManagers from "../../../../components/PackageManagers.astro";
 
-export const deps = `drizzle-orm@1.0.0-rc.5-ab785fc @effect/sql-mysql2 mysql2`;
-export const devDeps = `drizzle-kit@1.0.0-rc.5-ab785fc`;
+export const deps = `@alchemy.run/drizzle drizzle-orm@1.0.0-rc.5 @effect/sql-mysql2`;
+export const devDeps = `drizzle-kit@1.0.0-rc.5`;
 
 `Drizzle.MySQL` provides typed, Effect-native queries for compatible MySQL databases, independently of where your application runs. Choose a database in [SQL databases](/sql/databases) and supply its connection through your runtime's binding or configuration.
 
 Install the optional dependencies:
 
-<Tabs syncKey="pkgManager">
-  <TabItem label="bun" icon="bun">
-    <Code code={`bun add ${deps}\nbun add -d ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="npm" icon="npm">
-    <Code code={`npm install ${deps}\nnpm install -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="pnpm" icon="pnpm">
-    <Code code={`pnpm add ${deps}\npnpm add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-  <TabItem label="yarn" icon="seti:yarn">
-    <Code code={`yarn add ${deps}\nyarn add -D ${devDeps}`} lang="sh" />
-  </TabItem>
-</Tabs>
+<PackageManagers add={deps} dev={devDeps} />
 
 ## Define the schema
 
@@ -61,7 +48,7 @@ export const relations = defineRelations({ Users, Posts }, (t) => ({
 
 ```typescript
 // src/queries.ts
-import * as Drizzle from "alchemy/Drizzle/MySQL";
+import * as Drizzle from "@alchemy.run/drizzle/MySQL";
 import * as Effect from "effect/Effect";
 import type * as Redacted from "effect/Redacted";
 import { relations, Users } from "./schema.ts";

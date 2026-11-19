@@ -1,9 +1,9 @@
-import * as Bundle from "@/Bundle/Bundle";
+import { expect, layer } from "@alchemy.run/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { expect, layer } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Bundle from "@/Bundle/Bundle";
 
 layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
   it.effect(
@@ -12,9 +12,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-sql-module-",
-        });
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-sql-module-" });
         yield* fs.writeFileString(
           path.join(root, "0000_init.sql"),
           "CREATE TABLE sql_module_marker (id integer primary key);",
@@ -25,10 +23,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
           `import m0000 from "./0000_init.sql";\nconsole.log(m0000);\n`,
         );
 
-        const result = yield* Bundle.build({
-          input: entry,
-          cwd: root,
-        });
+        const result = yield* Bundle.build({ input: entry, cwd: root });
 
         const code = result.files
           .filter((f) => typeof f.content === "string")
@@ -49,14 +44,10 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-drizzle-migrations-",
-        });
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-drizzle-migrations-" });
         // Mirror `drizzle-kit generate` output for `driver: "durable-sqlite"`:
         // migrations.js imports each .sql migration and the meta journal.
-        yield* fs.makeDirectory(path.join(root, "drizzle", "meta"), {
-          recursive: true,
-        });
+        yield* fs.makeDirectory(path.join(root, "drizzle", "meta"), { recursive: true });
         yield* fs.writeFileString(
           path.join(root, "drizzle", "0000_cool_migration.sql"),
           "CREATE TABLE drizzle_do_marker (id integer primary key, name text);",
@@ -67,13 +58,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
             version: "7",
             dialect: "sqlite",
             entries: [
-              {
-                idx: 0,
-                version: "6",
-                when: 1,
-                tag: "0000_cool_migration",
-                breakpoints: true,
-              },
+              { idx: 0, version: "6", when: 1, tag: "0000_cool_migration", breakpoints: true },
             ],
           }),
         );
@@ -91,10 +76,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
           `import migrations from "./drizzle/migrations.js";\nconsole.log(migrations);\n`,
         );
 
-        const result = yield* Bundle.build({
-          input: entry,
-          cwd: root,
-        });
+        const result = yield* Bundle.build({ input: entry, cwd: root });
 
         const code = result.files
           .filter((f) => typeof f.content === "string")
@@ -114,17 +96,9 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-text-module-",
-        });
-        yield* fs.writeFileString(
-          path.join(root, "note.txt"),
-          "TXT_MODULE_MARKER",
-        );
-        yield* fs.writeFileString(
-          path.join(root, "page.html"),
-          "<h1>HTML_MODULE_MARKER</h1>",
-        );
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-text-module-" });
+        yield* fs.writeFileString(path.join(root, "note.txt"), "TXT_MODULE_MARKER");
+        yield* fs.writeFileString(path.join(root, "page.html"), "<h1>HTML_MODULE_MARKER</h1>");
         const entry = path.join(root, "entry.ts");
         yield* fs.writeFileString(
           entry,
@@ -135,10 +109,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
           ].join("\n"),
         );
 
-        const result = yield* Bundle.build({
-          input: entry,
-          cwd: root,
-        });
+        const result = yield* Bundle.build({ input: entry, cwd: root });
 
         const code = result.files
           .filter((f) => typeof f.content === "string")
@@ -158,18 +129,10 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectory({
-          prefix: "alchemy-module-override-",
-        });
-        yield* fs.writeFileString(
-          path.join(root, "data.sql"),
-          "OVERRIDE_MARKER",
-        );
+        const root = yield* fs.makeTempDirectory({ prefix: "alchemy-module-override-" });
+        yield* fs.writeFileString(path.join(root, "data.sql"), "OVERRIDE_MARKER");
         const entry = path.join(root, "entry.ts");
-        yield* fs.writeFileString(
-          entry,
-          `import data from "./data.sql";\nconsole.log(data);\n`,
-        );
+        yield* fs.writeFileString(entry, `import data from "./data.sql";\nconsole.log(data);\n`);
 
         const result = yield* Bundle.build({
           input: entry,
@@ -182,9 +145,7 @@ layer(NodeServices.layer)("Bundle.build default text module types", (it) => {
           .map((f) => f.content as string)
           .join("\n");
         expect(code).not.toContain("OVERRIDE_MARKER");
-        expect(code).toContain(
-          Buffer.from("OVERRIDE_MARKER").toString("base64"),
-        );
+        expect(code).toContain(Buffer.from("OVERRIDE_MARKER").toString("base64"));
 
         yield* fs.remove(root, { recursive: true });
       }),

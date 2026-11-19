@@ -30,7 +30,12 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
 }) {
   const endpoint = {
     params: { threadId: input.threadId },
-    query: { compactTurnItems: "1", dedupeBodies: "1", compactIds: "1" },
+    query: {
+      compactTurnItems: "1",
+      dedupeBodies: "1",
+      compactIds: "1",
+      deferWork: "1",
+    },
   };
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,

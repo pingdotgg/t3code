@@ -1,5 +1,6 @@
 import {
   AuthRelayReadScope,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -16,8 +17,10 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as ManagedLimits from "../policy/managedLimits.ts";
 import * as CloudLink from "./CloudLink.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
+import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
@@ -66,6 +69,8 @@ const connectErrorCases = {
   CloudLinkProofRejectedError: unauthorized,
   CloudLinkProofReplayedError: conflict,
   CloudLinkTunnelSupersededError: conflict,
+  ManagedPolicyRefusedError: (error: ManagedLimits.ManagedPolicyRefusedError) =>
+    Effect.fail(new EnvironmentHttpForbiddenError({ message: error.message })),
   CloudLinkInternalError: (error: CloudLink.CloudLinkInternalError) =>
     internalServerError(error, error.cause),
   RelayRequestError: relayFailure,
@@ -74,6 +79,7 @@ const connectErrorCases = {
 type ConnectFailure =
   | Exclude<CloudLink.CloudLinkError, CloudLink.CloudLinkEndpointUnavailableError>
   | EnvironmentAuth.ServerAuthInternalError
+  | ManagedLimits.ManagedPolicyRefusedError
   | RelayRequestError;
 
 const toHttpError = <A, R>(effect: Effect.Effect<A, ConnectFailure, R>) =>
@@ -112,7 +118,7 @@ export const layer = HttpApiBuilder.group(
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayWriteScope);
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
           const request = yield* HttpServerRequest.HttpServerRequest;
           const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
           yield* appendCloudCredentialResponseHeaders;
@@ -120,14 +126,18 @@ export const layer = HttpApiBuilder.group(
         }),
       )
       .handle("relayConfig", ({ payload }) =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          return yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
+        }),
       )
       .handle("linkState", () =>
-        requireEnvironmentScope(AuthRelayReadScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.linkState())),
-        ),
+        Effect.gen(function* () {
+          const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
+          const state = yield* toHttpError(cloudLink.linkState());
+          const request = yield* HttpServerRequest.HttpServerRequest;
+          return { ...state, linkableHere: canLinkHere(request, principal.subject) };
+        }),
       )
       .handle("checkReachability", () =>
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
@@ -140,6 +150,13 @@ export const layer = HttpApiBuilder.group(
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
+        ),
+      )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
         ),
       )
       .handle("health", ({ payload }) =>

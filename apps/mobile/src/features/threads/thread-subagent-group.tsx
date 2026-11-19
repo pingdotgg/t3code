@@ -1,18 +1,24 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT, useMessages } from "gt-react-native";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  resolveProviderInstanceDisplayName,
+  shouldShowInstanceBadge,
+} from "@t3tools/client-runtime/state/provider-instance-display";
 import { summarizeSubagentStatuses } from "@t3tools/client-runtime/state/subagent-display";
 import { isActiveSubagentStatus } from "@t3tools/client-runtime/state/subagentRuntime";
 import type {
   EnvironmentId,
   OrchestrationV2Subagent,
   OrchestrationV2TurnItem,
+  ServerConfig,
 } from "@t3tools/contracts";
 import { Pressable, View, type ColorValue } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
@@ -33,7 +39,8 @@ type AgentTiming = Pick<OrchestrationV2Subagent, "status" | "startedAt" | "compl
 function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTiming> }) {
   const live = agents.some((agent) => isActiveSubagentStatus(agent.status));
   const nowMs = useVisibleSecondClock(live);
-  const elapsed = subagentCardElapsed(agents, nowMs);
+  const messages = useMessages();
+  const elapsed = subagentCardElapsed(agents, nowMs, messages);
   return elapsed ? (
     <Text className="shrink-0 text-xs tabular-nums text-foreground-muted">{elapsed}</Text>
   ) : null;
@@ -41,14 +48,54 @@ function SubagentElapsed({ agents }: { readonly agents: ReadonlyArray<AgentTimin
 
 function SubagentAvatar(props: {
   readonly item: SubagentItem;
-  readonly iconUrl?: string | null | undefined;
+  readonly config: ServerConfig | null | undefined;
 }) {
+  const providers = props.config?.providers ?? [];
+  const provider = providers.find(
+    (candidate) => candidate.instanceId === props.item.providerInstanceId,
+  );
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    provider?.driver ?? (props.item.remoteChild === undefined ? props.item.driver : undefined);
+  const badgeEntries = providers.map((candidate) => {
+    const rawConfig = props.config?.settings.providerInstances[candidate.instanceId]?.config;
+    const instanceConfig =
+      rawConfig !== null && typeof rawConfig === "object"
+        ? (rawConfig as Readonly<Record<string, unknown>>)
+        : null;
+    const agentId = instanceConfig?.source === "local" ? undefined : instanceConfig?.agentId;
+    return {
+      ...candidate,
+      driverKind: candidate.driver,
+      acpRegistryAgentId: typeof agentId === "string" ? agentId.trim() || undefined : undefined,
+    };
+  });
+  const badgeEntry = badgeEntries.find(
+    (candidate) => candidate.instanceId === props.item.providerInstanceId,
+  );
+  const showBadge =
+    provider !== undefined &&
+    badgeEntry !== undefined &&
+    shouldShowInstanceBadge(badgeEntry, badgeEntries);
   return (
     <View
       accessible={false}
       className="h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border bg-card"
     >
-      <ProviderIcon provider={props.item.driver} iconUrl={props.iconUrl} size={15} />
+      {showBadge ? (
+        <ProviderInstanceIcon
+          provider={provider.driver}
+          iconUrl={provider.iconUrl}
+          size={15}
+          displayName={resolveProviderInstanceDisplayName(provider)}
+          accentColor={provider.accentColor}
+          showBadge
+        />
+      ) : driver === undefined ? (
+        <SymbolView name="robot" size={13} tintColorClassName="accent-icon-muted" />
+      ) : (
+        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={15} />
+      )}
     </View>
   );
 }
@@ -61,6 +108,8 @@ export function ThreadSubagentGroup(props: {
   readonly iconSubtleColor: ColorValue;
   readonly onToggleRow: (rowId: string, anchorKey: string) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const navigation = useNavigation();
   const openInspector = useOpenThreadInspector();
@@ -83,25 +132,28 @@ export function ThreadSubagentGroup(props: {
       result: live?.result ?? item.result,
       progress: live?.progress ?? item.progress,
       model: live?.model ?? null,
+      modelSelection: live?.modelSelection,
     };
   });
   const grouped = agents.length > 1;
-  const label = `${agents.length} subagents`;
-  const summary = summarizeSubagentStatuses(agents.map((agent) => agent.status));
+  const label = gt("{count, plural, one {{count} subagent} other {{count} subagents}}", {
+    count: agents.length,
+  });
+  const summary = summarizeSubagentStatuses(
+    agents.map((agent) => agent.status),
+    messages,
+  );
   const expanded = props.expandedRows[props.anchorKey] ?? false;
   const serverConfigs = useServerConfigs();
   // A task in a linked environment runs a provider instance of that environment.
-  const iconUrl = (item: SubagentItem) =>
-    (item.remoteChild === undefined
-      ? config
-      : serverConfigs.get(item.remoteChild.environmentId)
-    )?.providers.find((provider) => provider.instanceId === item.providerInstanceId)?.iconUrl;
+  const configOf = (item: SubagentItem) =>
+    item.remoteChild === undefined ? config : serverConfigs.get(item.remoteChild.environmentId);
   return (
     <WorkLogBlock>
       {grouped ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${label}, ${summary}`}
+          accessibilityLabel={gt("{label}, {summary}", { label, summary })}
           accessibilityState={{ expanded }}
           onPress={() => props.onToggleRow(props.anchorKey, props.anchorKey)}
           className="min-h-14 flex-row items-center gap-3 rounded-lg py-2 active:bg-subtle"
@@ -109,7 +161,7 @@ export function ThreadSubagentGroup(props: {
           <View className="flex-row items-center">
             {agents.slice(0, 3).map((agent, index) => (
               <View key={agent.item.id} style={{ marginLeft: index === 0 ? 0 : -7 }}>
-                <SubagentAvatar item={agent.item} iconUrl={iconUrl(agent.item)} />
+                <SubagentAvatar item={agent.item} config={configOf(agent.item)} />
               </View>
             ))}
             {agents.length > 3 ? (
@@ -157,10 +209,10 @@ export function ThreadSubagentGroup(props: {
                 accessibilityRole={target === null ? undefined : "link"}
                 accessibilityHint={
                   target !== null
-                    ? "Opens this agent's thread"
+                    ? gt("Opens this agent's thread")
                     : agent.remoteChild !== undefined
-                      ? `Runs on ${agent.remoteChild.label}`
-                      : "Provider-managed agent"
+                      ? gt("Runs on {label}", { label: agent.remoteChild.label })
+                      : gt("Provider-managed agent")
                 }
                 disabled={target === null}
                 onPress={() => {

@@ -1,11 +1,19 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import {
+  editHeldPullRequestListEntries,
+  pullRequestHostAnswer,
+  pullRequestPendingEditsFor,
+} from "@t3tools/client-runtime/state/pull-requests";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { msg, useMessages } from "gt-react-native";
 import { use, useMemo, useState } from "react";
 import { environmentCatalog } from "../../connection/catalog";
+import { m } from "../../i18n/messages";
 import {
   composerPullRequests,
   pullRequestListPagesFamily,
@@ -31,7 +39,10 @@ type Read = <A>(atom: Atom.Atom<A>) => A;
 
 /** The head the list query holds now, cached or answered. */
 function currentHead(read: Read, target: ListTarget) {
-  return AsyncResult.getOrElse(read(composerPullRequests.list(target)), () => null);
+  return AsyncResult.getOrElse(
+    read(pullRequestHostAnswer(composerPullRequests.list(target))),
+    () => null,
+  );
 }
 
 function currentPages(read: Read, target: ListTarget): PullRequestListPages | null {
@@ -44,12 +55,23 @@ function currentPages(read: Read, target: ListTarget): PullRequestListPages | nu
 const sourcesFamily = Atom.family((key: string) => {
   const targets: readonly ListTarget[] = JSON.parse(key);
   return Atom.make((get) =>
-    targets.map((target) => ({
-      target,
-      result: get(composerPullRequests.list(target)),
-      pages: currentPages(get, target),
-      stats: get(pullRequestListStatsFamily(target.environmentId)),
-    })),
+    targets.map((target) => {
+      const pages = currentPages(get, target);
+      return {
+        target,
+        result: get(composerPullRequests.list(target)),
+        pages:
+          pages === null
+            ? null
+            : {
+                ...pages,
+                entries: editHeldPullRequestListEntries(target.input, pages.entries, (entry) =>
+                  get(pullRequestPendingEditsFor(target.environmentId, entry)),
+                ),
+              },
+        stats: get(pullRequestListStatsFamily(target.environmentId)),
+      };
+    }),
   );
 });
 
@@ -71,7 +93,7 @@ async function loadNextPages(
     continuations(registry, targets).map(async ({ target, pages, input }) => {
       const response = await executeAtomQuery(
         registry,
-        composerPullRequests.list({ ...target, input }),
+        pullRequestHostAnswer(composerPullRequests.list({ ...target, input })),
         {
           signal,
           refresh: retry,
@@ -95,7 +117,7 @@ async function loadNextPages(
         JSON.stringify(Object.entries(input.cursors).sort()) ===
           JSON.stringify(Object.entries(next.nextCursors).sort())
       )
-        throw new Error("Couldn't advance the list. Try again.");
+        throw new Error(m(msg("Couldn't advance the list. Try again.")));
     }),
   );
   return requestErrors(responses);
@@ -113,11 +135,15 @@ async function refreshHeads(
         input: {},
       });
       if (signal.aborted) return;
-      const response = await executeAtomQuery(registry, composerPullRequests.list(target), {
-        refresh: true,
-        signal,
-        reportFailure: false,
-      });
+      const response = await executeAtomQuery(
+        registry,
+        pullRequestHostAnswer(composerPullRequests.list(target)),
+        {
+          refresh: true,
+          signal,
+          reportFailure: false,
+        },
+      );
       if (signal.aborted) return;
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       registry.set(
@@ -131,16 +157,18 @@ async function refreshHeads(
 
 // One load of each kind per list scope. The atoms are not kept alive, so leaving a scope (a
 // filter change, unmount) interrupts its load and aborts the requests.
-const pageLoadFamily = Atom.family((scopeKey: string) =>
-  Atom.fn((retry: boolean, get) =>
-    Effect.promise((signal) => loadNextPages(get.registry, JSON.parse(scopeKey), retry, signal)),
-  ),
-);
-const refreshLoadFamily = Atom.family((scopeKey: string) =>
-  Atom.fn((_: void, get) =>
-    Effect.promise((signal) => refreshHeads(get.registry, JSON.parse(scopeKey), signal)),
-  ),
-);
+const pageLoadFamily = Atom.family((scopeKey: string) => {
+  const targets: readonly ListTarget[] = JSON.parse(scopeKey);
+  return Atom.fn((retry: boolean, get) =>
+    Effect.promise((signal) => loadNextPages(get.registry, targets, retry, signal)),
+  );
+});
+const refreshLoadFamily = Atom.family((scopeKey: string) => {
+  const targets: readonly ListTarget[] = JSON.parse(scopeKey);
+  return Atom.fn((_: void, get) =>
+    Effect.promise((signal) => refreshHeads(get.registry, targets, signal)),
+  );
+});
 
 // Changes when any of the scope's environments brings up a new session.
 const sessionsFamily = Atom.family((scopeKey: string) =>
@@ -155,6 +183,7 @@ const settledError = (result: AsyncResult.AsyncResult<string | null, never>) =>
   AsyncResult.isSuccess(result) && !result.waiting ? result.value : null;
 
 export function usePullRequestList(targets: readonly ListTarget[]) {
+  const messages = useMessages();
   const registry = use(RegistryContext);
   const scopeKey = JSON.stringify(targets);
   const sources = useAtomValue(sourcesFamily(scopeKey));
@@ -162,8 +191,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
   const refreshAtom = refreshLoadFamily(scopeKey);
   const page = useAtomValue(pageAtom);
   const refresh = useAtomValue(refreshAtom);
-  // Starting one kind of load clears the other, so at most one holds an error.
-  const loadError = settledError(refresh) ?? settledError(page);
+  const loadError = settledError(page);
 
   // A page or refresh asked for while an environment was unreachable fails at once, and its
   // error stops loading on scroll. Once it is back, ask for the page again; a refresh's error is
@@ -184,7 +212,7 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
     const pageResult = registry.get(pageAtom);
     const refreshResult = registry.get(refreshAtom);
     if (pageResult.waiting || refreshResult.waiting) return;
-    if (!retry && (settledError(refreshResult) ?? settledError(pageResult))) return;
+    if (!retry && settledError(pageResult)) return;
     if (!continuations(registry, targets).length) return;
     registry.set(refreshAtom, Atom.Reset);
     registry.set(pageAtom, retry);
@@ -309,11 +337,14 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           {
             environmentId: target.environmentId,
             projectTitle: "",
-            message: cause instanceof Error ? cause.message : "Couldn't load pull requests.",
+            message:
+              cause instanceof Error
+                ? (errorDisplayMessage(cause, messages) ?? cause.message)
+                : messages(msg("Couldn't load pull requests.")),
           },
         ];
       }),
-    [sources],
+    [sources, messages],
   );
   const listing = useMemo(
     () => ({ ...data, entries, errors: [...data.errors, ...errors] }),
@@ -345,8 +376,8 @@ function requestErrors(results: readonly PromiseSettledResult<unknown>[]) {
         result.status === "rejected"
           ? [
               result.reason instanceof Error
-                ? result.reason.message
-                : "Couldn't load pull requests.",
+                ? (errorDisplayMessage(result.reason, m) ?? result.reason.message)
+                : m(msg("Couldn't load pull requests.")),
             ]
           : [],
       )

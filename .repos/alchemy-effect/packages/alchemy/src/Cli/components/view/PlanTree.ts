@@ -1,9 +1,5 @@
+import type { ApplyEvent, ApplyStatus, ResourceStatusChanged } from "../../../Events.ts";
 import type { ActionApply, ActionDelete, CRUD, Plan } from "../../../Plan.ts";
-import type {
-  ApplyEvent,
-  ApplyStatus,
-  ResourceStatusChanged,
-} from "../../../Report.ts";
 import type { ProviderMode } from "../../../ProviderMode.ts";
 import {
   buildNamespaceTree,
@@ -66,12 +62,9 @@ export type ResourceRow = Extract<PlanRow, { type: "resource" }>;
  * grouping only, and bindings are reconciled by their host resource, so
  * counting them would leave the progress total unreachable.
  */
-const isProgressRow = (row: PlanRow) =>
-  row.type === "resource" || row.type === "task";
+const isProgressRow = (row: PlanRow) => row.type === "resource" || row.type === "task";
 
-export interface RowState extends Required<
-  Pick<ResourceStatusChanged, "id" | "status">
-> {
+export interface RowState extends Required<Pick<ResourceStatusChanged, "id" | "status">> {
   key: string;
   message?: string;
   startedAt?: number;
@@ -132,8 +125,7 @@ const buildRows = (plan: Plan, detailed: boolean): PlanRow[] => {
   const resources = [
     ...Object.values(plan.resources),
     ...Object.values(plan.deletions).filter(
-      (item): item is NonNullable<Plan["deletions"][string]> =>
-        item !== undefined,
+      (item): item is NonNullable<Plan["deletions"][string]> => item !== undefined,
     ),
   ] as CRUD[];
   const actions = [
@@ -196,15 +188,13 @@ const buildRows = (plan: Plan, detailed: boolean): PlanRow[] => {
 export const initialResourceState = (row: ResourceRow): RowState => ({
   key: row.key,
   id: row.id,
-  status:
-    row.action === "noop" ? (row.persistedApplyStatus ?? "created") : "pending",
+  status: row.action === "noop" ? (row.persistedApplyStatus ?? "created") : "pending",
 });
 
 const buildInitialTasks = (rows: readonly PlanRow[]) =>
   new Map(
     rows.flatMap((row): Array<[string, RowState]> => {
-      if (row.type === "resource")
-        return [[row.key, initialResourceState(row)]];
+      if (row.type === "resource") return [[row.key, initialResourceState(row)]];
       if (row.type === "task") {
         return [
           [
@@ -296,11 +286,7 @@ export class PlanTree {
     });
   }
 
-  finish(
-    outcome: PlanOutcome,
-    label: string,
-    view: PlanView = this.state.view,
-  ) {
+  finish(outcome: PlanOutcome, label: string, view: PlanView = this.state.view) {
     this.update({ busy: false, outcome, label, view });
   }
 
@@ -317,8 +303,7 @@ export class PlanTree {
     const key = event.fqn;
     const now = Date.now();
     const timing = (current: RowState | undefined, status: ApplyStatus) => {
-      const startedAt =
-        current?.startedAt ?? (isInProgress(status) ? now : undefined);
+      const startedAt = current?.startedAt ?? (isInProgress(status) ? now : undefined);
       return {
         startedAt,
         elapsedMs:
@@ -328,7 +313,7 @@ export class PlanTree {
       };
     };
 
-    if (event._tag === "apply.resource.status") {
+    if (event.type === "apply.resource.status") {
       const current = tasks.get(key);
       if (current) {
         tasks.set(key, {

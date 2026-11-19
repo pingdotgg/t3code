@@ -9,7 +9,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestratorMcpFailure,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -28,15 +28,18 @@ const shared = {
     ServerConfig.ServerConfig,
     ServerSecretStore.ServerSecretStore,
     FileSystem.FileSystem,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 };
 const AttachmentUploadTool = Tool.make("t3_attachment_prepare_upload", {
   ...shared,
   description:
-    "Get an upload URL. POST the file's exact bytes to `relativeUrl` on this MCP server's HTTP origin, then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
+    "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
   parameters: Schema.Struct({ upload: AttachmentCreateUploadUrlInput }),
-  success: AttachmentCreateUploadUrlResult,
+  success: Schema.Struct({
+    ...AttachmentCreateUploadUrlResult.fields,
+    uploadUrl: Schema.optionalKey(Schema.String),
+  }),
 }).annotate(Tool.Destructive, true);
 const AttachmentDiscardTool = Tool.make("t3_attachment_discard", {
   ...shared,

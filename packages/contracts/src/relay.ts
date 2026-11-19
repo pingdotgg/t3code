@@ -966,6 +966,8 @@ export type RelayOkResponse = typeof RelayOkResponse.Type;
 export const RelayT3ChatPlan = Schema.Literals(["free", "pro", "premier"]);
 export type RelayT3ChatPlan = typeof RelayT3ChatPlan.Type;
 
+export const DEFAULT_MANAGED_TUNNEL_LIMIT = 3;
+
 // A linked paid T3 Chat plan raises the default managed tunnel cap.
 export const T3CHAT_PLAN_TUNNEL_LIMITS = { pro: 10, premier: 100 } as const;
 
@@ -979,6 +981,8 @@ export const RelayT3ChatLinkResponse = Schema.Struct({
   // False when this relay has no T3 Chat secret, so clients hide the feature.
   available: Schema.Boolean,
   link: Schema.NullOr(RelayT3ChatLink),
+  // A manual cap that replaces the plan's; T3 Chat upgrades do not raise it.
+  maxTunnelsOverride: Schema.optionalKey(Schema.Number),
 });
 export type RelayT3ChatLinkResponse = typeof RelayT3ChatLinkResponse.Type;
 
@@ -1258,6 +1262,19 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "updateLiveActivityPreference",
+      "/v1/environments/:environmentId/live-activity-preference",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: Schema.Struct({
+          cloudUserId: Schema.String,
+          liveActivitiesEnabled: Schema.Boolean,
+        }),
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,

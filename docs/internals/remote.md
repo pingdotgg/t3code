@@ -73,7 +73,7 @@ A [peer link](../../apps/server/src/peer/PeerLinks.ts) lets one environment's
 agents work in another. The linking environment signs in to the other's `/mcp`
 as an outside MCP client, with a pairing code from it, and keeps that session's
 token in its own secret store. The other environment needs nothing new: it
-sees one more OAuth client, lists it in Connections, and revokes it there.
+sees one more OAuth client, lists it in Sharing & access, and revokes it there.
 Unlinking on the linking side only forgets the token.
 
 - **The Linked environments beta (`linkedEnvironmentsEnabled`) gates both
@@ -94,9 +94,15 @@ Unlinking on the linking side only forgets the token.
   `T3-Mode-Limit`, which the receiving `/mcp` only ever narrows the client's
   approved access with. A plan-mode agent therefore cannot start full-access
   work through a full-access link.
-- **The token goes only to an address that proves it is the linked
-  environment**: its descriptor must report the linked environment id. A LAN
-  address that now belongs to another machine never receives it.
+- **A descriptor's environment id filters addresses; it does not prove
+  identity.** The token goes only to an address that reports the linked id, so
+  a LAN address that now reports another machine's never receives it. Anything can
+  report any id, though, so only addresses from the user's client count as a
+  machine's, and never a loopback one, which names whichever machine opens
+  it. An address an agent gives is recorded alone, and
+  [`linkRequestTarget`](../../packages/client-runtime/src/linkRequest.ts) names
+  a machine for it only when the client already reaches exactly one machine
+  there. An address alone never moves an unexpired link to another address.
 - **All callers on one side share the link's single session on the other**,
   so idempotency keys are hashed with the caller's namespace before they
   leave. Without that, two agents reusing a key would collide on the far side.
@@ -151,6 +157,32 @@ in its query and carries the pairing secret in its fragment. Fragments stay out
 of requests to the hosted origin. The browser exchanges the secret with the
 environment and strips it from its history. Moving the token into a query
 parameter would disclose it to the wrong origin.
+
+## Desktop previews tunnel loopback
+
+A desktop webview for another environment keeps `localhost` URLs and reaches the environment's
+loopback through `/api/preview/tunnel`, one WebSocket per TCP connection, on the same origin as
+every other request. That is why it works over any connection method. Four choices are easy to
+undo by accident:
+
+- **Fixed proxy, not PAC.** Chromium never consults a PAC script for loopback hosts, even with
+  `<-loopback>`. The partition uses a fixed SOCKS5 proxy with the bypass list
+  `*,<-loopback>,169.254.0.0/16,fe80::/10`, in that order, since the last matching rule wins:
+  everything is direct except loopback. `<-loopback>` also takes link-local addresses, so the last
+  two rules hand them back to the direct route. A fixed proxy also has no
+  direct retry, so a failed tunnel is a connection error and never the reviewer's own localhost.
+  The rule matches hostnames, not resolved addresses, so a custom name that resolves to loopback
+  still goes direct.
+- **Media tickets.** Desktop main opens the tunnel but holds no environment credentials. Media
+  tickets are not DPoP-bound, so the renderer can hand one over. Main asks it for a tunnel URL per
+  connection, which also makes the tunnel follow a route switch.
+- **Owner check, not auth.** Chromium can't authenticate to a SOCKS proxy, so any local process
+  can connect to the listener and ride this user's tunnel. On Linux the listener looks the client
+  up in `/proc/net/tcp` and refuses other users. macOS and Windows have no such check yet. The
+  mobile app's device preview has the same listener while it is open: iOS suspends other apps, but
+  Android lets any app reach it, and apps cannot see another app's socket owner there.
+- **System browser links** have no tunnel. They keep the private-network rewrite in
+  [`browserTargetResolver.ts`](../../apps/web/src/browser/browserTargetResolver.ts).
 
 ## Access and process ownership are different
 

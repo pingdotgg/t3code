@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -8,6 +9,8 @@ import { presentConnectionDiagnosis } from "./diagnosis.ts";
 import { mapManagedRelayError, mapRemoteEnvironmentError } from "./errors.ts";
 import {
   AVAILABLE_CONNECTION_STATE,
+  ConnectionBlockedError,
+  ConnectionTransientError,
   type ConnectionAttemptError,
   type SupervisorConnectionState,
 } from "./model.ts";
@@ -126,6 +129,60 @@ describe("presentConnectionDiagnosis", () => {
       relayStatus: { status: "offline", endpointFailure: "origin_unreachable" },
     });
     expect(origin?.hops.map((hop) => hop.hop)).toEqual(["device", "relay", "tunnel", "server"]);
+  });
+
+  it("blames this device, not the host, while its own T3 Connect sign-in loads", () => {
+    const failure = new ConnectionTransientError({
+      reason: "session-pending",
+      detail: "Waiting for the T3 Connect sign-in to load.",
+    });
+    const diagnosis = diagnose(backoff(failure));
+    expect(diagnosis?.headline).not.toContain("did not answer");
+    expect(diagnosis?.hops.find((hop) => hop.result === "failed")?.hop).toBe("device");
+    expect(diagnosis?.steps.join(" ")).not.toContain("Mac mini");
+    expect(diagnosis?.moreInfoUrl).toContain("sign-in-account-or-link-problems");
+    // A host with a LAN route as well uses the direct route, still authorized through T3 Connect.
+    expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toContain(
+      "sign-in-account-or-link-problems",
+    );
+  });
+
+  it("asks for approval on the host instead of reporting it unreachable", () => {
+    const diagnosis = diagnose(
+      backoff(
+        new ConnectionTransientError({
+          reason: "approval-pending",
+          detail: "Approve this device on Mac mini. It shows code K7QM-2XFD.",
+          verificationCode: "K7QM-2XFD",
+          hop: "server",
+          via: "relay",
+          failureCause: "approval_pending",
+        }),
+      ),
+    );
+    expect(diagnosis?.headline).toBe("Mac mini is waiting for someone to approve this device");
+    expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
+  });
+
+  it("tells a host that refused this device's login to sign in again, not to start T3 Code", () => {
+    const failure = mapRemoteEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        traceId: "trace-1",
+      }),
+    );
+    const steps = diagnose(backoff(failure), "direct")?.steps.join(" ");
+    expect(steps).not.toContain("Make sure T3 Code is running");
+    expect(steps).toMatch(/pair|sign in/i);
+  });
+
+  it("does not report hops as working when the failure names none", () => {
+    const failure = new ConnectionBlockedError({
+      reason: "authentication",
+      detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
+    });
+    expect(results(backoff(failure))).not.toContainEqual(expect.stringMatching(/:ok$/));
   });
 
   it("keeps the relay health status out of a failure that has its own cause", () => {

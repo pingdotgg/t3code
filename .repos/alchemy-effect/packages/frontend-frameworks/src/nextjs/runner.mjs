@@ -1,3 +1,4 @@
+import fs from "node:fs";
 // Alchemy modifications are licensed under Apache-2.0.
 // This file includes third-party code; see /THIRD_PARTY_LICENSES.md.
 // Programmatic @opennextjs/cloudflare build runner — NO wrangler binary, NO
@@ -17,7 +18,6 @@
 //   { appDir, configPath, compatibilityDate, skipNextBuild, minify, debug,
 //     buildCommand }
 import { createRequire } from "node:module";
-import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -36,15 +36,12 @@ const cfRequire = createRequire(path.join(cfRoot, "package.json"));
 /** Import a file from the @opennextjs/cloudflare dist (bypasses the exports map). */
 const importCf = (p) => import(pathToFileURL(path.join(cfRoot, p)).href);
 /** Import a subpath of @opennextjs/aws resolved from the cloudflare package. */
-const importAws = (p) =>
-  import(pathToFileURL(cfRequire.resolve(`@opennextjs/aws/${p}`)).href);
+const importAws = (p) => import(pathToFileURL(cfRequire.resolve(`@opennextjs/aws/${p}`)).href);
 
 const { compileOpenNextConfig } = await importAws("build/compileConfig.js");
 const { normalizeOptions } = await importAws("build/helper.js");
 const { default: logger } = await importAws("logger.js");
-const { ensureCloudflareConfig } = await importCf(
-  "dist/cli/build/utils/ensure-cf-config.js",
-);
+const { ensureCloudflareConfig } = await importCf("dist/cli/build/utils/ensure-cf-config.js");
 const { build } = await importCf("dist/cli/build/build.js");
 
 const configPath = runnerConfig.configPath ?? runnerConfig.generatedConfigPath;
@@ -66,12 +63,9 @@ const { config, buildDir } = await compileOpenNextConfig(configPath, {
   compileEdge: true,
 });
 ensureCloudflareConfig(config);
-config.buildCommand =
-  runnerConfig.buildCommand ?? config.buildCommand ?? "npx next build";
+config.buildCommand = runnerConfig.buildCommand ?? config.buildCommand ?? "npx next build";
 
-const openNextDistDir = path.dirname(
-  cfRequire.resolve("@opennextjs/aws/index.js"),
-);
+const openNextDistDir = path.dirname(cfRequire.resolve("@opennextjs/aws/index.js"));
 const options = normalizeOptions(config, openNextDistDir, buildDir);
 logger.setLevel(runnerConfig.debug ? "debug" : "info");
 
@@ -87,9 +81,7 @@ const projectOptions = {
   minify: !!runnerConfig.minify,
 };
 await build(options, config, projectOptions, wranglerConfig, false);
-console.log(
-  "[@alchemy.run/frontend-frameworks/nextjs] OpenNext build finished OK",
-);
+console.log("[@alchemy.run/frontend-frameworks/nextjs] OpenNext build finished OK");
 fs.writeFileSync(
   runnerConfig.outputPath,
   JSON.stringify({

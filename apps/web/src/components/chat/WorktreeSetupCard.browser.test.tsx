@@ -53,13 +53,13 @@ it("ticks the running stage while finished stages keep their duration", async ()
   // Assert synchronously: expect.element polls on timers these tests fake.
   const section = screen.getByRole("region", { name: "Worktree setup" });
 
-  expect(section.element().textContent).toContain("Fetch base branch3.0s");
-  expect(section.element().textContent).toContain("Check out files7.0s");
+  expect(section.element().textContent).toContain("Fetch base branch3s");
+  expect(section.element().textContent).toContain("Check out files7s");
 
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
-  expect(section.element().textContent).toContain("Fetch base branch3.0s");
+  expect(section.element().textContent).toContain("Fetch base branch3s");
   expect(section.element().textContent).toContain("Check out files12s");
 });
 
@@ -70,9 +70,9 @@ it("stops a stage interrupted by the setup ending at the setup's end", async () 
   await using screen = await render(card(failed));
   const section = screen.getByRole("region", { name: "Worktree setup" });
 
-  expect(section.element().textContent).toContain("Check out files2.0s");
+  expect(section.element().textContent).toContain("Check out files2s");
   await act(async () => {
     await vi.advanceTimersByTimeAsync(5_000);
   });
-  expect(section.element().textContent).toContain("Check out files2.0s");
+  expect(section.element().textContent).toContain("Check out files2s");
 });

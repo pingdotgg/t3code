@@ -1,0 +1,37 @@
+import * as im from "@distilled.cloud/aws/internetmonitor";
+import * as Binding from "alchemy/Binding";
+import * as Effect from "effect/Effect";
+import type { Monitor } from "./Monitor.ts";
+
+export interface StopQueryRequest extends Omit<im.StopQueryInput, "MonitorName"> {}
+
+/**
+ * Runtime binding for `internetmonitor:StopQuery` — cancel an in-progress
+ * query on the bound {@link Monitor}; the monitor name is injected
+ * automatically.
+ *
+ * Provide `InternetMonitor.StopQueryHttp` on the hosting Lambda Function to
+ * satisfy the requirement.
+ * ### Querying Measurements
+ * **Example:** Cancel a Running Query
+ * ```typescript
+ * // init — grants internetmonitor:StopQuery on the monitor
+ * const stopQuery = yield* AWS.InternetMonitor.StopQuery(monitor);
+ *
+ * // runtime
+ * yield* stopQuery({ QueryId: queryId });
+ * ```
+ *
+ * @binding
+ */
+export interface StopQuery extends Binding.Service<
+  StopQuery,
+  "AWS.InternetMonitor.StopQuery",
+  (
+    monitor: Monitor,
+  ) => Effect.Effect<
+    (request: StopQueryRequest) => Effect.Effect<im.StopQueryOutput, im.StopQueryError>
+  >
+> {}
+
+export const StopQuery = Binding.Service<StopQuery>("AWS.InternetMonitor.StopQuery");

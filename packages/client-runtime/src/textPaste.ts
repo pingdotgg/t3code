@@ -4,12 +4,20 @@ const textEncoder = new TextEncoder();
 
 export type PastedTextDisposition = "attachment" | "inline";
 
+/** Non-Latin layouts (Cyrillic, Greek) report the typed letter; fall back to the physical key. */
+function isVKey(event: { readonly key: string; readonly code?: string }): boolean {
+  const key = event.key.toLowerCase();
+  return /^[a-z]$/.test(key) ? key === "v" : event.code === "KeyV";
+}
+
 export function isPasteAsTextShortcut(
-  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey">,
+  event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"> & {
+    readonly code?: string;
+  },
   macPlatform: boolean,
 ): boolean {
   return (
-    event.key.toLowerCase() === "v" &&
+    isVKey(event) &&
     event.shiftKey &&
     !event.altKey &&
     (macPlatform ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey)

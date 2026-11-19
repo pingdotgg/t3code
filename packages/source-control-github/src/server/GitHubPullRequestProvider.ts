@@ -24,6 +24,7 @@ import {
   type PullRequestProviderApi,
   type ProviderRepositoryRef,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type { GitHubCredentialSource } from "./GitHubCredentials.ts";
 import type {
   GitHubRepositoryAccess,
   GitHubViewerAccess,
@@ -40,6 +41,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   updateMethods: ["merge", "rebase"],
   search: true,
   reactions: true,
+  mentions: true,
+  referenceSigils: ["#"],
   viewedFiles: "host",
   review: {
     inlineComment: true,
@@ -48,21 +51,22 @@ const CAPABILITIES: PullRequestCapabilities = {
     resolve: true,
     verdicts: ["comment", "approve", "request-changes"],
   },
-  reviewers: { request: true, listCandidates: true },
-  edit: { changeRequest: true, comment: true },
+  reviewers: { request: true, listCandidates: true, searchCandidates: true },
+  edit: { changeRequest: true, comment: true, maintainerEdits: true },
   stacks: true,
   stackActions: true,
   labels: true,
   // Statuses and check runs land on the head commit itself and are read whole, so an empty list
   // after a push is CI that never started rather than a read that saw nothing.
   checksAlwaysReport: true,
+  withheldFileDiff: true,
 };
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
     "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
   unauthenticated:
-    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source Control.",
+    "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
 };
 
 /**
@@ -110,6 +114,7 @@ function gitHubProviderFailure(
       return { reason: "missing-tool" };
     case "GitHubNotSignedInError":
     case "GitHubHostDisabledError":
+    case "SettingsSecretUnresolvedError":
     case "GitHubApiAuthenticationError":
       return { reason: "unauthenticated" };
     case "GitHubApiRateLimitError":
@@ -119,12 +124,30 @@ function gitHubProviderFailure(
       };
     case "SourceControlRateLimitPausedError":
       return { reason: "rate-limited", retryAt: error.retryAt };
+    case "GitHubApiResponseError":
+      return {
+        reason:
+          error.status === 403 ||
+          (error.githubErrorTypes?.includes("FORBIDDEN") &&
+            error.githubErrorTypes.every((type) => type === "FORBIDDEN" || type === "NOT_FOUND"))
+            ? "forbidden"
+            : "failed",
+      };
     case "GitHubApiNotFoundError":
-      return { reason: "not-found" };
+      return error.credential === undefined || error.credential === "app"
+        ? { reason: "not-found" }
+        : { reason: "not-found", accessHint: REPOSITORY_ACCESS_HINTS[error.credential] };
     default:
       return { reason: "failed" };
   }
 }
+
+const REPOSITORY_ACCESS_HINTS: Record<Exclude<GitHubCredentialSource, "app">, string> = {
+  settings:
+    "Your saved GitHub token can't see it. Give it access, or change it in Settings → Source control & issues.",
+  env: "The server's environment token can't see it. Give it access, or unset it.",
+  gh: "Your gh login can't see it. Give it access, or save a token in Settings → Source control & issues.",
+};
 
 function withAvatar(
   actor: PullRequestActor | null,
@@ -139,6 +162,9 @@ function withAvatar(
   return avatarUrl === null ? actor : { ...actor, avatarUrl };
 }
 
+const workflowRunIdOf = (url: string | null) =>
+  url?.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1] ?? null;
+
 function withWorkflowApprovals(
   checks: ReadonlyArray<PullRequestCheck>,
   runs: ReadonlyArray<GitHubWorkflowRunApproval>,
@@ -147,8 +173,8 @@ function withWorkflowApprovals(
   const representedRunIds = new Set<number>();
   for (const check of checks) {
     if (check.status !== "action-required" || check.url === null) continue;
-    const id = check.url.match(/\/actions\/runs\/(\d+)(?:\/|$)/)?.[1];
-    if (id !== undefined) representedRunIds.add(Number(id));
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) representedRunIds.add(Number(id));
   }
   const approvalChecks = runs
     .filter((run) => !representedRunIds.has(run.id))
@@ -168,9 +194,34 @@ function withWorkflowApprovals(
             status: "action-required" as const,
             description: "GitHub could not determine whether workflows are awaiting approval.",
             url: null,
+            placeholder: true,
           },
         ]
       : []),
+  ];
+}
+
+// GitHub adds a run's check runs only as its jobs start, so a queued run can have none yet.
+function withUnfinishedWorkflowRuns(
+  checks: ReadonlyArray<PullRequestCheck>,
+  runs: ReadonlyArray<GitHubWorkflowRunApproval>,
+): ReadonlyArray<PullRequestCheck> {
+  const runningRunIds = new Set<number>();
+  for (const check of checks) {
+    if (check.status !== "pending" && check.status !== "action-required") continue;
+    const id = workflowRunIdOf(check.url);
+    if (id !== null) runningRunIds.add(Number(id));
+  }
+  return [
+    ...checks,
+    ...runs
+      .filter((run) => !runningRunIds.has(run.id))
+      .map((run): PullRequestCheck => ({
+        name: run.name,
+        status: "pending",
+        description: "This workflow run has not finished.",
+        url: run.url,
+      })),
   ];
 }
 
@@ -315,11 +366,24 @@ export const make = Effect.gen(function* () {
                   }),
                 )
         ).pipe(
-          Effect.map((workflowApprovals) => ({
+          Effect.zip(
+            pullRequest.state !== "open" || pullRequest.headSha == null
+              ? Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>)
+              : cli.listUnfinishedWorkflowRuns({ ...input, headSha: pullRequest.headSha }).pipe(
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "GitHubApiRateLimitError" &&
+                      error._tag !== "SourceControlRateLimitPausedError",
+                    () => Effect.succeed([] as ReadonlyArray<GitHubWorkflowRunApproval>),
+                  ),
+                ),
+            { concurrent: true },
+          ),
+          Effect.map(([workflowApprovals, unfinishedRuns]) => ({
             ...pullRequest,
             author: withAvatar(pullRequest.author, new Map(), input.host),
             checks: withWorkflowApprovals(
-              pullRequest.checks,
+              withUnfinishedWorkflowRuns(pullRequest.checks, unfinishedRuns),
               workflowApprovals.runs,
               workflowApprovals.unavailable,
             ),
@@ -336,6 +400,7 @@ export const make = Effect.gen(function* () {
     capabilities: CAPABILITIES,
     unavailableRequirement: UNAVAILABLE_REQUIREMENT,
     readsPublicHostWithoutCheckout: true,
+    batchesReads: true,
     mergeMessageRewrite: removeAgentCredits,
     getRoutingIdentity: (input) =>
       cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
@@ -430,6 +495,8 @@ export const make = Effect.gen(function* () {
         .getPullRequestWatchFingerprint(input)
         .pipe(Effect.mapError(fail("getChangeRequestWatchFingerprint"))),
 
+    changeRequestEvents: (input) => cli.pullRequestEvents(input),
+
     getChangeRequestPreview: (input) =>
       cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
 
@@ -453,10 +520,13 @@ export const make = Effect.gen(function* () {
             ...pullRequest.reviewRequestTeams,
           ],
           mergeCapabilities: pullRequest.viewerAccess.mergeCapabilities,
-          viewerPermissions: gitHubViewerPermissions({
-            ...pullRequest.viewerAccess,
-            canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
-          }),
+          viewerPermissions: {
+            ...gitHubViewerPermissions({
+              ...pullRequest.viewerAccess,
+              canUpdateBranch: pullRequest.comparison?.viewerCanUpdate === true,
+            }),
+            maintainerEdits: pullRequest.canEditMaintainerEdits,
+          },
           baseComparison:
             pullRequest.comparison === null || pullRequest.comparison.behindBy === null
               ? "unknown"
@@ -470,12 +540,14 @@ export const make = Effect.gen(function* () {
         Effect.mapError(fail("getChangeRequest")),
       ),
 
-    getChangeRequestActivity: (input) =>
-      Effect.all(
-        [
-          cli.getPullRequestActivity(input),
-          cli.listReviewThreadComments(input).pipe(
-            Effect.orElseSucceed(() => ({
+    getChangeRequestActivity: (input) => {
+      const threadRead = cli.listReviewThreadComments(input).pipe(
+        Effect.catchIf(
+          (error) =>
+            error._tag !== "GitHubApiRateLimitError" &&
+            error._tag !== "SourceControlRateLimitPausedError",
+          () =>
+            Effect.succeed({
               comments: [],
               dismissalsByReviewId: new Map<string, string>(),
               reactions: [],
@@ -490,11 +562,12 @@ export const make = Effect.gen(function* () {
               botLogins: new Set<string>(),
               commits: [],
               viewer: { canUpdate: true, didAuthor: false },
-            })),
-          ),
-        ],
-        { concurrency: 2 },
-      ).pipe(
+            }),
+        ),
+      );
+      return Effect.all([cli.getPullRequestActivity(input), threadRead], {
+        concurrency: 2,
+      }).pipe(
         Effect.mapError(fail("getChangeRequestActivity")),
         Effect.map(([pullRequest, reviewThreads]): ProviderChangeRequestActivity => {
           const commitStats = new Map(
@@ -549,7 +622,7 @@ export const make = Effect.gen(function* () {
               }))
               .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt)),
             commentCount: pullRequest.comments.length + reviewThreads.commentCount,
-            commentsTruncated: reviewThreads.truncated,
+            commentsTruncated: pullRequest.truncated || reviewThreads.truncated,
             reviewThreadsTruncated: reviewThreads.reviewThreadsTruncated,
             reviewThreads: reviewThreads.reviewThreads.map((thread) => ({
               ...thread,
@@ -565,7 +638,8 @@ export const make = Effect.gen(function* () {
             })),
           };
         }),
-      ),
+      );
+    },
 
     getReviewThreadComments: (input) =>
       cli.getReviewThreadComments(input).pipe(Effect.mapError(fail("getReviewThreadComments"))),
@@ -633,6 +707,11 @@ export const make = Effect.gen(function* () {
     searchRepositoryAuthors: (input) =>
       cli.searchRepositoryAuthors(input).pipe(Effect.mapError(fail("searchRepositoryAuthors"))),
 
+    searchRepositoryReferences: (input) =>
+      cli
+        .searchRepositoryReferences(input)
+        .pipe(Effect.mapError(fail("searchRepositoryReferences"))),
+
     setLabels: (input) =>
       cli
         .setLabels({
@@ -666,6 +745,9 @@ export const make = Effect.gen(function* () {
     updateChangeRequest: (input) =>
       cli
         .updatePullRequest({
+          ...(input.maintainerCanModify === undefined
+            ? {}
+            : { maintainerCanModify: input.maintainerCanModify }),
           cwd: input.cwd,
           repository: input.repository,
           host: input.host,

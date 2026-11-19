@@ -61,9 +61,7 @@ describe("skipEnvironments", () => {
     expect(await callConfigEnvironment(plugin, "astro")).toBeUndefined();
     const ssr = await callConfigEnvironment(plugin, "ssr");
     expect(ssr).toBeDefined();
-    expect(
-      (ssr as { resolve?: { builtins?: unknown } }).resolve?.builtins,
-    ).toBeDefined();
+    expect((ssr as { resolve?: { builtins?: unknown } }).resolve?.builtins).toBeDefined();
   });
 
   it("keeps the client environment's special configEnvironment handling", async () => {
@@ -76,9 +74,9 @@ describe("skipEnvironments", () => {
   });
 
   it("rejects worker environments listed in skipEnvironments", () => {
-    expect(() =>
-      parseViteEnvironments({ skipEnvironments: ["ssr"] }),
-    ).toThrowError(/cannot be both a worker environment/);
+    expect(() => parseViteEnvironments({ skipEnvironments: ["ssr"] })).toThrowError(
+      /cannot be both a worker environment/,
+    );
     expect(() =>
       parseViteEnvironments({
         viteEnvironments: { entry: "rsc", children: ["ssr"] },
@@ -97,18 +95,12 @@ describe("skipEnvironments", () => {
     const plugin = nodejsUnenvPlugin.vite(options);
     assert(plugin, "plugin is not defined");
     const configureServer = plugin.configureServer;
-    assert(
-      typeof configureServer === "function",
-      "configureServer is not a function",
-    );
+    assert(typeof configureServer === "function", "configureServer is not a function");
 
     const registered: Array<string> = [];
     const makeEnvironment = (
       name: string,
-      {
-        noDiscovery = false,
-        throws = false,
-      }: { noDiscovery?: boolean; throws?: boolean } = {},
+      { noDiscovery = false, throws = false }: { noDiscovery?: boolean; throws?: boolean } = {},
     ) => ({
       name,
       config: { optimizeDeps: { noDiscovery } },
@@ -116,9 +108,7 @@ describe("skipEnvironments", () => {
         init: async () => {},
         registerMissingImport: (id: string) => {
           if (throws) {
-            throw new Error(
-              `registerMissingImport is not supported in dev ${name}`,
-            );
+            throw new Error(`registerMissingImport is not supported in dev ${name}`);
           }
           registered.push(`${name}:${id}`);
           return { id, processing: Promise.resolve() };
@@ -146,9 +136,7 @@ describe("skipEnvironments", () => {
       },
     };
 
-    await expect(
-      configureServer.call(plugin as never, server as never),
-    ).resolves.not.toThrow();
+    await expect(configureServer.call(plugin as never, server as never)).resolves.not.toThrow();
     expect(registered.length).toBeGreaterThan(0);
     expect(registered.every((entry) => entry.startsWith("ssr:"))).toBe(true);
   });
@@ -157,14 +145,9 @@ describe("skipEnvironments", () => {
     const plugin = nodejsUnenvPlugin.vite(options);
     assert(plugin, "plugin is not defined");
     const hook = plugin.resolveId;
-    assert(
-      hook && typeof hook === "object" && "handler" in hook,
-      "resolveId is not a hook",
-    );
+    assert(hook && typeof hook === "object" && "handler" in hook, "resolveId is not a hook");
     const registerMissingImport = vi.fn(() => {
-      throw new Error(
-        "registerMissingImport is not supported in dev prerender",
-      );
+      throw new Error("registerMissingImport is not supported in dev prerender");
     });
     const resolve = vi.fn(async (id: string) => ({ id }));
     const context = {

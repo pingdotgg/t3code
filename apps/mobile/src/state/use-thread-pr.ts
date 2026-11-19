@@ -7,12 +7,17 @@ import {
 import type { EnvironmentId, PullRequestSummary } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom } from "effect/reactivity";
-import { useMemo } from "react";
+import { useMessages } from "gt-react-native";
+import { use, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "./atom-registry";
 import { serverEnvironment } from "./server";
+import { environmentThreadShells } from "./threads";
 import { useEnvironmentQuery } from "./query";
+import { ThreadPrDemandContext } from "./thread-pr-demand";
 import {
+  knownPullRequestSummary,
   rememberBounded,
   resolveThreadPrSource,
   presentThreadPr,
@@ -58,7 +63,24 @@ const pullRequestSummaryAtom = createLinkedPullRequestSummaryAtomFamily(
 
 export { type ThreadPr, type ThreadPrPresentation } from "./thread-pr-presentation";
 
+/** Seeds a pull request page with a summary already in memory, never another pull request's. */
+export function withKnownPullRequestSummary<
+  Params extends { readonly host?: string; readonly repository: string; readonly number: number },
+>(params: Params) {
+  const initialSummary =
+    params.host === undefined
+      ? undefined
+      : knownPullRequestSummary(
+          { host: params.host, repository: params.repository, number: params.number },
+          appAtomRegistry.get(environmentThreadShells.threadShellsAtom),
+          appAtomRegistry.get(pullRequestSnapshotsAtom).values(),
+        );
+  return initialSummary === undefined ? params : { ...params, initialSummary };
+}
+
 export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentation | null {
+  const demand = use(ThreadPrDemandContext);
+  const resolve = useMessages();
   const supportsLinks = useAtomValue(
     serverEnvironment.configValueAtom(thread.environmentId),
     (config) => config !== null,
@@ -72,8 +94,15 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
           branchPullRequest: thread.branchPullRequest,
         },
         supportsLinks,
+        resolve,
       ),
-    [thread.pullRequests, thread.linkedPullRequest, thread.branchPullRequest, supportsLinks],
+    [
+      thread.pullRequests,
+      thread.linkedPullRequest,
+      thread.branchPullRequest,
+      supportsLinks,
+      resolve,
+    ],
   );
   const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.
@@ -81,7 +110,7 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
     key === null ? undefined : current.get(key),
   );
   const pullRequestSummary = useEnvironmentQuery(
-    pullRequestRef === null
+    pullRequestRef === null || !demand
       ? null
       : pullRequestSummaryAtom({
           environmentId: thread.environmentId,
@@ -97,10 +126,14 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
   const summaryPresentation =
     summary === undefined
       ? null
-      : presentThreadPr(pullRequestDetailToVcsStatus(summary), {
-          kind: summary.provider,
-          name: summary.provider,
-          baseUrl: "",
-        });
+      : presentThreadPr(
+          pullRequestDetailToVcsStatus(summary),
+          {
+            kind: summary.provider,
+            name: summary.provider,
+            baseUrl: "",
+          },
+          resolve,
+        );
   return linkedPresentation ?? summaryPresentation;
 }

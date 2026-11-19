@@ -58,7 +58,28 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
   return Predicate.isNumber(value) && Number.isFinite(value) ? value : undefined;
 }
 
-export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
+// Pi provider names and model ids may both contain "/", so a slug only splits
+// reliably through the `{provider, id}` pairs `get_available_models` reported.
+export function findReportedPiModel(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | undefined {
+  if (!Array.isArray(reportedModels)) return undefined;
+  for (const model of reportedModels) {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    if (provider !== undefined && modelId !== undefined && `${provider}/${modelId}` === slug)
+      return { provider, modelId };
+  }
+  return undefined;
+}
+
+export function resolvePiModelSlug(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | null {
+  const reported = findReportedPiModel(slug, reportedModels);
+  if (reported !== undefined) return reported;
   const separator = slug.indexOf("/");
   if (separator <= 0 || separator === slug.length - 1) return null;
   return { provider: slug.slice(0, separator), modelId: slug.slice(separator + 1) };
@@ -84,6 +105,7 @@ export interface PiRpcConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+const TERMINATION_POLL_INTERVAL = Duration.millis(20);
 
 interface PendingPiRequest {
   readonly deferred: Deferred.Deferred<unknown, PiRpcError>;
@@ -96,14 +118,16 @@ const MAX_PI_RECORD_CHARS =
 function makeJsonlFramer() {
   let buffer = "";
   let dropping = false;
-  return (chunk: string): ReadonlyArray<string> => {
+  return (chunk: string) => {
     const lines: string[] = [];
+    const droppedLengths: number[] = [];
     let start = 0;
     while (start < chunk.length) {
       const newline = chunk.indexOf("\n", start);
       const end = newline < 0 ? chunk.length : newline;
       if (!dropping) {
         if (buffer.length + end - start > MAX_PI_RECORD_CHARS) {
+          droppedLengths.push(buffer.length + end - start);
           buffer = "";
           dropping = true;
         } else {
@@ -118,9 +142,21 @@ function makeJsonlFramer() {
       dropping = false;
       start = newline + 1;
     }
-    return lines;
+    return { lines, droppedLengths };
   };
 }
+
+// Report the observed length before LF arrives; an unterminated response can time out first.
+const logDroppedPiRecords = (droppedLengths: ReadonlyArray<number>) =>
+  Effect.forEach(
+    droppedLengths,
+    (recordLength) =>
+      Effect.logWarning("Dropping oversized pi stdout record.", {
+        recordLength,
+        maxRecordLength: MAX_PI_RECORD_CHARS,
+      }),
+    { discard: true },
+  );
 
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const decodeJsonLine = Schema.decodeSync(UnknownFromJsonString);
@@ -161,10 +197,14 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
+  groupGone: () => boolean,
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_GRACE);
+  yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
+    Effect.repeat({ until: groupGone }),
+    Effect.timeoutOption(TERMINATION_GRACE),
+  );
   if (hasExited()) return;
   kill("SIGKILL");
 });
@@ -185,6 +225,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         extendEnv: false,
         shell: spawnCommand.shell,
         detached: platform !== "win32",
+        // On stdin EOF Pi quits without its SIGTERM handler, so the later SIGTERM kills it mid-cleanup.
+        stdin: { stream: "pipe", endOnDone: false },
       }),
     )
     .pipe(Effect.mapError((cause) => new PiRpcError({ operation: "spawn", cause })));
@@ -216,6 +258,16 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
+  // EPERM means a group member is still alive, so only ESRCH ends the SIGTERM grace early.
+  const processGroupGone = (): boolean => {
+    try {
+      signalProcessGroup(Number(child.pid), 0);
+      return false;
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+    }
+  };
+
   // Windows process.kill leaves extension children and pipes alive; taskkill /T reaps the tree.
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
@@ -226,7 +278,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   }).pipe(Effect.scoped, Effect.ignore);
 
   const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+    platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited, processGroupGone);
 
   // Register teardown immediately after spawn so interrupted setup cannot leak a detached process.
   yield* Scope.addFinalizer(scope, terminateProcess.pipe(Effect.ignore, Effect.uninterruptible));
@@ -294,7 +348,8 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
       Stream.decodeText(),
       Stream.runForEach((chunk) =>
         Effect.gen(function* () {
-          const lines = frame(chunk);
+          const { lines, droppedLengths } = frame(chunk);
+          yield* logDroppedPiRecords(droppedLengths);
           for (const line of lines) {
             const record = parsePiRecord(line);
             if (record === undefined) {
@@ -308,7 +363,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
         }),
       ),
     );
-    for (const line of frame("\n")) {
+    const flushed = frame("\n");
+    yield* logDroppedPiRecords(flushed.droppedLengths);
+    for (const line of flushed.lines) {
       const trailing = parsePiRecord(line);
       if (trailing !== undefined) yield* routeRecord(trailing);
     }
