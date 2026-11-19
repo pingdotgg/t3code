@@ -86,6 +86,20 @@ describe("createCodeViewScrollRestore", () => {
     expect(again.scrolls).toEqual([{ type: "position", position: 182 }]);
   });
 
+  it("moves a viewer kept across a scope change to that scope's position, not the old one", () => {
+    const commitA = viewer(10_000);
+    mount("commit-a", commitA).onScroll(3000, commitA.instance);
+    const commitB = viewer(10_000);
+    mount("commit-b", commitB).onScroll(800, commitB.instance);
+
+    const kept = viewer(700);
+    const restore = mount("commit-a", kept, false, () => {});
+    restore.update("commit-b", true, null);
+    kept.instance.scrollHeight = 10_000;
+    restore.flush();
+    expect(kept.scrolls).toEqual([{ type: "position", position: 832 }]);
+  });
+
   it("forgets a position that a reveal or collapsing every file replaced", () => {
     const first = viewer(10_000);
     const restore = mount("thread-d", first);

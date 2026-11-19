@@ -40,6 +40,10 @@ export function createCodeViewScrollRestore() {
   };
   return {
     update(nextScopeKey: string | null, nextSettled: boolean, nextLoadMore: (() => void) | null) {
+      // A viewer kept across a scope change takes the new scope's position, never the old one's.
+      if (viewer && nextScopeKey !== scopeKey) {
+        pending = nextScopeKey === null ? null : (scrollTopByScopeKey.get(nextScopeKey) ?? null);
+      }
       scopeKey = nextScopeKey;
       settled = nextSettled;
       loadMore = nextLoadMore;
