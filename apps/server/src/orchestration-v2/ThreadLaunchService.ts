@@ -1300,11 +1300,15 @@ const make = Effect.gen(function* () {
       let modelSelection = input.modelSelection;
       if (input.reuseExistingThread !== true && Option.isNone(launchReceipt)) {
         if (input.agentId === undefined && input.importedNativeThread === undefined) {
-          const settings = yield* serverSettings.getSettings.pipe(
-            Effect.mapError(mapError(input, "resolve-project")),
+          // Unreadable settings must not block a launch; it just has no default agent.
+          agentId = yield* serverSettings.getSettings.pipe(
+            Effect.map(
+              (settings) =>
+                resolveProjectSettings(settings, input.projectId).settings.defaultAgentId ??
+                undefined,
+            ),
+            Effect.orElseSucceed(() => undefined),
           );
-          agentId =
-            resolveProjectSettings(settings, input.projectId).settings.defaultAgentId ?? undefined;
         }
         if (agentId !== undefined) {
           const agentOption = yield* getAgentDefinition(agentId, project.workspaceRoot).pipe(
