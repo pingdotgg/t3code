@@ -51,6 +51,7 @@ export type LayoutDragSource =
   | { kind: "tab"; tabId: string }
   | { kind: "thread"; threadRef: ScopedThreadRef }
   | { kind: "pull-requests" }
+  | { kind: "issues" }
   | {
       kind: "surface";
       threadRef: ScopedThreadRef;
@@ -305,6 +306,7 @@ export function layoutDragContent(source: LayoutDragContentSource): LayoutTabCon
     return { kind: "chat", target: { kind: "server", threadRef: source.threadRef } };
   }
   if (source.kind === "pull-requests") return { kind: "pull-requests" };
+  if (source.kind === "issues") return { kind: "issues" };
   if (source.kind === "new-tab") return source.content;
   return {
     kind: "surface",
