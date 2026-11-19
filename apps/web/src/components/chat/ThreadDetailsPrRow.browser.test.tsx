@@ -421,6 +421,13 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+  const exposedKeys = [...screen.container.querySelectorAll("span")].filter(
+    (span) =>
+      span.textContent?.trim() === "#123" &&
+      span.closest("a") === null &&
+      span.closest('[aria-hidden="true"]') === null,
+  );
+  expect(exposedKeys).toHaveLength(0);
   const externalClick = new MouseEvent("click", { bubbles: true, cancelable: true });
   await act(async () => {
     row.dispatchEvent(externalClick);
