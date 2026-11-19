@@ -76,30 +76,31 @@ export function BackgroundWorkDetails(props: {
               const itemId =
                 task.itemId ?? (item?.type === "command_execution" ? item.id : undefined);
               const childThreadId = task.kind === "subagent" ? task.childThreadId : undefined;
-              const heading = <h3 className="min-w-0 font-medium">{title}</h3>;
               const status = backgroundWorkHoldsCompletion([task])
                 ? gt("Waiting", { $context: "status of background work" })
                 : gt("Running", { $context: "status of background work" });
               return (
                 <section key={task.taskId} className="space-y-2 text-sm">
                   {childThreadId ? (
-                    <button
-                      type="button"
-                      className="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                      onClick={() => {
-                        setOpen(false);
-                        props.onOpenThread(childThreadId);
-                      }}
-                    >
-                      {heading}
-                      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
-                        {status}
-                        <ChevronRightIcon aria-hidden className="size-3.5" />
-                      </span>
-                    </button>
+                    <h3>
+                      <button
+                        type="button"
+                        className="-mx-2 flex w-[calc(100%+1rem)] cursor-pointer items-baseline justify-between gap-3 rounded-lg px-2 py-1.5 text-start outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        onClick={() => {
+                          setOpen(false);
+                          props.onOpenThread(childThreadId);
+                        }}
+                      >
+                        <span className="min-w-0 font-medium">{title}</span>
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                          {status}
+                          <ChevronRightIcon aria-hidden className="size-3.5" />
+                        </span>
+                      </button>
+                    </h3>
                   ) : (
                     <div className="flex items-baseline justify-between gap-3">
-                      {heading}
+                      <h3 className="min-w-0 font-medium">{title}</h3>
                       <span className="shrink-0 text-xs text-muted-foreground">{status}</span>
                     </div>
                   )}
