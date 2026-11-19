@@ -114,6 +114,15 @@ it.each([
     },
   },
   {
+    name: "Chrome's floating link tooltip",
+    helpers: [{ id: 120, title: "", bounds: { x: 612, y: 418, width: 38, height: 22 } }],
+    content: {
+      id: 71,
+      title: "Google",
+      bounds: { x: 0, y: 39, width: 1_512, height: 943 },
+    },
+  },
+  {
     name: "a smaller front window's strips with a larger background window",
     helpers: [
       { id: 75, title: "", bounds: { x: 100, y: 139, width: 1_200, height: 41 } },
