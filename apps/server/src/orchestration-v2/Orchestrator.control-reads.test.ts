@@ -2183,7 +2183,7 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
-    assert.isAtMost(shortSteps, readSteps() * 1.1);
+    assert.isAtMost(readSteps(), shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2336,7 +2336,7 @@ it.effect("records a secret and a link card without reading the thread's history
         INSERT INTO ${name} (${columns.join(", ")})
         SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
     }
-    assert.isAtMost(shortSteps, replaySteps() * 1.1);
+    assert.isAtMost(replaySteps(), shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 

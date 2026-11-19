@@ -5997,6 +5997,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: "The source thread changed before continuation; keep working in it.",
         });
+      const settings = yield* serverSettings.getSettings.pipe(Effect.orDie);
+      if (
+        !resolveProjectProviderInstanceEnabled(
+          settings,
+          sourceProjection.thread.projectId,
+          sourceProjection.thread.modelSelection.instanceId,
+        )
+      )
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "The provider for this project is disabled.",
+        });
     }
     // Read under the source's lock; validate the modes copied here, not an earlier read.
     yield* refuseAboveDispatchModeLimit(command, command.sourceThreadId, sourceProjection.thread);
