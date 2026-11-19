@@ -133,9 +133,6 @@ const isProviderAdapterOpenSessionError = Schema.is(
   ProviderAdapter.ProviderAdapterOpenSessionError,
 );
 
-/** Sent in place of a native resume the provider does not support. */
-const MANUAL_RESUME_CONTINUE_TEXT = "Continue where you left off.";
-
 /**
  * Claude refuses these before it reads the prompt: replacing a process running background work,
  * launch arguments whose appended system prompt or settings cannot be read, or MCP registration
@@ -951,7 +948,7 @@ export const layer: Layer.Layer<
       const continueInstead =
         manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined;
       const userText = continueInstead
-        ? MANUAL_RESUME_CONTINUE_TEXT
+        ? RESUME_PROMPT
         : projectComposerContextForProvider({
             text: providerMessage.text,
             records: providerMessage.context?.records ?? [],
