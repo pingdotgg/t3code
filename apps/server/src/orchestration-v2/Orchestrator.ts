@@ -11865,6 +11865,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         cause: `Run ${command.runId} is ${run.status} and takes no result.`,
       });
     }
+    // A stopped run stays active until its provider settles; what it submits then is not kept.
+    if (yield* stopReachedRun(command, command.threadId, run.id)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} was stopped and takes no result.`,
+      });
+    }
     const now = yield* DateTime.now;
     yield* emit(
       events,

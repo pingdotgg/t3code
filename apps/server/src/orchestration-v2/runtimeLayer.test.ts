@@ -11480,6 +11480,95 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
   );
 });
 
+it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {
+  it.effect("turns down a result submitted after a stop was requested", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-stopped-output-project");
+      const threadId = ThreadId.make("runtime-layer-stopped-output-thread");
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-stopped-output-project-create"),
+        projectId,
+        title: "Stopped output project",
+        workspaceRoot: "/tmp/runtime-layer-stopped-output-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-stopped-output-create"),
+        threadId,
+        projectId,
+        title: "Stopped output",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-stopped-output-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-stopped-output-message"),
+        text: "Return a verdict.",
+        attachments: [],
+        modelSelection,
+        outputSchema: { type: "object" },
+        dispatchMode: { type: "start_immediately" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      // The stop is asked for while the provider has not settled it, so the run is still active.
+      const at = run.requestedAt;
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}-interrupt-request`),
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: at,
+            payload: {
+              id: TurnItemId.make(`${threadId}-interrupt-request`),
+              type: "run_interrupt_request",
+              threadId,
+              runId: run.id,
+              nodeId: run.rootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 90,
+              status: "completed",
+              title: "Interrupt requested",
+              startedAt: at,
+              completedAt: at,
+              updatedAt: at,
+              message: "Stopped by user",
+            },
+          },
+        ],
+      });
+
+      const rejected = yield* threadManagement
+        .submitRunOutput({
+          threadId,
+          commandId: CommandId.make("runtime-layer-stopped-output-submit"),
+          json: "{}",
+        })
+        .pipe(Effect.flip);
+      assert.include(String((rejected as { cause?: unknown }).cause), "was stopped");
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(after.runs[0]?.output);
+    }),
+  );
+});
+
 it.layer(layerTest)("snooze queued runs", (it) => {
   it.effect.each(["notification", "delegated-completion", "user", "limited-user"] as const)(
     "only user messages block snooze with a queued %s run, unless a usage limit holds them",
