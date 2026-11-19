@@ -1,4 +1,5 @@
 // Adapted from opencode (MIT). Copyright (c) 2025 opencode. See LICENSE.opencode.
+import type { VectorBitmap, VectorRequest } from "./vector-pictures";
 import type { Method } from "./worker-rpc";
 
 // What the Word preview's window and its document worker say to each other. The window keeps only the page column, the
@@ -70,11 +71,16 @@ export type WordMethods = {
   >;
   /** Lays out a short step more of the document. */
   readonly layout: Method<undefined, WordLayoutStep>;
-  /** Paints a page at `scale` page pixels per CSS pixel times `ratio` device pixels per CSS pixel. */
+  /**
+   * Paints a page at `scale` page pixels per CSS pixel times `ratio` device pixels per CSS pixel. `vectors` lists the
+   * SVG pictures it drew without, or too coarse: paint again once the worker has them.
+   */
   readonly paint: Method<
     { readonly index: number; readonly scale: number; readonly ratio: number },
-    ImageBitmap | undefined
+    { readonly bitmap: ImageBitmap; readonly vectors: readonly VectorRequest[] } | undefined
   >;
+  /** Hands over SVG pictures rasterized for `VectorRequest`s. */
+  readonly vectors: Method<readonly VectorBitmap[], undefined>;
   /** Builds a page's content ahead of its paint. */
   readonly build: Method<{ readonly index: number }, undefined>;
   /** A page's text layer. */

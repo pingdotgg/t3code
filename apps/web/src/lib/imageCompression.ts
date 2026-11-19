@@ -7,6 +7,9 @@ import {
   IMAGE_DIMENSIONS_HEADER_BYTES,
   readImageDimensions,
 } from "@t3tools/shared/imageDimensions";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 const MAX_DIMENSION = IMAGE_ATTACHMENT_MAX_EDGE;
 export const MAX_STASH_IMAGE_DATA_URL_CHARS = 1_300_000;
@@ -126,10 +129,10 @@ export function readFileAsDataUrl(file: Blob): Promise<string> {
         resolve(reader.result);
         return;
       }
-      reject(new Error("Could not read image data."));
+      reject(new Error(m(msg("Could not read image data."))));
     });
     reader.addEventListener("error", () => {
-      reject(reader.error ?? new Error("Failed to read image."));
+      reject(reader.error ?? new Error(m(msg("Failed to read image."))));
     });
     reader.readAsDataURL(file);
   });
@@ -227,16 +230,18 @@ export function createComposerImageThumbnail(file: File): Promise<string | null>
 /**
  * Pasted images are re-encoded after their placeholder already shows the source's thumbnail.
  * Reusing it keeps the tile from flashing back to its fallback while the new file is decoded.
+ * Resolves once the target's thumbnail is readable, so a tile swapped to it paints at once even
+ * when compression finished before the source's thumbnail did.
  */
-export function inheritComposerImageThumbnail(source: File, target: File): void {
+export async function inheritComposerImageThumbnail(source: File, target: File): Promise<void> {
   const sourceThumbnail = composerThumbnails.get(source);
   if (source === target || !sourceThumbnail || composerThumbnails.has(target)) return;
-  const settled = settledComposerThumbnails.get(source);
-  if (settled) settledComposerThumbnails.set(target, settled);
   cacheComposerImageThumbnail(
     target,
     sourceThumbnail.then((src) => src ?? renderComposerImageThumbnail(target)),
   );
+  const src = await sourceThumbnail;
+  if (src) settledComposerThumbnails.set(target, src);
 }
 
 async function renderComposerImageThumbnail(file: File): Promise<string | null> {
