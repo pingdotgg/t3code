@@ -5379,8 +5379,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           if (Option.isSome(token)) agentRequests.delete(token.value);
                           const context = yield* Ref.get(activeTurn);
                           if (context !== null) yield* settleIdleWork(context);
-                          if (context !== null && flavor.wakeOnDetachedRequest)
+                          if (context !== null && flavor.wakeOnDetachedRequest) {
+                            // The agent goes on with its reply once the request is answered.
+                            if (flavor.replyEndsWithUsageUpdate === true) context.replyOpen = true;
                             yield* rearmDeferredFinalize(context);
+                          }
                         }),
                       ).pipe(Effect.asVoid),
                   ),
@@ -5400,15 +5403,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
-          if (
-            flavor.replyEndsWithUsageUpdate === true &&
-            context?.nativeThreadId === notification.sessionId
-          ) {
-            if (update.sessionUpdate === "usage_update") {
-              context.replyOpen = false;
-              yield* rearmDeferredFinalize(context);
-            } else if (acpRootSessionUpdateIngestsOutput(notification)) {
-              context.replyOpen = true;
+          if (flavor.replyEndsWithUsageUpdate === true) {
+            if (context === null) {
+              // A reply can end before its continuation run starts; replay its end with its output.
+              if (
+                update.sessionUpdate === "usage_update" &&
+                (yield* Ref.get(wakeBuffer)).length > 0
+              ) {
+                yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+              }
+            } else if (context.nativeThreadId === notification.sessionId) {
+              if (update.sessionUpdate === "usage_update") {
+                context.replyOpen = false;
+                yield* rearmDeferredFinalize(context);
+              } else if (acpRootSessionUpdateIngestsOutput(notification)) {
+                context.replyOpen = true;
+              }
             }
           }
           if (

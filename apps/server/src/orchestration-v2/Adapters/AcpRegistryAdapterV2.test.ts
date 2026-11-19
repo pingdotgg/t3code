@@ -498,6 +498,8 @@ describe("AcpRegistryAdapterV2", () => {
             }),
             label: "wake",
           },
+          // agy ends each reply with usage_update; this one ends before the continuation run starts.
+          update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
           claudeMarker("late output received"),
         ],
         gate,
@@ -525,7 +527,7 @@ describe("AcpRegistryAdapterV2", () => {
     "continues an agy permission request after the prompt settles (%s)",
     (runtimeMode) =>
       Effect.gen(function* () {
-        const gate = makeProviderReplayGate(["wake"]);
+        const gate = makeProviderReplayGate(["wake", "reply"]);
         const session = yield* openClaudeReplaySession(
           [
             {
@@ -583,9 +585,17 @@ describe("AcpRegistryAdapterV2", () => {
                 result: { outcome: { outcome: "selected", optionId: "allow" } },
               },
             },
+            {
+              ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Command approved." },
+              }),
+              label: "reply",
+            },
             claudeFrames.update(CLAUDE_ROOT_SESSION, {
-              sessionUpdate: "agent_message_chunk",
-              content: { type: "text", text: "Command approved." },
+              sessionUpdate: "usage_update",
+              used: 100,
+              size: 1000,
             }),
           ],
           gate,
@@ -614,6 +624,9 @@ describe("AcpRegistryAdapterV2", () => {
             decision: "accept",
           });
         }
+        // The model can be silent longer than the finalize debounce before it goes on.
+        yield* TestClock.adjust("10 seconds");
+        gate.release("reply");
         const output = yield* session.until(
           (event) => event.type === "message.updated" && event.message.text === "Command approved.",
         );
