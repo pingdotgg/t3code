@@ -133,6 +133,26 @@ describe("t3 theme", () => {
     }),
   );
 
+  it.effect("refuses to publish over a directory with the theme's file name", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const taken = NodePath.join(baseDir, "userdata", "themes", "nightfall.json");
+      NodeFS.mkdirSync(taken, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(taken, "notes.txt"), "notes");
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+
+      const failure = yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]).pipe(
+        Effect.flip,
+      );
+
+      assert.include(String(failure), "is a directory");
+      assert.equal(NodeFS.readFileSync(NodePath.join(taken, "notes.txt"), "utf8"), "notes");
+      assert.deepEqual(NodeFS.readdirSync(NodePath.dirname(taken)), ["nightfall.json"]);
+      assert.equal(NodeFS.existsSync(settingsPathFor(baseDir)), false);
+    }),
+  );
+
   it.effect("rejects a file that is not a theme and sets nothing", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();
