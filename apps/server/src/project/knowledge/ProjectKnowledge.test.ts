@@ -2484,7 +2484,6 @@ it.effect("automatic recall requires human support for learned and agent policy 
           sources: [citation],
         },
         actor,
-        "standing",
       );
     }
     const agent = { kind: "agent-thread" as const, threadId: sourceThreadId, providerInstanceId };

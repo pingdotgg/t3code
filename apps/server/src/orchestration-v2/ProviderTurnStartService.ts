@@ -54,8 +54,8 @@ import {
   allowsNativeMessageCommand,
   isActiveRun,
   isNativeMaintenanceCommand,
-  isNativeCompactionCommand as isCompactionCommandMessage,
-  parseNativeGoalCommand as parseGoalCommand,
+  isNativeCompactionCommand,
+  parseNativeGoalCommand,
 } from "./CommandPolicy.ts";
 import { groupParticipants, renderPrimaryGroupNote } from "./GroupPrompt.ts";
 import { contextBoundaryOrdinal } from "./contextBoundary.ts";
@@ -577,7 +577,8 @@ export const layer: Layer.Layer<
                     projection.messages.some(
                       (message) =>
                         message.id === source.userMessageId &&
-                        (isCompactionCommandMessage(message) || parseGoalCommand(message) !== null),
+                        (isNativeCompactionCommand(message) ||
+                          parseNativeGoalCommand(message) !== null),
                     ))),
             )));
       const isSideChatHandoff = (handoff: OrchestrationV2ContextHandoff) =>
@@ -668,7 +669,7 @@ export const layer: Layer.Layer<
         providerMessage.text.trimStart().startsWith("/")
       ) {
         const isEmptyCompaction =
-          isCompactionCommandMessage(providerMessage) && !projection.hasConversation;
+          isNativeCompactionCommand(providerMessage) && !projection.hasConversation;
         // Preparation may select a new provider; account commands still target the last native session.
         const nativeThreads = new Map(
           projection.providerThreads
@@ -965,7 +966,7 @@ export const layer: Layer.Layer<
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
-      const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      const goalCommand = goalDriver && parseNativeGoalCommand(providerMessage) !== null;
       const provenance = messageProvenance(providerMessage);
       const renderMessage = (text: string) =>
         isNativeMaintenanceCommand(providerMessage) || goalCommand
@@ -991,8 +992,8 @@ export const layer: Layer.Layer<
           projection.messages
             .filter(
               (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
+                isNativeCompactionCommand(candidate) ||
+                (goalDriver && parseNativeGoalCommand(candidate) !== null),
             )
             .map((candidate) => candidate.id),
         ),
@@ -1011,7 +1012,7 @@ export const layer: Layer.Layer<
         groupOthers.length === 0 ||
         message.createdBy !== "user" ||
         isNativeMaintenanceCommand(providerMessage) ||
-        parseGoalCommand(providerMessage) !== null
+        parseNativeGoalCommand(providerMessage) !== null
           ? ""
           : renderPrimaryGroupNote({
               self: group.primary,
@@ -1214,8 +1215,8 @@ export const layer: Layer.Layer<
               );
               return source === undefined ||
                 (message !== undefined &&
-                  (isCompactionCommandMessage(message) ||
-                    (goalDriver && parseGoalCommand(message) !== null)))
+                  (isNativeCompactionCommand(message) ||
+                    (goalDriver && parseNativeGoalCommand(message) !== null)))
                 ? []
                 : [source.ordinal];
             }),
@@ -1613,7 +1614,7 @@ export const layer: Layer.Layer<
             handoffs: [...handoffs, ...resumedRetryHandoff.handoffs],
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
-            deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
+            deferInline: isNativeCompactionCommand(providerMessage) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
             persist: () => Effect.void,
           }).pipe(
@@ -1649,7 +1650,7 @@ export const layer: Layer.Layer<
             const refusal = contextRestartRefusal({
               controlMessage:
                 isNativeMaintenanceCommand(providerMessage) ||
-                parseGoalCommand(providerMessage) !== null,
+                parseNativeGoalCommand(providerMessage) !== null,
               restartContinuation:
                 run.restartContinuationOfRunId !== undefined || restartNote !== "",
               groupDiscussion: projection.thread.group?.discussion != null,

@@ -11,11 +11,8 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import {
-  OrchestrationV2Actor,
-  OrchestrationV2CreationSource,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
-} from "./orchestrationV2.ts";
+import { OrchestrationV2Actor, OrchestrationV2CreationSource } from "./messageProvenance.ts";
+import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 const TimeOfDay = TrimmedNonEmptyString.check(

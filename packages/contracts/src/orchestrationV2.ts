@@ -95,12 +95,6 @@ import {
   OrchestrationV2LinkedSender,
   OrchestrationV2MessageProvenance,
 } from "./messageProvenance.ts";
-export {
-  OrchestrationV2Actor,
-  OrchestrationV2CreationSource,
-  OrchestrationV2LinkedSender,
-  OrchestrationV2MessageProvenance,
-} from "./messageProvenance.ts";
 
 export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;

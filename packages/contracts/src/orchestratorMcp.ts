@@ -37,8 +37,10 @@ import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTi
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
-  OrchestrationV2DelegatedFrom,
   OrchestrationV2LinkedSender,
+} from "./messageProvenance.ts";
+import {
+  OrchestrationV2DelegatedFrom,
   OrchestrationV2MessageSpeaker,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,

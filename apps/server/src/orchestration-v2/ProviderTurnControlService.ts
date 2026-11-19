@@ -39,10 +39,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import {
-  isNativeMaintenanceCommand,
-  parseNativeGoalCommand as parseGoalCommand,
-} from "./CommandPolicy.ts";
+import { isNativeMaintenanceCommand, parseNativeGoalCommand } from "./CommandPolicy.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -527,7 +524,7 @@ export const layer: Layer.Layer<
             loaded.session.value.providerSession.capabilities.turns.supportsNativeGoals === true;
           const provenance =
             isNativeMaintenanceCommand(message) ||
-            (supportsNativeGoals && parseGoalCommand(message) !== null)
+            (supportsNativeGoals && parseNativeGoalCommand(message) !== null)
               ? undefined
               : messageProvenance(message);
           let composer = { text: message.text, records: message.context?.records ?? [] };
