@@ -161,6 +161,7 @@ function layerProjectionStore(
       hasUnpairedRunInterruptRequest: () => Effect.die("unused interrupt read"),
       hasRunInterruptRequest: () => Effect.die("unused stop read"),
       getRunProviderRecords: () => Effect.die("unused run provider read"),
+      getRunCardRecords: () => Effect.die("unused run card read"),
       getThreadAttachmentIds: () => Effect.die("Unused attachment lookup"),
       searchThread: () => Effect.die("unused"),
       searchThreadStream: () => Stream.empty,
@@ -217,6 +218,7 @@ function layerSessions(
       detach: () => Effect.void,
       otherWorkingThreads: () => Effect.succeed([]),
       releaseUnlessBusy: () => Effect.succeed(true),
+      forgetLoadedProviderThread: () => Effect.void,
       subscribePromptSuggestion: () => Stream.empty,
     }),
   );
