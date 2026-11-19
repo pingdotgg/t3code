@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { readDeviceLocales } from "./locales";
+import { readDeviceLocales } from "./deviceLocales";
 
 vi.mock("react-native", () => ({
   Platform: { OS: "ios" },

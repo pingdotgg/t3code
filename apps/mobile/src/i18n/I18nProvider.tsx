@@ -7,7 +7,8 @@ import { useDeferredValue, useEffect, type ReactNode } from "react";
 import { View } from "react-native";
 
 import { mobilePreferencesAtom } from "../state/preferences";
-import { DEFAULT_LOCALE, readDeviceLocales, SUPPORTED_LOCALES } from "./locales";
+import { readDeviceLocales } from "./deviceLocales";
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./locales";
 import { setActiveLocale } from "./messages";
 
 // Committed catalogs, so forks and offline installs never reach GT's CDN. English is the source.

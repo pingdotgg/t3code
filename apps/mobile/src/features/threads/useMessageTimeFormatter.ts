@@ -3,7 +3,7 @@ import { requireNativeModule } from "expo";
 import { useLocale } from "gt-react-native";
 import { useEffect, useMemo, useState } from "react";
 import { AppState, Platform } from "react-native";
-import { readDeviceLocales } from "../../i18n/locales";
+import { readDeviceLocales } from "../../i18n/deviceLocales";
 import { createMessageTimeFormatter } from "./messageTimestamp";
 
 function systemUses24HourClock() {
