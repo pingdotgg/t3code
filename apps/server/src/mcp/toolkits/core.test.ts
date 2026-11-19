@@ -473,7 +473,10 @@ it.effect("records only failed calls of tools that hand off no work", () => {
 });
 
 // A thread read whose runs or messages are bounded by nothing but the thread.
-const historyReads = (reads: Array<string>) => {
+const historyReads = (
+  reads: Array<string>,
+  queued?: { readonly attachments: ReadonlyArray<unknown>; readonly dispatched: Array<unknown> },
+) => {
   const record = (
     fields: ReadonlyArray<string>,
     filter: ProjectionStore.ProjectionRecordFilter | undefined,
@@ -499,9 +502,20 @@ const historyReads = (reads: Array<string>) => {
     getProjectThreadRecords: (_target, fields, filter) =>
       Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
     getThreadRecords: (_id, fields, filter) =>
-      Effect.sync(() => record(fields, filter)).pipe(Effect.as(projection as never)),
-    getMessagesById: () => Effect.succeed(new Map()),
-    dispatch: () => Effect.succeed({ sequence: 1 } as never),
+      Effect.sync(() => record(fields, filter)).pipe(
+        Effect.as({
+          ...projection,
+          runs:
+            queued === undefined
+              ? projection.runs
+              : [{ id: "run:queued", status: "queued", userMessageId: "message:queued" }],
+        } as never),
+      ),
+    getMessagesById: () =>
+      Effect.succeed(new Map(queued === undefined ? [] : [["message:queued", queued]]) as never),
+    hasReceipt: () => Effect.succeed(false),
+    dispatch: (command) =>
+      Effect.sync(() => queued?.dispatched.push(command)).pipe(Effect.as({ sequence: 1 } as never)),
   });
 };
 
@@ -532,6 +546,8 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
 
 it.effect("handoff analytics read only the caller's active run and its message", () => {
   const reads: Array<string> = [];
+  const attachments = [{ type: "image", id: "shot", name: "shot.png" }];
+  const dispatched: Array<unknown> = [];
   const recorded = Deferred.makeUnsafe<void>();
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -546,8 +562,8 @@ it.effect("handoff analytics read only the caller's active run and its message",
       );
     yield* Deferred.await(recorded);
     expect(reads).toEqual([]);
-    // The edit keeps the queued attachments, so a bare /logout could sign the provider out.
-    const signOut = yield* server
+    // The edit keeps the queued image, so `/logout` stays an ordinary prompt and is not refused.
+    const attached = yield* server
       .callTool({
         name: "t3_queue",
         arguments: { action: "edit", queuedRunId: "run:queued", text: " /LOGOUT " },
@@ -556,14 +572,15 @@ it.effect("handoff analytics read only the caller's active run and its message",
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(signOut.isError).toBe(true);
-    expect(JSON.stringify(signOut.content)).toContain("provider sign-out");
+    expect(attached.isError).not.toBe(true);
+    expect(dispatched).toMatchObject([{ text: "Edited" }, { text: " /LOGOUT ", attachments }]);
+    expect(dispatched[0]).not.toHaveProperty("attachments");
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
-        Layer.provide(historyReads(reads)),
+        Layer.provide(historyReads(reads, { attachments, dispatched })),
         Layer.provide(
           Layer.succeed(
             AnalyticsService.AnalyticsService,

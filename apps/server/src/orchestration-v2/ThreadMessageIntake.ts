@@ -92,11 +92,11 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
 });
 
 /**
- * An edit that omits `attachments` keeps the queued ones, so `/logout` signs out only when the
- * queued message has none. The edit goes on with the files read here, so an edit racing this
- * one cannot strip them afterwards. A run that is no longer queued is refused too.
+ * For a caller without `providers:manage`. An edit that omits `attachments` keeps the queued
+ * ones, so `/logout` signs out only when the queued message has none. The edit goes on with
+ * the files read here, so an edit racing this one cannot strip them afterwards.
  */
-const withQueuedAttachmentsOnSignOutText = Effect.fn(
+export const withQueuedAttachmentsOnSignOutText = Effect.fn(
   "ThreadMessageIntake.withQueuedAttachmentsOnSignOutText",
 )(function* (command: Extract<OrchestrationV2Command, { readonly type: "queued-run.edit" }>) {
   if (
@@ -106,14 +106,18 @@ const withQueuedAttachmentsOnSignOutText = Effect.fn(
     return command;
   }
   const threads = yield* ThreadManagement.ThreadManagementService;
-  const { runs, messages } = yield* threads.getThreadRecords(
-    command.threadId,
-    ["runs", "messages"],
-    { messageRoles: ["user"] },
-  );
+  // A retry of an accepted edit replays its receipt, even after its run left the queue.
+  if (yield* threads.hasReceipt(command.commandId)) return command;
+  const { runs } = yield* threads.getThreadRecords(command.threadId, ["runs"], {
+    runIds: [command.runId],
+  });
   const queuedRun = runs.find((run) => run.id === command.runId && run.status === "queued");
   const attachments =
-    messages.find((message) => message.id === queuedRun?.userMessageId)?.attachments ?? [];
+    queuedRun === undefined
+      ? []
+      : ((yield* threads.getMessagesById(command.threadId, [queuedRun.userMessageId])).get(
+          queuedRun.userMessageId,
+        )?.attachments ?? []);
   if (attachments.length === 0) return yield* rpcAuthorizationError(AuthProvidersManageScope);
   return { ...command, attachments };
 });

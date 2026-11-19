@@ -510,7 +510,7 @@ it.effect("a queued /logout edit without provider management must keep an attach
         Effect.provide(
           Layer.mock(ThreadManagementService.ThreadManagementService)({
             dispatch: layerFailingDispatchHandler(captured),
-            hasReceipt: () => Effect.succeed(false),
+            hasReceipt: (commandId) => Effect.succeed(commandId === "edit-replayed-false"),
             getThreadRecords: () =>
               Effect.succeed({
                 runs: ["attached", "bare"].map((id) => ({
@@ -518,11 +518,11 @@ it.effect("a queued /logout edit without provider management must keep an attach
                   status: "queued",
                   userMessageId: MessageId.make(id),
                 })),
-                messages: [
-                  { id: MessageId.make("attached"), attachments: [image] },
-                  { id: MessageId.make("bare"), attachments: [] },
-                ],
               } as never),
+            getMessagesById: (_threadId, [id]) =>
+              Effect.succeed(
+                new Map([[id, { attachments: id === "attached" ? [image] : [] }]]) as never,
+              ),
           }),
         ),
         Effect.flip,
@@ -533,11 +533,15 @@ it.effect("a queued /logout edit without provider management must keep an attach
     expect(captured).toEqual([]);
     yield* edit("attached", false);
     yield* edit("bare", true);
+    // A retry of an accepted edit reaches its receipt after its run left the queue.
+    yield* edit("replayed", false);
     // The kept files are pinned, so an edit racing this one cannot strip them afterwards.
     expect(captured).toMatchObject([
       { runId: "attached", attachments: [image] },
       { runId: "bare" },
+      { runId: "replayed" },
     ]);
     expect(captured[1]).not.toHaveProperty("attachments");
+    expect(captured[2]).not.toHaveProperty("attachments");
   }).pipe(Effect.provide(layerIntakeTest)),
 );
