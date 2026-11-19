@@ -4,7 +4,6 @@ import {
   CheckpointScopeId,
   CommandId,
   EnvironmentId,
-  GuestShareId,
   MessageId,
   NodeId,
   ORCHESTRATION_V2_WS_METHODS,
@@ -18,8 +17,6 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
-  type GuestShareCreateInput,
-  type GuestShareCreateResult,
   type ProjectMutation,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -42,14 +39,11 @@ import {
   type SupervisorConnectionState,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
-import { RpcPermissionGuard } from "../rpc/client.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import { v2Now, v2Projection, v2ThreadId } from "../state/orchestrationV2TestFixtures.ts";
 import {
   archiveThread,
-  closeGuestShare,
-  createGuestShare,
   interruptThreadTurn,
   revertThreadCheckpoint,
   resumeThreadQueue,
@@ -81,25 +75,8 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
   readonly advertiseThreadStop?: boolean;
-  readonly advertiseGuestShareCloseById?: boolean;
-  readonly guestShareCreates?: GuestShareCreateInput[];
 }) {
   const client = {
-    [WS_METHODS.guestShareCreate]: (request: GuestShareCreateInput) =>
-      Effect.sync((): GuestShareCreateResult => {
-        input.guestShareCreates?.push(request);
-        return {
-          url: "https://environment.example.test/guest#invite",
-          share: {
-            id: GuestShareId.make("share-1"),
-            host: "environment.example.test",
-            createdAt: "2026-06-06T00:00:00.000Z",
-            expiresAt: "2026-06-07T00:00:00.000Z",
-            guestName: null,
-            messages: [],
-          },
-        };
-      }),
     [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
       Effect.sync(() => {
         input.commands.push(command);
@@ -146,7 +123,6 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
         capabilities: {
           repositoryIdentity: true,
           ...(input.advertiseThreadStop === true ? { threadStop: true } : {}),
-          ...(input.advertiseGuestShareCloseById === true ? { guestShareCloseById: true } : {}),
         },
       },
     } as never),
@@ -168,63 +144,6 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("V2 environment commands", () => {
-  it.effect("creates a guest link only on a host that can stop the selected link", () =>
-    Effect.gen(function* () {
-      const guestShareCreates: GuestShareCreateInput[] = [];
-      const threadId = ThreadId.make("thread-1");
-      const create = createGuestShare({ threadId }).pipe(
-        Effect.provideService(RpcPermissionGuard, { authorize: () => Effect.void }),
-      );
-      const olderHost = yield* makeSupervisor({ commands: [], projects: [], guestShareCreates });
-      const failure = yield* create.pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, olderHost),
-        Effect.flip,
-      );
-      expect(failure.message).toBe("Update T3 Code on Test environment.");
-      expect(guestShareCreates).toEqual([]);
-
-      const updatedHost = yield* makeSupervisor({
-        commands: [],
-        projects: [],
-        guestShareCreates,
-        advertiseGuestShareCloseById: true,
-      });
-      yield* create.pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, updatedHost),
-      );
-      expect(guestShareCreates).toEqual([{ threadId }]);
-    }),
-  );
-
-  it.effect("sends a selected guest link close only to a server that honors its share ID", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const input = {
-        commandId: CommandId.make("close-selected"),
-        threadId: ThreadId.make("thread-1"),
-        expectedShareId: GuestShareId.make("share-1"),
-      };
-
-      const olderHost = yield* makeSupervisor({ commands, projects: [] });
-      const failure = yield* closeGuestShare(input).pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, olderHost),
-        Effect.flip,
-      );
-      expect(failure.message).toBe("Update T3 Code on Test environment.");
-      expect(commands).toEqual([]);
-
-      const updatedHost = yield* makeSupervisor({
-        commands,
-        projects: [],
-        advertiseGuestShareCloseById: true,
-      });
-      yield* closeGuestShare(input).pipe(
-        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, updatedHost),
-      );
-      expect(commands).toEqual([{ type: "thread.guest-share.close", ...input }]);
-    }).pipe(Effect.provide(layerTestRandom)),
-  );
-
   it.effect("distinguishes sending a selected queued message from resuming queue order", () =>
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];

@@ -1,5 +1,4 @@
 import { useAtomValue } from "@effect/atom-react";
-import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -17,7 +16,6 @@ import { useState } from "react";
 
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useNowMinute } from "~/hooks/useNowMinute";
-import { m } from "~/i18n/messages";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useQuietThreadProjection } from "~/state/entities";
 import { serverEnvironment } from "~/state/server";
@@ -37,7 +35,6 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { toastManager } from "../ui/toast";
 import { useAssetUrls } from "~/assets/assetUrls";
 import { type ChatFileAttachment, isImageAttachment } from "../../types";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -79,10 +76,6 @@ function GuestShareDialog({
   const canCreate = useAtomValue(
     serverEnvironment.createGuestShare.permissionAtom(threadRef.environmentId),
   );
-  const host = useAtomValue(
-    serverEnvironment.configValueAtom(threadRef.environmentId),
-  )?.environment;
-  const canStopSelectedShare = host?.capabilities.guestShareCloseById === true;
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
   });
@@ -112,7 +105,7 @@ function GuestShareDialog({
     const error = squashAtomCommandFailure(result);
     setState({
       status: "failed",
-      message: errorDisplayMessage(error, m) ?? gt("Could not create a guest link."),
+      message: error instanceof Error ? error.message : gt("Could not create a guest link."),
     });
   };
 
@@ -151,13 +144,9 @@ function GuestShareDialog({
             </div>
           ) : (
             <p className="text-muted-foreground text-sm">
-              {host === undefined
-                ? gt("Connecting…")
-                : !canStopSelectedShare
-                  ? gt("Update T3 Code on {host}.", { host: host.label })
-                  : activeShare !== null
-                    ? gt("A new link ends the current one.")
-                    : gt("The link works once and expires in 24 hours.")}
+              {activeShare !== null
+                ? gt("A new link ends the current one.")
+                : gt("The link works once and expires in 24 hours.")}
             </p>
           )}
           {state.status === "failed" ? (
@@ -184,7 +173,7 @@ function GuestShareDialog({
               <Button
                 size="sm"
                 onClick={() => void create()}
-                disabled={!canCreate || !canStopSelectedShare || state.status === "creating"}
+                disabled={!canCreate || state.status === "creating"}
               >
                 {state.status === "creating" ? gt("Creating...") : gt("Create link")}
               </Button>
@@ -198,11 +187,9 @@ function GuestShareDialog({
 
 /** Header status for a shared thread, with the way to end the share. */
 export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
-  const gt = useGT();
   const share = useThreadGuestShare(threadRef);
   const closeGuestShare = useOrchestrationCommand(threadEnvironment.closeGuestShare, {
     label: "stop guest share",
-    reportFailure: false,
   });
   const [closing, setClosing] = useState(false);
   if (share === null) return null;
@@ -216,19 +203,11 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
         disabled={closing}
         onClick={async () => {
           setClosing(true);
-          const result = await closeGuestShare({
+          await closeGuestShare({
             environmentId: threadRef.environmentId,
             input: { threadId: threadRef.threadId, expectedShareId: share.id },
           });
           setClosing(false);
-          if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-            toastManager.add({
-              type: "error",
-              title: gt("Could not stop sharing"),
-              description:
-                errorDisplayMessage(squashAtomCommandFailure(result), m) ?? gt("Try again."),
-            });
-          }
         }}
       >
         <T>Stop sharing</T>

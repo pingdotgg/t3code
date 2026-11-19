@@ -1,5 +1,5 @@
 import { msg } from "gt-i18n";
-import { messageFromError, translatableMessage } from "../errors/translatable.ts";
+import { translatableMessage } from "../errors/translatable.ts";
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
@@ -29,7 +29,6 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
-  type GuestShareCreateInput,
   type GuestShareId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
@@ -44,12 +43,10 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
-  currentSession,
   EnvironmentRpcUnavailableError,
   getInitialServerConfig,
   isRpcClientError,
   request,
-  requestInSession,
 } from "../rpc/client.ts";
 
 interface CommandMetadata {
@@ -517,39 +514,10 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
 export interface CloseGuestShareInput extends ThreadCommandInput {
   readonly expectedShareId: GuestShareId;
 }
-
-const guestShareSession = Effect.fn("EnvironmentCommands.guestShareSession")(function* () {
-  const { target } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  const session = yield* currentSession();
-  const config = yield* session.initialConfig.pipe(
-    Effect.mapError(
-      (error) =>
-        new EnvironmentRpcUnavailableError({
-          environmentId: target.environmentId,
-          ...messageFromError(error),
-        }),
-    ),
-  );
-  if (config.environment.capabilities.guestShareCloseById !== true) {
-    return yield* new EnvironmentRpcUnavailableError({
-      environmentId: target.environmentId,
-      ...translatableMessage(msg("Update T3 Code on {host}.", { host: target.label })),
-    });
-  }
-  return session;
-});
-
-export const createGuestShare = Effect.fn("EnvironmentCommands.createGuestShare")(function* (
-  input: GuestShareCreateInput,
-) {
-  return yield* requestInSession(yield* guestShareSession(), WS_METHODS.guestShareCreate, input);
-});
-
 export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
   input: CloseGuestShareInput,
 ) {
-  const session = yield* guestShareSession();
-  return yield* requestInSession(session, ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
+  return yield* dispatch({
     type: "thread.guest-share.close",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
