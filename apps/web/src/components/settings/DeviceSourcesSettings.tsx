@@ -32,7 +32,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { incompleteListings } from "../device/DeviceSetup";
-import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
+import { deviceHostConnectionKey, hasPendingDeviceHostChecks } from "./deviceHostConnectionChecks";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
 import { EasDeviceHostEditor } from "./EasDeviceHostEditor";
@@ -167,6 +167,7 @@ export function DeviceSourcesSettings(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [editing, setEditing] = useState<Editing | null>(null);
   const [busy, setBusy] = useState(false);
+  const [checkingRows, setCheckingRows] = useState<ReadonlyMap<string, string>>(() => new Map());
   const label = (environment: (typeof environments)[number]) =>
     settingsScopeEnvironmentLabel(environment, environments);
   const targets = environments.map((environment) => ({
@@ -321,9 +322,18 @@ export function DeviceSourcesSettings(props: {
       gt("Simlock host not removed everywhere"),
     );
 
-  const testSsh = async (host: SshDeviceHostConfig) => {
-    const checked = await testConnection(host);
-    if (!checked) return;
+  const testSsh = async (host: SshDeviceHostConfig, rowKey: string) => {
+    const check = testConnection(host);
+    if (!check) return;
+    const connectionKey = deviceHostConnectionKey(host);
+    setCheckingRows((current) => new Map(current).set(connectionKey, rowKey));
+    const checked = await check.finally(() => {
+      setCheckingRows((current) => {
+        const next = new Map(current);
+        next.delete(connectionKey);
+        return next;
+      });
+    });
     const failed = targets.filter((target) => checked[target.environmentId]?.status === "failed");
     toastManager.add({
       type: failed.length ? "error" : "success",
@@ -428,11 +438,13 @@ export function DeviceSourcesSettings(props: {
   for (const group of sshGroups) {
     const host = group.host;
     const holders = new Set(group.members.map((member) => member.environmentId));
-    const testing = Object.values(checks[deviceHostConnectionKey(host)] ?? {}).some(
-      (check) => check.status === "pending",
-    );
+    const rowKey = `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`;
+    const connectionKey = deviceHostConnectionKey(host);
+    const testing =
+      checkingRows.get(connectionKey) === rowKey &&
+      hasPendingDeviceHostChecks(checks[connectionKey]);
     rows.push({
-      key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
+      key: rowKey,
       shared: true,
       title: host.label,
       kind: "SSH",
@@ -468,7 +480,7 @@ export function DeviceSourcesSettings(props: {
         () =>
           setEditing({ kind: "ssh", host, original: host, ...(grouped ? {} : { only: holders }) }),
         () => void saveSsh(host, true, host, holders),
-        <MenuItem onClick={() => void testSsh(host)}>
+        <MenuItem onClick={() => void testSsh(host, rowKey)}>
           <T>Test connection</T>
         </MenuItem>,
       ),

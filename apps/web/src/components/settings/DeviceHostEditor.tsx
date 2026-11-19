@@ -20,6 +20,7 @@ import { DeviceHostAvailability } from "../device/DeviceHostAvailability";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import {
   deviceHostConnectionKey,
+  hasPendingDeviceHostChecks,
   parseDeviceHostDraft,
   type DeviceHostCheckTarget,
 } from "./deviceHostConnectionChecks";
@@ -84,7 +85,7 @@ function DeviceHostEditorForm({
   const { checks, testConnection } = useHostConnectionChecks(targets);
   const connectionKey = deviceHostConnectionKey(draft);
   const results = checks[connectionKey];
-  const checking = Object.values(results ?? {}).some((check) => check.status === "pending");
+  const checking = hasPendingDeviceHostChecks(results);
   const input = parseDeviceHostDraft({ ...draft, label: draft.label.trim() || draft.target });
   const valid = Option.isSome(input);
   const failed = Object.values(results ?? {}).filter((check) => check.status === "failed").length;
