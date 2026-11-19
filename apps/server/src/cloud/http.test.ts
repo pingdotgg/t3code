@@ -43,7 +43,6 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const DESKTOP_BOOTSTRAP_TOKEN = "test-desktop-bootstrap-token";
 const NON_LOOPBACK_ORIGIN = "http://172.24.162.233:3773";
-const LOOPBACK_ORIGIN = "http://127.0.0.1:3773";
 const proofRequest: RelayLinkProofRequest = {
   challenge: "test-challenge",
   relayIssuer: "https://relay.example.test",
@@ -160,10 +159,10 @@ const linkProofClient = Effect.gen(function* () {
     const payload = (yield* responseJson(response)) as { access_token: string };
     return payload.access_token;
   });
-  const linkableHere = (token: string, origin = NON_LOOPBACK_ORIGIN) =>
+  const linkableHere = (token: string) =>
     Effect.promise(() =>
       handler(
-        new Request(`${origin}/api/connect/link-state`, {
+        new Request(`${NON_LOOPBACK_ORIGIN}/api/connect/link-state`, {
           headers: { authorization: `Bearer ${token}` },
         }),
       ),
@@ -174,16 +173,27 @@ const linkProofClient = Effect.gen(function* () {
   return { post, exchange, linkableHere };
 });
 
-describe("link proof over a non-loopback desktop transport", () => {
+describe("link proof over a non-loopback transport", () => {
   it.effect(
-    "signs a loopback tunnel origin after desktop bootstrap token exchange over a non-loopback host",
+    "signs this server's loopback origin for a remote client allowed to configure the relay",
     () =>
       Effect.gen(function* () {
         const { post, exchange } = yield* linkProofClient;
-        const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
-        const response = yield* post("/api/connect/link-proof", proofRequest, {
-          authorization: `Bearer ${token}`,
-        });
+        const admin = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
+        const paired = yield* post(
+          "/api/auth/pairing-token",
+          { scopes: ["relay:read", "relay:configure"] },
+          { authorization: `Bearer ${admin}` },
+        );
+        expect(paired.status).toBe(200);
+        const { credential } = (yield* responseJson(paired)) as { credential: string };
+        const token = yield* exchange(credential);
+        // The caller's origin and forwarding headers must not steer the tunnel elsewhere.
+        const response = yield* post(
+          "/api/connect/link-proof",
+          { ...proofRequest, origin: { localHttpHost: "172.24.162.233", localHttpPort: 5432 } },
+          { authorization: `Bearer ${token}`, "x-forwarded-host": "evil.example.test" },
+        );
         expect(response.status).toBe(200);
         expect(response.headers.get("cache-control")).toBe("no-store");
         const proof = (yield* responseJson(response)) as string;
@@ -199,90 +209,27 @@ describe("link proof over a non-loopback desktop transport", () => {
           audience: proofRequest.relayIssuer,
         });
         expect(verified).toMatchObject({
-          origin: proofRequest.origin,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
           endpoint: proofRequest.endpoint,
           challenge: proofRequest.challenge,
         });
       }).pipe(Effect.provide(NodeCrypto.layerSignature)),
   );
 
-  it.effect(
-    "does not pass desktop trust to a paired client or accept client-supplied provenance",
-    () =>
-      Effect.gen(function* () {
-        const { post, exchange, linkableHere } = yield* linkProofClient;
-        const desktop = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
-        const paired = yield* post(
-          "/api/auth/pairing-token",
-          {
-            scopes: ["relay:read", "relay:configure"],
-            label: "desktop-bootstrap",
-            subject: "desktop-bootstrap",
-          },
-          { authorization: `Bearer ${desktop}` },
-        );
-        expect(paired.status).toBe(200);
-        const { credential } = (yield* responseJson(paired)) as { credential: string };
-        const token = yield* exchange(credential);
-        const headers = { authorization: `Bearer ${token}`, "x-desktop-bootstrap": "true" };
-        const payload = {
-          ...proofRequest,
-          allowNonLoopbackRequestHost: true,
-          subject: "desktop-bootstrap",
-        };
-        const rejected = yield* post("/api/connect/link-proof", payload, headers);
-        expect(rejected.status).toBe(400);
-        expect(yield* responseJson(rejected)).toMatchObject({
-          message: "Invalid managed endpoint origin.",
-        });
-        const loopback = yield* post(
-          "/api/connect/link-proof",
-          proofRequest,
-          headers,
-          LOOPBACK_ORIGIN,
-        );
-        expect(loopback.status).toBe(200);
-        // Clients offer Turn on only to the desktop's own session; SSH forwards look like loopback.
-        expect(yield* linkableHere(desktop)).toBe(true);
-        expect(yield* linkableHere(token)).toBe(false);
-        expect(yield* linkableHere(token, LOOPBACK_ORIGIN)).toBe(false);
-      }),
-  );
-
-  it.effect.each([
-    {
-      name: "non-loopback tunnel origin",
-      origin: { localHttpHost: "172.24.162.233", localHttpPort: 3773 },
-      headers: {},
-    },
-    {
-      name: "mismatched port",
-      origin: { localHttpHost: "127.0.0.1", localHttpPort: 3774 },
-      headers: {},
-    },
-    {
-      name: "forwarded host",
-      origin: proofRequest.origin,
-      headers: { "x-forwarded-host": "127.0.0.1:3773" },
-    },
-    {
-      name: "forwarded protocol",
-      origin: proofRequest.origin,
-      headers: { "x-forwarded-proto": "http" },
-    },
-  ])("rejects $name even for desktop bootstrap", ({ origin, headers }) =>
+  it.effect("offers Turn on to any session allowed to configure the relay", () =>
     Effect.gen(function* () {
-      const { post, exchange } = yield* linkProofClient;
-      const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
-      const response = yield* post(
-        "/api/connect/link-proof",
-        { ...proofRequest, origin },
-        { ...headers, authorization: `Bearer ${token}` },
-      );
-      expect(response.status).toBe(400);
-      expect(yield* responseJson(response)).toMatchObject({
-        message: "Invalid managed endpoint origin.",
-      });
+      const { post, exchange, linkableHere } = yield* linkProofClient;
+      const desktop = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
+      const pair = (scopes: ReadonlyArray<string>) =>
+        post("/api/auth/pairing-token", { scopes }, { authorization: `Bearer ${desktop}` }).pipe(
+          Effect.flatMap(responseJson),
+          Effect.flatMap((paired) => exchange((paired as { credential: string }).credential)),
+        );
+      expect(yield* linkableHere(desktop)).toBe(true);
+      const remote = yield* pair(["relay:read", "relay:write", "relay:configure"]);
+      expect(yield* linkableHere(remote)).toBe(true);
+      expect(yield* linkableHere(yield* pair(["relay:read", "relay:write"]))).toBe(false);
+      expect(yield* linkableHere(yield* pair(["relay:read", "relay:configure"]))).toBe(false);
     }),
   );
 
