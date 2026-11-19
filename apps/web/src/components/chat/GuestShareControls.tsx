@@ -205,7 +205,7 @@ export function GuestShareIndicator({ threadRef }: { readonly threadRef: ScopedT
           setClosing(true);
           await closeGuestShare({
             environmentId: threadRef.environmentId,
-            input: { threadId: threadRef.threadId },
+            input: { threadId: threadRef.threadId, expectedShareId: share.id },
           });
           setClosing(false);
         }}

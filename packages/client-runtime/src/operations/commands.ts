@@ -29,6 +29,7 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  type GuestShareId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -491,13 +492,7 @@ export const createThread = Effect.fn("EnvironmentCommands.createThread")(functi
 });
 
 function simpleThreadCommand(
-  type:
-    | "thread.archive"
-    | "thread.unarchive"
-    | "thread.settle"
-    | "thread.pin"
-    | "thread.unpin"
-    | "thread.guest-share.close",
+  type: "thread.archive" | "thread.unarchive" | "thread.settle" | "thread.pin" | "thread.unpin",
   input: ThreadCommandInput,
 ) {
   return allocateCommandId(input).pipe(
@@ -516,11 +511,19 @@ export const deleteThread = Effect.fn("EnvironmentCommands.deleteThread")(functi
   });
 });
 
-export type CloseGuestShareInput = ThreadCommandInput;
+export interface CloseGuestShareInput extends ThreadCommandInput {
+  readonly expectedShareId: GuestShareId;
+}
+
 export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
   input: CloseGuestShareInput,
 ) {
-  return yield* simpleThreadCommand("thread.guest-share.close", input);
+  return yield* dispatch({
+    type: "thread.guest-share.close",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    expectedShareId: input.expectedShareId,
+  });
 });
 
 export interface ResolveGuestMessageInput extends ThreadCommandInput {

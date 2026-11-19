@@ -97,7 +97,7 @@ export function ThreadGuestShareBar(props: {
         setBusy(true);
         void closeGuestShare({
           environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
+          input: { threadId: threadRef.threadId, expectedShareId: share.id },
         }).then((result) => {
           setBusy(false);
           alertOnFailure(gt("Could not stop sharing"), result);

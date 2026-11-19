@@ -3154,6 +3154,8 @@ export const OrchestrationV2Command = Schema.Union([
     type: Schema.Literal("thread.guest-share.close"),
     commandId: CommandId,
     threadId: ThreadId,
+    /** Older clients omit this and close whichever share is current. */
+    expectedShareId: Schema.optional(GuestShareId),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.guest-message.dismiss"),

@@ -126,7 +126,13 @@ export function decideGuestShareCommand(input: {
       });
     }
     case "thread.guest-share.close":
-      return share === null ? Result.succeed(thread) : withShare(null);
+      if (
+        share === null ||
+        (command.expectedShareId !== undefined && share.id !== command.expectedShareId)
+      ) {
+        return Result.succeed(thread);
+      }
+      return withShare(null);
     case "thread.guest-share.redeem": {
       if (share === null || share.id !== command.shareId || isExpired(share, now)) {
         return Result.fail(GUEST_FAILURE.inactive);
