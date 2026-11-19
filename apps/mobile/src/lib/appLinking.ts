@@ -1,4 +1,11 @@
 import type { NavigationState, PartialState } from "@react-navigation/native";
+import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+
+/** The build's hosted app opens in the app; a build without one (`null`) claims no web origin. */
+export function hostedAppLinkPrefixes(hostedAppUrl: string | null | undefined): string[] {
+  if (hostedAppUrl === null) return [];
+  return [hostedAppUrl ? new URL(hostedAppUrl).origin : DEFAULT_HOSTED_APP_URL];
+}
 
 /**
  * The Expo dev client launches the app via

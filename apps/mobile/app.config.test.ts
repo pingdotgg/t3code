@@ -14,6 +14,9 @@ vi.mock("../../scripts/lib/public-config.ts", () => ({
         "T3CODE_STANDALONE",
         "T3CODE_EAS_PROJECT_ID",
         "T3CODE_HOSTED_APP_URL",
+        "T3CODE_MOBILE_BUNDLE_ID",
+        "T3CODE_IOS_TEAM_ID",
+        "T3CODE_DESKTOP_UPDATE_REPOSITORY",
       ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
     ),
 }));
@@ -55,9 +58,11 @@ it.each([
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
 });
 
-it("keeps T3's Expo project, owner, and hosted app out of a standalone build", async () => {
+it("keeps T3's Expo project, owner, hosted app, and Apple team out of a standalone build", async () => {
   vi.stubEnv("T3CODE_STANDALONE", "1");
+  vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
   const config = await loadConfig("production");
+  expect(config.ios?.appleTeamId).toBeUndefined();
   expect(config.updates).toMatchObject({ enabled: false });
   expect(config.updates?.url).toBeUndefined();
   expect(config.owner).toBeUndefined();
@@ -65,11 +70,37 @@ it("keeps T3's Expo project, owner, and hosted app out of a standalone build", a
   expect(config.extra?.hostedAppUrl).toBe("");
   expect(config.ios?.associatedDomains).toEqual([]);
   expect(config.android?.intentFilters).toEqual([]);
-  expect(JSON.stringify(config)).not.toMatch(/t3\.codes|d763fcb8|pingdotgg/);
+  expect(JSON.stringify(config)).not.toMatch(/t3\.codes|d763fcb8|pingdotgg|t3tools|ARK85ZXQ4Z/);
+});
+
+it("requires a standalone build to bring its own bundle identifier", async () => {
+  vi.stubEnv("T3CODE_STANDALONE", "1");
+  await expect(loadConfig("production")).rejects.toThrow("T3CODE_MOBILE_BUNDLE_ID");
+  vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork-code.app");
+  await expect(loadConfig("production")).rejects.toThrow("T3CODE_MOBILE_BUNDLE_ID");
+});
+
+it.each([
+  ["development", "com.fork.code.dev"],
+  ["preview", "com.fork.code.preview"],
+  ["production", "com.fork.code"],
+])("signs APP_VARIANT=%j as the fork's app", async (value, identifier) => {
+  vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
+  vi.stubEnv("T3CODE_IOS_TEAM_ID", "FORKTEAM01");
+  vi.stubEnv("T3CODE_DESKTOP_UPDATE_REPOSITORY", "fork/t3code");
+  const config = await loadConfig(value);
+  expect(config.ios?.bundleIdentifier).toBe(identifier);
+  expect(config.android?.package).toBe(identifier);
+  expect(config.ios?.appleTeamId).toBe("FORKTEAM01");
+  expect(config.ios?.entitlements?.["keychain-access-groups"]).toEqual([
+    `$(AppIdentifierPrefix)${identifier}`,
+  ]);
+  expect(config.extra?.releaseRepository).toBe("fork/t3code");
 });
 
 it("uses the fork's own Expo project and hosted app in a standalone build", async () => {
   vi.stubEnv("T3CODE_STANDALONE", "1");
+  vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
   vi.stubEnv("T3CODE_EAS_PROJECT_ID", "fork-project");
   vi.stubEnv("T3CODE_HOSTED_APP_URL", "https://app.fork.example");
   const config = await loadConfig("production");

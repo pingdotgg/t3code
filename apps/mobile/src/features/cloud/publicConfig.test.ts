@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveCloudPublicConfig, resolveHostedAppUrl } from "./publicConfig";
+import {
+  resolveCloudPublicConfig,
+  resolveHostedAppUrl,
+  resolveReleaseRepository,
+} from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -43,5 +47,16 @@ describe("resolveHostedAppUrl", () => {
     [undefined, undefined],
   ])("resolves %j to %j", (extra, expected) => {
     expect(resolveHostedAppUrl(extra)).toBe(expected);
+  });
+});
+
+describe("resolveReleaseRepository", () => {
+  it.each([
+    [{ releaseRepository: " fork/t3code " }, "fork/t3code"],
+    [{ releaseRepository: "" }, undefined],
+    [{ releaseRepository: "fork/t3code/extra" }, undefined],
+    [{ releaseRepository: "https://github.com/fork/t3code" }, undefined],
+  ])("resolves %j to %j", (extra, expected) => {
+    expect(resolveReleaseRepository(extra)).toBe(expected);
   });
 });

@@ -7,17 +7,19 @@ function isValidRepositorySegment(value: string | undefined): value is string {
   );
 }
 
-/** The repository this build is released from: its update feed, releases, and issues. */
-export function repositoryUrl(
+/** The owner/repo this build is released from: its update feed, releases, issues, and docs. */
+export function releaseRepository(
   repository: string | undefined = import.meta.env.T3CODE_DESKTOP_UPDATE_REPOSITORY,
 ): string {
   const configuredRepository = repository?.trim() ?? "";
   const [owner, name, ...extra] = configuredRepository.split("/");
-  const releaseRepository =
-    isValidRepositorySegment(owner) && isValidRepositorySegment(name) && extra.length === 0
-      ? configuredRepository
-      : DEFAULT_REPOSITORY;
-  return `https://github.com/${releaseRepository}`;
+  return isValidRepositorySegment(owner) && isValidRepositorySegment(name) && extra.length === 0
+    ? configuredRepository
+    : DEFAULT_REPOSITORY;
+}
+
+export function repositoryUrl(repository?: string): string {
+  return `https://github.com/${releaseRepository(repository)}`;
 }
 
 /** A fork build that sends no one to services T3 operates. `loadRepoEnv` validates its config. */

@@ -521,9 +521,12 @@ export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
 ] as const;
 export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING_SECTIONS)[number];
 
-/** Clients, the CLI, and server logs link here as "More info". */
-export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
+/** Clients, the CLI, and server logs link here as "More info". A fork build passes its own owner/repo. */
+export function t3ConnectTroubleshootingUrl(
+  section: T3ConnectTroubleshootingSection,
+  repository = "pingdotgg/t3code",
+): string {
+  return `https://github.com/${repository}/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
 }
 
 const REACHABILITY_SECTION = {

@@ -26,6 +26,13 @@ const runtimeVersionPolicy =
 
 const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+const MOBILE_BUNDLE_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/;
+// Also the Android package; variants append .dev or .preview.
+const mobileBundleId = repoEnv.T3CODE_MOBILE_BUNDLE_ID?.trim() || undefined;
+const iosTeamId =
+  repoEnv.T3CODE_IOS_TEAM_ID?.trim() || (isStandaloneBuild ? undefined : "ARK85ZXQ4Z");
+const releaseRepository =
+  repoEnv.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || repoEnv.GITHUB_REPOSITORY?.trim() || "";
 
 // Compiled into the native project. Without a relay, Observe's native side could dispatch to
 // Expo's own ingest before observe.ts turns it off; `.invalid` never resolves (RFC 6761).
@@ -43,6 +50,12 @@ if (
 ) {
   throw new Error(
     "T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code when T3CODE_IOS_PERSONAL_TEAM=1.",
+  );
+}
+
+if (mobileBundleId ? !MOBILE_BUNDLE_ID_PATTERN.test(mobileBundleId) : isStandaloneBuild) {
+  throw new Error(
+    "T3CODE_MOBILE_BUNDLE_ID must be a reverse-DNS identifier such as com.example.t3code; T3CODE_STANDALONE=1 requires it.",
   );
 }
 
@@ -89,24 +102,21 @@ const VARIANT_CONFIG = {
   development: {
     appName: "T3 Code Dev",
     scheme: "t3code-dev",
-    iosBundleIdentifier: "com.t3tools.t3code.dev",
-    androidPackage: "com.t3tools.t3code.dev",
+    bundleIdSuffix: ".dev",
     relyingParty: "clerk.t3.codes",
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
     appName: "T3 Code Preview",
     scheme: "t3code-preview",
-    iosBundleIdentifier: "com.t3tools.t3code.preview",
-    androidPackage: "com.t3tools.t3code.preview",
+    bundleIdSuffix: ".preview",
     relyingParty: "clerk.t3.codes",
     assets: PREVIEW_ASSETS,
   },
   production: {
     appName: "T3 Code",
     scheme: "t3code",
-    iosBundleIdentifier: "com.t3tools.t3code",
-    androidPackage: "com.t3tools.t3code",
+    bundleIdSuffix: "",
     relyingParty: "clerk.t3.codes",
     assets: RELEASE_ASSETS,
   },
@@ -126,11 +136,12 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+const variantBundleIdentifier = `${mobileBundleId ?? "com.t3tools.t3code"}${variant.bundleIdSuffix}`;
 // Copied thread links open the app. The hosted app's /.well-known lists every variant's identifiers.
 const hostedAppHost = hostedAppUrl ? new URL(hostedAppUrl).host : undefined;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
-  : variant.iosBundleIdentifier;
+  : variantBundleIdentifier;
 
 const dmSansFonts = {
   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
@@ -265,7 +276,7 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
-    appleTeamId: "ARK85ZXQ4Z",
+    ...(iosTeamId ? { appleTeamId: iosTeamId } : {}),
     associatedDomains: [
       // T3's Clerk passkey domain; a standalone build has no relying party of its own yet.
       ...(isStandaloneBuild
@@ -274,7 +285,7 @@ const config: ExpoConfig = {
       ...(hostedAppHost ? [`applinks:${hostedAppHost}`] : []),
     ],
     entitlements: {
-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
+      "keychain-access-groups": [`$(AppIdentifierPrefix)${variantBundleIdentifier}`],
     },
     infoPlist: {
       UISupportedInterfaceOrientations: [
@@ -308,7 +319,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: variantBundleIdentifier,
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
@@ -485,6 +496,8 @@ const config: ExpoConfig = {
     standalone: isStandaloneBuild,
     // Empty means no hosted app: the manifest turns null into {}.
     hostedAppUrl: hostedAppUrl ?? "",
+    // owner/repo for release checks and help links; empty means T3's.
+    releaseRepository,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },
