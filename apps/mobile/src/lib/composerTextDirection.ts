@@ -24,7 +24,7 @@ export function composerLineDirections(text: string): ReadonlyArray<ComposerLine
       return "ltr";
     }
     if (fence !== undefined) {
-      if (marker?.[0] === fence[0] && marker.length >= fence.length) fence = undefined;
+      if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
       return "ltr";
     }
     previous = markdownProseDirection(line) ?? previous;
