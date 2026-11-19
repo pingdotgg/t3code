@@ -622,6 +622,7 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
   ) => AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"];
   readonly cancelled?: Deferred.Deferred<void>;
   readonly followAgentWorkState?: boolean;
+  readonly sessionScope?: Scope.Scope;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const natives: Array<AcpSessionRuntime.AcpSessionRuntime["Service"]> = [];
@@ -662,12 +663,15 @@ const makePromptInactivityHarness = Effect.fnUntraced(function* (input: {
     cwd: process.cwd(),
   });
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtime = yield* adapter.openSession({
+  const opened = adapter.openSession({
     threadId,
     providerSessionId: ProviderSessionId.make("provider-session-acp-prompt-inactivity"),
     modelSelection,
     runtimePolicy,
   });
+  const runtime = yield* input.sessionScope === undefined
+    ? opened
+    : opened.pipe(Effect.provideService(Scope.Scope, input.sessionScope));
   const providerThread = yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
   const startTurn = (ordinal: number) =>
     DateTime.now.pipe(
@@ -5778,6 +5782,42 @@ describe("AcpAdapterV2", () => {
         const terminal = events.at(-1);
         assert.equal(terminal?.type === "turn.terminal" ? terminal.status : undefined, "failed");
       }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("ends a running T3 MCP tool call when its session closes mid-prompt", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makePromptInactivityHarness({
+        sessionScope,
+        environment: () => ({ T3_ACP_EMIT_TRACKED_TOOL_CALL_KIND_THEN_HANG: "other" }),
+      });
+      const trackedToolStatus = (event: ProviderAdapter.ProviderAdapterV2Event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.nativeItemRef?.nativeId === "tracked-tool-call"
+          ? event.turnItem.status
+          : undefined;
+      yield* harness.startTurn(1);
+      yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.runHead,
+      );
+      // t3_worktree_handoff releases the live session while its own tool call is open.
+      yield* Scope.close(sessionScope, Exit.void);
+      // The event queue outlives the session; only events emitted by the close remain.
+      const after = yield* harness.runtime.events.pipe(
+        Stream.filter((event) => trackedToolStatus(event) !== undefined),
+        Stream.map(trackedToolStatus),
+        Stream.takeUntil((status) => status !== "pending" && status !== "running"),
+        Stream.runCollect,
+        Effect.map((collected) => Array.from(collected)),
+        Effect.timeoutOption("1 second"),
+        Effect.forkChild,
+      );
+      yield* TestClock.adjust("1 second");
+      const statuses = Option.getOrElse(yield* Fiber.join(after), () => []);
+      // regression: #39410 the handoff's tool call stayed running after the session closed.
+      assert.include(["completed", "failed", "interrupted", "cancelled"], statuses.at(-1));
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.live("does not poll the process ledger while a cgroup lease owns teardown", () =>
