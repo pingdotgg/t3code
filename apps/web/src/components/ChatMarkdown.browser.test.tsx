@@ -568,53 +568,50 @@ describe("ChatMarkdown workspace file opens", () => {
   it.each([
     ["open a link in another panel", "separate-panels"],
     ["unhost the side chat", "unhosted-side-chat"],
-  ] as const)(
-    "keeps a citation in its original panel scope if you %s",
-    async (action, scope) => {
-      setup();
-      const host = { ...threadRef, threadId: ThreadId.make(`${scope}-host`) };
-      const guest = { ...threadRef, threadId: ThreadId.make(`${scope}-guest`) };
-      const other = { ...threadRef, threadId: ThreadId.make(`${scope}-other`) };
-      const unhost = hostRightPanel(guest, host);
-      using _hosted = { [Symbol.dispose]: unhost };
-      const result = AsyncResult.success({
-        entries: [{ path: "notes/cited-note.txt", kind: "file" }],
-        truncated: false,
-      });
-      const { promise: pending, resolve: resolvePending } = Promise.withResolvers<typeof result>();
-      workspaceSearch.mockReturnValueOnce(pending);
-      await using screen = await render(
-        <>
-          <ChatMarkdown cwd="/repo" threadRef={guest} text="[Cited](cited-note.txt)" />
-          <ChatMarkdown cwd="/repo" threadRef={other} text="[Other](/elsewhere/other.md)" />
-        </>,
-      );
-      const [cited, otherLink] = screen.container.querySelectorAll("a");
-      await act(async () => cited!.click());
-      expect(workspaceSearch).toHaveBeenCalledOnce();
-      if (action === "open a link in another panel") {
-        await act(async () => otherLink!.click());
-      } else {
-        unhost();
-      }
-      await act(async () => resolvePending(result));
+  ] as const)("keeps a citation in its original panel scope if you %s", async (action, scope) => {
+    setup();
+    const host = { ...threadRef, threadId: ThreadId.make(`${scope}-host`) };
+    const guest = { ...threadRef, threadId: ThreadId.make(`${scope}-guest`) };
+    const other = { ...threadRef, threadId: ThreadId.make(`${scope}-other`) };
+    const unhost = hostRightPanel(guest, host);
+    using _hosted = { [Symbol.dispose]: unhost };
+    const result = AsyncResult.success({
+      entries: [{ path: "notes/cited-note.txt", kind: "file" }],
+      truncated: false,
+    });
+    const { promise: pending, resolve: resolvePending } = Promise.withResolvers<typeof result>();
+    workspaceSearch.mockReturnValueOnce(pending);
+    await using screen = await render(
+      <>
+        <ChatMarkdown cwd="/repo" threadRef={guest} text="[Cited](cited-note.txt)" />
+        <ChatMarkdown cwd="/repo" threadRef={other} text="[Other](/elsewhere/other.md)" />
+      </>,
+    );
+    const [cited, otherLink] = screen.container.querySelectorAll("a");
+    await act(async () => cited!.click());
+    expect(workspaceSearch).toHaveBeenCalledOnce();
+    if (action === "open a link in another panel") {
+      await act(async () => otherLink!.click());
+    } else {
+      unhost();
+    }
+    await act(async () => resolvePending(result));
 
-      const { byThreadKey } = useRightPanelStore.getState();
-      expect(selectActiveRightPanelSurface(byThreadKey, guest)).toBeNull();
-      if (action === "unhost the side chat") {
-        expect(selectActiveRightPanelSurface(byThreadKey, host)).toBeNull();
-      } else {
-        expect(selectActiveRightPanelSurface(byThreadKey, host)).toMatchObject({
-          kind: "file",
-          relativePath: "notes/cited-note.txt",
-        });
-        expect(selectActiveRightPanelSurface(byThreadKey, other)).toMatchObject({
-          kind: "file",
-          relativePath: "/elsewhere/other.md",
-        });
-      }
-    },
-  );
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(selectActiveRightPanelSurface(byThreadKey, guest)).toBeNull();
+    if (action === "unhost the side chat") {
+      expect(selectActiveRightPanelSurface(byThreadKey, host)).toBeNull();
+    } else {
+      expect(selectActiveRightPanelSurface(byThreadKey, host)).toMatchObject({
+        kind: "file",
+        relativePath: "notes/cited-note.txt",
+      });
+      expect(selectActiveRightPanelSurface(byThreadKey, other)).toMatchObject({
+        kind: "file",
+        relativePath: "/elsewhere/other.md",
+      });
+    }
+  });
 });
 
 describe("ChatMarkdown skill chips", () => {
