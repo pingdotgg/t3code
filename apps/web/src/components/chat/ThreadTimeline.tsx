@@ -74,6 +74,7 @@ export function ThreadTimeline({
   return (
     <MessagesTimeline
       {...timelineProps}
+      syncing={syncing}
       timelineEntries={
         handoffEntry ? displayedEntries.filter((entry) => entry !== handoffEntry) : displayedEntries
       }

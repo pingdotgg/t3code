@@ -1,7 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
-import { useRightPanelStore } from "../rightPanelStore";
 import { changeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -1113,20 +1112,7 @@ export function BranchToolbarBranchSelector({
                   branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
                   onActed={() => branchStatusQuery.refresh()}
                 />
-                <ThreadDetailsIssueRows
-                  links={linkedIssues}
-                  onOpenLink={(event, link) => {
-                    event.stopPropagation();
-                    useRightPanelStore.getState().openIssue(threadRef, {
-                      projectId: link.projectId,
-                      tracker: link.tracker,
-                      host: link.host,
-                      scope: link.scope,
-                      key: link.key,
-                      url: link.url,
-                    });
-                  }}
-                />
+                <ThreadDetailsIssueRows links={linkedIssues} threadRef={threadRef} />
               </>,
             )
           : null}

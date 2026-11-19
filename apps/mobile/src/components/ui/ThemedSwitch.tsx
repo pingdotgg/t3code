@@ -16,6 +16,8 @@ export function ThemedSwitch(props: ThemedSwitchProps) {
       ios_backgroundColorClassName="accent-switch-inactive-track"
       trackColorOffClassName="accent-switch-inactive-track"
       trackColorOnClassName="accent-switch-active-track"
+      // UIKit tints the thumb in both states; the off thumb keeps its default white.
+      thumbColorClassName={props.value ? "accent-switch-active-thumb" : undefined}
     />
   );
 }

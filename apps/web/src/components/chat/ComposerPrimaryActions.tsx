@@ -215,18 +215,15 @@ function StopGenerationSlot({
 
 function StopGenerationButton({
   leading = null,
-  showStop = true,
   ...props
 }: StopGenerationSlotProps & {
   /** The dictation mic slot that shares the pill. */
   leading?: ReactNode;
-  /** False while dictation records with no turn to stop: the mic's own controls fill the pill. */
-  showStop?: boolean;
 }) {
   return (
     <ComposerSendPill className={cn(props.insidePendingAction && "sm:h-7")}>
       {leading}
-      {showStop ? <StopGenerationSlot {...props} /> : null}
+      <StopGenerationSlot {...props} />
     </ComposerSendPill>
   );
 }
@@ -334,7 +331,6 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
       onStopRequested={() => setStopPhase("pending")}
       onInterrupt={onInterrupt}
       leading={insidePendingAction ? null : renderSpeechAction?.(true)}
-      showStop={!voiceInputActive || canInterrupt || stopPhase !== null}
     />
   );
 
@@ -403,10 +399,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   }
 
   if (
-    voiceInputActive ||
-    ((canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
-      !hasSendableContent &&
-      !isEditingQueuedMessage)
+    (canInterrupt || stopPhase === "pending" || stopPhase === "timedOut") &&
+    !hasSendableContent &&
+    !isEditingQueuedMessage
   ) {
     return (
       <>
@@ -590,4 +585,9 @@ export const COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME =
 export const COMPOSER_PILL_SLOT_BUTTON_UNAVAILABLE_CLASS_NAME = cn(
   COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
   "opacity-64 enabled:cursor-default enabled:hover:bg-transparent",
+);
+// The mic while dictation runs: a held fill marks the slot as on, beside its changed glyph.
+export const COMPOSER_PILL_SLOT_BUTTON_ACTIVE_CLASS_NAME = cn(
+  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
+  "bg-foreground/12 enabled:hover:bg-foreground/16",
 );

@@ -1,8 +1,9 @@
 // Preview appearance modes with default-theme tokens, regardless of the active theme.
 // Set both foreground variables because foreground utilities read --contrast-foreground.
+import { ListFilterIcon, PlusIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { AppearanceChoice } from "../../hooks/useTheme";
-import { LayoutPaneSkeleton, PaneNotchTab } from "../../layout/PaneSkeleton";
+import { LayoutPaneSkeleton, PaneJoinTab, PaneNotchTab } from "../../layout/PaneSkeleton";
 
 type Tone = "light" | "dark";
 
@@ -33,7 +34,8 @@ function paneVars(tone: Tone) {
 
 const THREAD_ROW_WIDTHS = ["w-4/5", "w-3/5", "w-[70%]", "w-1/2"] as const;
 
-function WireframeWindow({ chrome, pane }: { chrome: Tone; pane: Tone }) {
+// Light, black chrome keeps the notch tab in the app too (index.css).
+function WireframeWindow({ chrome, pane, notch }: { chrome: Tone; pane: Tone; notch?: boolean }) {
   return (
     <div className="absolute inset-0 bg-(--app-chrome-background)" style={chromeVars(chrome)}>
       <div className="absolute inset-y-0 left-0 flex w-[21%] flex-col gap-1.25 px-1.5 pt-1.5 pb-1.75">
@@ -50,16 +52,40 @@ function WireframeWindow({ chrome, pane }: { chrome: Tone; pane: Tone }) {
         <div className="mt-auto h-0.5 w-3/5 rounded-full bg-foreground/20" />
         <div className="h-2 rounded-sm bg-foreground/10" />
       </div>
-      <div
-        className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
-        style={paneVars(pane)}
-      >
-        <PaneNotchTab className="h-3 w-[42%] shrink-0 gap-1 px-1.25" style={chromeVars(chrome)}>
-          <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
-          <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
-        </PaneNotchTab>
-        <LayoutPaneSkeleton shape="chat" />
-      </div>
+      {notch ? (
+        <div
+          className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
+          style={paneVars(pane)}
+        >
+          <PaneNotchTab className="h-3 w-[42%] shrink-0 gap-1 px-1.25" style={chromeVars(chrome)}>
+            <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
+            <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
+          </PaneNotchTab>
+          <LayoutPaneSkeleton shape="chat" />
+        </div>
+      ) : (
+        <div className="absolute top-[3px] right-[3px] bottom-[3px] left-[21%] flex flex-col">
+          <div className="flex h-3 shrink-0 items-center text-foreground/45">
+            {/* The app's 10px radius and ear on its 41px joined tab, at this 12px tab. */}
+            <PaneJoinTab radius={3} className="h-full w-[42%] gap-1 px-1.25" style={paneVars(pane)}>
+              <div className="size-1 shrink-0 rounded-full bg-foreground/40" />
+              <div className="h-0.5 flex-1 rounded-full bg-foreground/35" />
+            </PaneJoinTab>
+            <PlusIcon absoluteStrokeWidth strokeWidth={1} className="ms-1 size-1.5 shrink-0" />
+            <ListFilterIcon
+              absoluteStrokeWidth
+              strokeWidth={1}
+              className="ms-auto me-1 size-1.5 shrink-0"
+            />
+          </div>
+          <div
+            className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md rounded-tl-none bg-background"
+            style={paneVars(pane)}
+          >
+            <LayoutPaneSkeleton shape="chat" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -85,7 +111,7 @@ export function ThemeWireframe({ mode }: { mode: AppearanceChoice }) {
       ) : mode === "dark" ? (
         <WireframeWindow chrome="dark" pane="dark" />
       ) : mode === "black-chrome" ? (
-        <WireframeWindow chrome="dark" pane="light" />
+        <WireframeWindow chrome="dark" pane="light" notch />
       ) : (
         <WireframeWindow chrome="light" pane="light" />
       )}

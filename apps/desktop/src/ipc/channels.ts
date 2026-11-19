@@ -130,6 +130,8 @@ export const PREVIEW_SET_FORWARDED_KEY_CHORDS_CHANNEL = "desktop:preview-set-for
 export const PREVIEW_FORWARDED_KEY_CHORD_CHANNEL = "desktop:preview-forwarded-key-chord";
 export const PREVIEW_OPEN_LINK_CHANNEL = "desktop:preview-open-link";
 export const PREVIEW_FIND_RESULT_CHANNEL = "desktop:preview-find-result";
+export const PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL = "desktop:preview-tunnel-access-request";
+export const PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL = "desktop:preview-tunnel-access-resolve";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 

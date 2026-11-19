@@ -24,6 +24,7 @@ import {
   type SurfaceLauncherAction,
 } from "../components/SurfaceLauncher";
 import { isElectron } from "../env";
+import { IssueGlyph } from "../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import {
   COLLAPSED_SIDEBAR_INSET_EASE_CLASS,
@@ -41,6 +42,7 @@ import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { cn } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useThreadShell } from "../state/entities";
+import { useIssuesSupported } from "../state/environments";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useThreadSurfaceOpeners } from "../components/ThreadSurfaceTab";
 import { ThreadContextChip } from "../components/ThreadContextChip";
@@ -179,6 +181,7 @@ function NewTabLauncherBody({
   const browserProfiles = useBrowserDefaults().profiles;
   const focusedWorkspaceId = useLayoutStore((state) => state.layout.focusedWorkspaceId);
   const openLayoutPage = useOpenLayoutPage();
+  const issuesSupported = useIssuesSupported();
   const openPage = (kind: LayoutPageContent["kind"]) =>
     void openLayoutPage(
       kind,
@@ -309,6 +312,14 @@ function NewTabLauncherBody({
           detail=""
           onSelect={() => openPage("pull-requests")}
         />
+        {issuesSupported ? (
+          <DraftProjectRow
+            icon={<IssueGlyph.issue className="size-4 shrink-0 text-muted-foreground" />}
+            label={gt("All issues")}
+            detail=""
+            onSelect={() => openPage("issues")}
+          />
+        ) : null}
         <LayoutLearningTips />
       </div>
     </div>
