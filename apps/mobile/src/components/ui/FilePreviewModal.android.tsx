@@ -153,7 +153,6 @@ function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   );
 }
 
-// Images still resolving show the viewer's loading page, and remount by key once their URL arrives.
 function imageViewingProps(source: FilePreviewImages) {
   return {
     images: source.images.map((image) => (image.uri ? { uri: image.uri } : {})),
@@ -183,11 +182,14 @@ function AndroidFilePreview(props: FilePreviewViewerProps) {
   const { source } = props;
   if (source.kind === "pdf") return <PdfDocumentPreview {...props} source={source} />;
   if (source.kind !== "image") return <DocumentPreview {...props} source={source} />;
-  if (source.images[source.selectedIndex]?.actionsSource)
-    return <ImagePreview source={source} onRequestClose={props.onRequestClose} />;
+  const selected = source.images[source.selectedIndex]!;
+  const images = source.images.filter((image) => !image.failed);
+  const gallery = { ...source, images, selectedIndex: images.indexOf(selected) };
+  if (selected.actionsSource)
+    return <ImagePreview source={gallery} onRequestClose={props.onRequestClose} />;
   return (
     <ImageViewing
-      {...imageViewingProps(source)}
+      {...imageViewingProps(gallery)}
       visible
       onRequestClose={props.onRequestClose}
       swipeToCloseEnabled={false}

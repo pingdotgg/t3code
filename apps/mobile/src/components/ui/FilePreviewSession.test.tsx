@@ -26,7 +26,30 @@ vi.mock("../../lib/attachmentDownload", () => ({
 }));
 vi.mock("../../lib/previewPresentation", () => ({ usePreviewPresentation: () => {} }));
 vi.mock("./Dialog", () => ({ alert: harness.alert }));
+vi.mock("./Button", () => ({ Button: () => null }));
+vi.mock("./SheetHeader", () => ({ SheetHeader: () => null }));
+vi.mock("./AppText", () => ({ AppText: () => null }));
+vi.mock("../PdfPreview", () => ({ PdfPreview: () => null }));
+vi.mock("../MediaPreviewHeader", () => ({ MediaPreviewHeader: () => null }));
+vi.mock("../../state/mediaActions", () => ({ useMediaActions: () => ({ actions: [] }) }));
+vi.mock("react-native", () => ({ Modal: () => null, View: () => null }));
+vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0 }) }));
+vi.mock("react-native-image-viewing", () => ({
+  default: function ImageViewing(props: {
+    images: readonly { uri?: string }[];
+    imageIndex: number;
+  }) {
+    useState(() => harness.mounts++);
+    harness.previews.push({
+      kind: "image",
+      images: props.images,
+      selectedIndex: props.imageIndex,
+    });
+    return null;
+  },
+}));
 
+import { FilePreviewModal as AndroidFilePreviewModal } from "./FilePreviewModal.android";
 import type { FilePreviewItem, FilePreviewViewerProps } from "./FilePreviewModal.types";
 import { FilePreviewSession } from "./FilePreviewSession";
 
@@ -57,14 +80,19 @@ async function openGallery(
   harness.alert.mockClear();
   const root = createRoot(document.createElement("div"));
   const onRequestClose = vi.fn();
+  const source = { ...selected, gallery };
   await act(async () =>
     root.render(
-      <FilePreviewSession
-        source={{ ...selected, gallery }}
-        onRequestClose={onRequestClose}
-        progressiveGallery={progressiveGallery}
-        Viewer={Viewer}
-      />,
+      progressiveGallery ? (
+        <FilePreviewSession
+          source={source}
+          onRequestClose={onRequestClose}
+          progressiveGallery
+          Viewer={Viewer}
+        />
+      ) : (
+        <AndroidFilePreviewModal source={source} onRequestClose={onRequestClose} />
+      ),
     ),
   );
   return { onRequestClose, [Symbol.asyncDispose]: () => act(async () => root.unmount()) };
