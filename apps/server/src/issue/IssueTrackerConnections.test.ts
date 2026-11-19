@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as SqlClient from "effect/sql/SqlClient";
 import { IssueTrackerKind, type ProjectId } from "@t3tools/contracts";
 import {
   IssueTrackerError,
@@ -61,17 +64,21 @@ const linear: StandaloneIssueTrackerApi = {
   getComments: () => Effect.die("unused"),
 };
 
-function makeConnections() {
+function makeConnections(probe: (token: string) => Effect.Effect<void> = () => Effect.void) {
   const secrets = new Map<string, Uint8Array>();
   let random = 0;
+  const tracker: StandaloneIssueTrackerApi = {
+    ...linear,
+    probeCredential: (token) => Effect.andThen(probe(token), linear.probeCredential(token)),
+  };
   const layer = IssueTrackerConnections.layer.pipe(
     Layer.provideMerge(IssueTrackerBindings.layer),
-    Layer.provide(
+    Layer.provideMerge(
       Layer.mergeAll(
         SqlitePersistence.layerMemory,
         Layer.succeed(
           IssueTrackerRegistry.IssueTrackerRegistry,
-          IssueTrackerRegistry.fromTrackers([linear]),
+          IssueTrackerRegistry.fromTrackers([tracker]),
         ),
         Layer.succeed(
           ServerSecretStore.ServerSecretStore,
@@ -158,6 +165,43 @@ describe("IssueTrackerConnections", () => {
         }),
       );
       expect(forgotten).toMatchObject({ detail: "This account is not saved on the server." });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("lets no credential outlive the account it was saved for", () => {
+    const probing = Deferred.makeUnsafe<void>();
+    const released = Deferred.makeUnsafe<void>();
+    const { layer, storedKeys } = makeConnections((token) =>
+      token === "slow"
+        ? Effect.andThen(Deferred.succeed(probing, undefined), Deferred.await(released))
+        : Effect.void,
+    );
+    return Effect.gen(function* () {
+      const connections = yield* IssueTrackerConnections.IssueTrackerConnections;
+      const { accountId } = yield* connections.connect({
+        tracker: LINEAR,
+        token: "home",
+        addAccount: true,
+      });
+
+      // A removal that arrives while a replacement key is being checked waits for it.
+      const replacing = yield* connections
+        .connect({ tracker: LINEAR, accountId, token: "slow" })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.await(probing);
+      const removing = yield* connections
+        .connect({ tracker: LINEAR, accountId, token: null })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Deferred.succeed(released, undefined);
+      yield* Fiber.join(replacing);
+      yield* Fiber.join(removing);
+      expect(storedKeys()).toEqual({});
+
+      // An account that cannot be saved takes its new key with it.
+      const sql = yield* SqlClient.SqlClient;
+      yield* sql`DROP TABLE issue_tracker_accounts`;
+      yield* Effect.flip(connections.connect({ tracker: LINEAR, token: "home", addAccount: true }));
+      expect(storedKeys()).toEqual({});
     }).pipe(Effect.provide(layer));
   });
 });

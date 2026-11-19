@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 import * as DateTime from "effect/DateTime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import {
@@ -52,6 +53,9 @@ const make = Effect.gen(function* () {
   const registry = yield* IssueTrackerRegistry.IssueTrackerRegistry;
   const secrets = yield* ServerSecretStore.ServerSecretStore;
   const bindings = yield* IssueTrackerBindings.IssueTrackerBindingsRepository;
+  // Account checks, credential writes, and removals run one at a time, so a removal cannot land
+  // between a check and the write that relied on it.
+  const accountLock = yield* Semaphore.make(1);
   const random = yield* SecureRandom.SecureRandom;
 
   const requireTracker = (
@@ -238,9 +242,12 @@ const make = Effect.gen(function* () {
       .pipe(Effect.mapError(secretFailure(api.kind, "The credential could not be stored.")));
     if (input.addAccount === true && accountId !== null) {
       const createdAt = DateTime.formatIso(yield* DateTime.now);
-      yield* bindings
-        .addAccount({ tracker: api.kind, accountId, createdAt })
-        .pipe(Effect.mapError(secretFailure(api.kind, "The account could not be saved.")));
+      yield* bindings.addAccount({ tracker: api.kind, accountId, createdAt }).pipe(
+        Effect.tapError(() =>
+          Effect.ignore(secrets.remove(issueTrackerSecretName(api.kind, accountId))),
+        ),
+        Effect.mapError(secretFailure(api.kind, "The account could not be saved.")),
+      );
     }
     return {
       ...api.standalone,
@@ -251,7 +258,7 @@ const make = Effect.gen(function* () {
       ...(probed.workspace === undefined ? {} : { workspace: probed.workspace }),
       scopes: probed.scopes,
     };
-  });
+  }, accountLock.withPermits(1));
 
   const bindProject: IssueTrackerConnections["Service"]["bindProject"] = Effect.fn(
     "IssueTrackerConnections.bindProject",
@@ -264,7 +271,7 @@ const make = Effect.gen(function* () {
     yield* bindings
       .set({ projectId: input.projectId, binding: input.binding, updatedAt })
       .pipe(Effect.mapError(secretFailure(tracker, "The project binding could not be saved.")));
-  });
+  }, accountLock.withPermits(1));
 
   return IssueTrackerConnections.of({ list, connect, bindProject });
 });

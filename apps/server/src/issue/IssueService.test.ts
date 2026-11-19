@@ -677,6 +677,13 @@ describe("IssueService with a standalone tracker", () => {
           { projectId: failed, message: "Linear refused the key." },
         ]);
       }
+      // A continuation that skips the healthy account does not speak for it.
+      const continued = yield* (yield* refusing(["second"])).list({
+        state: "open",
+        cursors: { "linear.app second/eng": "second-next" },
+      });
+      expect(continued.trackers).toMatchObject([{ tracker: "linear", configured: true }]);
+      expect(continued.nextCursors).toEqual({ "linear.app second/eng": "second-next" });
       const none = yield* (yield* refusing(["first", "second"])).list({ state: "open" });
       expect(none.trackers).toMatchObject([
         { tracker: "linear", configured: false, detail: "Linear refused the key." },
@@ -712,6 +719,39 @@ describe("IssueService with a standalone tracker", () => {
           "home" as ProjectId,
         ),
       ).toMatchObject({ projectId: "work", issue: { title: "Issue of first" } });
+
+      // The preferred account missing the key does not hide why the link's own account failed.
+      const limited = yield* makeService({
+        projects: [project({ id: "work" }), project({ id: "home" })],
+        trackers: [
+          fakeStandaloneTracker({
+            getIssue: () =>
+              Effect.flatMap(asWhom, (account) =>
+                Effect.fail(
+                  new IssueTrackerError({
+                    tracker: LINEAR,
+                    operation: "getIssue",
+                    ...(account === "first"
+                      ? { reason: "not-found", detail: "No such issue." }
+                      : { reason: "rate-limited", detail: "Slow down.", retryAt: 60 }),
+                  }),
+                ),
+              ),
+          }),
+        ],
+        bindings: {
+          work: { tracker: LINEAR, scope: "ENG" },
+          home: { tracker: LINEAR, accountId: second, scope: "ENG" },
+        },
+      });
+      expect(
+        yield* Effect.flip(
+          limited.resolveUrl(
+            "https://linear.app/other-workspace/issue/ENG-1/old-title",
+            "work" as ProjectId,
+          ),
+        ),
+      ).toMatchObject({ reason: "rate-limited", retryAt: 60 });
     }),
   );
 

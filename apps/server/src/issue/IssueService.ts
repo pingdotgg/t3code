@@ -149,6 +149,9 @@ function toIssueError(operation: string): (error: IssueTrackerError) => IssueErr
         });
 }
 
+const isNotFound = (error: IssueError) =>
+  error._tag === "IssueOperationError" && error.reason === "not-found";
+
 const readOnly = (operation: string) =>
   new IssueOperationError({
     operation,
@@ -412,10 +415,15 @@ const make = Effect.gen(function* () {
     }
     // Accounts of one tracker share its host: the host is unusable only when every account read
     // failed for want of a tool or credential. Otherwise a failure stays its projects' error.
+    const hostAccounts = new Map<string, Set<string>>();
+    for (const project of scopes.values()) {
+      const accounts = hostAccounts.get(project.host) ?? new Set();
+      hostAccounts.set(project.host, accounts.add(viewerKey(project)));
+    }
     const unusable = new Map<string, string>();
     const usable = new Set<string>();
     const recordFailure = (project: SupportedProject, failure: IssueTrackerError) => {
-      if (isTrackerUnusable(failure)) unusable.set(project.host, trackerDetail(failure));
+      if (isTrackerUnusable(failure)) unusable.set(viewerKey(project), trackerDetail(failure));
       else usable.add(project.host);
     };
 
@@ -484,10 +492,11 @@ const make = Effect.gen(function* () {
       { concurrency: SCOPE_CONCURRENCY, discard: true },
     );
 
-    for (const [host, detail] of unusable) {
+    for (const [host, accounts] of hostAccounts) {
+      const details = [...accounts].map((account) => unusable.get(account));
       const existing = trackers.get(host);
-      if (existing !== undefined && !usable.has(host))
-        trackers.set(host, { ...existing, configured: false, detail });
+      if (existing === undefined || usable.has(host) || details.includes(undefined)) continue;
+      trackers.set(host, { ...existing, configured: false, detail: details[0] ?? null });
     }
     for (const [host, { tracker, projectIds }] of unimplemented) {
       trackers.set(host, {
@@ -818,7 +827,8 @@ const make = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(toIssueError("resolveUrl")), Effect.result);
         if (read._tag === "Failure") {
-          failure ??= read.failure;
+          // Another workspace's account not having the key is a miss, not why the link failed.
+          if (failure === null || isNotFound(failure)) failure = read.failure;
           continue;
         }
         const canonicalUrl = parseUrl(read.success.url);
