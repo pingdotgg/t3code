@@ -74,14 +74,14 @@ export function start(configuration: PreviewStreamConfiguration) {
   const container = document.createElement("div");
   const canvas = document.createElement("canvas");
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Browser page");
+  canvas.setAttribute("aria-label", configuration.labels.page);
   const agentCursor = document.createElement("div");
   agentCursor.className = "agent-cursor";
   agentCursor.setAttribute("aria-hidden", "true");
   agentCursor.innerHTML = AGENT_CURSOR_SVG;
   container.append(canvas, agentCursor);
   const input = document.createElement("textarea");
-  input.setAttribute("aria-label", "Browser page input");
+  input.setAttribute("aria-label", configuration.labels.pageInput);
   input.autocapitalize = "off";
   input.autocomplete = "off";
   input.spellcheck = false;
@@ -651,7 +651,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
-      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      reportPictureInPicture(configuration.labels.pictureInPictureNotReady);
       return;
     }
     // The page may have changed since the video's last frame. WebKit captures only on a draw.
@@ -660,7 +660,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     const fail = (error: unknown) => {
       element.pause();
       reportPictureInPicture(
-        error instanceof Error ? error.message : "Picture in picture is unavailable.",
+        error instanceof Error ? error.message : configuration.labels.pictureInPictureUnavailable,
       );
     };
     if (document.pictureInPictureEnabled) {

@@ -10,7 +10,11 @@ import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer"
 
 import * as Dpop from "../cloud/dpop";
 import * as ManagedRelayLayer from "../cloud/managedRelayLayer";
-import { resolveCloudPublicConfig, resolveRelayTracingConfig } from "../cloud/publicConfig";
+import {
+  relayTelemetryEnabled,
+  resolveCloudPublicConfig,
+  resolveRelayTracingConfig,
+} from "../cloud/publicConfig";
 import * as ClientTracer from "../observability/clientTracer";
 
 function configuredRelayUrl(): string {
@@ -18,13 +22,17 @@ function configuredRelayUrl(): string {
 }
 
 const layerHttpClient = layerRemoteHttpClient((input, init) => globalThis.fetch(input, init));
-const layerRelayTracing = RelayTracing.layer(resolveRelayTracingConfig(), {
-  serviceName: "t3code-web",
-  serviceVersion: import.meta.env.APP_VERSION,
-  runtime: "browser",
-  serviceInstanceId: ClientTracer.serviceInstanceId,
-  client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
-}).pipe(Layer.provide(layerHttpClient));
+const layerRelayTracing = RelayTracing.layer(
+  resolveRelayTracingConfig(),
+  {
+    serviceName: "t3code-web",
+    serviceVersion: import.meta.env.APP_VERSION,
+    runtime: "browser",
+    serviceInstanceId: ClientTracer.serviceInstanceId,
+    client: typeof window !== "undefined" && window.desktopBridge ? "desktop" : "web",
+  },
+  { isEnabled: () => relayTelemetryEnabled() === true },
+).pipe(Layer.provide(layerHttpClient));
 
 type RuntimeLayerSource =
   | typeof layerHttpClient
