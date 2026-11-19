@@ -23,33 +23,19 @@ import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 
 const MINUTE = 60_000;
 
-export function exhaustedUsageWindow(
-  provider: ServerProvider | undefined,
-  now: number,
-  model?: string,
-) {
+function modelUsageWindows(provider: ServerProvider | undefined, model: string) {
   const windows = provider?.usageLimits?.windows ?? [];
-  const exhausted = windows.filter(
-    (window) =>
-      (window.usedPercent ?? 0) >= 100 &&
-      (model === undefined || window.modelIds === undefined || window.modelIds.includes(model)) &&
-      (model === undefined ||
-        window.providerIds === undefined ||
-        window.providerIds.includes(model.split("/")[0] ?? "")) &&
-      (!window.resetsAt ||
-        !Number.isFinite(Date.parse(window.resetsAt)) ||
-        Date.parse(window.resetsAt) > now),
-  );
-  if (model === undefined) return exhausted[0];
-  switch (provider?.driver) {
-    case "cursor": {
-      const api = exhausted.find((window) => window.id === "apiPercentUsed");
-      const auto = exhausted.find((window) => window.id === "autoPercentUsed");
-      return /^(auto|default|grok|composer)/.test(model) ? auto && api : api;
-    }
-    case "antigravity": {
-      const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
-      return exhausted.find((window) => {
+  return windows.filter((window) => {
+    if (window.modelIds && !window.modelIds.includes(model)) return false;
+    if (window.providerIds && !window.providerIds.includes(model.split("/")[0] ?? "")) return false;
+    switch (provider?.driver) {
+      case "cursor":
+        return (
+          window.id === "apiPercentUsed" ||
+          (/^(auto|default|grok|composer)/.test(model) && window.id === "autoPercentUsed")
+        );
+      case "antigravity": {
+        const family = model.match(/^(gemini|claude|gpt)-/)?.[1];
         const pool = window.id.match(/^(gemini|claude|gpt|3p)-/)?.[1];
         return (
           pool === undefined ||
@@ -57,61 +43,170 @@ export function exhaustedUsageWindow(
           pool === family ||
           (pool === "3p" && (family === "claude" || family === "gpt"))
         );
-      });
+      }
+      case "codex":
+        // Seat-based plans spend credits only past their plan windows.
+        return (
+          window.id !== "individual" ||
+          !windows.some((entry) => entry.id === "primary" || entry.id === "secondary")
+        );
+      case "opencode":
+        return !window.id.startsWith("go_") || model.startsWith("opencode-go/");
+      default:
+        return true;
     }
-    case "codex": {
-      // Seat-based plans spend credits only past their plan windows, so the credit cap blocks only plans without them.
-      const hasPlanWindows = windows.some(
-        (window) => window.id === "primary" || window.id === "secondary",
-      );
-      return exhausted.find((window) => window.id !== "individual" || !hasPlanWindows);
-    }
-    case "opencode":
-      return exhausted.find(
-        (window) => !window.id.startsWith("go_") || model.startsWith("opencode-go/"),
-      );
-    default:
-      return exhausted[0];
-  }
+  });
 }
 
-export function resolveNewThreadModelSelection(input: {
-  readonly defaultSelection: ModelSelection | null;
-  readonly explicitSelection?: ModelSelection | null;
-  readonly fallbackSelection: ModelSelection | null;
+export function exhaustedUsageWindow(
+  provider: ServerProvider | undefined,
+  now: number,
+  model?: string,
+) {
+  const windows =
+    model === undefined
+      ? (provider?.usageLimits?.windows ?? [])
+      : modelUsageWindows(provider, model);
+  const exhausted = windows.filter(
+    (window) =>
+      (window.usedPercent ?? 0) >= 100 &&
+      (!window.resetsAt ||
+        !Number.isFinite(Date.parse(window.resetsAt)) ||
+        Date.parse(window.resetsAt) > now),
+  );
+  if (
+    provider?.driver === "cursor" &&
+    model !== undefined &&
+    /^(auto|default|grok|composer)/.test(model)
+  ) {
+    return (
+      exhausted.find((window) => window.id === "autoPercentUsed") &&
+      exhausted.find((window) => window.id === "apiPercentUsed")
+    );
+  }
+  return exhausted[0];
+}
+
+interface AccountChoiceInput {
   readonly providers: readonly ServerProvider[];
   readonly now: number;
   readonly settings?: ServerSettings;
   readonly projectId?: ProjectId | null;
-}) {
-  const selection = input.explicitSelection ?? input.defaultSelection;
-  const unchanged = { selection, fallback: null };
-  if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
-  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-  const window = exhaustedUsageWindow(provider, input.now, selection.model);
-  const fallback = input.providers.find(
-    (entry) => entry.instanceId === input.fallbackSelection?.instanceId,
-  );
-  if (
-    !provider ||
-    !window ||
-    !fallback?.enabled ||
-    !fallback.installed ||
-    fallback.auth.status === "unauthenticated" ||
-    !isProviderAvailable(fallback) ||
-    exhaustedUsageWindow(fallback, input.now, input.fallbackSelection.model) ||
-    (input.settings &&
-      !resolveProjectProviderInstanceEnabled(
+}
+
+function isUsableSelection(candidate: ModelSelection, input: AccountChoiceInput) {
+  const entry = input.providers.find((item) => item.instanceId === candidate.instanceId);
+  return (
+    entry !== undefined &&
+    entry.enabled &&
+    entry.installed &&
+    entry.auth.status !== "unauthenticated" &&
+    isProviderAvailable(entry) &&
+    !exhaustedUsageWindow(entry, input.now, candidate.model) &&
+    (!input.settings ||
+      resolveProjectProviderInstanceEnabled(
         input.settings,
         input.projectId ?? null,
-        fallback.instanceId,
+        entry.instanceId,
       ))
-  )
-    return unchanged;
+  );
+}
+
+/**
+ * With `fallbackToAvailableAccounts` on and the selection's account out of usage (`exhausted`
+ * when a turn just said so), the same model on another account with usage left, else another
+ * provider's default model.
+ */
+export function availableAccountSelection(
+  input: AccountChoiceInput & { readonly selection: ModelSelection; readonly exhausted?: boolean },
+): ModelSelection | null {
+  if (!input.settings?.fallbackToAvailableAccounts) return null;
+  const provider = input.providers.find((entry) => entry.instanceId === input.selection.instanceId);
+  if (!provider) return null;
+  if (!input.exhausted && !exhaustedUsageWindow(provider, input.now, input.selection.model)) {
+    return null;
+  }
+  return (
+    automaticFallbackSelections(input.selection, provider, input.providers, input.now).find(
+      (candidate) => isUsableSelection(candidate, input),
+    ) ?? null
+  );
+}
+
+export function resolveNewThreadModelSelection(
+  input: AccountChoiceInput & {
+    readonly defaultSelection: ModelSelection | null;
+    readonly explicitSelection?: ModelSelection | null;
+    readonly fallbackSelection: ModelSelection | null;
+  },
+) {
+  const selection = input.explicitSelection ?? input.defaultSelection;
+  const unchanged = { selection, fallback: null };
+  if (input.explicitSelection || !selection) return unchanged;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  const window = exhaustedUsageWindow(provider, input.now, selection.model);
+  if (!provider || !window) return unchanged;
+  const replacement =
+    (input.fallbackSelection && isUsableSelection(input.fallbackSelection, input)
+      ? input.fallbackSelection
+      : null) ?? availableAccountSelection({ ...input, selection, exhausted: true });
+  if (!replacement) return unchanged;
   return {
-    selection: input.fallbackSelection,
+    selection: replacement,
     fallback: { provider, resetsAt: window.resetsAt ?? null },
   };
+}
+
+/** Other accounts of the exhausted provider first, then other providers, most headroom first. */
+function automaticFallbackSelections(
+  selection: ModelSelection,
+  exhausted: ServerProvider,
+  providers: readonly ServerProvider[],
+  now: number,
+): ModelSelection[] {
+  // Only accounts that report limits: an unknown balance could be pay-per-use or already spent.
+  const headroom = (entry: ServerProvider, model: string) => {
+    const windows = entry.usageLimits?.unavailable ? [] : modelUsageWindows(entry, model);
+    if (windows.length === 0) return null;
+    const left = windows.map((window) =>
+      window.resetsAt && Date.parse(window.resetsAt) <= now ? 100 : remainingPercent(window),
+    );
+    return entry.driver === "cursor" && /^(auto|default|grok|composer)/.test(model)
+      ? Math.max(...left)
+      : Math.min(...left);
+  };
+  const resolveAccountKey = accountKeyResolver(providers.map(nativeReport));
+  const exhaustedLogin = resolveAccountKey(nativeReport(exhausted));
+  return providers
+    .flatMap((entry) => {
+      if (
+        entry.instanceId === exhausted.instanceId ||
+        // Two instances signed in to the same login share one quota.
+        (exhaustedLogin !== null && resolveAccountKey(nativeReport(entry)) === exhaustedLogin)
+      ) {
+        return [];
+      }
+      const sameDriver = entry.driver === exhausted.driver;
+      const model =
+        (sameDriver ? entry.models.find((item) => item.slug === selection.model) : undefined) ??
+        entry.models.find((item) => item.isDefault) ??
+        entry.models[0];
+      if (!model) return [];
+      const left = headroom(entry, model.slug);
+      if (left === null) return [];
+      const keepsModel = sameDriver && model.slug === selection.model;
+      const candidate: ModelSelection = keepsModel
+        ? { ...selection, instanceId: entry.instanceId }
+        : { instanceId: entry.instanceId, model: model.slug };
+      return [{ candidate, sameDriver, keepsModel, left }];
+    })
+    .sort(
+      (a, b) =>
+        Number(b.sameDriver) - Number(a.sameDriver) ||
+        Number(b.keepsModel) - Number(a.keepsModel) ||
+        b.left - a.left,
+    )
+    .map(({ candidate }) => candidate);
 }
 
 export const CHATGPT_USAGE_URL = "https://chatgpt.com/#settings/Usage";

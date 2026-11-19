@@ -1,5 +1,14 @@
 import { assert, describe, it } from "@effect/vitest";
-import { RunId, ThreadId, type OrchestrationV2DomainEvent } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2DomainEvent,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -8,13 +17,14 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
-import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
+import { limitRecoveryCommand, limitSwitchCommand } from "./UsageLimitRecoveryWorker.ts";
 
 it.effect("idle sweeps skip SQL until the next wake time or a relevant event", () =>
   Effect.gen(function* () {
@@ -22,6 +32,7 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
     const startMs = Date.parse("2026-07-01T09:00:00.000Z");
     const queries = yield* Queue.unbounded<number>();
     const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+    const providerChanges = yield* Queue.unbounded<ReadonlyArray<ServerProvider>>();
     const layer = UsageLimitRecoveryWorker.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -39,6 +50,10 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
               ),
           }),
           Layer.mock(ThreadManagement.ThreadManagementService)({}),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([]),
+            streamChanges: Stream.fromQueue(providerChanges),
+          }),
           Layer.mock(Orchestrator.OrchestratorV2)({
             streamDomainEvents: Stream.fromQueue(events),
           }),
@@ -66,6 +81,9 @@ it.effect("idle sweeps skip SQL until the next wake time or a relevant event", (
       yield* TestClock.adjust("5 seconds");
       // A streaming item at 90s does not wake it; the failed run does on the 95s tick.
       assert.equal(yield* Queue.take(queries), 95_000);
+      yield* Queue.offer(providerChanges, []);
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(yield* Queue.take(queries), 100_000);
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -77,6 +95,11 @@ const failedThread = (failedAgoMs: number, resetAgoMs: number) => {
   const failedAt = DateTime.makeUnsafe(nowMs - failedAgoMs);
   const candidate: ProjectionStore.ProjectionLimitRecoveryCandidate = {
     id: ThreadId.make("thread:limited"),
+    projectId: ProjectId.make("project:limited"),
+    modelSelection: {
+      instanceId: ProviderInstanceId.make("claude_work"),
+      model: "claude-opus-5-5",
+    },
     status: "failed",
     lastErrorClass: "usage_limit",
     usageLimitResetAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs - resetAgoMs)),
@@ -116,3 +139,170 @@ describe("limitRecoveryCommand arming", () => {
     assert.isNull(limitRecoveryCommand(thread, true, nowMs));
   });
 });
+
+describe("limitSwitchCommand", () => {
+  const claude = (id: string, usedPercent: number): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-10-19T11:00:00.000Z",
+    models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities: null }],
+    slashCommands: [],
+    skills: [],
+    usageLimits: {
+      checkedAt: "2026-10-19T11:00:00.000Z",
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent }],
+    },
+  });
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    fallbackToAvailableAccounts: true,
+    providerInstances: {
+      [ProviderInstanceId.make("claude_work")]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+      },
+      [ProviderInstanceId.make("claude_personal")]: {
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+      },
+    },
+  };
+  // The work account's bars are stale: the turn that just failed is the proof it is spent.
+  const providers = [claude("claude_work", 40), claude("claude_personal", 20)];
+  const input = { providers, settings, nowMs, limitedUntil: new Map<ProviderInstanceId, number>() };
+  const justLimited = failedThread(60_000, -HOUR_MS);
+
+  it("continues the same model on another account with usage left", () => {
+    assert.deepInclude(limitSwitchCommand(justLimited, input), {
+      type: "message.dispatch",
+      manualContinuationOfRunId: RunId.make("run:limited"),
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claude_personal"),
+        model: "claude-opus-5-5",
+      },
+    });
+  });
+
+  it.each([
+    ["the setting is off", justLimited, { ...input, settings: DEFAULT_SERVER_SETTINGS }],
+    ["the limit was hit long ago", failedThread(HOUR_MS, -HOUR_MS), input],
+    [
+      "the other account hit its own limit here and has not reset",
+      justLimited,
+      {
+        ...input,
+        limitedUntil: new Map([[ProviderInstanceId.make("claude_personal"), nowMs + HOUR_MS]]),
+      },
+    ],
+  ])("waits when %s", (_name, thread, options) => {
+    assert.isNull(limitSwitchCommand(thread, options));
+  });
+});
+
+it.effect("wakes for account exclusion expiry and keeps expired resets excluded", () =>
+  Effect.gen(function* () {
+    const start = Date.parse("2026-10-19T12:00:00.000Z");
+    yield* TestClock.setTime(start);
+    const dispatched = yield* Queue.unbounded<string>();
+    const queried = yield* Queue.unbounded<number>();
+    const first = failedThread(60_000, -30_000);
+    const second = {
+      ...failedThread(60_000, 1),
+      id: ThreadId.make("thread:second"),
+      latestRunId: RunId.make("run:second"),
+      modelSelection: {
+        ...first.modelSelection,
+        instanceId: ProviderInstanceId.make("claude_personal"),
+      },
+    };
+    const provider = (id: string): ServerProvider => ({
+      instanceId: ProviderInstanceId.make(id),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-19T12:00:00.000Z",
+      models: [{ slug: "claude-opus-5-5", name: "Opus", isCustom: false, capabilities: null }],
+      slashCommands: [],
+      skills: [],
+      usageLimits: {
+        checkedAt: "2026-10-19T12:00:00.000Z",
+        windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 20 }],
+      },
+    });
+    const layer = UsageLimitRecoveryWorker.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Scheduler.layer,
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getLimitRecoveryCandidates: () =>
+              Clock.currentTimeMillis.pipe(
+                Effect.flatMap((now) =>
+                  Queue.offer(queried, now).pipe(
+                    Effect.as([
+                      now === start
+                        ? first
+                        : now < start + 35_000
+                          ? second
+                          : {
+                              ...first,
+                              id: ThreadId.make("thread:third"),
+                              latestRunId: RunId.make("run:third"),
+                            },
+                    ]),
+                  ),
+                ),
+              ),
+            getLimitRecoveryWakeAt: () => Effect.succeed(null),
+          }),
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            dispatch: (command) =>
+              command.type === "message.dispatch"
+                ? Queue.offer(dispatched, command.threadId).pipe(Effect.as({} as never))
+                : Effect.die("Expected an account-switch message dispatch"),
+          }),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.succeed([provider("claude_work"), provider("claude_personal")]),
+            streamChanges: Stream.never,
+          }),
+          Layer.mock(Orchestrator.OrchestratorV2)({ streamDomainEvents: Stream.never }),
+          Layer.mock(ServerSettings.ServerSettingsService)({
+            getSettings: Effect.succeed({
+              ...DEFAULT_SERVER_SETTINGS,
+              providerInstances: Object.fromEntries(
+                ["claude_work", "claude_personal"].map((id) => [
+                  id,
+                  { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+                ]),
+              ),
+              fallbackToAvailableAccounts: true,
+              autoResumeLimitedThreads: false,
+              snoozeLimitedThreads: false,
+            }),
+            streamChanges: Stream.never,
+          }),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      assert.equal(yield* Queue.take(dispatched), first.id);
+      assert.equal(yield* Queue.take(queried), start);
+      yield* TestClock.adjust("10 seconds");
+      assert.deepEqual(yield* Queue.takeAll(queried), [start + 5_000]);
+      assert.equal(yield* Queue.size(dispatched), 0);
+      yield* TestClock.adjust("20 seconds");
+      assert.deepEqual(yield* Queue.takeAll(dispatched), [second.id]);
+      assert.deepEqual(yield* Queue.takeAll(queried), [start + 30_000]);
+      yield* TestClock.adjust("5 seconds");
+      assert.deepEqual(yield* Queue.takeAll(queried), [start + 35_000]);
+      assert.equal(yield* Queue.size(dispatched), 0);
+    }).pipe(Effect.provide(layer));
+  }),
+);

@@ -1,3 +1,4 @@
+import { AccountFallback } from "./CommandPolicy.ts";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   GuestShareId,
@@ -7048,6 +7049,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
       return;
     }
+    const fallback = yield* AccountFallback;
+    const automaticFallback = fallback?.commandId === command.commandId ? fallback : undefined;
+    if (automaticFallback && command.manualContinuationOfRunId === undefined) {
+      const mode = resolveMessageDispatchIntent(
+        projection,
+        command.dispatchMode,
+        command.deliveryIntent,
+      );
+      if (
+        ((mode.type === "steer_active" || mode.type === "restart_active") &&
+          command.freshContext !== true) ||
+        !modelSelectionsEqual(projection.thread.modelSelection, automaticFallback.threadSelection)
+      ) {
+        command = {
+          ...command,
+          modelSelection: automaticFallback.requestedSelection ?? projection.thread.modelSelection,
+        };
+      }
+    }
     const activeProviderInstanceId = projection.providerThreads.find(
       (candidate) => candidate.id === projection.thread.activeProviderThreadId,
     )?.providerInstanceId;
@@ -7071,7 +7091,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latestExecutedRun(projection.runs)?.id !== source.id ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
+        projection.runtimeRequests.some((request) => request.status === "pending") ||
+        (automaticFallback !== undefined &&
+          (projection.thread.settledOverride === "settled" ||
+            !modelSelectionsEqual(source.modelSelection, automaticFallback.threadSelection) ||
+            !modelSelectionsEqual(
+              projection.thread.modelSelection,
+              automaticFallback.threadSelection,
+            ) ||
+            (projection.thread.snoozedUntil != null &&
+              DateTime.toEpochMillis(projection.thread.snoozedUntil) >
+                DateTime.toEpochMillis(yield* DateTime.now)) ||
+            (yield* stopReachedRun(command, command.threadId, source.id))))
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,

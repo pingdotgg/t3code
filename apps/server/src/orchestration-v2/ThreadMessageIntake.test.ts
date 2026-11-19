@@ -1,4 +1,5 @@
 import * as DocumentText from "../provider/DocumentText.ts";
+import { AccountFallback } from "./CommandPolicy.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -10,6 +11,9 @@ import {
   EventId,
   GuestMessageId,
   MessageId,
+  ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -17,6 +21,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2StoredEvent,
+  type ServerProvider,
   type UserInputAttachments,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -28,6 +33,7 @@ import {
   resolveAttachmentPath,
 } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
@@ -41,6 +47,9 @@ const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
 }).pipe(
   Layer.provideMerge(DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer))),
   Layer.provideMerge(ServerSettings.layerTest()),
+  Layer.provideMerge(
+    Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+  ),
 );
 
 const layerFailingDispatchHandler =
@@ -426,6 +435,112 @@ it.effect("sends a guest message with the guest's files, never ones the client n
     // The guest's file, which is already the thread's.
     expect(command.attachments).toEqual([guestFile]);
   }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect.each([false, true])(
+  "routes an exhausted account while preserving manual resume: %s",
+  (manual) =>
+    Effect.gen(function* () {
+      const claude = (id: string, usedPercent: number): ServerProvider => ({
+        instanceId: ProviderInstanceId.make(id),
+        driver: ProviderDriverKind.make("claudeAgent"),
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-09-13T00:00:00.000Z",
+        models: [
+          { slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities: null },
+        ],
+        slashCommands: [],
+        skills: [],
+        usageLimits: {
+          checkedAt: "2026-09-13T00:00:00.000Z",
+          windows: [
+            {
+              id: "five_hour",
+              kind: "session",
+              label: "Session",
+              usedPercent,
+              resetsAt: "2099-01-01T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+      const captured: OrchestrationV2ServerCommand[] = [];
+      const selection = {
+        instanceId: ProviderInstanceId.make("claude_work"),
+        model: "claude-opus-5-5",
+      };
+      yield* dispatchCommand({
+        type: "message.dispatch",
+        commandId: CommandId.make("send-limited"),
+        threadId: ThreadId.make("thread-limited"),
+        messageId: MessageId.make("message-limited"),
+        ...(manual ? { manualContinuationOfRunId: RunId.make("limited-run") } : {}),
+        text: "go",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              dispatch: (command) =>
+                AccountFallback.pipe(
+                  Effect.flatMap((fallback) => {
+                    expect(fallback).toEqual(
+                      manual
+                        ? undefined
+                        : {
+                            commandId: command.commandId,
+                            threadSelection: selection,
+                            requestedSelection: undefined,
+                          },
+                    );
+                    return layerFailingDispatchHandler(captured)(command);
+                  }),
+                ),
+              getThreadRecords: () =>
+                Effect.succeed({
+                  thread: {
+                    projectId: ProjectId.make("project-limited"),
+                    modelSelection: selection,
+                  },
+                } as never),
+            }),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({
+              getProviders: Effect.succeed([
+                claude("claude_work", 100),
+                claude("claude_personal", 30),
+              ]),
+            }),
+            ServerSettings.layerTest({
+              fallbackToAvailableAccounts: true,
+              providerInstances: Object.fromEntries(
+                ["claude_work", "claude_personal"].map((id) => [
+                  ProviderInstanceId.make(id),
+                  { driver: ProviderDriverKind.make("claudeAgent"), enabled: true },
+                ]),
+              ),
+            }),
+          ),
+        ),
+        Effect.result,
+      );
+      if (manual) {
+        expect(captured[0]).not.toHaveProperty("modelSelection");
+        return;
+      }
+      expect(captured[0]).toMatchObject({
+        modelSelection: {
+          instanceId: "claude_personal",
+          model: "claude-opus-5-5",
+        },
+      });
+    }).pipe(Effect.provide(layerIntakeTest)),
 );
 
 it.effect("refuses a queued edit that keeps a file another edit already deleted", () =>

@@ -1,14 +1,24 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import { appendUserInputAttachmentPaths } from "../provider/userInputAttachments.ts";
-import type { ChatAttachment, OrchestrationV2Command } from "@t3tools/contracts";
+import type {
+  ChatAttachment,
+  ModelSelection,
+  OrchestrationV2Command,
+  ProjectId,
+} from "@t3tools/contracts";
+import { availableAccountSelection } from "@t3tools/shared/usageLimits";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 import * as AttachmentClaims from "./AttachmentClaims.ts";
+import { AccountFallback } from "./CommandPolicy.ts";
 import * as ThreadLaunch from "./ThreadLaunchService.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
@@ -85,11 +95,65 @@ const withGuestAttachments = Effect.fn("ThreadMessageIntake.withGuestAttachments
   return { ...command, attachments: message?.attachments ?? [] };
 });
 
+/** Null unless the user lets sends move off an account that is out of usage. */
+const readAccountChoice = Effect.fn("ThreadMessageIntake.readAccountChoice")(function* () {
+  const settings = yield* ServerSettings.ServerSettingsService.pipe(
+    Effect.flatMap((service) => service.getSettings),
+    Effect.orElseSucceed(() => null),
+  );
+  if (!settings?.fallbackToAvailableAccounts) return null;
+  const providers = yield* ProviderRegistry.ProviderRegistry.pipe(
+    Effect.flatMap((registry) => registry.getProviders),
+  );
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
+  return (selection: ModelSelection, projectId: ProjectId) =>
+    availableAccountSelection({ selection, providers, now, settings, projectId }) ?? selection;
+});
+
+const withAvailableAccount = Effect.fn("ThreadMessageIntake.withAvailableAccount")(function* (
+  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+) {
+  // Steering stays on the active run's account; server continuations validate their own.
+  if (
+    command.dispatchMode.type === "steer_active" ||
+    command.dispatchMode.type === "restart_active" ||
+    command.manualContinuationOfRunId !== undefined ||
+    command.usageLimitContinuationOfRunId !== undefined ||
+    command.restartContinuationOfRunId !== undefined
+  ) {
+    return { command, fallback: undefined };
+  }
+  const choose = yield* readAccountChoice();
+  if (choose === null) return { command, fallback: undefined };
+  const threads = yield* ThreadManagement.ThreadManagementService;
+  const records = yield* threads
+    .getThreadRecords(command.threadId, [])
+    .pipe(Effect.orElseSucceed(() => null));
+  if (records === null) return { command, fallback: undefined };
+  const { thread } = records;
+  const selection = command.modelSelection ?? thread.modelSelection;
+  const next = choose(selection, thread.projectId);
+  return {
+    command: next === selection ? command : { ...command, modelSelection: next },
+    fallback:
+      next === selection
+        ? undefined
+        : {
+            commandId: command.commandId,
+            threadSelection: thread.modelSelection,
+            requestedSelection: command.modelSelection,
+          },
+  };
+});
+
 export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(function* (
   incoming: OrchestrationV2Command,
 ) {
-  const command =
-    incoming.type === "message.dispatch" ? yield* withGuestAttachments(incoming) : incoming;
+  const prepared =
+    incoming.type === "message.dispatch"
+      ? yield* withAvailableAccount(yield* withGuestAttachments(incoming))
+      : { command: incoming, fallback: undefined };
+  const { command } = prepared;
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
@@ -197,6 +261,7 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
         : {}),
     })
     .pipe(
+      Effect.provideService(AccountFallback, prepared.fallback),
       Effect.tap((result) =>
         releaseUnusedClaims(
           claimed.claimedPaths,
@@ -229,9 +294,14 @@ export const sendToThread = Effect.fn("ThreadMessageIntake.sendToThread")(functi
 });
 
 export const launchThread = Effect.fn("ThreadMessageIntake.launchThread")(function* (
-  input: ThreadLaunch.ThreadLaunchInput,
+  requested: ThreadLaunch.ThreadLaunchInput,
 ) {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
+  const choose = yield* readAccountChoice();
+  const input =
+    choose === null
+      ? requested
+      : { ...requested, modelSelection: choose(requested.modelSelection, requested.projectId) };
   yield* AttachmentClaims.validateAttachmentLimits(input.initialMessage?.attachments ?? []);
   if (!input.initialMessage?.attachments.some(AttachmentClaims.attachmentIsPendingUpload)) {
     return yield* launches.launch(input);

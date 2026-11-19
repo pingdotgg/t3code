@@ -59,6 +59,7 @@ describe("new thread model fallback", () => {
   const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
   const fallback = { instanceId: ProviderInstanceId.make("claude"), model: "claude-fable-5-1" };
   const limited = provider({
+    auth: { status: "authenticated", email: "quota@example.com", workspaceId: "workspace_a" },
     usageLimits: {
       checkedAt: "2026-09-03T11:00:00.000Z",
       windows: [{ ...window, usedPercent: 100 }],
@@ -111,6 +112,148 @@ describe("new thread model fallback", () => {
         providers: [limited, { ...available, ...overrides }],
       }).selection,
     ).toEqual(selection);
+  });
+  describe("without a usable configured fallback", () => {
+    const limits = (usedPercent: number) => ({
+      checkedAt: limited.checkedAt,
+      windows: [{ ...window, usedPercent }],
+    });
+    const model = (slug: string, isDefault = false) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      isDefault,
+      capabilities: null,
+    });
+    const codexAccount = (id: string, usedPercent: number) =>
+      provider({
+        instanceId: ProviderInstanceId.make(id),
+        models: [model("gpt-6.1-luna", true), model(selection.model)],
+        usageLimits: limits(usedPercent),
+      });
+    const claude = provider({
+      instanceId: fallback.instanceId,
+      driver: ProviderDriverKind.make("claudeAgent"),
+      models: [model("claude-sonnet-5-5"), model("claude-opus-5-5", true)],
+      usageLimits: limits(0),
+    });
+    const resolve = (providers: ServerProvider[], fallbackToAvailableAccounts = true) =>
+      resolveNewThreadModelSelection({
+        defaultSelection: { ...selection, options: [{ id: "reasoningEffort", value: "high" }] },
+        fallbackSelection: null,
+        providers: [limited, ...providers],
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          fallbackToAvailableAccounts,
+          providerInstances: Object.fromEntries(
+            providers.map((entry) => [
+              entry.instanceId,
+              { driver: entry.driver, enabled: true, config: {} },
+            ]),
+          ),
+        },
+        now,
+      }).selection;
+
+    it.each([
+      [
+        "another account of the same provider with the most headroom, keeping model and options",
+        [claude, codexAccount("codex_a", 90), codexAccount("codex_b", 20)],
+        {
+          instanceId: ProviderInstanceId.make("codex_b"),
+          model: selection.model,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      ],
+      [
+        "a distinct login instead of another instance sharing the exhausted account",
+        [
+          {
+            ...codexAccount("codex_duplicate", 0),
+            auth: {
+              status: "authenticated",
+              email: "QUOTA@example.com",
+              workspaceId: "workspace_a",
+            },
+          },
+          codexAccount("codex_other", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_other"), model: selection.model },
+      ],
+      [
+        "a different workspace on the same login",
+        [
+          {
+            ...codexAccount("codex_workspace", 0),
+            auth: {
+              status: "authenticated",
+              email: "quota@example.com",
+              workspaceId: "workspace_b",
+            },
+          },
+          codexAccount("codex_other", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_workspace"), model: selection.model },
+      ],
+      [
+        "the requested model before a same-provider default with more headroom",
+        [
+          { ...codexAccount("codex_other", 0), models: [model("gpt-6.1-luna", true)] },
+          codexAccount("codex_same", 80),
+        ],
+        {
+          instanceId: ProviderInstanceId.make("codex_same"),
+          model: selection.model,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        },
+      ],
+      [
+        "an account whose stored window already reset",
+        [
+          {
+            ...codexAccount("codex_reset", 100),
+            usageLimits: {
+              ...limits(100),
+              windows: [{ ...window, usedPercent: 100, resetsAt: "2026-09-03T11:00:00.000Z" }],
+            },
+          },
+          codexAccount("codex_partial", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_reset"), model: selection.model },
+      ],
+      [
+        "headroom for the candidate model instead of unrelated pools",
+        [
+          {
+            ...codexAccount("codex_model", 0),
+            usageLimits: {
+              ...limits(0),
+              windows: [
+                { ...window, usedPercent: 0, modelIds: [selection.model] },
+                { ...window, id: "other", usedPercent: 100, modelIds: ["gpt-6.1-luna"] },
+              ],
+            },
+          },
+          codexAccount("codex_partial", 20),
+        ],
+        { instanceId: ProviderInstanceId.make("codex_model"), model: selection.model },
+      ],
+      [
+        "another provider's default model when every same-provider account is spent",
+        [codexAccount("codex_a", 100), claude],
+        { instanceId: claude.instanceId, model: "claude-opus-5-5" },
+      ],
+      [
+        "nothing when no other account reports limits",
+        [{ ...claude, usageLimits: undefined }],
+        selection,
+      ],
+    ] as const)("switches to %s", (_name, providers, expected) => {
+      expect(resolve([...providers])).toMatchObject(expected);
+    });
+    it("stays on the default while the setting is off", () => {
+      expect(resolve([codexAccount("codex_a", 0), claude], false)).toMatchObject(selection);
+    });
   });
   it.each([undefined, "invalid"])("treats an unknown reset as exhausted: %s", (resetsAt) => {
     expect(

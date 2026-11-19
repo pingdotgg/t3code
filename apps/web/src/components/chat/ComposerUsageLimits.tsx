@@ -80,6 +80,7 @@ export function usageLimitsBannerItem(
 export function modelFallbackBannerItem(
   {
     fallbackModelName,
+    fallbackProviderName,
     defaultProviderName,
     defaultModelName,
     resetsAt,
@@ -88,6 +89,7 @@ export function modelFallbackBannerItem(
     onDismiss,
   }: {
     readonly fallbackModelName: string;
+    readonly fallbackProviderName: string;
     readonly defaultProviderName: string;
     readonly defaultModelName: string;
     readonly resetsAt: string | null;
@@ -101,7 +103,12 @@ export function modelFallbackBannerItem(
     id: "fallback-model",
     variant: "info",
     icon: <GaugeIcon />,
-    title: resolve(msg("Using {model}", { model: fallbackModelName })),
+    title: resolve(
+      msg("Using {model} on {provider}", {
+        model: fallbackModelName,
+        provider: fallbackProviderName,
+      }),
+    ),
     description: resetsAt
       ? resolve(
           msg("{provider} is out of usage · resets {time}", {

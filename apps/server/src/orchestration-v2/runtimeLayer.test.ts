@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
+import { AccountFallback } from "./CommandPolicy.ts";
 import {
   type ApplicationStoredEvent,
   CheckpointId,
@@ -1878,179 +1879,200 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
-  it.effect("resolves delivery intent against the active run and starts after it completes", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const eventSink = yield* EventSink.EventSinkV2;
-      const outbox = yield* EffectOutbox.EffectOutboxV2;
-      const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const threadId = ThreadId.make("runtime-delivery-intent");
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-delivery-intent-create"),
-        threadId,
-        projectId: ProjectId.make("runtime-delivery-intent-project"),
-        title: "Delivery intent",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: process.cwd(),
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("runtime-delivery-intent-first"),
-        threadId,
-        messageId: MessageId.make("runtime-delivery-intent-first"),
-        text: "Start work.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-      });
-      const initial = yield* orchestrator.getThreadProjection(threadId);
-      const run = initial.runs[0]!;
-      const providerThread = initial.providerThreads[0]!;
-      const now = yield* DateTime.now;
-      const providerSession = {
-        id: providerThread.providerSessionId!,
-        driver,
-        providerInstanceId: modelSelection.instanceId,
-        status: "running" as const,
-        cwd: process.cwd(),
-        model: modelSelection.model,
-        capabilities: CodexProviderCapabilitiesV2,
-        createdAt: now,
-        updatedAt: now,
-        lastError: null,
-      };
-      const providerTurn = {
-        id: ProviderTurnId.make("runtime-delivery-intent-turn"),
-        providerThreadId: providerThread.id,
-        nodeId: run.rootNodeId!,
-        runAttemptId: run.activeAttemptId,
-        nativeTurnRef: null,
-        ordinal: 1,
-        status: "running" as const,
-        startedAt: now,
-        completedAt: null,
-      };
-      yield* eventSink.write({
-        commandId: CommandId.make("runtime-delivery-intent-running"),
-        events: [
-          {
-            id: EventId.make("runtime-delivery-intent-run-event"),
-            type: "run.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "running", startedAt: now },
-          },
-          {
-            id: EventId.make("runtime-delivery-intent-session-event"),
-            type: "provider-session.attached",
-            threadId,
-            occurredAt: now,
-            payload: providerSession,
-          },
-          {
-            id: EventId.make("runtime-delivery-intent-turn-event"),
-            type: "provider-turn.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: providerTurn,
-          },
-        ],
-      });
-      const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
-        Effect.succeedSome({
-          providerSession,
-        } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
-      );
-      yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
+  it.effect.each([false, true])(
+    "resolves delivery intent with fresh context %s against the active run",
+    (freshContext) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threadId = ThreadId.make(`runtime-delivery-intent-${freshContext}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-delivery-intent-create-${freshContext}`),
+          threadId,
+          projectId: ProjectId.make(`runtime-delivery-intent-project-${freshContext}`),
+          title: "Delivery intent",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-delivery-intent-first-${freshContext}`),
+          threadId,
+          messageId: MessageId.make(`runtime-delivery-intent-first-${freshContext}`),
+          text: "Start work.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+        });
+        const initial = yield* orchestrator.getThreadProjection(threadId);
+        const run = initial.runs[0]!;
+        const providerThread = initial.providerThreads[0]!;
+        const now = yield* DateTime.now;
+        const providerSession = {
+          id: providerThread.providerSessionId!,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          status: "running" as const,
+          cwd: process.cwd(),
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        };
+        const providerTurn = {
+          id: ProviderTurnId.make(`runtime-delivery-intent-turn-${freshContext}`),
+          providerThreadId: providerThread.id,
+          nodeId: run.rootNodeId!,
+          runAttemptId: run.activeAttemptId,
+          nativeTurnRef: null,
+          ordinal: 1,
+          status: "running" as const,
+          startedAt: now,
+          completedAt: null,
+        };
+        yield* eventSink.write({
+          commandId: CommandId.make(`runtime-delivery-intent-running-${freshContext}`),
+          events: [
+            {
+              id: EventId.make(`runtime-delivery-intent-run-event-${freshContext}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "running", startedAt: now },
+            },
+            {
+              id: EventId.make(`runtime-delivery-intent-session-event-${freshContext}`),
+              type: "provider-session.attached",
+              threadId,
+              occurredAt: now,
+              payload: providerSession,
+            },
+            {
+              id: EventId.make(`runtime-delivery-intent-turn-event-${freshContext}`),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: providerTurn,
+            },
+          ],
+        });
+        const sessionSpy = vi.spyOn(sessions, "get").mockReturnValue(
+          Effect.succeedSome({
+            providerSession,
+          } as ProviderAdapter.ProviderAdapterV2SessionRuntime),
+        );
+        yield* Effect.addFinalizer(() => Effect.sync(() => sessionSpy.mockRestore()));
 
-      const steerCommandId = CommandId.make("runtime-delivery-intent-auto");
-      const steerMessageId = MessageId.make("runtime-delivery-intent-auto");
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: steerCommandId,
-        threadId,
-        messageId: steerMessageId,
-        text: "Include this in the active work.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        deliveryIntent: "auto",
-      });
-      const steered = yield* orchestrator.getThreadProjection(threadId);
-      assert.lengthOf(steered.runs, 1);
-      assert.equal(
-        steered.messages.find((message) => message.id === steerMessageId)?.runId,
-        run.id,
-      );
-      assert.deepEqual(
-        (yield* outbox.listByCommandId(steerCommandId)).map((effect) => effect.request),
-        [
-          {
-            type: "provider-turn.steer",
-            providerSessionId: providerSession.id,
-            providerThreadId: providerThread.id,
-            providerTurnId: providerTurn.id,
+        const steerCommandId = CommandId.make(`runtime-delivery-intent-auto-${freshContext}`);
+        const steerMessageId = MessageId.make(`runtime-delivery-intent-auto-${freshContext}`);
+        yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: steerCommandId,
+            threadId,
             messageId: steerMessageId,
-            modelSelection: run.modelSelection,
-            steerFollowUpAfterRunOrdinal: run.ordinal,
-          },
-        ],
-      );
+            text: "Include this in the active work.",
+            freshContext,
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+            modelSelection: {
+              ...modelSelection,
+              instanceId: alternateInstanceId,
+            },
+          })
+          .pipe(
+            Effect.provideService(AccountFallback, {
+              commandId: steerCommandId,
+              threadSelection: modelSelection,
+              requestedSelection: undefined,
+            }),
+          );
+        const steered = yield* orchestrator.getThreadProjection(threadId);
+        if (freshContext) {
+          const queued = steered.runs.find((run) => run.status === "queued");
+          assert.equal(queued?.modelSelection.instanceId, alternateInstanceId);
+          assert.equal(queued?.freshContext, true);
+          return;
+        }
+        assert.lengthOf(steered.runs, 1);
+        assert.equal(
+          steered.messages.find((message) => message.id === steerMessageId)?.runId,
+          run.id,
+        );
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(steerCommandId)).map((effect) => effect.request),
+          [
+            {
+              type: "provider-turn.steer",
+              providerSessionId: providerSession.id,
+              providerThreadId: providerThread.id,
+              providerTurnId: providerTurn.id,
+              messageId: steerMessageId,
+              modelSelection: run.modelSelection,
+              steerFollowUpAfterRunOrdinal: run.ordinal,
+            },
+          ],
+        );
 
-      yield* eventSink.write({
-        commandId: CommandId.make("runtime-delivery-intent-completed"),
-        events: [
-          {
-            id: EventId.make("runtime-delivery-intent-run-completed"),
-            type: "run.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
-          },
-          {
-            id: EventId.make("runtime-delivery-intent-turn-completed"),
-            type: "provider-turn.updated",
-            threadId,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...providerTurn, status: "completed", completedAt: now },
-          },
-        ],
-      });
-      const nextCommandId = CommandId.make("runtime-delivery-intent-next");
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: nextCommandId,
-        threadId,
-        messageId: MessageId.make("runtime-delivery-intent-next"),
-        text: "The previous run finished before this arrived.",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        deliveryIntent: "restart",
-      });
-      const restarted = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(
-        restarted.runs.map((candidate) => candidate.status),
-        ["completed", "starting"],
-      );
-      assert.deepEqual(
-        (yield* outbox.listByCommandId(nextCommandId)).map((effect) => effect.request.type),
-        ["provider-turn.start"],
-      );
-    }),
+        yield* eventSink.write({
+          commandId: CommandId.make(`runtime-delivery-intent-completed-${freshContext}`),
+          events: [
+            {
+              id: EventId.make(`runtime-delivery-intent-run-completed-${freshContext}`),
+              type: "run.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+            },
+            {
+              id: EventId.make(`runtime-delivery-intent-turn-completed-${freshContext}`),
+              type: "provider-turn.updated",
+              threadId,
+              runId: run.id,
+              occurredAt: now,
+              payload: { ...providerTurn, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const nextCommandId = CommandId.make(`runtime-delivery-intent-next-${freshContext}`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: nextCommandId,
+          threadId,
+          messageId: MessageId.make(`runtime-delivery-intent-next-${freshContext}`),
+          text: "The previous run finished before this arrived.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          deliveryIntent: "restart",
+        });
+        const restarted = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          restarted.runs.map((candidate) => candidate.status),
+          ["completed", "starting"],
+        );
+        assert.deepEqual(
+          (yield* outbox.listByCommandId(nextCommandId)).map((effect) => effect.request.type),
+          ["provider-turn.start"],
+        );
+      }),
   );
 
   // regression: #37412 one thread's busy lock held up every other thread's run-end reaction
@@ -13265,6 +13287,32 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         yield* orchestrator.dispatch(freshResume!);
         yield* orchestrator.dispatch(freshResume!);
         assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+      }
+      if (["stop", "settled", "archive", "replacement"].includes(scenario)) {
+        const switchId = CommandId.make(`account-switch:${scenario}`);
+        const result = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            commandId: switchId,
+            threadId,
+            messageId: MessageId.make(switchId),
+            manualContinuationOfRunId: run.id,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "server",
+          })
+          .pipe(
+            Effect.provideService(AccountFallback, {
+              commandId: switchId,
+              threadSelection: modelSelection,
+              requestedSelection: undefined,
+            }),
+            Effect.exit,
+          );
+        assert.equal(result._tag, "Failure");
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
       }
       const before = yield* orchestrator.getThreadProjection(threadId);
       if (resume !== null) {
