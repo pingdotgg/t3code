@@ -82,6 +82,9 @@ import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServerOwnership from "./serverOwnership.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
+import * as DirectApnsClient from "./relay/DirectApnsClient.ts";
+import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
+import * as DirectApnsNotifier from "./relay/DirectApnsNotifier.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
@@ -558,8 +561,22 @@ const layerProviderInstallationRefresh = Layer.effectDiscard(
   }),
 );
 
+// One DirectApnsDevices instance serves the RPC handlers and the notifier, so its
+// write lock covers every registration and rejection.
+const layerDirectApnsNotifier = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const service = yield* DirectApnsNotifier.DirectApnsNotifier;
+    yield* service.start();
+  }),
+).pipe(
+  Layer.provide(DirectApnsNotifier.layer),
+  Layer.provide(DirectApnsClient.layer.pipe(Layer.provide(DirectApnsClient.transportLayer))),
+  Layer.provideMerge(DirectApnsDevices.layer),
+);
+
 const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
+  layerDirectApnsNotifier,
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
   layerIdleCompactionWorker,

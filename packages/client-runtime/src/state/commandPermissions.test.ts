@@ -89,6 +89,33 @@ describe("command permissions", () => {
     ),
   );
 
+  it.effect.each([
+    WS_METHODS.notificationsRegisterDevice,
+    WS_METHODS.notificationsUnregisterDevice,
+  ])("requires the destination thread-read grant for %s", (method) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const push = createCommandPermissions(runtime, method);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(push.permissionAtom(env))).toBe(false);
+        expect((yield* push.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(
+          sessions(env),
+          AsyncResult.success({
+            ...grant(false),
+            scopes: [AuthOrchestrationReadScope],
+            permissions: [AuthOrchestrationReadScope],
+          }),
+        );
+        expect(registry.get(push.permissionAtom(env))).toBe(true);
+        yield* push.authorize(registry, env);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

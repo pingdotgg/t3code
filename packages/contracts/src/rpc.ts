@@ -71,6 +71,7 @@ import {
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
 } from "./auth.ts";
+import { PushDeviceRegistration, PushDeviceUnregistration } from "./pushNotifications.ts";
 import {
   BackgroundPolicySnapshot,
   ClientActivityReportInput,
@@ -524,6 +525,9 @@ export const WS_METHODS = {
   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
 
+  notificationsRegisterDevice: "notifications.registerDevice",
+  notificationsUnregisterDevice: "notifications.unregisterDevice",
+
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
 
@@ -925,6 +929,16 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
   success: RelayClientInstallProgressEventSchema,
   error: Schema.Union([RelayClientInstallFailedError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+const WsNotificationsRegisterDeviceRpc = Rpc.make(WS_METHODS.notificationsRegisterDevice, {
+  payload: PushDeviceRegistration,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsNotificationsUnregisterDeviceRpc = Rpc.make(WS_METHODS.notificationsUnregisterDevice, {
+  payload: PushDeviceUnregistration,
+  error: EnvironmentAuthorizationError,
 });
 
 const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
@@ -1949,6 +1963,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSecretsAnswerRequestRpc,
   WsScheduledTasksListWebhookDeliveriesRpc,
   WsScheduledTasksGetWebhookDeliveryRpc,
+  WsNotificationsRegisterDeviceRpc,
+  WsNotificationsUnregisterDeviceRpc,
   WsServerReportClientActivityRpc,
   WsServerReportHostPowerStateRpc,
   WsServerGetBackgroundPolicyRpc,

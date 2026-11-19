@@ -47,6 +47,10 @@
       "types": "./src/advertisedEndpoint.ts",
       "import": "./src/advertisedEndpoint.ts"
     },
+    "./apnsProviderToken": {
+      "types": "./src/apnsProviderToken.ts",
+      "import": "./src/apnsProviderToken.ts"
+    },
     "./agentAwareness": {
       "types": "./src/agentAwareness.ts",
       "import": "./src/agentAwareness.ts"

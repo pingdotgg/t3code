@@ -44,6 +44,7 @@ import {
 } from "./agentLiveActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
+import { registerDirectApnsDevice } from "./directApnsRegistration";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
@@ -338,6 +339,11 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
   body: RelayDeviceRegistrationRequest,
   expectedGeneration: number,
 ): Effect.fn.Return<void, unknown, ManagedRelay.ManagedRelayClient> {
+  // Direct server push does not depend on a T3 Connect sign-in, and its failure
+  // must never affect relay registration, so it runs detached.
+  void registerDirectApnsDevice(body).catch((error: unknown) => {
+    logRegistrationError("direct push registration failed", error);
+  });
   if (expectedGeneration !== deviceRegistrationGeneration) {
     logRegistrationDebug("device registration cancelled before relay request", {
       expectedGeneration,

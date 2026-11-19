@@ -58,6 +58,9 @@ const environmentConfigsMock = vi.hoisted(() => ({
     { environment: { capabilities: { agentActivityPublishing?: boolean } } }
   >(),
 }));
+const directApns = vi.hoisted(() => ({
+  register: vi.fn(() => Promise.resolve()),
+}));
 const backgroundRuntime = vi.hoisted(() => ({
   pending: [] as Array<{
     readonly operation: unknown;
@@ -73,6 +76,10 @@ const registrationRecordStore = vi.hoisted(() => ({
     readonly signature: string;
     readonly pushToStartToken?: string;
   } | null,
+}));
+
+vi.mock("./directApnsRegistration", () => ({
+  registerDirectApnsDevice: directApns.register,
 }));
 
 vi.mock("expo-constants", () => ({
@@ -555,6 +562,33 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       ).toMatchObject({ ok: true });
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("also registers the push token for direct server push", () => {
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    directApns.register.mockClear();
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(directApns.register).toHaveBeenCalledWith(
+        expect.objectContaining({ deviceId: "device-1", pushToken: "apns-token" }),
+      );
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("still registers with the relay when the direct registration fails", () => {
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    directApns.register.mockRejectedValue(new Error("environment unreachable"));
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+    }).pipe(
+      Effect.ensuring(Effect.sync(() => directApns.register.mockResolvedValue(undefined))),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {
