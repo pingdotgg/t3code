@@ -43,8 +43,9 @@ const filterLaunchArgs = (launchArgs: string | undefined, allowed: LaunchArgFilt
   const kept: Array<string> = [];
 
   for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
-    if (arg === undefined) continue;
+    const rawArg = args[index];
+    if (rawArg === undefined) continue;
+    const arg = rawArg.replace(/^(-[cp])(?=[^=])/u, "$1=");
 
     if (allowed.switches.has(arg)) {
       kept.push(arg);
@@ -62,17 +63,19 @@ const filterLaunchArgs = (launchArgs: string | undefined, allowed: LaunchArgFilt
   return kept;
 };
 
-const HOOK_FEATURES = new Set(["hooks", "codex_hooks"]);
+const MCP_LIST_DISABLED_FEATURES = new Set(["apps", "connectors", "plugins"]);
+const EXEC_DISABLED_FEATURES = new Set([...MCP_LIST_DISABLED_FEATURES, "hooks", "codex_hooks"]);
 
-// Feature toggles beat config overrides, so a launch arg's hook enable would undo ours.
-export const codexExecLaunchArgs = (launchArgs?: string) => {
-  const args = filterLaunchArgs(launchArgs, EXEC_FILTER);
-  return args.filter((arg, index) => {
-    if (arg.startsWith("--enable=")) return !HOOK_FEATURES.has(arg.slice("--enable=".length));
-    if (arg === "--enable") return !HOOK_FEATURES.has(args[index + 1] ?? "");
-    return !(args[index - 1] === "--enable" && HOOK_FEATURES.has(arg));
+// Codex can apply explicit --enable flags after trailing -c overrides.
+const omitFeatureEnables = (args: ReadonlyArray<string>, features: ReadonlySet<string>) =>
+  args.filter((arg, index) => {
+    if (arg.startsWith("--enable=")) return !features.has(arg.slice("--enable=".length));
+    if (arg === "--enable") return !features.has(args[index + 1] ?? "");
+    return !(args[index - 1] === "--enable" && features.has(arg));
   });
-};
+
+export const codexExecLaunchArgs = (launchArgs?: string) =>
+  omitFeatureEnables(filterLaunchArgs(launchArgs, EXEC_FILTER), EXEC_DISABLED_FEATURES);
 
 export const codexMcpListLaunchArgs = (launchArgs?: string) =>
-  filterLaunchArgs(launchArgs, MCP_LIST_FILTER);
+  omitFeatureEnables(filterLaunchArgs(launchArgs, MCP_LIST_FILTER), MCP_LIST_DISABLED_FEATURES);
