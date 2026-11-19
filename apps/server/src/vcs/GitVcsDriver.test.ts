@@ -3077,6 +3077,7 @@ it.effect(
       yield* makeRepository(bulk);
       yield* commitFiles(bulk, { "seed.txt": "seed\n" }, "initial");
       yield* git(app, ["worktree", "add", "-q", "--detach", "../app.worktrees/3"]);
+      yield* git(app, ["worktree", "add", "-q", "--detach", "../app.worktrees/4"]);
       yield* makeRepository(root);
       yield* commitFiles(root, { "notes.txt": "notes\n" }, "track checkouts");
       const [before, after] = ["before", "after"].map((name) =>
@@ -3093,6 +3094,7 @@ it.effect(
       yield* git(app, ["worktree", "add", "-q", "-b", "untouched", "../app.worktrees/2"]);
       yield* git(app, ["mv", "src/old.txt", "src/new.txt"]);
       yield* git(app, ["commit", "-m", "rename"]);
+      yield* git(path.join(root, "app.worktrees/4"), ["checkout", "-q", "--detach", "main"]);
       const reused = path.join(root, "app.worktrees/3");
       yield* git(reused, ["checkout", "-q", "-b", "reuse", "main"]);
       yield* commitFiles(reused, { "reuse.txt": "reuse\n" }, "reuse");
@@ -3134,6 +3136,7 @@ it.effect(
       assert.include(patch, "+++ b/app.worktrees/3/reuse.txt");
       assert.include(patch, "Subproject commit");
       assert.notInclude(patch, "app.worktrees/2");
+      assert.notInclude(patch, "app.worktrees/4");
       assert.include(patch, "+++ b/app/src/new.txt");
       assert.notInclude(patch, "base.txt");
 

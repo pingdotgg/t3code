@@ -1226,7 +1226,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 args: ["merge-base", "--is-ancestor", gitlink.from, forkPoint],
                 allowNonZeroExit: true,
               })).exitCode === 0;
-            const start = gitlink.from === null || forkPointFollowsFrom ? forkPoint : gitlink.from;
+            const isLinkedWorktree = Effect.map(
+              nestedGit(nestedCwd, ["rev-parse", "--git-dir", "--git-common-dir"]),
+              (dirs) => {
+                const [gitDir = "", commonDir = ""] = dirs.split("\n");
+                return path.resolve(nestedCwd, gitDir) !== path.resolve(nestedCwd, commonDir);
+              },
+            );
+            const start =
+              forkPoint === gitlink.to && (yield* isLinkedWorktree)
+                ? gitlink.to
+                : gitlink.from === null || forkPointFollowsFrom
+                  ? forkPoint
+                  : gitlink.from;
             if (start === null) return null;
             const changed = yield* nestedGit(nestedCwd, [
               "diff",
