@@ -229,7 +229,7 @@ it("retries a failed continuation without discarding loaded files or restarting 
   expect(screen.current.error).not.toBeNull();
   expect(screen.current.patch).toContain("first.ts");
 
-  act(() => screen.current.refresh());
+  act(() => screen.current.retry());
   expect(screen.requests.map((request) => request.cursor)).toEqual([null, "second", "second"]);
   expect(screen.current.patch).toContain("first.ts");
   await screen.succeed(2, patch("second.ts"));
