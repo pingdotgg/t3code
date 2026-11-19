@@ -408,6 +408,7 @@ const make = Effect.gen(function* () {
                 assignee: input.assignee,
                 sort: input.sort ?? "updated",
                 cursor,
+                refresh: input.refresh,
               }),
             ),
             Effect.result,
