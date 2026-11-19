@@ -1237,6 +1237,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   nativeTurnRef: Schema.NullOr(OrchestrationV2ProviderRef),
   /** The native session that held this turn, when a provider can move a thread between sessions. */
   nativeThreadRef: Schema.optional(OrchestrationV2ProviderRef),
+  /** A successful Codex history scan has reconciled through this turn. */
+  nativeHistoryReconciled: Schema.optionalKey(Schema.Literal(true)),
   ordinal: PositiveInt,
   status: Schema.Literals([
     "pending",

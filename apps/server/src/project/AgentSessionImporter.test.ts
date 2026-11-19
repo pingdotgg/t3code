@@ -4,6 +4,9 @@ import {
   type AgentSessionSource,
   type OrchestrationV2Run,
   type ServerSettingsError,
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EventId,
   ProjectId,
   ProviderDriverKind,
@@ -14,6 +17,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  TurnItemId,
   type ApplicationStoredEvent,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
@@ -36,6 +40,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
+import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
@@ -63,6 +68,7 @@ const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
 const persistence = Layer.mergeAll(
   stores,
   EventSink.layer.pipe(Layer.provide(stores)),
+  EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
   ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
   IdAllocator.layer,
 );
@@ -260,9 +266,9 @@ const makeImporter = Effect.fn(function* (
               }),
           }),
           Layer.mock(Orchestrator.OrchestratorV2)({
-            getThreadRecords: (threadId, fields) =>
+            getThreadRecords: (threadId, fields, filter) =>
               projections
-                .getThreadRecords(threadId, fields)
+                .getThreadRecords(threadId, fields, filter)
                 .pipe(
                   Effect.mapError(
                     (cause) => new Orchestrator.OrchestratorProjectionError({ threadId, cause }),
@@ -604,6 +610,8 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
     const first = candidate(CODEX_MODEL_SELECTION, "continued-in-codex");
+    const replyAt = "2026-09-01T09:59:59.000Z";
+    first.thread.messages[1] = { role: "assistant", text: "Fixed", createdAt: replyAt };
     const threadId = importId(first);
     expect(yield* (yield* makeImporter([first])).run).toEqual({
       importedCount: 1,
@@ -612,6 +620,7 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
     const before = yield* projections.getThreadRecords(threadId, ["messages"]);
 
     const continued = candidate(CODEX_MODEL_SELECTION, first.source.providerSessionId);
+    continued.thread.messages[1] = { role: "assistant", text: "Fixed", createdAt: replyAt };
     continued.source.size = 200;
     continued.source.mtimeMs = 3;
     continued.thread.messages.push(
@@ -631,7 +640,7 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
     expect(recorded).toEqual([continued.source]);
     expect(after.thread).toEqual(before.thread);
     expect(after.messages.slice(0, 2)).toEqual(before.messages);
-    expect(after.messages.map((message) => message.text)).toEqual([
+    expect(after.turnItems.map((item) => ("text" in item ? item.text : null))).toEqual([
       "Fix it",
       "Fixed",
       "Continue",
@@ -641,7 +650,7 @@ it.effect("appends new Codex messages to the existing import exactly once", () =
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("refreshes completed Codex turns after a turn run in T3", () =>
+it.effect("refreshes completed Codex turns in order, including gaps after a failed read", () =>
   Effect.gen(function* () {
     const sink = yield* EventSink.EventSinkV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -744,12 +753,21 @@ it.effect("refreshes completed Codex turns after a turn run in T3", () =>
       nativeTurn("outside-2", "Next Codex message", "inProgress"),
     ];
     const readAnchors: Array<string> = [];
+    let failRead = false;
     const session = {
-      readHistoryAfter: ({ nativeTurnId }) =>
-        Effect.sync(() => {
+      readHistoryAfter: ({ nativeTurnId, providerThread }) =>
+        Effect.suspend(() => {
           readAnchors.push(nativeTurnId);
+          if (failRead) {
+            return Effect.fail(
+              new ProviderAdapter.ProviderAdapterReadThreadSnapshotError({
+                driver: providerThread.driver,
+                providerThreadId: providerThread.id,
+              }),
+            );
+          }
           const anchor = nativeHistory.findIndex((turn) => turn.id === nativeTurnId);
-          return anchor < 0 ? [] : nativeHistory.slice(anchor + 1);
+          return Effect.succeed(anchor < 0 ? [] : nativeHistory.slice(anchor + 1));
         }),
     } satisfies Pick<ProviderAdapter.ProviderAdapterV2SessionRuntime, "readHistoryAfter">;
     const adapter = {
@@ -777,22 +795,142 @@ it.effect("refreshes completed Codex turns after a turn run in T3", () =>
     nativeHistory[3] = nativeTurn("outside-2", "Next Codex message");
     expect(yield* refresh).toBe(1);
 
+    nativeHistory.push(nativeTurn("missed", "Missed Codex message"));
+    failRead = true;
+    expect(yield* refresh).toBe(0);
+    const continuedId = RunId.make(`${threadId}:continued`);
+    const continuedAttemptId = RunAttemptId.make(`${continuedId}:1`);
+    const continuedNodeId = NodeId.make(`${continuedId}:root`);
+    const checkpointId = CheckpointId.make(`${continuedId}:checkpoint`);
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/continued");
+    const continuedRun: OrchestrationV2Run = {
+      ...localRun,
+      id: continuedId,
+      ordinal: 5,
+      rootNodeId: continuedNodeId,
+      activeAttemptId: continuedAttemptId,
+      checkpointId,
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${continuedId}:created`),
+          type: "run.created",
+          threadId,
+          occurredAt: now,
+          payload: continuedRun,
+        },
+        {
+          id: EventId.make(checkpointId),
+          type: "checkpoint.captured",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: checkpointId,
+            threadId,
+            scopeId: CheckpointScopeId.make(`${threadId}:scope`),
+            runId: continuedId,
+            nodeId: continuedNodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: 5,
+            appRunOrdinal: 5,
+            ref: checkpointRef,
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`${continuedId}:native`),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make(`${continuedId}:native`),
+            providerThreadId: nativeThread.id,
+            nodeId: continuedNodeId,
+            runAttemptId: continuedAttemptId,
+            nativeTurnRef: {
+              driver: nativeThread.driver,
+              nativeId: "continued",
+              strength: "strong",
+            },
+            ordinal: 4,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`${continuedId}:prompt`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`${continuedId}:prompt`),
+            threadId,
+            runId: continuedId,
+            nodeId: continuedNodeId,
+            providerThreadId: nativeThread.id,
+            providerTurnId: ProviderTurnId.make(`${continuedId}:native`),
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "user_message",
+            messageId: continuedRun.userMessageId,
+            createdBy: "user",
+            creationSource: "web",
+            inputIntent: "turn_start",
+            text: "Continued in T3",
+            attachments: [],
+          },
+        },
+      ],
+    });
+    nativeHistory.push(nativeTurn("continued", "Continued in T3"));
+    failRead = false;
+    const restarted = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    expect(yield* restarted.refreshCodexHistory({ threadId })).toBe(1);
+    expect(yield* refresh).toBe(0);
+    expect(readAnchors.slice(-3)).toEqual(["outside-2", "outside-2", "continued"]);
+
     const after = yield* projections.getThreadRecords(threadId, [
       "runs",
       "turnItems",
       "providerTurns",
+      "checkpoints",
     ]);
-    expect(after.runs.map((run) => run.ordinal)).toEqual([1, 2, 3, 4]);
+    expect(after.runs.map((run) => run.ordinal)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(after.runs.at(-1)?.id).toBe(continuedId);
+    expect(after.checkpoints).toMatchObject([
+      {
+        id: checkpointId,
+        runId: continuedId,
+        ordinalWithinScope: 5,
+        appRunOrdinal: 6,
+        ref: checkpointRef,
+      },
+    ]);
     expect(after.providerTurns.map((turn) => turn.nativeTurnRef?.nativeId)).toEqual([
       "local-turn",
       "outside-1",
       "outside-2",
+      "missed",
+      "continued",
     ]);
     expect(after.turnItems.map((item) => ("text" in item ? item.text : null))).toEqual([
       "From Codex",
       "Reply to From Codex",
       "Next Codex message",
       "Reply to Next Codex message",
+      "Missed Codex message",
+      "Reply to Missed Codex message",
+      "Continued in T3",
     ]);
     expect(after.turnItems[0]?.ordinal).toBeGreaterThan(2_000_000);
     expect(after.thread.id).toBe(threadId);

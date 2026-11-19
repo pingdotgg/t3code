@@ -812,7 +812,11 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;
   /** Native turns after a known turn, oldest first. If the anchor is missing, returns no turns. */
   readonly readHistoryAfter?: (
-    input: ProviderAdapterV2ReadThreadSnapshotInput & { readonly nativeTurnId: string },
+    input: ProviderAdapterV2ReadThreadSnapshotInput & {
+      readonly nativeTurnId: string;
+      /** Keep these turns in the result for ordering, but omit their messages. */
+      readonly knownNativeTurnIds?: ReadonlySet<string>;
+    },
   ) => Effect.Effect<ReadonlyArray<ProviderAdapterV2HistoryTurn>, ProviderAdapterV2Error>;
   readonly uploadFeedback?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;

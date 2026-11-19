@@ -226,6 +226,10 @@ export interface EffectOutboxV2Shape {
   readonly listByCommandId: (
     commandId: CommandId,
   ) => Effect.Effect<ReadonlyArray<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly hasUnsettled: (
+    threadId: ThreadId,
+    effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>,
+  ) => Effect.Effect<boolean, EffectOutboxError>;
   /** A message's first steer effect: it records which runs were queued before the message. */
   readonly firstSteer: (
     threadId: ThreadId,
@@ -477,6 +481,20 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "list", cause }),
           ),
         ),
+      hasUnsettled: Effect.fn("EffectOutbox.hasUnsettled")(function* (threadId, effectTypes) {
+        if (effectTypes.length === 0) return false;
+        const rows = yield* sql`
+          SELECT 1 FROM orchestration_v2_effect_outbox
+          WHERE thread_id = ${threadId}
+            AND status IN ('pending', 'running')
+            AND effect_type IN ${sql.in(effectTypes)}
+          LIMIT 1
+        `.pipe(
+          NodeSqliteClient.readOnly,
+          Effect.mapError((cause) => new EffectOutboxError({ operation: "list", cause })),
+        );
+        return rows.length > 0;
+      }),
       firstSteer: (threadId, messageId) =>
         sql<EffectRow>`
           SELECT *

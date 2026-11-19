@@ -8789,9 +8789,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ),
           mcpApps,
           readHistoryAfter: Effect.fn("CodexAdapterV2.readHistoryAfter")(
-            function* ({ providerThread, nativeTurnId }) {
+            function* ({ providerThread, nativeTurnId, knownNativeTurnIds }) {
               const threadId = yield* getNativeThreadId(providerThread);
               yield* ensureInitialized;
+              const { historyMode } = yield* readCodexThreadHistoryMetadata(client.raw, threadId);
+              const paginated = historyMode === "paginated";
               const turns: Array<CodexSchema.V2ThreadTurnsListResponse__Turn> = [];
               const visited = new Set<string | null>();
               let cursor: string | null = null;
@@ -8799,35 +8801,78 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 visited.add(cursor);
                 const page: CodexSchema.V2ThreadTurnsListResponse = yield* client.request(
                   "thread/turns/list",
-                  { threadId, cursor, limit: 32, itemsView: "summary", sortDirection: "desc" },
+                  {
+                    threadId,
+                    cursor,
+                    limit: paginated ? 32 : 8,
+                    itemsView: paginated ? "notLoaded" : "full",
+                    sortDirection: "desc",
+                  },
                 );
                 const anchor = page.data.findIndex((turn) => turn.id === nativeTurnId);
                 if (anchor >= 0) {
                   const observedAt = yield* DateTime.now;
                   turns.push(...page.data.slice(0, anchor));
-                  return turns
-                    .reverse()
-                    .map((turn): ProviderAdapter.ProviderAdapterV2HistoryTurn => {
-                      const startedAt =
-                        turn.startedAt == null ? observedAt : codexTimestamp(turn.startedAt);
-                      return {
-                        id: turn.id,
-                        status: turn.status,
-                        startedAt,
-                        completedAt:
-                          turn.completedAt == null ? startedAt : codexTimestamp(turn.completedAt),
-                        messages: turn.items.flatMap(
-                          (item): ProviderAdapter.ProviderAdapterV2HistoryTurn["messages"] => {
-                            if (item.type === "userMessage") {
-                              return [{ role: "user", text: codexUserMessageText(item.content) }];
+                  const history: Array<ProviderAdapter.ProviderAdapterV2HistoryTurn> = [];
+                  for (const turn of turns.reverse()) {
+                    if (turn.status === "inProgress") break;
+                    const start = turn.startedAt ?? turn.completedAt;
+                    const startedAt = start == null ? observedAt : codexTimestamp(start);
+                    const messages: Array<
+                      ProviderAdapter.ProviderAdapterV2HistoryTurn["messages"][number]
+                    > = [];
+                    const addMessage = (
+                      item: CodexSchema.V2ThreadItemsListResponse__ThreadItem,
+                    ) => {
+                      if (item.type === "userMessage") {
+                        messages.push({ role: "user", text: codexUserMessageText(item.content) });
+                      } else if (item.type === "agentMessage" && item.text.trim() !== "") {
+                        messages.push({ role: "assistant", text: item.text });
+                      }
+                    };
+                    if (turn.status === "completed" && !knownNativeTurnIds?.has(turn.id)) {
+                      if (paginated) {
+                        const itemCursors = new Set<string | null>();
+                        let itemCursor: string | null = null;
+                        do {
+                          if (itemCursors.has(itemCursor)) {
+                            return yield* toProtocolError(
+                              `Codex repeated a history item cursor for turn ${turn.id}.`,
+                            );
+                          }
+                          itemCursors.add(itemCursor);
+                          const items: CodexSchema.V2ThreadItemsListResponse =
+                            yield* client.request("thread/items/list", {
+                              threadId,
+                              turnId: turn.id,
+                              cursor: itemCursor,
+                              limit: 100,
+                              sortDirection: "asc",
+                            });
+                          for (const entry of items.data) {
+                            if (entry.turnId !== turn.id) {
+                              return yield* toProtocolError(
+                                `Codex returned history items for a different turn than ${turn.id}.`,
+                              );
                             }
-                            return item.type === "agentMessage" && item.text.trim() !== ""
-                              ? [{ role: "assistant", text: item.text }]
-                              : [];
-                          },
-                        ),
-                      };
+                            addMessage(entry.item);
+                          }
+                          itemCursor = items.nextCursor ?? null;
+                        } while (itemCursor !== null);
+                      } else {
+                        for (const item of turn.items) addMessage(item);
+                      }
+                    }
+                    history.push({
+                      id: turn.id,
+                      status: turn.status,
+                      startedAt,
+                      completedAt:
+                        turn.completedAt == null ? startedAt : codexTimestamp(turn.completedAt),
+                      messages,
                     });
+                  }
+                  return history;
                 }
                 turns.push(...page.data);
                 cursor = page.nextCursor ?? null;

@@ -4925,23 +4925,57 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("reads the Codex turn suffix across pages in conversation order", () =>
+  it.effect("reads the complete text of the Codex turn suffix in conversation order", () =>
     Effect.gen(function* () {
       const nativeThreadId = "external-history";
       const nativeTurnId = "anchor";
-      const turn = (id: string) => ({
+      const user = (id: string, text = id) => ({
+        type: "userMessage",
+        id,
+        content: [{ type: "text", text }],
+      });
+      const answer = (id: string) => ({
+        type: "agentMessage",
+        id: `${id}:assistant`,
+        text: `Reply to ${id}`,
+      });
+      const turn = (
+        id: string,
+        itemsView = "notLoaded",
+        items: Array<ReturnType<typeof user> | ReturnType<typeof answer>> = [],
+      ) => ({
         id,
         status: "completed",
-        items: [
-          { type: "userMessage", id: `${id}:user`, content: [{ type: "text", text: id }] },
-          { type: "agentMessage", id: `${id}:assistant`, text: `Reply to ${id}` },
-        ],
+        startedAt: null,
+        completedAt: 1_785_000_000,
+        itemsView,
+        items,
       });
+      const readMode = (
+        id: number,
+        historyMode: "paginated" | "legacy",
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "expect_outbound",
+          label: "thread/read",
+          frame: {
+            id,
+            method: "thread/read",
+            params: { threadId: nativeThreadId, includeTurns: false },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "thread/read",
+          frame: { id, result: { thread: { historyMode } } },
+        },
+      ];
       const listPage = (
         id: number,
         cursor: string | null,
         data: Array<ReturnType<typeof turn>>,
         nextCursor: string | null,
+        itemsView = "notLoaded",
       ): Array<CodexReplay.CodexAppServerReplayEntry> => [
         {
           type: "expect_outbound",
@@ -4952,8 +4986,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             params: {
               threadId: nativeThreadId,
               cursor,
-              limit: 32,
-              itemsView: "summary",
+              limit: itemsView === "full" ? 8 : 32,
+              itemsView,
               sortDirection: "desc",
             },
           },
@@ -4964,33 +4998,102 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           frame: { id, result: { data, nextCursor } },
         },
       ];
+      const listItems = (
+        id: number,
+        turnId: string,
+        cursor: string | null,
+        items: Array<ReturnType<typeof user> | ReturnType<typeof answer>>,
+        nextCursor: string | null,
+      ): Array<CodexReplay.CodexAppServerReplayEntry> => [
+        {
+          type: "expect_outbound",
+          label: "thread/items/list",
+          frame: {
+            id,
+            method: "thread/items/list",
+            params: { threadId: nativeThreadId, turnId, cursor, limit: 100, sortDirection: "asc" },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "thread/items/list",
+          frame: {
+            id,
+            result: { data: items.map((item) => ({ turnId, item })), nextCursor },
+          },
+        },
+      ];
       const { runtime, providerThread } = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "codex-external-history",
           entries: [
             ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Start" }).slice(0, 5),
-            ...listPage(3, null, [turn("newest")], "before-newest"),
+            ...readMode(3, "paginated"),
+            ...listPage(4, null, [turn("newest")], "before-newest"),
             ...listPage(
-              4,
+              5,
               "before-newest",
               [turn("older"), turn(nativeTurnId), turn("past")],
               null,
             ),
-            ...listPage(5, null, [turn("newest"), turn("older")], null),
+            ...listItems(6, "older", null, [user("older:user", "older")], "steer"),
+            ...listItems(
+              7,
+              "older",
+              "steer",
+              [user("steer", "Steer the turn"), answer("older")],
+              null,
+            ),
+            ...readMode(8, "paginated"),
+            ...listPage(9, null, [turn("newest"), turn("older")], null),
+            ...readMode(10, "paginated"),
+            ...listPage(11, null, [turn("newest"), turn(nativeTurnId)], null),
+            ...listItems(12, "newest", null, [user("newest:user", "newest")], "stuck"),
+            ...listItems(13, "newest", "stuck", [answer("newest")], "stuck"),
+            ...readMode(14, "legacy"),
+            ...listPage(
+              15,
+              null,
+              [
+                turn("legacy", "full", [
+                  user("legacy:user", "legacy"),
+                  user("steer", "Steer the turn"),
+                  answer("legacy"),
+                ]),
+                turn(nativeTurnId, "full"),
+              ],
+              null,
+              "full",
+            ),
           ],
         }),
       );
       const readHistory = runtime.readHistoryAfter!;
-      const appended = yield* readHistory({ providerThread, nativeTurnId });
+      const appended = yield* readHistory({
+        providerThread,
+        nativeTurnId,
+        knownNativeTurnIds: new Set(["newest"]),
+      });
       assert.deepEqual(
         appended.map((turn) => turn.id),
         ["older", "newest"],
       );
       assert.deepEqual(appended[0]?.messages, [
         { role: "user", text: "older" },
+        { role: "user", text: "Steer the turn" },
         { role: "assistant", text: "Reply to older" },
       ]);
+      assert.deepEqual(appended[0]?.startedAt, appended[0]?.completedAt);
+      assert.deepEqual(appended[1]?.messages, []);
       assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
+      const error = yield* Effect.flip(readHistory({ providerThread, nativeTurnId }));
+      assert.equal(error._tag, "ProviderAdapterReadThreadSnapshotError");
+      const legacy = yield* readHistory({ providerThread, nativeTurnId });
+      assert.deepEqual(legacy[0]?.messages, [
+        { role: "user", text: "legacy" },
+        { role: "user", text: "Steer the turn" },
+        { role: "assistant", text: "Reply to legacy" },
+      ]);
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
