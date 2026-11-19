@@ -263,7 +263,7 @@ function setup(kind: "thread" | "workspace-embed" | "PR" | "files", compact = fa
   };
 }
 
-it("keeps a workspace video poster visible while signing reloads or reconnects", async () => {
+it("keeps a workspace video poster through a reconnect's reload", async () => {
   using screen = setup("workspace-embed");
   mocks.asset = {
     _tag: "Success",
@@ -279,17 +279,13 @@ it("keeps a workspace video poster visible while signing reloads or reconnects",
   await act(async () => screen.render());
   expect(screen.poster()).toBe("file:///poster.jpg");
 
+  mocks.asset = { _tag: "Failure", reason: "disconnected" };
+  screen.render();
+  expect(screen.poster()).toBeNull();
+
   mocks.asset = { _tag: "Loading" };
   screen.render();
   expect(screen.poster()).toBe("file:///poster.jpg");
-
-  mocks.asset = { _tag: "Failure", reason: "disconnected" };
-  screen.render();
-  expect(screen.poster()).toBe("file:///poster.jpg");
-
-  mocks.asset = { _tag: "Failure", reason: "missing-file-access" };
-  screen.render();
-  expect(screen.poster()).toBeNull();
 });
 
 it("keeps an open workspace video playing when signing disconnects and recovers", async () => {

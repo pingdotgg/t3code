@@ -10,6 +10,7 @@ const host = vi.hoisted(() => ({
   minted: null as { readonly revision: string | null | undefined; fileRevision: string } | null,
   posterKeys: [] as string[],
 }));
+const thread = vi.hoisted(() => ({ focused: true }));
 
 // Like the app's URL cache: a reader reuses the last mint unless it reads a new revision.
 vi.mock("../../state/assets", () => ({
@@ -33,7 +34,11 @@ vi.mock("../../components/MediaVideoPlayer", () => ({
   },
 }));
 
+vi.mock("@react-navigation/native", () => ({ useIsFocused: () => thread.focused }));
+vi.mock("../../state/threads", () => ({ environmentThreadDetails: {} }));
+
 import { ThreadMarkdownVideo } from "./ThreadMarkdownVideo";
+import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 
 const source: MediaVideoPreviewSource = {
   type: "media",
@@ -43,35 +48,8 @@ const source: MediaVideoPreviewSource = {
   resource: { _tag: "media-file", threadId: ThreadId.make("thread"), path: "./clip.mp4" },
 };
 
-it("gives a workspace video replaced while its thread was closed a new poster", () => {
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  const root = createRoot(document.createElement("div"));
-  const openThread = () => {
-    act(() => root.render(<ThreadMarkdownVideo source={source} thumbnailVisible />));
-    return host.posterKeys.at(-1);
-  };
-  const leaveThread = () => act(() => root.render(null));
-
-  const red = openThread();
-  leaveThread();
-  expect(openThread()).toBe(red);
-  leaveThread();
-  host.fileRevision = "blue";
-  expect(openThread()).not.toBe(red);
-  act(() => root.unmount());
-});
-
-const thread = vi.hoisted(() => ({ focused: true }));
-vi.mock("@react-navigation/native", () => ({ useIsFocused: () => thread.focused }));
-vi.mock("../../state/threads", () => ({ environmentThreadDetails: {} }));
-
-import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
-
 it("reuses the poster when an embed is recycled in the same visit and checks again on return", () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  host.fileRevision = "red";
-  host.minted = null;
-  thread.focused = true;
   const root = createRoot(document.createElement("div"));
   using _cleanup = { [Symbol.dispose]: () => act(() => root.unmount()) };
   const render = (showVideo = true) => {

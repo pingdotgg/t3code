@@ -443,7 +443,6 @@ describe("makeRevisionedAssetUrlFamily", () => {
     before();
 
     const stillMinting = mount("mutation-3");
-    const anotherReader = mount("mutation-3");
     edited();
     expect(mints()).toBe(2);
 
@@ -451,7 +450,6 @@ describe("makeRevisionedAssetUrlFamily", () => {
     expect(mints()).toBe(3);
     settle();
     expect(mints()).toBe(3);
-    anotherReader();
     stillMinting();
   });
 

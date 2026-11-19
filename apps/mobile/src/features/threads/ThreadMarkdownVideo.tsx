@@ -71,7 +71,6 @@ export function ThreadMarkdownVideo(props: {
       name={source.name}
       thumbnailKey={posterKey ?? playbackKey}
       thumbnailVisible={visible}
-      showPosterWhenUnavailable={disconnected && posterKey !== null}
       visible={visible}
       onPlaybackStart={props.onPlaybackStart}
       unavailable={"resource" in source && asset._tag === "Failure"}
