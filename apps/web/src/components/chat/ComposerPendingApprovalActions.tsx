@@ -56,13 +56,16 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
   const primaryOptions = options.filter(
     (option) => option.decision === "decline" || option.decision === "accept",
   );
-  const moreOptions = options.filter(
+  const secondaryOptions = options.filter(
     (option) => option.decision !== "decline" && option.decision !== "accept",
   );
+  const inlineOptions =
+    secondaryOptions.length <= 1 ? [...primaryOptions, ...secondaryOptions] : primaryOptions;
+  const moreOptions = secondaryOptions.length > 1 ? secondaryOptions : [];
 
   return (
     <>
-      {primaryOptions.map((option) => {
+      {inlineOptions.map((option) => {
         const buttonProps = {
           disabled: disabled || isResponding || !canRespond,
           "aria-description": option.warning,
