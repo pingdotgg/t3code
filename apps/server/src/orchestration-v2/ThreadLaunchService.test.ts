@@ -20,6 +20,7 @@ import {
   EnvironmentId,
   GitCommandError,
   MessageId,
+  RunId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -61,6 +62,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
@@ -138,6 +140,10 @@ interface HarnessOptions {
   readonly getLaunchSettings?: ServerSettings.ServerSettingsService["Service"]["getSettings"];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly dispatch?: (
+    command: Parameters<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>[0],
+    dispatch: ThreadManagement.ThreadManagementService["Service"]["dispatch"],
+  ) => ReturnType<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>;
   readonly isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
 }
 
@@ -222,6 +228,8 @@ function makeHarness(options: HarnessOptions = {}) {
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
       currentBranch: () => Effect.succeed(null),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
+      resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+      resolveDefaultBranchName: () => Effect.succeed("main"),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       listLocalBranchNames: () => Effect.succeed([]),
@@ -245,11 +253,25 @@ function makeHarness(options: HarnessOptions = {}) {
         folderForThread: () => Effect.succeedNone,
       }),
   );
+  const interceptDispatch = options.dispatch;
+  const layerLaunchThreads =
+    interceptDispatch === undefined
+      ? layerThreadManagement
+      : Layer.effect(
+          ThreadManagement.ThreadManagementService,
+          Effect.gen(function* () {
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            return ThreadManagement.ThreadManagementService.of({
+              ...threads,
+              dispatch: (command) => interceptDispatch(command, threads.dispatch),
+            });
+          }),
+        ).pipe(Layer.provide(layerThreadManagement));
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerExternalServices,
-        layerThreadManagement,
+        layerLaunchThreads,
         layerReceipts,
         layerOrchestrator,
         IdAllocator.layer,
@@ -1310,6 +1332,7 @@ it.effect.each(["stable", "upstream/release"])(
         git: {
           resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
           hasRefNamed: () => Effect.succeed(false),
+          listLocalBranchNames: () => git.listLocalBranchNames(cwd),
         },
         fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
         createWorktree: (input, options) =>
@@ -1360,6 +1383,140 @@ it.effect.each(["stable", "upstream/release"])(
         ),
       ),
     ),
+);
+
+const withRealGitRepo = <A, E, R>(
+  run: (repo: {
+    readonly directory: string;
+    readonly cwd: string;
+    readonly worktreePath: string;
+    readonly command: (
+      at: string,
+      args: string[],
+    ) => ReturnType<GitVcsDriver.GitVcsDriver["Service"]["execute"]>;
+    readonly harness: (options?: HarnessOptions) => ReturnType<typeof makeHarness>;
+  }) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-base-fallback-" });
+    const cwd = `${directory}/repo`;
+    const worktreePath = `${directory}/worktree`;
+    yield* fs.makeDirectory(cwd);
+    const command = (at: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd: at, args });
+    yield* command(cwd, ["init", "-b", "beta"]);
+    yield* command(cwd, ["config", "user.name", "Test"]);
+    yield* command(cwd, ["config", "user.email", "test@example.test"]);
+    const harness = (options: HarnessOptions = {}) =>
+      makeHarness({
+        hasCommit: ({ refName }) =>
+          command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+        createWorktree: (input, progress) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, progress),
+        ...options,
+        git: {
+          resolveWorktreeBaseRemote: (input) => git.resolveWorktreeBaseRemote({ ...input, cwd }),
+          resolvePrimaryRemoteName: () => git.resolvePrimaryRemoteName(cwd),
+          resolveDefaultBranchName: (_cwd, remoteName) =>
+            git.resolveDefaultBranchName(cwd, remoteName),
+          currentBranch: () =>
+            command(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]).pipe(
+              Effect.map((result) => result.stdout.trim() || null),
+              Effect.orElseSucceed(() => null),
+            ),
+          hasRefNamed: () => Effect.succeed(false),
+          ...options.git,
+        },
+      });
+    return yield* run({ directory, cwd, worktreePath, command, harness });
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-base-git-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  );
+
+const launchFromBase = (harness: ReturnType<typeof makeHarness>, baseRef: string) =>
+  Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:base-fallback",
+        thread: "thread:launch:base-fallback",
+        message: "Build the feature",
+        workspace: { type: "worktree", baseRef, branch: "feature", startFromOrigin: true },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+  }).pipe(Effect.provide(harness.layer));
+
+it.effect("re-bases a stored base that no longer exists on the remote default branch", () =>
+  withRealGitRepo(({ directory, cwd, worktreePath, command, harness }) =>
+    Effect.gen(function* () {
+      const remote = `${directory}/remote.git`;
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      yield* command(cwd, ["init", "--bare", remote]);
+      yield* command(cwd, ["remote", "add", "origin", remote]);
+      yield* command(cwd, ["push", "-u", "origin", "beta"]);
+      yield* command(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/beta"]);
+      const remoteHead = (yield* command(cwd, ["rev-parse", "beta"])).stdout.trim();
+      yield* command(cwd, ["checkout", "--detach"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "local only"]);
+
+      // Tasks saved before the base followed the default branch still record "main".
+      yield* launchFromBase(harness(), "main");
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), remoteHead);
+    }),
+  ),
+);
+
+it.effect("keeps a `:/` commit-search base instead of re-basing", () =>
+  withRealGitRepo(({ cwd, worktreePath, command, harness }) =>
+    Effect.gen(function* () {
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "searched base"]);
+      const searchedHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "later work"]);
+
+      yield* launchFromBase(harness(), ":/searched");
+      assert.equal(
+        (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+        searchedHead,
+      );
+    }),
+  ),
+);
+
+it.effect("skips a stale tracking ref when the remote reports the base branch is gone", () =>
+  withRealGitRepo(({ cwd, worktreePath, command, harness }) =>
+    Effect.gen(function* () {
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "stale point"]);
+      const staleHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "current work"]);
+      const betaHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      // The deleted remote branch leaves its tracking ref (and origin/HEAD) behind.
+      yield* command(cwd, ["update-ref", "refs/remotes/origin/gone", staleHead]);
+      yield* command(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone"]);
+
+      yield* launchFromBase(
+        harness({
+          // A completed fetch that found no branch, as when the branch was deleted.
+          fetchWorktreeBaseCommit: () => Effect.succeed(null),
+          git: { resolvePrimaryRemoteName: () => Effect.succeed("origin") },
+        }),
+        "main",
+      );
+      assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), betaHead);
+    }),
+  ),
 );
 
 it.effect("fetches the origin base from the remote it already resolved", () => {
@@ -1674,6 +1831,102 @@ it.effect.each(["fails", "is interrupted"] as const)(
         }
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("returns from prepareRun without retrying a scheduling failure", () =>
+  Effect.gen(function* () {
+    const rejected = yield* Deferred.make<void>();
+    let rejectedWrites = 0;
+    const harness = makeHarness({
+      dispatch: (command, dispatch) =>
+        command.type !== "prepared-run.fail"
+          ? dispatch(command)
+          : Effect.suspend(() => {
+              rejectedWrites += 1;
+              return Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(Effect.die("SQLITE_FULL: database or disk is full")),
+              );
+            }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.prepareRun({
+        commandId: CommandId.make("command:prepare:missing-thread"),
+        threadId: ThreadId.make("thread:prepare:missing-thread"),
+        runId: RunId.make("run:prepare:missing-thread"),
+      });
+      yield* Deferred.await(rejected);
+      yield* TestClock.adjust("1 second");
+      assert.equal(rejectedWrites, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a run whose preparation failure could not be stored until storage recovers", () =>
+  Effect.gen(function* () {
+    const storageFull = yield* Deferred.make<void>();
+    let rejectedWrites = 0;
+    let preparations = 0;
+    const harness = makeHarness({
+      fetchWorktreeBaseCommit: () =>
+        Effect.sync(() => preparations++).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitCommandError({
+                operation: "GitVcsDriver.fetchRemote",
+                command: "git",
+                cwd: project.workspaceRoot,
+                detail: "Git could not reach the remote.",
+                exitCode: 128,
+              }),
+            ),
+          ),
+        ),
+      dispatch: (command, dispatch) =>
+        command.type !== "prepared-run.fail"
+          ? dispatch(command)
+          : Effect.suspend(() => {
+              if (rejectedWrites >= 2) return dispatch(command);
+              rejectedWrites += 1;
+              return Deferred.succeed(storageFull, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause: new Error("SQLITE_FULL: database or disk is full"),
+                    }),
+                  ),
+                ),
+              );
+            }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:storage-full",
+        thread: "thread:launch:storage-full",
+        message: "First message",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      });
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(storageFull);
+      yield* TestClock.adjust("0 seconds");
+      yield* launches.launch(input);
+      yield* TestClock.adjust("0 seconds");
+      assert.equal(preparations, 1);
+      yield* TestClock.adjust("1 second");
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(rejectedWrites, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect.each(["failed", "interrupted"] as const)(
@@ -2189,6 +2442,7 @@ it.effect(
             fetched.push(refName);
             return null;
           }),
+        hasCommit: ({ refName }) => Effect.succeed(refName === "main"),
         runSetup: () =>
           Deferred.succeed(setupEntered, undefined).pipe(
             Effect.andThen(Deferred.await(allowSetup)),
@@ -2749,6 +3003,43 @@ it.effect("tells the thread when its worktree branch could not be renamed", () =
   }),
 );
 
+it.effect("starts the agent on the temporary branch when branch naming hangs", () =>
+  Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      // A rate-limited provider retries until the CLI's own timeout, minutes later.
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:rename-hangs",
+          thread: "thread:rename-hangs",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* Deferred.await(branchNameStarted);
+      yield* TestClock.adjust("20 seconds");
+      yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter((snapshot) => snapshot?.phase === "done"),
+        Stream.runHead,
+      );
+      assert.equal(harness.renameBranch.mock.calls.length, 0);
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      const notice = projection.turnItems.find((item) => item.type === "system_notice");
+      assert.include(
+        notice?.type === "system_notice" ? notice.message : "",
+        `stays ${projection.thread.branch}. Text generation failed in generateBranchName: Timed out after 20 seconds.`,
+      );
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect("reports submodule downloads as their own setup step", () =>
   Effect.gen(function* () {
     const progressReady =
@@ -2883,6 +3174,62 @@ it.effect.each([0, 1])("releases an async setup before its completion with exit 
   }),
 );
 
+it.effect("shows an async setup as done while the agent still waits for its branch name", () =>
+  Effect.gen(function* () {
+    const branchNameStarted = yield* Deferred.make<void>();
+    const allowBranchName = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () =>
+        Effect.succeed({
+          status: "started" as const,
+          async: true,
+          scriptId: "setup",
+          scriptName: "Setup",
+          scriptCommand: "vp install",
+          terminalId: "setup",
+          cwd: "/repo-worktrees/feature",
+          completion: Effect.succeed({ exitCode: 0, durationMs: 1 }),
+        }),
+      generateBranchName: () =>
+        Deferred.succeed(branchNameStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(allowBranchName)),
+          Effect.as({ branch: "generated-branch" }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:async-setup-before-name",
+          thread: "thread:async-setup-before-name",
+          message: "Start",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      yield* Deferred.await(branchNameStarted);
+      const snapshot = yield* tracker.stream(launched.threadId).pipe(
+        Stream.filter(
+          (current) =>
+            current?.stages.some(
+              (stage) =>
+                (stage.id === "setup-script" &&
+                  (stage.status === "done" || stage.status === "failed")) ||
+                (stage.id === "agent" && stage.status === "done"),
+            ) === true,
+        ),
+        Stream.runHead,
+      );
+      const stages = Option.getOrUndefined(snapshot)?.stages ?? [];
+      const setupStage = stages.find((stage) => stage.id === "setup-script");
+      assert.equal(setupStage?.status, "done");
+      assert.isNotNull(setupStage?.endedAt ?? null);
+      assert.notEqual(stages.find((stage) => stage.id === "agent")?.status, "done");
+      yield* Deferred.succeed(allowBranchName, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 it.effect.each(["origin/master", ":/initial"])(
   "refuses a worktree in a non-Git project before checking base %s",
   (baseRef) =>
@@ -2995,6 +3342,75 @@ it.effect.each([
       );
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect("refuses a new worktree whose explicit branch already exists", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-branch-exists-" });
+    const cwd = `${directory}/repo`;
+    const temporaryBranch = "t3code/0b5e7a1c-3f2d-4e8a-9b6c-1d2e3f4a5b6c";
+    yield* fs.makeDirectory(cwd);
+    const command = (args: string[]) => git.execute({ operation: "launch-test", cwd, args });
+    yield* command(["init", "-b", "main"]);
+    yield* command(["config", "user.name", "Test"]);
+    yield* command(["config", "user.email", "test@example.test"]);
+    yield* command(["commit", "--allow-empty", "-m", "initial"]);
+    yield* command(["branch", "feature/idle"]);
+    yield* command(["branch", temporaryBranch]);
+    // Resolves as `refs/heads/feature/tagged` although no such branch exists.
+    yield* command(["tag", "refs/heads/feature/tagged"]);
+    yield* command(["worktree", "add", "-b", "feature/taken", `${directory}/taken`]);
+    const harness = makeHarness({
+      hasCommit: ({ refName }) =>
+        command(["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      git: { listLocalBranchNames: () => git.listLocalBranchNames(cwd) },
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const check = (branch: string, baseRef = "main") =>
+        launches
+          .checkWorktreeBase({
+            projectId,
+            workspaceStrategy: { type: "worktree", baseRef, branch },
+          })
+          .pipe(
+            Effect.match({
+              onSuccess: () => [branch, "accepted"],
+              onFailure: (error) => [branch, error._tag],
+            }),
+          );
+      assert.deepEqual(
+        yield* Effect.forEach(
+          ["feature/idle", "feature/taken", temporaryBranch, "feature/fresh", "feature/tagged"],
+          (branch) => check(branch),
+        ),
+        [
+          ["feature/idle", "ThreadLaunchBranchExistsError"],
+          ["feature/taken", "ThreadLaunchBranchExistsError"],
+          [temporaryBranch, "ThreadLaunchBranchExistsError"],
+          ["feature/fresh", "accepted"],
+          ["feature/tagged", "accepted"],
+        ],
+      );
+      // A `:/text` base skips the base check but not the branch check.
+      assert.deepEqual(yield* check("feature/taken", ":/initial"), [
+        "feature/taken",
+        "ThreadLaunchBranchExistsError",
+      ]);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-branch-exists-" })),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect.each([

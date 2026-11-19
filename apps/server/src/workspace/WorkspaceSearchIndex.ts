@@ -32,7 +32,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
+import { PROJECT_FAVICON_EXTENSIONS, isProjectFaviconPath } from "@t3tools/shared/projectFavicon";
 import { scoreSubsequenceMatch } from "@t3tools/shared/searchRanking";
 
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -42,13 +42,24 @@ import { type IgnoreDecision, type IgnoreFile, parseIgnoreFile } from "./IgnoreP
 const requireForFff = NodeModule.createRequire(import.meta.url);
 const { FileFinder } = requireForFff("@ff-labs/fff-node") as typeof import("@ff-labs/fff-node");
 
+// A glob intersects existing extension constraints; fff ORs bare `*.ext` constraints together.
+const IMAGE_SEARCH_CONSTRAINT = `**/*.{${PROJECT_FAVICON_EXTENSIONS.map((extension) =>
+  extension.slice(1).replace(/[a-z]/g, (letter) => `[${letter}${letter.toUpperCase()}]`),
+).join(",")}}`;
+
+// fff 0.11 disables filename fallback above this match count per base/overflow segment.
+const FFF_FILENAME_FALLBACK_MAX_MATCHES = 15_000;
+
 const WORKSPACE_INDEX_MAX_ENTRIES = 25_000;
 const WORKSPACE_INDEX_PAGE_SIZE = WORKSPACE_INDEX_MAX_ENTRIES + 2;
 const WORKSPACE_INDEX_SCAN_TIMEOUT = "15 seconds";
 const WORKSPACE_INDEX_SCAN_TIMEOUT_MS = 15_000;
-const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
+export const WORKSPACE_INDEX_IDLE_TTL = "15 minutes";
 const CONTENT_SEARCH_TIME_BUDGET_MS = 250;
 const CONTENT_SEARCH_MAX_MATCHES_PER_FILE = 100;
+const GIT_GREP_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
+// fff's lineContent cap; matches past it are reported without ranges.
+const CONTENT_LINE_MAX_LENGTH = 512;
 const SYMLINK_SCAN_CONCURRENCY = 16;
 // A scan no watcher can invalidate is reused this long, so typing does not rescan every folder.
 const UNWATCHED_SYMLINK_SCAN_TTL_MS = 2_000;
@@ -134,7 +145,10 @@ export class WorkspaceSearchIndex extends Context.Service<
     ) => Effect.Effect<ProjectSearchEntriesResult, WorkspaceSearchIndexSearchFailed>;
     readonly searchContents: (
       input: Omit<ProjectSearchContentsInput, "cwd">,
-    ) => Effect.Effect<ProjectSearchContentsResult, WorkspaceSearchIndexSearchFailed>;
+    ) => Effect.Effect<
+      ProjectSearchContentsResult,
+      WorkspaceSearchIndexScanTimedOut | WorkspaceSearchIndexSearchFailed
+    >;
     readonly refresh: () => Effect.Effect<void, WorkspaceSearchIndexRefreshFailed>;
   }
 >()("t3/workspace/WorkspaceSearchIndex") {}
@@ -173,6 +187,14 @@ function toFileEntry(item: FileItem, hostIsWindows: boolean): ProjectEntry | nul
 function toDirectoryEntry(item: DirItem, hostIsWindows: boolean): ProjectEntry | null {
   const normalizedPath = trimDirectorySeparator(toPosixPath(item.relativePath, hostIsWindows));
   return normalizedPath ? { path: normalizedPath, kind: "directory" } : null;
+}
+
+function isLoneFuzzyPath(query: string): boolean {
+  const trimmed = query.trim();
+  return (
+    !/\s/u.test(trimmed) &&
+    (trimmed.startsWith("/") || (trimmed.endsWith("/") && !/^[*!\\]/u.test(trimmed)))
+  );
 }
 
 type SearchPage<I> = { readonly items: ReadonlyArray<I>; readonly totalMatched: number };
@@ -273,6 +295,47 @@ function mapContentMatchRanges(
     start: toStringIndex(startByte),
     end: toStringIndex(endByte),
   }));
+}
+
+function escapeRegExp(input: string): string {
+  return input.replace(/[\\^$.*+?()[\]{}|/]/g, "\\$&");
+}
+
+// Git before 2.55 reports wrong `--column` values for every match after a line's first, so
+// later matches are found by their text, searching on from the end of the previous one.
+function locateRegexMatches(
+  line: string,
+  matches: { readonly column: number; readonly texts: ReadonlyArray<string> } | undefined,
+): Array<readonly [number, number]> {
+  if (!matches) return [];
+  const lineBytes = Buffer.from(line);
+  const ranges: Array<readonly [number, number]> = [];
+  let start = matches.column - 1;
+  for (const text of matches.texts) {
+    const textBytes = Buffer.from(text);
+    if (ranges.length > 0) start = lineBytes.indexOf(textBytes, ranges.at(-1)![1]);
+    if (start < 0) break;
+    ranges.push([start, start + textBytes.length]);
+  }
+  return ranges;
+}
+
+// `git grep -z` records: NUL-separated fields, one record per line; a truncated last line is dropped.
+function parseGitGrepRecords(
+  stdout: string,
+  fieldCount: number,
+  truncated: boolean,
+): Array<Array<string>> {
+  const lines = stdout.split("\n");
+  if (truncated || lines.at(-1) === "") lines.pop();
+  const records: Array<Array<string>> = [];
+  for (const line of lines) {
+    const fields = line.split("\0");
+    if (fields.length < fieldCount) continue;
+    // Only the last field (the line or match text) can contain NUL bytes.
+    records.push([...fields.slice(0, fieldCount - 1), fields.slice(fieldCount - 1).join("\0")]);
+  }
+  return records;
 }
 
 // Post-filter whole words: consuming boundary regexes swallow adjacent separators and widen ranges; \b misses punctuation edges.
@@ -463,13 +526,12 @@ const listGitIgnoredPaths = Effect.fn("WorkspaceSearchIndex.listGitIgnoredPaths"
       maxOutputBytes: 16 * 1024 * 1024,
     })
     .pipe(Effect.orElseSucceed(() => undefined));
-  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return new Set<string>();
-  return new Set(
-    result.stdout
-      .split("\0")
-      .filter((entry) => entry.length > 0)
-      .map((entry) => trimDirectorySeparator(toPosixPath(entry, hostIsWindows))),
-  );
+  if (!result || result.exitCode !== 0 || result.stdoutTruncated) return [];
+  // Folders keep their trailing `/`.
+  return result.stdout
+    .split("\0")
+    .filter((entry) => entry.length > 0)
+    .map((entry) => toPosixPath(entry, hostIsWindows));
 });
 
 function mixedItemPath(item: MixedItem): string {
@@ -557,27 +619,73 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }).pipe(Effect.orDie),
   );
   let initialScanTimedOut = false;
+  // The content index reads every file, which takes minutes where antivirus scans each open,
+  // so content searches do not wait for it; git grep answers until it is ready.
+  let contentIndexPending = variant === "content";
   const vcsProcess = yield* VcsProcess.VcsProcess;
-  let ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
-  yield* waitForIndexReady(
-    cwd,
-    finder,
-    ({ reason, cause }) =>
-      new WorkspaceSearchIndexCreateFailed({
-        cwd,
-        reason,
-        cause,
+
+  /** The nearest `.ignore` with a pattern matching `relativePath` itself decides. */
+  const makeIgnoreFileDecider = () => {
+    const ignoreFiles = new Map<string, IgnoreFile | undefined>();
+    const readIgnoreFile = Effect.fn("WorkspaceSearchIndex.readIgnoreFile")(function* (
+      directory: string,
+    ) {
+      if (ignoreFiles.has(directory)) return ignoreFiles.get(directory);
+      const contents = yield* fileSystem
+        .readFileString(path.join(cwd, directory, ".ignore"))
+        .pipe(Effect.option);
+      const file = Option.isSome(contents) ? parseIgnoreFile(contents.value) : undefined;
+      ignoreFiles.set(directory, file);
+      return file;
+    });
+    return Effect.fn("WorkspaceSearchIndex.decideByIgnoreFile")(function* (
+      relativePath: string,
+      isFolder: boolean,
+    ) {
+      const segments = relativePath.split("/");
+      for (let ancestor = segments.length - 1; ancestor >= 0; ancestor -= 1) {
+        const directory = segments.slice(0, ancestor).join("/");
+        const file = yield* readIgnoreFile(directory);
+        const relative = directory ? relativePath.slice(directory.length + 1) : relativePath;
+        const decision = file?.decide(relative, isFolder);
+        if (decision) return decision;
+      }
+      return undefined;
+    });
+  };
+
+  // Like ripgrep and fff, a `.ignore` that re-includes a path overrules Git's ignore rules for it.
+  const loadIgnoredPaths = Effect.fn("WorkspaceSearchIndex.loadIgnoredPaths")(function* () {
+    const decide = makeIgnoreFileDecider();
+    const ignored = new Set<string>();
+    for (const entry of yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows)) {
+      const relativePath = trimDirectorySeparator(entry);
+      if ((yield* decide(relativePath, entry.endsWith("/"))) !== "included") {
+        ignored.add(relativePath);
+      }
+    }
+    return ignored;
+  });
+  let ignoredPaths = yield* loadIgnoredPaths();
+  if (variant === "paths") {
+    yield* waitForIndexReady(
+      cwd,
+      finder,
+      ({ reason, cause }) =>
+        new WorkspaceSearchIndexCreateFailed({
+          cwd,
+          reason,
+          cause,
+        }),
+    ).pipe(
+      Effect.catchTags({
+        WorkspaceSearchIndexScanTimedOut: () =>
+          Effect.sync(() => {
+            initialScanTimedOut = true;
+          }),
       }),
-  ).pipe(
-    Effect.catchTags({
-      WorkspaceSearchIndexScanTimedOut: (error) =>
-        variant === "paths"
-          ? Effect.sync(() => {
-              initialScanTimedOut = true;
-            })
-          : Effect.fail(error),
-    }),
-  );
+    );
+  }
 
   // fff's isScanning takes the picker lock too, so progress is read off the JS thread.
   const isScanning = Effect.promise(async () => {
@@ -589,6 +697,181 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     }
   });
   const hasIncompleteInitialScan = () => (initialScanTimedOut ? isScanning : Effect.succeed(false));
+
+  const isContentIndexReady = Effect.fn("WorkspaceSearchIndex.isContentIndexReady")(function* () {
+    if (!contentIndexPending) return true;
+    const progress = yield* Effect.promise(() =>
+      finder.getScanProgressAsync().catch(() => undefined),
+    );
+    if (progress?.ok && !progress.value.isScanning && progress.value.isWarmupComplete) {
+      contentIndexPending = false;
+    }
+    return !contentIndexPending;
+  });
+
+  const runGitGrep = Effect.fn("WorkspaceSearchIndex.runGitGrep")(function* (
+    pattern: string,
+    options: {
+      readonly regexMode: boolean;
+      readonly ignoreCase: boolean;
+      readonly maxMatchesPerFile: number;
+      readonly onlyMatching: boolean;
+    },
+  ) {
+    return yield* vcsProcess
+      .run({
+        operation: "WorkspaceSearchIndex.gitGrep",
+        command: "git",
+        args: [
+          "-c",
+          "core.quotePath=false",
+          "-c",
+          "core.fsmonitor=false",
+          "grep",
+          "--untracked",
+          "--no-color",
+          "-I",
+          "-n",
+          "-z",
+          "-m",
+          String(options.maxMatchesPerFile),
+          ...(options.onlyMatching ? ["-o", "--column"] : []),
+          ...(options.ignoreCase ? ["-i"] : []),
+          options.regexMode ? "-P" : "-F",
+          "-e",
+          pattern,
+        ],
+        cwd,
+        allowNonZeroExit: true,
+        // Defender scanning fff's warmup reads slows git too; a late answer beats a failure.
+        timeoutMs: 30_000,
+        maxOutputBytes: GIT_GREP_MAX_OUTPUT_BYTES,
+        outputMode: "truncate",
+        appendTruncationMarker: false,
+      })
+      .pipe(Effect.option);
+  });
+
+  // fff leaves out what `.ignore` files exclude, which git cannot evaluate; the nearest
+  // `.ignore` that matches a path or one of its folders decides, as in decideByIgnoreFiles.
+  const makeIgnoreFileFilter = () => {
+    const decide = makeIgnoreFileDecider();
+    return Effect.fn("WorkspaceSearchIndex.isExcludedByIgnoreFiles")(function* (
+      relativePath: string,
+    ) {
+      const segments = relativePath.split("/");
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        const candidate = segments.slice(0, depth).join("/");
+        if ((yield* decide(candidate, depth < segments.length)) === "ignored") return true;
+      }
+      return false;
+    });
+  };
+
+  // fff's grep before its content index is ready opens every file itself, as slowly as the build.
+  // None when git cannot search this folder (not a repository, git missing, no PCRE for a regex).
+  const searchContentsWithGit = Effect.fn("WorkspaceSearchIndex.searchContentsWithGit")(function* (
+    input: Omit<ProjectSearchContentsInput, "cwd">,
+  ): Effect.fn.Return<Option.Option<ProjectSearchContentsResult>> {
+    const options = {
+      ignoreCase: !input.caseSensitive,
+      maxMatchesPerFile: CONTENT_SEARCH_MAX_MATCHES_PER_FILE,
+      onlyMatching: false,
+    };
+    let regexMode = input.useRegex;
+    let regexFallbackError: string | undefined;
+    let result = yield* runGitGrep(input.query, { ...options, regexMode });
+    if (regexMode && Option.isSome(result) && result.value.exitCode === 128) {
+      if (/USE_LIBPCRE|Perl-compatible/i.test(result.value.stderr)) return Option.none();
+      // fff searches an invalid pattern as a literal and reports why.
+      regexFallbackError = result.value.stderr.trim().split("\n")[0] || "Invalid regex";
+      regexMode = false;
+      result = yield* runGitGrep(input.query, { ...options, regexMode });
+    }
+    if (Option.isNone(result) || result.value.exitCode > 1) return Option.none();
+
+    // Per line: the first match's byte column and every match's text, in order.
+    const regexMatches = new Map<string, { readonly column: number; readonly texts: string[] }>();
+    let rangesTruncated = false;
+    if (regexMode) {
+      // Ranges come from git too: running the user's pattern in JS could backtrack without bound.
+      const ranges = yield* runGitGrep(input.query, { ...options, regexMode, onlyMatching: true });
+      // Without ranges, whole-word filtering would drop every hit and report no matches.
+      if (Option.isNone(ranges) || ranges.value.exitCode > 1) return Option.none();
+      rangesTruncated = ranges.value.stdoutTruncated;
+      if (ranges.value.exitCode === 0) {
+        for (const record of parseGitGrepRecords(
+          ranges.value.stdout,
+          4,
+          ranges.value.stdoutTruncated,
+        )) {
+          const [relativePath, lineNumber, column, text] = record as [
+            string,
+            string,
+            string,
+            string,
+          ];
+          const key = `${relativePath}\0${lineNumber}`;
+          const lineMatches = regexMatches.get(key);
+          if (lineMatches) lineMatches.texts.push(text);
+          else regexMatches.set(key, { column: Number(column), texts: [text] });
+        }
+      }
+    }
+    const literal = regexMode
+      ? undefined
+      : new RegExp(escapeRegExp(input.query), input.caseSensitive ? "gu" : "giu");
+
+    const isExcludedByIgnoreFiles = makeIgnoreFileFilter();
+    const matches: Array<ProjectSearchContentsResult["matches"][number]> = [];
+    let rangesCutOff = false;
+    for (const record of parseGitGrepRecords(
+      result.value.stdout,
+      3,
+      result.value.stdoutTruncated,
+    )) {
+      const [relativePath, lineNumber, rawLine] = record as [string, string, string];
+      if (yield* isExcludedByIgnoreFiles(relativePath)) continue;
+      const key = `${relativePath}\0${lineNumber}`;
+      // Lines past the cut-off of a truncated ranges run have no ranges; stop there instead.
+      if (rangesTruncated && !regexMatches.has(key)) {
+        rangesCutOff = true;
+        break;
+      }
+      const lineContent = (rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine).slice(
+        0,
+        CONTENT_LINE_MAX_LENGTH,
+      );
+      const matchRanges = (
+        literal
+          ? Array.from(lineContent.matchAll(literal), (match) => ({
+              start: match.index,
+              end: match.index + match[0].length,
+            }))
+          : mapContentMatchRanges(
+              lineContent,
+              locateRegexMatches(lineContent, regexMatches.get(key)),
+            )
+      ).filter(
+        (range) =>
+          range.end <= lineContent.length &&
+          (!input.wholeWord || isWholeWordRange(lineContent, range)),
+      );
+      if (input.wholeWord && matchRanges.length === 0) continue;
+      matches.push({
+        path: relativePath,
+        lineNumber: Number(lineNumber),
+        lineContent,
+        matchRanges,
+      });
+      if (matches.length > input.limit) break;
+    }
+    return Option.some({
+      matches: matches.slice(0, input.limit),
+      truncated: matches.length > input.limit || result.value.stdoutTruncated || rangesCutOff,
+      ...(regexFallbackError !== undefined ? { regexFallbackError } : {}),
+    });
+  });
 
   const runSearch = Effect.fn("WorkspaceSearchIndex.runSearch")(function* <A>(
     query: string,
@@ -771,38 +1054,36 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     if (!editsOnly) invalidateSymlinkScan();
   };
   // fff refuses subscriptions until its watcher is up, which can trail the initial scan, so
-  // each read retries until one is in place.
+  // each read retries until one is in place. Subscribing waits on fff's picker lock, which its
+  // watcher holds while it indexes a new folder, so it runs off the JS thread.
   let unwatch: WatchUnsubscribe | undefined;
   yield* Effect.addFinalizer(() => Effect.sync(() => unwatch?.()));
-  const ensureWatching = () => {
+  const ensureWatching = Effect.fn("WorkspaceSearchIndex.ensureWatching")(function* () {
     if (unwatch) return true;
-    try {
-      const result = finder.watch(onWatchBatch);
-      if (result.ok) unwatch = result.value;
-    } catch {
-      // Not ready yet; the next read tries again.
-    }
+    const result = yield* Effect.promise(() =>
+      finder.watchAsync(onWatchBatch).catch(() => undefined),
+    );
+    if (result?.ok) unwatch = result.value;
     return unwatch !== undefined;
-  };
+  });
   const indexScope = yield* Effect.scope;
   const startSymlinkScan = Effect.fn("WorkspaceSearchIndex.startSymlinkScan")(function* () {
     symlinkScanStale = false;
-    // Subscribing before the scan starts means no change during it goes unseen.
-    const watched = ensureWatching();
     const done = yield* Deferred.make<SymlinkScan>();
     pendingSymlinkScan = done;
-    yield* scanSymlinkEntries().pipe(
-      Effect.tap((result) =>
-        Effect.gen(function* () {
-          lastSymlinkScan = result;
-          knownLinkPaths = result.linkPaths;
-          // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
-          lastSymlinkScanExpiresAt =
-            watched && result.indexComplete
-              ? undefined
-              : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
-        }),
-      ),
+    yield* Effect.gen(function* () {
+      // Subscribing before the scan starts means no change during it goes unseen.
+      const watched = yield* ensureWatching();
+      const result = yield* scanSymlinkEntries();
+      lastSymlinkScan = result;
+      knownLinkPaths = result.linkPaths;
+      // Without a watcher, or before fff has seen every folder, the result is kept only briefly.
+      lastSymlinkScanExpiresAt =
+        watched && result.indexComplete
+          ? undefined
+          : (yield* Clock.currentTimeMillis) + UNWATCHED_SYMLINK_SCAN_TTL_MS;
+      return result;
+    }).pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
           pendingSymlinkScan = undefined;
@@ -841,13 +1122,13 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   });
 
   // Grows the first page until hidden entries can no longer crowd visible ones out of it.
-  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I>(
+  const searchVisible = Effect.fn("WorkspaceSearchIndex.searchVisible")(function* <I, Metadata>(
     query: string,
     pageSize: number,
     operation: "directorySearch" | "fileSearch" | "mixedSearch",
-    execute: (pageSize: number) => Promise<Result<SearchPage<I>>>,
+    execute: (pageSize: number) => Promise<Result<SearchPage<I> & Metadata>>,
     pathOf: (item: I) => string,
-  ): Effect.fn.Return<SearchPage<I>, WorkspaceSearchIndexSearchFailed> {
+  ): Effect.fn.Return<SearchPage<I> & Metadata, WorkspaceSearchIndexSearchFailed> {
     let size = pageSize;
     while (true) {
       const fetchSize = size;
@@ -862,6 +1143,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
         fetchSize >= WORKSPACE_INDEX_PAGE_SIZE
       ) {
         return {
+          ...result,
           items,
           totalMatched: result.totalMatched - (result.items.length - items.length),
         };
@@ -901,7 +1183,7 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
           cause,
         }),
     ).pipe(Effect.catchTags({ WorkspaceSearchIndexScanTimedOut: () => Effect.void }));
-    ignoredPaths = yield* listGitIgnoredPaths(vcsProcess, cwd, hostIsWindows);
+    ignoredPaths = yield* loadIgnoredPaths();
     invalidateSymlinkScan();
   });
 
@@ -945,17 +1227,40 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
     );
     // Index results that are filtered-out links get dropped in the merge, so fetch past them.
     const indexLimit = limit + linkPaths.size - symlinks.length;
-    const pageSize = imageOnly ? WORKSPACE_INDEX_PAGE_SIZE : Math.max(1, indexLimit + 1);
+    const pageSize = Math.max(1, indexLimit + 1);
     const merge = (indexed: ProjectSearchEntriesResult) =>
       mergeSymlinkMatches(indexed, linkPaths, symlinks, query, limit);
     if (kind === "file" || imageOnly) {
-      const result = yield* searchVisible(
-        query,
+      const searchFiles = (fileQuery: string, size: number) =>
+        searchVisible(
+          query,
+          size,
+          "fileSearch",
+          (fetchSize) => finder.fileSearchAsync(fileQuery, { pageSize: fetchSize }),
+          (item: FileItem) => item.relativePath,
+        );
+      // Adding a constraint changes fff's lone-path parse; offset pages can skip tied matches.
+      if (imageOnly && isLoneFuzzyPath(query)) {
+        const result = yield* searchFiles(query, WORKSPACE_INDEX_PAGE_SIZE);
+        return merge(mapFileSearchResult(result, indexLimit, hostIsWindows, true));
+      }
+      let result = yield* searchFiles(
+        imageOnly ? `${query} ${IMAGE_SEARCH_CONSTRAINT}` : query,
         pageSize,
-        "fileSearch",
-        (size) => finder.fileSearchAsync(query, { pageSize: size }),
-        (item) => item.relativePath,
       );
+      if (
+        imageOnly &&
+        query.trim() &&
+        result.totalFiles > FFF_FILENAME_FALLBACK_MAX_MATCHES &&
+        result.totalMatched > 0
+      ) {
+        const unfiltered = yield* runSearch(query, 1, "fileSearch", () =>
+          finder.fileSearchAsync(query, { pageSize: 1 }),
+        );
+        if (unfiltered.totalMatched > FFF_FILENAME_FALLBACK_MAX_MATCHES) {
+          result = yield* searchFiles(query, WORKSPACE_INDEX_PAGE_SIZE);
+        }
+      }
       return merge(mapFileSearchResult(result, indexLimit, hostIsWindows, imageOnly));
     }
     if (kind === "directory") {
@@ -996,6 +1301,23 @@ export const make = Effect.fn("WorkspaceSearchIndex.make")(function* (
   const searchContents: WorkspaceSearchIndex["Service"]["searchContents"] = Effect.fn(
     "WorkspaceSearchIndex.searchContents",
   )(function* (input) {
+    if (!(yield* isContentIndexReady())) {
+      const gitResult = yield* searchContentsWithGit(input);
+      if (Option.isSome(gitResult)) return gitResult.value;
+      yield* waitForIndexReady(
+        cwd,
+        finder,
+        ({ reason, cause }) =>
+          new WorkspaceSearchIndexSearchFailed({
+            cwd,
+            queryLength: input.query.length,
+            pageSize: input.limit,
+            reason,
+            cause,
+          }),
+      );
+      contentIndexPending = false;
+    }
     let { searchQuery, regexMode } = buildContentSearchQuery(input);
     const deadline = performance.now() + CONTENT_SEARCH_TIME_BUDGET_MS;
     // Grep cursors advance per file; whole-word filtering needs enough raw candidates before advancing.

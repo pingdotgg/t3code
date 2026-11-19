@@ -61,6 +61,9 @@ Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on th
 Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
 
 ## Update the managed runtime
 
@@ -90,9 +93,10 @@ Use Antigravity's native `/plan` command for planning. Tool approvals follow [Pe
 Questions with fixed choices still need one of the offered answers, even in
 **Full access**.
 
-T3 Code keeps conversation history and file diffs, but Antigravity cannot rewind
-its conversation. Reverting a thread or editing and resubmitting an earlier turn
-is unavailable. Continue with a follow-up message or start a new thread.
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and T3 Code sends it the kept conversation,
+without the turns you removed.
 
 Use `/compact` to summarize a long conversation when your Antigravity runtime
 offers that command. If it is unavailable, update Antigravity in provider settings
