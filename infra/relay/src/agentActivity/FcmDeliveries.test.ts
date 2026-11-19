@@ -334,6 +334,30 @@ describe("Android delivery routing", () => {
     }).pipe(Effect.provide(h.layer));
   });
 
+  it.effect("keeps a device's turned-off environment off its card until turned back on", () => {
+    const h = harness();
+    const other = { ...secondState, environmentId: EnvironmentId.make("other-env") };
+    h.current.state = { ...state, phase: "waiting_for_approval" };
+    h.current.otherStates = [{ ...other, phase: "waiting_for_input" }];
+    h.current.target.preferences_json = encodeJson({
+      ...preferences,
+      mutedEnvironmentIds: [other.environmentId],
+    });
+    return Effect.gen(function* () {
+      const delivery = yield* FcmDeliveries.FcmDeliveries;
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      expect(h.marked[0]?.aggregate?.activities).toMatchObject([
+        { environmentId: state.environmentId },
+      ]);
+      // Turning it back on re-registers, and that replay restores the row without a buzz.
+      h.current.target.preferences_json = encodeJson(preferences);
+      yield* delivery.process({ ...h.job, state: null, replay: true });
+      yield* delivery.process({ ...h.job, state: h.current.state });
+      expect(h.marked[1]?.aggregate?.activities).toHaveLength(2);
+      expect(h.sent.every((message) => !message.alert)).toBe(true);
+    }).pipe(Effect.provide(h.layer));
+  });
+
   it.effect.each(["mutedEnvironments", "revokedEnvironments"] as const)(
     "excludes %s when forming cross-environment groups",
     (restriction) => {

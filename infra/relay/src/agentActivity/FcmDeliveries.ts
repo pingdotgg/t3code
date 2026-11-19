@@ -2,7 +2,6 @@ import { and, eq } from "drizzle-orm";
 import {
   RelayAgentActivityState,
   RelayAgentActivityAggregateState,
-  RelayAgentAwarenessPreferences,
   type RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import * as Digest from "effect/crypto/Digest";
@@ -29,6 +28,7 @@ import {
   alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
+  DeliveryPreferences,
   shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
@@ -42,9 +42,7 @@ export const FcmDeliveryJob = Schema.Struct({
 });
 export type FcmDeliveryJob = typeof FcmDeliveryJob.Type;
 const decodeJob = Schema.decodeUnknownEffect(FcmDeliveryJob);
-const decodePreferences = Schema.decodeUnknownOption(
-  Schema.fromJsonString(RelayAgentAwarenessPreferences),
-);
+const decodePreferences = Schema.decodeUnknownOption(Schema.fromJsonString(DeliveryPreferences));
 const decodePreviousActivity = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateState),
 );
@@ -60,7 +58,7 @@ export class FcmDeliveryError extends Schema.TaggedError<FcmDeliveryError>()("Fc
 
 export function androidAlertForState(
   state: RelayAgentActivityState,
-  preferences: RelayAgentAwarenessPreferences,
+  preferences: DeliveryPreferences,
   nowMs: number,
 ) {
   if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
@@ -77,7 +75,7 @@ export function androidAlertForState(
 export function androidAlertForAggregate(input: {
   readonly previousAggregate: RelayAgentActivityAggregateState;
   readonly nextAggregate: RelayAgentActivityAggregateState;
-  readonly preferences: RelayAgentAwarenessPreferences;
+  readonly preferences: DeliveryPreferences;
   readonly nowMs: number;
 }) {
   if (!input.preferences.notificationsEnabled) return null;
@@ -207,6 +205,7 @@ const make = Effect.gen(function* () {
         activeStates: states,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        preferences: preferences.value,
       });
       const previousAggregate = target.last_aggregate_json
         ? Option.getOrNull(decodePreviousActivity(target.last_aggregate_json))

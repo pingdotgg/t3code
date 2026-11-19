@@ -7,18 +7,25 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as SqlError from "effect/sql/SqlError";
 import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayLiveActivities, relayMobileDevices } from "../persistence/schema.ts";
+import { nextEnvironmentRevealedAt } from "./agentActivityAlerts.ts";
 
 export class DeviceRegistrationPersistenceError extends Schema.TaggedError<DeviceRegistrationPersistenceError>()(
   "DeviceRegistrationPersistenceError",
   {
     userId: Schema.String,
     deviceId: Schema.String,
-    stage: Schema.Literals(["claim-push-token", "claim-push-to-start-token", "upsert-device"]),
+    stage: Schema.Literals([
+      "claim-push-token",
+      "claim-push-to-start-token",
+      "read-device",
+      "upsert-device",
+    ]),
     cause: Schema.Defect(),
   },
 ) {
@@ -78,7 +85,8 @@ const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({
         "relay.mobile.device_id": input.registration.deviceId,
       });
-      const updatedAt = DateTime.formatIso(yield* DateTime.now);
+      const now = yield* DateTime.now;
+      const updatedAt = DateTime.formatIso(now);
       const registration = input.registration;
 
       // Alchemy's lazy drizzle proxies become Effects only at yield*; Effect.all sends raw proxies into a spinning fiber.
@@ -117,56 +125,93 @@ const make = Effect.gen(function* () {
           );
       }
 
-      yield* db
-        .insert(relayMobileDevices)
-        .values({
+      const persistError = (stage: "read-device" | "upsert-device") => (cause: unknown) =>
+        new DeviceRegistrationPersistenceError({
           userId: input.userId,
           deviceId: registration.deviceId,
-          label: registration.label,
-          platform: registration.platform,
-          iosMajorVersion: registration.iosMajorVersion ?? null,
-          androidApiLevel: registration.androidApiLevel ?? null,
-          appVersion: registration.appVersion ?? null,
-          bundleId: registration.bundleId ?? null,
-          apsEnvironment: registration.apsEnvironment ?? null,
-          pushToken: registration.pushToken ?? null,
-          pushToStartToken: registration.pushToStartToken ?? null,
-          preferencesJson: registration.preferences,
-          createdAt: updatedAt,
-          updatedAt,
-        })
-        .onConflictDoUpdate({
-          target: [relayMobileDevices.userId, relayMobileDevices.deviceId],
-          set: {
-            platform: registration.platform,
+          stage,
+          cause,
+        });
+      const upsertDevice = Effect.gen(function* () {
+        // Held until commit; unlike FOR UPDATE it also serializes the first insert of a device.
+        yield* db
+          .execute(
+            sql`select pg_advisory_xact_lock(hashtextextended(${`mobile-device:${input.userId}:${registration.deviceId}`}, 0))`,
+          )
+          .pipe(Effect.mapError(persistError("read-device")));
+        const [previous] = yield* db
+          .select({
+            preferences: relayMobileDevices.preferencesJson,
+            environmentRevealedAt: relayMobileDevices.environmentRevealedAt,
+          })
+          .from(relayMobileDevices)
+          .where(
+            and(
+              eq(relayMobileDevices.userId, input.userId),
+              eq(relayMobileDevices.deviceId, registration.deviceId),
+            ),
+          )
+          .limit(1)
+          .pipe(Effect.mapError(persistError("read-device")));
+        // Read after the lock, so no activity under the old muted list is newer than the reveal.
+        const revealedAt = yield* DateTime.now;
+        const environmentRevealedAt = nextEnvironmentRevealedAt({
+          previousMuted: previous?.preferences.mutedEnvironmentIds ?? [],
+          previousRevealedAt: previous?.environmentRevealedAt ?? null,
+          nextMuted: registration.preferences.mutedEnvironmentIds ?? [],
+          nowMs: revealedAt.epochMilliseconds,
+        });
+        yield* db
+          .insert(relayMobileDevices)
+          .values({
+            userId: input.userId,
+            deviceId: registration.deviceId,
             label: registration.label,
+            platform: registration.platform,
             iosMajorVersion: registration.iosMajorVersion ?? null,
             androidApiLevel: registration.androidApiLevel ?? null,
             appVersion: registration.appVersion ?? null,
-            // Older builds must preserve newer routing fields on re-registration.
-            bundleId: sql`coalesce(excluded.bundle_id, ${relayMobileDevices.bundleId})`,
-            apsEnvironment: sql`coalesce(
-                excluded.aps_environment,
-                ${relayMobileDevices.apsEnvironment}
-              )`,
-            pushToken: sql`coalesce(excluded.push_token, ${relayMobileDevices.pushToken})`,
-            pushToStartToken: sql`coalesce(
-                excluded.push_to_start_token,
-                ${relayMobileDevices.pushToStartToken}
-              )`,
+            bundleId: registration.bundleId ?? null,
+            apsEnvironment: registration.apsEnvironment ?? null,
+            pushToken: registration.pushToken ?? null,
+            pushToStartToken: registration.pushToStartToken ?? null,
             preferencesJson: registration.preferences,
+            environmentRevealedAt,
+            createdAt: updatedAt,
             updatedAt,
-          },
-        })
+          })
+          .onConflictDoUpdate({
+            target: [relayMobileDevices.userId, relayMobileDevices.deviceId],
+            set: {
+              platform: registration.platform,
+              label: registration.label,
+              iosMajorVersion: registration.iosMajorVersion ?? null,
+              androidApiLevel: registration.androidApiLevel ?? null,
+              appVersion: registration.appVersion ?? null,
+              // Older builds must preserve newer routing fields on re-registration.
+              bundleId: sql`coalesce(excluded.bundle_id, ${relayMobileDevices.bundleId})`,
+              apsEnvironment: sql`coalesce(
+                    excluded.aps_environment,
+                    ${relayMobileDevices.apsEnvironment}
+                  )`,
+              pushToken: sql`coalesce(excluded.push_token, ${relayMobileDevices.pushToken})`,
+              pushToStartToken: sql`coalesce(
+                    excluded.push_to_start_token,
+                    ${relayMobileDevices.pushToStartToken}
+                  )`,
+              preferencesJson: registration.preferences,
+              environmentRevealedAt,
+              updatedAt,
+            },
+          })
+          .pipe(Effect.mapError(persistError("upsert-device")));
+      });
+      // Statements map their own errors; any SqlError left comes from opening or committing.
+      yield* db.$client
+        .withTransaction(upsertDevice)
         .pipe(
-          Effect.mapError(
-            (cause) =>
-              new DeviceRegistrationPersistenceError({
-                userId: input.userId,
-                deviceId: registration.deviceId,
-                stage: "upsert-device",
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            SqlError.isSqlError(cause) ? persistError("upsert-device")(cause) : cause,
           ),
         );
     }),

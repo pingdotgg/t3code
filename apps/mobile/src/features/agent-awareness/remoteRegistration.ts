@@ -102,6 +102,11 @@ let widgetSnapshotReads = 0;
 let androidDeviceReplayedAt: number | null = null;
 let lastNativePushToken: string | null = null;
 let registeredWithPushToken = false;
+let mutedEnvironmentIds: ReadonlyArray<EnvironmentId> = [];
+// The muted list the relay last accepted for this account; null until its first registration.
+let relayMutedEnvironmentsKey: string | null = null;
+// Settings changes the relay accepted, kept until local storage catches up with them.
+let acceptedPreferenceOverride: Partial<Preferences> = {};
 let nativePushTokenRotations = 0;
 let pushTokenSubscription: { remove: () => void } | null = null;
 let appStateSubscription: { remove: () => void } | null = null;
@@ -192,6 +197,20 @@ function shouldRegisterAgentAwarenessDeviceForProvider(
   return identity === undefined || identity !== previousIdentity;
 }
 
+/** Environments turned off on this device; the relay leaves them out of its alerts and cards. */
+export function setAgentAwarenessMutedEnvironments(ids: Iterable<EnvironmentId>): void {
+  const next = [...new Set(ids)].sort();
+  if (next.join(",") === mutedEnvironmentIds.join(",")) return;
+  mutedEnvironmentIds = next;
+  if (!relayTokenProvider) return;
+  // Queue even behind an in-flight registration: it may already have sent the old list.
+  pendingDeviceRegistration ??= {
+    input: {},
+    context: "device registration after environment toggle failed",
+  };
+  startPendingDeviceRegistration();
+}
+
 export function setAgentAwarenessRelayTokenProvider(
   provider: (() => Promise<string | null>) | null,
   identity?: string,
@@ -209,6 +228,8 @@ export function setAgentAwarenessRelayTokenProvider(
     }
     androidDeviceReplayedAt = null;
     deviceRegistrationGeneration++;
+    acceptedPreferenceOverride = {};
+    relayMutedEnvironmentsKey = null;
     activeDeviceRegistration = null;
     pendingDeviceRegistration = null;
     registeredActivityPushTokens.clear();
@@ -254,6 +275,8 @@ export function releaseAgentAwarenessRelayTokenProvider(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
+  acceptedPreferenceOverride = {};
+  relayMutedEnvironmentsKey = null;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   androidDeviceReplayedAt = null;
@@ -381,6 +404,7 @@ function registrationSignature(body: RelayDeviceRegistrationRequest): string {
     body.preferences.notifyOnInput,
     body.preferences.notifyOnCompletion,
     body.preferences.notifyOnFailure,
+    body.preferences.mutedEnvironmentIds?.join(",") ?? "",
   ].join("|");
 }
 
@@ -568,8 +592,16 @@ const readAgentActivitySnapshot: () => Effect.Effect<
     if (!token) {
       return null;
     }
+    const deviceId = yield* Effect.tryPromise({
+      try: () => loadOrCreateAgentAwarenessDeviceId(),
+      catch: (cause) =>
+        new AgentAwarenessOperationError({
+          operation: "load-device-registration-identifier",
+          cause,
+        }),
+    });
     const client = yield* ManagedRelay.ManagedRelayClient;
-    return yield* client.getAgentActivitySnapshot({ clerkToken: token });
+    return yield* client.getAgentActivitySnapshot({ clerkToken: token, deviceId });
   },
   Effect.catch((error) =>
     Effect.sync(() => {
@@ -689,6 +721,9 @@ function enqueueDeviceRegistration(input: DeviceRegistrationInput, context: stri
   startPendingDeviceRegistration();
 }
 
+// Build and send one registration at a time, so the last one the relay accepts has the newest list.
+let deviceRegistrationSendLock = Semaphore.makeUnsafe(1);
+
 const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* (
   input: RegisterDeviceInput = {},
   expectedGeneration = deviceRegistrationGeneration,
@@ -715,47 +750,80 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
         }),
     }),
   ]);
-  const preferences = mergeAgentAwarenessRegistrationPreferences(
-    storedPreferences,
-    input.preferencesOverride,
-  );
+  const preferencesNow = () =>
+    mergeAgentAwarenessRegistrationPreferences(storedPreferences, {
+      ...acceptedPreferenceOverride,
+      ...input.preferencesOverride,
+    });
   if (expectedGeneration !== deviceRegistrationGeneration) return;
-  if (relayTokenProvider && relayTokenProviderIdentity) {
-    configureAndroidAgentNotifications(
-      deviceId,
-      relayTokenProviderIdentity,
-      preferences.liveActivitiesEnabled !== false,
-    );
-  }
   const pushTokenRegistration = yield* nativePushTokenRegistration(input?.observedPushToken);
   const bundleId =
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
       : Constants.expoConfig?.ios?.bundleIdentifier?.trim();
-  yield* registerDeviceWithRelay(
-    makeRelayDeviceRegistrationRequest({
-      deviceId,
-      label:
-        Constants.deviceName?.trim() ||
-        // oxlint-disable-next-line t3code/no-untranslated-copy -- device label stored on the relay and shown to every client
-        (Platform.OS === "android" ? "Android device" : "iOS device"),
-      ...(Platform.OS === "android"
-        ? {
-            platform: "android" as const,
-            androidApiLevel: Number(Platform.Version),
-            notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
-          }
-        : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
-      appVersion: Constants.expoConfig?.version,
-      ...(bundleId ? { bundleId } : {}),
-      ...(Platform.OS === "ios"
-        ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
-        : {}),
-      ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
-      notificationsEnabled: pushTokenRegistration.notificationsEnabled,
-      preferences,
+  yield* deviceRegistrationSendLock.withPermit(
+    Effect.suspend(() => {
+      // The account may have changed during the push-token lookup; keep its Android settings.
+      if (expectedGeneration !== deviceRegistrationGeneration) return Effect.void;
+      const preferences = preferencesNow();
+      const sentMutedKey = mutedEnvironmentIds.join(",");
+      // Configure Android with the same settings the relay gets, so the two cannot disagree.
+      if (relayTokenProvider && relayTokenProviderIdentity) {
+        configureAndroidAgentNotifications(
+          deviceId,
+          relayTokenProviderIdentity,
+          preferences.liveActivitiesEnabled !== false,
+        );
+      }
+      return registerDeviceWithRelay(
+        makeRelayDeviceRegistrationRequest({
+          deviceId,
+          label:
+            Constants.deviceName?.trim() ||
+            // oxlint-disable-next-line t3code/no-untranslated-copy -- device label stored on the relay and shown to every client
+            (Platform.OS === "android" ? "Android device" : "iOS device"),
+          ...(Platform.OS === "android"
+            ? {
+                platform: "android" as const,
+                androidApiLevel: Number(Platform.Version),
+                notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
+              }
+            : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
+          appVersion: Constants.expoConfig?.version,
+          ...(bundleId ? { bundleId } : {}),
+          ...(Platform.OS === "ios"
+            ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
+            : {}),
+          ...(pushTokenRegistration.pushToken
+            ? { pushToken: pushTokenRegistration.pushToken }
+            : {}),
+          notificationsEnabled: pushTokenRegistration.notificationsEnabled,
+          preferences,
+          mutedEnvironmentIds,
+        }),
+        expectedGeneration,
+      ).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            if (expectedGeneration !== deviceRegistrationGeneration) return;
+            if (input.preferencesOverride) {
+              acceptedPreferenceOverride = {
+                ...acceptedPreferenceOverride,
+                ...input.preferencesOverride,
+              };
+            }
+            // The widget has no push path, so repaint it once the relay filters by the new list.
+            if (relayMutedEnvironmentsKey !== null && relayMutedEnvironmentsKey !== sentMutedKey) {
+              runRegistrationInBackground(
+                repaintWidgetFromSnapshot(expectedGeneration),
+                "agent activity widget repaint after environment toggle failed",
+              );
+            }
+            relayMutedEnvironmentsKey = sentMutedKey;
+          }),
+        ),
+      );
     }),
-    expectedGeneration,
   );
 });
 
@@ -881,10 +949,14 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   relayTokenProvider = null;
   relayTokenProviderIdentity = null;
   deviceRegistrationGeneration++;
+  acceptedPreferenceOverride = {};
+  relayMutedEnvironmentsKey = null;
   activeDeviceRegistration = null;
   pendingDeviceRegistration = null;
   registrationStatus = "unknown";
   registeredWithPushToken = false;
+  mutedEnvironmentIds = [];
+  deviceRegistrationSendLock = Semaphore.makeUnsafe(1);
   androidDeviceReplayedAt = null;
   lastNativePushToken = null;
   nativePushTokenRotations = 0;
@@ -1012,6 +1084,29 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
   }, REMOTE_ACTIVITY_REGISTRATION_RETRY_MS);
 }
 
+const isCurrentWidgetAccount = (generation: number) =>
+  relayTokenProvider !== null && deviceRegistrationGeneration === generation;
+
+// Yields undefined once the account changed or a newer read started, so a stale
+// result is never shown or primed.
+const repaintWidgetFromSnapshot = Effect.fn("remoteRegistration.repaintWidgetFromSnapshot")(
+  function* (generation: number) {
+    // An obsolete refresh must not supersede the current account's read.
+    if (!canRegisterRemoteLiveActivities() || !isCurrentWidgetAccount(generation)) {
+      return undefined;
+    }
+    const read = ++widgetSnapshotReads;
+    const snapshot = yield* readAgentActivitySnapshot();
+    if (!isCurrentWidgetAccount(generation) || read !== widgetSnapshotReads) {
+      return undefined;
+    }
+    publishWidget(
+      snapshot ? { kind: "snapshot", aggregate: snapshot.aggregate } : { kind: "unavailable" },
+    );
+    return { snapshot, read };
+  },
+);
+
 export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   "remoteRegistration.refreshActiveLiveActivityRemoteRegistration",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
@@ -1020,31 +1115,17 @@ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   }
 
   // The home-screen widget has no push path of its own, so every foreground
-  // refresh repaints it from one snapshot read. Yields undefined once the
-  // account changed or a newer read started, so a stale result is never
-  // shown or primed.
+  // refresh repaints it from one snapshot read.
   const generation = deviceRegistrationGeneration;
-  const isCurrentAccount = () =>
-    relayTokenProvider !== null && deviceRegistrationGeneration === generation;
   let read = 0;
-  const isNewestRead = () => isCurrentAccount() && read === widgetSnapshotReads;
-  const refreshWidget = Effect.gen(function* () {
-    // An obsolete refresh must not supersede the current account's read.
-    if (!isCurrentAccount()) {
-      return undefined;
-    }
-    read = ++widgetSnapshotReads;
-    const snapshot = yield* readAgentActivitySnapshot();
-    if (!isNewestRead()) {
-      return undefined;
-    }
-    if (snapshot) {
-      publishWidget({ kind: "snapshot", aggregate: snapshot.aggregate });
-    } else {
-      publishWidget({ kind: "unavailable" });
-    }
-    return { snapshot };
-  });
+  const isNewestRead = () => isCurrentWidgetAccount(generation) && read === widgetSnapshotReads;
+  const refreshWidget = repaintWidgetFromSnapshot(generation).pipe(
+    Effect.tap((result) =>
+      Effect.sync(() => {
+        if (result) read = result.read;
+      }),
+    ),
+  );
 
   dismissEndedLocalLiveActivities();
   let activities = yield* Effect.try({

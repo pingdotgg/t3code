@@ -37,6 +37,8 @@ export const RelayAgentAwarenessPreferences = Schema.Struct({
   notifyOnInput: Schema.Boolean,
   notifyOnCompletion: Schema.Boolean,
   notifyOnFailure: Schema.Boolean,
+  // Environments this device turned off; the relay leaves them out of its alerts and cards.
+  mutedEnvironmentIds: Schema.optionalKey(Schema.Array(EnvironmentId)),
 });
 export type RelayAgentAwarenessPreferences = typeof RelayAgentAwarenessPreferences.Type;
 
@@ -1055,6 +1057,8 @@ export const RelayAgentActivitySnapshotEndpoint = HttpApiEndpoint.get(
   "/v1/mobile/agent-activity",
   {
     headers: RelayDpopRequestHeaders,
+    // The asking device's turned-off environments are left out; older apps send none.
+    query: Schema.Struct({ deviceId: Schema.optionalKey(TrimmedNonEmptyString) }),
     success: RelayAgentActivitySnapshotResponse,
     error: RelayAuthAndInternalErrors,
   },

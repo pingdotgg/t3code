@@ -1,6 +1,7 @@
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
+  RelayAgentAwarenessPreferences,
 } from "@t3tools/contracts/relay";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -75,16 +76,23 @@ export function makeAggregateState(input: {
   readonly activeStates: ReadonlyArray<RelayAgentActivityState>;
   readonly terminalState: RelayAgentActivityState | null;
   readonly nowMs: number;
+  readonly preferences?: RelayAgentAwarenessPreferences | null;
 }): RelayAgentActivityAggregateState | null {
-  const activeStates = input.activeStates.filter(
+  const muted = new Set<string>(input.preferences?.mutedEnvironmentIds ?? []);
+  const shownStates = input.activeStates.filter((state) => !muted.has(state.environmentId));
+  const terminalState =
+    input.terminalState && !muted.has(input.terminalState.environmentId)
+      ? input.terminalState
+      : null;
+  const activeStates = shownStates.filter(
     (state) => !isTerminalPhase(state) && !isExpiredAgentActivityState(state, input.nowMs),
   );
   if (activeStates.length === 0) {
-    if (input.terminalState !== null) {
-      return terminalAggregateState(input.terminalState);
+    if (terminalState !== null) {
+      return terminalAggregateState(terminalState);
     }
     // Alerts compare with the delivered aggregate; replays must repaint without buzzing.
-    const recentTerminal = input.activeStates
+    const recentTerminal = shownStates
       .filter((state) => isRecentTerminalState(state, input.nowMs))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const newest = recentTerminal[0];
@@ -99,7 +107,7 @@ export function makeAggregateState(input: {
       activities: recentTerminal.slice(0, MAX_ACTIVITY_ROWS).map(aggregateRowForState),
     });
   }
-  const recentTerminalStates = input.activeStates
+  const recentTerminalStates = shownStates
     .filter((state) => isRecentTerminalState(state, input.nowMs))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   const displayedStates = [

@@ -14,7 +14,7 @@ import * as Layer from "effect/Layer";
 import { Cookies, FetchHttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
 import { verifyDpopProof } from "@t3tools/shared/dpop";
 import * as Dpop from "../cloud/dpop";
@@ -36,6 +36,7 @@ import {
   refreshAgentAwarenessRegistration,
   registerLiveActivityPushToken,
   releaseAgentAwarenessRelayTokenProvider,
+  setAgentAwarenessMutedEnvironments,
   setAgentAwarenessRelayTokenProvider,
   subscribeAgentAwarenessRegistrationStatus,
   updateAgentAwarenessRegistrationPreferences,
@@ -576,7 +577,128 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         }),
       ).toMatchObject({ ok: true });
       expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
+
+      const disabled = EnvironmentId.make("env-disabled");
+      setAgentAwarenessMutedEnvironments([disabled]);
+      yield* runBackgroundOperations();
+      const mutedCalls = fetchMock.mock.calls.filter(([request]) =>
+        requestUrl(request).endsWith("/v1/mobile/devices"),
+      );
+      expect(mutedCalls).toHaveLength(2);
+      const [mutedRequest, mutedInit] = mutedCalls[1] as unknown as [
+        unknown,
+        RequestInit | undefined,
+      ];
+      const mutedBody = yield* Effect.promise(() =>
+        mutedRequest instanceof Request
+          ? mutedRequest.json()
+          : Promise.resolve(JSON.parse(String(mutedInit?.body))),
+      );
+      expect(mutedBody.preferences.mutedEnvironmentIds).toEqual([disabled]);
     }).pipe(Effect.provide(layerRelayTest));
+  });
+
+  it.effect("keeps toggles and Settings changes made while a registration is in flight", () => {
+    // The device request with a given index waits until released; `arrived` marks when it is sent.
+    const holds = new Map<number, { readonly release: () => void; readonly held: Promise<void> }>();
+    const arrived = new Map<number, () => void>();
+    const hold = (index: number) => {
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      holds.set(index, { release, held });
+      return new Promise<void>((resolve) => arrived.set(index, resolve));
+    };
+    const deviceBodies: Array<Promise<{ preferences: Record<string, unknown> }>> = [];
+    const relayCalls: Array<string> = [];
+    const fetchMock = vi.fn((request: RequestInfo | URL, init?: RequestInit) => {
+      const url = request instanceof Request ? request.url : String(request);
+      if (url.endsWith("/v1/client/dpop-token")) {
+        return Promise.resolve(
+          Response.json({
+            access_token: "relay-dpop-token",
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "DPoP",
+            expires_in: 300,
+            scope: "mobile:registration",
+          }),
+        );
+      }
+      if (url.includes("/v1/mobile/agent-activity")) relayCalls.push("widget snapshot");
+      if (!url.endsWith("/v1/mobile/devices")) return Promise.resolve(Response.json({ ok: true }));
+      relayCalls.push(`device ${deviceBodies.length}`);
+      deviceBodies.push(
+        request instanceof Request
+          ? request.clone().json()
+          : Promise.resolve(JSON.parse(String(init?.body))),
+      );
+      const index = deviceBodies.length - 1;
+      arrived.get(index)?.();
+      return (holds.get(index)?.held ?? Promise.resolve()).then(() => Response.json({ ok: true }));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    vi.mocked(loadPreferences).mockResolvedValue({ liveActivitiesEnabled: true });
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
+    const disabled = EnvironmentId.make("env-disabled");
+
+    return Effect.gen(function* () {
+      // A toggle made while the sign-in registration is in flight is still sent.
+      const signInArrived = hold(0);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"), "user-a");
+      const drain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => signInArrived);
+      setAgentAwarenessMutedEnvironments([disabled]);
+      holds.get(0)?.release();
+      yield* Fiber.join(drain);
+      yield* runBackgroundOperations();
+
+      // Settings saves its change locally only after its flow; a toggle in between keeps it.
+      const settingsArrived = hold(2);
+      const settings = yield* Effect.forkChild(
+        updateAgentAwarenessRegistrationPreferences({ liveActivitiesEnabled: false }),
+      );
+      yield* Effect.promise(() => settingsArrived);
+      let markToggleLookup = () => {};
+      const toggleLookup = new Promise<void>((resolve) => {
+        markToggleLookup = resolve;
+      });
+      vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+        markToggleLookup();
+        return Promise.resolve({ type: "ios", data: "apns-token" });
+      });
+      setAgentAwarenessMutedEnvironments([]);
+      const toggleDrain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => toggleLookup);
+      holds.get(2)?.release();
+      yield* Fiber.join(settings);
+      yield* Fiber.join(toggleDrain);
+
+      const bodies = yield* Effect.promise(() => Promise.all(deviceBodies));
+      expect(bodies.map((body) => body.preferences)).toMatchObject([
+        { liveActivitiesEnabled: true },
+        { liveActivitiesEnabled: true, mutedEnvironmentIds: [disabled] },
+        { liveActivitiesEnabled: false, mutedEnvironmentIds: [disabled] },
+        { liveActivitiesEnabled: false },
+      ]);
+      expect(bodies[0]?.preferences.mutedEnvironmentIds).toBeUndefined();
+      expect(bodies[3]?.preferences.mutedEnvironmentIds).toBeUndefined();
+      // The widget repaints only after the relay accepted a changed muted list.
+      expect(relayCalls).toEqual([
+        "widget snapshot",
+        "device 0",
+        "device 1",
+        "widget snapshot",
+        "device 2",
+        "device 3",
+        "widget snapshot",
+      ]);
+      // Android's native setting follows the same preferences the relay received.
+      expect(vi.mocked(configureAndroidAgentNotifications).mock.calls.at(-1)?.[2]).toBe(false);
+    }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
+      Effect.provide(layerRelayTest),
+    );
   });
 
   it.effect("keeps a registered status when a later refresh fails", () => {
@@ -948,6 +1070,36 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       }).pipe(Effect.provide(layerRelayTest));
     },
   );
+
+  it.effect("does not configure Android from a registration the account switched away from", () => {
+    vi.spyOn(Platform, "OS", "get").mockReturnValue("android");
+    vi.spyOn(Platform, "Version", "get").mockReturnValue(36);
+    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test" } };
+    let markLookup = () => {};
+    const lookupStarted = new Promise<void>((resolve) => {
+      markLookup = resolve;
+    });
+    let finishLookup = () => {};
+    const lookup = new Promise<{ type: "android"; data: string }>((resolve) => {
+      finishLookup = () => resolve({ type: "android", data: "fcm-token" });
+    });
+    vi.mocked(Notifications.getDevicePushTokenAsync).mockImplementationOnce(() => {
+      markLookup();
+      return lookup;
+    });
+    return Effect.gen(function* () {
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-a"), "user-a");
+      const drain = yield* Effect.forkChild(runBackgroundOperations());
+      yield* Effect.promise(() => lookupStarted);
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-b"), "user-b");
+      vi.mocked(configureAndroidAgentNotifications).mockClear();
+      finishLookup();
+      yield* Fiber.join(drain);
+      yield* runBackgroundOperations();
+      // Only user-b's own registration configures it.
+      expect(configureAndroidAgentNotifications).toHaveBeenCalledOnce();
+    }).pipe(Effect.provide(layerRelayTest));
+  });
 
   describe("home-screen widget", () => {
     // These cover the widget path only, so keep the Live Activity from priming.

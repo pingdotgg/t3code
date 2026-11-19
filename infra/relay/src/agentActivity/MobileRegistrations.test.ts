@@ -296,4 +296,59 @@ describe("MobileRegistrations", () => {
       }).pipe(Effect.provide(layerRegistrationReplay({ devices, liveActivities, queuedJobs })));
     },
   );
+
+  it.effect("leaves the asking device's turned-off environments out of the snapshot", () => {
+    const liveActivities = makeLiveActivities({
+      listTargets: () =>
+        Effect.succeed([
+          {
+            user_id: "dev:julius",
+            device_id: "device-1",
+            platform: "ios",
+            ios_major_version: 18,
+            app_version: "1.0.0",
+            bundle_id: null,
+            aps_environment: null,
+            push_token: null,
+            push_to_start_token: null,
+            preferences_json: JSON.stringify({
+              ...device.preferences,
+              mutedEnvironmentIds: ["env-1"],
+            }),
+            activity_push_token: null,
+            remote_start_queued_at: null,
+            remote_started_at: null,
+            ended_at: null,
+            last_aggregate_json: null,
+            last_live_activity_delivery_at: null,
+          },
+        ]),
+    });
+    return Effect.gen(function* () {
+      const registrations = yield* MobileRegistrations.MobileRegistrations;
+      const forDevice = yield* registrations.getAgentActivitySnapshot({
+        userId: "dev:julius",
+        deviceId: "device-1",
+      });
+      const forAccount = yield* registrations.getAgentActivitySnapshot({ userId: "dev:julius" });
+      expect(forDevice.aggregate).toBeNull();
+      expect(forAccount.aggregate?.activities).toMatchObject([{ environmentId: "env-1" }]);
+    }).pipe(
+      Effect.provide(
+        MobileRegistrations.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(Devices.Devices, makeDevices()),
+              Layer.succeed(LiveActivities.LiveActivities, liveActivities),
+              Layer.succeed(AgentActivityRows.AgentActivityRows, makeAgentActivityRows()),
+              Layer.succeed(
+                AgentActivityPublisher.AgentActivityPublisher,
+                makeAgentActivityPublisher(),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
 });

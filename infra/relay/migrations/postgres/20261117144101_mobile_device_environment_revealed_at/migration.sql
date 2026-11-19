@@ -1,0 +1,1 @@
+ALTER TABLE "relay_mobile_devices" ADD COLUMN "environment_revealed_at" jsonb;

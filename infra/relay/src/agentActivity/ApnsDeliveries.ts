@@ -1,13 +1,11 @@
 import type {
   RelayAgentActivityAggregateState,
   RelayAgentActivityState,
-  RelayAgentAwarenessPreferences,
   RelayDeliveryKind,
   RelayDeliveryResult,
 } from "@t3tools/contracts/relay";
 import {
   RelayAgentActivityAggregateState as RelayAgentActivityAggregateStateSchema,
-  RelayAgentAwarenessPreferences as RelayAgentAwarenessPreferencesSchema,
   RelayDeliveryKind as RelayDeliveryKindSchema,
 } from "@t3tools/contracts/relay";
 import * as Arr from "effect/Array";
@@ -23,6 +21,7 @@ import * as Stream from "effect/Stream";
 
 import {
   isExpiredAgentActivityState,
+  MAX_ACTIVITY_ROWS,
   notificationForActivity,
   sanitizeAgentActivityAggregateState,
   sanitizeApnsNotificationPayload,
@@ -52,6 +51,7 @@ import {
   alertForTerminalAggregate,
   rowPhasesChanged,
   shouldAlertForActivity,
+  DeliveryPreferences,
 } from "./agentActivityAlerts.ts";
 const MIN_LIVE_ACTIVITY_UPDATE_INTERVAL_MS = 15_000;
 const FRESHLY_ARMED_GRACE_MS = 2 * 60 * 1_000;
@@ -131,7 +131,7 @@ const decodeRelayAgentActivityAggregateStateJson = Schema.decodeUnknownOption(
   Schema.fromJsonString(RelayAgentActivityAggregateStateSchema),
 );
 const decodeRelayAgentAwarenessPreferencesJson = Schema.decodeUnknownOption(
-  Schema.fromJsonString(RelayAgentAwarenessPreferencesSchema),
+  Schema.fromJsonString(DeliveryPreferences),
 );
 const decodeSignedApnsDeliveryJob = Schema.decodeUnknownEffect(SignedApnsDeliveryJob);
 const decodeSignedApnsDeliveryJobOption = Schema.decodeUnknownOption(SignedApnsDeliveryJob);
@@ -143,7 +143,7 @@ function parseAggregate(value: string | null): RelayAgentActivityAggregateState 
   return Option.getOrNull(decodeRelayAgentActivityAggregateStateJson(value));
 }
 
-function parsePreferences(value: string): RelayAgentAwarenessPreferences | null {
+export function parsePreferences(value: string): DeliveryPreferences | null {
   return Option.getOrNull(decodeRelayAgentAwarenessPreferencesJson(value));
 }
 
@@ -234,7 +234,11 @@ function chooseLiveActivityDelivery(input: {
         : DateTime.make(input.target.remote_started_at),
       { onNone: () => null, onSome: (dt) => dt.epochMilliseconds },
     );
-    if (armedAtMs !== null && input.nowMs - armedAtMs < FRESHLY_ARMED_GRACE_MS) {
+    // A card still showing an environment the device turned off has content to clear, not to wait for.
+    const showsMutedRows = parseAggregate(input.target.last_aggregate_json)?.activities.some(
+      (row) => preferences?.mutedEnvironmentIds?.some((id) => id === row.environmentId),
+    );
+    if (!showsMutedRows && armedAtMs !== null && input.nowMs - armedAtMs < FRESHLY_ARMED_GRACE_MS) {
       return null;
     }
     return {
@@ -514,15 +518,19 @@ const make = Effect.gen(function* () {
   const apns = yield* Apns.ApnsClient;
   const activityRows = yield* AgentActivityRows.AgentActivityRows;
 
-  const userHasContentToShow = Effect.fnUntraced(function* (userId: string) {
+  const targetHasContentToShow = Effect.fnUntraced(function* (target: {
+    readonly user_id: string;
+    readonly preferences_json: string;
+  }) {
     const now = yield* DateTime.now;
-    return yield* activityRows.listForUser({ userId }).pipe(
+    return yield* activityRows.listForUser({ userId: target.user_id }).pipe(
       Effect.map(
         (activeStates) =>
           makeAggregateState({
             activeStates,
             terminalState: null,
             nowMs: now.epochMilliseconds,
+            preferences: parsePreferences(target.preferences_json),
           }) !== null,
       ),
       // Keep the card on persistence failures; a later sweep can retry.
@@ -646,7 +654,7 @@ const make = Effect.gen(function* () {
     });
     let deliveryTarget = input.target;
     const now = yield* DateTime.now;
-    const aggregate =
+    let aggregate =
       input.aggregate === null ? null : sanitizeAgentActivityAggregateState(input.aggregate);
     let alert = input.alert ?? null;
     const recoverTransportError = (cause: Apns.ApnsError) =>
@@ -686,8 +694,42 @@ const make = Effect.gen(function* () {
       return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
     }
     deliveryTarget = currentTarget;
+    const currentPreferences = parsePreferences(currentTarget.preferences_json);
+    const muted = currentPreferences?.mutedEnvironmentIds ?? [];
+    // A card queued before an environment was turned off is rebuilt without it, keeping the
+    // other environments' rows and alert. If the rebuild fails, skip it; the replay repaints.
+    // Rows past MAX_ACTIVITY_ROWS still count in activeCount, so a card with hidden rows is rebuilt too.
+    if (
+      aggregate &&
+      muted.length > 0 &&
+      (aggregate.activeCount > MAX_ACTIVITY_ROWS ||
+        aggregate.activities.some((row) => muted.some((id) => id === row.environmentId)))
+    ) {
+      aggregate = yield* activityRows.listForUser({ userId: input.target.user_id }).pipe(
+        Effect.map((activeStates) =>
+          makeAggregateState({
+            activeStates,
+            terminalState: null,
+            nowMs: now.epochMilliseconds,
+            preferences: currentPreferences,
+          }),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning("Card rebuild failed; skipping the queued update", { error }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+      if (aggregate === null) {
+        yield* attempts.completeSourceJob({
+          sourceJobId: input.sourceJobId,
+          apnsReason: "Stale agent activity state skipped.",
+        });
+        return staleJobResult({ deviceId: input.target.device_id, kind: input.kind });
+      }
+    }
     if (alert) {
-      const preferences = parsePreferences(currentTarget.preferences_json);
+      const preferences = currentPreferences;
       const previousAggregate = parseAggregate(currentTarget.last_aggregate_json);
       alert =
         !preferences?.notificationsEnabled || !aggregate
@@ -724,7 +766,7 @@ const make = Effect.gen(function* () {
       input.kind === "live_activity_end" &&
       aggregate === null &&
       parsePreferences(currentTarget.preferences_json)?.liveActivitiesEnabled !== false &&
-      (yield* userHasContentToShow(input.target.user_id))
+      (yield* targetHasContentToShow(currentTarget))
     ) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,
@@ -878,7 +920,8 @@ const make = Effect.gen(function* () {
             preferences,
             nowMs: now.epochMilliseconds,
           })
-        : preferences?.notificationsEnabled === true;
+        : preferences?.notificationsEnabled === true &&
+          !preferences.mutedEnvironmentIds?.some((id) => id === notification.environmentId);
     if (!alertAllowed) {
       yield* attempts.completeSourceJob({
         sourceJobId: input.sourceJobId,

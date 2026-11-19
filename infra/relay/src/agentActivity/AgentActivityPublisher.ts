@@ -66,14 +66,10 @@ const make = Effect.gen(function* () {
     const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
     // Only iOS targets with a running Live Activity read the aggregate, and few users have one,
     // so skip the per-user activity query otherwise.
-    const liveActivityAggregate =
+    const activeStates =
       input.deliveryUser.liveActivitiesEnabled &&
       targets.some((target) => target.platform !== "android" && target.activity_push_token)
-        ? makeAggregateState({
-            activeStates: yield* rows.listForUser({ userId: input.deliveryUser.userId }),
-            terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
-            nowMs: input.nowMs,
-          })
+        ? yield* rows.listForUser({ userId: input.deliveryUser.userId })
         : null;
     return yield* Effect.forEach(
       targets,
@@ -83,7 +79,14 @@ const make = Effect.gen(function* () {
         }
         return yield* apnsDeliveries.sendForTarget({
           target,
-          aggregate: liveActivityAggregate,
+          aggregate:
+            activeStates &&
+            makeAggregateState({
+              activeStates,
+              terminalState: input.state && isTerminalPhase(input.state) ? input.state : null,
+              nowMs: input.nowMs,
+              preferences: ApnsDeliveries.parsePreferences(target.preferences_json),
+            }),
           state: input.deliveryUser.notificationsEnabled ? input.state : null,
           nowMs: input.nowMs,
         });
@@ -119,6 +122,7 @@ const make = Effect.gen(function* () {
         activeStates,
         terminalState: null,
         nowMs: now.epochMilliseconds,
+        preferences: ApnsDeliveries.parsePreferences(target.preferences_json),
       });
       return yield* apnsDeliveries.sendForTarget({
         target,
@@ -141,16 +145,19 @@ const make = Effect.gen(function* () {
         ([userId, candidates]) =>
           Effect.gen(function* () {
             const activeStates = yield* rows.listForUser({ userId });
-            const aggregate = makeAggregateState({
-              activeStates,
-              terminalState: null,
-              nowMs: now.epochMilliseconds,
-            });
-            if (aggregate !== null) return;
             const targets = yield* liveActivities.listTargets({ userId });
             const idleDeviceIds = new Set(candidates.map((target) => target.device_id));
             yield* Effect.forEach(
-              targets.filter((target) => idleDeviceIds.has(target.device_id)),
+              targets.filter(
+                (target) =>
+                  idleDeviceIds.has(target.device_id) &&
+                  makeAggregateState({
+                    activeStates,
+                    terminalState: null,
+                    nowMs: now.epochMilliseconds,
+                    preferences: ApnsDeliveries.parsePreferences(target.preferences_json),
+                  }) === null,
+              ),
               (target) =>
                 apnsDeliveries
                   .sendForTarget({
