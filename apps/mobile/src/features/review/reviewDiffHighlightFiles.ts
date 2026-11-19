@@ -86,7 +86,5 @@ export function createReviewDiffHighlightFiles<E>(
     },
     cache,
   );
-  return loaded.map((file, index) =>
-    needsContents.has(file.id) ? { ...file, patchTokensWhenUnavailable: true } : files[index]!,
-  );
+  return loaded.map((file, index) => (needsContents.has(file.id) ? file : files[index]!));
 }

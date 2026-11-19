@@ -51,6 +51,7 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: RuntimeMode;
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly newWorktreesStartFromOrigin?: boolean;
+  readonly defaultThreadEnvMode?: "local" | "worktree";
   readonly fallbackModel?: ModelSelection;
   readonly providers?: readonly ServerProvider[];
   /** Where Settings saves a project's model; the legacy project field stays null. */
@@ -83,6 +84,9 @@ const clientLaunchHarness = (input: {
       ...(input.newWorktreesStartFromOrigin === undefined
         ? {}
         : { newWorktreesStartFromOrigin: input.newWorktreesStartFromOrigin }),
+      ...(input.defaultThreadEnvMode === undefined
+        ? {}
+        : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
       ...(input.overrideModel === undefined
         ? {}
         : {
@@ -540,16 +544,22 @@ it.effect("a launch binds only an existing checkout that is one of the project's
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchInto = (worktreePath: string) =>
+    const launchInto = (worktreePath: string, clientRequestId?: string) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
+          ...(clientRequestId === undefined ? {} : { clientRequestId }),
           workspaceStrategy: { type: "existing_worktree", worktreePath },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
-    expect((yield* launchInto(worktree)).at(-1)?.result).toMatchObject({ projectId });
+    expect((yield* launchInto(worktree, "existing-checkout")).at(-1)?.result).toMatchObject({
+      projectId,
+    });
+    expect((yield* launchInto(outside, "existing-checkout")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+    });
     expect((yield* launchInto(repo)).at(-1)?.result).toMatchObject({ projectId });
     for (const elsewhere of [outside, path.join(worktree, "..", "outside"), "/"]) {
       expect((yield* launchInto(elsewhere)).at(-1)?.result).toMatchObject({
@@ -576,36 +586,56 @@ it.effect("a launch into a new worktree creates nothing when its base ref has no
       runtimeModeCeiling: "auto",
       launched,
       checkWorktreeBase: ({ projectId, workspaceStrategy }) =>
-        workspaceStrategy.type === "worktree" && workspaceStrategy.baseRef === "t3/renamed"
-          ? Effect.fail(
-              new ThreadLaunch.ThreadLaunchBaseRefError({
-                projectId,
-                projectTitle: "Client target",
-                workspaceRoot: "/projects/client-target",
-                baseRef: workspaceStrategy.baseRef,
-              }),
-            )
-          : Effect.void,
+        workspaceStrategy.type !== "worktree"
+          ? Effect.void
+          : workspaceStrategy.baseRef === "t3/renamed"
+            ? Effect.fail(
+                new ThreadLaunch.ThreadLaunchBaseRefError({
+                  projectId,
+                  projectTitle: "Client target",
+                  workspaceRoot: "/projects/client-target",
+                  baseRef: workspaceStrategy.baseRef,
+                }),
+              )
+            : workspaceStrategy.branch === "feature/taken"
+              ? Effect.fail(
+                  new ThreadLaunch.ThreadLaunchBranchExistsError({
+                    projectId,
+                    projectTitle: "Client target",
+                    branch: workspaceStrategy.branch,
+                  }),
+                )
+              : Effect.void,
     });
     const toolkit = yield* ProjectToolkit.pipe(
       Effect.provide(
         McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
       ),
     );
-    const launchFrom = (baseRef: string) =>
+    const launchFrom = (baseRef: string, branch?: string) =>
       toolkit
         .handle("t3_thread_launch", {
           title: "Fix",
           projectId,
-          workspaceStrategy: { type: "worktree", baseRef, startFromOrigin: false },
+          workspaceStrategy: {
+            type: "worktree",
+            baseRef,
+            ...(branch === undefined ? {} : { branch }),
+            startFromOrigin: false,
+          },
         })
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     const refused = (yield* launchFrom("t3/renamed")).at(-1)?.result;
     expect(refused).toMatchObject({ code: "invalid_request" });
     expect((refused as { message: string }).message).toContain(
-      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created.',
+      'Base ref "t3/renamed" does not resolve to a commit in project "Client target" (/projects/client-target). No thread was created. Pass a branch, tag, or commit that exists there',
     );
+    expect((yield* launchFrom("main", "feature/taken")).at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message:
+        'Branch "feature/taken" already exists in project "Client target". No thread was created. Pass a branch name that does not exist yet, or omit branch to get a generated name.',
+    });
     expect(launched).toHaveLength(0);
 
     expect((yield* launchFrom("main")).at(-1)?.result).toMatchObject({ projectId });
@@ -656,6 +686,55 @@ it.effect("a worktree launch that omits startFromOrigin follows the new-worktree
       expect(launched.map((launch) => launch.workspaceStrategy)).toEqual([strategy]);
     }
   }),
+);
+
+it.effect("a launch that omits its workspace follows the new-threads-in-a-worktree default", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    for (const source of ["setting", "t3.json"] as const) {
+      const repo = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-launch-env-mode-" });
+      const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      const { projectId, dependencies } = clientLaunchHarness({
+        runtimeModeCeiling: "auto",
+        launched,
+        workspaceRoot: repo,
+        ...(source === "setting" ? { defaultThreadEnvMode: "worktree" as const } : {}),
+      });
+      const git = yield* GitVcsDriver.GitVcsDriver.pipe(Effect.provide(dependencies));
+      for (const args of [
+        ["init", "-b", "main"],
+        ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-m", "init"],
+      ]) {
+        yield* git.execute({ operation: "test.setupRepo", cwd: repo, args });
+      }
+      if (source === "t3.json")
+        yield* fileSystem.writeFileString(
+          `${repo}/t3.json`,
+          JSON.stringify({ defaultThreadEnvMode: "worktree" }),
+        );
+      const toolkit = yield* ProjectToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+            Layer.provide(dependencies),
+          ),
+        ),
+      );
+      for (const workspaceStrategy of [undefined, { type: "root" as const }]) {
+        yield* toolkit
+          .handle("t3_thread_launch", {
+            title: "Fix",
+            projectId,
+            ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      }
+
+      expect(
+        launched.map((launch) => launch.workspaceStrategy.type),
+        source,
+      ).toEqual(["worktree", "root"]);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect("a launch into a new worktree creates nothing when its branch collides", () =>
@@ -970,6 +1049,47 @@ it.effect("an agent cannot delete the built-in scratch project, even with force"
       code: "invalid_request",
       message: expect.stringMatching(/scratch|no project/i),
     });
+  }),
+);
+
+it.effect("reading a project shows the default model saved in Settings", () =>
+  Effect.gen(function* () {
+    const overrideModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet",
+    };
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      overrideModel,
+      launched: [],
+    });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        getById: (projectId) =>
+          Effect.succeedSome({
+            id: projectId,
+            title: "Client target",
+            workspaceRoot: "/projects/client-target",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            deletedAt: null,
+          }),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const read = yield* toolkit
+      .handle("t3_project_read", { projectId: harness.projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(read.at(-1)?.result).toMatchObject({ defaultModelSelection: overrideModel });
   }),
 );
 

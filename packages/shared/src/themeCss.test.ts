@@ -30,6 +30,25 @@ describe("themeCssValueFetches", () => {
 });
 
 describe("themeCssLoadsRemoteFiles", () => {
+  it.each([
+    ['[data-chat-header]::after { content: "@import"; }', false],
+    ['.a::after { content: "say \\"@import\\""; }', false],
+    ['.a::after { content: "a\\\r\n@import"; }', false],
+    ['.a::after { content: "\\22\r\n@import"; }', false],
+    ['.a::after { content: "/*"; } /* note */ .b::after { content: "@import"; }', false],
+    ['/* @import "x.css"; */ .a::after { content: "*/"; }', false],
+    [
+      ".a { background-image: url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C!--/*@import*/--%3E%3C/svg%3E); }",
+      false,
+    ],
+    ['@import "x.css";', true],
+    ['.a\\" {} @import "x.css"; .b\\" {}', true],
+    ['.a::after { content: "\\\\"; } @import "x.css";', true],
+    [".a { background: url(https://example.invalid/x.png); }", true],
+  ])("%s", (css, loads) => {
+    expect(themeCssLoadsRemoteFiles(css)).toBe(loads);
+  });
+
   it("allows a url() inside a data: address", () => {
     expect(
       themeCssLoadsRemoteFiles(`.repro { background-image: url('${SVG_WITH_OWN_GRADIENT}'); }`),
