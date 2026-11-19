@@ -1,3 +1,5 @@
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+
 const PROJECT_ROW_SELECTOR = '[data-draft-hero-projects] [role="listitem"] > button:first-child';
 const TABBABLE_SELECTOR =
   'button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [contenteditable="true"], [tabindex]';
@@ -22,13 +24,12 @@ function tabStopAfterEditor(overlay: HTMLElement, editor: HTMLElement) {
   );
 }
 
-export function routeDraftHeroTab(
+function routeDraftHeroTab(
   event: Pick<
     KeyboardEvent,
     "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "isComposing" | "target"
   >,
   overlay: HTMLElement,
-  focusEditor: () => void,
 ): boolean {
   if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey || event.isComposing) {
     return false;
@@ -52,7 +53,7 @@ export function routeDraftHeroTab(
   if (target.closest("[data-draft-hero-projects]")) {
     const next = event.shiftKey ? undefined : tabStopAfterEditor(overlay, editor);
     if (next) next.focus();
-    else focusEditor();
+    else editor.focus();
     return true;
   }
   if (event.shiftKey && target === tabStopAfterEditor(overlay, editor)) {
@@ -62,7 +63,7 @@ export function routeDraftHeroTab(
   return false;
 }
 
-export function moveDraftHeroRowFocus(
+function moveDraftHeroRowFocus(
   event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "target">,
   list: HTMLElement,
 ): boolean {
@@ -75,4 +76,14 @@ export function moveDraftHeroRowFocus(
   if (index === -1) return false;
   rows[(index + (event.key === "ArrowDown" ? 1 : -1) + rows.length) % rows.length]!.focus();
   return true;
+}
+
+export function onDraftHeroKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+  if (!event.defaultPrevented && routeDraftHeroTab(event.nativeEvent, event.currentTarget)) {
+    event.preventDefault();
+  }
+}
+
+export function onDraftHeroListKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+  if (moveDraftHeroRowFocus(event.nativeEvent, event.currentTarget)) event.preventDefault();
 }

@@ -295,7 +295,7 @@ import {
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
-import { routeDraftHeroTab } from "./chat/draftHeroTabOrder";
+import { onDraftHeroKeyDown } from "./chat/draftHeroTabOrder";
 import { HeroWidgets } from "./chat/heroWidgets/HeroWidgets";
 import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
 import {
@@ -3776,14 +3776,7 @@ export default function ChatView(props: ChatViewProps) {
               }}
               inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
-              onKeyDown={(event) => {
-                if (
-                  isDraftHeroState &&
-                  !event.defaultPrevented &&
-                  routeDraftHeroTab(event.nativeEvent, event.currentTarget, focusComposerAtEnd)
-                )
-                  event.preventDefault();
-              }}
+              onKeyDown={isDraftHeroState ? onDraftHeroKeyDown : undefined}
               className={
                 isDraftHeroState
                   ? "pointer-events-none absolute inset-0 z-20 flex flex-col justify-end pt-1.5 [container:draft-hero/size] sm:pt-2"

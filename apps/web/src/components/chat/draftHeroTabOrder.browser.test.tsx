@@ -2,27 +2,19 @@ import { describe, expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { moveDraftHeroRowFocus, routeDraftHeroTab } from "./draftHeroTabOrder";
+import { onDraftHeroKeyDown, onDraftHeroListKeyDown } from "./draftHeroTabOrder";
 
 function DraftHero() {
-  const focusEditor = () => document.querySelector<HTMLElement>("[contenteditable]")?.focus();
   return (
     <>
       <button type="button">Header</button>
-      <div
-        onKeyDown={(event) => {
-          if (routeDraftHeroTab(event.nativeEvent, event.currentTarget, focusEditor)) {
-            event.preventDefault();
-          }
-        }}
-      >
+      <div onKeyDown={onDraftHeroKeyDown}>
         <div
           role="list"
           data-draft-hero-projects=""
-          onKeyDown={(event) => {
-            if (moveDraftHeroRowFocus(event.nativeEvent, event.currentTarget))
-              event.preventDefault();
-          }}
+          style={{ maxHeight: 40, overflowY: "auto" }}
+          tabIndex={-1}
+          onKeyDown={onDraftHeroListKeyDown}
         >
           {["alpha", "beta", "gamma"].map((name) => (
             <div role="listitem" key={name}>
