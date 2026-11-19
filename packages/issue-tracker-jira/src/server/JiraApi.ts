@@ -552,7 +552,7 @@ export const make = Effect.gen(function* () {
             path: "/issue/detail",
             params: { issueId, applicationType, dataType: "pullrequest" },
             schema: DevelopmentDetail,
-          }),
+          }).pipe(Effect.orElseSucceed(() => ({ detail: [] }))),
         { concurrency: "unbounded" },
       );
       return details.flatMap(({ detail }) => detail.flatMap((entry) => entry.pullRequests ?? []));

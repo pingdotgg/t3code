@@ -249,11 +249,15 @@ describe("JiraIssueTracker", () => {
         },
         "GET /rest/dev-status/latest/issue/summary": () => ({
           summary: {
-            pullrequest: { byInstanceType: { GitHub: { count: 1 }, stash: { count: 0 } } },
+            pullrequest: {
+              byInstanceType: { GitHub: { count: 1 }, GitLab: { count: 1 }, stash: { count: 0 } },
+            },
           },
         }),
         "GET /rest/dev-status/latest/issue/detail": (seen) => {
-          expect(seen.params.get("applicationType")).toBe("GitHub");
+          expect(seen.params.get("applicationType")).not.toBe("stash");
+          if (seen.params.get("applicationType") === "GitLab")
+            return new Response("", { status: 403 });
           const pull = { name: "Fix", url: "https://github.com/acme/web/pull/7", status: "MERGED" };
           return { detail: [{ pullRequests: [pull, pull] }] };
         },
