@@ -192,7 +192,7 @@ function InstanceSessionManagement(
 
   const loadSessions = async (cursor?: string) => {
     const generation = projectGeneration.current;
-    if (projectId === null || deletionsDuringList.current !== null) return;
+    if (projectId === null || loading) return;
     const deletedSessionIds = new Set<string>();
     deletionsDuringList.current = deletedSessionIds;
     setLoading(true);
