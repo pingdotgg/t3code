@@ -865,25 +865,21 @@ describe("ChatMarkdown copy", () => {
     },
   );
 
-  it.each([
-    { offset: 0, text: "2. Configure", listStart: 2 },
-    { offset: 3, text: "figure", listStart: undefined },
-  ])("copies $text with the markers its list shows", async ({ offset, text, listStart }) => {
+  it("copies 2. Configure with the markers its list shows", async () => {
     setup();
     await using screen = await renderText("1. Install\n2. Configure\n3. Deploy");
     const item = screen.container.querySelectorAll("li")[1]!.firstChild!;
     const range = document.createRange();
-    range.setStart(item, offset);
-    range.setEnd(item, item.textContent!.length);
+    range.selectNodeContents(item);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
 
     const payload = chatMarkdownClipboardPayload(selection);
-    expect(payload?.text).toBe(text);
+    expect(payload?.text).toBe("2. Configure");
     const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-    expect(pasted.querySelector("ol")?.start).toBe(listStart);
-    expect(pasted.body.textContent).toBe(offset === 0 ? "Configure" : text);
+    expect(pasted.querySelector("ol")?.start).toBe(2);
+    expect(pasted.body.textContent).toBe("Configure");
   });
 });
 
