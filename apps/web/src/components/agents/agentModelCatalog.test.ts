@@ -79,5 +79,24 @@ describe("agent model catalog", () => {
       label: "max (unlisted)",
     });
     expect(agentThinkingChoices(undefined, "")).toEqual([]);
+    const thoughtLevel = {
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "thought_level",
+            label: "Thinking",
+            type: "select",
+            role: "reasoning",
+            options: ["low", "medium", "high", "xhigh"].map((id) => ({ id, label: id })),
+          },
+        ],
+      },
+    } as unknown as ServerProviderModel;
+    expect(agentThinkingChoices(thoughtLevel, "high").map((choice) => choice.value)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
   });
 });

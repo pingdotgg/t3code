@@ -1,6 +1,7 @@
 import { OrchestratorMcpFailure, type ServerSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Environment from "../../../environment/ServerEnvironment.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -51,6 +52,40 @@ export const layer = McpToolAccess.toLayer(EnvironmentToolkit, {
         serverVersion: descriptor.serverVersion,
         platform: descriptor.platform,
         preferences: preferences(current),
+      };
+    }),
+  ),
+  t3_provider_refresh: McpToolAccess.reads(({ providerInstanceId }) =>
+    Effect.gen(function* () {
+      yield* access;
+      const registry = yield* ProviderRegistry.ProviderRegistry;
+      const providers = yield* registry.refreshModels({ instanceId: providerInstanceId }).pipe(
+        Effect.mapError(
+          (error) =>
+            new OrchestratorMcpFailure({
+              code: "provider_unavailable",
+              message: `${error.instanceId}: ${error.detail}`,
+            }),
+        ),
+      );
+      const refreshed = providers.filter(
+        (provider) =>
+          providerInstanceId === undefined || provider.instanceId === providerInstanceId,
+      );
+      if (refreshed.length === 0) {
+        return yield* new OrchestratorMcpFailure({
+          code: "provider_unavailable",
+          message: `No provider instance ${providerInstanceId} on this server.`,
+        });
+      }
+      return {
+        providers: refreshed.map(({ instanceId, driver, status, message, models }) => ({
+          instanceId,
+          driver,
+          status,
+          message,
+          models: models.map((model) => model.slug),
+        })),
       };
     }),
   ),

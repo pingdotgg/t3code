@@ -490,6 +490,10 @@ it.effect("reaches a linked environment no app relays, within the link's access"
         { environmentId: "full", targetKind: "linked" },
         { environmentId: "limited", targetKind: "linked" },
       ]);
+      // Links carry whole tools, not port calls, so a relayed write says so instead of naming apps.
+      expect(
+        yield* failureMessage(broker.forward("replicateProfiles", ["full", []], ["full"])),
+      ).toContain("Environment full is reached only over this server's link");
       // An app that relays the environment owns its route again.
       yield* serve(broker, "desktop", { full: ["read"] }, (method) => ({ result: method }));
       expect((yield* broker.access).linked).toEqual({ limited: ["read"] });

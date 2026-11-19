@@ -754,6 +754,14 @@ const T3_TOOL_SENTENCES: ReadonlyMap<string, T3ToolSentence> = new Map<string, T
     },
   ],
   [
+    "Refresh\nRefreshing\nRefreshed\nprovider models",
+    {
+      detail: msg(
+        "{status, select, inProgress {Refreshing provider models} completed {Refreshed provider models} failed {Failed to refresh provider models} declined {Declined to refresh provider models} stopped {Stopped refreshing provider models} other {Refreshing provider models}}",
+      ),
+    },
+  ],
+  [
     "Read\nReading\nRead\nthemes",
     {
       detail: msg(
