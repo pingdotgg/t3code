@@ -29,6 +29,8 @@ const scratch = project("scratch", "/scratch");
 
 const harness = vi.hoisted(() => ({
   setProject: vi.fn(),
+  getShare: vi.fn<(id: string) => unknown>(() => null),
+  releaseShareReservation: vi.fn(),
   openScratch: vi.fn(),
   selectDetail: vi.fn(),
   navigation: {
@@ -42,6 +44,7 @@ const harness = vi.hoisted(() => ({
     canGoBack: () => true,
     dispatch: vi.fn(),
     navigate: vi.fn(),
+    setParams: vi.fn(),
   },
 }));
 
@@ -113,7 +116,10 @@ vi.mock("../../state/workspace", () => ({
   useWorkspaceState: () => ({ state: { hasReadyEnvironment: true } }),
 }));
 vi.mock("../sharing/IncomingShareProvider", () => ({
-  useIncomingShare: () => ({ getShare: () => null, releaseShareReservation: vi.fn() }),
+  useIncomingShare: () => ({
+    getShare: harness.getShare,
+    releaseShareReservation: harness.releaseShareReservation,
+  }),
 }));
 vi.mock("../layout/workspace/useSelectWorkspaceDetail", () => ({
   useSelectWorkspaceDetail: () => harness.selectDetail,
@@ -221,4 +227,29 @@ it("cancels the No project draft retarget when another project is picked", async
   await act(async () => screen.retargeting.resolve(true));
 
   expect(harness.selectDetail.mock.calls).toEqual(appDraftSelection);
+});
+
+it("releases a share reserved for another project when Add Project returns a new one", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const reserved = { environmentId, projectId: scratch.id };
+  harness.getShare.mockReturnValue({ id: "share-1", attachments: [], destination: reserved });
+  harness.setProject.mockClear();
+  harness.selectDetail.mockClear();
+  using _share = { [Symbol.dispose]: () => harness.getShare.mockReturnValue(null) };
+
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const addedProject = { environmentId, projectId: regular.id, title: regular.title };
+  await act(async () =>
+    root.render(
+      <NewTaskRouteScreen
+        route={{ params: { incomingShareId: "share-1", addedProject } } as never}
+      />,
+    ),
+  );
+
+  expect(harness.releaseShareReservation).toHaveBeenCalledExactlyOnceWith("share-1", reserved);
+  expect(harness.setProject.mock.calls).toEqual([[regular]]);
+  expect(harness.selectDetail).not.toHaveBeenCalled();
 });

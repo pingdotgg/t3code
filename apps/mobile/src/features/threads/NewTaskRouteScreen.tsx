@@ -260,9 +260,13 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     signal?: AbortSignal,
     addedProject?: AddedProject,
   ): Promise<void> {
-    if (incomingShare?.destination && !reservedDestinationProject) {
+    const reserved = incomingShare?.destination;
+    if (
+      reserved &&
+      (reserved.environmentId !== project.environmentId || reserved.projectId !== project.id)
+    ) {
       try {
-        await releaseShareReservation(incomingShare.id, incomingShare.destination);
+        await releaseShareReservation(incomingShare.id, reserved);
       } catch (error) {
         if (signal?.aborted) return;
         Dialog.alert(
