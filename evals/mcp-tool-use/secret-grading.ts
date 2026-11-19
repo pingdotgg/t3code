@@ -1590,7 +1590,7 @@ export const classifyFileUse = (
     ids.length > 0
       ? [
           `(?:${dirExpr})\\s*/\\s*['"](?:${ids})['"]`,
-          `os\\.path\\.join\\(\\s*(?:${dirExpr})\\s*,\\s*['"](?:${ids})['"]\\s*\\)`,
+          `os\\.path\\.join\\(\\s*(?:${dirExpr})\\s*,\\s*['"](?:${ids})['"]\\s*(?:,\\s*)?\\)`,
         ]
       : [];
   const fileRef = () =>
