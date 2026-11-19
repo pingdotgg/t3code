@@ -17,6 +17,13 @@ vi.mock("../../state/threads", () => ({
   threadFamilies: { mountRows: () => () => {} },
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: undefined }));
+vi.mock("../../state/workspace", () => {
+  const environments = ["environment-1", "environment-2"].map((environmentId) => ({
+    environmentId,
+    connectionState: "connected",
+  }));
+  return { useWorkspaceState: () => ({ environments }) };
+});
 
 it("reuses a large thread list across tab renders and updates when its inputs change", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
