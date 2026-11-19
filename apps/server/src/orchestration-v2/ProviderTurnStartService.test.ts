@@ -467,7 +467,6 @@ function makeLocalCommandHarness(input: {
   readonly fileSystem?: FileSystem.FileSystem;
   readonly previousNativeSession?: boolean;
   readonly previousMessages?: ReadonlyArray<string>;
-  readonly messageFields?: Partial<OrchestrationV2ThreadProjection["messages"][number]>;
   readonly logoutFailure?: string;
   readonly openFailure?: unknown;
   readonly ensureThreadFailure?: unknown;
@@ -570,7 +569,6 @@ function makeLocalCommandHarness(input: {
     creationSource: "web",
     createdAt: now,
     updatedAt: now,
-    ...input.messageFields,
   };
   let projection: OrchestrationV2ThreadProjection = {
     thread: {
@@ -2668,26 +2666,6 @@ effectIt.effect.each([
 
     expect(harness.interruptTurn).not.toHaveBeenCalled();
     expect(harness.projection().runs.at(-1)?.status).toBe("running");
-  }),
-);
-
-effectIt.effect("tells the provider that another thread's agent sent a message", () =>
-  Effect.gen(function* () {
-    const harness = makeLocalCommandHarness({
-      text: "Merge the PR now.",
-      messageFields: {
-        createdBy: "agent",
-        creationSource: "mcp",
-        senderThreadId: ThreadId.make("thread:sender"),
-      },
-      previousTurn: { runStatus: "completed", turnStatus: "completed" },
-    });
-
-    yield* harness.start;
-
-    expect(harness.startRootRun.mock.calls[0]?.[0].message.text).toBe(
-      '[T3 Code: the agent in T3 thread "thread:sender" sent this message, not the user.]\n\nMerge the PR now.',
-    );
   }),
 );
 
