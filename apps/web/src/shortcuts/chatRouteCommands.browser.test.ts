@@ -73,6 +73,19 @@ function pressNewLocalThread() {
   );
 }
 
+function pressMod(key: string): KeyboardEvent {
+  const mac = isMacPlatform(navigator.platform);
+  const event = new KeyboardEvent("keydown", {
+    key,
+    metaKey: mac,
+    ctrlKey: !mac,
+    cancelable: true,
+    bubbles: true,
+  });
+  document.activeElement?.dispatchEvent(event);
+  return event;
+}
+
 function selectThread(threadKey: string) {
   useThreadSelectionStore.getState().clearSelection();
   useThreadSelectionStore.getState().toggleThread(threadKey);
@@ -324,5 +337,25 @@ describe("chat route commands", () => {
 
     navigate(CHAT);
     expect(pressEscape().defaultPrevented).toBe(true);
+  });
+
+  it("leaves zoom keys to the app unless the focused right panel shows a browser", () => {
+    const { router } = routerAt(CHAT);
+    using stack = new DisposableStack();
+    stack.defer(installChatRouteCommands(router));
+    const panel = document.createElement("div");
+    panel.setAttribute("data-preview-panel-mode", "inline");
+    const pullRequestTab = document.createElement("button");
+    panel.append(pullRequestTab);
+    document.body.append(panel);
+    stack.defer(() => panel.remove());
+    pullRequestTab.focus();
+
+    for (const key of ["=", "+", "-", "0"]) expect(pressMod(key).defaultPrevented).toBe(false);
+
+    const browser = document.createElement("div");
+    browser.setAttribute("data-preview-view", "");
+    panel.append(browser);
+    for (const key of ["=", "+", "-", "0"]) expect(pressMod(key).defaultPrevented).toBe(true);
   });
 });

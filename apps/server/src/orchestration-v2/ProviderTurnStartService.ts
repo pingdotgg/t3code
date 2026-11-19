@@ -46,7 +46,7 @@ import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import { canForkBusySourceNatively, isActiveRun } from "./CommandPolicy.ts";
-import { contextBoundaryOrdinal } from "./contextBoundary.ts";
+import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
@@ -61,7 +61,7 @@ import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDeliv
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { unsentManualContinuationSource } from "./manualContinuation.ts";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,
@@ -570,13 +570,16 @@ export const layer: Layer.Layer<
           (handoff.transferId == null || !subagentResultTransfers.has(handoff.transferId)) &&
           isPendingForRun(handoff),
       );
-      // Carried forward until a provider turn accepts it, also after a provider switch.
-      const sideChatHandoff = projection.contextHandoffs.find(
+      // Carried forward until a provider turn accepts them, also after a provider switch. A fresh
+      // session starts without them, and an unscheduled fresh run retires them. A schedule's fresh
+      // run is a side conversation, so the thread's next turn still gets them.
+      const carriedSideChatHandoffs = projection.contextHandoffs.filter(
         (handoff) =>
           isSideChatHandoff(handoff) &&
           handoff.delivery === undefined &&
           isPendingForRun(handoff, true),
       );
+      const sideChatHandoff = run.freshContext === true ? undefined : carriedSideChatHandoffs[0];
       const nativeForkTransfer = projection.contextTransfers.find(
         (transfer) =>
           transfer.type === "fork" &&
@@ -597,6 +600,31 @@ export const layer: Layer.Layer<
           runId,
           cause: `Run ${runId} is missing its execution projection state.`,
         });
+      }
+      if (
+        carriedSideChatHandoffs.length > 0 &&
+        run.freshContext === true &&
+        !isScheduledFreshRun(run, projection.turnItems)
+      ) {
+        const updatedAt = yield* DateTime.now;
+        const retired = yield* eventSink.writeIfRunCurrent({
+          threadId: run.threadId,
+          runId,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
+          events: yield* Effect.forEach(carriedSideChatHandoffs, (handoff) =>
+            Effect.map(idAllocator.allocate.event({ threadId: projection.thread.id }), (id) => ({
+              id,
+              type: "context-handoff.updated" as const,
+              threadId: projection.thread.id,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: updatedAt,
+              payload: { ...handoff, status: "superseded" as const, updatedAt },
+            })),
+          ),
+        });
+        if (!retired.committed) return;
       }
       const manualResume =
         run.manualContinuationOfRunId !== undefined && attempt.reason !== "steering_restart";
@@ -1604,9 +1632,32 @@ export const layer: Layer.Layer<
           }),
         );
         if (replacement === undefined) return undefined;
+        if (
+          replacement.nativeThreadRef?.nativeId != null &&
+          replacement.nativeThreadRef.driver === providerThread.nativeThreadRef?.driver &&
+          replacement.nativeThreadRef.nativeId === providerThread.nativeThreadRef.nativeId
+        ) {
+          // Never retried. Forget the load first, or the next turn would skip resume and start on
+          // the reused session without this error or the recovery handoff.
+          yield* providerSessions.forgetLoadedProviderThread({
+            providerSessionId: session.providerSessionId,
+            threadId: projection.thread.id,
+            providerThread: replacement,
+            modelSelection: run.modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          });
+          yield* settleStartFailure({
+            signal: "provider-thread-load-failure",
+            title: "Provider turn failed to start",
+            error: new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: session.driver,
+              detail:
+                "the provider returned its existing session when asked for a fresh one, so the conversation context could not be moved to a new session",
+            }),
+          });
+          return undefined;
+        }
         const { handoff, transferId, createdAt } = yield* recoveryHandoff;
-        effectiveHandoffs = withRecoveryHandoff(handoff);
-        resumeFellBack = true;
         const previousRun = projection.runs.findLast(
           (candidate) =>
             candidate.providerThreadId === providerThread.id &&
@@ -1651,7 +1702,11 @@ export const layer: Layer.Layer<
           strategy: handoff.strategy,
           summary: handoff.summaryText,
         };
-        yield* eventSink.write({
+        const replacementWrite = yield* eventSink.writeIfRunCurrent({
+          threadId: projection.thread.id,
+          runId: run.id,
+          activeAttemptId: attempt.id,
+          expectedStatus: "starting",
           events: [
             {
               id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
@@ -1690,6 +1745,9 @@ export const layer: Layer.Layer<
             },
           ],
         });
+        if (!replacementWrite.committed) return undefined;
+        effectiveHandoffs = withRecoveryHandoff(handoff);
+        resumeFellBack = true;
         recoveryTurnItem = handoffTurnItem;
         return replacement;
       });
