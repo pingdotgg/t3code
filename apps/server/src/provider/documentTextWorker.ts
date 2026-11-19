@@ -361,6 +361,8 @@ async function archive(path: string): Promise<Map<string, string>> {
 }
 
 const NOTEBOOK_CELL_TYPES = ["code", "markdown", "raw"];
+// ECMA-48 CSI byte classes are disjoint, including when the final byte is missing.
+const NOTEBOOK_CSI = /(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]/gu;
 
 function* notebook(source: string): Generator<string, void> {
   const book: unknown = JSON.parse(source);
@@ -373,6 +375,11 @@ function* notebook(source: string): Generator<string, void> {
         if (typeof line === "string") yield line;
       }
   }
+  function outputText(value: unknown): string {
+    // Notebook fragments can split a terminal escape sequence.
+    const text = typeof value === "string" ? value : [...lines(value)].join("");
+    return text.replaceAll(NOTEBOOK_CSI, "");
+  }
   for (const [index, cell] of book.cells.entries()) {
     if (index >= 10_000) throw new Truncation("Notebook cell limit");
     if (!cell || typeof cell !== "object") continue;
@@ -384,14 +391,14 @@ function* notebook(source: string): Generator<string, void> {
       yield "\nOutput:\n";
       for (const output of cell.outputs) {
         if (!output || typeof output !== "object") continue;
-        if ("text" in output) yield* lines(output.text);
+        if ("text" in output) yield outputText(output.text);
         else if (
           "data" in output &&
           output.data &&
           typeof output.data === "object" &&
           "text/plain" in output.data
         )
-          yield* lines(output.data["text/plain"]);
+          yield outputText(output.data["text/plain"]);
         else if ("output_type" in output && output.output_type === "error") {
           if ("ename" in output) yield* lines(output.ename);
           if ("evalue" in output) {
