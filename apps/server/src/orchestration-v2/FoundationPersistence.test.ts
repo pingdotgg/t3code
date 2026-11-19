@@ -3462,10 +3462,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* outbox.succeed({ effectId: resume("a").id, workerId });
       assert.strictEqual(yield* claimId, start.id);
       assert.isUndefined(yield* claimId);
+      // The run is 'running' before the provider accepts the turn, so its start still holds the slot.
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = ${resumedRunOf("a")}`;
+      assert.isUndefined(yield* claimId);
       yield* outbox.succeed({ effectId: start.id, workerId });
 
       // A resumed run that is working no longer holds a slot, however long it runs.
-      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = ${resumedRunOf("a")}`;
       assert.strictEqual(yield* claimId, resume("b").id);
       yield* insertResumedRun("b");
       yield* outbox.succeed({ effectId: resume("b").id, workerId });

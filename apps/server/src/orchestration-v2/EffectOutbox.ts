@@ -336,8 +336,9 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // A continuation holds a slot only while its run is starting, and for a bounded time, so long
-    // or stuck resumed runs cannot keep other interrupted threads from resuming.
+    // A continuation holds a slot only until the provider accepts its run's turn (the run is
+    // 'running' before that; its start effect settles after provider startup), and for a bounded
+    // time, so long or stuck resumed runs cannot keep other interrupted threads from resuming.
     // pruneSettled keeps the succeeded continue effect while its run is live.
     const restartContinuationsAtCapacity = (maxActive: number, startedAfter: string) => sql`(
       SELECT COUNT(*)
@@ -352,9 +353,19 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               SELECT 1
               FROM orchestration_v2_projection_runs AS resuming_run
               WHERE resuming_run.thread_id = resuming.thread_id
-                AND resuming_run.status IN ('preparing', 'starting')
                 AND json_extract(resuming_run.payload_json, '$.restartContinuationOfRunId') =
                   json_extract(resuming.payload_json, '$.sourceRunId')
+                AND (
+                  resuming_run.status IN ('preparing', 'starting')
+                  OR EXISTS (
+                    SELECT 1
+                    FROM orchestration_v2_effect_outbox AS resuming_start
+                    WHERE resuming_start.thread_id = resuming_run.thread_id
+                      AND resuming_start.effect_type = 'provider-turn.start'
+                      AND resuming_start.status IN ('pending', 'running')
+                      AND json_extract(resuming_start.payload_json, '$.runId') = resuming_run.run_id
+                  )
+                )
             )
           )
         )
