@@ -160,10 +160,11 @@ export function pickProjectLinkMatch(
     }
   }
   if (isBasename && rootHits > 1) {
-    // A root's highest-ranked basename can hide another file that an overlapping root also lists.
+    // A root's pick, or a root left ambiguous by case, can hide another file elsewhere.
+    const folded = target.toLowerCase();
     for (const { root, entries } of searches) {
       for (const entry of entries) {
-        if (entry.kind === "file" && basenameOfPath(entry.path) === target) {
+        if (entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded) {
           addMatch(resolveWorkspaceFilePath(entry.path, root));
         }
       }

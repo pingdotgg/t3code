@@ -152,20 +152,21 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
-  it("opens nothing when overlapping projects also list a second exact basename match", () => {
+  it.each([
+    { cited: "handoff.txt", other: "archive/handoff.txt" },
+    { cited: "HANDOFF.txt", other: "archive/Handoff.txt" },
+  ])("opens nothing when overlapping projects also list $other", ({ cited, other }) => {
     expect(
       pickProjectLinkMatch("handoff.txt", [
         {
           root: "/home/user/reports",
           entries: [
-            { path: "docs/handoff.txt", kind: "file" },
-            { path: "archive/handoff.txt", kind: "file" },
+            { path: `team/docs/${cited}`, kind: "file" },
+            { path: other, kind: "file" },
           ],
         },
-        {
-          root: "/home/user/reports/docs",
-          entries: [{ path: "handoff.txt", kind: "file" }],
-        },
+        { root: "/home/user/reports/team", entries: [{ path: `docs/${cited}`, kind: "file" }] },
+        { root: "/home/user/reports/team/docs", entries: [{ path: cited, kind: "file" }] },
       ]),
     ).toBeNull();
   });
