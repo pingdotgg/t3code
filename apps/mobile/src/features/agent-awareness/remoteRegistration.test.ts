@@ -599,6 +599,22 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     }).pipe(Effect.provide(layerRelayTest));
   });
 
+  it.effect("leaves the signed-out status alone when an obsolete registration fails", () => {
+    Constants.expoConfig!.extra = {
+      relay: {
+        url: "https://relay.example.test/",
+      },
+    };
+    vi.mocked(loadOrCreateAgentAwarenessDeviceId).mockRejectedValue(new Error("storage failure"));
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+    setAgentAwarenessRelayTokenProvider(null);
+
+    return Effect.gen(function* () {
+      yield* runBackgroundOperations();
+      expect(getAgentAwarenessRegistrationStatus()).toBe("unknown");
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
   it.effect("does not re-register the same account when nothing has changed", () => {
     Constants.expoConfig!.extra = {
       relay: {
