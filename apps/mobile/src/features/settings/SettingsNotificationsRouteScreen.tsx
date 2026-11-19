@@ -11,7 +11,7 @@ import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
-import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { Linking, Platform } from "react-native";
@@ -20,30 +20,32 @@ import { m as resolveMessage } from "../../i18n/messages";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   reportAtomCommandResult,
-  settleAsyncResult,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import {
+  disableLiveActivityUpdates,
+  enableLiveActivityUpdates,
+  LiveActivityRelayTokenError,
+  requestAgentNotifications,
+} from "../agent-awareness/agentAwarenessCommands";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import {
   openAndroidLiveUpdateSettings,
   supportsAndroidLiveUpdateSettings,
 } from "../agent-awareness/androidNotifications";
-import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
-import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
-  refreshAgentAwarenessRegistration,
   subscribeAgentAwarenessRegistrationStatus,
 } from "../agent-awareness/remoteRegistration";
 import { refreshManagedRelayEnvironments } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "../cloud/publicConfig";
 import { makePermissionStatusAtom } from "../../lib/permissionStatusAtom";
-import { runtime } from "../../lib/runtime";
-import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsRow } from "./components/SettingsRow";
@@ -82,6 +84,18 @@ const notificationStatusAtom = makePermissionStatusAtom<NotificationStatus>({
     return result.value.granted ? "enabled" : "disabled";
   },
 });
+
+type CommandFailure = Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>;
+
+const isRelayTokenError = Schema.is(LiveActivityRelayTokenError);
+
+function failureMessage(failure: CommandFailure, fallback: string): string {
+  const squashed = squashAtomCommandFailure(failure);
+  const error = isRelayTokenError(squashed) ? squashed.cause : squashed;
+  return error instanceof Error
+    ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
+    : fallback;
+}
 
 type LiveActivityBasis = {
   readonly isLoaded: boolean;
@@ -142,7 +156,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const gt = useGT();
   const m = useMessages();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const requestPermission = useAtomCommand(requestAgentNotifications, { reportFailure: false });
+  const enableLiveActivities = useAtomCommand(enableLiveActivityUpdates, { reportFailure: false });
+  const disableLiveActivityPreference = useAtomCommand(
+    disableLiveActivityUpdates,
+    "live activity disable",
+  );
   const agentAwarenessPushAvailable = supportsAgentAwarenessPush();
   const agentAwarenessPlatform = resolveAgentAwarenessPlatformPresentation(Platform.OS, m);
   const agentAwarenessSubtitle =
@@ -185,23 +204,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   const environmentCount = connections.length;
 
   const requestNotifications = async () => {
-    const result = await settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        requestAgentNotificationPermission.pipe(
-          Effect.tap((permission) =>
-            permission.type === "granted" ? refreshAgentAwarenessRegistration() : Effect.void,
-          ),
-        ),
-      ),
-    );
+    const result = await requestPermission({ registerDevice: true });
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
         Dialog.alert(
           gt("Notifications unavailable"),
-          error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
-            : gt("Could not request notification permission."),
+          failureMessage(result, gt("Could not request notification permission.")),
         );
       }
       return;
@@ -266,17 +274,12 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
     setLiveActivityStatus("linking");
     if (Platform.OS === "android") {
-      const permission = await settleAsyncResult(() =>
-        runtime.runPromiseExit(requestAgentNotificationPermission),
-      );
+      const permission = await requestPermission({ registerDevice: false });
       if (permission._tag === "Failure") {
         setLiveActivityStatus("disabled");
-        const error = squashAtomCommandFailure(permission);
         Dialog.alert(
           gt("Ongoing activity unavailable"),
-          error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
-            : gt("Could not enable agent notifications."),
+          failureMessage(permission, gt("Could not enable agent notifications.")),
         );
         return;
       }
@@ -294,54 +297,30 @@ function ConfiguredSettingsNotificationsRouteScreen() {
       }
       setNotificationStatus("enabled");
     }
-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-    if (tokenResult._tag === "Failure") {
+    const result = await enableLiveActivities({
+      getClerkToken: () => getToken(resolveRelayClerkTokenOptions()),
+      previousEnabled: liveActivitiesPreferenceEnabled,
+      connections,
+      canConfigureEnvironment: canLinkEnvironmentToConnect,
+    });
+    if (result._tag === "Failure") {
       setLiveActivityStatus("disabled");
-      const error = squashAtomCommandFailure(tokenResult);
-      Dialog.alert(
-        Platform.OS === "android"
-          ? gt("Ongoing activity unavailable")
-          : gt("Live Activities unavailable"),
-        error instanceof Error
-          ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
-          : gt("Could not enable agent activity updates."),
-      );
+      if (!isAtomCommandInterrupted(result)) {
+        Dialog.alert(
+          Platform.OS === "android"
+            ? gt("Ongoing activity unavailable")
+            : gt("Live Activities unavailable"),
+          failureMessage(result, gt("Could not enable agent activity updates.")),
+        );
+      }
       return;
     }
-    if (!tokenResult.value) {
+    if (result.value === "signed-out") {
       promptSignIn();
       setLiveActivityStatus("signed-out");
       return;
     }
 
-    const updateResult = await settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
-          enabled: true,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: tokenResult.value,
-          connections,
-        }),
-      ),
-    );
-    if (updateResult._tag === "Failure") {
-      setLiveActivityStatus("disabled");
-      if (!isAtomCommandInterrupted(updateResult)) {
-        const error = squashAtomCommandFailure(updateResult);
-        Dialog.alert(
-          Platform.OS === "android"
-            ? gt("Ongoing activity unavailable")
-            : gt("Live Activities unavailable"),
-          error instanceof Error
-            ? (errorDisplayMessage(error, resolveMessage) ?? error.message)
-            : gt("Could not enable agent activity updates."),
-        );
-      }
-      return;
-    }
-
-    void savePreferences({ liveActivitiesEnabled: true });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("enabled");
     // Environment linking can precede device registration; only registered devices can receive Live Activities.
@@ -386,38 +365,16 @@ function ConfiguredSettingsNotificationsRouteScreen() {
   };
 
   async function disableLiveActivities() {
-    let token: string | null = null;
-    if (isSignedIn) {
-      const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
-      if (tokenResult._tag === "Failure") {
-        setLiveActivityStatus("enabled");
-        reportAtomCommandResult(tokenResult, {
-          label: "live activity disable token lookup",
-        });
-        return;
-      }
-      token = tokenResult.value;
-    }
-
-    const updateResult = await settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        setLiveActivityUpdatesEnabled({
-          canConfigureEnvironment: canLinkEnvironmentToConnect,
-          enabled: false,
-          previousEnabled: liveActivitiesPreferenceEnabled,
-          clerkToken: token,
-          connections,
-        }),
-      ),
-    );
-    if (updateResult._tag === "Failure") {
+    const result = await disableLiveActivityPreference({
+      getClerkToken: isSignedIn ? () => getToken(resolveRelayClerkTokenOptions()) : null,
+      previousEnabled: liveActivitiesPreferenceEnabled,
+      connections,
+      canConfigureEnvironment: canLinkEnvironmentToConnect,
+    });
+    if (result._tag === "Failure") {
       setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
-      reportAtomCommandResult(updateResult, {
-        label: "live activity disable",
-      });
       return;
     }
-    void savePreferences({ liveActivitiesEnabled: false });
     refreshManagedRelayEnvironments();
     setLiveActivityStatus("disabled");
   }

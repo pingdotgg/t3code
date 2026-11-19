@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import { Atom } from "effect/reactivity";
 
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 
@@ -51,6 +52,8 @@ export const layer: Layer.Layer<
   Layer.Success<RuntimeLayerSource>,
   Layer.Error<RuntimeLayerSource>
 > = Layer.effectContext(runtime.contextEffect);
+
+export const appAtomRuntime = Atom.runtime(layer);
 
 disposeOnFoundationReplace(typeof module === "undefined" ? undefined : module.hot, () =>
   runtime.dispose(),

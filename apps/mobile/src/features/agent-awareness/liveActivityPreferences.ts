@@ -2,6 +2,10 @@ import * as Effect from "effect/Effect";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { SavedRemoteConnection } from "../../lib/connection";
+import type {
+  MobilePreferencesSaveError,
+  MobilePreferencesStore,
+} from "../../persistence/mobile-preferences";
 import { linkEnvironmentToCloudWithPreference } from "../cloud/linkEnvironment";
 import { updateAgentAwarenessRegistrationPreferences } from "./remoteRegistration";
 
@@ -12,6 +16,9 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     readonly clerkToken: string | null;
     readonly connections: ReadonlyArray<SavedRemoteConnection>;
     readonly canConfigureEnvironment: (environmentId: EnvironmentId) => boolean;
+    readonly saveLocalPreference: (
+      enabled: boolean,
+    ) => Effect.Effect<unknown, MobilePreferencesSaveError, MobilePreferencesStore>;
   }) {
     const linkedConnections = input.connections.filter(
       (connection) => connection.bearerToken !== null,
@@ -74,6 +81,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     });
 
     yield* updateRelayPreference(input.enabled).pipe(
+      Effect.andThen(Effect.suspend(() => input.saveLocalPreference(input.enabled))),
       Effect.onError(() => restoreRelayPreference()),
     );
   },

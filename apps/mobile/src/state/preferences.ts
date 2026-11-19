@@ -118,8 +118,8 @@ export function createMobilePreferencesState(
   return { preferencesAtom, save, savePreferences } as const;
 }
 
-const mobilePreferencesRuntime = Atom.runtime(Runtime.layer);
-const mobilePreferencesState = createMobilePreferencesState(mobilePreferencesRuntime);
+const mobilePreferencesState = createMobilePreferencesState(Runtime.appAtomRuntime);
 
 export const mobilePreferencesAtom = mobilePreferencesState.preferencesAtom;
 export const saveMobilePreferences = mobilePreferencesState.savePreferences;
+export const saveMobilePreferencesEffect = mobilePreferencesState.save;

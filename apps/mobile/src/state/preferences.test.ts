@@ -21,9 +21,11 @@ vi.mock("react-native", () => ({
 
 vi.mock("../lib/runtime", async () => {
   const Layer = await import("effect/Layer");
+  const { Atom } = await import("effect/reactivity");
   return {
     runtime: { runPromise: vi.fn() },
     layer: Layer.empty,
+    appAtomRuntime: Atom.runtime(Layer.empty),
   };
 });
 
