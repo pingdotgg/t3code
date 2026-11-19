@@ -1,17 +1,10 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
-import {
-  cancelEnvironmentSpeechModelDownload,
-  downloadEnvironmentSpeechModel,
-  getEnvironmentSpeechModels,
-  getEnvironmentSpeechStatus,
-  linkEnvironmentSpeechModels,
-  removeEnvironmentSpeechModel,
-  selectEnvironmentSpeechModel,
-  updateEnvironmentSpeechAcceleration,
-  updateEnvironmentSpeechModelUnloadTimeout,
-} from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import {
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { openRouterIcon } from "@t3tools/client-runtime/provider-clients";
 import {
   AuthFilesystemReadScope,
@@ -55,6 +48,7 @@ import {
   UnlinkIcon,
   XIcon,
 } from "lucide-react";
+import type { AsyncResult } from "effect/reactivity";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 
@@ -77,7 +71,16 @@ import {
   useCleanupGrant,
 } from "../../speech/voiceConsent";
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
-import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
+import {
+  cancelSpeechModelDownload,
+  downloadSpeechModel,
+  linkSpeechModels,
+  readSpeechCatalog,
+  removeSpeechModel,
+  selectSpeechModel,
+  updateSpeechAcceleration,
+  updateSpeechModelUnloadTimeout,
+} from "../../speech/speechCommands";
 import {
   getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -85,6 +88,7 @@ import {
 import { useTextGenerationTargets } from "../../textGenerators";
 import { useEnvironmentProviders, useEnvironments } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import {
   useEnvironmentSpeechInput,
@@ -673,6 +677,11 @@ function CleanupModelRow() {
   );
 }
 
+function failureDescription(result: AsyncResult.Failure<unknown, unknown>) {
+  const error = squashAtomCommandFailure(result);
+  return error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : String(error);
+}
+
 function useVoiceModels(prepared: PreparedConnection | null) {
   const gt = useGT();
   const canManage = useEnvironmentScope(prepared?.environmentId ?? null, AuthSettingsWriteScope);
@@ -688,39 +697,37 @@ function useVoiceModels(prepared: PreparedConnection | null) {
     setModels([]);
     setStatus(null);
   }
+  const readCatalog = useAtomCommand(readSpeechCatalog, { reportFailure: false });
   const epoch = useRef(0);
   const refreshRevision = useRef(0);
   const refresh = useStableCallback(
     async (connection: PreparedConnection, mode: "foreground" | "progress") => {
       const current = epoch.current;
       const revision = ++refreshRevision.current;
-      try {
-        const [nextStatus, nextModels] = await Promise.all([
-          runEnvironmentSpeech(getEnvironmentSpeechStatus(connection)),
-          runEnvironmentSpeech(getEnvironmentSpeechModels(connection, mode === "foreground")),
-        ]);
-        if (current !== epoch.current || revision !== refreshRevision.current) return;
-        setStatus(nextStatus);
-        setModels((previous) => {
-          if (mode === "foreground") return nextModels.models;
-          const benchmarks = new Map(previous.map((model) => [model.id, model.benchmark]));
-          return nextModels.models.map((model) => {
-            const benchmark = benchmarks.get(model.id);
-            return benchmark ? { ...model, benchmark } : model;
+      const result = await readCatalog({
+        prepared: connection,
+        includeBenchmarks: mode === "foreground",
+      });
+      if (current !== epoch.current || revision !== refreshRevision.current) return;
+      if (result._tag === "Failure") {
+        if (mode === "foreground")
+          toastManager.add({
+            type: "error",
+            title: gt("Could not load transcription models"),
+            description: failureDescription(result),
           });
-        });
-      } catch (error) {
-        if (mode === "progress") return;
-        if (current !== epoch.current || revision !== refreshRevision.current) return;
-        toastManager.add({
-          type: "error",
-          title: gt("Could not load transcription models"),
-          description:
-            error instanceof Error
-              ? (thrownErrorMessage(error, m) ?? error.message)
-              : String(error),
-        });
+        return;
       }
+      setStatus(result.value.status);
+      const nextModels = result.value.catalog.models;
+      setModels((previous) => {
+        if (mode === "foreground") return nextModels;
+        const benchmarks = new Map(previous.map((model) => [model.id, model.benchmark]));
+        return nextModels.map((model) => {
+          const benchmark = benchmarks.get(model.id);
+          return benchmark ? { ...model, benchmark } : model;
+        });
+      });
     },
   );
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the environment's model catalog when its connection becomes available
@@ -750,24 +757,18 @@ function useVoiceModels(prepared: PreparedConnection | null) {
     };
   }, [downloading, prepared, refresh]);
 
-  const run = async (label: string, work: () => Promise<unknown>, downloadId?: string) => {
+  const run = async (
+    label: string,
+    work: () => Promise<AtomCommandResult<unknown, unknown>>,
+    downloadId?: string,
+  ) => {
     if (!prepared || !canManage) return;
     const current = epoch.current;
     if (downloadId) setRequestedDownload(downloadId);
     else setBusy(true);
-    try {
-      await work();
-    } catch (error) {
-      if (current === epoch.current)
-        toastManager.add({
-          type: "error",
-          title: label,
-          description:
-            error instanceof Error
-              ? (thrownErrorMessage(error, m) ?? error.message)
-              : String(error),
-        });
-    }
+    const result = await work();
+    if (current === epoch.current && result._tag === "Failure")
+      toastManager.add({ type: "error", title: label, description: failureDescription(result) });
     if (current === epoch.current) {
       if (downloadId) setRequestedDownload(null);
       else setBusy(false);
@@ -798,6 +799,8 @@ function AdvancedSpeechSettings({
   const gt = useGT();
   const settings = useClientSettings();
   const { run, controlsDisabled, status } = catalog;
+  const updateAcceleration = useAtomCommand(updateSpeechAcceleration);
+  const updateUnloadTimeout = useAtomCommand(updateSpeechModelUnloadTimeout);
   if (!status?.supported) return null;
   const supported = status;
   return (
@@ -832,9 +835,7 @@ function AdvancedSpeechSettings({
             onValueChange={(value) => {
               if (value)
                 void run(gt("Could not change transcription hardware"), () =>
-                  runEnvironmentSpeech(
-                    updateEnvironmentSpeechAcceleration(prepared, value as SpeechAcceleration),
-                  ),
+                  updateAcceleration({ prepared, acceleration: value as SpeechAcceleration }),
                 );
             }}
           >
@@ -875,12 +876,7 @@ function AdvancedSpeechSettings({
             onValueChange={(value) => {
               if (value)
                 void run(gt("Could not change when the model unloads"), () =>
-                  runEnvironmentSpeech(
-                    updateEnvironmentSpeechModelUnloadTimeout(
-                      prepared,
-                      value as SpeechModelUnloadTimeout,
-                    ),
-                  ),
+                  updateUnloadTimeout({ prepared, timeout: value as SpeechModelUnloadTimeout }),
                 );
             }}
           >
@@ -920,6 +916,11 @@ function SpeechModelBrowser(props: {
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [existingPath, setExistingPath] = useState("");
   const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
+  const downloadModel = useAtomCommand(downloadSpeechModel);
+  const selectModel = useAtomCommand(selectSpeechModel);
+  const cancelDownload = useAtomCommand(cancelSpeechModelDownload);
+  const removeModel = useAtomCommand(removeSpeechModel);
+  const linkModels = useAtomCommand(linkSpeechModels);
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);
@@ -1120,20 +1121,20 @@ function SpeechModelBrowser(props: {
             onDownload: () =>
               void run(
                 gt("Could not download the model"),
-                () => runEnvironmentSpeech(downloadEnvironmentSpeechModel(prepared, model.id)),
+                () => downloadModel({ prepared, modelId: model.id }),
                 model.id,
               ),
             onSelect: () =>
               void run(gt("Could not select the model"), () =>
-                runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, model.id)),
+                selectModel({ prepared, modelId: model.id }),
               ),
             onCancel: () =>
               void run(gt("Could not cancel the download"), () =>
-                runEnvironmentSpeech(cancelEnvironmentSpeechModelDownload(prepared, model.id)),
+                cancelDownload({ prepared, modelId: model.id }),
               ),
             onDelete: () =>
               void run(gt("Could not delete the model"), () =>
-                runEnvironmentSpeech(removeEnvironmentSpeechModel(prepared, model.id)),
+                removeModel({ prepared, modelId: model.id }),
               ),
           };
           return model.active ? (
@@ -1156,8 +1157,9 @@ function SpeechModelBrowser(props: {
           onSubmit={(event) => {
             event.preventDefault();
             void run(gt("Could not use a model from that path"), async () => {
-              await runEnvironmentSpeech(linkEnvironmentSpeechModels(prepared, existingPath));
-              setExistingPath("");
+              const result = await linkModels({ prepared, path: existingPath });
+              if (result._tag === "Success") setExistingPath("");
+              return result;
             });
           }}
         >

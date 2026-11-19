@@ -17,7 +17,7 @@ import type { CloudSpeechModelId, CloudSpeechProvider } from "@t3tools/contracts
 import * as Schema from "effect/Schema";
 
 import { createBrowserPcmCapture } from "./browserPcmCapture";
-import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
+import { runVoiceSessionEffect } from "./runVoiceSessionEffect";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
 
@@ -47,7 +47,7 @@ export function createBrowserVoiceInputPlatform(input: {
       try {
         const response = await fetch(uri, { signal: transcriptionSignal });
         const pcm = new Uint8Array(await response.arrayBuffer());
-        const result = await runEnvironmentSpeech(
+        const result = await runVoiceSessionEffect(
           input.cloudProvider
             ? transcribeCloudPcm(
                 input.prepared,
@@ -83,7 +83,7 @@ export function createBrowserVoiceInputPlatform(input: {
           code: "unavailable",
           message: m(msg("Choose an OpenRouter model in Settings → Voice.")),
         });
-      await runEnvironmentSpeech(
+      await runVoiceSessionEffect(
         requireCloudSpeechKey(input.prepared, input.cloudProvider),
         options,
       );
@@ -93,7 +93,7 @@ export function createBrowserVoiceInputPlatform(input: {
         transcribe: transcribeRecording,
       };
     }
-    const status = await runEnvironmentSpeech(getEnvironmentSpeechStatus(input.prepared), options);
+    const status = await runVoiceSessionEffect(getEnvironmentSpeechStatus(input.prepared), options);
     throwIfVoiceTranscriptionAborted(options.signal);
     if (!status.supported)
       throw new VoiceTranscriptionError({ code: "unavailable", message: status.reason });
@@ -114,7 +114,7 @@ export function createBrowserVoiceInputPlatform(input: {
     if (status.supportsStreaming ? !nativeStreaming : !status.supportsBufferedStreaming) {
       return { locale, transcribe: transcribeRecording };
     }
-    const url = await runEnvironmentSpeech(getEnvironmentSpeechStreamUrl(input.prepared), options);
+    const url = await runVoiceSessionEffect(getEnvironmentSpeechStreamUrl(input.prepared), options);
     return {
       locale,
       transcribe: transcribeRecording,

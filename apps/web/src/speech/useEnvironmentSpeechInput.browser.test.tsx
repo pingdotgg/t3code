@@ -118,7 +118,13 @@ vi.mock("../hooks/useSettings", () => ({
       ),
     }),
 }));
-vi.mock("./runEnvironmentSpeech", () => ({ runEnvironmentSpeech: Effect.runPromise }));
+vi.mock("../connection/runtime", async () => {
+  const [{ Atom }, Layer] = await Promise.all([
+    import("effect/reactivity"),
+    import("effect/Layer"),
+  ]);
+  return { connectionAtomRuntime: Atom.runtime(Layer.empty) };
+});
 vi.mock("../components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/voice-input")>()),
@@ -146,11 +152,11 @@ vi.mock("@t3tools/client-runtime/voice-input", async (importOriginal) => ({
       return { models: mocks.models };
     }),
   selectEnvironmentSpeechModel: (_prepared: PreparedConnection, modelId: string) =>
-    Effect.sync(() => {
+    Effect.suspend(() => {
       mocks.selected.push(modelId);
-      if (mocks.selectionFails) throw new Error("selection failed");
+      if (mocks.selectionFails) return Effect.fail("selection failed" as const);
       mocks.statusModelId = modelId;
-      return { models: mocks.models };
+      return Effect.succeed({ models: mocks.models });
     }),
   getEnvironmentSpeechModels: vi.fn((_prepared: PreparedConnection, includeBenchmarks = false) =>
     Effect.sync(() => {

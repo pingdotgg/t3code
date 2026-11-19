@@ -5,11 +5,7 @@ import {
   configuredSecretSources,
   secretRequestReference,
 } from "@t3tools/client-runtime/secret-request";
-import {
-  getCloudSpeechKeys,
-  getCloudSpeechModels,
-  setCloudSpeechKey,
-} from "@t3tools/client-runtime/voice-input";
+import { getCloudSpeechKeys, getCloudSpeechModels } from "@t3tools/client-runtime/voice-input";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -28,14 +24,12 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type { HttpClient } from "effect/http";
-import { Atom, AsyncResult } from "effect/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { isSecretsFeatureEnabled } from "../../env";
-import {
-  inEnvironmentSpeechRuntime,
-  runEnvironmentSpeech,
-} from "../../speech/runEnvironmentSpeech";
+import { saveCloudSpeechKey } from "../../speech/speechCommands";
 import {
   chooseAudioDestination,
   pendingCloudAudioChoice,
@@ -43,6 +37,7 @@ import {
 } from "../../speech/voiceConsent";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import {
   Combobox,
@@ -74,9 +69,7 @@ function useCloudRead<A, E>(
 ) {
   const make = (connection: PreparedConnection | null) => ({
     prepared: connection,
-    atom: Atom.make(
-      connection ? inEnvironmentSpeechRuntime(read(connection)) : Effect.succeed(null),
-    ),
+    atom: connectionAtomRuntime.atom(connection ? read(connection) : Effect.succeed(null)),
   });
   const [current, setCurrent] = useState(() => make(prepared));
   if (current.prepared !== prepared) setCurrent(make(prepared));
@@ -190,6 +183,7 @@ export function CloudVoiceConfiguration({
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const saveCloudKey = useAtomCommand(saveCloudSpeechKey);
   const [model, setModel] = useState(currentModel ?? "");
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
   const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
@@ -237,15 +231,18 @@ export function CloudVoiceConfiguration({
     if (!connected || !canManage || busy) return;
     setError("");
     setBusy(true);
-    try {
+    const save = async () => {
       const commit = thenEnable ? pendingCloudAudioChoice(destination()) : null;
-      await runEnvironmentSpeech(setCloudSpeechKey(prepared, provider, value));
+      const result = await saveCloudKey({ prepared, provider, value });
+      if (result._tag === "Failure") return false;
       refresh();
       commit?.();
       close();
-    } catch {
-      setError(gt("Couldn’t save this change. Check your connection and try again."));
-    }
+      return true;
+    };
+    // Recording the pending grant writes to storage this browser may refuse.
+    const saved = await save().catch(() => false);
+    if (!saved) setError(gt("Couldn’t save this change. Check your connection and try again."));
     setBusy(false);
   };
   const submit = () => {

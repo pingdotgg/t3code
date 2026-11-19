@@ -24,7 +24,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { toastManager } from "../components/ui/toast";
 import { chooseRecordingMicrophone } from "./browserMicrophones";
 import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
-import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
+import { runVoiceSessionEffect } from "./runVoiceSessionEffect";
 import { bindAudioGrant, readCleanupGrant } from "./voiceConsent";
 import { msg } from "gt-react";
 import { m } from "../i18n/messages";
@@ -185,7 +185,7 @@ export class VoiceInputSession {
         return Promise.reject(
           new Error(m(msg("The draft's environment is unavailable for transcript cleanup."))),
         );
-      return runEnvironmentSpeech(
+      return runVoiceSessionEffect(
         postProcessEnvironmentTranscript(
           preferences.cleanupPrepared,
           transcript,

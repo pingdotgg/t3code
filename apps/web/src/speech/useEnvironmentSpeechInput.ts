@@ -1,18 +1,14 @@
+import { useAtomValue } from "@effect/atom-react";
 import {
-  cancelEnvironmentSpeechModelDownload,
-  downloadEnvironmentSpeechModel,
-  getEnvironmentSpeechModels,
-  getEnvironmentSpeechStatus,
-  selectEnvironmentSpeechModel,
   voiceInputBlocksSubmission,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { AuthOrchestrationOperateScope, CLOUD_SPEECH_LABELS } from "@t3tools/contracts";
 import type {
   EnvironmentId,
   EnvironmentSpeechModel,
-  EnvironmentSpeechStatus,
   ProjectId,
   SpeechBenchmarkTier,
 } from "@t3tools/contracts";
@@ -20,10 +16,13 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { chooseSetupSpeechModel } from "@t3tools/shared/speech";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { AsyncResult } from "effect/reactivity";
 import { msg, useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
+import { useAtomCommand } from "~/state/use-atom-command";
+import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
 import {
@@ -34,7 +33,16 @@ import {
 import { useEnvironment } from "../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../state/session";
 import { preferredSpeechLanguages } from "./preferredSpeechLanguages";
-import { runEnvironmentSpeech } from "./runEnvironmentSpeech";
+import {
+  cancelSpeechModelDownload,
+  isSpeechModelSelectError,
+  noSpeechDownloadProgressAtom,
+  readSpeechModels,
+  setUpSpeechModel,
+  speechDownloadProgressAtom,
+  speechStatusAtom,
+  unreadSpeechStatusAtom,
+} from "./speechCommands";
 import { useAudioChoice } from "./voiceConsent";
 import {
   IDLE_VOICE_STATE,
@@ -55,19 +63,6 @@ const INITIAL_SETUP = {
   catalogFailed: false,
   error: null as string | null,
 };
-
-// Every mounted editor shares one status probe per destination; starting a recording refreshes it.
-const statusProbes = new WeakMap<PreparedConnection, Promise<EnvironmentSpeechStatus>>();
-function probeSpeechStatus(prepared: PreparedConnection, refresh = false) {
-  const cached = refresh ? undefined : statusProbes.get(prepared);
-  if (cached) return cached;
-  const probe = runEnvironmentSpeech(getEnvironmentSpeechStatus(prepared));
-  statusProbes.set(prepared, probe);
-  probe.catch(() => {
-    if (statusProbes.get(prepared) === probe) statusProbes.delete(prepared);
-  });
-  return probe;
-}
 
 type DraftInput = {
   readonly text: string;
@@ -171,10 +166,16 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     input.environmentId,
     (settings) => resolveProjectSettings(settings, projectId).settings.speechProjectCustomWords,
   );
-  const [status, setStatus] = useState<{
-    readonly prepared: PreparedConnection;
-    readonly value: EnvironmentSpeechStatus | null;
-  } | null>(null);
+  const statusResult = useAtomValue(
+    prepared && !cloudProvider ? speechStatusAtom(prepared) : unreadSpeechStatusAtom,
+  );
+  const refreshStatus = useAtomQueryRunner(speechStatusAtom, {
+    refresh: true,
+    reportFailure: false,
+  });
+  const readModels = useAtomCommand(readSpeechModels, { reportFailure: false });
+  const setUpModel = useAtomCommand(setUpSpeechModel);
+  const cancelModelDownload = useAtomCommand(cancelSpeechModelDownload);
   const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [setup, setSetup] = useState(INITIAL_SETUP);
   const [previousDestination, setPreviousDestination] = useState({ prepared, grantId });
@@ -230,52 +231,20 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     [input.ownerKey, input.presented],
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- probes the chosen environment's speech status once its connection is available
-  useEffect(() => {
-    if (!prepared || cloudProvider) return;
-    let disposed = false;
-    void probeSpeechStatus(prepared)
-      .then((value) => {
-        if (!disposed) setStatus({ prepared, value });
-      })
-      .catch(() => {
-        if (!disposed) setStatus({ prepared, value: null });
-      });
-    return () => {
-      disposed = true;
-    };
-  }, [prepared, cloudProvider]);
-  const currentStatus = !cloudProvider && status?.prepared === prepared ? status.value : null;
+  const currentStatus = Option.getOrNull(AsyncResult.value(statusResult));
+  const progress = useAtomValue(
+    setup.open && setup.downloading && prepared
+      ? speechDownloadProgressAtom(prepared)
+      : noSpeechDownloadProgressAtom,
+  );
   const setupModelId = setup.model?.id;
-
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls download progress while the setup dialog owns an active model download
-  useEffect(() => {
-    if (!setup.open || !setup.downloading || !prepared || !setupModelId) return;
-    let disposed = false;
-    let refreshing = false;
-    const timer = window.setInterval(() => {
-      if (refreshing) return;
-      refreshing = true;
-      void runEnvironmentSpeech(getEnvironmentSpeechModels(prepared))
-        .then((result) => {
-          if (disposed) return;
-          const model = result.models.find((candidate) => candidate.id === setupModelId) ?? null;
-          if (model)
-            setSetup((current) => ({
-              ...current,
-              model: { ...model, recommended: current.model?.recommended ?? false },
-            }));
-        })
-        .catch(() => undefined)
-        .finally(() => {
-          refreshing = false;
-        });
-    }, 1_000);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [prepared, setup.downloading, setup.open, setupModelId]);
+  const downloadingModel = AsyncResult.isSuccess(progress)
+    ? progress.value.find((candidate) => candidate.id === setupModelId)
+    : undefined;
+  const setupModel =
+    setup.model && downloadingModel
+      ? { ...downloadingModel, recommended: setup.model.recommended }
+      : setup.model;
 
   const previousOwnerRef = useRef(input.ownerKey);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- abandons any queued submission, and a recording that cannot outlive its editor, when the draft's owner changes
@@ -365,10 +334,9 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       request: number,
     ) => {
       setSetup({ ...INITIAL_SETUP, open: true });
-      const catalog = await runEnvironmentSpeech(
-        getEnvironmentSpeechModels(connection, true),
-      ).catch(() => null);
+      const result = await readModels({ prepared: connection, includeBenchmarks: true });
       if (request !== startRequestRef.current) return;
+      const catalog = result._tag === "Success" ? result.value : null;
       const choice = chooseSetupSpeechModel(catalog?.models ?? [], {
         selectedModelId,
         intent: latestRef.current.clientSettings.speechLanguage,
@@ -414,12 +382,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       !latestRef.current.input.disabled;
     setSetup(INITIAL_SETUP);
     setQueuedStart(prepared);
-    let latestStatus: EnvironmentSpeechStatus;
-    try {
-      latestStatus = await probeSpeechStatus(prepared, true);
-    } catch (error) {
-      if (!stillCurrent()) return;
-      setQueuedStart(null);
+    const probe = await refreshStatus(prepared);
+    if (!stillCurrent()) return;
+    setQueuedStart(null);
+    if (probe._tag === "Failure") {
+      const error = squashAtomCommandFailure(probe);
       toastManager.add({
         type: "error",
         title: m(msg("Could not start voice input")),
@@ -427,9 +394,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       });
       return;
     }
-    if (!stillCurrent()) return;
-    setStatus({ prepared, value: latestStatus });
-    setQueuedStart(null);
+    const latestStatus = probe.value;
     if (latestStatus.supported && latestStatus.state === "missing-model") {
       return loadSetupCatalog(prepared, latestStatus.modelId, latestStatus.benchmarkTier, request);
     }
@@ -446,67 +411,45 @@ export function useEnvironmentSpeechInput(input: HookInput) {
 
   const downloadSetupModel = useStableCallback(async () => {
     if (!prepared || !currentStatus?.supported || !setupModelId || setup.downloading) return;
-    const modelId = setupModelId;
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
-    try {
-      const { models } = await runEnvironmentSpeech(
-        downloadEnvironmentSpeechModel(prepared, modelId),
-      );
-      if (request !== startRequestRef.current) return;
-      // A download cancelled from elsewhere still resolves, so select the model only once it landed.
-      const installed = models.some(({ id, state }) => id === modelId && state === "installed");
-      if (installed && modelId !== currentStatus.modelId) {
-        try {
-          await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
-        } catch {
-          if (request !== startRequestRef.current) return;
-          setSetup((current) => ({
-            ...current,
-            downloading: false,
-            error: m(
-              msg("The model downloaded, but this environment could not select it. Try again."),
-            ),
-          }));
-          return;
-        }
-      }
-      if (request !== startRequestRef.current) return;
-      const next = await probeSpeechStatus(prepared, true);
-      if (request !== startRequestRef.current) return;
-      setStatus({ prepared, value: next });
-      const ready =
-        installed && next.supported && next.modelId === modelId && next.state !== "missing-model";
-      setSetup((current) => ({
-        ...current,
-        downloading: false,
-        step: ready ? 1 : current.step,
-        error: ready ? null : m(msg("The model is not ready. Try downloading it again.")),
-      }));
-    } catch {
-      if (request !== startRequestRef.current) return;
-      setSetup((current) => ({
-        ...current,
-        downloading: false,
-        error: m(
-          msg("Could not download the model. Check this environment's connection and try again."),
-        ),
-      }));
-    }
+    const result = await setUpModel({
+      prepared,
+      modelId: setupModelId,
+      selectedModelId: currentStatus.modelId,
+      isCurrent: () => request === startRequestRef.current,
+    });
+    if (request !== startRequestRef.current) return;
+    const ready = result._tag === "Success" && result.value.ready;
+    setSetup((current) => ({
+      ...current,
+      downloading: false,
+      step: ready ? 1 : current.step,
+      error: ready
+        ? null
+        : result._tag === "Success"
+          ? m(msg("The model is not ready. Try downloading it again."))
+          : isSpeechModelSelectError(squashAtomCommandFailure(result))
+            ? m(msg("The model downloaded, but this environment could not select it. Try again."))
+            : m(
+                msg(
+                  "Could not download the model. Check this environment's connection and try again.",
+                ),
+              ),
+    }));
   });
 
   const cancelSetupDownload = useStableCallback(async () => {
     if (!prepared || !setupModelId) return;
     startRequestRef.current += 1;
     setSetup((current) => ({ ...current, open: false, downloading: false }));
-    try {
-      await runEnvironmentSpeech(cancelEnvironmentSpeechModelDownload(prepared, setupModelId));
-    } catch (error) {
-      setSetup((current) => ({
-        ...current,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    }
+    const result = await cancelModelDownload({ prepared, modelId: setupModelId });
+    if (result._tag === "Success") return;
+    const error = squashAtomCommandFailure(result);
+    setSetup((current) => ({
+      ...current,
+      error: error instanceof Error ? error.message : String(error),
+    }));
   });
 
   const destinationReady =
@@ -514,7 +457,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       ? Boolean(destination.offerFirstRunSetup) && input.offerSetup !== false
       : prepared !== null &&
         (cloudProvider !== undefined ||
-          (status?.prepared === prepared && status.value?.supported !== false));
+          (!AsyncResult.isInitial(statusResult) && currentStatus?.supported !== false));
   return {
     available:
       destinationReady &&
@@ -527,6 +470,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     transcriptionEnvironmentLabel: destination.label,
     setup: {
       ...setup,
+      model: setupModel,
       setOpen: (open: boolean) => setSetup((current) => ({ ...current, open })),
       retryCatalog:
         setup.open && setup.catalogFailed && prepared && currentStatus?.supported
