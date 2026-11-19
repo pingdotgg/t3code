@@ -200,6 +200,9 @@ export const TerminalWriteInput = Schema.Struct({
   ),
   // `data` holds one byte per UTF-16 code unit; older servers write it as UTF-8 text.
   binary: Schema.optionalKey(Schema.Boolean),
+  // A renderer's answer to a terminal query (DA, DSR, DECRQM). Every attached renderer
+  // answers, so the server passes on one viewer's replies; older servers ignore it.
+  reply: Schema.optionalKey(Schema.Boolean),
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
@@ -278,6 +281,7 @@ export type TerminalSummary = typeof TerminalSummary.Type;
 const TerminalMetadataSnapshotEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   terminals: Schema.Array(TerminalSummary),
+  managerId: Schema.optional(Schema.String),
 });
 
 const TerminalMetadataUpsertEvent = Schema.Struct({

@@ -38,13 +38,27 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
-  it("drops launch args that enable user hooks", () => {
-    NodeAssert.deepStrictEqual(
-      codexExecLaunchArgs(
-        "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
-      ),
-      ["--enable", "foo", "--disable", "hooks"],
-    );
+  it("keeps user hooks, apps, and plugins off during text generation", () => {
+    const launchArgs =
+      "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable apps --enable=apps --enable connectors --enable=connectors --enable plugins --enable=plugins --enable foo --disable hooks";
+    NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
+    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), [
+      "--enable",
+      "hooks",
+      "--enable=hooks",
+      "--enable",
+      "codex_hooks",
+      "--enable=codex_hooks",
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
   });
 
   it("does not pair value-taking flags with adjacent flags", () => {
@@ -54,9 +68,8 @@ describe("codexExecLaunchArgs", () => {
   });
 });
 
-describe("codex exec and mcp list launch args", () => {
-  const launchArgs =
-    "--strict-config --oss --local-provider ollama --profile local -p=work --listen off --enable foo";
+describe.each(["", "="])("codex exec and mcp list launch args with -p%swork", (separator) => {
+  const launchArgs = `--strict-config --oss --local-provider ollama --profile local -p${separator}work -c${separator}model_provider=ollama --listen off --enable foo`;
 
   it("keeps the local model provider flags for codex exec", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
@@ -67,6 +80,7 @@ describe("codex exec and mcp list launch args", () => {
       "--profile",
       "local",
       "-p=work",
+      "-c=model_provider=ollama",
       "--enable",
       "foo",
     ]);
@@ -77,6 +91,7 @@ describe("codex exec and mcp list launch args", () => {
       "--profile",
       "local",
       "-p=work",
+      "-c=model_provider=ollama",
       "--enable",
       "foo",
     ]);
