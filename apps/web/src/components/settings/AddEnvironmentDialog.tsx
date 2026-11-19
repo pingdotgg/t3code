@@ -186,7 +186,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    handleOpenChange(false);
+    if (session === savedBackendSessionRef.current) handleOpenChange(false);
     toastManager.add({
       type: "success",
       title: routeTarget ? gt("Route added") : gt("Environment connected"),
@@ -218,6 +218,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
+    const session = savedBackendSessionRef.current;
     setIsAddingSavedBackend(true);
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
@@ -267,7 +268,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    handleOpenChange(false);
+    if (session === savedBackendSessionRef.current) handleOpenChange(false);
     toastManager.add(
       routeTarget
         ? {
