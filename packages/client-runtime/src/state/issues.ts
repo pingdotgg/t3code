@@ -15,8 +15,9 @@ import {
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   type AtomCommandResult,
@@ -24,8 +25,11 @@ import {
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  createEnvironmentQueryAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
+import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { request } from "../rpc/client.ts";
 
 /** One row's identity across list pages and detail reads; hosts compare case-insensitively. */
 export function issueEntryKey(
@@ -101,20 +105,25 @@ export function createIssueCommentPager<E>(
 
   return {
     view,
-    async refresh(registry: AtomRegistry.AtomRegistry, read: () => void | Promise<void>) {
+    /** `read` settles once the detail has been read again, whether or not that read failed. */
+    async refresh(registry: AtomRegistry.AtomRegistry, read: () => Promise<unknown>) {
       const current = registry.get(state);
       if (current.refreshing) return;
-      // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
-      registry.set(state, {
-        ...current,
-        older: null,
-        refreshing: true,
-        refreshes: current.refreshes + 1,
-      });
+      registry.set(state, { ...current, refreshing: true });
+      let succeeded = false;
       try {
         await read();
+        const result = registry.get(detailAtom);
+        succeeded = result._tag === "Success" && !result.waiting;
       } finally {
-        registry.set(state, { ...registry.get(state), refreshing: false });
+        const latest = registry.get(state);
+        // A successful read invalidates older pages even when the query reuses unchanged detail.
+        registry.set(
+          state,
+          succeeded
+            ? { ...latest, older: null, refreshing: false, refreshes: latest.refreshes + 1 }
+            : { ...latest, refreshing: false },
+        );
       }
     },
     async loadOlder(
@@ -144,6 +153,8 @@ export function createIssueCommentPager<E>(
     },
   };
 }
+
+type IssueListRefreshMode = "manual" | "background";
 
 /**
  * Every read goes to a tracker API over the environment, so results are reused for a short while
@@ -179,6 +190,40 @@ export function createIssueEnvironmentAtoms<R, E>(
     label: "environment-data:issues:linked-thread-refreshes",
     tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
   });
+  const pendingListRefreshes = new WeakMap<
+    AtomRegistry.AtomRegistry,
+    WeakMap<Atom.Atom<unknown>, symbol>
+  >();
+  type ListRequest = ReturnType<typeof request<typeof WS_METHODS.issuesList>>;
+  const list = createEnvironmentQueryAtomFamily(runtime, {
+    label: "environment-data:issues:list",
+    staleTimeMs: 30_000,
+    execute: Effect.fnUntraced(function* (
+      input: IssueListInput,
+    ): Effect.fn.Return<
+      IssueListResult,
+      Effect.Error<ListRequest>,
+      Effect.Services<ListRequest> | AtomRegistry.AtomRegistry
+    > {
+      const registry = yield* AtomRegistry.AtomRegistry;
+      const {
+        target: { environmentId },
+      } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+      const pending = pendingListRefreshes.get(registry);
+      if (pending === undefined) return yield* request(WS_METHODS.issuesList, input);
+      const atom = list({ environmentId, input });
+      const intent = pending.get(atom);
+      if (intent === undefined) return yield* request(WS_METHODS.issuesList, input);
+      return yield* request(WS_METHODS.issuesList, { ...input, refresh: true }).pipe(
+        // Invalidation interrupts the read; its replacement still owes the explicit refresh.
+        Effect.onExit((exit) =>
+          Effect.sync(() => {
+            if (!Exit.hasInterrupts(exit) && pending.get(atom) === intent) pending.delete(atom);
+          }),
+        ),
+      );
+    }),
+  });
   return {
     /** The threads an issue is linked to, reread when the server signals a link changed. */
     linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
@@ -187,11 +232,23 @@ export function createIssueEnvironmentAtoms<R, E>(
       staleTimeMs: 0,
       refreshTrigger: ({ environmentId }) => linkedThreadSignals({ environmentId, input: {} }),
     }),
-    list: createEnvironmentRpcQueryAtomFamily(runtime, {
-      label: "environment-data:issues:list",
-      tag: WS_METHODS.issuesList,
-      staleTimeMs: 30_000,
-    }),
+    list,
+    refreshList(
+      registry: AtomRegistry.AtomRegistry,
+      target: IssueListTarget,
+      mode: IssueListRefreshMode,
+    ) {
+      const atom = list(target);
+      if (mode === "manual") {
+        let pending = pendingListRefreshes.get(registry);
+        if (pending === undefined) {
+          pending = new WeakMap();
+          pendingListRefreshes.set(registry, pending);
+        }
+        pending.set(atom, Symbol());
+      }
+      registry.refresh(atom);
+    },
     /**
      * A continuation of the listing, run as a command rather than read as a query: a page is
      * asked for once and laid over the rows held, and a refresh of the first page forgets it.
@@ -281,13 +338,38 @@ export interface MergedIssueList {
 
 const NO_ISSUE_LISTS: MergedIssueList = { answers: [], error: null, isPending: false };
 
+function refreshFailed<Target, A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  targets: ReadonlyArray<Target>,
+  query: (target: Target) => Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+) {
+  for (const target of targets) {
+    const atom = query(target);
+    const result = registry.get(atom);
+    if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
+  }
+}
+
 /**
  * One listing read across every environment at once: React cannot subscribe to a list of atoms
  * whose length changes, so the fan-out lives in one derived atom keyed by the targets. An
- * environment that fails contributes nothing rather than blanking the list.
+ * environment that fails contributes nothing rather than blanking the list. Retry reloads only
+ * the environments that failed, so a read still in flight elsewhere is not restarted.
  */
 export function createMergedIssueListAtoms<E>(
-  list: (target: IssueListTarget) => Atom.Atom<AsyncResult.AsyncResult<IssueListResult, E>>,
+  {
+    list,
+    refreshList,
+  }: {
+    readonly list: (
+      target: IssueListTarget,
+    ) => Atom.Atom<AsyncResult.AsyncResult<IssueListResult, E>>;
+    readonly refreshList: (
+      registry: AtomRegistry.AtomRegistry,
+      target: IssueListTarget,
+      mode: IssueListRefreshMode,
+    ) => void;
+  },
   formatError: (cause: Cause.Cause<E>) => string,
 ) {
   const empty = Atom.make(NO_ISSUE_LISTS).pipe(Atom.withLabel("issues:merged-list:empty"));
@@ -309,8 +391,9 @@ export function createMergedIssueListAtoms<E>(
   const refresh = (
     registry: AtomRegistry.AtomRegistry,
     targets: ReadonlyArray<IssueListTarget>,
+    mode: IssueListRefreshMode,
   ) => {
-    for (const target of targets) registry.refresh(list(target));
+    for (const target of targets) refreshList(registry, target, mode);
   };
   // The targets behind each listing atom, so a write made elsewhere can refresh the ones still
   // shown. Weak, so a closed search goes with its atom once the registry drops it.
@@ -323,6 +406,8 @@ export function createMergedIssueListAtoms<E>(
       return atom;
     },
     refresh,
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueListTarget>) =>
+      refreshFailed(registry, targets, list),
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
       for (const node of registry.getNodes().values()) {
@@ -331,6 +416,7 @@ export function createMergedIssueListAtoms<E>(
         refresh(
           registry,
           targets.filter((target) => target.environmentId === environmentId),
+          "background",
         );
       }
     },
@@ -401,12 +487,7 @@ export function createMergedIssueCandidatesAtoms<E>(
   return {
     atom: (targets: ReadonlyArray<IssueCandidatesTarget>) =>
       targets.length === 0 ? empty : family(JSON.stringify(targets)),
-    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) => {
-      for (const target of targets) {
-        const atom = candidates(target);
-        const result = registry.get(atom);
-        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
-      }
-    },
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) =>
+      refreshFailed(registry, targets, candidates),
   };
 }
