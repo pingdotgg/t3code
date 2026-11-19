@@ -35,6 +35,8 @@ const TRANSCRIPT_BYTE_CAP = 256 * 1024;
 const BATCH_TRANSCRIPT_BYTES = 512 * 1024;
 const STEP_TEXT_CAP = 4_000;
 const TOOL_INPUT_CAP = 1_000;
+const MAX_MESSAGE_FILES = 256;
+const MAX_DETACHED_CHILDREN = 64;
 
 /** T3's title for a batch whose launch text it never saw. */
 export const ANTIGRAVITY_SUBAGENT_BATCH_TITLE = "Antigravity subagent batch";
@@ -44,10 +46,10 @@ interface AntigravityChildLaunch {
   readonly prompt: string;
 }
 
+const LaunchInput = Schema.Struct({ Role: Schema.String, Prompt: Schema.String });
+// agy 1.5 launches one child per call with a flat input; earlier releases send a batch.
 const decodeLaunchInput = Schema.decodeUnknownOption(
-  Schema.Struct({
-    Subagents: Schema.NonEmptyArray(Schema.Struct({ Role: Schema.String, Prompt: Schema.String })),
-  }),
+  Schema.Union([Schema.Struct({ Subagents: Schema.NonEmptyArray(LaunchInput) }), LaunchInput]),
 );
 
 /** `invoke_subagent` arguments, from the permission prompt or the persisted record. */
@@ -56,7 +58,10 @@ export function antigravitySubagentLaunches(
 ): ReadonlyArray<AntigravityChildLaunch> | undefined {
   return Option.getOrUndefined(
     Option.map(decodeLaunchInput(input), (decoded) =>
-      decoded.Subagents.map((entry) => ({ role: entry.Role, prompt: entry.Prompt })),
+      ("Subagents" in decoded ? decoded.Subagents : [decoded]).map((entry) => ({
+        role: entry.Role,
+        prompt: entry.Prompt,
+      })),
     ),
   );
 }
@@ -120,7 +125,10 @@ const text = (bytes: Uint8Array | undefined, field: number) => {
 interface InvokeRecord {
   readonly toolCallId: string | undefined;
   readonly launches: ReadonlyArray<AntigravityChildLaunch>;
-  readonly children: ReadonlyArray<{ readonly conversationId: string; readonly logUri: string }>;
+  readonly children: ReadonlyArray<{
+    readonly conversationId: string;
+    readonly logUri?: string | undefined;
+  }>;
 }
 
 const NATIVE_ID = /^[A-Za-z0-9-]{1,64}$/;
@@ -381,13 +389,15 @@ async function readChildTranscript(
     )
   )?.path;
   if (expected === undefined) return undefined;
-  let named: string;
-  try {
-    named = NodeURL.fileURLToPath(child.logUri);
-  } catch {
-    return undefined;
+  if (child.logUri !== undefined) {
+    let named: string;
+    try {
+      named = NodeURL.fileURLToPath(child.logUri);
+    } catch {
+      return undefined;
+    }
+    if ((await NodeFSP.realpath(named).catch(() => undefined)) !== expected) return undefined;
   }
-  if ((await NodeFSP.realpath(named).catch(() => undefined)) !== expected) return undefined;
   const handle = await NodeFSP.open(
     expected,
     NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
@@ -430,23 +440,27 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
   return yield* Effect.tryPromise({
     try: async (): Promise<ReadonlyArray<OrchestrationV2NativeChildWork>> => {
       const profileRoot = await antigravityProfileRoot(input.profileDirectory);
-      const databasePath =
-        profileRoot === undefined
-          ? undefined
-          : (
-              await antigravityManagedPath(
-                profileRoot,
-                ["antigravity-acp", "conversations", `${input.rootSessionId}.db`],
-                "file",
-              )
-            )?.path;
-      if (profileRoot === undefined || databasePath === undefined) return [];
-      const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
-      let record: InvokeRecord | undefined;
-      try {
-        record = findInvokeRecord(database, input);
-      } finally {
-        database.close();
+      if (profileRoot === undefined) return [];
+      let record = await findDetachedInvokeRecord(
+        profileRoot,
+        input.rootSessionId,
+        input.nativeTaskId,
+      );
+      if (record === undefined) {
+        const databasePath = (
+          await antigravityManagedPath(
+            profileRoot,
+            ["antigravity-acp", "conversations", `${input.rootSessionId}.db`],
+            "file",
+          )
+        )?.path;
+        if (databasePath === undefined) return [];
+        const database = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+        try {
+          record = findInvokeRecord(database, input);
+        } finally {
+          database.close();
+        }
       }
       if (record === undefined) return [];
       const { launches, children } = record;
@@ -476,3 +490,197 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
     catch: (cause) => new AntigravityChildWorkReadError({ cause }),
   });
 });
+
+const decodeChildMessage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sender: Schema.String,
+      content: Schema.optional(Schema.String),
+      sourceMetadata: Schema.optional(
+        Schema.Struct({
+          tool: Schema.optional(
+            Schema.Struct({
+              conversationId: Schema.optional(Schema.String),
+              toolCall: Schema.optional(
+                Schema.Struct({
+                  id: Schema.String,
+                  name: Schema.String,
+                  argumentsJson: Schema.optional(Schema.String),
+                }),
+              ),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+);
+
+const decodeDetachedSubagent = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      conversationId: Schema.optional(Schema.String),
+      subagentDescriptor: Schema.optional(
+        Schema.Struct({
+          role: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  ),
+);
+
+/** A conversation's inbox. Throws past a bound or on a file it cannot read, so nothing is proven. */
+async function readInbox(profileRoot: string, conversationId: string) {
+  const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
+  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox === undefined) return [];
+  // `read.json` is the runtime's read receipts, not a message.
+  const names = (await NodeFSP.readdir(inbox.path)).filter(
+    (name) => name.endsWith(".json") && name !== "read.json",
+  );
+  if (names.length > MAX_MESSAGE_FILES) throw new Error("Too many messages");
+  return Promise.all(
+    names.map(async (name) => {
+      const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
+      if (file === undefined || file.info.size > MAX_STEP_BYTES) throw new Error("Unreadable");
+      return Option.getOrThrow(decodeChildMessage(await NodeFSP.readFile(file.path, "utf8")));
+    }),
+  );
+}
+
+type ChildMessage = Awaited<ReturnType<typeof readInbox>>[number];
+
+async function listDetachedChildIds(
+  profileRoot: string,
+  rootSessionId: string,
+): Promise<ReadonlyArray<string> | undefined> {
+  const children = await antigravityManagedPath(
+    profileRoot,
+    ["antigravity-acp", "brain", rootSessionId, ".system_generated", "subagents"],
+    "directory",
+  );
+  if (children === undefined) return undefined;
+  const entries = await NodeFSP.readdir(children.path).catch(() => undefined);
+  if (entries === undefined) return undefined;
+  const childIds = entries.flatMap((name) =>
+    name.endsWith(".json") && NATIVE_ID.test(name.slice(0, -5)) ? [name.slice(0, -5)] : [],
+  );
+  return childIds.length > MAX_DETACHED_CHILDREN ? undefined : childIds;
+}
+
+function detachedLaunchCall(message: ChildMessage, rootSessionId: string) {
+  const tool = message.sourceMetadata?.tool;
+  const call = tool?.toolCall;
+  return message.sender === rootSessionId &&
+    (tool?.conversationId === undefined || tool.conversationId === rootSessionId) &&
+    call?.name === "invoke_subagent"
+    ? call
+    : undefined;
+}
+
+async function readDetachedSubagent(profileRoot: string, rootSessionId: string, childId: string) {
+  const file = await antigravityManagedPath(
+    profileRoot,
+    [
+      "antigravity-acp",
+      "brain",
+      rootSessionId,
+      ".system_generated",
+      "subagents",
+      `${childId}.json`,
+    ],
+    "file",
+  );
+  if (file === undefined || file.info.size > MAX_STEP_BYTES) return undefined;
+  const contents = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
+  if (contents === undefined) return undefined;
+  const record = Option.getOrUndefined(decodeDetachedSubagent(contents));
+  return record !== undefined &&
+    (record.conversationId === undefined || record.conversationId === childId)
+    ? record
+    : undefined;
+}
+
+/**
+ * agy 1.5 records detached children under `subagents/` instead of a SQLite `INVOKE_SUBAGENT` step;
+ * the child's own inbox carries the parent's launching `invoke_subagent` tool call id.
+ */
+async function findDetachedInvokeRecord(
+  profileRoot: string,
+  rootSessionId: string,
+  nativeTaskId: string,
+): Promise<InvokeRecord | undefined> {
+  const childIds = await listDetachedChildIds(profileRoot, rootSessionId);
+  if (childIds === undefined || childIds.length === 0) return undefined;
+  const matches: Array<InvokeRecord> = [];
+  for (const childId of childIds) {
+    const messages = await readInbox(profileRoot, childId).catch(() => undefined);
+    // An unreadable or oversized sibling inbox could also claim this id, so uniqueness is unproven.
+    if (messages === undefined) return undefined;
+    const launchMessage = messages.find(
+      (message) => detachedLaunchCall(message, rootSessionId)?.id === nativeTaskId,
+    );
+    if (launchMessage === undefined) continue;
+    const subagent = await readDetachedSubagent(profileRoot, rootSessionId, childId);
+    if (subagent === undefined) return undefined;
+    const argumentsJson = launchMessage.sourceMetadata?.tool?.toolCall?.argumentsJson;
+    const parsedArgs =
+      argumentsJson === undefined
+        ? undefined
+        : Option.getOrUndefined(decodeArgument(argumentsJson));
+    const [fromArgs] = antigravitySubagentLaunches(parsedArgs) ?? [];
+    matches.push({
+      toolCallId: nativeTaskId,
+      launches: [
+        fromArgs ?? {
+          role: subagent.subagentDescriptor?.role ?? "",
+          prompt: launchMessage.content ?? "",
+        },
+      ],
+      children: [{ conversationId: childId }],
+    });
+  }
+  const [match] = matches;
+  return matches.length === 1 ? match : undefined;
+}
+
+/**
+ * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
+ * a child is done, or waits for guidance, once its message is in the parent's inbox. Returns the
+ * launching tool call ids of children with no message yet; none when the records prove nothing.
+ */
+export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly rootSessionId: string;
+    readonly toolCallIds: ReadonlyArray<string>;
+  }) {
+    if (!NATIVE_ID.test(input.rootSessionId)) return [];
+    const read = async (): Promise<ReadonlyArray<string>> => {
+      const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+      const childIds =
+        profileRoot === undefined
+          ? undefined
+          : await listDetachedChildIds(profileRoot, input.rootSessionId);
+      if (profileRoot === undefined || childIds === undefined) return [];
+      const reported = new Set(
+        (await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
+      );
+      const atWork: Array<string> = [];
+      for (const childId of childIds) {
+        if (reported.has(childId)) continue;
+        for (const message of await readInbox(profileRoot, childId)) {
+          const launch = detachedLaunchCall(message, input.rootSessionId);
+          if (launch !== undefined && input.toolCallIds.includes(launch.id)) {
+            atWork.push(launch.id);
+          }
+        }
+      }
+      return atWork;
+    };
+    return yield* Effect.tryPromise({
+      try: read,
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  },
+);
