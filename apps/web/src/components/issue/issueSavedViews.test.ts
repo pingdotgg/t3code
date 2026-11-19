@@ -46,6 +46,7 @@ describe("saved issue views", () => {
       (_, index) => [EnvironmentId.make("env-1"), ProjectId.make(`project-${index}`)] as const,
     );
     const stored = issueListPreferences({ ...preferences, hideProjects: many });
-    expect(decodePreferences(stored)._tag).toBe("Some");
+    const restored = decodePreferences(stored);
+    expect(restored._tag === "Some" && restored.value.hideProjects).toEqual(many.slice(0, 1_000));
   });
 });
