@@ -343,6 +343,7 @@ export function ResetCredits({
   credits,
   now,
   store,
+  blocked = null,
 }: {
   readonly environmentId: EnvironmentId;
   readonly input: ProviderConsumeResetCreditInput;
@@ -350,6 +351,8 @@ export function ResetCredits({
   readonly now: number;
   /** Keeps the redemption's progress and answer outside this component. */
   readonly store?: ResetCreditRedeemStore;
+  /** Why redeeming now would be wasted; disables the button and says so. */
+  readonly blocked?: string | null;
 }) {
   const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
     environmentId,
@@ -364,7 +367,7 @@ export function ResetCredits({
         <Button
           size="xs"
           variant="outline"
-          disabled={busy || !canManageProviders}
+          disabled={busy || !canManageProviders || blocked !== null}
           onClick={() => {
             if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
           }}
@@ -372,6 +375,7 @@ export function ResetCredits({
           {busy ? "Using…" : "Use reset"}
         </Button>
       ) : null}
+      {blocked !== null && credits.availableCount > 0 && !busy ? <span>{blocked}</span> : null}
       {status ? <span className="text-foreground">{status}</span> : null}
       <ResetCreditDialog
         open={confirming}

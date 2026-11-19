@@ -573,6 +573,7 @@ describe("resetCreditSlots", () => {
         kind: "weekly",
         credits: { availableCount: 0 },
         redeem: { busy: false, status: "Reset applied." },
+        blocked: null,
       },
     ]);
   });
@@ -590,5 +591,77 @@ describe("resetCreditSlots", () => {
       [resetRedeemKey("claude-2", "weekly"), { busy: false, status: "Reset applied." }],
     ]);
     expect(resetCreditSlots(row(undefined), elsewhere)).toEqual([]);
+  });
+});
+
+describe("deriveProxyPill Fable reset guard", () => {
+  const fableOnly = {
+    availableCount: 0,
+    usableNowCount: 0,
+    fable: { availableCount: 1, nextCreditId: "fable" as never },
+  };
+  const rowFor = (
+    windows: Array<[id: string, usedPercent: number, resetsAt?: string]>,
+    proxy: NonNullable<UsageLimitSourceSnapshot["accounts"][number]["proxy"]> = {
+      state: "ready",
+      inflight: 0,
+    },
+    resetCredits: NonNullable<
+      UsageLimitSourceSnapshot["accounts"][number]["usageLimits"]["resetCredits"]
+    > = fableOnly,
+  ) => {
+    const base = account("claude-1", windows, proxy);
+    const pill = deriveProxyPill(
+      snapshot({
+        accounts: [{ ...base, usageLimits: { ...base.usageLimits, resetCredits } }],
+      }),
+      now,
+    )!;
+    return pill.accounts.find((row) => row.id === "claude-1")!;
+  };
+
+  it("blocks a Fable reset while the weekly limit is full", () => {
+    const row = rowFor([
+      ["five_hour", 0],
+      ["seven_day", 99, at(100)],
+    ]);
+    const blocked = "Weekly limit full, resets in 4d 4h. A Fable reset can't be used until then.";
+    expect(row.resetCredits?.fableBlocked).toBe(blocked);
+    expect(row.resetCredits?.tooltip).toContain(blocked);
+    const fable = resetCreditSlots(row, new Map()).find((slot) => slot.kind === "fable");
+    expect(fable?.blocked).toBe(blocked);
+  });
+
+  it("never blocks the weekly reset that would clear the full limit", () => {
+    const row = rowFor([["seven_day", 99, at(100)]], undefined, {
+      ...fableOnly,
+      availableCount: 1,
+      usableNowCount: 1,
+      nextCreditId: "weekly" as never,
+    });
+    const weekly = resetCreditSlots(row, new Map()).find((slot) => slot.kind === "weekly");
+    expect(weekly?.blocked).toBeNull();
+  });
+
+  it("leaves a Fable reset open when only the session window is full", () => {
+    const row = rowFor([
+      ["five_hour", 99, at(2)],
+      ["seven_day", 50, at(100)],
+    ]);
+    expect(row.resetCredits?.fableBlocked).toBeNull();
+  });
+
+  it("leaves a Fable reset open on an account the gateway keeps serving on credits", () => {
+    const row = rowFor([["seven_day", 99, at(100)]], {
+      state: "ready",
+      inflight: 0,
+      credits: true,
+    });
+    expect(row.resetCredits?.fableBlocked).toBeNull();
+  });
+
+  it("leaves a Fable reset open once the full weekly window has reset", () => {
+    const row = rowFor([["seven_day", 99, at(-1)]]);
+    expect(row.resetCredits?.fableBlocked).toBeNull();
   });
 });

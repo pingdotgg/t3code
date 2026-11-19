@@ -413,6 +413,7 @@ function LedgerRow({
                       state: slot.redeem,
                       onChange: (next) => redeem.onState(key, next),
                     }}
+                    blocked={slot.blocked}
                   />
                 );
                 return slot.kind === "fable" ? (

@@ -85,6 +85,12 @@ export interface ProxyResetCreditsView {
   readonly weekly: ServerProviderResetCredits | null;
   /** Fable resets to redeem, credit id "fable"; null when none. */
   readonly fable: ServerProviderResetCredits | null;
+  /**
+   * Why a Fable reset can't help now, or null when it can. The gateway stops
+   * routing every model to an account whose weekly limit is full, Fable too,
+   * so clearing the Fable bucket buys nothing until the weekly limit resets.
+   */
+  readonly fableBlocked: string | null;
 }
 
 /** The bucket a gateway credit id names; the gateway resolves the real grant. */
@@ -96,6 +102,8 @@ export interface ProxyResetCreditSlot {
   /** The bucket, or an empty one once the last credit is spent. */
   readonly credits: ServerProviderResetCredits;
   readonly redeem: ResetCreditRedeemState | null;
+  /** Why this bucket can't be redeemed usefully now, or null when it can. */
+  readonly blocked: string | null;
 }
 
 export interface ProxyAccountGroup {
@@ -228,6 +236,7 @@ function expiry(at: string | undefined, now: number): string {
 export function resetCreditsView(
   credits: ServerProviderResetCredits | undefined,
   now: number,
+  fableBlocked: string | null = null,
 ): ProxyResetCreditsView | null {
   if (!credits) return null;
   const { fable: _fable, ...weeklyBucket } = credits;
@@ -240,6 +249,7 @@ export function resetCreditsView(
     lines.push(`${plural(weekly, "weekly reset")}${expiry(credits.nextExpiresAt, now)}`);
   if (fable > 0) {
     lines.push(`${plural(fable, "Fable reset")}${expiry(credits.fable?.nextExpiresAt, now)}`);
+    if (fableBlocked) lines.push(fableBlocked);
   }
   if (muted) lines.push("None usable until a limit is reached");
   return {
@@ -248,6 +258,7 @@ export function resetCreditsView(
     tooltip: lines.join("\n"),
     weekly: weekly > 0 ? weeklyBucket : null,
     fable: credits.fable && fable > 0 ? { ...credits.fable } : null,
+    fableBlocked: fable > 0 ? fableBlocked : null,
   };
 }
 
@@ -270,7 +281,8 @@ export function resetCreditSlots(
     const held = redeems.get(resetRedeemKey(account.id, kind)) ?? null;
     const redeem = held && (held.busy || held.status !== null) ? held : null;
     if (bucket === null && redeem === null) return [];
-    return [{ kind, credits: bucket ?? { availableCount: 0 }, redeem }];
+    const blocked = kind === "fable" ? (account.resetCredits?.fableBlocked ?? null) : null;
+    return [{ kind, credits: bucket ?? { availableCount: 0 }, redeem, blocked }];
   });
 }
 
@@ -386,6 +398,19 @@ function accountView(
     }
   }
 
+  // A weekly limit at the threshold takes the account out of selection for
+  // every model until it resets, unless credits keep it serving. A full
+  // session window clears within hours, so it does not block a Fable reset.
+  const weeklyFull = proxy?.credits
+    ? undefined
+    : account.usageLimits.windows.find(
+        (window) => window.id === "seven_day" && spent(window, input.threshold, input.now),
+      );
+  const weeklyResetIn = weeklyFull ? countdown(weeklyFull.resetsAt, input.now, false) : "";
+  const fableBlocked = weeklyFull
+    ? `Weekly limit full${weeklyResetIn ? `, resets in ${weeklyResetIn}` : ""}. A Fable reset can't be used until then.`
+    : null;
+
   return {
     id: account.id,
     driver: String(account.driver),
@@ -399,7 +424,7 @@ function accountView(
     resumesAtMs: resumesAt && Number.isFinite(Date.parse(resumesAt)) ? Date.parse(resumesAt) : null,
     needsLogin: proxy?.state === "reauthentication",
     login: input.login ? loginView(input.login) : null,
-    resetCredits: resetCreditsView(account.usageLimits.resetCredits, input.now),
+    resetCredits: resetCreditsView(account.usageLimits.resetCredits, input.now, fableBlocked),
   };
 }
 

@@ -164,4 +164,34 @@ describe("Ledger reset credits", () => {
     await card.getByRole("button", { name: "Show claude-1 windows" }).click();
     await expect.element(card.getByRole("button", { name: "Use reset" })).toBeVisible();
   });
+
+  const fableOnly: ServerProviderResetCredits = {
+    availableCount: 0,
+    usableNowCount: 0,
+    fable: { availableCount: 1, nextCreditId: "fable" as never },
+  };
+
+  it("holds back a Fable reset while the weekly limit is full, and says why", async () => {
+    using _clock = frozenClock();
+    const calls = freshGateway();
+    await using card = await render(ledger(gatewaySnapshot(99, fableOnly), "card"));
+    await card.getByRole("button", { name: "Show claude-1 windows" }).click();
+    await expect.element(card.getByRole("button", { name: "Use reset" })).toBeDisabled();
+    await expect
+      .element(
+        card.getByText(
+          "Weekly limit full, resets in 3d 0h. A Fable reset can't be used until then.",
+        ),
+      )
+      .toBeVisible();
+    expect(calls.redeems).toHaveLength(0);
+  });
+
+  it("offers a Fable reset while the weekly limit has room", async () => {
+    using _clock = frozenClock();
+    await using card = await render(ledger(gatewaySnapshot(50, fableOnly), "card"));
+    await card.getByRole("button", { name: "Show claude-1 windows" }).click();
+    await expect.element(card.getByRole("button", { name: "Use reset" })).toBeEnabled();
+    await expect.element(card.getByText(/A Fable reset can't be used/)).not.toBeInTheDocument();
+  });
 });
