@@ -3,6 +3,9 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -17,6 +20,8 @@ import {
   codexRoutesSpendNativeQuota,
   makeCodexSkillsProbe,
   mapCodexModelCapabilities,
+  probeCodexAppServerProvider,
+  type CodexAppServerProviderSnapshot,
 } from "./CodexProvider.ts";
 
 function makeFakeCodexAppServers() {
@@ -142,6 +147,136 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
 
     yield* Scope.close(providerScope, Exit.void);
     assert.strictEqual(helpers[3]!.closed, true);
+  }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+);
+
+it.effect("keeps the probe's app-server alive until its slow catalog refresh lands", () =>
+  Effect.gen(function* () {
+    const cacheStamp = (fetchedAt: string, model: string) =>
+      JSON.stringify({ fetched_at: fetchedAt, model });
+    let cache = cacheStamp("1969-12-31T00:00:00.000Z", "gpt-old");
+    const pollStarted = yield* Deferred.make<void>();
+    let appServerClosed = false;
+    const modelEntry = (model: string) => ({
+      additionalSpeedTiers: [],
+      defaultReasoningEffort: "medium",
+      description: model,
+      displayName: model,
+      hidden: false,
+      id: model,
+      isDefault: true,
+      model,
+      supportedReasoningEfforts: [],
+    });
+    const idle = (stdout: string) =>
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(900_100_001),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: Stream.make(new TextEncoder().encode(stdout)),
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    const spawner = ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        if (command._tag === "StandardCommand" && command.command === "pgrep") return idle("");
+        const output = yield* Queue.unbounded<Uint8Array, Cause.Done>();
+        const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+        yield* Effect.addFinalizer(() => Effect.sync(() => (appServerClosed = true)));
+        // Codex's own models download, finishing after the probe's three-second wait.
+        yield* Effect.sleep("6 seconds").pipe(
+          Effect.andThen(
+            Effect.sync(() => (cache = cacheStamp("1970-01-01T00:00:06.000Z", "gpt-new"))),
+          ),
+          Effect.forkScoped,
+        );
+        const results: Record<string, () => unknown> = {
+          initialize: () => ({
+            codexHome: "/codex-home",
+            platformFamily: "unix",
+            platformOs: "linux",
+            userAgent: "codex/0.0.0",
+          }),
+          "account/read": () => ({
+            account: { type: "chatgpt", email: "a@example.com", planType: "pro" },
+            requiresOpenaiAuth: true,
+          }),
+          "skills/list": () => ({ data: [] }),
+          "config/read": () => ({ config: { model_provider: "hub" }, origins: {} }),
+          "model/list": () => ({
+            data: [modelEntry((JSON.parse(cache) as { model: string }).model)],
+            nextCursor: null,
+          }),
+        };
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(900_100_000),
+          exitCode: Deferred.await(exited),
+          isRunning: Effect.map(Deferred.isDone(exited), (done) => !done),
+          kill: () => Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1)).pipe(Effect.asVoid),
+          unref: Effect.succeed(Effect.void),
+          stdin: Sink.forEach((chunk: string | Uint8Array) =>
+            Effect.forEach(
+              (typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk))
+                .split("\n")
+                .filter(Boolean),
+              (line) => {
+                const frame = JSON.parse(line) as { readonly id?: number; readonly method: string };
+                const result = results[frame.method];
+                if (frame.id === undefined || !result) return Effect.void;
+                return Queue.offer(
+                  output,
+                  new TextEncoder().encode(
+                    `${JSON.stringify({ id: frame.id, result: result() })}\n`,
+                  ),
+                );
+              },
+              { discard: true },
+            ),
+          ),
+          stdout: Stream.fromQueue(output),
+          stderr: Stream.empty,
+          all: Stream.empty,
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    );
+    const fileSystem = FileSystem.makeNoop({
+      readFileString: () => Deferred.succeed(pollStarted, undefined).pipe(Effect.as(cache)),
+    });
+
+    const probeFiber = yield* probeCodexAppServerProvider({
+      probeTimeoutMs: 20_000,
+      binaryPath: "codex",
+      cwd: "/project",
+      environment: {},
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provide(Path.layer),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(pollStarted);
+    yield* TestClock.adjust("3 seconds");
+    const probed: CodexAppServerProviderSnapshot = yield* Fiber.join(probeFiber);
+    assert.deepStrictEqual(
+      probed.models?.map((model) => model.slug),
+      ["gpt-old"],
+    );
+    assert.strictEqual(appServerClosed, false);
+
+    const late = yield* Effect.forkChild(probed.lateModels ?? Effect.undefined);
+    yield* TestClock.adjust("3 seconds");
+    assert.deepStrictEqual(
+      (yield* Fiber.join(late))?.map((model) => model.slug),
+      ["gpt-new"],
+    );
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
 );
 

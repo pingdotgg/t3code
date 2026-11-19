@@ -269,24 +269,45 @@ export const CodexDriver: ProviderDriver<
       ),
     );
 
-    // Codex's own catalog fetch often outlasts the probe's wait; a recheck lists its write.
-    const catalogStale = yield* Ref.make(false);
+    // A catalog refresh that outlasts the probe's wait lands later on the same app-server; the
+    // next check publishes that probe with its late models instead of spawning another.
+    const driverScope = yield* Effect.scope;
+    let refreshSnapshot: Effect.Effect<unknown> = Effect.void;
+    const probeCount = yield* Ref.make(0);
+    const lateProbe = yield* Ref.make<CodexAppServerProviderSnapshot | undefined>(undefined);
+    const probe = Effect.fn("CodexDriver.probe")(function* (
+      probeInput: Parameters<typeof probeCodexAppServerProvider>[0],
+    ) {
+      const late = yield* Ref.getAndSet(lateProbe, undefined);
+      if (late) return late;
+      const probeId = yield* Ref.updateAndGet(probeCount, (count) => count + 1);
+      const probed: CodexAppServerProviderSnapshot = yield* probeCodexAppServerProvider(probeInput);
+      const { lateModels, ...current } = probed;
+      if (lateModels) {
+        yield* lateModels.pipe(
+          Effect.flatMap((models) =>
+            Ref.get(probeCount).pipe(
+              Effect.flatMap((latestId) =>
+                models === undefined || latestId !== probeId
+                  ? Effect.void
+                  : Ref.set(lateProbe, { ...current, models }).pipe(
+                      Effect.andThen(Effect.suspend(() => refreshSnapshot)),
+                    ),
+              ),
+            ),
+          ),
+          Effect.ignoreCause({ log: true }),
+          Effect.forkIn(driverScope),
+        );
+      }
+      return probed;
+    });
     // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
     // manifest, so a slow or hung fetch never delays the provider check.
     const checkProvider = modelCatalog.refreshInBackground.pipe(
-      Effect.andThen(Ref.set(catalogStale, false)),
       Effect.andThen(
         Effect.zipWith(
-          checkCodexProviderStatus(
-            effectiveConfig,
-            (input) =>
-              probeCodexAppServerProvider(input).pipe(
-                Effect.tap((probed: CodexAppServerProviderSnapshot) =>
-                  Ref.set(catalogStale, probed.catalogStale === true),
-                ),
-              ),
-            processEnv,
-          ),
+          checkCodexProviderStatus(effectiveConfig, probe, processEnv),
           currentCatalog,
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
           { concurrent: true },
@@ -309,7 +330,6 @@ export const CodexDriver: ProviderDriver<
           (draft, catalog) => stampIdentity(applyCodexModelCatalog(draft, catalog)),
         ),
       checkProvider,
-      recheckSoon: Ref.get(catalogStale),
       enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
         resolveMaintenance().pipe(
           Effect.flatMap((maintenanceCapabilities) =>
@@ -332,6 +352,7 @@ export const CodexDriver: ProviderDriver<
           }),
       ),
     );
+    refreshSnapshot = snapshot.refresh;
     const textGeneration = yield* makeCodexTextGeneration(
       effectiveConfig,
       processEnv,
