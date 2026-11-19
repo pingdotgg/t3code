@@ -3483,6 +3483,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.runId === item.runId,
       );
       if (run === undefined || message === undefined || isActiveRun(run)) continue;
+      const firstSteerEffect = Option.getOrUndefined(
+        yield* effectOutbox.firstSteer(threadId, message.id),
+      );
+      if (firstSteerEffect?.request.type === "provider-turn.steer") {
+        if (firstSteerEffect.status === "pending" || firstSteerEffect.status === "running") {
+          yield* effectOutbox.awaitSettled(firstSteerEffect.id);
+        }
+        const settledSteer = Option.getOrUndefined(yield* effectOutbox.get(firstSteerEffect.id));
+        if (settledSteer?.status === "succeeded") continue;
+      }
       // Stop drops a steer it reached; say so, as the adapter does for steers it still held.
       if (yield* projectionStore.hasRunInterruptRequest(threadId, run.id)) {
         const now = yield* DateTime.now;

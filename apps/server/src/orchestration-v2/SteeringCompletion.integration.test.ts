@@ -58,6 +58,7 @@ it.effect.each(
   (
     [
       [false, "during delivery"],
+      [false, "accepted before terminal"],
       [false, "before dispatch"],
       [true, "after delivery"],
       [true, "without native steering"],
@@ -162,6 +163,7 @@ it.effect.each(
                 if (timing === "after delivery" || timing === "during continuation") return;
                 yield* Deferred.succeed(steerEntered, undefined);
                 yield* Deferred.await(rejectSteer);
+                if (timing === "accepted before terminal") return;
                 return yield* new ProviderAdapter.ProviderAdapterSteerRunError({
                   driver,
                   providerThreadId: turn.providerThread.id,
@@ -380,7 +382,9 @@ it.effect.each(
         if (consumed !== null) yield* Fiber.join(consumed);
       }
       const delivery =
-        timing === "during delivery" ? yield* worker.runOnce().pipe(Effect.forkScoped) : null;
+        timing === "during delivery" || timing === "accepted before terminal"
+          ? yield* worker.runOnce().pipe(Effect.forkScoped)
+          : null;
       if (delivery !== null) yield* Deferred.await(steerEntered);
       const completed = yield* watch(
         (event) =>
@@ -405,12 +409,29 @@ it.effect.each(
         failure: null,
         threadDisposition: "reusable",
       });
-      yield* Fiber.join(completed);
-      if (delivery !== null) {
+      if (timing === "accepted before terminal") {
         yield* Deferred.succeed(rejectSteer, undefined);
-        yield* Fiber.join(delivery);
+        yield* Fiber.join(delivery!);
       }
-      if (delivery !== null && !question) {
+      yield* Fiber.join(completed);
+      if (timing === "during delivery") {
+        yield* Deferred.succeed(rejectSteer, undefined);
+        yield* Fiber.join(delivery!);
+      }
+      if (timing === "accepted before terminal") {
+        const accepted = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          accepted.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === messageId,
+          )?.status,
+          "completed",
+        );
+        assert.isFalse(accepted.runs.some((run) => run.status === "queued"));
+        assert.equal(steerCalls, 1);
+        assert.equal(started.length, 1);
+        assert.equal(accepted.messages.filter((message) => message.id === messageId).length, 1);
+        return;
+      } else if (delivery !== null && !question) {
         const requeued = yield* orchestrator.getThreadProjection(threadId);
         assert.isTrue(requeued.runs.some((run) => run.status === "queued"));
         assert.isFalse(
