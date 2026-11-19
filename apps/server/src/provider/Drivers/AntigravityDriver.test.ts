@@ -4,6 +4,7 @@ import { expect, it } from "@effect/vitest";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   EnvironmentId,
+  ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
   ThreadId,
@@ -32,6 +33,8 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ModelManifest from "../ModelManifest.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
+import { resolveProviderCompatibility } from "../providerCompatibility.ts";
 import { AntigravityDriver } from "./AntigravityDriver.ts";
 import * as ProviderHostLive from "../ProviderHostLive.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
@@ -88,6 +91,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly agentVersion?: string;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -111,6 +115,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        `export T3_ACP_AGENT_VERSION=${shellQuote(options.agentVersion ?? "1.5.12")}`,
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -154,6 +159,14 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const layerInstallation = Layer.mock(AntigravityInstallation.AntigravityInstallation)({
     managedDirectory: root,
+    compatibility: (version) =>
+      Effect.succeed(
+        resolveProviderCompatibility(
+          ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+          ProviderDriverKind.make("antigravity"),
+          version,
+        ),
+      ),
     resolve: () =>
       Effect.gen(function* () {
         if (controls.failResolution) {
@@ -525,6 +538,42 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           T3_ACP_MCP_NODE: "/ambient/node",
           T3_ACP_MCP_ENTRYPOINT: "/ambient/entrypoint.mjs",
         });
+        yield* h.assertClosed;
+      }),
+  );
+
+  it.effect.skipIf(windowsHost)(
+    "refuses to open a session on a PATH executable older than 1.5",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const old = yield* h.makeExecutable("runtime old", { agentVersion: "1.4.5" });
+        h.controls.selected = { ...old, source: "path", version: null };
+        const threadId = ThreadId.make("thread-antigravity-old-runtime");
+        const modelSelection = { instanceId: h.instance.instanceId, model: "gemini-test-low" };
+        const error = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const workspace = yield* h.fs.makeTempDirectoryScoped({ prefix: "t3-ag-old-runtime-" });
+            const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "approval-required",
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const session = yield* h.instance.orchestrationAdapter.openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("provider-session-antigravity-old-runtime"),
+              modelSelection,
+              runtimePolicy,
+            });
+            yield* session.ensureThread({ threadId, modelSelection, runtimePolicy });
+          }),
+        ).pipe(Effect.flip);
+        expect(knownProviderFailureMessage(error)).toBe(
+          `Antigravity 1.4.5 does not work with this T3 Code release. Update the Antigravity executable at ${old.executablePath} to >=1.5.12 <2, then retry.`,
+        );
+        const methods = (yield* h.readRequests).map((request) => request.method);
+        expect(methods).toContain("initialize");
+        expect(methods).not.toContain("session/new");
         yield* h.assertClosed;
       }),
   );

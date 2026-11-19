@@ -132,20 +132,17 @@ describe("provider compatibility", () => {
     }
   });
 
-  it.each(["1.4.5", "1.5.7"])(
-    "supports the legacy and native Antigravity runtime %s in the bundled manifest",
-    (version) => {
-      const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
-      assert.strictEqual(
-        resolveProviderCompatibility(
-          policies,
-          ProviderDriverKind.make("antigravity"),
-          `agy_acp_server_${version}`,
-        )?.status,
-        "supported",
-      );
-    },
-  );
+  it("supports a prefixed native Antigravity runtime in the bundled manifest", () => {
+    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
+    assert.strictEqual(
+      resolveProviderCompatibility(
+        policies,
+        ProviderDriverKind.make("antigravity"),
+        "agy_acp_server_1.5.7",
+      )?.status,
+      "supported",
+    );
+  });
 
   it("marks Antigravity below 1.5 broken and recommends 1.5.12 in the bundled manifest", () => {
     const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);

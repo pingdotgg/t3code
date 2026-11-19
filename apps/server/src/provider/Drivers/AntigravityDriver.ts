@@ -291,22 +291,40 @@ export const AntigravityDriver: ProviderDriver<
           runtimeTempDirectory,
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
+      // A custom or PATH executable has no version until it answers initialize.
+      const startCompatible = Effect.fn("AntigravityDriver.startCompatible")(function* () {
+        const version = (yield* runtime.initialize()).agentInfo?.version;
+        const advisory = version ? yield* installation.compatibility(version) : undefined;
+        if (advisory?.status === "broken") {
+          const target =
+            advisory.recommendedVersion ?? advisory.recommendedRange ?? "a newer version";
+          const update =
+            executable.source === "managed"
+              ? `Update it in Antigravity setup to ${target}`
+              : `Update the Antigravity executable at ${executable.executablePath} to ${target}`;
+          const cause = new ProviderSetupError({
+            instanceId,
+            operation: "runtime",
+            detail: `Antigravity ${version} does not work with this T3 Code release. ${update}, then retry.`,
+          });
+          return yield* new AcpErrors.AcpTransportError({ detail: cause.detail, cause });
+        }
+        return yield* runtime.start();
+      });
       return {
         ...runtime,
         ...(executable.harnessPath === null
           ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
           : {}),
         start: () =>
-          runtime
-            .start()
-            .pipe(
-              Effect.tapError((cause): Effect.Effect<void> =>
-                runtimeInput.onAuthorizationUrl === undefined &&
-                isAntigravitySignInRequiredError(cause)
-                  ? provider.onAuthRequired
-                  : Effect.void,
-              ),
+          startCompatible().pipe(
+            Effect.tapError((cause): Effect.Effect<void> =>
+              runtimeInput.onAuthorizationUrl === undefined &&
+              isAntigravitySignInRequiredError(cause)
+                ? provider.onAuthRequired
+                : Effect.void,
             ),
+          ),
       };
     });
 
