@@ -75,6 +75,7 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshWorkspaceSnapshot: () => Effect.succeed(input.providers ?? []),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -172,6 +173,7 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+      workspaceScanDirectory: Effect.succeed,
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -375,6 +377,22 @@ it.effect("a launch with a model its provider does not advertise creates no thre
       ],
       slashCommands: [],
       skills: [],
+      // The project folder's own provider config adds a model the machine catalog lacks.
+      workspaceSnapshots:
+        driver === "codex"
+          ? [
+              {
+                cwd: "/projects/client-target",
+                checkedAt: "2026-01-01T00:00:00Z",
+                slashCommands: [],
+                skills: [],
+                models: [
+                  { slug: "gpt-5.4", name: "GPT", isCustom: false, capabilities: null },
+                  { slug: "folder-local", name: "Local", isCustom: false, capabilities: null },
+                ],
+              },
+            ]
+          : [],
     }));
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
@@ -416,7 +434,10 @@ it.effect("a launch with a model its provider does not advertise creates no thre
     expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
       modelSelection: { instanceId: "claudeAgent", model: "Opus" },
     });
-    expect(launched).toHaveLength(1);
+    expect(yield* launchWith("codex", "folder-local")).toMatchObject({
+      modelSelection: { instanceId: "codex", model: "folder-local" },
+    });
+    expect(launched).toHaveLength(2);
   }),
 );
 

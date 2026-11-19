@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   type Project as ProjectRecord,
+  type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
 import * as Digest from "effect/crypto/Digest";
@@ -268,10 +269,38 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           yield* assertProjectWorktree(project.workspaceRoot, input.workspaceStrategy.worktreePath);
         if (!replaying && input.modelSelection !== undefined) {
           const { instanceId, model } = input.modelSelection;
-          const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
-          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
-          if (provider !== undefined)
-            yield* OrchestrationMcp.requireAdvertisedModel(provider, model);
+          const registry = yield* ProviderRegistry.ProviderRegistry;
+          // The thread runs in this folder, whose own provider config can add models.
+          const cwd =
+            input.workspaceStrategy?.type === "existing_worktree"
+              ? input.workspaceStrategy.worktreePath
+              : project?.workspaceRoot;
+          const requireModel = (
+            providers: ReadonlyArray<ServerProvider>,
+          ): Effect.Effect<void, OrchestratorMcpFailure> => {
+            const provider = OrchestrationMcp.withWorkspaceModels(providers, cwd).find(
+              (candidate) => candidate.instanceId === instanceId,
+            );
+            return provider === undefined
+              ? Effect.void
+              : OrchestrationMcp.requireAdvertisedModel(provider, model);
+          };
+          const checked = requireModel(yield* registry.getProviders);
+          yield* cwd === undefined
+            ? checked
+            : checked.pipe(
+                Effect.catchIf(
+                  (error) => error.code === "model_unavailable",
+                  () =>
+                    Project.ProjectService.pipe(
+                      Effect.flatMap((projects) => projects.workspaceScanDirectory(cwd)),
+                      Effect.flatMap((scanCwd) =>
+                        registry.refreshWorkspaceSnapshot({ instanceId, cwd, scanCwd }),
+                      ),
+                      Effect.flatMap(requireModel),
+                    ),
+                ),
+              );
         }
         const projectSettings =
           replaying || project === undefined
