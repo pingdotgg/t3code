@@ -7376,6 +7376,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* applyItem(otherThreadId, otherRunId);
 
         const snapshot = yield* projectionStore.getShellSnapshot({ projectId });
+        const withoutItemCounts = yield* projectionStore.getShellSnapshot({
+          projectId,
+          includeItemCounts: false,
+        });
+        assert.deepEqual(
+          withoutItemCounts.threads,
+          snapshot.threads.map((thread) => ({
+            ...thread,
+            itemCount: 0,
+            visibleItemCount: 0,
+          })),
+        );
         const expected = [
           [busyThreadId, 4],
           [emptyThreadId, 0],

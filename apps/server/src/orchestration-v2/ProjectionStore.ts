@@ -452,6 +452,8 @@ export interface ProjectionTimelinePage {
 }
 
 export interface ShellSnapshotOptions {
+  /** Skip item counts for consumers that only need thread and worktree state. Defaults to true. */
+  readonly includeItemCounts?: boolean;
   readonly location?: "active" | "archive";
   readonly projectId?: ProjectId;
   readonly unsettledOnly?: boolean;
@@ -8876,8 +8878,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pendingTurnItemRows,
       ] = yield* Effect.all([
         readForThreadIds(selectShellRunRows, forkSourceIds),
-        readForThreadIds(selectShellRunItemCounts, forkSourceIds),
-        readForThreadIds(selectShellItemCounts),
+        readForThreadIds(
+          selectShellRunItemCounts,
+          options?.includeItemCounts === false ? [] : forkSourceIds,
+        ),
+        readForThreadIds(
+          selectShellItemCounts,
+          options?.includeItemCounts === false ? [] : threadIds,
+        ),
         sql<{ readonly snapshot_sequence: number | null }>`
         SELECT MAX(sequence) AS snapshot_sequence
         FROM orchestration_events
