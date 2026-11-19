@@ -26,6 +26,6 @@ describe("thread sidebar width", () => {
   it("restores the default width when the viewport widens after a narrow startup", () => {
     const sidebarWidth = resolveInitialThreadSidebarWidth(null);
     expect(renderedWidth(sidebarWidth, 840)).toBe(208);
-    expect(renderedWidth(sidebarWidth, 1638)).toBe(256);
+    expect(renderedWidth(sidebarWidth, 1638)).toBe(272);
   });
 });

@@ -62,6 +62,7 @@ vi.mock("../commandPaletteBus", () => ({
 vi.mock("./sidebar/SidebarChrome", () => ({
   SidebarChromeHeader: () => null,
   SidebarChromeFooter: () => null,
+  SidebarNavigation: () => null,
 }));
 
 function project(id: string): Project {
@@ -370,10 +371,10 @@ describe("sidebar settled pagination", () => {
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
       </SidebarProvider>,
     );
-    const shelf = screen.container.querySelector<HTMLElement>(
-      '[data-sidebar-row="shelf:settled"]',
-    )!;
-    if (shelf.getAttribute("aria-expanded") === "false") await act(() => shelf.click());
+    await expect
+      .element(screen.getByRole("button", { name: /^Settled \d/ }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByRole("button", { name: /Settled thread 0/ })).toBeVisible();
     const more = screen.getByRole("button", { name: "Show 25 more", exact: true });
     await expect.element(more).toBeInTheDocument();
     const moreButton = more.element() as HTMLButtonElement;

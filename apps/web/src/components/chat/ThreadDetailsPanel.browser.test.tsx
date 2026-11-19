@@ -93,7 +93,7 @@ const threadRef: ScopedThreadRef = {
   threadId: ThreadId.make("thread"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 908, y: 0, right: 12, width: 280, height: 400 } as const;
+const placement = { x: 880, y: 0, right: 12, width: 308, height: 400 } as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
   repository: "pingdotgg/t3code",
@@ -172,7 +172,7 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
-        usage={{} as never}
+        usage={{ providerInstanceId: null, providers: [], sources: [], contextWindow: null }}
       />
     </ChatCanvasContext>
   );
@@ -198,7 +198,7 @@ it("shows a linked pull request in a folder that is not a git repository", async
     pullRequests: [linkedPullRequest],
   });
   await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByRole("region", { name: "Environment" })).toBeVisible();
   await expect.element(page.getByText("#27513")).toBeVisible();
   await expect.element(page.getByRole("button", { name: "Initialize Git" })).toBeVisible();
 });
@@ -210,7 +210,7 @@ it("offers no Initialize Git before the server config says where No project live
     configLoaded: false,
   });
   await using _screen = await render(<Panel fixture={fixture} />);
-  await expect.element(page.getByRole("region", { name: "Workspace" })).toBeVisible();
+  await expect.element(page.getByRole("region", { name: "Environment" })).toBeVisible();
   await expect
     .element(page.getByRole("button", { name: "Initialize Git" }))
     .not.toBeInTheDocument();

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type {
   ProviderInstanceId,
   ServerProvider,
@@ -60,11 +61,7 @@ export function ThreadDetailsUsage({
   const notice = limitsNotice(limits);
 
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-usage-heading"
-      title="Usage limits"
-      showHeading={false}
-    >
+    <ThreadDetailsSection headingId="thread-details-usage-heading" title="Usage limits">
       <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
         {notice ? (
           <UsageRow
@@ -84,6 +81,7 @@ export function ThreadDetailsUsage({
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
 export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+  const gt = useGT();
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null
@@ -94,45 +92,112 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
       ? (threshold / maxTokens) * 100
       : null;
-  const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const input = usage.inputTokens ?? null;
+  const cached = usage.cachedInputTokens ?? null;
+  const output = usage.outputTokens ?? null;
+  const total = input !== null || output !== null ? (input ?? 0) + (output ?? 0) : null;
+  const rows = [
+    ...(cached !== null ? [{ label: gt("Cache read"), value: cached, color: "bg-blue-400" }] : []),
+    ...(output !== null ? [{ label: gt("Output"), value: output, color: "bg-emerald-400" }] : []),
+    ...(input !== null
+      ? [
+          {
+            label: cached !== null ? gt("Uncached input") : gt("Input"),
+            value: Math.max(0, input - (cached ?? 0)),
+            color: "bg-amber-400",
+          },
+        ]
+      : []),
+  ];
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-context-heading"
-      title="Context window"
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        <UsageRow
-          label="Context"
-          fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
-          muted
-          value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
-          }
-          ariaValue={used !== null ? `${used}% used` : `${usedTokens} tokens used`}
-          tooltip={
-            <>
-              <span className="text-foreground">
-                {used !== null ? `Context: ${used}% used` : `Context: ${usedTokens} tokens used`}
+    <ThreadDetailsSection headingId="thread-details-context-heading" title={gt("Context")}>
+      <div className="space-y-3 px-2.5 pb-0.5 text-xs">
+        <div className="space-y-2">
+          <div className="flex items-baseline justify-between gap-2 tabular-nums">
+            <span className="text-sm text-foreground">
+              {used !== null ? (
+                <>
+                  {used}% <T>used</T>
+                </>
+              ) : (
+                <>
+                  {formatContextWindowTokens(usage.usedTokens)} <T>tokens</T>
+                </>
+              )}
+            </span>
+            <span className="text-muted-foreground">
+              {formatContextWindowTokens(usage.usedTokens)}
+              {maxTokens !== null ? ` / ${formatContextWindowTokens(maxTokens)}` : ""}
+            </span>
+          </div>
+          {used !== null ? (
+            <div
+              role="progressbar"
+              aria-label={gt("Context usage")}
+              aria-valuenow={used}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              className="relative h-1.5 rounded-full bg-muted-foreground/20"
+            >
+              <div
+                className={cn(
+                  "h-full rounded-full",
+                  used >= 90 ? "bg-error" : used >= 80 ? "bg-warning" : "bg-foreground",
+                )}
+                style={{ width: `${used}%` }}
+              />
+              {tick !== null ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span
+                        aria-label={
+                          threshold !== null
+                            ? formatContextWindowCompactionMessage(threshold)
+                            : undefined
+                        }
+                        tabIndex={0}
+                        className="absolute -top-0.5 h-2.5 w-px bg-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                        style={{ left: `${tick}%` }}
+                      />
+                    }
+                  />
+                  <TooltipPopup>
+                    {threshold !== null ? formatContextWindowCompactionMessage(threshold) : null}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {rows.length > 0 ? (
+          <div className="space-y-1.5 border-t border-border/65 pt-3">
+            <div className="flex justify-between gap-2">
+              <span>
+                <T>Reported usage</T>
               </span>
-              {maxTokens !== null ? (
-                <span className="text-muted-foreground">
-                  {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                  tokens
-                </span>
-              ) : null}
-              {threshold !== null && threshold > 0 ? (
-                <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold)}
-                </span>
-              ) : null}
-            </>
-          }
-        />
+              <span className="tabular-nums">
+                {total !== null ? formatContextWindowTokens(total) : ""} <T>tokens</T>
+              </span>
+            </div>
+            <dl className="space-y-1">
+              {rows.map((row) => (
+                <div key={row.label} className="flex items-center gap-2 text-muted-foreground">
+                  <span aria-hidden className={cn("size-2.5 shrink-0 rounded-sm", row.color)} />
+                  <dt className="min-w-0 flex-1 truncate">{row.label}</dt>
+                  <dd className="flex shrink-0 gap-3 tabular-nums">
+                    <span>{formatContextWindowTokens(row.value)}</span>
+                    {total !== null && total > 0 ? (
+                      <span className="w-10 text-right text-foreground/80">
+                        {((row.value / total) * 100).toFixed(1)}%
+                      </span>
+                    ) : null}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </div>
+        ) : null}
       </div>
     </ThreadDetailsSection>
   );

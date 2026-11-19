@@ -45,7 +45,12 @@ export function resolveChatCanvasLayout({
     ? detailsCard.left - DETAILS_CARD_CLEARANCE
     : container.width - padding;
   const normalWidth = Math.max(0, Math.min(centeredWidth, laneRight - padding));
-  const canvasCenterLeft = (container.width - normalWidth) / 2;
+  // A resting conversation is centered in the space beside its details cards.
+  // A movable preview keeps the canvas origin stable while it is dragged or resized.
+  const canvasCenterLeft =
+    detailsCard && !preview
+      ? (padding + laneRight - normalWidth) / 2
+      : (container.width - normalWidth) / 2;
   const normalLeft = Math.max(padding, Math.min(canvasCenterLeft, laneRight - normalWidth));
   let chat = {
     left: normalLeft,

@@ -20,6 +20,8 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { memo, useState, type ComponentProps } from "react";
+import { ThreadDetailsChecks } from "./ThreadDetailsChecks";
+import { ThreadDetailsMcp } from "./ThreadDetailsMcp";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -179,13 +181,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
         };
         return (
           <>
-            <div className="group/details-items">
+            <div className="group/details-items space-y-2">
               {show.environment || show.openIn || show.scripts ? (
                 <ThreadDetailsSection
                   headingId="thread-details-workspace-heading"
-                  title="Workspace"
-                  separated={false}
-                  showHeading={false}
+                  title="Environment"
+                  showHeading
                 >
                   <div className="flex flex-col">
                     {show.environment ? (
@@ -233,9 +234,8 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               {show.branch || show.pullRequests || show.git ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
-                  title="Version Control"
-                  showHeading={false}
-                  separated={density === "full"}
+                  title="Changes"
+                  showHeading
                 >
                   <div className="flex flex-col">
                     {show.branch ? (
@@ -264,6 +264,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
+              {!props.draftId && visible.checks ? (
+                <ThreadDetailsChecks threadRef={activeThreadRef} />
+              ) : null}
+
               {density === "full" && !props.draftId && visible.servers ? (
                 <ThreadServersPanel environmentId={props.environmentId} threadId={props.threadId} />
               ) : null}
@@ -290,8 +294,12 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 <ThreadDetailsContext usage={props.usage.contextWindow} />
               ) : null}
 
+              {!props.draftId && visible.mcp ? (
+                <ThreadDetailsMcp threadRef={activeThreadRef} />
+              ) : null}
+
               {/* Shown only when no section above has content, so an emptied card can be refilled. */}
-              <div className="p-2 group-has-[>section>:last-child:not(:empty)]/details-items:hidden">
+              <div className="p-2 group-has-[>section>div:last-child>*:not(:empty)]/details-items:hidden">
                 <ThreadDetailsControl
                   size="xs"
                   variant="ghost"

@@ -1,3 +1,15 @@
+# T3 Parade — fork integrado
+
+Versão pessoal mantida em [joaokhalaf/t3code](https://github.com/joaokhalaf/t3code), baseada no T3 Code e distribuída sob a licença MIT original.
+
+Inclui navegação lateral unificada, abas de sessões, painel de detalhes recolhível, tema escuro e **Verificar alterações**, com testes, verificações no navegador e evidências vinculadas à conversa. O agente e o modelo selecionados continuam sendo os da conversa.
+
+Para instalar em outra máquina, veja o [guia do fork](docs/operations/parade.md). Para abrir a interface no aplicativo Windows com WSL, veja o [inicializador Windows](docs/operations/windows-fork.md).
+
+Os downloads oficiais abaixo pertencem ao projeto original e não incluem estas alterações. A distribuição deste fork contém código-fonte; não inclui credenciais, histórico de conversas ou um instalador Windows independente.
+
+---
+
 <p align="center">
   <a href="https://t3.codes">
     <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
