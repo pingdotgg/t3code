@@ -1,5 +1,5 @@
 import { Minus, Plus, Scan } from "lucide-react";
-import { useEffect, useRef, useState, type PointerEvent, type ReactNode } from "react";
+import { useCallback, useRef, useState, type PointerEvent, type ReactNode } from "react";
 
 import { INITIAL_VIEW, fitToContent, panBy, zoomAt, type Rect, type View } from "./viewport";
 
@@ -10,15 +10,14 @@ const WHEEL_ZOOM_RATE = 0.01;
 const zoomButton = "grid h-[30px] w-8 place-items-center text-muted hover:bg-hover hover:text-fg";
 
 export function Viewport({ content, children }: { content?: Rect; children?: ReactNode }) {
-  const surfaceRef = useRef<HTMLDivElement>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const drag = useRef<{ startX: number; startY: number; origin: View } | null>(null);
   const [view, setView] = useState<View>(INITIAL_VIEW);
   const [panning, setPanning] = useState(false);
 
   // React registers wheel listeners as passive, which forbids preventDefault.
-  useEffect(() => {
-    const surface = surfaceRef.current;
-    if (!surface) return;
+  const attachSurface = useCallback((surface: HTMLDivElement) => {
+    surfaceRef.current = surface;
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       const rect = surface.getBoundingClientRect();
@@ -34,7 +33,10 @@ export function Viewport({ content, children }: { content?: Rect; children?: Rea
       );
     };
     surface.addEventListener("wheel", onWheel, { passive: false });
-    return () => surface.removeEventListener("wheel", onWheel);
+    return () => {
+      surface.removeEventListener("wheel", onWheel);
+      surfaceRef.current = null;
+    };
   }, []);
 
   const zoomAroundCenter = (factor: number) => {
@@ -70,7 +72,7 @@ export function Viewport({ content, children }: { content?: Rect; children?: Rea
   return (
     <div className="relative h-full overflow-hidden">
       <div
-        ref={surfaceRef}
+        ref={attachSurface}
         data-testid="board-canvas"
         className={`absolute inset-0 touch-none ${panning ? "cursor-grabbing" : "cursor-grab"}`}
         style={{

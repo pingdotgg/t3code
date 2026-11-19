@@ -2,7 +2,6 @@ name: agent-board
 
 on:
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -35,8 +34,14 @@ jobs:
       - name: Engine boundary
         run: node apps/board/scripts/check-engine-untouched.mjs
 
-      - name: Board script tests
-        run: node --test apps/board/scripts/*.test.mjs
+      - name: Standards
+        run: node standards/check-added-diagnostics.mjs
+
+      - name: Standards dependency rules
+        run: vp run --filter @agent-board/app standards:deps
+
+      - name: Node tests
+        run: node --test "apps/board/scripts/*.test.mjs" "apps/board/plugins/**/*.test.mjs" "standards/**/*.test.mjs"
 
       - name: Typecheck
         run: vp run --filter @agent-board/app typecheck

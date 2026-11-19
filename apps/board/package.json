@@ -16,7 +16,9 @@
     "start:windows": "node scripts/launch-windows.mjs",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run && node --test scripts/*.test.mjs",
-    "check:boundary": "node scripts/check-engine-untouched.mjs"
+    "check:boundary": "node scripts/check-engine-untouched.mjs",
+    "standards": "node ../../standards/check-added-diagnostics.mjs",
+    "standards:deps": "cd ../.. && depcruise --config standards/.dependency-cruiser.cjs --ignore-known standards/dependency-baseline.json apps packages"
   },
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
@@ -31,6 +33,7 @@
     "@types/node": "catalog:",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "dependency-cruiser": "^18.8.0",
     "vite": "catalog:",
     "vite-plus": "catalog:"
   }
