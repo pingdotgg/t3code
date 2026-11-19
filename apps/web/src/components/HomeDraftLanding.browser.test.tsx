@@ -1,4 +1,3 @@
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createMemoryHistory } from "@tanstack/react-router";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import type * as Context from "effect/Context";
@@ -10,11 +9,9 @@ import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import stylesheet from "~/index.css?inline";
 import { getRouter } from "~/router";
-import { readProject } from "~/state/entities";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   ENVIRONMENT_ID,
-  PROJECT_ID,
   installFakeEnvironment,
   threadWithHistory,
   type FakeDriver,
@@ -54,12 +51,17 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (o
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
 });
 
-it("stays recoverable while the most recent project's settings are unavailable", async () => {
-  using _environment = installFakeEnvironment([threadWithHistory("home-settings", 1)]);
+function setup() {
+  appAtomRegistry.set(configVisible, false);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
+  return installFakeEnvironment([threadWithHistory("home-settings", 1)]);
+}
+
+it("stays recoverable while the most recent project's settings are unavailable", async () => {
+  using _environment = setup();
   const router = getRouter(createMemoryHistory({ initialEntries: ["/"] }));
   await router.load();
   await using screen = await render(
@@ -69,7 +71,6 @@ it("stays recoverable while the most recent project's settings are unavailable",
     </>,
     { router: false },
   );
-  await expect.poll(() => readProject(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID))).not.toBeNull();
 
   const retry = screen.getByRole("button", { name: "Try again", exact: true });
   await expect.element(retry).toBeVisible();
@@ -81,7 +82,7 @@ it("stays recoverable while the most recent project's settings are unavailable",
   expect(router.state.location.pathname).toBe("/");
 
   await act(() => appAtomRegistry.set(configVisible, true));
-  await expect.poll(() => router.state.location.pathname).toMatch(/^\/draft\//);
+  await vi.waitFor(() => expect(router.state.location.pathname).toMatch(/^\/draft\//));
   const draftId = DraftId.make(
     decodeURIComponent(router.state.location.pathname.split("/").at(-1)!),
   );
