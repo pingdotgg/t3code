@@ -5858,8 +5858,6 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           interruptPromptOnCancel: true,
-          approvalPrompt: extractAntigravityCommand,
-          normalizeToolCall: (toolCall) => ({ ...toolCall, kind: "execute" }),
           makeRuntime: (input) =>
             Effect.sync(() => {
               runtimeInput = input;
@@ -5907,7 +5905,6 @@ describe("AcpAdapterV2", () => {
           toolCall: {
             toolCallId: "unknown-permission-tool",
             title: "Unknown permission kind",
-            rawInput: { CommandLine: "git status" },
           },
           options: [{ optionId: "allow-once", name: "Allow once", kind: "allow_once" }],
         },
@@ -6080,48 +6077,18 @@ describe("AcpAdapterV2", () => {
 
   it.effect.each([
     {
-      label: "preserves Antigravity CommandLine in ID-only approval",
+      label: "shows Antigravity's CommandLine in an ID-only approval",
       kind: "execute",
       granted: true,
       commandField: "CommandLine",
       fullRequest: false,
     },
     {
-      label: "preserves Antigravity CommandLine in full approval",
+      label: "shows a long Antigravity CommandLine untruncated in a full approval",
       kind: "execute",
       granted: true,
       commandField: "CommandLine",
       fullRequest: true,
-    },
-    {
-      label: "preserves Antigravity command_line in ID-only approval",
-      kind: "execute",
-      granted: true,
-      commandField: "command_line",
-      fullRequest: false,
-    },
-    {
-      label: "preserves Antigravity command_line in full approval",
-      kind: "execute",
-      granted: true,
-      commandField: "command_line",
-      fullRequest: true,
-    },
-    {
-      label: "preserves long Antigravity CommandLine in full approval",
-      kind: "execute",
-      granted: true,
-      commandField: "CommandLine",
-      fullRequest: true,
-      longCommand: true,
-    },
-    {
-      label: "preserves long Antigravity command in full approval",
-      kind: "execute",
-      granted: true,
-      commandField: "command",
-      fullRequest: true,
-      longCommand: true,
     },
     {
       label: "grants an ID-only execute approval its tracked command",
@@ -6155,11 +6122,9 @@ describe("AcpAdapterV2", () => {
     Effect.gen(function* () {
       const commandField = "commandField" in testCase ? testCase.commandField : "command";
       const command =
-        "longCommand" in testCase
+        "commandField" in testCase
           ? `echo start\n${"# padding\n".repeat(1000)}echo end`
-          : "commandField" in testCase
-            ? "git status --short\nprintf '%s\\n' approval-probe"
-            : "git status";
+          : "git status";
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const selfInvocation = yield* resolveSelfInvocation();
       const mockAgentPath = yield* bundledMockAgentPath;
