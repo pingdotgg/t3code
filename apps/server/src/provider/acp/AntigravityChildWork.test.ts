@@ -96,7 +96,7 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
   it.effect("matches a permission-prompt call by its launch text, only when unique", () =>
     Effect.gen(function* () {
       const other = { role: "Test Runner", prompt: "Run the tests" };
-      const long = { role: "Long Reader", prompt: `Read this:\n${"x".repeat(9_000)}` };
+      const long = { role: "Long Reader", prompt: `Read this:\n🚀${"x".repeat(7_999)}` };
       // A role's leading byte order mark is part of its text.
       const marked = { role: "\uFEFFMarked", prompt: "Check the mark" };
       const { profile } = yield* makeProfile({
@@ -142,6 +142,13 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       );
       const longMatch = yield* read(profile, opaque, describeAntigravitySubagentLaunches(stored!));
       expect(longMatch.map((child) => child.prompt)).toEqual([long.prompt]);
+      const savedLaunch = {
+        title: long.role,
+        prompt: `[Earlier output truncated]\n\n\uDE80${"x".repeat(7_999)}`,
+      };
+      expect((yield* read(profile, opaque, savedLaunch)).map((child) => child.prompt)).toEqual([
+        long.prompt,
+      ]);
       expect(
         yield* read(profile, opaque, describeAntigravitySubagentLaunches([marked])),
       ).toHaveLength(1);

@@ -1623,45 +1623,48 @@ describe("ManagedEndpointProvider", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("treats already deleted remote resources as successfully deprovisioned", () => {
-    const allocationCalls: AllocationCall[] = [];
-    const notFound = { _tag: "NotFound" } as const;
-    const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
-      ...makeTunnelClient(),
-      delete: () =>
-        Effect.fail(
-          new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
-            operation: "delete",
-            tunnelId: "tunnel-id",
-            cause: notFound,
-          }),
-        ),
-    });
-    const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
-      ...makeDnsClient(),
-      deleteRecord: () =>
-        Effect.fail(
-          new ManagedEndpointProvider.ManagedEndpointDnsClientError({
-            operation: "delete-record",
-            dnsRecordId: "created-record-id",
-            cause: notFound,
-          }),
-        ),
-    });
-    const layer = layerProvider(tunnelClient, dnsClient, makeAllocations(allocationCalls));
-
-    return Effect.gen(function* () {
-      const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
-      const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
-      yield* provider.provision({
-        ...key,
-        origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+  it.effect.each(["NotFound", "RecordNotFound"])(
+    "treats deleted remote resources as deprovisioned (%s)",
+    (dnsErrorTag) => {
+      const allocationCalls: AllocationCall[] = [];
+      const notFound = { _tag: "NotFound" } as const;
+      const tunnelClient = ManagedEndpointProvider.ManagedEndpointTunnelClient.of({
+        ...makeTunnelClient(),
+        delete: () =>
+          Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointTunnelClientError({
+              operation: "delete",
+              tunnelId: "tunnel-id",
+              cause: notFound,
+            }),
+          ),
       });
-      yield* provider.deprovision(key);
+      const dnsClient = ManagedEndpointProvider.ManagedEndpointDnsClient.of({
+        ...makeDnsClient(),
+        deleteRecord: () =>
+          Effect.fail(
+            new ManagedEndpointProvider.ManagedEndpointDnsClientError({
+              operation: "delete-record",
+              dnsRecordId: "created-record-id",
+              cause: { _tag: dnsErrorTag },
+            }),
+          ),
+      });
+      const layer = layerProvider(tunnelClient, dnsClient, makeAllocations(allocationCalls));
 
-      expect(allocationCalls.map((call) => call.operation)).toContain("removeClaimed");
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+        const key = { userId: "user_ABC", environmentId: "env_ABC" } as const;
+        yield* provider.provision({
+          ...key,
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        });
+        yield* provider.deprovision(key);
+
+        expect(allocationCalls.map((call) => call.operation)).toContain("removeClaimed");
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("scopes managed endpoint resources by user", () => {
     const tunnelCalls: TunnelCall[] = [];
