@@ -1525,31 +1525,35 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           fetchCwd,
           ["--git-dir", gitCommonDir, "count-objects", "-v"],
         );
-        const options = {
+        const options = (writableObjects: string) => ({
           ...fetchOptions,
           env: {
             ...STATUS_UPSTREAM_REFRESH_ENV,
-            ...privateObjectDirectoryEnv(privateObjects, objectsPath, objectDirectories),
+            ...privateObjectDirectoryEnv(writableObjects, objectsPath, objectDirectories),
           },
-        };
-        const adopt = adoptPrivateObjects(privateObjects, objectsPath);
+        });
         const { stderr } = yield* executeGit(
           "GitVcsDriver.fetchRemoteForStatus.download",
           fetchCwd,
           fetchArgs("--dry-run"),
-          options,
+          options(privateObjects),
         );
-        yield* adopt;
+        yield* adoptPrivateObjects(privateObjects, objectsPath);
         // A dry run names each ref it would move on stderr and is silent when none would.
         if (stderr.trim() === "") return;
-        // The remote can have moved on since the dry run, so this fetch may download too. It
-        // moves refs first; however it ends, what it finished goes into the repository.
+        // This fetch may only move refs to objects the repository now holds. If the remote moved
+        // on since the dry run it would download, so it gets an object directory where `pack` is
+        // a file and every transfer is a pack: it then fails, moves nothing, and the next poll
+        // downloads. Git reports the unreadable `pack` on stderr and carries on.
+        const sealedObjects = path.join(privateObjects, "sealed");
+        yield* fileSystem.makeDirectory(sealedObjects);
+        yield* fileSystem.writeFileString(path.join(sealedObjects, "pack"), "");
         yield* executeGit(
           "GitVcsDriver.fetchRemoteForStatus",
           fetchCwd,
-          fetchArgs("--quiet"),
-          options,
-        ).pipe(Effect.ensuring(Effect.ignore(adopt, { log: "Warn" })));
+          ["-c", "fetch.unpackLimit=1", ...fetchArgs("--quiet")],
+          options(sealedObjects),
+        );
       }),
       (privateObjects) =>
         fileSystem
