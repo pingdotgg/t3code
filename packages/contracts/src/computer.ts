@@ -288,12 +288,12 @@ export const ComputerAct = Schema.Struct({
   /** `click`: a control's label, when no ref is at hand. */
   label: Schema.optionalKey(Schema.String),
   /** `click`: a screen point, when the control is not in the look. */
-  x: Schema.optionalKey(Schema.Number),
-  y: Schema.optionalKey(Schema.Number),
+  x: Schema.optionalKey(Schema.Finite),
+  y: Schema.optionalKey(Schema.Finite),
   key: Schema.optionalKey(ComputerKey),
   direction: Schema.optionalKey(Schema.Literals(["up", "down", "top", "bottom"])),
   /** `scroll` up or down: how many screens, 1 to 10; one when left out. */
-  amount: Schema.optionalKey(Schema.Number),
+  amount: Schema.optionalKey(Schema.Finite),
   url: Schema.optionalKey(Schema.String),
   /** The app whose window to act on, as computer_look reads it; defaults to the app in front. */
   app: Schema.optionalKey(Schema.String),
@@ -301,10 +301,10 @@ export const ComputerAct = Schema.Struct({
 export type ComputerAct = typeof ComputerAct.Type;
 
 export const ComputerRect = Schema.Struct({
-  x: Schema.Number,
-  y: Schema.Number,
-  w: Schema.Number,
-  h: Schema.Number,
+  x: Schema.Finite,
+  y: Schema.Finite,
+  w: Schema.Finite,
+  h: Schema.Finite,
 });
 export type ComputerRect = typeof ComputerRect.Type;
 

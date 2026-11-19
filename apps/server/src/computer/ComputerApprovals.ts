@@ -74,6 +74,8 @@ function approvalDigest(binding: ComputerApprovalBinding): string {
 interface StoredApproval {
   readonly id: ComputerApprovalId;
   readonly binding: ComputerApprovalBinding;
+  /** The binding as a client that cannot answer approvals sees it, fixed when the approval is made. */
+  readonly readerBinding: ComputerApprovalBinding;
   readonly digest: string;
   readonly createdAtMs: number;
   readonly expiresAtMs: number;
@@ -97,9 +99,9 @@ const pruned = (
         approval.state === "pending" || nowMs - approval.createdAtMs <= KEPT_FINISHED_MS,
     );
 
-const view = (approval: StoredApproval): ComputerApproval => ({
+const view = (approval: StoredApproval, revealTypedText: boolean): ComputerApproval => ({
   id: approval.id,
-  binding: approval.binding,
+  binding: revealTypedText ? approval.binding : approval.readerBinding,
   createdAt: DateTime.makeUnsafe(approval.createdAtMs),
   expiresAt: DateTime.makeUnsafe(approval.expiresAtMs),
   state: approval.state,
@@ -109,9 +111,10 @@ const view = (approval: StoredApproval): ComputerApproval => ({
 export class ComputerApprovals extends Context.Service<
   ComputerApprovals,
   {
-    readonly create: (
-      binding: ComputerApprovalBinding,
-    ) => Effect.Effect<ComputerApproval, ComputerApprovalLimitError>;
+    readonly create: (input: {
+      readonly binding: ComputerApprovalBinding;
+      readonly readerBinding: ComputerApprovalBinding;
+    }) => Effect.Effect<ComputerApproval, ComputerApprovalLimitError>;
     readonly decide: (input: {
       readonly approvalId: ComputerApprovalId;
       readonly approve: boolean;
@@ -127,8 +130,13 @@ export class ComputerApprovals extends Context.Service<
     }) => Effect.Effect<ComputerApprovalTakeResult>;
     /** The task ended or was stopped: its approvals, answered or not, can no longer be granted. */
     readonly cancelTask: (taskId: ComputerTaskId) => Effect.Effect<void>;
-    /** Every approval still pending, then the ones that ended in the last ten minutes, newest first. */
-    readonly list: Effect.Effect<ReadonlyArray<ComputerApproval>>;
+    /**
+     * Every approval still pending, then the ones that ended in the last ten minutes, newest first. Without
+     * `revealTypedText`, each carries its reader binding.
+     */
+    readonly list: (input: {
+      readonly revealTypedText: boolean;
+    }) => Effect.Effect<ReadonlyArray<ComputerApproval>>;
   }
 >()("t3/computer/ComputerApprovals") {}
 
@@ -137,7 +145,7 @@ const make = Effect.fn("computer.approvals.make")(function* () {
   const approvalsRef = yield* Ref.make<ReadonlyArray<StoredApproval>>([]);
 
   const create: ComputerApprovals["Service"]["create"] = Effect.fn("computer.approvals.create")(
-    function* (binding) {
+    function* ({ binding, readerBinding }) {
       const nowMs = yield* Clock.currentTimeMillis;
       const id: ComputerApprovalId = `appr_${yield* random.uuidV4()}`;
       const created = yield* Ref.modify(
@@ -148,6 +156,7 @@ const make = Effect.fn("computer.approvals.make")(function* () {
           const approval: StoredApproval = {
             id,
             binding,
+            readerBinding,
             digest: approvalDigest(binding),
             createdAtMs: nowMs,
             expiresAtMs: nowMs + TTL_MS,
@@ -158,7 +167,7 @@ const make = Effect.fn("computer.approvals.make")(function* () {
         },
       );
       if (created === null) return yield* new ComputerApprovalLimitError({ limit: MAX_APPROVALS });
-      return view(created);
+      return view(created, true);
     },
   );
 
@@ -225,20 +234,22 @@ const make = Effect.fn("computer.approvals.make")(function* () {
     );
   });
 
-  const list: ComputerApprovals["Service"]["list"] = Effect.gen(function* () {
-    const nowMs = yield* Clock.currentTimeMillis;
-    const current = yield* Ref.modify(
-      approvalsRef,
-      (approvals): readonly [ReadonlyArray<StoredApproval>, ReadonlyArray<StoredApproval>] => {
-        const kept = pruned(approvals, nowMs);
-        return [kept, kept];
-      },
-    );
-    return current
-      .toReversed()
-      .sort((left, right) => Number(right.state === "pending") - Number(left.state === "pending"))
-      .map(view);
-  });
+  const list: ComputerApprovals["Service"]["list"] = Effect.fn("computer.approvals.list")(
+    function* (input) {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const current = yield* Ref.modify(
+        approvalsRef,
+        (approvals): readonly [ReadonlyArray<StoredApproval>, ReadonlyArray<StoredApproval>] => {
+          const kept = pruned(approvals, nowMs);
+          return [kept, kept];
+        },
+      );
+      return current
+        .toReversed()
+        .sort((left, right) => Number(right.state === "pending") - Number(left.state === "pending"))
+        .map((approval) => view(approval, input.revealTypedText));
+    },
+  );
 
   return ComputerApprovals.of({ create, decide, take, cancelTask, list });
 });

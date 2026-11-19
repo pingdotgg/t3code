@@ -38,7 +38,10 @@ const makeApprovals = Effect.gen(function* () {
 it.effect("an approval grants its own step once", () =>
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
-    const approval = yield* approvals.create(binding("on my way"));
+    const approval = yield* approvals.create({
+      binding: binding("on my way"),
+      readerBinding: binding("on my way"),
+    });
     assert.strictEqual(approval.state, "pending");
     assert.strictEqual(
       yield* approvals.take({ approvalId: approval.id, binding: binding("on my way") }),
@@ -73,7 +76,7 @@ it.effect("binds the exact action: other text, step, task, window or host cannot
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
     const own = binding("on my way");
-    const approval = yield* approvals.create(own);
+    const approval = yield* approvals.create({ binding: own, readerBinding: own });
     yield* approvals.decide({ approvalId: approval.id, approve: true, decidedBy: "web" });
 
     const others: ReadonlyArray<ComputerApprovalBinding> = [
@@ -100,7 +103,7 @@ it.effect("the digest does not collide when bytes move between fields", () =>
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
     const own = binding("ab", "c");
-    const approval = yield* approvals.create(own);
+    const approval = yield* approvals.create({ binding: own, readerBinding: own });
     yield* approvals.decide({ approvalId: approval.id, approve: true, decidedBy: "web" });
 
     assert.strictEqual(
@@ -119,7 +122,7 @@ it.effect("neither a late tap nor a late take grants anything", () =>
     const approvals = yield* makeApprovals;
     const own = binding("x");
 
-    const late = yield* approvals.create(own);
+    const late = yield* approvals.create({ binding: own, readerBinding: own });
     yield* TestClock.adjust("60 seconds");
     assert.strictEqual(
       yield* approvals.decide({ approvalId: late.id, approve: true, decidedBy: "web" }),
@@ -128,7 +131,7 @@ it.effect("neither a late tap nor a late take grants anything", () =>
     assert.strictEqual(yield* approvals.take({ approvalId: late.id, binding: own }), "expired");
 
     // Approved in time but taken too late: still expired.
-    const takenLate = yield* approvals.create(own);
+    const takenLate = yield* approvals.create({ binding: own, readerBinding: own });
     yield* TestClock.adjust("10 seconds");
     assert.strictEqual(
       yield* approvals.decide({ approvalId: takenLate.id, approve: true, decidedBy: "web" }),
@@ -147,14 +150,14 @@ it.effect("deny and cancel end it, answered or not", () =>
     const approvals = yield* makeApprovals;
     const own = binding("x");
 
-    const denied = yield* approvals.create(own);
+    const denied = yield* approvals.create({ binding: own, readerBinding: own });
     assert.strictEqual(
       yield* approvals.decide({ approvalId: denied.id, approve: false, decidedBy: "web" }),
       "ok",
     );
     assert.strictEqual(yield* approvals.take({ approvalId: denied.id, binding: own }), "denied");
 
-    const cancelled = yield* approvals.create(own);
+    const cancelled = yield* approvals.create({ binding: own, readerBinding: own });
     yield* approvals.cancelTask(own.taskId);
     assert.strictEqual(
       yield* approvals.take({ approvalId: cancelled.id, binding: own }),
@@ -166,7 +169,7 @@ it.effect("deny and cancel end it, answered or not", () =>
     );
 
     // A tap already given but not yet used is revoked too: it cannot outlive its task.
-    const answered = yield* approvals.create(own);
+    const answered = yield* approvals.create({ binding: own, readerBinding: own });
     yield* approvals.decide({ approvalId: answered.id, approve: true, decidedBy: "web" });
     yield* approvals.cancelTask(own.taskId);
     assert.strictEqual(
@@ -185,11 +188,14 @@ it.effect("deny and cancel end it, answered or not", () =>
 it.effect("lists pending approvals first, then finished ones, newest first", () =>
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
-    const first = yield* approvals.create(binding("first"));
+    const first = yield* approvals.create({
+      binding: binding("first"),
+      readerBinding: binding("first"),
+    });
     yield* approvals.decide({ approvalId: first.id, approve: false, decidedBy: "web" });
-    yield* approvals.create(binding("second"));
+    yield* approvals.create({ binding: binding("second"), readerBinding: binding("second") });
 
-    const listed = yield* approvals.list;
+    const listed = yield* approvals.list({ revealTypedText: true });
     assert.deepStrictEqual(
       listed.map((approval) => approval.state),
       ["pending", "denied"],
@@ -201,9 +207,15 @@ it.effect("lists pending approvals first, then finished ones, newest first", () 
 it.effect("refuses to hold more than 256 approvals", () =>
   Effect.gen(function* () {
     const approvals = yield* makeApprovals;
-    for (let index = 0; index < 256; index += 1) yield* approvals.create(binding(`text ${index}`));
+    for (let index = 0; index < 256; index += 1)
+      yield* approvals.create({
+        binding: binding(`text ${index}`),
+        readerBinding: binding(`text ${index}`),
+      });
 
-    const error = yield* approvals.create(binding("one too many")).pipe(Effect.flip);
+    const error = yield* approvals
+      .create({ binding: binding("one too many"), readerBinding: binding("one too many") })
+      .pipe(Effect.flip);
     assert.strictEqual(error._tag, "ComputerApprovalLimitError");
     assert.strictEqual(error.limit, 256);
     assert.instanceOf(error, ComputerApprovalLimitError);

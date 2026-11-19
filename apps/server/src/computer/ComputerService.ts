@@ -5,7 +5,6 @@
 import type {
   ComputerAct,
   ComputerAnswers,
-  ComputerApproval,
   ComputerApprovalBinding,
   ComputerApprovalId,
   ComputerApprovalsMode,
@@ -97,6 +96,10 @@ const MAX_ENDED_APPROVALS = 10;
 /** Every string a snapshot carries is at most this long, and a whole snapshot at most `MAX_SNAPSHOT_BYTES`. */
 const MAX_VIEW_FIELD_BYTES = 4_000;
 const MAX_STEP_BYTES = 400;
+const MAX_VIEW_QUESTIONS = 4;
+const MAX_VIEW_KEY_BYTES = 64;
+const MAX_VIEW_INSTRUCTIONS_BYTES = 2_000;
+const MAX_VIEW_DECISION_BYTES = 64_000;
 const MAX_SNAPSHOT_BYTES = 256_000;
 const MAX_BINDING_FIELD_BYTES = 400;
 const MAX_BINDING_URL_BYTES = 2_000;
@@ -175,6 +178,8 @@ type Host = {
 type PendingReply = {
   readonly hostId: ComputerHostId;
   readonly reply: Deferred.Deferred<ComputerHostReply, ComputerError>;
+  /** The control this reply confirms the end of: kept past its wait, so a late reply still frees the host. */
+  readonly confirms: ComputerTaskId | null;
 };
 
 type ApprovalWake = "answered" | "cancelled" | "timeout";
@@ -243,21 +248,51 @@ const hostView = (host: Host): ComputerHostView => ({
 });
 
 /**
+ * The questions as a snapshot carries them: at most `MAX_VIEW_QUESTIONS`, every string capped, and choices kept
+ * in order while the whole decision fits in `MAX_VIEW_DECISION_BYTES`.
+ */
+function boundedQuestions(questions: ComputerQuestions): ComputerQuestions {
+  let left = MAX_VIEW_DECISION_BYTES;
+  const take = (value: string, max: number) => {
+    const capped = capBytes(value, max);
+    left -= utf8Bytes(capped);
+    return capped;
+  };
+  const bounded: Record<string, ComputerQuestion> = {};
+  for (const [id, question] of Object.entries(questions).slice(0, MAX_VIEW_QUESTIONS)) {
+    const key = take(id, MAX_VIEW_KEY_BYTES);
+    const instructions = take(question.instructions, MAX_VIEW_INSTRUCTIONS_BYTES);
+    if (question.type === "noul") {
+      bounded[key] = { type: "noul", instructions };
+      continue;
+    }
+    const criteria: Record<string, string> = {};
+    for (const [choice, line] of Object.entries(question.criteria)) {
+      if (left - MAX_VIEW_KEY_BYTES - MAX_STEP_BYTES < 0) break;
+      criteria[take(choice, MAX_VIEW_KEY_BYTES)] = take(line, MAX_STEP_BYTES);
+    }
+    bounded[key] = { type: "choice", instructions, criteria };
+  }
+  return bounded;
+}
+
+/**
  * Only the agent's tools read the planner's questions, so client snapshots leave them out. The typed text
- * is hidden in every field, whoever reads it.
+ * is kept out of every field, whoever reads it; a goal never holds it.
  */
 const taskView = (task: Task, withQuestions = true): ComputerTaskView => {
   const shown = (value: string, max = MAX_VIEW_FIELD_BYTES) =>
     capBytes(hideTyped(value, task.text), max);
+  const read = (value: string) => capBytes(hideEchoed(value, task.text), MAX_VIEW_FIELD_BYTES);
   return {
     taskId: task.id,
     kind: task.kind,
     hostId: task.hostId,
     hostName: task.hostName,
-    goal: shown(task.goal),
+    goal: capBytes(task.goal, MAX_VIEW_FIELD_BYTES),
     status: task.status,
     reason: shown(task.reason),
-    surface: shown(task.surface),
+    surface: read(task.surface),
     steps: task.steps.map((step) => shown(step, MAX_STEP_BYTES)),
     requester: task.requester,
     threadId: task.threadId,
@@ -268,10 +303,10 @@ const taskView = (task: Task, withQuestions = true): ComputerTaskView => {
       task.decision === null
         ? null
         : withQuestions
-          ? { id: task.decision.id, questions: task.decision.shown.questions }
+          ? { id: task.decision.id, questions: boundedQuestions(task.decision.shown.questions) }
           : { id: task.decision.id },
     approvalsMode: task.approvalsMode,
-    ...(withQuestions && task.screenText !== "" ? { screenText: shown(task.screenText) } : {}),
+    ...(withQuestions && read(task.screenText) !== "" ? { screenText: read(task.screenText) } : {}),
   };
 };
 
@@ -295,20 +330,42 @@ const DecideState = Schema.Struct({
 });
 const decodeDecideState = Schema.decodeUnknownOption(DecideState);
 
-const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** Shorter typed text cannot be told apart from ordinary words and labels, so it is never replaced inside them. */
+const MIN_HIDDEN = 3;
+/** How the helper describes a field's value (`textbox “To” containing “…”`): an echo of what was typed. */
+const ECHOED_VALUE = / containing “([^”]*)”/g;
+
+const holds = (value: string, typed: string) => value.toLowerCase().includes(typed.toLowerCase());
 
 /**
- * The task's typed text hidden wherever it appears. Text of one or two characters is hidden where it stands
- * alone, so it does not take every letter it shares with ordinary words.
+ * The typed text kept out of a line the helper wrote: a field value that holds it is left out, and text long
+ * enough to tell apart is replaced wherever else it appears. Labels are otherwise kept, so a "No" button stays
+ * "No" when the task types "No".
  */
 function hideTyped(value: string, typed: string | null): string {
   if (typed === null || typed === "") return value;
-  if (typed.length >= 3) return value.split(typed).join(TYPED_TEXT);
-  return value.replace(
-    new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(typed)}(?![\\p{L}\\p{N}])`, "gu"),
-    TYPED_TEXT,
+  const unechoed = value.replace(ECHOED_VALUE, (whole, echoed: string) =>
+    holds(echoed, typed) ? "" : whole,
   );
+  return typed.length >= MIN_HIDDEN ? unechoed.split(typed).join(TYPED_TEXT) : unechoed;
 }
+
+/** Text read off the screen, which can echo what was typed: a field too short to clean is left out whole. */
+function hideEchoed(value: string, typed: string | null): string {
+  if (typed !== null && typed !== "" && typed.length < MIN_HIDDEN && holds(value, typed)) return "";
+  return hideTyped(value, typed);
+}
+
+/** Whether a goal carries the typed text: as written for longer text, as a word of its own for shorter. */
+function goalCarries(goal: string, typed: string): boolean {
+  if (typed.length >= MIN_HIDDEN) return holds(goal, typed);
+  return goal
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .includes(typed.toLowerCase());
+}
+
+const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
 
 /** At most `max` UTF-8 bytes, cut on a character. */
 function capBytes(value: string, max: number): string {
@@ -330,7 +387,7 @@ function aliasQuestions(questions: ComputerQuestions, typed: string | null): Ali
   const shown: Record<string, ComputerQuestion> = {};
   let renamed = 0;
   const alias = (key: string, taken: ReadonlySet<string>) => {
-    if (hideTyped(key, typed) === key) return key;
+    if (typed === null || typed === "" || !holds(key, typed)) return key;
     let next = `hidden_${++renamed}`;
     while (taken.has(next)) next = `hidden_${++renamed}`;
     return next;
@@ -383,31 +440,32 @@ function unaliasAnswers<A extends object>(
 }
 
 /**
- * The only state a decision provider is sent: known fields, capped, and the typed text hidden everywhere,
- * the goal included. Anything else a host puts in its state stays here.
+ * The only state a decision provider is sent: known fields, capped, and the typed text kept out of all of
+ * them. Anything else a host puts in its state stays here.
  */
 function outboundState(state: unknown, task: Task) {
   const decided = Option.getOrUndefined(decodeDecideState(state));
   const text = (value: string, max: number) => hideTyped(value, task.text).slice(0, max);
+  const read = (value: string, max: number) => hideEchoed(value, task.text).slice(0, max);
   const list = (values: ReadonlyArray<string> | undefined, keep: number) =>
     (values ?? []).slice(-keep).map((value) => text(value, MAX_STATE_FIELD));
   const screen = decided?.screen;
   return {
-    goal: text(task.goal, MAX_VIEW_FIELD_BYTES),
+    goal: task.goal,
     ...(task.text === null
       ? {}
       : { hasTextToType: true, alreadyTyped: decided?.alreadyTyped === true }),
     screen: {
       app: text(screen?.app ?? "", MAX_STATE_FIELD),
-      title: text(screen?.title ?? "", MAX_STATE_FIELD),
-      url: text(screen?.url ?? "", MAX_STATE_URL),
-      visibleText: text(screen?.visibleText ?? "", MAX_SCREEN_TEXT),
-      popup: text(screen?.popup ?? "", MAX_POPUP_TEXT),
+      title: read(screen?.title ?? "", MAX_STATE_FIELD),
+      url: read(screen?.url ?? "", MAX_STATE_URL),
+      visibleText: read(screen?.visibleText ?? "", MAX_SCREEN_TEXT),
+      popup: read(screen?.popup ?? "", MAX_POPUP_TEXT),
       readFrom: text(screen?.readFrom ?? "", MAX_STATE_FIELD),
     },
     stepsSoFar: list(decided?.stepsSoFar, MAX_STATE_STEPS),
     triedWithoutEffect: list(decided?.triedWithoutEffect, MAX_STATE_STEPS),
-    note: text(decided?.note ?? "", MAX_STATE_FIELD),
+    note: read(decided?.note ?? "", MAX_STATE_FIELD),
   };
 }
 
@@ -438,36 +496,59 @@ const waitEnded = (task: Task, nowMs: number): Task =>
       };
 
 /**
- * An approval for a client that cannot answer approvals: without the text it types, and with that text
- * hidden wherever else it shows.
+ * An approval as a client that cannot answer approvals sees it: without the text it types, and with that
+ * text kept out of every other field. Made with the approval, so it holds after its task is gone.
  */
-function withoutTypedText(approval: ComputerApproval, typed: string | null): ComputerApproval {
-  const { text: _text, ...action } = approval.binding.action;
-  const hide = (value: string | undefined) =>
-    value === undefined ? undefined : hideTyped(value, typed);
-  const hidden = (field: "label" | "name" | "fieldLabel") => {
-    const value = hide(action[field]);
-    return value === undefined ? {} : { [field]: value };
+function readerBinding(
+  binding: ComputerApprovalBinding,
+  typed: string | null,
+): ComputerApprovalBinding {
+  const { text: _text, ...action } = binding.action;
+  const hidden = (field: "label" | "name" | "fieldLabel" | "why" | "url") => {
+    const value = action[field];
+    if (value === undefined) return {};
+    return { [field]: field === "url" ? hideEchoed(value, typed) : hideTyped(value, typed) };
   };
   return {
-    ...approval,
-    binding: {
-      ...approval.binding,
-      title: hideTyped(approval.binding.title, typed),
-      url: hideTyped(approval.binding.url, typed),
-      goal: hideTyped(approval.binding.goal, typed),
-      why: hideTyped(approval.binding.why, typed),
-      action: { ...action, ...hidden("label"), ...hidden("name"), ...hidden("fieldLabel") },
+    ...binding,
+    title: hideEchoed(binding.title, typed),
+    url: hideEchoed(binding.url, typed),
+    why: hideTyped(binding.why, typed),
+    action: {
+      ...action,
+      ...hidden("label"),
+      ...hidden("name"),
+      ...hidden("fieldLabel"),
+      ...hidden("why"),
+      ...hidden("url"),
     },
   };
 }
 
-/** The oldest ended tasks, then the oldest ended approvals, dropped until the snapshot fits. */
+/** A running task without its steps, screen text and questions: what a snapshot keeps when it must. */
+const compactTask = (task: ComputerTaskView): ComputerTaskView => {
+  const { screenText: _screenText, ...rest } = task;
+  return {
+    ...rest,
+    steps: [],
+    pendingDecision: task.pendingDecision === null ? null : { id: task.pendingDecision.id },
+  };
+};
+
+const detailed = (task: ComputerTaskView) =>
+  task.steps.length > 0 ||
+  task.screenText !== undefined ||
+  task.pendingDecision?.questions !== undefined;
+
+/**
+ * Drops the oldest ended tasks, then the oldest ended approvals, until the snapshot fits. Running tasks and
+ * pending approvals are never dropped, since the user must see, stop and answer them: when they alone are over
+ * the cap, running tasks lose their details oldest first, and a snapshot still over is sent as it is.
+ */
 function withinBytes(snapshot: ComputerSnapshot): ComputerSnapshot {
   const tasks = [...snapshot.tasks];
   const approvals = [...snapshot.approvals];
-  const size = () =>
-    new TextEncoder().encode(JSON.stringify({ ...snapshot, tasks, approvals })).byteLength;
+  const size = () => utf8Bytes(JSON.stringify({ ...snapshot, tasks, approvals }));
   while (size() > MAX_SNAPSHOT_BYTES) {
     const endedTask = tasks.findLastIndex((task) => task.status !== "running");
     if (endedTask !== -1) {
@@ -475,8 +556,14 @@ function withinBytes(snapshot: ComputerSnapshot): ComputerSnapshot {
       continue;
     }
     const endedApproval = approvals.findLastIndex((approval) => approval.state !== "pending");
-    if (endedApproval === -1) break;
-    approvals.splice(endedApproval, 1);
+    if (endedApproval !== -1) {
+      approvals.splice(endedApproval, 1);
+      continue;
+    }
+    const busy = tasks.findLastIndex(detailed);
+    const target = tasks[busy];
+    if (target === undefined) break;
+    tasks[busy] = compactTask(target);
   }
   return { ...snapshot, tasks, approvals };
 }
@@ -681,8 +768,7 @@ const make = Effect.gen(function* () {
     readonly revealTypedText: boolean;
   }) {
     const state = yield* Ref.get(stateRef);
-    const listed = yield* approvals.list;
-    const typedText = new Map(state.tasks.map((task) => [task.id, task.text]));
+    const listed = yield* approvals.list({ revealTypedText: input.revealTypedText });
     const tasks =
       input.threadId === null
         ? state.tasks
@@ -699,11 +785,7 @@ const make = Effect.gen(function* () {
     return withinBytes({
       hosts: state.hosts.map(hostView),
       tasks: tasks.toReversed().map((task) => taskView(task, input.withQuestions)),
-      approvals: input.revealTypedText
-        ? scoped
-        : scoped.map((approval) =>
-            withoutTypedText(approval, typedText.get(approval.binding.taskId) ?? null),
-          ),
+      approvals: scoped,
     });
   });
   const status = (threadId: ThreadId | null) =>
@@ -799,12 +881,11 @@ const make = Effect.gen(function* () {
     return { replies, failed };
   };
 
-  const unregisterHost = Effect.fn("ComputerService.unregisterHost")(function* (
-    hostId: ComputerHostId,
-  ) {
-    const removed = yield* mutate((state) => {
+  /** Removes the host, only while `keep` still holds for it, in the same change that checks it. */
+  const removeHost = (hostId: ComputerHostId, keep: (host: Host) => boolean = () => true) =>
+    mutate((state) => {
       const host = state.hosts.find((candidate) => candidate.id === hostId);
-      if (host === undefined) return [null, state] as const;
+      if (host === undefined || !keep(host)) return [null, state] as const;
       const { replies, failed } = repliesOf(state, hostId);
       return [
         { host, failed },
@@ -815,6 +896,11 @@ const make = Effect.gen(function* () {
         },
       ] as const;
     });
+
+  const unregisterHost = Effect.fn("ComputerService.unregisterHost")(function* (
+    hostId: ComputerHostId,
+  ) {
+    const removed = yield* removeHost(hostId);
     if (removed === null) return;
     yield* afterHostGone(removed.host, removed.failed);
   });
@@ -825,14 +911,14 @@ const make = Effect.gen(function* () {
    */
   const awaitShutdown = (host: Host, taskId: ComputerTaskId) =>
     Effect.sleep(REPLY_TIMEOUT).pipe(
-      Effect.andThen(Ref.get(stateRef)),
-      Effect.flatMap((state) =>
-        state.hosts.some((candidate) => candidate.id === host.id && candidate.taskId === taskId)
-          ? record("host.unconfirmed_stop", { hostId: host.id, taskId }).pipe(
-              Effect.andThen(unregisterHost(host.id)),
+      Effect.andThen(removeHost(host.id, (current) => current.taskId === taskId)),
+      Effect.flatMap((removed) =>
+        removed === null
+          ? Effect.void
+          : record("host.unconfirmed_stop", { hostId: host.id, taskId }).pipe(
+              Effect.andThen(afterHostGone(removed.host, removed.failed)),
               Effect.andThen(host.end()),
-            )
-          : Effect.void,
+            ),
       ),
       Effect.forkIn(serviceScope),
     );
@@ -1005,7 +1091,11 @@ const make = Effect.gen(function* () {
         "ok",
         {
           ...marked,
-          replies: new Map(state.replies).set(requestId, { hostId: host.id, reply }),
+          replies: new Map(state.replies).set(requestId, {
+            hostId: host.id,
+            reply,
+            confirms: task !== null && !options.endsWithTask ? task.id : null,
+          }),
         },
       ] as const;
     });
@@ -1028,6 +1118,11 @@ const make = Effect.gen(function* () {
     ).pipe(
       Effect.ensuring(
         mutate((state) => {
+          const confirms = state.replies.get(requestId)?.confirms ?? null;
+          const reserved = state.hosts.some(
+            (candidate) => candidate.id === host.id && candidate.taskId === confirms,
+          );
+          if (confirms !== null && reserved) return [undefined, state] as const;
           const replies = new Map(state.replies);
           replies.delete(requestId);
           return [undefined, { ...state, replies }] as const;
@@ -1142,7 +1237,7 @@ const make = Effect.gen(function* () {
   const waitForTap = Effect.fn("ComputerService.waitForTap")(
     function* (task: Task, binding: ComputerApprovalBinding) {
       const approval = yield* approvals
-        .create(binding)
+        .create({ binding, readerBinding: readerBinding(binding, task.text) })
         .pipe(
           Effect.mapError((cause) =>
             failure(
@@ -1374,6 +1469,12 @@ const make = Effect.gen(function* () {
       const goal = input.goal.trim();
       if (goal.length === 0 || goal.length > MAX_GOAL) {
         return yield* failure("refused", `A goal is required, and at most ${MAX_GOAL} characters.`);
+      }
+      if (input.text !== undefined && input.text !== "" && goalCarries(goal, input.text)) {
+        return yield* failure(
+          "refused",
+          "Keep the text to type out of the goal, which the decision endpoint reads; say what it is for instead.",
+        );
       }
       return yield* begin({ ...input, goal });
     },
@@ -1977,7 +2078,17 @@ const make = Effect.gen(function* () {
       }
       const replies = new Map(state.replies);
       replies.delete(input.reply.requestId);
-      return [entry.reply, { ...state, replies }] as const;
+      // A late reply to a control that already ended is still its host's confirmation.
+      const confirmed = entry.confirms;
+      const late = confirmed !== null && taskIn(state, confirmed)?.status !== "running";
+      const hosts = late
+        ? state.hosts.map((host) =>
+            host.id === entry.hostId && host.taskId === confirmed
+              ? { ...host, taskId: null }
+              : host,
+          )
+        : state.hosts;
+      return [entry.reply, { ...state, replies, hosts }] as const;
     });
     if (reply === null) {
       return yield* failure("not_found", "That reply does not match a request in flight.", {

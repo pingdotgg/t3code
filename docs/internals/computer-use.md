@@ -57,18 +57,25 @@ steered by it, so no model's verdict grants a step: a click the deterministic
 policy cannot show is safe always becomes a tap. No accessibility role clears a
 click on an untrusted surface, since a `tab`, `row` or `textbox` can still send. The decision endpoint only
 chooses the next step, and the server sends it an allowlisted, capped state,
-never what the host put there beyond it. The goal goes with it. Only the
-`text` a task was started with is ever typed (without one, only the exact
-address the helper's navigation parser reads from the goal), and that text is
-hidden from the decision endpoint, read-only snapshots, logs, errors and the
-audit file wherever it appears, the goal and question keys included.
+never what the host put there beyond it. The goal goes with it, so a goal
+that contains the task's `text` is refused. Only that `text` is ever typed
+(without one, only the exact address the helper's navigation parser reads
+from the goal). It is kept out of the decision endpoint, read-only snapshots,
+logs, errors and the audit file. A field value the helper echoes
+(`containing “…”`) is dropped when it holds the text, and text of three
+characters or more is replaced wherever else it appears. Shorter text cannot
+be told apart from ordinary words: labels keep it, so a "No" button stays
+visible, and screen text that holds it is left out whole. A read-only client's
+approval is redacted when the approval is made, so it stays redacted after its
+task is gone.
 
 A host is bound to the authenticated session that connected it. Host calls
 from any other session are refused, and only that session's reconnect
 replaces it. A stopped task keeps its host reserved until the host reports
 the task finished, and a control keeps it until the control's reply, since a
-fixed control cannot be cancelled. A host that does not answer within the
-reply timeout is disconnected, which for a standalone server stops the
+fixed control cannot be cancelled. A reply that arrives after its wait timed
+out still frees the host. A host that has not let go within the reply
+timeout of a stop is disconnected, which for a standalone server stops the
 helper so its session can start again.
 
 Approvals do not stop a full-access agent with a shell on the same machine as

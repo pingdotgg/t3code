@@ -315,12 +315,12 @@ describe("computer toolkit", () => {
     Effect.gen(function* () {
       const host = yield* startHost;
       const use = yield* call("computer_use", {
-        goal: "reply to Dana that I am on my way",
+        goal: "reply to Dana that I am coming",
         text: "on my way",
       }).pipe(Effect.forkScoped);
 
       const task = yield* taskWhere((candidate) => candidate.kind === "use");
-      expect(task).toMatchObject({ threadId, goal: "reply to Dana that I am [typed text]" });
+      expect(task).toMatchObject({ threadId, goal: "reply to Dana that I am coming" });
 
       // The helper asks what to do next; with no grounder those questions come to the agent.
       const decided = yield* host
