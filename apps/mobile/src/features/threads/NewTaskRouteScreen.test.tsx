@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot } from "react-dom/client";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
@@ -28,6 +28,7 @@ const scratch = project("scratch", "/scratch");
 const harness = vi.hoisted(() => ({
   setProject: vi.fn(),
   openScratch: vi.fn(),
+  retargetDraft: vi.fn(),
   selectDetail: vi.fn(),
   navigation: {
     goBack: vi.fn(),
@@ -68,10 +69,17 @@ vi.mock("gt-react-native", () => ({
 }));
 vi.mock("@react-navigation/native", () => ({
   StackActions: { push: (name: string) => ({ type: "PUSH", name }) },
+  useFocusEffect: (effect: () => () => void) => useEffect(effect, [effect]),
   useIsFocused: () => true,
   useNavigation: () => harness.navigation,
 }));
-vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: () => null }));
+vi.mock("../../components/ui/NavigationRow", () => ({
+  NavigationRow: (props: { title: string; disabled?: boolean; onPress: () => void }) => (
+    <button aria-label={props.title} disabled={props.disabled} onClick={props.onPress}>
+      {props.title}
+    </button>
+  ),
+}));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
@@ -94,7 +102,9 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { openScratch: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => harness.openScratch }));
-vi.mock("../../state/use-composer-drafts", () => ({ retargetSavedNewTaskDraft: vi.fn() }));
+vi.mock("../../state/use-composer-drafts", () => ({
+  retargetSavedNewTaskDraft: harness.retargetDraft,
+}));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useRemoteConnectionStatus: () => ({
     connectedEnvironments: [{ environmentId, connectionState: "connected" }],
@@ -147,3 +157,48 @@ it("keeps the project picked while No project was still opening", async () => {
   expect(harness.setProject.mock.calls).toEqual([[regular]]);
   expect(harness.navigation.goBack).toHaveBeenCalledTimes(1);
 });
+
+it.each(["backing out and reopening", "waiting for the saved draft to load"])(
+  "keeps the picked project after %s while No project is pending",
+  async (scenario) => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    const opening = Promise.withResolvers<unknown>();
+    const retargeting = Promise.withResolvers<boolean>();
+    harness.openScratch.mockReturnValue(opening.promise);
+    harness.retargetDraft
+      .mockReset()
+      .mockImplementation((_draftId, target: { projectId: ProjectId }) =>
+        target.projectId === scratch.id ? retargeting.promise : Promise.resolve(true),
+      );
+    harness.selectDetail.mockClear();
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+    const route = { params: { draftId: "existing-draft" } } as never;
+    const row = (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
+    act(() => root.render(<NewTaskRouteScreen key="first" route={route} />));
+
+    act(() => row("No project").click());
+    if (scenario === "backing out and reopening") {
+      act(() => root.render(null));
+      act(() => root.render(<NewTaskRouteScreen key="second" route={route} />));
+    } else {
+      await act(async () => opening.resolve({ _tag: "Success", value: scratch }));
+    }
+    await act(async () => row("app").click());
+    await act(async () => {
+      opening.resolve({ _tag: "Success", value: scratch });
+      retargeting.resolve(true);
+    });
+
+    expect(harness.selectDetail.mock.calls).toEqual([
+      [
+        {
+          name: "Thread",
+          params: { draft: { environmentId, projectId: regular.id, draftId: "existing-draft" } },
+        },
+      ],
+    ]);
+  },
+);
