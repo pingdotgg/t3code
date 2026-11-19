@@ -56,16 +56,24 @@ function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes"
 // Claude records absolute paths; name files under the workspace relative to it, as other diffs do.
 // Only header lines, from the start or a `diff --git` line up to the first hunk, are rewritten.
 function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | undefined) {
-  const root = workspaceRoot?.replace(/[\\/]+$/, "");
-  if (!patch || !root) return patch;
-  // Separators match / and \, which a quoted header escapes as \\. Git's a/ and b/ can stand in
-  // for an absolute path's leading separator.
-  const segments = root
-    .split(/[\\/]+/)
-    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const windows = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(workspaceRoot ?? "");
+  const segments = workspaceRoot?.split(windows ? /[\\/]+/ : /\/+/);
+  while (segments?.at(-1) === "") segments.pop();
+  if (!patch || !segments?.some(Boolean)) return patch;
+  // Windows separates with / or \ (\\ in a quoted header); POSIX only with /, where a \ is part of
+  // a name and a quoted header doubles it.
+  const separator = windows ? String.raw`[\\/]+` : "/+";
+  const root = segments
+    .map((segment) =>
+      segment
+        .split("\\")
+        .map((text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+        .join(String.raw`\\\\?`),
+    )
+    .join(separator);
   const prefix = new RegExp(
-    String.raw`((?:^|[ "])(?:[ab]/)?)[\\/]*${segments.filter(Boolean).join(String.raw`[\\/]+`)}[\\/]+`,
-    /^[A-Za-z]:/.test(root) ? "gi" : "g",
+    String.raw`((?:^|[ "])(?:[ab]/)?)${root}${separator}`,
+    windows ? "gi" : "g",
   );
   let inHeader = true;
   return patch

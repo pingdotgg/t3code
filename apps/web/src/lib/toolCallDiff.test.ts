@@ -124,11 +124,24 @@ describe("toolCallDiff", () => {
     expect(paths(toolCallDiff({ fileName: "/elsewhere/b.ts", diffStr: hunk }, root).patch)).toEqual(
       ["/elsewhere/b.ts"],
     );
+    // A relative path, and on POSIX a backslash that is part of a name, keep theirs.
+    for (const [fileName, workspace] of [
+      ["repo/src/a.ts", "/repo"],
+      ["/repo/back/slash/a.ts", "/repo/back\\slash"],
+    ] as const) {
+      const diffStr = `--- ${fileName}\n+++ ${fileName}\n${hunk}`;
+      expect(toolCallDiff({ fileName, diffStr }, workspace).patch).toBe(diffStr);
+    }
+    const backslash = toolCallDiff(
+      { fileName: "/repo/back\\slash/a.ts", diffStr: hunk },
+      "/repo/back\\slash",
+    ).patch;
+    expect(paths(backslash)).toEqual(["a.ts"]);
     // Each file of a multi-file patch; a path that merely contains the root keeps it.
     const twoFiles = [
-      `diff --git a${root}/a.ts b${root}/a.ts`,
-      `--- a${root}/a.ts`,
-      `+++ b${root}/a.ts`,
+      `diff --git a/${root}/a.ts b/${root}/a.ts`,
+      `--- a/${root}/a.ts`,
+      `+++ b/${root}/a.ts`,
       hunk.trimEnd(),
       `diff --git a/backup${root}/b.ts b/backup${root}/b.ts`,
       `--- a/backup${root}/b.ts`,
