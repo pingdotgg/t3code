@@ -30,7 +30,7 @@ describe("hostedPairing", () => {
         host: "https://backend.example.com:3773",
         token: "pairing-token",
         label: "Workstation",
-      }),
+      })!,
     );
 
     expect(url.origin).toBe("https://preview.t3.codes");
@@ -39,5 +39,18 @@ describe("hostedPairing", () => {
     expect(url.searchParams.get("label")).toBe("Workstation");
     expect(url.searchParams.has("token")).toBe(false);
     expect(url.hash).toBe("#token=pairing-token");
+  });
+
+  it("never sends a standalone build without a hosted app to app.t3.codes", async () => {
+    vi.stubEnv("VITE_T3CODE_STANDALONE", "1");
+    vi.stubEnv("VITE_HOSTED_APP_URL", "");
+    vi.resetModules();
+    const hostedPairing = await import("./hostedPairing");
+
+    expect(hostedPairing.configuredHostedAppUrl()).toBeNull();
+    expect(hostedPairing.isHostedStaticApp(new URL("https://app.t3.codes/"))).toBe(false);
+    expect(
+      hostedPairing.buildHostedPairingUrl({ host: "https://backend.example.com", token: "t" }),
+    ).toBeNull();
   });
 });

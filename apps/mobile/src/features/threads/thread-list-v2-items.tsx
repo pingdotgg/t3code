@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { resolveHostedAppUrl } from "../cloud/publicConfig";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
@@ -1232,7 +1233,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         const target = threadChipCopyTarget(
           { environmentId: thread.environmentId, threadId: thread.id },
           thread.title,
-          undefined,
+          resolveHostedAppUrl(),
           m,
         );
         void copyThreadReference(target).then((didCopy) => {

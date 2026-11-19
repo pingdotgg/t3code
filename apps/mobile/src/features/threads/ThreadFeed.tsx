@@ -4,6 +4,7 @@ import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import { formatDuration } from "@t3tools/shared/orchestrationTimingCopy";
 import { Sheet } from "../../components/ui/Sheet";
+import { resolveHostedAppUrl } from "../cloud/publicConfig";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { ListSection } from "../../components/ui/ListSection";
 import { collectMobileAssistantTextSelectors } from "../../lib/assistantCitationSelection";
@@ -84,7 +85,7 @@ import {
 } from "@t3tools/contracts";
 import type { ToolCallVisibility } from "@t3tools/contracts/settings";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
-import { hostedThreadLink, parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadLinkHref, shareableThreadLink } from "@t3tools/shared/threadLinks";
 import { PROMPT_LINK_MAX_PROMPT_LENGTH } from "@t3tools/shared/promptLinks";
 import {
   parseComposerContextHref,
@@ -426,7 +427,10 @@ function UserMessageCopyButton(props: {
     />
   );
   const linkText = replaceComposerContextReferences(props.text, (reference) => reference.label);
-  if (linkText.length > PROMPT_LINK_MAX_PROMPT_LENGTH) return button;
+  // A prompt link needs a hosted app; a standalone build may have none.
+  if (linkText.length > PROMPT_LINK_MAX_PROMPT_LENGTH || resolveHostedAppUrl() === null) {
+    return button;
+  }
   return (
     <Menu
       actions={USER_MESSAGE_COPY_MENU_ACTIONS.map((action) => ({
@@ -3571,7 +3575,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const thread = resolveLinkedThread(href);
       if (thread) {
         if (actionId === "open-thread") onMarkdownLinkPress(href);
-        else if (actionId === "copy-thread-link") copyTextWithHaptic(hostedThreadLink(thread));
+        else if (actionId === "copy-thread-link")
+          copyTextWithHaptic(shareableThreadLink(thread, resolveHostedAppUrl()));
         return;
       }
       const deviceUrl = loopbackUrlForDevice(href);

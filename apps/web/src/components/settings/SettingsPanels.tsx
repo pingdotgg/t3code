@@ -2,7 +2,7 @@ import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
+import { PRIVACY_POLICY_URL } from "../../projectLinks";
 import { CheckIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -2505,23 +2505,27 @@ export function AboutSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="legal" title={gt("Legal")}>
-        <SettingsRow
-          {...setting("privacy-policy")}
-          description={
-            telemetryOff === undefined
-              ? gt("How we handle your data, including the anonymous usage data T3 Code collects.")
-              : gt("How we handle your data. {telemetryOff}", { telemetryOff })
-          }
-          control={
-            <Button
-              render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
-              size="sm"
-              variant="outline"
-            >
-              <T>View policy</T>
-            </Button>
-          }
-        />
+        {PRIVACY_POLICY_URL ? (
+          <SettingsRow
+            {...setting("privacy-policy")}
+            description={
+              telemetryOff === undefined
+                ? gt(
+                    "How we handle your data, including the anonymous usage data T3 Code collects.",
+                  )
+                : gt("How we handle your data. {telemetryOff}", { telemetryOff })
+            }
+            control={
+              <Button
+                render={<a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer noopener" />}
+                size="sm"
+                variant="outline"
+              >
+                <T>View policy</T>
+              </Button>
+            }
+          />
+        ) : null}
         <SettingsRow
           {...setting("open-source-licenses")}
           description={gt("Notices for dependencies, assets, and optional tools used by T3 Code.")}
