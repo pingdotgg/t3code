@@ -1,6 +1,11 @@
 import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
-import type { EnvironmentId, IssueListInput, ProjectId } from "@t3tools/contracts";
+import {
+  ISSUE_LIST_MAX_EXCLUDED_PROJECTS,
+  type EnvironmentId,
+  type IssueListInput,
+  type ProjectId,
+} from "@t3tools/contracts";
 
 import type { IssueListTarget } from "@t3tools/client-runtime/state/issues";
 
@@ -25,7 +30,7 @@ const projectPairs = (raw: unknown): IssuesSearch["hideProjects"] => {
       ? [[environmentId as EnvironmentId, projectId as ProjectId] as const]
       : [];
   });
-  return pairs.length === 0 ? undefined : pairs.slice(0, 200);
+  return pairs.length === 0 ? undefined : pairs.slice(0, ISSUE_LIST_MAX_EXCLUDED_PROJECTS);
 };
 
 // Every optional key is an own key, even when undefined: the router lays these over the parent
@@ -71,6 +76,7 @@ export const issueProjectKeys = (pairs: IssuesSearch["hideProjects"]): ReadonlyS
 /**
  * Each environment leaves out its hidden projects, named from the saved pairs so a listing sent
  * before the project list loads still leaves them out. One with every project hidden is not read.
+ * Rows past the request limit are hidden on the client.
  */
 export function issueListTargets(
   environmentIds: ReadonlyArray<EnvironmentId>,
@@ -82,9 +88,13 @@ export function issueListTargets(
   return environmentIds.flatMap((environmentId) => {
     const own = projects.filter((project) => project.environmentId === environmentId);
     if (own.length > 0 && own.every((project) => keys.has(projectKey(project)))) return [];
-    const excludeProjectIds = (hidden ?? [])
-      .filter(([environment]) => environment === environmentId)
-      .map(([, projectId]) => projectId);
+    const excludeProjectIds = (
+      own.length > 0
+        ? own.filter((project) => keys.has(projectKey(project))).map((project) => project.id)
+        : (hidden ?? [])
+            .filter(([environment]) => environment === environmentId)
+            .map(([, projectId]) => projectId)
+    ).slice(0, ISSUE_LIST_MAX_EXCLUDED_PROJECTS);
     return [
       {
         environmentId,

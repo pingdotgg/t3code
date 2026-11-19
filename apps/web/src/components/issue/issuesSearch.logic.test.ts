@@ -41,6 +41,7 @@ describe("issueListTargets", () => {
     const input = { state: "open" } as const;
     const hidden = [
       [laptop, ProjectId.make("api")],
+      [laptop, ProjectId.make("removed")],
       [vps, ProjectId.make("docs")],
     ] as const;
     expect(issueListTargets([laptop, vps], projects, hidden, input)).toEqual([
@@ -48,7 +49,7 @@ describe("issueListTargets", () => {
     ]);
     // Before the project list loads, the saved choice still leaves its projects out.
     expect(issueListTargets([laptop, vps], [], hidden, input)).toEqual([
-      { environmentId: laptop, input: { state: "open", excludeProjectIds: ["api"] } },
+      { environmentId: laptop, input: { state: "open", excludeProjectIds: ["api", "removed"] } },
       { environmentId: vps, input: { state: "open", excludeProjectIds: ["docs"] } },
     ]);
     expect(issueListTargets([laptop, vps], projects, undefined, input)).toEqual([

@@ -1,8 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import * as Schema from "effect/Schema";
+
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
+import { issueListPreferences, IssueListPreferencesSchema } from "./issueListPreferences";
 import { issueViewMatches } from "./issueSavedViews";
+
+const decodePreferences = Schema.decodeOption(IssueListPreferencesSchema);
 
 const preferences = {
   who: "assigned",
@@ -33,5 +38,14 @@ describe("saved issue views", () => {
       }),
     ).toBe(true);
     expect(issueViewMatches(view, { ...preferences, hideProjects: undefined })).toBe(false);
+  });
+
+  it("keeps a selection of every project within what it reads back", () => {
+    const many = Array.from(
+      { length: 1_001 },
+      (_, index) => [EnvironmentId.make("env-1"), ProjectId.make(`project-${index}`)] as const,
+    );
+    const stored = issueListPreferences({ ...preferences, hideProjects: many });
+    expect(decodePreferences(stored)._tag).toBe("Some");
   });
 });

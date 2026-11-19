@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
 
-import { EnvironmentId, IssueInvolvement, IssueListState, ProjectId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ISSUE_LIST_MAX_EXCLUDED_PROJECTS,
+  IssueInvolvement,
+  IssueListState,
+  ProjectId,
+} from "@t3tools/contracts";
 
 /**
  * What the issues page remembers between visits; the selection in the URL is not part of it.
@@ -33,7 +39,9 @@ export const IssueListPreferencesSchema = Schema.Struct({
   who: IssueInvolvement,
   status: IssueListState,
   hideProjects: Schema.optional(
-    Schema.Array(Schema.Tuple([EnvironmentId, ProjectId])).check(Schema.isMaxLength(200)),
+    Schema.Array(Schema.Tuple([EnvironmentId, ProjectId])).check(
+      Schema.isMaxLength(ISSUE_LIST_MAX_EXCLUDED_PROJECTS),
+    ),
   ),
   host: Schema.optional(BoundedPreference),
   q: Schema.optional(BoundedPreference),
@@ -63,7 +71,9 @@ export function issueListPreferences(search: {
   return {
     who: search.who,
     status: search.status,
-    ...(search.hideProjects?.length ? { hideProjects: search.hideProjects } : {}),
+    ...(search.hideProjects?.length
+      ? { hideProjects: search.hideProjects.slice(0, ISSUE_LIST_MAX_EXCLUDED_PROJECTS) }
+      : {}),
     ...(search.host ? { host: search.host } : {}),
     ...(search.q ? { q: search.q } : {}),
     ...(search.label?.length ? { label: search.label } : {}),

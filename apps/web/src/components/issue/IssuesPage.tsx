@@ -295,6 +295,12 @@ export function IssuesPage() {
               ),
               answer: {
                 ...page.answer,
+                scopes: page.answer.scopes?.filter(
+                  (scope) =>
+                    !hiddenProjects.has(
+                      pullRequestProjectKey({ environmentId, id: scope.projectId }),
+                    ),
+                ),
                 trackers: chosenHost
                   ? page.answer.trackers.filter(
                       (tracker) => tracker.host.toLowerCase() === chosenHost,
