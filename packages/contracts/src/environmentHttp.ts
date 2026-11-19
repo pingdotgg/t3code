@@ -541,8 +541,11 @@ const REACHABILITY_SECTION = {
   timeout: "the-t3-connect-address-does-not-resolve-or-answer",
 } satisfies Record<EnvironmentConnectReachabilityCause, T3ConnectTroubleshootingSection>;
 
-export function connectReachabilityHelpUrl(cause: EnvironmentConnectReachabilityCause): string {
-  return t3ConnectTroubleshootingUrl(REACHABILITY_SECTION[cause]);
+export function connectReachabilityHelpUrl(
+  cause: EnvironmentConnectReachabilityCause,
+  repository?: string,
+): string {
+  return t3ConnectTroubleshootingUrl(REACHABILITY_SECTION[cause], repository);
 }
 
 export const EnvironmentCloudLinkStateResult = Schema.Struct({

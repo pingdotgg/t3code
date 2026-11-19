@@ -72,13 +72,14 @@ const TelemetryEnvConfig = Config.all({
   posthogHost: Config.String("T3CODE_POSTHOG_HOST").pipe(
     Config.withDefault("https://ingest.t3.codes"),
   ),
-  // Standalone builds send only to a PostHog host the operator chose.
+  // Standalone builds send only to a PostHog host and project the operator chose.
   enabled: Config.all({
     standalone: standaloneConfig,
     host: Config.String("T3CODE_POSTHOG_HOST").pipe(Config.option),
+    key: Config.String("T3CODE_POSTHOG_KEY").pipe(Config.option),
   }).pipe(
-    Config.flatMap(({ standalone, host }) =>
-      standalone && Option.isNone(host)
+    Config.flatMap(({ standalone, host, key }) =>
+      standalone && (Option.isNone(host) || Option.isNone(key))
         ? Config.succeed(false)
         : Config.Boolean("T3CODE_TELEMETRY_ENABLED").pipe(Config.withDefault(true)),
     ),

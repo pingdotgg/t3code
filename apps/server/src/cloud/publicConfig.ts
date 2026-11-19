@@ -1,4 +1,5 @@
 import {
+  BUILD_HOSTED_APP_URL,
   connectLoopbackRedirectUri,
   CONNECT_OAUTH_SCOPES,
   DEFAULT_HOSTED_APP_URL,
@@ -110,9 +111,10 @@ export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
 
 export const relayUrlConfig = makeRelayUrlConfig();
 
+// Required in a standalone build without a hosted app of its own.
 export const hostedAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",
-  DEFAULT_HOSTED_APP_URL,
+  BUILD_HOSTED_APP_URL,
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 const NIGHTLY_HOSTED_APP_URL = "https://nightly.app.t3.codes";
@@ -123,9 +125,11 @@ const NIGHTLY_HOSTED_APP_URL = "https://nightly.app.t3.codes";
  */
 export const agentApprovalAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",
-  typeof __T3CODE_BUILD_CHANNEL__ !== "undefined" && __T3CODE_BUILD_CHANNEL__ === "nightly"
+  BUILD_HOSTED_APP_URL === DEFAULT_HOSTED_APP_URL &&
+    typeof __T3CODE_BUILD_CHANNEL__ !== "undefined" &&
+    __T3CODE_BUILD_CHANNEL__ === "nightly"
     ? NIGHTLY_HOSTED_APP_URL
-    : DEFAULT_HOSTED_APP_URL,
+    : BUILD_HOSTED_APP_URL,
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 function validateHostedAppUrl(value: string) {

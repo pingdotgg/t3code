@@ -399,8 +399,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
     { name: "nothing by default", env: {}, origins: [] },
     { name: "nothing to T3 when turned on", env: { T3CODE_TELEMETRY_ENABLED: true }, origins: [] },
     {
-      name: "to a host the operator chose",
+      name: "nothing without the operator's project key",
       env: { T3CODE_POSTHOG_HOST: "http://localhost" },
+      origins: [],
+    },
+    {
+      name: "to a host the operator chose",
+      env: { T3CODE_POSTHOG_HOST: "http://localhost", T3CODE_POSTHOG_KEY: "phc_test_key" },
       origins: ["http://localhost"],
     },
   ])("a standalone server sends $name", (input) =>
@@ -417,7 +422,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AnalyticsService
         Effect.provide(
           analyticsLayerWith(client, undefined, {
             T3CODE_STANDALONE: true,
-            T3CODE_POSTHOG_KEY: "phc_test_key",
             ...input.env,
           }),
         ),

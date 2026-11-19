@@ -23,8 +23,13 @@ export function standaloneBuildDefine(env: Environment): Record<string, string> 
       `T3CODE_STANDALONE=1 does not allow the release repository ${repository}; use the fork's.`,
     );
   }
+  const hostedAppUrl = env.T3CODE_HOSTED_APP_URL?.trim();
   return {
     __T3CODE_BUILD_STANDALONE__: "true",
     __T3CODE_BUILD_RELEASE_REPOSITORY__: JSON.stringify(repository),
+    // Empty when the fork hosts no web app: nothing then trusts or links to a hosted origin.
+    __T3CODE_BUILD_HOSTED_APP_URL__: JSON.stringify(
+      hostedAppUrl ? new URL(hostedAppUrl).origin : "",
+    ),
   };
 }

@@ -18,4 +18,14 @@ describe("provider auth return destinations", () => {
     "t3code://app/welcome/../evil",
     "https://attacker.example/welcome",
   ])("rejects %s", (url) => expect(providerAuthReturnUrl(url)).toBeUndefined());
+
+  it("returns to the build's hosted app and no other", () => {
+    const fork = "https://t3.fork.example";
+    expect(providerAuthReturnUrl("https://app.t3.codes/settings")).toBe(
+      "https://app.t3.codes/settings",
+    );
+    expect(providerAuthReturnUrl(`${fork}/settings`, fork)).toBe(`${fork}/settings`);
+    expect(providerAuthReturnUrl("https://app.t3.codes/settings", fork)).toBeUndefined();
+    expect(providerAuthReturnUrl("https://app.t3.codes/settings", "")).toBeUndefined();
+  });
 });

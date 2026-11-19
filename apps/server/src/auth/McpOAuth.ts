@@ -19,7 +19,7 @@ import {
   parseMcpApprovalCode,
   type RuntimeMode,
 } from "@t3tools/contracts";
-import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import { BUILD_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 import { encodeOAuthScope } from "@t3tools/shared/oauthScope";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -635,11 +635,14 @@ export const layerMcpClientAuthenticator = Layer.effect(
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
+    // A standalone build without a hosted app gives outside clients native thread links.
     const hostedAppUrl = yield* hostedAppUrlConfig.pipe(
       Effect.catch((cause) =>
-        Effect.logWarning("Outside MCP clients get app.t3.codes thread links", { cause }).pipe(
-          Effect.as(DEFAULT_HOSTED_APP_URL),
-        ),
+        BUILD_HOSTED_APP_URL === ""
+          ? Effect.undefined
+          : Effect.logWarning(`Outside MCP clients get ${BUILD_HOSTED_APP_URL} thread links`, {
+              cause,
+            }).pipe(Effect.as(BUILD_HOSTED_APP_URL)),
       ),
     );
     return McpHttpServer.McpClientAuthenticator.of({
