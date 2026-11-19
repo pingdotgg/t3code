@@ -2682,6 +2682,29 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    // regression: #38935 an unclassified worktree add failure keeps Git's diagnostic
+    it.effect("reports Git's diagnostic when worktree add fails for an unclassified reason", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        yield* writeTextFile(cwd, ".git/worktrees", "not a directory\n");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const error = yield* driver
+          .createWorktree({
+            cwd,
+            refName: initialBranch,
+            newRefName: "fix/example",
+            path: path.join(yield* makeTmpDir("git-worktrees-"), "created"),
+          })
+          .pipe(Effect.flip);
+
+        assert.equal(error.operation, "GitVcsDriver.createWorktree");
+        assert.include(error.message, "could not create directory");
+      }),
+    );
+
     it.effect("explains a non-fast-forward push from a host with a translated Git", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
