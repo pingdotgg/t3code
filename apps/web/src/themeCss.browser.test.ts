@@ -24,6 +24,9 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
       mask-image: v\\61r(--none, u\\72l(https://example.com/e));
       @media (min-width: 0px) { cursor: url(https://example.com/c), auto; }
     }
+    [data-theme-css-probe] { background: var(--none, url(https://example.com/h)); }
+    @keyframes shorthand { to { border-image: var(--none, url(https://example.com/i)); } }
+    [data-workspace-area="conversation"] { background: var(--theme-background-image) center / cover no-repeat; }
   `);
 
   const style = getComputedStyle(probe);
@@ -36,7 +39,36 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
     Array.from(sheet.cssRules, (rule) => rule.cssText),
   );
   expect(kept.join("\n")).not.toContain("example.com");
+  expect(kept.join("\n")).toContain(
+    "background: var(--theme-background-image) center / cover no-repeat;",
+  );
   expect(style.cursor).toBe("auto");
+
+  // A later longhand hides the shorthand's text from CSSOM, and the browser still loads its url().
+  applyThemeCss(`
+    [data-theme-css-probe] { mask: v\\61r(--none, u\\72l(https://example.com/k)); mask-size: auto; }
+    [data-theme-css-probe] { list-style: env(t3-none, url(https://example.com/l)); list-style-type: disc; }
+    @keyframes hidden { to { background: var(--none, url(https://example.com/m)); background-color: red; } }
+    [data-theme-css-probe] { border-image: var(--none, url(https://example.com/n)); border-image-slice: 1; }
+    [data-theme-css-probe] { animation: hidden 1s forwards paused; animation-delay: -1s; }
+  `);
+  expect(style.maskImage).toBe("none");
+  expect(style.listStyleImage).toBe("none");
+  expect(style.borderImageSource).toBe("none");
+  expect(style.backgroundImage).toBe("none");
+  expect(style.backgroundColor).toBe("rgb(255, 0, 0)");
+
+  // The same shape without a fetch stays, whatever the rest of the sheet holds.
+  applyThemeCss(`
+    [data-theme-css-probe] {
+      --edge: 4px solid red; border: var(--edge); border-left-width: 0;
+      background: var(--none, linear-gradient(red, blue)); background-color: red;
+    }
+    .unused { c\\6flor: red; b\\61 ckground: var(--none); cursor: url(https://example.com/x), auto; }
+  `);
+  expect(style.borderTopWidth).toBe("4px");
+  expect(style.borderLeftWidth).toBe("0px");
+  expect(style.backgroundImage).toContain("linear-gradient");
 
   applyThemeCss(undefined);
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
