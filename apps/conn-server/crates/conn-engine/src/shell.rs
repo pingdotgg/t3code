@@ -315,6 +315,12 @@ pub(crate) fn thread_shell(tx: &Tx<'_>, thread_id: &str) -> StoreResult<Value> {
         "limitRecovery": field("limitRecovery"),
         "deletedAt": field("deletedAt"),
     });
+    // As T3's shell: present only when the thread has them.
+    for key in ["linkedPullRequest", "branchPullRequest"] {
+        if let (Some(value), Some(map)) = (thread.get(key), row.as_object_mut()) {
+            map.insert(key.into(), value.clone());
+        }
+    }
     // The link that started it, when one did (`linkOrigin`): the fence reads it.
     if let Some(origin) = thread.get("linkOrigin").filter(|o| o.is_object()) {
         row["linkOrigin"] = origin.clone();

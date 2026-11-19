@@ -84,7 +84,7 @@ fn without_watch(link: &Value) -> Value {
 
 /// The thread after `command`, or `None` when T3's decider returns the thread unchanged.
 /// T3 emits `thread.pull-request-synced` with the thread either way.
-pub(crate) fn decide(thread: &Value, command: &Value, now: &str) -> Option<Value> {
+pub fn decide(thread: &Value, command: &Value, now: &str) -> Option<Value> {
     let key = key_of(command);
     let links = links_of(thread);
     let existing = links.iter().position(|link| key_of(link) == key);
@@ -93,6 +93,12 @@ pub(crate) fn decide(thread: &Value, command: &Value, now: &str) -> Option<Value
     } else {
         unlink(&key, &links, existing?)
     };
+    Some(with_links(thread, pull_requests, Some(now)))
+}
+
+/// The thread with `pull_requests`; the older `linkedPullRequest` stays only while a visible
+/// link still names it. `updatedAt` moves only when `now` is given.
+fn with_links(thread: &Value, pull_requests: Vec<Value>, now: Option<&str>) -> Value {
     let mut updated = thread.clone();
     let keeps_legacy = thread
         .get("linkedPullRequest")
@@ -108,9 +114,101 @@ pub(crate) fn decide(thread: &Value, command: &Value, now: &str) -> Option<Value
         if !keeps_legacy {
             map.insert("linkedPullRequest".into(), Value::Null);
         }
-        map.insert("updatedAt".into(), json!(now));
+        if let Some(now) = now {
+            map.insert("updatedAt".into(), json!(now));
+        }
     }
-    Some(updated)
+    updated
+}
+
+// ---- Host syncs: `thread.pull-request-link.sync` and `thread.pull-request.sync` -------------
+
+/// `thread.pull-request-link.sync`: the link's snapshot and stack as the host read them.
+/// `None` when no link has the key; T3 then returns the thread unchanged and emits nothing.
+/// `updatedAt` stays: a host read is not thread activity.
+pub fn decide_link_sync(thread: &Value, command: &Value) -> Option<Value> {
+    let key = key_of(command);
+    let mut links = links_of(thread);
+    let link = links
+        .iter_mut()
+        .find(|link| key_of(link) == key)?
+        .as_object_mut()?;
+    for field in ["snapshot", "stack"] {
+        link.insert(
+            field.into(),
+            command.get(field).cloned().unwrap_or(Value::Null),
+        );
+    }
+    Some(with_links(thread, links, None))
+}
+
+/// `legacyPullRequestLink`: a `linkedPullRequest` as a manual link, keeping what an existing
+/// link of the same key carried (web URL, watch, ended watch).
+fn legacy_link(thread: &Value, linked: &Value, now: &str) -> Value {
+    let key = legacy_key(linked);
+    let existing = links_of(thread).into_iter().find(|l| key_of(l) == key);
+    let mut link = key_json(&key);
+    if let Some(map) = link.as_object_mut() {
+        map.insert("url".into(), json!(text(linked, "url")));
+        map.insert("source".into(), json!("manual"));
+        map.insert("linkedAt".into(), json!(now));
+        map.insert("snapshot".into(), Value::Null);
+        map.insert("stack".into(), Value::Null);
+        for field in ["repositoryWebUrl", "endedWatch"] {
+            if let Some(value) = existing.as_ref().and_then(|e| e.get(field)) {
+                map.insert(field.into(), value.clone());
+            }
+        }
+    }
+    let watch = existing.as_ref().and_then(|e| e.get("watch"));
+    match watch {
+        Some(watch) => with_watch(&link, Some(watch)),
+        None => link,
+    }
+}
+
+/// `thread.pull-request.sync`: the branch's pull request, and an optional replacement of the
+/// older single link. `updatedAt` stays.
+pub fn decide_branch_sync(thread: &Value, command: &Value, now: &str) -> Value {
+    let mut updated = thread.clone();
+    let Some(map) = updated.as_object_mut() else {
+        return updated;
+    };
+    map.insert(
+        "branchPullRequest".into(),
+        command
+            .get("branchPullRequest")
+            .cloned()
+            .unwrap_or(Value::Null),
+    );
+    let Some(replacement) = command.get("linkedPullRequest").filter(|l| l.is_object()) else {
+        return updated;
+    };
+    let old = thread
+        .get("linkedPullRequest")
+        .filter(|l| l.is_object())
+        .map(legacy_key);
+    let new = legacy_key(replacement);
+    let mut links: Vec<Value> = links_of(thread)
+        .into_iter()
+        .filter(|link| {
+            let key = key_of(link);
+            old.as_ref() != Some(&key) && key != new
+        })
+        .collect();
+    links.push(legacy_link(thread, replacement, now));
+    map.insert("linkedPullRequest".into(), replacement.clone());
+    map.insert("pullRequests".into(), json!(links));
+    updated
+}
+
+/// `threadPullRequestLinksEqual`: two `ThreadLinkedPullRequest` values (or nulls) are equal.
+pub(crate) fn linked_equal(left: Option<&Value>, right: Option<&Value>) -> bool {
+    let fields = |v: Option<&Value>| {
+        v.filter(|v| v.is_object())
+            .map(|v| ["projectId", "repository", "number", "url"].map(|key| v.get(key).cloned()))
+    };
+    fields(left) == fields(right)
 }
 
 fn link(

@@ -13,6 +13,7 @@ pub mod actions;
 mod activity;
 mod detail;
 pub mod diff;
+pub mod link_sync;
 pub mod listing;
 pub mod normalize;
 mod stack;
@@ -454,6 +455,69 @@ impl Client {
             }
         }
         Ok(stats)
+    }
+    /// `listPullRequestsByHead` for many heads, as T3's background head resolver batches them
+    /// (`GraphQLResolver.aliased`, 25 per document): for each `(owner, name, head)`, every
+    /// state, newest 100. `None` for a head whose repository GitHub could not read, or whose
+    /// document failed: each document stands on its own, so one that times out loses only
+    /// its own heads.
+    pub async fn pull_requests_by_heads(
+        &self,
+        heads: &[(String, String, String)],
+    ) -> Vec<Option<Vec<Value>>> {
+        const PER_DOCUMENT: usize = 25;
+        let mut answers = Vec::with_capacity(heads.len());
+        for batch in heads.chunks(PER_DOCUMENT) {
+            match self.heads_document(batch).await {
+                Ok(found) => answers.extend(found),
+                Err(_) => answers.extend(batch.iter().map(|_| None)),
+            }
+        }
+        answers
+    }
+
+    async fn heads_document(
+        &self,
+        batch: &[(String, String, String)],
+    ) -> Result<Vec<Option<Vec<Value>>>, Error> {
+        let query = generated::PULL_REQUESTS_BY_HEAD
+            .render_slices(batch.len())
+            .map_err(|_| Error::Failed("Could not build GitHub's head lookup.".into()))?;
+        let mut variables = serde_json::Map::new();
+        for (index, (owner, name, head)) in batch.iter().enumerate() {
+            for (key, value) in [
+                ("owner", json!(owner)),
+                ("name", json!(name)),
+                ("head", json!(head)),
+                ("states", json!(["OPEN", "CLOSED", "MERGED"])),
+                ("first", json!(100)),
+            ] {
+                variables.insert(format!("_{index}_{key}"), value);
+            }
+        }
+        let response = self
+            .request(
+                Method::Post,
+                self.graphql_path(),
+                Some(json!({"query": query, "variables": variables})),
+                "application/vnd.github+json",
+                16_000_000,
+            )
+            .await?;
+        if response.truncated {
+            return Err(Error::Failed(
+                "GitHub's response was too large to read.".into(),
+            ));
+        }
+        let raw: Value = serde_json::from_slice(&response.body)
+            .map_err(|_| Error::Failed("GitHub returned an invalid change request list.".into()))?;
+        Ok((0..batch.len())
+            .map(|index| {
+                raw.pointer(&format!("/data/_{index}_repository/pullRequests/nodes"))
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
+            .collect())
     }
     pub async fn files_viewed(&self, lookup: &Lookup) -> Result<Value, Error> {
         self.file_pages(lookup, true).await

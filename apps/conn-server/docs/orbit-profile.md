@@ -536,7 +536,9 @@ is effort per turn, token use, and the 4b verifier. **Orbit must change:** repla
     not call GitHub from a container.
 - **Client change:** the thread PR panel takes its data from the Gateway when the
   environment is an Orbit container.
-- **Server change:** none beyond the link tools.
+- **Server change:** none beyond the link tools. The link sweep (since 2026-11-19) reads
+  GitHub only with a credential (`GH_TOKEN` or a `gh` login). Without one, a link has no
+  snapshot and is tried again every 15 minutes, as in T3.
 
 ---
 

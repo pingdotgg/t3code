@@ -409,7 +409,7 @@ check("pull requests: link, unlink and relink as T3 writes them", () => {
   const kinds = exported.pullRequestLinkItems
     .filter((item) => item.event)
     .map((item) => item.event.type);
-  assert.deepEqual(kinds.slice(-4), Array(4).fill("thread.pull-request-synced"));
+  assert.deepEqual(kinds.slice(-6), Array(6).fill("thread.pull-request-synced"));
   const links = followed.projection.thread.pullRequests.map((link) => ({
     host: link.host,
     repository: link.repository,
@@ -421,6 +421,12 @@ check("pull requests: link, unlink and relink as T3 writes them", () => {
     { host: "github.com", repository: "o/r", number: 4, url: "https://github.com/O/R/pull/4", source: "manual" },
     { host: "github.com", repository: "o/r", number: 9, url: "https://github.com/o/r/pull/9", source: "manual" },
   ]);
+  // The link sweep's writes reach the client: #4's snapshot and the branch's pull request.
+  const [first] = followed.projection.thread.pullRequests;
+  assert.equal(first.snapshot.title, "Fix the chip");
+  assert.equal(first.snapshot.checksState, "failing");
+  assert.equal(first.snapshot.reviewDecision, "review-required");
+  assert.equal(followed.projection.thread.branchPullRequest.number, 4);
 });
 
 check("batch threads: creation appears in the parent timeline and keeps sender provenance", () => {

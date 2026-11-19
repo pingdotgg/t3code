@@ -1179,3 +1179,46 @@ async fn requests_keep_github_messages_and_secondary_rate_limit_classification()
         assert_eq!(error.to_contract("summary")["cause"]["reason"], reason);
     }
 }
+
+/// 26 heads take two documents. When the second fails, the first document's 25 answers still
+/// count; only the 26th head is unanswered.
+#[tokio::test]
+async fn head_lookups_keep_each_documents_answers_when_a_later_one_fails() {
+    use crate::http::fake;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let documents = std::sync::Arc::new(AtomicUsize::new(0));
+    let seen = documents.clone();
+    let server = fake::serve(move |request| {
+        if request.path != "/graphql" {
+            return (404, String::new());
+        }
+        if seen.fetch_add(1, Ordering::SeqCst) > 0 {
+            return (502, "bad gateway".into());
+        }
+        let body: Value = serde_json::from_str(&request.body).expect("request");
+        let mut data = serde_json::Map::new();
+        for index in 0..25 {
+            let head = body["variables"][format!("_{index}_head")].clone();
+            data.insert(
+                format!("_{index}_repository"),
+                json!({"pullRequests": {"nodes": [{"number": index + 1, "headRefName": head}]}}),
+            );
+        }
+        (200, json!({"data": data}).to_string())
+    })
+    .await;
+    let stubs = StubDir::new("pr-heads");
+    stubs.executable("gh", &[], "printf '%s\\n' fake-pr-token");
+    let client = connect(&stubs, &server.base).await;
+    let heads: Vec<(String, String, String)> = (0..26)
+        .map(|n| ("o".into(), "r".into(), format!("b{n}")))
+        .collect();
+    let answers = client.pull_requests_by_heads(&heads).await;
+    assert_eq!(documents.load(Ordering::SeqCst), 2, "two documents");
+    assert_eq!(answers.len(), 26);
+    for (index, answer) in answers.iter().take(25).enumerate() {
+        let nodes = answer.as_ref().expect("the first document's answer");
+        assert_eq!(nodes[0]["headRefName"], format!("b{index}"));
+    }
+    assert_eq!(answers[25], None, "the failed document's head");
+}

@@ -139,6 +139,121 @@ pub async fn remote_names(cwd: &Path) -> VcsResult<Vec<String>> {
     )
 }
 
+/// `findRemoteTrackingRemote`: the remote that has `refs/remotes/<remote>/<branch>`; the
+/// preferred remote first, then `origin`, then the first in `git remote` order.
+pub async fn remote_tracking_remote(
+    cwd: &Path,
+    branch: &str,
+    preferred: Option<&str>,
+) -> VcsResult<Option<String>> {
+    if branch.is_empty() {
+        return Ok(None);
+    }
+    let names = remote_names(cwd).await?;
+    if names.is_empty() {
+        return Ok(None);
+    }
+    let mut args = vec!["for-each-ref".to_owned(), "--format=%(refname)".to_owned()];
+    args.extend(names.iter().map(|n| format!("refs/remotes/{n}/{branch}")));
+    let refs = optional_text(
+        git("GitManager.findRemoteTrackingRemote.refs", cwd, args).timeout(PROBE_TIMEOUT),
+    )
+    .await?
+    .unwrap_or_default();
+    let refs: Vec<&str> = refs.lines().map(str::trim).collect();
+    let matching: Vec<&String> = names
+        .iter()
+        .filter(|n| refs.contains(&format!("refs/remotes/{n}/{branch}").as_str()))
+        .collect();
+    if let Some(preferred) = preferred
+        && matching.iter().any(|n| *n == preferred)
+    {
+        return Ok(Some(preferred.to_owned()));
+    }
+    if matching.iter().any(|n| *n == "origin") {
+        return Ok(Some("origin".to_owned()));
+    }
+    Ok(matching.first().map(|n| (*n).clone()))
+}
+
+/// `findPublishedBranchRemote`: the one remote a branch without an upstream was pushed to.
+/// A remote whose `refs/remotes/<remote>/<branch>` is the local commit wins; else the one
+/// whose ref is an ancestor of it. Without a local branch, the one remote that tracks
+/// `branch`. Two candidates, or none, answer `None`.
+pub async fn published_branch_remote(cwd: &Path, branch: &str) -> VcsResult<Option<String>> {
+    let names = remote_names(cwd).await?;
+    if names.is_empty() {
+        return Ok(None);
+    }
+    let local_ref = format!("refs/heads/{branch}");
+    let mut args = vec![
+        "for-each-ref".to_owned(),
+        "--format=%(refname)%00%(objectname)".to_owned(),
+        local_ref.clone(),
+    ];
+    args.extend(names.iter().map(|n| format!("refs/remotes/{n}/{branch}")));
+    let listing = optional_text(
+        git("GitManager.findPublishedBranchRemote", cwd, args).timeout(PROBE_TIMEOUT),
+    )
+    .await?
+    .unwrap_or_default();
+    let oids: Vec<(&str, &str)> = listing
+        .lines()
+        .filter_map(|line| line.trim().split_once('\0'))
+        .collect();
+    let oid_of = |reference: &str| oids.iter().find(|(r, _)| *r == reference).map(|(_, o)| *o);
+    let remote_refs: Vec<(&String, &str)> = names
+        .iter()
+        .filter_map(|n| oid_of(&format!("refs/remotes/{n}/{branch}")).map(|o| (n, o)))
+        .collect();
+    let Some(local) = oid_of(&local_ref) else {
+        // No local branch (deleted after the push): the one remote that tracks it, as T3's
+        // `branchPullRequest.remoteTrackingRefs`. Several are ambiguous.
+        let [(name, _)] = remote_refs.as_slice() else {
+            return Ok(None);
+        };
+        return Ok(config_get(cwd, &format!("remote.{name}.url"))
+            .await?
+            .map(|_| (*name).clone()));
+    };
+    let exact: Vec<&String> = remote_refs
+        .iter()
+        .filter(|(_, o)| *o == local)
+        .map(|(n, _)| *n)
+        .collect();
+    if exact.len() > 1 {
+        return Ok(None);
+    }
+    let remote = match exact.first() {
+        Some(name) => (*name).clone(),
+        None => {
+            let mut ancestors = Vec::new();
+            for (name, oid) in &remote_refs {
+                let output = git(
+                    "GitManager.findPublishedBranchRemote.ancestor",
+                    cwd,
+                    ["merge-base", "--is-ancestor", oid, local],
+                )
+                .allow_exit(&[0, 1])
+                .timeout(PROBE_TIMEOUT)
+                .run()
+                .await
+                .map_err(crate::error::VcsError::from)?;
+                if output.code == 0 {
+                    ancestors.push((*name).clone());
+                }
+            }
+            if ancestors.len() != 1 {
+                return Ok(None);
+            }
+            ancestors.remove(0)
+        }
+    };
+    Ok(config_get(cwd, &format!("remote.{remote}.url"))
+        .await?
+        .map(|_| remote))
+}
+
 /// `origin` when it exists, else the first remote.
 pub async fn primary_remote(cwd: &Path) -> VcsResult<Option<String>> {
     let names = remote_names(cwd).await?;

@@ -198,6 +198,10 @@ run 4 120 "registry-diff" \
 # Pull request watch evaluation and wake texts against T3's own pullRequestWatch.ts.
 run 4 120 "pr-watch-diff" \
   node crates/conn-source-control/tools/pr-watch-diff.mjs "$release/examples/pr_watch_cases"
+# The pull request link sweep and branch lookup against T3's own services on a test clock.
+run 4 120 "pr-link-sync-diff" \
+  node crates/conn-source-control/tools/pr-link-sync-diff.mjs "$release/examples/pr_link_sync_cases" \
+  "$release/examples/background_gate"
 # Webhook prompt templates, filters and signatures against T3's own functions.
 run 4 120 "webhook-diff" node crates/conn-features/tools/webhook-diff.mjs "$release/examples/webhook_functions"
 run 4 120 "limits-diff" node crates/conn-server/tools/limits-diff.mjs

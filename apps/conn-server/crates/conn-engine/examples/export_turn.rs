@@ -541,6 +541,18 @@ async fn main() {
                "number": 9}),
         json!({"type": "thread.pull-request.link", "host": "github.com", "repository": "o/r",
                "number": 9, "url": "https://github.com/o/r/pull/9", "source": "manual"}),
+        // The link sweep's writes: #4's snapshot, then the branch's pull request.
+        json!({"type": "thread.pull-request-link.sync", "host": "github.com", "repository": "o/r",
+               "number": 4, "stack": null, "snapshot": {"state": "open", "title": "Fix the chip",
+                   "headBranch": "fix", "baseBranch": "main", "isDraft": false,
+                   "updatedAt": "2026-11-19T08:00:00.000Z", "syncedAt": "2026-11-19T09:00:00.000Z",
+                   "closedAt": null, "mergedAt": null, "checksState": "failing",
+                   "reviewDecision": "review-required", "mergeability": "mergeable"}}),
+        json!({"type": "thread.pull-request.sync", "projectId": project_id, "snapshotSequence": 0,
+               "expected": {"workspaceRoot": ROOT, "branch": null, "worktreePath": null,
+                   "linkedPullRequest": null, "branchPullRequest": null},
+               "branchPullRequest": {"projectId": project_id, "repository": "o/r", "number": 4,
+                   "url": "https://github.com/O/R/pull/4"}}),
     ]
     .into_iter()
     .enumerate()
@@ -555,7 +567,7 @@ async fn main() {
         if item["event"]["type"] == "thread.pull-request-synced" {
             synced.set(synced.get() + 1);
         }
-        synced.get() == 4
+        synced.get() == 6
     })
     .await;
     drop(links);

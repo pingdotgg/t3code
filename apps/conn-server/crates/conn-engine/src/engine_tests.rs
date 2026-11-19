@@ -1299,8 +1299,99 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 45);
+    assert_eq!(handled, 47);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
+}
+
+/// The link sweep's syncs, as T3's decider writes them: `thread.pull-request-link.sync`
+/// replaces a link's snapshot and stack and leaves `updatedAt`; `thread.pull-request.sync`
+/// sets the branch's pull request when the thread is still as the lookup saw it, and shows in
+/// the shell row, where the sidebar chip reads it.
+#[tokio::test(flavor = "current_thread")]
+async fn link_and_branch_syncs_write_what_the_host_read() {
+    let db = TempDb::new("pr-link-sync");
+    let (engine, _) = open(&db);
+    let mut thread = create("t1", "c1");
+    thread["branch"] = json!("fix");
+    dispatch(&engine, thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request.link", "commandId": "l1", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 14,
+            "url": "https://github.com/o/r/pull/14", "source": "manual"}),
+    )
+    .await;
+    let before = projection(&engine, "t1").await["thread"].clone();
+    // Let the clock move, so a sync that counted as activity would show.
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let snapshot = json!({"state": "open", "title": "Fix the chip", "headBranch": "fix",
+        "baseBranch": "main", "isDraft": false, "updatedAt": "2026-11-19T08:00:00Z",
+        "syncedAt": "2026-11-19T09:00:00.000Z", "closedAt": null, "mergedAt": null,
+        "checksState": "failing", "reviewDecision": "review-required"});
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request-link.sync", "commandId": "s1", "threadId": "t1",
+            "host": "GitHub.com", "repository": "O/R", "number": 14, "snapshot": snapshot,
+            "stack": null}),
+    )
+    .await;
+    let after = projection(&engine, "t1").await["thread"].clone();
+    assert_eq!(after["pullRequests"][0]["snapshot"], snapshot, "{after}");
+    assert_eq!(
+        after["updatedAt"], before["updatedAt"],
+        "a host read is not activity"
+    );
+    // A sync for a pull request the thread does not link changes nothing.
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request-link.sync", "commandId": "s2", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 99, "snapshot": snapshot,
+            "stack": null}),
+    )
+    .await;
+    assert_eq!(projection(&engine, "t1").await["thread"], after);
+
+    let shell = engine.shell_snapshot().await.unwrap();
+    let branch_pr = json!({"projectId": project_id(), "repository": "o/r", "number": 14,
+        "url": "https://github.com/o/r/pull/14"});
+    let sync = |id: &str, branch: Value, expected_pr: Value| {
+        json!({"type": "thread.pull-request.sync", "commandId": id, "threadId": "t1",
+            "projectId": project_id(), "snapshotSequence": shell["snapshotSequence"],
+            "expected": {"workspaceRoot": ROOT, "branch": branch, "worktreePath": null,
+                "linkedPullRequest": null, "branchPullRequest": expected_pr},
+            "branchPullRequest": branch_pr})
+    };
+    // The lookup saw another branch: refused, as T3 refuses it.
+    let refused = engine
+        .dispatch(from_json(sync("b0", json!("other"), Value::Null)).unwrap())
+        .await;
+    match refused {
+        Err(EngineError::Rejected(e)) => assert!(
+            to_json(&e)
+                .to_string()
+                .contains("changed before pull request discovery"),
+            "{}",
+            to_json(&e)
+        ),
+        other => panic!("not refused: {other:?}"),
+    }
+    dispatch(&engine, sync("b1", json!("fix"), Value::Null)).await;
+    let thread = projection(&engine, "t1").await["thread"].clone();
+    assert_eq!(thread["branchPullRequest"], branch_pr);
+    assert_eq!(thread["updatedAt"], before["updatedAt"]);
+    let r = engine.shell_snapshot().await.unwrap()["threads"][0].clone();
+    assert_eq!(r["branchPullRequest"], branch_pr, "the shell carries it");
+    assert_eq!(
+        r["updatedAt"], before["updatedAt"],
+        "the sidebar does not move the thread"
+    );
+    // A second lookup that expected no pull request is stale now.
+    assert!(
+        engine
+            .dispatch(from_json(sync("b2", json!("fix"), Value::Null)).unwrap())
+            .await
+            .is_err()
+    );
 }
 
 /// A watch starts with a link, its sync from the watch loop records what the host showed and

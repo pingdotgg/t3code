@@ -8,8 +8,12 @@
 //! (T3 reads sooner after a host event and skips unchanged pull requests), the cached
 //! review-thread tails, and the watch-life log lines.
 
-use super::{Panel, ReadKey};
+use super::{
+    Panel, ReadKey,
+    links::{self, Links, Request},
+};
 use conn_source_control::pull_requests::{
+    link_sync,
     normalize::{array, text},
     watch::{self, Change, Wake},
 };
@@ -629,20 +633,90 @@ async fn read_remarks(
     Some(remarks)
 }
 
-/// Runs the loop for the server's life: a sweep every two minutes, and a read of a pull
-/// request as soon as a new watch appears on it, so CI that finishes before the next sweep
-/// is not taken as the baseline.
+/// What the shell listener remembers of a thread, to tell what an update changed.
+#[derive(Default)]
+pub(super) struct Observed {
+    watches: Vec<String>,
+    unsynced: Vec<String>,
+    run_completed: Value,
+    settled: bool,
+    branch: Value,
+}
+
+impl Observed {
+    pub(super) fn new(thread: &Value) -> Self {
+        Self {
+            watches: watches_of(thread),
+            unsynced: link_sync::visible_links(thread)
+                .filter(|l| l["snapshot"].is_null())
+                .map(link_sync::pull_request_key)
+                .collect(),
+            run_completed: thread["latestRunCompletedAt"].clone(),
+            settled: thread["settledOverride"] == "settled" || !thread["settledAt"].is_null(),
+            branch: json!([thread["branch"], thread["worktreePath"]]),
+        }
+    }
+}
+
+/// The link sweep's requests for one thread update (`links::Request`), as T3's reactors react
+/// to `thread.created`, `thread.unsettled`, `thread.metadata-updated`, a run's end,
+/// `thread.settled` and a link without a snapshot.
+pub(super) fn link_requests(
+    thread: &Value,
+    before: Option<&Observed>,
+    now: &Observed,
+) -> Vec<Request> {
+    let id = text(thread, "id").to_owned();
+    let project_id = text(thread, "projectId").to_owned();
+    let mut requests: Vec<Request> = link_sync::visible_links(thread)
+        .filter(|l| {
+            l["snapshot"].is_null()
+                && before.is_none_or(|b| !b.unsynced.contains(&link_sync::pull_request_key(l)))
+        })
+        .map(|link| Request::Unsynced {
+            project_id: project_id.clone(),
+            link: link.clone(),
+        })
+        .collect();
+    let looks_up = match before {
+        None => !thread["branch"].is_null(),
+        Some(before) => {
+            (now.run_completed != before.run_completed && !now.run_completed.is_null())
+                || (before.settled && !now.settled)
+                || now.branch != before.branch
+        }
+    };
+    if looks_up {
+        requests.push(Request::Branch(id));
+    }
+    if before.is_some_and(|b| !b.settled) && now.settled {
+        let keys = link_sync::unmerged_links(thread);
+        if !keys.is_empty() {
+            requests.push(Request::Settled(keys));
+        }
+    }
+    requests
+}
+
+/// Runs the loop for the server's life: a watch sweep every two minutes, a read of a pull
+/// request as soon as a new watch appears on it (so CI that finishes before the next sweep is
+/// not taken as the baseline), and the link sweep (`links.rs`) every minute and on its events.
 pub(super) async fn run(panel: Arc<Panel>) {
     let (tx, mut rx) = mpsc::channel::<String>(16);
-    // New watches beyond the channel's room are not lost: they ask for one more full pass.
+    let (link_tx, mut link_rx) = mpsc::channel::<Request>(64);
+    // New watches or links beyond the channels' room are not lost: they ask for a full pass.
     let overflow = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let overflowed = overflow.clone();
+    let links_overflow = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let links_overflowed = links_overflow.clone();
+    let settles = links::Settles::default();
+    let link_settles = settles.clone();
     let input = conn_contract::from_json(json!({"requestCompletionMarker": true}));
     if let Ok(input) = input
         && let Ok(mut shell) = panel.engine.subscribe_shell(input).await
     {
         tokio::spawn(async move {
-            let mut known: Vec<(String, Vec<String>)> = Vec::new();
+            let mut known: Vec<(String, Observed)> = Vec::new();
             while let Some(Ok(item)) = shell.recv().await {
                 let item = conn_contract::to_json(&item);
                 match text(&item, "kind") {
@@ -652,23 +726,35 @@ pub(super) async fn run(panel: Arc<Panel>) {
                             .iter()
                             .take(MAX_OBSERVED_THREADS)
                         {
-                            known.push((text(thread, "id").to_owned(), watches_of(thread)));
+                            known.push((text(thread, "id").to_owned(), Observed::new(thread)));
                         }
                     }
                     "thread.updated" => {
                         let thread = item.get("thread").unwrap_or(&Value::Null);
                         let id = text(thread, "id").to_owned();
-                        let now = watches_of(thread);
+                        let now = Observed::new(thread);
                         let before = known
                             .iter()
                             .position(|(t, _)| *t == id)
-                            .map(|i| known.remove(i).1)
+                            .map(|i| known.remove(i).1);
+                        let before_watches = before
+                            .as_ref()
+                            .map(|b| b.watches.as_slice())
                             .unwrap_or_default();
-                        for life in now.iter().filter(|life| !before.contains(life)) {
+                        for life in now
+                            .watches
+                            .iter()
+                            .filter(|life| !before_watches.contains(life))
+                        {
                             if let Some((key, _)) = life.split_once(' ')
                                 && tx.try_send(key.to_owned()).is_err()
                             {
                                 overflowed.store(true, std::sync::atomic::Ordering::Relaxed);
+                            }
+                        }
+                        for request in link_requests(thread, before.as_ref(), &now) {
+                            if !links::route(request, &link_tx, &settles) {
+                                links_overflowed.store(true, std::sync::atomic::Ordering::Relaxed);
                             }
                         }
                         if known.len() >= MAX_OBSERVED_THREADS {
@@ -685,6 +771,23 @@ pub(super) async fn run(panel: Arc<Panel>) {
             }
         });
     }
+    // The link sweep runs in its own task: a slow GitHub lookup there must not hold back a
+    // new watch's first read, or CI that ends meanwhile becomes the baseline and never wakes.
+    let mut links = Links::new(panel.clone(), link_settles);
+    let links_task = tokio::spawn(async move {
+        let mut link_sweep = tokio::time::interval(Duration::from_millis(link_sync::SWEEP_MS));
+        link_sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = link_sweep.tick() => links.tick().await,
+                Some(request) = link_rx.recv() => links.handle(request).await,
+            }
+            if links_overflow.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                links.tick().await;
+            }
+        }
+    });
+    let _stop_links = AbortOnDrop(links_task);
     let mut watcher = Watcher::new(panel);
     let mut sweep = tokio::time::interval(SWEEP);
     sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -696,6 +799,14 @@ pub(super) async fn run(panel: Arc<Panel>) {
         if overflow.swap(false, std::sync::atomic::Ordering::Relaxed) {
             watcher.pass(None).await;
         }
+    }
+}
+
+/// Stops the link sweep's task when the watch loop ends.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

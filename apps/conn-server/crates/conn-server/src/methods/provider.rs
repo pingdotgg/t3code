@@ -184,6 +184,8 @@ struct Lease {
     ttl: Duration,
     /// `isForegroundLease`: visible, and focused or recently used.
     foreground: bool,
+    /// The client reported `lowPowerMode: "true"` (`isClientConstrained`).
+    low_power: bool,
     /// `provider-status` scopes: `None` for every instance, else the instance id.
     scopes: Vec<Option<String>>,
 }
@@ -259,6 +261,7 @@ impl ProviderStatus {
             ttl,
             foreground: input["visible"] == true
                 && (input["focused"] == true || input["recentlyInteracted"] == true),
+            low_power: input["lowPowerMode"] == "true",
             scopes,
         };
         let mut leases = self.leases();
@@ -267,6 +270,19 @@ impl ProviderStatus {
             leases.remove(0);
         }
         leases.push(lease);
+    }
+
+    /// `shouldRunOpportunisticWork`: an active foreground lease from a client that is not
+    /// held back by its low power mode. T3 also pauses for host power (locked, low power,
+    /// battery, heat); this server reads no host power state, as T3 with a stale snapshot.
+    pub fn opportunistic(&self, settings: &serde_json::Map<String, Value>) -> bool {
+        self.opportunistic_at(pause_when_client_low_power(settings), &Mark::now())
+    }
+
+    fn opportunistic_at(&self, pause_on_low_power: bool, now: &Mark) -> bool {
+        self.leases().iter().any(|lease| {
+            lease.active_at(now) && lease.foreground && !(pause_on_low_power && lease.low_power)
+        })
     }
 
     /// `shouldRunScopeWork` for `provider-status` (generic or this instance): an active lease
@@ -285,6 +301,40 @@ impl ProviderStatus {
                     .any(|s| s.as_deref().is_none_or(|id| id == instance_id))
         })
     }
+}
+
+/// `pauseWhenClientLowPower` of `resolveServerBackgroundActivitySettings`: off only in the
+/// `performance` preset or by a custom override. Without a set `backgroundActivity`, the older
+/// `backgroundActivityProfile` names the preset; the default is `balanced`.
+pub(crate) fn pause_when_client_low_power(settings: &serde_json::Map<String, Value>) -> bool {
+    let preset = |profile: Option<&str>| profile != Some("performance");
+    let activity = settings.get("backgroundActivity");
+    let profile = activity
+        .and_then(|a| a.get("profile"))
+        .and_then(Value::as_str)
+        .unwrap_or("balanced");
+    let base = activity
+        .and_then(|a| a.get("baseProfile"))
+        .and_then(Value::as_str);
+    let overrides = activity
+        .and_then(|a| a.get("overrides"))
+        .and_then(Value::as_object);
+    let is_default =
+        profile == "balanced" && base.is_none() && overrides.is_none_or(|o| o.is_empty());
+    if is_default {
+        return preset(
+            settings
+                .get("backgroundActivityProfile")
+                .and_then(Value::as_str),
+        );
+    }
+    if profile != "custom" {
+        return preset(Some(profile));
+    }
+    overrides
+        .and_then(|o| o.get("pauseWhenClientLowPower"))
+        .and_then(Value::as_bool)
+        .unwrap_or_else(|| preset(Some(base.unwrap_or("balanced"))))
 }
 
 /// `DEFAULT_PROVIDER_HEALTH_REFRESH_INTERVAL`.

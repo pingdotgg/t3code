@@ -203,11 +203,34 @@ tools; the engine decides `thread.pull-request.watch` and `thread.pull-request-w
 and `conn-server/src/methods/pull_requests/watches.rs` is the watch loop (`docs/status.md`,
 "PR watching and review guides").
 
+## Pull request link sync
+
+`src/pull_requests/link_sync.rs` decides what T3's `PullRequestSyncReactor` and
+`ThreadPullRequestService` decide; `conn-server/src/methods/pull_requests/links.rs` reads GitHub
+and dispatches, in its own task beside the watch loop. The link sweep reads each due link's
+summary (and its stack when it may have changed) every minute on T3's cadence: active links each
+minute, quiet open ones every 5 minutes, closed ones every 15, merged and day-old closed ones
+never; a new link, a settle and a request read at once; failed reads back off from 1 minute,
+doubling, and not-found waits 15 minutes. It writes `thread.pull-request-link.sync`, links new
+stack layers (`source: "stack"`), and makes older members of a changed stack read theirs again.
+The branch lookup asks GitHub's `PullRequestsByHead` (25 heads per document, by host) for each
+active thread's published head every minute while a client is in the foreground (branches
+without a pull request at most 4 per sweep, each after 30 minutes or more), and on the thread's
+own events (created, run ended, unsettled, branch changed), and writes
+`thread.pull-request.sync`. Proof: `tools/pr-link-sync-diff.mjs` (T3's own services on stub
+services and a test clock against ours, minute by minute, and T3's `BackgroundPolicy` gate).
+
+Not built: per-host pauses until a rate limit's reset time (a limited read backs off instead),
+host power state in the gate, the replacement of an older single `linkedPullRequest`, re-reads
+after an agent's `gh pr merge` or a panel action (the next sweep reads them), T3's lookup caches
+and fresh-git-state confirmation, and the fork owner page fallback when 100 pull requests share
+a head name.
+
 ## PR panel differences
 
 - Reads use a bounded memory cache rather than T3's persistent stale reads; entries do not survive restart.
 - Listings read each repository separately. ETag revalidation, credential-token caching, quota reserve and Unix-socket transport remain absent.
-- Withheld whole-diff single-file extraction and the automatic PR-link sync reactor remain unbuilt. The watch loop has no GitHub change feed or fingerprints.
+- Withheld whole-diff single-file extraction remains unbuilt. The watch loop has no GitHub change feed or fingerprints.
 - The 15 actions, stack and guide methods remain unregistered here; the actions branch supplies them.
 - No live macOS/iPhone or signed-in Orbit proof has been run for the panel.
 

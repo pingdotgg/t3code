@@ -1094,6 +1094,7 @@ impl Tx<'_> {
         } = draft;
         let collection = collection_of(event_type);
         let mut inserted = false;
+        let mut keeps_activity = false;
         if let Some(kind) = collection {
             let id = payload["id"].as_str().unwrap_or_default().to_owned();
             let existing: Option<(i64, Option<i64>)> = self
@@ -1146,6 +1147,13 @@ impl Tx<'_> {
         } else if event_type.starts_with("thread.") {
             let project_id = payload["projectId"].as_str().unwrap_or_default().to_owned();
             let deleted = event_type == "thread.deleted";
+            // A host sync (link snapshot, branch pull request, watch read) keeps the thread's
+            // `updatedAt`, as T3's deciders do; the sidebar must not move the thread.
+            keeps_activity = event_type == "thread.pull-request-synced"
+                && payload["updatedAt"].is_string()
+                && self
+                    .thread(&thread_id)?
+                    .is_some_and(|old| old["updatedAt"] == payload["updatedAt"]);
             if deleted {
                 self.tx
                     .execute(
@@ -1157,8 +1165,9 @@ impl Tx<'_> {
             self.tx
                 .execute(
                     "INSERT INTO threads (id, project_id, deleted, activity_at, thread) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3, activity_at = ?4, thread = ?5",
-                    params![thread_id, project_id, deleted, self.now, payload.to_string()],
+                     ON CONFLICT(id) DO UPDATE SET project_id = ?2, deleted = ?3,
+                       activity_at = CASE WHEN ?6 THEN activity_at ELSE ?4 END, thread = ?5",
+                    params![thread_id, project_id, deleted, self.now, payload.to_string(), keeps_activity],
                 )
                 .map_err(err)?;
         } else if event_type == "provider-session.detached" {
@@ -1192,7 +1201,7 @@ impl Tx<'_> {
                 params![seq as i64, thread_id, command_id, event_type, streaming, event.to_string()],
             )
             .map_err(err)?;
-        if collection.is_some() || event_type.starts_with("thread.") {
+        if collection.is_some() || (event_type.starts_with("thread.") && !keeps_activity) {
             self.tx
                 .execute(
                     "UPDATE threads SET activity_at = ?2 WHERE id = ?1",
@@ -1340,6 +1349,18 @@ impl Tx<'_> {
                 |row| row.get::<_, i64>(0),
             )
             .map(|n| n as u64)
+            .map_err(err)
+    }
+
+    /// The sequence of the thread's latest stored event, or 0.
+    pub(crate) fn thread_latest_sequence(&self, thread_id: &str) -> StoreResult<u64> {
+        self.tx
+            .query_row(
+                "SELECT COALESCE(MAX(seq), 0) FROM events WHERE thread_id = ?1",
+                [thread_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|seq| seq.max(0) as u64)
             .map_err(err)
     }
 

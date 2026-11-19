@@ -155,6 +155,8 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "thread.pull-request.link" => thread_pull_request_link,
         "thread.pull-request.unlink" => thread_pull_request_unlink,
         "thread.pull-request.watch" => thread_pull_request_watch,
+        "thread.pull-request-link.sync" => thread_pull_request_link_sync,
+        "thread.pull-request.sync" => thread_pull_request_sync,
         "thread.user-input.dismiss" => thread_user_input_dismiss,
         "provider-session.detach" => provider_session_detach,
         "provider.switch" => provider_switch,
@@ -179,9 +181,6 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         | "prepared-run.retry" => "Conn Server does not prepare worktrees for runs yet.",
         "thread.guest-share.close" | "thread.guest-message.dismiss" => {
             "Conn Server does not share threads with guests."
-        }
-        "thread.pull-request-link.sync" | "thread.pull-request.sync" => {
-            "Conn Server does not sync pull request links from the host yet."
         }
         "notification.delivery.accept" => {
             "Conn Server does not deliver background notifications yet."
@@ -2457,6 +2456,67 @@ fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
 
 fn thread_pull_request_unlink(tx: &mut Tx<'_>, command: Value) -> Outcome {
     thread_pull_request_link(tx, command)
+}
+
+/// `thread.pull-request-link.sync`, from the server's link sweep: the snapshot and stack a host
+/// read gave. T3 emits `thread.pull-request-link-updated` (one link); this store keeps whole
+/// threads, so it emits `thread.pull-request-synced`. Nothing when no link has the key.
+fn thread_pull_request_link_sync(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    if let Some(updated) = crate::pull_requests::decide_link_sync(&thread, &command) {
+        let cid = command["commandId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+        )?;
+    }
+    Ok(vec![])
+}
+
+/// `thread.pull-request.sync`, from the server's branch lookup: the branch's pull request. The
+/// guards are T3's: the thread must still have the branch, worktree, project and pull requests
+/// the lookup saw, and a replacement of the older single link must see no newer event.
+fn thread_pull_request_sync(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    if !is_null(&thread, "archivedAt") {
+        return reject(format!("Thread {thread_id} is archived."));
+    }
+    let expected = &command["expected"];
+    let project_id = command["projectId"].as_str().unwrap_or_default();
+    let project = tx.project(project_id)?;
+    let replaces = command
+        .get("linkedPullRequest")
+        .is_some_and(Value::is_object);
+    let newer = replaces
+        && tx.thread_latest_sequence(&thread_id)?
+            > command["snapshotSequence"].as_u64().unwrap_or(0);
+    let same = |field: &str| thread.get(field).unwrap_or(&Value::Null) == &expected[field];
+    let changed = project.is_none_or(|p| p["workspaceRoot"] != expected["workspaceRoot"])
+        || newer
+        || thread["projectId"] != command["projectId"]
+        || !same("branch")
+        || !same("worktreePath")
+        || !crate::pull_requests::linked_equal(
+            thread.get("linkedPullRequest"),
+            expected.get("linkedPullRequest"),
+        )
+        || !crate::pull_requests::linked_equal(
+            thread.get("branchPullRequest"),
+            expected.get("branchPullRequest"),
+        );
+    if changed {
+        return reject(format!(
+            "Thread {thread_id} changed before pull request discovery."
+        ));
+    }
+    let now = tx.now().to_owned();
+    let updated = crate::pull_requests::decide_branch_sync(&thread, &command, &now);
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+    )?;
+    Ok(vec![])
 }
 
 fn is_settled_or_archived(thread: &Value) -> bool {

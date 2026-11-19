@@ -21,6 +21,68 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## PR link sync from GitHub (2026-11-19)
+
+Linked PR rows now get their title, state, checks and review state, and the sidebar chip shows
+the thread branch's PR. Before, the engine refused `thread.pull-request-link.sync` and
+`thread.pull-request.sync`, so rows kept "Waiting for host state".
+
+- **Served:** both commands, with T3's deciders and guards (`conn-engine/src/pull_requests.rs`,
+  `commands.rs`): a link sync replaces the link's snapshot and stack and keeps `updatedAt`; a
+  branch sync is refused with T3's text when the thread, its project or its pull requests
+  changed after the lookup. The shell row carries `branchPullRequest` and `linkedPullRequest`
+  when the thread has them, as T3's does. A host sync (link, branch, watch read) no longer
+  moves the thread's `updatedAt` in the sidebar; before, every `thread.pull-request-synced`
+  did.
+- **The sweeps** (`conn-source-control/src/pull_requests/link_sync.rs` decides,
+  `conn-server/src/methods/pull_requests/links.rs` reads GitHub through the panel's client and
+  `gh`'s login). They run in their own task beside the #146 watch loop, one read at a time, so
+  a slow lookup never holds back a new watch's first read. T3's cadence and triggers: every
+  minute; at once for a new link, a settle (open and closed links), and a thread's own events
+  for its branch (created, run ended, unsettled, branch changed); T3's start-up backfill of
+  settled threads. The minute branch lookup after the first runs only while a client is in
+  the foreground (`shouldRunOpportunisticWork`: a visible, focused or recently used lease,
+  not held back by low power under the `pauseWhenClientLowPower` setting); events always
+  look up. Branch lookups share one GraphQL document per host and 25 heads, as T3's
+  background head resolver. A branch with an upstream is looked up by the head it pushes to
+  (`branch.<b>.merge` in `branch.<b>.remote`'s repository), so a checkout of a fork's PR
+  (`t3code/pr-42/feature`) finds it. A saved branch PR is cleared only after its summary was
+  read; a failed read leaves the thread for a later sweep, also when the found PR predates
+  the thread. A stack read that finds a different layer list makes the older members of that
+  stack read theirs again. Every map is pruned to the current links and branches each sweep;
+  pending requests stop at 1,024.
+- **Proof:** `pr-link-sync-diff` (new check, group 4) runs T3's own `PullRequestSyncReactor`,
+  `ThreadPullRequestService` and `BackgroundPolicy` on stub services and Effect's test clock,
+  and ours through `conn-engine/examples/pr_link_sync_cases.rs` and
+  `conn-server/examples/background_gate.rs`, minute by minute on the same host answers. Each
+  side applies its own commands. 22 cases, 157 sweeps: reads, commands and final threads
+  equal (new link, quiet cadence, merged final plus request, not found, backoff, unknown
+  mergeability, settled thread, stack layers, stale sibling stacks, shared read, closed
+  cadence, tombstone; branch found, rechecks after 30 minutes, historical, checked out,
+  replaced, settled thread's event, kept merged PR, saved PR checked before a historical one,
+  unreadable saved PR kept, subagent). 21 gate cases (profiles, custom overrides, the older
+  profile setting, low power, focus, visibility) give T3's answers. Changing one cadence
+  constant, or dropping the sibling flag or the saved-PR checks, fails it. Engine test: both
+  syncs, the stale refusal, the shell field, no sidebar move. `client-check`: the client's own
+  reducers show the snapshot and the branch PR. Server tests on a stub GitHub with a stub
+  `gh`: one sweep writes the link snapshot and the branch PR, later sweeps look branches up
+  only with a foreground client; a fork checkout is found by its published head, two
+  branches in one document; an unreadable saved PR stays; a new watch is read while a branch
+  lookup is held open (fails when both run in one loop). A listener test covers the
+  triggers. Live (mini, scratch profile, Conn dev desktop): three threads that linked
+  nckrtl/conn#14 got its title and failing checks on the first sweep; a new thread on the
+  PR's head branch got #14 as its branch PR at the end of its turn. The linked row shows
+  title, failed-checks icon, author and "synced 1m ago"; the sidebar chip reads
+  "PR #14 - Open: <title>" (it read "status pending").
+- **Known differences:** no per-host pause until a rate limit's reset time (a limited read
+  backs off as T3 does without one); no host power state in the activity gate (as T3 with no
+  desktop telemetry); no replacement of an older single `linkedPullRequest`; an agent's
+  `gh pr merge` or a panel action is not re-read at once (the next sweep reads it); no lookup
+  caches or fresh-git-state confirmation; no owner page fallback when 100 PRs share a head
+  name. A link sync writes `thread.pull-request-synced` (whole thread) where T3 writes
+  `thread.pull-request-link-updated` (one link); clients end in the same state. Link reads
+  run one at a time (T3 runs up to 100).
+
 ## Peer links and linked environments (2026-11-19)
 
 An agent or a client here can link another environment and act there with the `/mcp`

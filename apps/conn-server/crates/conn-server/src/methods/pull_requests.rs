@@ -28,6 +28,7 @@ use std::{
 };
 use tokio::sync::{OnceCell, mpsc, watch};
 mod guides;
+mod links;
 mod watches;
 
 #[derive(Clone, Debug)]
@@ -98,6 +99,9 @@ struct Panel {
     linked: watch::Sender<u64>,
     monitor: OnceCell<tokio::task::JoinHandle<()>>,
     reports: Mutex<VecDeque<(String, Value, tokio::time::Instant)>>,
+    /// The clients' activity leases (`BackgroundPolicy`), which gate the periodic branch
+    /// lookup.
+    activity: super::provider::ProviderStatus,
 }
 struct MutationReads<'a> {
     panel: &'a Panel,
@@ -116,6 +120,15 @@ impl Drop for Panel {
     }
 }
 impl Panel {
+    /// `shouldRunOpportunisticWork`.
+    fn opportunistic(&self) -> bool {
+        let settings = self
+            .environment
+            .as_ref()
+            .map(|e| e.settings.raw())
+            .unwrap_or_default();
+        self.activity.opportunistic(&settings)
+    }
     fn settings(&self) -> Settings {
         Settings::new(
             self.environment
@@ -1295,6 +1308,7 @@ impl Shared {
                         linked: watch::channel(0).0,
                         monitor: OnceCell::new(),
                         reports: Mutex::new(VecDeque::new()),
+                        activity: deps.provider_status.clone(),
                     })
                 })
                 .clone(),
