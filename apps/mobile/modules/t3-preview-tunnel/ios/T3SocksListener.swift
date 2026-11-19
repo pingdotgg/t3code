@@ -230,10 +230,11 @@ private final class T3SocksConnection {
       self?.queue.async {
         guard let self, !self.closed else { return }
         if error != nil {
-          // The environment refuses a dead or blocked port before upgrading; no reply means
-          // the environment itself is out of reach.
-          let status = (tunnel.response as? HTTPURLResponse)?.statusCode
-          self.onOutcome(status == 502 || status == 403 ? .port : .environment)
+          // The environment marks a dead or blocked port; any other failure, including a proxy's
+          // 502 while the environment is down, means the environment itself is out of reach.
+          let portRefused = (tunnel.response as? HTTPURLResponse)?
+            .value(forHTTPHeaderField: "x-t3-tunnel-port-refused") != nil
+          self.onOutcome(portRefused ? .port : .environment)
           return self.finish(socksReply(replyFailure))
         }
         self.onOutcome(nil)
