@@ -111,6 +111,7 @@ import {
 import {
   contextCompactionTokenCounts,
   resolveViewedImageAsset,
+  webSourcesMarkdown,
 } from "@t3tools/client-runtime/work-log/presentation";
 import {
   renderCodexInlineDirectivesAsMarkdown,
@@ -2157,10 +2158,18 @@ function renderFeedEntry(
       <ThreadWebSources
         rowSizing={props.workRowSizing}
         iconSubtleColor={iconSubtleColor}
-        sources={entry.sources}
+        count={entry.sources.length}
         expanded={entry.expanded}
         onToggle={() => props.onToggleWorkGroup(entry.id, entry.id)}
-      />
+      >
+        <AssistantMarkdownContent
+          markdown={webSourcesMarkdown(entry.sources)}
+          environmentId={props.environmentId}
+          markdownStyles={markdownStyles.assistant}
+          linkHandlers={props.markdownLinkHandlers}
+          renderImage={props.renderMarkdownImage}
+        />
+      </ThreadWebSources>
     );
   }
 

@@ -1246,6 +1246,82 @@ describe("deriveMessagesTimelineRows", () => {
     ).toBeDefined();
   });
 
+  it("keeps the turn's web sources under its answer when the work folds", () => {
+    const runId = RunId.make("turn-1");
+    const search = (id: string, url: string) => ({
+      id: `${id}-entry`,
+      kind: "work" as const,
+      createdAt: "2026-01-01T00:00:01Z",
+      entry: {
+        id,
+        createdAt: "2026-01-01T00:00:01Z",
+        runId,
+        label: "Searched the web",
+        tone: "tool" as const,
+        itemType: "web_search" as const,
+        toolLifecycleStatus: "completed" as const,
+        structuredPayload: { type: "web_search", results: [{ title: "Docs", url }] } as never,
+      },
+    });
+    const timelineEntries = [
+      search("search-1", "https://nodejs.org/en"),
+      search("search-2", "https://nodejs.org/en#latest"),
+      {
+        id: "assistant-final-entry",
+        kind: "message" as const,
+        createdAt: "2026-01-01T00:00:05Z",
+        message: {
+          id: "assistant-final" as never,
+          role: "assistant" as const,
+          text: "Node 26 is current.",
+          runId,
+          createdAt: "2026-01-01T00:00:05Z",
+          updatedAt: "2026-01-01T00:00:06Z",
+          streaming: false,
+        },
+      },
+    ];
+    const input = {
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    };
+
+    const rows = deriveMessagesTimelineRows({
+      ...input,
+      latestRun: {
+        runId,
+        status: "completed" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:10Z",
+      },
+    });
+    expect(rows.map((row) => row.id)).toEqual([
+      "turn-fold:turn-1",
+      "assistant-final-entry",
+      "web-sources:assistant-final",
+    ]);
+    expect(rows.at(-1)).toMatchObject({
+      sources: [{ url: "https://nodejs.org/en", title: "Docs", host: "nodejs.org" }],
+      expanded: false,
+    });
+
+    const working = deriveMessagesTimelineRows({
+      ...input,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      latestRun: {
+        runId,
+        status: "running" as const,
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: null,
+      },
+    });
+    expect(working.some((row) => row.kind === "web-sources")).toBe(false);
+  });
+
   it.each([1, 2, 3])("folds %i completed activities after the terminal response", (count) => {
     const runId = RunId.make("turn-1");
     const timelineEntries = [

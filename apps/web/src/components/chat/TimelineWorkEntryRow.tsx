@@ -18,6 +18,7 @@ import {
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   toolGroupAction,
+  webSourcesMarkdown,
   workEntryViewedImagePath,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { t3ToolResultIndicatesFailure } from "@t3tools/client-runtime/t3ToolSummary";
@@ -283,7 +284,7 @@ export function WebSourcesTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "web-sources" }>;
 }) {
-  const { onToggleWorkGroup } = use(TimelineRowCtx);
+  const { onToggleWorkGroup, markdownCwd, threadRef } = use(TimelineRowCtx);
   const gt = useGT();
   return (
     <div>
@@ -303,21 +304,14 @@ export function WebSourcesTimelineRow({
         }
       />
       {row.expanded ? (
-        <ul className="ms-8 flex min-w-0 flex-col gap-0.5 py-1">
-          {row.sources.map((source) => (
-            <li key={source.url} className="min-w-0">
-              <a
-                href={source.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex min-w-0 items-baseline gap-2 text-sm hover:underline"
-              >
-                <span className="truncate text-foreground">{source.title}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{source.host}</span>
-              </a>
-            </li>
-          ))}
-        </ul>
+        <div className="ms-8 min-w-0 text-sm">
+          <ChatMarkdown
+            text={webSourcesMarkdown(row.sources)}
+            cwd={markdownCwd}
+            threadRef={threadRef ?? undefined}
+            parseRawHtml={false}
+          />
+        </div>
       ) : null}
     </div>
   );

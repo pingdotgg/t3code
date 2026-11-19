@@ -244,7 +244,7 @@ type ThreadFeedEntryContent =
       readonly thought?: string;
     }
   | {
-      /** Pages the tool group above found on the web, kept visible while the group is collapsed. */
+      /** Pages the turn's web searches found, shown under its answer so the run fold keeps them. */
       readonly type: "web-sources";
       readonly id: string;
       readonly createdAt: string;
@@ -1699,6 +1699,35 @@ const DEFAULT_THREAD_FEED_DISPLAY: ThreadFeedDisplay = {
   revealedMessageId: null,
 };
 
+// Keyed by each run's last assistant message; every search in the run counts, folded or hidden.
+function deriveAnswerWebSources(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+): ReadonlyMap<string, ReadonlyArray<WebSource>> {
+  const lastAnswerIdByRun = new Map<RunId, string>();
+  const searchesByRun = new Map<RunId, WorkLogPresentationEntry[]>();
+  for (const entry of feed) {
+    if (entry.type === "message") {
+      if (entry.message.role === "assistant" && entry.message.runId !== null) {
+        lastAnswerIdByRun.set(entry.message.runId, entry.message.id);
+      }
+    } else if (entry.type === "activity-group" && entry.runId !== null) {
+      for (const activity of entry.activities) {
+        if (activity.workEntry.itemType !== "web_search") continue;
+        const searches = searchesByRun.get(entry.runId) ?? [];
+        searches.push(activity.workEntry);
+        searchesByRun.set(entry.runId, searches);
+      }
+    }
+  }
+  const sourcesByAnswerId = new Map<string, ReadonlyArray<WebSource>>();
+  for (const [runId, searches] of searchesByRun) {
+    const answerId = lastAnswerIdByRun.get(runId);
+    const sources = workEntriesWebSources(searches);
+    if (answerId !== undefined && sources.length > 0) sourcesByAnswerId.set(answerId, sources);
+  }
+  return sourcesByAnswerId;
+}
+
 export function deriveThreadFeedPresentation(
   feed: ReadonlyArray<ThreadFeedEntry>,
   latestRun: ThreadFeedLatestRun | null,
@@ -1807,6 +1836,7 @@ export function deriveThreadFeedPresentation(
       compactionItemRunIds.add(entry.runId);
     }
   }
+  const answerSources = deriveAnswerWebSources(feed);
   const foldsByAnchorId = zen
     ? new Map<string, ThreadFeedRunFold>()
     : deriveThreadFeedRunFolds(
@@ -1940,6 +1970,22 @@ export function deriveThreadFeedPresentation(
         resolve,
         locale,
       );
+      const sources = entry.type === "message" ? answerSources.get(entry.message.id) : undefined;
+      if (
+        entry.type === "message" &&
+        sources &&
+        !(isWorking && entry.message.runId === activeRunId)
+      ) {
+        const id = `web-sources:${entry.message.id}`;
+        result.push({
+          type: "web-sources",
+          id,
+          createdAt: entry.createdAt,
+          runId: entry.message.runId,
+          sources,
+          expanded: expandedWorkGroupIds.has(id),
+        });
+      }
     }
   }
   if (liveFold !== null && !liveFoldPlaced) result.push(liveFold);
@@ -2235,8 +2281,7 @@ function appendActivityGroupRows(
       activeTail && isTrailingRun,
       resolve,
     );
-    const workEntries = groupableRun.map((activity) => activity.workEntry);
-    const paths = workEntriesViewedImagePaths(workEntries);
+    const paths = workEntriesViewedImagePaths(groupableRun.map((activity) => activity.workEntry));
     if (paths.length > 0) {
       result.push({
         type: "viewed-images",
@@ -2244,18 +2289,6 @@ function appendActivityGroupRows(
         createdAt: groupableRun[0]!.createdAt,
         runId: groupableRun[0]!.runId,
         paths,
-      });
-    }
-    const sources = workEntriesWebSources(workEntries);
-    if (sources.length > 0) {
-      const sourcesId = `${groupId}:web-sources`;
-      result.push({
-        type: "web-sources",
-        id: sourcesId,
-        createdAt: groupableRun[0]!.createdAt,
-        runId: groupableRun[0]!.runId,
-        sources,
-        expanded: expandedWorkGroupIds.has(sourcesId),
       });
     }
     groupableRun = [];

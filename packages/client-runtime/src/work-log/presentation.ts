@@ -460,7 +460,9 @@ export interface WebSource {
   readonly host: string;
 }
 
-/** Distinct http(s) pages a tool group's web searches returned, in result order. */
+const webSourcesByItem = new WeakMap<OrchestrationV2TurnItem, ReadonlyArray<WebSource>>();
+
+/** Distinct http(s) pages the entries' web searches returned, in result order. */
 export function workEntriesWebSources(
   entries: ReadonlyArray<WorkLogPresentationEntry>,
 ): WebSource[] {
@@ -468,12 +470,32 @@ export function workEntriesWebSources(
   for (const entry of entries) {
     const item = entry.structuredPayload;
     if (item?.type !== "web_search") continue;
-    for (const result of item.results ?? []) {
-      const source = webSource(result.url, result.title);
-      if (source && !sources.has(source.url)) sources.set(source.url, source);
+    let itemSources = webSourcesByItem.get(item);
+    if (itemSources === undefined) {
+      itemSources = (item.results ?? []).flatMap(
+        (result) => webSource(result.url, result.title) ?? [],
+      );
+      webSourcesByItem.set(item, itemSources);
+    }
+    for (const source of itemSources) {
+      if (!sources.has(source.url)) sources.set(source.url, source);
     }
   }
   return [...sources.values()];
+}
+
+/** One linked line per source, for the clients' markdown renderers. */
+export function webSourcesMarkdown(sources: ReadonlyArray<WebSource>): string {
+  return sources
+    .map(
+      (source) =>
+        `- [${escapeMarkdownText(source.title)}](<${source.url}>) · ${escapeMarkdownText(source.host)}`,
+    )
+    .join("\n");
+}
+
+function escapeMarkdownText(text: string): string {
+  return text.replace(/[\\`*_{}[\]()#+\-.!|<>~&]/g, "\\$&");
 }
 
 function webSource(rawUrl: string | undefined, title: string | undefined): WebSource | null {
@@ -488,7 +510,7 @@ function webSource(rawUrl: string | undefined, title: string | undefined): WebSo
   const host = url.hostname.replace(/^www\./, "");
   // Anchors into one page are one source.
   const href = url.href.split("#")[0]!;
-  return { url: href, title: title?.trim() || host, host };
+  return { url: href, title: title?.replace(/\s+/g, " ").trim() || host, host };
 }
 
 export interface ViewedImageAsset {

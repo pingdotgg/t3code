@@ -590,7 +590,7 @@ type MessagesTimelineRowContent =
       hasFailure: boolean;
     }
   | {
-      /** Pages the tool group above found on the web, kept visible while the group is collapsed. */
+      /** Pages the turn's web searches found, shown under its answer so the work fold keeps them. */
       kind: "web-sources";
       id: string;
       createdAt: string;
@@ -725,31 +725,15 @@ function expandedWorkGroupRow(
   };
 }
 
-function groupFindingsRows(
+function viewedImagesRows(
   groupId: string,
   createdAt: string,
   groupedEntries: ReadonlyArray<WorkLogEntry>,
-  expandedWorkGroupIds: ReadonlySet<string> | undefined,
-): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" | "web-sources" }>> {
+): Array<Extract<MessagesTimelineRow, { kind: "viewed-images" }>> {
   const paths = workEntriesViewedImagePaths(groupedEntries);
-  const sources = workEntriesWebSources(groupedEntries);
-  const sourcesId = `${groupId}:web-sources`;
-  return [
-    ...(paths.length === 0
-      ? []
-      : [{ kind: "viewed-images" as const, id: `${groupId}:viewed-images`, createdAt, paths }]),
-    ...(sources.length === 0
-      ? []
-      : [
-          {
-            kind: "web-sources" as const,
-            id: sourcesId,
-            createdAt,
-            sources,
-            expanded: expandedWorkGroupIds?.has(sourcesId) ?? false,
-          },
-        ]),
-  ];
+  return paths.length === 0
+    ? []
+    : [{ kind: "viewed-images", id: `${groupId}:viewed-images`, createdAt, paths }];
 }
 
 export function resolveAssistantMessageCopyState({
@@ -767,6 +751,25 @@ export function resolveAssistantMessageCopyState({
     text: hasText ? (visible ? renderCodexDirectivesForCopy(text) : text) : null,
     visible,
   };
+}
+
+// Every search in the run counts, including ones the work fold or tool visibility hides.
+function deriveWebSourcesByRunId(timelineEntries: ReadonlyArray<TimelineEntry>) {
+  const searchesByRunId = new Map<string, WorkLogEntry[]>();
+  for (const entry of timelineEntries) {
+    if (entry.kind !== "work" || entry.entry.itemType !== "web_search" || !entry.entry.runId) {
+      continue;
+    }
+    const searches = searchesByRunId.get(entry.entry.runId) ?? [];
+    searches.push(entry.entry);
+    searchesByRunId.set(entry.entry.runId, searches);
+  }
+  const sourcesByRunId = new Map<string, ReadonlyArray<WebSource>>();
+  for (const [runId, searches] of searchesByRunId) {
+    const sources = workEntriesWebSources(searches);
+    if (sources.length > 0) sourcesByRunId.set(runId, sources);
+  }
+  return sourcesByRunId;
 }
 
 function deriveTerminalAssistantMessageIds(timelineEntries: ReadonlyArray<TimelineEntry>) {
@@ -1673,6 +1676,7 @@ export function deriveMessagesTimelineRows(
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
+  const webSourcesByRunId = deriveWebSourcesByRunId(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
   const liveSubagentEntryIds = liveSubagentCardEntryIds(timelineEntries);
@@ -1930,11 +1934,10 @@ export function deriveMessagesTimelineRows(
       );
     }
     nextRows.push(
-      ...groupFindingsRows(
+      ...viewedImagesRows(
         activeWorkRow.groupId,
         activeWorkRow.createdAt,
         activeWorkRow.groupedEntries,
-        input.expandedWorkGroupIds,
       ),
     );
   };
@@ -2205,11 +2208,10 @@ export function deriveMessagesTimelineRows(
           }
         }
         nextRows.push(
-          ...groupFindingsRows(
+          ...viewedImagesRows(
             workGroupId(timelineEntry.id),
             timelineEntry.createdAt,
             visibleGroupedEntries,
-            input.expandedWorkGroupIds,
           ),
         );
       }
@@ -2320,6 +2322,11 @@ export function deriveMessagesTimelineRows(
       terminalAssistantMessageIds.has(timelineEntry.message.id) &&
       !assistantResponseStillInProgress;
 
+    const answerSources =
+      showAssistantMeta && timelineEntry.message.runId != null
+        ? webSourcesByRunId.get(timelineEntry.message.runId)
+        : undefined;
+
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -2344,6 +2351,16 @@ export function deriveMessagesTimelineRows(
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
           : undefined,
     });
+    if (answerSources) {
+      const id = `web-sources:${timelineEntry.message.id}`;
+      nextRows.push({
+        kind: "web-sources",
+        id,
+        createdAt: timelineEntry.createdAt,
+        sources: answerSources,
+        expanded: input.expandedWorkGroupIds?.has(id) ?? false,
+      });
+    }
   }
 
   const setupHandedOff =
@@ -2416,14 +2433,7 @@ export function deriveMessagesTimelineRows(
       if (expanded) {
         nextRows.push(expandedWorkGroupRow(groupId, failedGroupAnchor.createdAt, groupedEntries));
       }
-      nextRows.push(
-        ...groupFindingsRows(
-          groupId,
-          failedGroupAnchor.createdAt,
-          groupedEntries,
-          input.expandedWorkGroupIds,
-        ),
-      );
+      nextRows.push(...viewedImagesRows(groupId, failedGroupAnchor.createdAt, groupedEntries));
     } else {
       const waitingOn =
         unsettledRunId === null

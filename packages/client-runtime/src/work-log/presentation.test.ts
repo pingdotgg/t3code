@@ -9,6 +9,7 @@ import {
   type WorkLogPresentationEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  webSourcesMarkdown,
   workEntriesWebSources,
 } from "./presentation.js";
 
@@ -245,5 +246,13 @@ describe("workEntriesWebSources", () => {
       },
       { url: "https://www.example.com/post", title: "example.com", host: "example.com" },
     ]);
+  });
+
+  it("renders titles as literal link text", () => {
+    expect(
+      webSourcesMarkdown([
+        { url: "https://a.dev/x_(y)", title: "[Guide] *new* `v2`", host: "a.dev" },
+      ]),
+    ).toBe(String.raw`- [\[Guide\] \*new\* \`v2\`](<https://a.dev/x_(y)>) · a\.dev`);
   });
 });
