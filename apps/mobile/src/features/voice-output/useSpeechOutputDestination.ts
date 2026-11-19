@@ -1,6 +1,6 @@
 import { useGT } from "gt-react-native";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { createContext, useContext } from "react";
 import type { SpeechPlaybackControls } from "@t3tools/client-runtime/voice-output";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -13,7 +13,8 @@ import {
   SpeechOutputDestination,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { serverEnvironment } from "../../state/server";
@@ -36,7 +37,7 @@ export function useSpeechOutputDestination(
     ? resolveProjectSettings(settings, thread?.projectId ?? null).settings
     : null;
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const save = useAtomSet(updateMobilePreferencesAtom, { mode: "promise" });
+  const save = useAtomCommand(saveMobilePreferences, { reportFailure: false });
   const localDestination = AsyncResult.isSuccess(preferences)
     ? (preferences.value.speechOutputDestination ?? null)
     : null;
@@ -69,7 +70,10 @@ export function useSpeechOutputDestination(
     return true;
   };
   const saveLocal = (patch: Parameters<typeof save>[0], title: string, message: string) => {
-    void save(patch).catch(() => Dialog.alert(title, message));
+    void save(patch).then((result) => {
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result))
+        Dialog.alert(title, message);
+    });
   };
   const setPlaybackRate = (rate: SpeechPlaybackRate) => {
     if (threadRef && voiceOutput.getSnapshot().owner?.startsWith(`${scopedThreadKey(threadRef)}:`))

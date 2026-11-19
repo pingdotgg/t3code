@@ -5,6 +5,7 @@ import {
   type SpeechOutputDestination,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
+import * as Cause from "effect/Cause";
 import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -32,11 +33,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => AsyncResult.success(mocks.preferences),
-  useAtomSet: () => mocks.save,
 }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
-  updateMobilePreferencesAtom: {},
+  saveMobilePreferences: {},
 }));
 vi.mock("expo-constants", () => ({ default: { expoConfig: { extra: {} } } }));
 vi.mock("../../components/ui/Chip", () => ({ Chip: () => null }));
@@ -152,7 +152,13 @@ vi.mock("../../state/server", () => ({
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: { get: () => mocks.readConfig() },
 }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.update }));
+vi.mock("../../state/use-atom-command", async () => {
+  const { saveMobilePreferences } = await import("../../state/preferences");
+  return {
+    useAtomCommand: (command: unknown) =>
+      command === saveMobilePreferences ? mocks.save : mocks.update,
+  };
+});
 
 it("defaults off and changes the playback destination on this device without changing server settings", async () => {
   mocks.preferences = {};
@@ -161,7 +167,7 @@ it("defaults off and changes the playback destination on this device without cha
   mocks.save.mockReset();
   mocks.save.mockImplementation((patch: typeof mocks.preferences) => {
     mocks.preferences = { ...mocks.preferences, ...patch };
-    return Promise.resolve();
+    return Promise.resolve(AsyncResult.success(mocks.preferences));
   });
   const environmentId = EnvironmentId.make("remote-speech");
   const environment = {
@@ -231,7 +237,9 @@ it("defaults off and changes the playback destination on this device without cha
     click("Read aloud with: ElevenLabs via Server");
     click("Off");
     expect(mocks.preferences.speechOutputDestination).toBeNull();
-    mocks.save.mockRejectedValueOnce(new Error("storage unavailable"));
+    mocks.save.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("storage unavailable"))),
+    );
     click("Read aloud with: Off");
     await act(async () => {
       click("OpenAI");
@@ -242,7 +250,9 @@ it("defaults off and changes the playback destination on this device without cha
       "Your previous destination is still selected. Please try again.",
     );
     expect(mocks.update).not.toHaveBeenCalled();
-    mocks.save.mockRejectedValueOnce(new Error("rate storage unavailable"));
+    mocks.save.mockResolvedValueOnce(
+      AsyncResult.failure(Cause.fail(new Error("rate storage unavailable"))),
+    );
     await act(async () => click("Speed picker result"));
     expect(mocks.alert).toHaveBeenLastCalledWith(
       "Could not save playback speed",
