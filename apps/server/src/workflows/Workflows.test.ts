@@ -739,6 +739,47 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );
 
+it.effect("a wait another signal claimed first wakes with that signal's value", () =>
+  Effect.gen(function* () {
+    // A second signal claims the wait just before the early mail is handed to it.
+    const store = Layer.effect(
+      WorkflowStore.WorkflowStore,
+      Effect.gen(function* () {
+        const real = yield* WorkflowStore.make;
+        return WorkflowStore.WorkflowStore.of({
+          ...real,
+          mailDeliver: (signalId, runId, name, woke) =>
+            Effect.andThen(
+              real.waitSignalled(runId, name, { expired: false, value: { merge: true } }),
+              real.mailDeliver(signalId, runId, name, woke),
+            ),
+        });
+      }),
+    );
+    const { boot } = yield* harness(store);
+    yield* boot(
+      Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        assert.equal(
+          yield* workflows.signal(
+            { workflow: "review", key: "c8" },
+            { merge: false },
+            { id: "s8" },
+          ),
+          "buffered",
+        );
+        const { runId } = yield* workflows.start(
+          "review",
+          { change: "c8" },
+          { idempotencyKey: "c8" },
+        );
+        const done = yield* workflows.waitFor(runId, status("completed"));
+        assert.equal(done.result, "2 checks, merge: true");
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
 it.effect("a wait past its timeout wakes with nothing, and a workflow may stop on its own", () =>
   Effect.gen(function* () {
     const { boot } = yield* harness();

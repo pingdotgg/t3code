@@ -282,7 +282,8 @@ export const waitAs = Effect.fn("workflow.wait")(function* <A, I>(
         const outcome = yield* run.store.mailDeliver(early.signalId, run.runId, name, woke);
         // Another wait on the same key took that one; there may be a next.
         if (outcome === "gone") continue;
-        // Claimed here or before a crash here: either way the wake is this wait's to make.
+        // Another signal claimed this wait first: its wake, or the sweep, carries what it claimed.
+        if (outcome === "claimed") break;
         yield* DurableDeferred.succeed(wake, { token, value: woke });
         break;
       }
