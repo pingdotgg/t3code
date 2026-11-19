@@ -60,9 +60,19 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() =>
         AsyncResult.success(
-          cursor === "first" || cursor === "short"
-            ? { ...pages[cursor]!, revision: mocks.diffRevision }
-            : pages[cursor]!,
+          cursor === "first"
+            ? { ...pages.first!, revision: mocks.diffRevision }
+            : cursor === "short"
+              ? {
+                  ...pages.short!,
+                  // Revisions follow page one's content, so a push that moves one changes both.
+                  patch:
+                    mocks.diffRevision === "after-push"
+                      ? filePatch("early-pushed.ts")
+                      : pages.short!.patch,
+                  revision: mocks.diffRevision,
+                }
+              : pages[cursor]!,
         ),
       ),
     ),

@@ -479,7 +479,6 @@ function PullRequestCodeTab({
     readonly key: string;
     readonly cursor: string | null;
     readonly slices: ReadonlyArray<DiffSlice>;
-    readonly awaitingFirstPage?: boolean;
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
@@ -508,7 +507,6 @@ function PullRequestCodeTab({
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
   const revision = loadedSlices[0]?.source.revision;
-  const awaitingFirstPage = sliceState.key === scopeKey && sliceState.awaitingFirstPage === true;
   const diffQuery = useEnvironmentQuery(
     pullRequestEnvironment.diff({
       environmentId,
@@ -529,17 +527,11 @@ function PullRequestCodeTab({
   const data = diffQuery.data;
   if (
     data !== null &&
-    (!awaitingFirstPage || (diffQuery.isSuccess && !diffQuery.isPending)) &&
-    (awaitingFirstPage ||
-      appliedPage?.data !== data ||
+    (appliedPage?.data !== data ||
       appliedPage.cursor !== cursor ||
       appliedPage.scopeKey !== scopeKey)
   ) {
     setAppliedPage({ data, cursor, scopeKey });
-    if (cursor === null && loadedSlices.length > 0 && data.revision !== revision) {
-      setDraft(null);
-      setSelectedLines(null);
-    }
     setSliceState((previous) => {
       const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
       const next = {
@@ -560,7 +552,6 @@ function PullRequestCodeTab({
         existing.patch === next.patch &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
-        existing.source.revision === next.source.revision &&
         existing.source.withheldFilesReadable === next.source.withheldFilesReadable &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
         existing.omittedFileStats.every((file, index) => {
@@ -573,7 +564,7 @@ function PullRequestCodeTab({
           );
         })
       ) {
-        return awaitingFirstPage ? { key: scopeKey, cursor, slices } : previous;
+        return previous;
       }
       // Drop later slices when replacing a changed page; their cursors target the old diff.
       return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
@@ -631,28 +622,29 @@ function PullRequestCodeTab({
     for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
   });
   const appliedRefreshToken = useRef(refreshToken);
-  const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh tokens restart pagination and refetch the diff and viewed files
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
-    const manual = appliedRefreshToken.current !== refreshToken;
-    if (!manual && appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
-    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
-    setSliceState((previous) => ({
-      key: scopeKey,
-      cursor: null,
-      // A background refresh keeps the old slices visible until the first page settles.
-      slices: manual || previous.key !== scopeKey ? NO_SLICES : previous.slices,
-      awaitingFirstPage: true,
-    }));
-    if (manual) {
-      setDraft(null);
-      setSelectedLines(null);
-    }
+    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
+    // An equal refetch keeps the answer's identity, so the emptied slices refill only if the
+    // applied page is forgotten too.
+    setAppliedPage(null);
     refreshFirstDiffPage();
     refreshWithheldFiles();
     refreshFilesViewed();
-  }, [refreshToken, backgroundRefreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
+  const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a background refresh token refetches the first diff page and viewed files while keeping slices
+  useEffect(() => {
+    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    appliedBackgroundRefreshToken.current = backgroundRefreshToken;
+    // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
+    setSliceState((previous) => ({ ...previous, cursor: null }));
+    refreshFirstDiffPage();
+    refreshWithheldFiles();
+    refreshFilesViewed();
+  }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
 
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
@@ -988,7 +980,6 @@ function PullRequestCodeTab({
   const canLoadNextSlice =
     nextCursor !== null &&
     nextCursor !== cursor &&
-    !awaitingFirstPage &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = () => {
@@ -1067,7 +1058,7 @@ function PullRequestCodeTab({
     range: SelectedLineRange | null,
     context: { item: CodeViewItem<ReviewAnnotationGroup> },
   ) => {
-    if (!range || !canSelectLines || awaitingFirstPage || withheldRefetching) return;
+    if (!range || !canSelectLines || withheldRefetching) return;
     const item = context.item;
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -1184,8 +1175,6 @@ function PullRequestCodeTab({
     );
   };
 
-  const canStartSelection =
-    canSelectLines && draft === null && !awaitingFirstPage && !withheldRefetching;
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -1201,8 +1190,8 @@ function PullRequestCodeTab({
             new Error(m(msg("Unchanged lines are unavailable in a file with cut lines."))),
           )
         : loadDiffFiles(fileDiff),
-    enableGutterUtility: canStartSelection,
-    enableLineSelection: canStartSelection,
+    enableGutterUtility: canSelectLines && draft === null && !withheldRefetching,
+    enableLineSelection: canSelectLines && draft === null && !withheldRefetching,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: (fileContainer: HTMLElement, instance: object) => {
@@ -1345,7 +1334,6 @@ function PullRequestCodeTab({
           projectId={reference.projectId}
           ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
           kind="draft"
-          pending={awaitingFirstPage}
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
           completionScope={canCommentOnLines ? completionScope : null}
