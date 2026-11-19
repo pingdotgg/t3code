@@ -2,6 +2,8 @@
 
 ## 2026-11-19
 
+- Recorded the [local macOS build](local-macos-signing.md) from fork `main` after a PR merges.
+
 - **Integration**: Recorded [PR #86](https://github.com/NicholasZolton/t3code/pull/86) and the [compatibility decisions](upstream-integration.md) for the 186 commits through `e37e45fd5b`.
 
 ## 2026-11-17
