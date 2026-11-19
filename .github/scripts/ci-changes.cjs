@@ -14,7 +14,7 @@ const INERT = [
 
 // Shared test setup and vendored mobile dependencies affect every package.
 const RUNS_EVERYTHING = [
-  /^packages\/shared\/src\/(HostProcess|gitEnvironment|testing\/(gitEnv|longTempDir|providerEnv))\.ts$/,
+  /^packages\/shared\/src\/(HostProcess|gitEnvironment|testing\/(longTempDir|providerEnv|gitEnv))\.ts$/,
   /^apps\/mobile\/deps\//,
 ];
 
