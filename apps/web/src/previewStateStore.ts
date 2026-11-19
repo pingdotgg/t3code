@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
   type DesktopPreviewColorScheme,
   type DesktopPreviewFavicon,
@@ -7,6 +7,7 @@ import {
   type PreviewListResult,
   type PreviewSessionSnapshot,
   type ScopedThreadRef,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
@@ -165,6 +166,38 @@ const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPrevie
 
 export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): ThreadPreviewState {
   const atom = ref ? previewStateAtom(scopedThreadKey(ref)) : emptyPreviewStateAtom;
+  return useAtomValue(atom);
+}
+
+type PreviewTabs = Pick<ThreadPreviewState, "sessions" | "desktopByTabId">;
+
+const mergedPreviewTabsAtom = Atom.family((threadKeys: string) =>
+  Atom.make((get): PreviewTabs => {
+    const sessions: ThreadPreviewState["sessions"] = {};
+    const desktopByTabId: ThreadPreviewState["desktopByTabId"] = {};
+    for (const threadKey of threadKeys.split("\n")) {
+      const state = get(previewStateAtom(threadKey));
+      Object.assign(sessions, state.sessions);
+      Object.assign(desktopByTabId, state.desktopByTabId);
+    }
+    return { sessions, desktopByTabId };
+  }).pipe(Atom.withLabel(`preview:merged-tabs:${threadKeys}`)),
+);
+
+/** `ref`'s browser tabs plus those of `otherThreadIds`, whose tabs its shared panel also holds. */
+export function usePreviewTabs(
+  ref: ScopedThreadRef | null | undefined,
+  otherThreadIds: ReadonlyArray<ThreadId>,
+): PreviewTabs {
+  const atom: Atom.Atom<PreviewTabs> = !ref
+    ? emptyPreviewStateAtom
+    : otherThreadIds.length === 0
+      ? previewStateAtom(scopedThreadKey(ref))
+      : mergedPreviewTabsAtom(
+          [ref.threadId, ...otherThreadIds]
+            .map((threadId) => scopedThreadKey(scopeThreadRef(ref.environmentId, threadId)))
+            .join("\n"),
+        );
   return useAtomValue(atom);
 }
 

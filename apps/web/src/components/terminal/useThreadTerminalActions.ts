@@ -10,7 +10,9 @@ import { nextTerminalId } from "@t3tools/shared/terminalLabels";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { randomUUID } from "~/lib/utils";
+import { panelScopeRef } from "../../panelScope";
 import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
+import { usePanelScopeRef } from "../../sharedProjectPanels";
 import { useProject, useQuietThreadShell } from "../../state/entities";
 import { readEnvironmentScope } from "../../state/session";
 import { terminalEnvironment } from "../../state/terminal";
@@ -41,9 +43,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       : null;
   const project = useProject(projectRef);
   const threadWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const terminalOwner = usePanelScopeRef(threadRef);
   const knownSessions = useKnownTerminalSessions({
-    environmentId: threadRef?.environmentId ?? null,
-    threadId: threadRef?.threadId ?? null,
+    environmentId: terminalOwner?.environmentId ?? null,
+    threadId: terminalOwner?.threadId ?? null,
   });
   const drawerTerminalIds = useTerminalUiStateStore(
     (state) => selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef).terminalIds,
@@ -63,7 +66,7 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
       ...panelSurfaces.flatMap((surface) =>
         surface.kind === "terminal" ? surface.terminalIds : [],
       ),
-      ...(threadRef ? closingTerminalIds(threadRef) : []),
+      ...(terminalOwner ? closingTerminalIds(terminalOwner) : []),
     ]);
     const canReuse =
       knownSessions !== null &&
@@ -92,15 +95,15 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
     readonly stopOnSettle?: boolean;
     readonly size?: { readonly cols: number; readonly rows: number };
   }) => {
-    if (!threadRef || !canWrite() || !project) return null;
+    if (!terminalOwner || !canWrite() || !project) return null;
     const location = input.location ?? defaultLaunchLocation();
     if (!location) return null;
     const terminalId = input.terminalId ?? allocateTerminalId();
     input.place(terminalId);
     const result = openTerminalCommand({
-      environmentId: threadRef.environmentId,
+      environmentId: terminalOwner.environmentId,
       input: {
-        threadId: threadRef.threadId,
+        threadId: terminalOwner.threadId,
         terminalId,
         cwd: location.cwd,
         ...(location.worktreePath !== null ? { worktreePath: location.worktreePath } : {}),
@@ -119,9 +122,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   /** Ends a session and deletes its history. A failed close falls back to typing `exit`. */
   const closeTerminalSession = (terminalId: string, target = threadRef) => {
     if (!target || !readEnvironmentScope(target.environmentId, AuthTerminalOperateScope)) return;
-    const environmentId = target.environmentId;
-    const threadId = target.threadId;
-    void holdTerminalIdWhileClosing(target, terminalId, async () => {
+    const owner = panelScopeRef(target);
+    const environmentId = owner.environmentId;
+    const threadId = owner.threadId;
+    void holdTerminalIdWhileClosing(owner, terminalId, async () => {
       const closeResult = await closeTerminalCommand({
         environmentId,
         input: { threadId, terminalId, deleteHistory: true },
@@ -137,10 +141,10 @@ export function useThreadTerminalActions(threadRef: ScopedThreadRef | null) {
   };
 
   const writeToTerminal = (terminalId: string, data: string) => {
-    if (!threadRef || !canWrite()) return null;
+    if (!terminalOwner || !canWrite()) return null;
     return writeTerminal({
-      environmentId: threadRef.environmentId,
-      input: { threadId: threadRef.threadId, terminalId, data },
+      environmentId: terminalOwner.environmentId,
+      input: { threadId: terminalOwner.threadId, terminalId, data },
     });
   };
 

@@ -13,8 +13,9 @@ import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { focusPanelTerminalAfterClose } from "../lib/terminalFocus";
 import { readLocalApi } from "../localApi";
-import { setActivePreviewTab, useThreadPreviewState } from "../previewStateStore";
+import { setActivePreviewTab } from "../previewStateStore";
 import {
+  browserSurfaceThreadRef,
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
   useRightPanelStore,
@@ -26,6 +27,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { threadEnvironment } from "../state/threads";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useRightPanelPreviewTabs } from "./useRightPanelPreviewTabs";
 import { useStableCallback } from "./useStableCallback";
 
 /**
@@ -43,7 +45,7 @@ export function useRightPanelSurfaceClose(input: {
     threadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
   );
-  const previewState = useThreadPreviewState(threadRef);
+  const previewState = useRightPanelPreviewTabs(threadRef);
   const terminalActions = useThreadTerminalActions(threadRef);
   const storeCloseTerminal = useTerminalUiStateStore((state) => state.closeTerminal);
   const surfaces = useRightPanelStore(
@@ -57,7 +59,7 @@ export function useRightPanelSurfaceClose(input: {
         closePreview,
         snapshot: previewState.sessions[surface.resourceId] ?? null,
         tabId: surface.resourceId,
-        threadRef: ref,
+        threadRef: browserSurfaceThreadRef(ref, surface),
       });
     }
     if (
@@ -121,7 +123,10 @@ export function useRightPanelSurfaceClose(input: {
       threadRef,
     );
     if (nextActiveSurface?.kind === "preview" && nextActiveSurface.resourceId) {
-      setActivePreviewTab(threadRef, nextActiveSurface.resourceId);
+      setActivePreviewTab(
+        browserSurfaceThreadRef(threadRef, nextActiveSurface),
+        nextActiveSurface.resourceId,
+      );
     }
     focusPanelTerminalAfterClose(threadRef, activeId);
   };
