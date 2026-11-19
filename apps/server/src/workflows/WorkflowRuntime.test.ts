@@ -5,7 +5,9 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -33,46 +35,54 @@ workflow("greet", { version: 1, payload: Schema.Struct({}), returns: Schema.Stri
 );
 `;
 
+/** A folder holding `hold.ts`, and the workflow runtime over it on a fresh database. */
+const setup = Effect.fn("setup")(function* (
+  wrap: (fileSystem: FileSystem.FileSystem) => FileSystem.FileSystem = (fileSystem) => fileSystem,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-defs-" });
+  const directory = path.join(home, "workflows");
+  const at = (name: string) => path.join(directory, name);
+  yield* fileSystem.makeDirectory(directory);
+  yield* fileSystem.writeFileString(at("hold.ts"), hold);
+  const database = NodeSqliteClient.layer({ filename: path.join(home, "state.sqlite") });
+  yield* Effect.provide(
+    Effect.all(
+      [
+        Migration0100,
+        Migration0101,
+        Migration0102,
+        Migration0103,
+        Migration0104,
+        Migration0105,
+        Migration0106,
+        Migration0107,
+      ],
+      { discard: true },
+    ),
+    database,
+  );
+  const runtime = Layer.effectContext(
+    WorkflowRuntime.make(
+      Effect.succeed((definitions) =>
+        WorkflowEngine.layer(definitions).pipe(
+          Layer.provide(Layer.mock(WorkflowAgents)({})),
+          Layer.provide(database),
+          Layer.provide(NodeCrypto.layer),
+        ),
+      ),
+      directory,
+    ).pipe(Effect.provideService(FileSystem.FileSystem, wrap(fileSystem))),
+  );
+  return { fileSystem, at, runtime };
+});
+
 it.effect(
   "every file in the folder defines workflows, and a saved file is verified before it runs",
   () =>
     Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-workflow-defs-" });
-      const directory = path.join(home, "workflows");
-      const at = (name: string) => path.join(directory, name);
-      yield* fileSystem.makeDirectory(directory);
-      yield* fileSystem.writeFileString(at("hold.ts"), hold);
-      const database = NodeSqliteClient.layer({ filename: path.join(home, "state.sqlite") });
-      yield* Effect.provide(
-        Effect.all(
-          [
-            Migration0100,
-            Migration0101,
-            Migration0102,
-            Migration0103,
-            Migration0104,
-            Migration0105,
-            Migration0106,
-            Migration0107,
-          ],
-          { discard: true },
-        ),
-        database,
-      );
-      const runtime = Layer.effectContext(
-        WorkflowRuntime.make(
-          Effect.succeed((definitions) =>
-            WorkflowEngine.layer(definitions).pipe(
-              Layer.provide(Layer.mock(WorkflowAgents)({})),
-              Layer.provide(database),
-              Layer.provide(NodeCrypto.layer),
-            ),
-          ),
-          directory,
-        ),
-      );
+      const { fileSystem, at, runtime } = yield* setup();
 
       yield* Effect.gen(function* () {
         const workflows = yield* Workflows.Workflows;
@@ -153,6 +163,73 @@ it.effect(
           .start("greet", {}, { idempotencyKey: "g4" })
           .pipe(Effect.flip);
         assert.equal(gone._tag, "WorkflowNotRegisteredError");
+      }).pipe(
+        Effect.provide(runtime),
+        Effect.scoped,
+        Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect(
+  "a folder that cannot be listed keeps its workflows and is looked at again, and an engine that cannot start leaves the last one running",
+  () =>
+    Effect.gen(function* () {
+      let refuse = false;
+      // No file events: only the runtime's own retry can pick up what changed.
+      const { at, fileSystem, runtime } = yield* setup((real) => ({
+        ...real,
+        exists: (target) =>
+          refuse
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "FileSystem",
+                  method: "exists",
+                  pathOrDescriptor: target,
+                }),
+              )
+            : real.exists(target),
+        watch: () => Stream.never,
+      }));
+
+      yield* Effect.gen(function* () {
+        const workflows = yield* Workflows.Workflows;
+        const definitions = yield* WorkflowRuntime.WorkflowDefinitions;
+        const revision = Effect.map(
+          Stream.runHead(workflows.watch),
+          (snapshot) => Option.getOrThrow(snapshot).definition?.revision ?? 0,
+        );
+        refuse = true;
+        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hi")), []);
+        // The folder could not be listed: what was loaded stays, and greet is not taken in yet.
+        const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
+        yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
+        const before = yield* revision;
+        refuse = false;
+        yield* workflows.watch.pipe(
+          Stream.filter((snapshot) => (snapshot.definition?.revision ?? 0) > before),
+          Stream.runHead,
+        );
+        const greeted = yield* workflows.start("greet", {}, { idempotencyKey: "g" });
+        assert.equal(
+          (yield* workflows.waitFor(greeted.runId, (run) => run.status === "completed")).result,
+          "hi",
+        );
+
+        // A definition that passes the checks but takes the engine down at start changes nothing.
+        yield* fileSystem.writeFileString(
+          at("broken.ts"),
+          'const made = T3.workflow("broken", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\nmade.triggers.push(null);\n',
+        );
+        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hello")), []);
+        const still = yield* workflows.start("hold", {}, { idempotencyKey: "h2" });
+        yield* workflows.waitFor(still.runId, (run) => run.status === "waiting");
+        assert.include(
+          (yield* Stream.runHead(workflows.watch)).pipe(Option.getOrThrow).definition?.problem ??
+            "",
+          "did not start",
+        );
       }).pipe(
         Effect.provide(runtime),
         Effect.scoped,

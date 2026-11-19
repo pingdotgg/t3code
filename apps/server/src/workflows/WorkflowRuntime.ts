@@ -32,6 +32,8 @@ const definitionsOverride = Config.String("T3CODE_WORKFLOWS").pipe(Config.option
 
 // An editor saves in several writes, and a save from here is followed by its own file event.
 const RELOAD_SETTLE = "300 millis";
+// A folder that could not be listed is looked at again, since no file event may follow.
+const LIST_RETRY = "30 seconds";
 // A leading dot is how a file is kept out: a draft being checked, an editor's swap file.
 // One name in the folder, never a path: the name is also the key a save and a removal go by.
 const DEFINITION_FILE = /^[A-Za-z0-9_][\w.-]*\.(ts|mts|js|mjs)$/;
@@ -224,6 +226,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const good = new Map<string, ReadonlyArray<WorkflowDefinition>>();
   const broken = new Map<string, WorkflowDefinitionProblem>();
   let between: ReadonlyArray<WorkflowDefinitionProblem> = [];
+  let retrying = false;
   const state = yield* SubscriptionRef.make<{ revision: number; problem: string | null }>({
     revision: 0,
     problem: null,
@@ -240,13 +243,11 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
 
   const names = Effect.gen(function* () {
     if (single) {
-      return (yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false)))
-        ? [path.basename(target)]
-        : [];
+      return (yield* fileSystem.exists(target)) ? [path.basename(target)] : [];
     }
     // A folder that is not there yet is empty. One that cannot be read just now is not: it
     // fails, and what was loaded stays.
-    if (!(yield* fileSystem.exists(directory).pipe(Effect.orElseSucceed(() => false)))) return [];
+    if (!(yield* fileSystem.exists(directory))) return [];
     const entries = yield* fileSystem.readDirectory(directory);
     return entries.filter((entry) => DEFINITION_FILE.test(entry)).toSorted();
   });
@@ -256,6 +257,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   ) {
     const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
     ready = next;
+    const previous = running;
     if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
     engineScope = undefined;
     running = [];
@@ -265,14 +267,20 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
     }
     engineScope = yield* Scope.fork(outer);
     const layerEngine = yield* engine;
-    const built = yield* Layer.buildWithScope(layerEngine(definitions), engineScope).pipe(
-      Effect.provideContext(services),
-      Effect.exit,
-    );
+    const scope = engineScope;
+    const built = yield* Effect.suspend(() =>
+      Layer.buildWithScope(layerEngine(definitions), scope),
+    ).pipe(Effect.provideContext(services), Effect.exit);
     if (Exit.isFailure(built)) {
+      const problem = `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
+      // What ran before comes back, so definitions that cannot start take nothing down.
+      if (previous.length > 0) yield* boot(previous);
       // Nobody may be left waiting on an engine that never came up.
-      yield* Deferred.succeed(next, Workflows.disabled);
-      return `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
+      yield* Deferred.succeed(
+        next,
+        running.length > 0 ? yield* Deferred.await(ready) : Workflows.disabled,
+      );
+      return problem;
     }
     running = definitions;
     yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
@@ -313,6 +321,19 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       yield* Effect.logWarning(
         "The workflows folder could not be read; its workflows stay as they are",
       );
+      if (!retrying) {
+        retrying = true;
+        yield* Effect.suspend(() => {
+          retrying = false;
+          return lock.withPermits(1)(reload());
+        }).pipe(
+          Effect.delay(LIST_RETRY),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Reloading workflow definitions failed", Cause.pretty(cause)),
+          ),
+          Effect.forkIn(outer),
+        );
+      }
       return;
     }
     const present = listed.value;
