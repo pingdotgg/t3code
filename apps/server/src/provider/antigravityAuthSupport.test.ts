@@ -235,6 +235,23 @@ describe("Antigravity process environment", () => {
       ).toBeGreaterThanOrEqual(260);
     }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
   );
+
+  it.effect("keeps POSIX runtimeTemp short enough for AF_UNIX domain sockets (<= 104 bytes)", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const directories = yield* resolveAntigravityInstanceDirectories(
+        "/home/some-very-long-username-on-linux-or-macos/.t3/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      // Simulating a per-run temp dir: runtimeTemp/run-XXXXXX
+      const perRunTemp = path.join(directories.runtimeTemp, "run-Z3MAVm");
+      // Simulating developer tooling creating a temp subdir + .sock file (e.g. Convex/Postgres)
+      const socketPath = path.join(perRunTemp, "app-backend-tmp-aJo3kT", "backend-ipc-123456.sock");
+      // AF_UNIX sockaddr_un.sun_path limit is 108 bytes on Linux, 104 bytes on macOS.
+      expect(socketPath.length).toBeLessThan(104);
+      expect(directories.runtimeTemp.startsWith("/tmp/")).toBe(true);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
 });
 
 describe("Antigravity authorization URL", () => {

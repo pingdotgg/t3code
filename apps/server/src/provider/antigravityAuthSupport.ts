@@ -177,20 +177,39 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
-  /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  /**
+   * On Windows: keep beside the profile so members stay under MAX_PATH (260).
+   * On POSIX: keep under /tmp so agent-spawned Unix domain sockets stay under
+   * sockaddr_un.sun_path (108 bytes on Linux, 104 bytes on macOS).
+   */
   readonly runtimeTemp: string;
+  /** Legacy directory under stateDir cleaned on POSIX during transition. */
+  readonly legacyRuntimeTemp?: string | undefined;
 }
 
 /** Hashes the instance ID so case-only differences stay separate on case-insensitive filesystems. */
 export const resolveAntigravityInstanceDirectories = Effect.fn(
   "resolveAntigravityInstanceDirectories",
-)(function* (stateDir: string, instanceId: ProviderInstanceId) {
+)(function* (
+  stateDir: string,
+  instanceId: ProviderInstanceId,
+  options?: { readonly platform?: NodeJS.Platform | undefined },
+) {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
+  const platform = options?.platform ?? (path.sep === "\\" ? "win32" : yield* HostProcess.Platform);
+  const isWindows = platform === "win32";
   const key = Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(instanceId)));
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  const posixTempParent = uid !== undefined ? `/tmp/t3-agy-${uid}` : "/tmp/t3-agy";
   return {
     profile: path.join(stateDir, "providers", "antigravity", key),
-    runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+    runtimeTemp: isWindows
+      ? path.join(stateDir, "antigravity-tmp", key.slice(0, 12))
+      : path.join(posixTempParent, key.slice(0, 6)),
+    ...(isWindows
+      ? {}
+      : { legacyRuntimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)) }),
   } satisfies AntigravityInstanceDirectories;
 });
 

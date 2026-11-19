@@ -176,6 +176,7 @@ export const AntigravityDriver: ProviderDriver<
     const profileDirectory = directories.profile;
     for (const directory of [
       directories.runtimeTemp,
+      ...(directories.legacyRuntimeTemp !== undefined ? [directories.legacyRuntimeTemp] : []),
       path.join(profileDirectory, "antigravity-acp", "tmp"),
     ]) {
       const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
