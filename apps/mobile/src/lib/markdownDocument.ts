@@ -572,11 +572,28 @@ function proseText(node: MarkdownNode): string {
   if (node.type === "inlineCode" || node.type === "code") return " ";
   if (!("children" in node)) return "";
   const text = node.children.map(proseText).join("");
-  return node.type === "paragraph" || node.type === "heading" ? ` ${text} ` : text;
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? ` ${text} `
+    : text;
 }
 
+// The native renderer scans inline code too when it picks a paragraph's direction.
+function renderedText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (!("children" in node)) return "";
+  return node.children.map(renderedText).join("");
+}
+
+// A mark inside `[label]` or `<url>` would break the reference or autolink.
 function firstLeafOffset(node: MarkdownNode): number | undefined {
-  if (!("children" in node) || node.children.length === 0) return node.position?.start.offset;
+  if (
+    !("children" in node) ||
+    node.children.length === 0 ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return node.position?.start.offset;
+  }
   return firstLeafOffset(node.children[0]!);
 }
 
@@ -596,7 +613,7 @@ export function markdownWithTextDirection(markdown: string): string {
     const mark = (node: MarkdownNode) => {
       if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
         const offset = firstLeafOffset(node);
-        const first = proseText(node).match(/\p{L}/u)?.[0];
+        const first = renderedText(node).match(/\p{L}/u)?.[0];
         if (offset !== undefined && first && textDirection(first) !== direction) {
           edits.push({ start: offset, end: offset, content: DIRECTION_MARK[direction] });
         }

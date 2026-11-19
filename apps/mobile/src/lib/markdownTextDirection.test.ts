@@ -41,4 +41,36 @@ describe("markdownWithTextDirection", () => {
       `\`\`\`\nconst a = 'مرحبا';\n\`\`\`\n\n- [ ] ${RLM}npm تشغيل الأوامر من المجلد الرئيسي`,
     );
   });
+
+  it("keeps words apart across table cells", () => {
+    const markdown = "| Name | الاسم | الوصف |\n| --- | --- | --- |\n| Price | السعر | القيمة |";
+    expect(markdownWithTextDirection(markdown)).toBe(
+      `| ${RLM}Name | الاسم | الوصف |\n| --- | --- | --- |\n| ${RLM}Price | السعر | القيمة |`,
+    );
+  });
+
+  it("puts the mark before a link so references and autolinks still parse", () => {
+    const markdown = [
+      "[Plantur] هذا شرح عربي طويل للمنتج",
+      "",
+      "<https://example.com> هذا شرح عربي طويل للرابط",
+      "",
+      "[Plantur]: /product",
+    ].join("\n");
+    expect(markdownWithTextDirection(markdown)).toBe(
+      [
+        `${RLM}[Plantur] هذا شرح عربي طويل للمنتج`,
+        "",
+        `${RLM}<https://example.com> هذا شرح عربي طويل للرابط`,
+        "",
+        "[Plantur]: /product",
+      ].join("\n"),
+    );
+  });
+
+  it("marks Arabic paragraphs that open with inline code", () => {
+    expect(markdownWithTextDirection("`npm` تشغيل الأوامر من المجلد الرئيسي")).toBe(
+      `${RLM}\`npm\` تشغيل الأوامر من المجلد الرئيسي`,
+    );
+  });
 });
