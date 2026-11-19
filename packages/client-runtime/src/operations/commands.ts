@@ -43,10 +43,12 @@ import * as SubscriptionRef from "effect/SubscriptionRef";
 
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
+  currentSession,
   EnvironmentRpcUnavailableError,
   getInitialServerConfig,
   isRpcClientError,
   request,
+  requestInSession,
 } from "../rpc/client.ts";
 
 interface CommandMetadata {
@@ -518,7 +520,16 @@ export interface CloseGuestShareInput extends ThreadCommandInput {
 export const closeGuestShare = Effect.fn("EnvironmentCommands.closeGuestShare")(function* (
   input: CloseGuestShareInput,
 ) {
-  return yield* dispatch({
+  const session = yield* currentSession();
+  const config = yield* session.initialConfig;
+  if (config.environment.capabilities.guestShareCloseById !== true) {
+    const { target } = yield* EnvironmentSupervisor.EnvironmentSupervisor;
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: target.environmentId,
+      ...translatableMessage(msg("Update T3 Code on {host}.", { host: target.label })),
+    });
+  }
+  return yield* requestInSession(session, ORCHESTRATION_V2_WS_METHODS.dispatchCommand, {
     type: "thread.guest-share.close",
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
