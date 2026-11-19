@@ -38,6 +38,7 @@ import {
   antigravityAuthLabel,
   antigravityAuthUsesBrowser,
   buildAntigravityAcpSpawnInput,
+  copyAntigravityCliConversation,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
@@ -151,6 +152,12 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
+    const rejectCliAuthIssue = (harnessPath: string | null) => {
+      const detail = antigravityAuthConfigIssue(auth, { isCliRuntime: harnessPath === null });
+      return detail === null
+        ? Effect.void
+        : Effect.fail(new ProviderSetupError({ instanceId, operation: "configure", detail }));
+    };
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
@@ -225,6 +232,7 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      yield* rejectCliAuthIssue(executable.harnessPath);
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,
@@ -246,6 +254,19 @@ export const AntigravityDriver: ProviderDriver<
             : cause,
         ),
       );
+      if (executable.harnessPath === null && input.resumeSessionId !== undefined) {
+        yield* copyAntigravityCliConversation({
+          userHome,
+          acpDirectory: profile.acpDirectory,
+          sessionId: input.resumeSessionId,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.catch(() =>
+            Effect.logWarning("Could not copy an Antigravity CLI conversation into the profile."),
+          ),
+        );
+      }
       // Use one directory per process; shared cleanup could delete files another session still reads.
       // Remove after the child dies, best-effort on Windows where handles may outlive the kill;
       // the next driver start sweeps leftovers.
@@ -419,6 +440,7 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
+      yield* rejectCliAuthIssue(executable.harnessPath);
       return {
         protocolVersion: 1,
         agentCapabilities: {
