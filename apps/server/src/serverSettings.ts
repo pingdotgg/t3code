@@ -1278,13 +1278,11 @@ const make = Effect.gen(function* () {
   );
 
   // `ready` completes once the watch is registered, or once it fails to be.
-  const watchFileChanges = (filePath: string, ready?: Deferred.Deferred<void>) => {
+  const watchFileChanges = (filePath: string, ready: Deferred.Deferred<void>) => {
     const directory = pathService.dirname(filePath);
     const fileName = pathService.basename(filePath);
     const resolvedFilePath = pathService.resolve(filePath);
-    const markReady = () => {
-      if (ready) Deferred.doneUnsafe(ready, Exit.void);
-    };
+    const markReady = () => Deferred.doneUnsafe(ready, Exit.void);
     return fs.watch(directory, { onReady: markReady }).pipe(
       Stream.filter(
         (event) =>
@@ -1367,40 +1365,44 @@ const make = Effect.gen(function* () {
       return Option.some(linkTargetPath);
     }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
 
-    const initialLinkTarget = yield* watchLinkTarget;
     const settingsReady = yield* Deferred.make<void>();
     const linkTargetReady = yield* Deferred.make<void>();
-    const startupWatches = [settingsReady, linkTargetReady];
-    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
-      Stream.changes,
-      Stream.switchMap(
-        Option.match({
-          onNone: () =>
-            Stream.fromEffect(Deferred.succeed(linkTargetReady, undefined)).pipe(Stream.drain),
-          onSome: (linkTargetPath) => watchLinkTargetChanges(linkTargetPath, linkTargetReady),
-        }),
-      ),
-    );
+    yield* Effect.gen(function* () {
+      const [settingsEvents, resolveEvents] = yield* watchFileChanges(
+        settingsPath,
+        settingsReady,
+      ).pipe(
+        Stream.ignoreCause({ log: true }),
+        Stream.broadcastN({ n: 2, capacity: 1, strategy: "sliding" }),
+      );
+      // Buffer settings path changes while resolving the first target.
+      const linkTargetEvents = Stream.fromEffect(
+        Deferred.await(settingsReady).pipe(Effect.andThen(watchLinkTarget)),
+      ).pipe(
+        Stream.concat(resolveEvents.pipe(Stream.mapEffect(() => watchLinkTarget))),
+        Stream.changes,
+        Stream.switchMap(
+          Option.match({
+            onNone: () =>
+              Stream.fromEffect(Deferred.succeed(linkTargetReady, undefined)).pipe(Stream.drain),
+            onSome: (linkTargetPath) => watchLinkTargetChanges(linkTargetPath, linkTargetReady),
+          }),
+        ),
+      );
 
-    // Saves emit multiple events; fs.watch may fire before content is flushed.
-    const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath, settingsReady),
-      linkTargetEvents,
-    ).pipe(Stream.debounce(Duration.millis(100)));
-
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
+      // Saves emit multiple events; fs.watch may fire before content is flushed.
+      yield* Stream.merge(settingsEvents, linkTargetEvents).pipe(
+        Stream.debounce(Duration.millis(100)),
+        Stream.runForEach(() => revalidateAndEmitSafely),
+      );
+    }).pipe(
+      Effect.scoped,
       Effect.ignoreCause({ log: true }),
-      // A watch can fail before the other streams start and install their finalizers.
-      Effect.ensuring(
-        Effect.forEach(startupWatches, (ready) => Deferred.succeed(ready, undefined), {
-          discard: true,
-        }),
-      ),
+      Effect.ensuring(Deferred.succeed(linkTargetReady, undefined)),
       Effect.forkIn(watcherScope),
     );
     // Edits made once `start` returns must reach a registered watch.
-    yield* Effect.forEach(startupWatches, Deferred.await, { discard: true });
+    yield* Deferred.await(linkTargetReady);
   });
 
   const start = Effect.gen(function* () {

@@ -3298,8 +3298,6 @@ it.live("starts when regular settings replace a symlink during watch registratio
     yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
 
     const parentRegistering = yield* Deferred.make<void>();
-    const settingsWatched = yield* Deferred.make<void>();
-    let settingsWatches = 0;
     const settingsLayer = layerServerSettings().pipe(
       Layer.provide(
         Layer.succeed(
@@ -3312,14 +3310,7 @@ it.live("starts when regular settings replace a symlink during watch registratio
                   Deferred.succeed(parentRegistering, undefined).pipe(Effect.as(Stream.never)),
                 );
               }
-              return fs.watch(directory, {
-                ...options,
-                onReady: () => {
-                  options?.onReady?.();
-                  // Both the settings reload and the link resolver need to see the rename.
-                  if (++settingsWatches === 2) Deferred.doneUnsafe(settingsWatched, Effect.void);
-                },
-              });
+              return fs.watch(directory, options);
             },
           }),
         ),
@@ -3335,12 +3326,69 @@ it.live("starts when regular settings replace a symlink during watch registratio
 
       const starting = yield* service.start.pipe(Effect.forkScoped);
       yield* Deferred.await(parentRegistering);
-      yield* Deferred.await(settingsWatched);
       yield* fs.rename(replacement, config.settingsPath);
       yield* Fiber.join(starting);
 
       const settings = yield* service.getSettings;
       assert.equal(settings.responseStreamingMode, "paragraph");
+    }).pipe(Effect.provide(settingsLayer));
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("follows a settings symlink installed before the directory watch is ready", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const target = path.join(dotfiles, "settings.json");
+    yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+
+    const targetEdited = yield* Deferred.make<void>();
+    let settingsPath: string;
+    const settingsLayer = layerServerSettings().pipe(
+      Layer.provide(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            watch: (directory, options) =>
+              Stream.unwrap(
+                Effect.gen(function* () {
+                  if (directory === path.dirname(settingsPath)) {
+                    // A replacement before registration produces no watch event.
+                    const replacement = `${settingsPath}.replacement`;
+                    yield* fs.symlink(target, replacement);
+                    yield* fs.rename(replacement, settingsPath);
+                  }
+                  options?.onReady?.();
+                  return directory === dotfiles
+                    ? Stream.fromEffect(Deferred.await(targetEdited)).pipe(
+                        Stream.as({ _tag: "Update", path: target } satisfies FileSystem.WatchEvent),
+                        Stream.concat(Stream.never),
+                      )
+                    : Stream.never;
+                }),
+              ),
+          }),
+        ),
+      ),
+    );
+
+    yield* Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      settingsPath = config.settingsPath;
+      yield* fs.writeFileString(settingsPath, `{ "responseStreamingMode": "paragraph" }`);
+      yield* service.start;
+      assert.equal((yield* service.getSettings).responseStreamingMode, "turn");
+
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+      yield* Deferred.succeed(targetEdited, undefined).pipe(
+        Effect.delay(1),
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("1 second");
+      assert.equal((yield* service.getSettings).responseStreamingMode, "paragraph");
     }).pipe(Effect.provide(settingsLayer));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
