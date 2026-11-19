@@ -88,6 +88,8 @@ export const fr: Messages = {
     channelLabel: "Canal de publication",
     stable: "Stable",
     nightly: "Nightly",
+    nightlyTagline:
+      "Les nouveautés dès qu'elles arrivent, avant la version Stable. Attendez-vous à quelques accrocs.",
     intelNote: "Sur un Mac Intel ? {link}.",
     intelLink: "Téléchargez la version x64",
     armNote: "Sur ARM ? Téléchargez le {deb} ou l'{appimage} arm64.",

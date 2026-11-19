@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 720 2560 531" preserveAspectRatio="xMidYMid slice">
+<svg xmlns="http://www.w3.org/2000/svg" width="2560" height="1440" viewBox="0 0 2560 1440">
   <!-- Orbital Sunrise, nightly channel art: deep space over a planet limb, city lights on the night side, the sun cresting bottom-right. -->
   <defs>
     <radialGradient id="sky" cx="899.78" cy="6122.7" r="6442.59" gradientUnits="userSpaceOnUse">

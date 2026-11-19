@@ -85,6 +85,7 @@ export const en = {
     channelLabel: "Release channel",
     stable: "Stable",
     nightly: "Nightly",
+    nightlyTagline: "New changes as they land, before they reach Stable. Expect rough edges.",
     intelNote: "On an Intel Mac? {link}.",
     intelLink: "Download the x64 build",
     armNote: "On ARM? Download the arm64 {deb} or {appimage}.",

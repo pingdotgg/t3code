@@ -84,6 +84,7 @@ export const ru: Messages = {
     channelLabel: "Канал релизов",
     stable: "Стабильный",
     nightly: "Nightly",
+    nightlyTagline: "Новые изменения сразу, раньше стабильной версии. Возможны шероховатости.",
     intelNote: "Mac на Intel? {link}.",
     intelLink: "Скачайте сборку x64",
     armNote: "На ARM? Скачайте {deb} или {appimage} для arm64.",

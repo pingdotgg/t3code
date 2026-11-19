@@ -88,6 +88,7 @@ export const ptBR: Messages = {
     channelLabel: "Canal de versões",
     stable: "Estável",
     nightly: "Nightly",
+    nightlyTagline: "As novidades assim que chegam, antes do Estável. Pode ter arestas a aparar.",
     intelNote: "Tem um Mac com Intel? {link}.",
     intelLink: "Baixe a versão x64",
     armNote: "Usa ARM? Baixe o {deb} ou o {appimage} para arm64.",

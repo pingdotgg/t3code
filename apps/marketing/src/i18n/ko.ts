@@ -84,6 +84,8 @@ export const ko: Messages = {
     channelLabel: "릴리스 채널",
     stable: "안정판",
     nightly: "Nightly",
+    nightlyTagline:
+      "새 변경 사항을 안정판보다 먼저 만나 보세요. 다듬어지지 않은 부분이 있을 수 있습니다.",
     intelNote: "Intel Mac을 쓰시나요? {link}.",
     intelLink: "x64 빌드 다운로드",
     armNote: "ARM을 쓰시나요? arm64 {deb} 또는 {appimage}를 다운로드하세요.",

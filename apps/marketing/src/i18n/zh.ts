@@ -82,6 +82,7 @@ export const zh: Messages = {
     channelLabel: "发布通道",
     stable: "稳定版",
     nightly: "Nightly 版",
+    nightlyTagline: "第一时间用上最新改动，早于稳定版。可能还有些粗糙。",
     intelNote: "使用 Intel 芯片的 Mac？{link}。",
     intelLink: "下载 x64 版本",
     armNote: "ARM 架构？下载 arm64 版 {deb} 或 {appimage}。",

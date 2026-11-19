@@ -89,6 +89,7 @@ export const ja: Messages = {
     channelLabel: "リリースチャンネル",
     stable: "安定版",
     nightly: "Nightly",
+    nightlyTagline: "新しい変更を、安定版より先にいち早く。荒削りな部分もあります。",
     intelNote: "Intel Mac をお使いですか？　{link}。",
     intelLink: "x64 版をダウンロード",
     armNote: "ARM をお使いですか？　arm64 版の {deb} または {appimage} をダウンロード。",

@@ -88,6 +88,8 @@ export const de: Messages = {
     channelLabel: "Release-Kanal",
     stable: "Stable",
     nightly: "Nightly",
+    nightlyTagline:
+      "Neue Änderungen, sobald sie landen, noch vor Stable. Rechne mit Ecken und Kanten.",
     intelNote: "Mac mit Intel-Chip? {link}.",
     intelLink: "Lade den x64-Build herunter",
     armNote: "Auf ARM? Lade das {deb} oder {appimage} für arm64 herunter.",
