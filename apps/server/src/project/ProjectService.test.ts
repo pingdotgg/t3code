@@ -847,6 +847,33 @@ it.effect("refuses a worktree container as a new project and as a new workspace 
   }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
 
+it.effect("refuses a workspace root the server cannot list", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const fixture = yield* fileSystem.makeTempDirectoryScoped({ prefix: "project-unreadable-" });
+    const workspaceRoot = `${fixture}/unreadable`;
+    yield* fileSystem.makeDirectory(workspaceRoot);
+    // stat succeeds and readdir fails, as on a macOS folder without a Files and Folders grant.
+    yield* Effect.acquireRelease(fileSystem.chmod(workspaceRoot, 0o000), () =>
+      Effect.orDie(fileSystem.chmod(workspaceRoot, 0o755)),
+    );
+
+    yield* Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const rejected = yield* service
+        .create({
+          commandId: CommandId.make("command:unreadable:create"),
+          projectId: ProjectId.make("project:unreadable"),
+          title: "Unreadable",
+          workspaceRoot,
+        })
+        .pipe(Effect.flip);
+      assert.include(rejected.message, workspaceRoot);
+      assert.isTrue(Option.isNone(yield* service.getByWorkspaceRoot(workspaceRoot)));
+    }).pipe(Effect.provide(layerTest));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("serializes two projects claiming the same workspace root", () =>
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
