@@ -1149,6 +1149,16 @@ it.each<[string, Run["calls"], boolean]>([
     true,
   ],
   [
+    "an os.path.join on a name assigned more than the secrets directory",
+    [
+      saved(),
+      bash(
+        `python3 - <<'PY'\nimport os, subprocess\nd = '/home/user/.t3/userdata/secrets/files' + '/archive'\ncode = open(os.path.join(d, '${F.slice(-32)}',)).read()\nsubprocess.run(['adb', 'pair', '192.168.1.42:37099', code])\nPY`,
+      ),
+    ],
+    false,
+  ],
+  [
     "an os.path.join that names another file after the id",
     [
       saved(),

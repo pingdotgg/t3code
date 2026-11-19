@@ -1578,7 +1578,13 @@ export const classifyFileUse = (
   const assigned = (name: string) =>
     code.match(new RegExp(`(?<![\\w.])${name}\\s*=(?!=)`, "g"))?.length ?? 0;
   const dirAssignments = [
-    ...command.matchAll(new RegExp(`(?<![\\w.])([A-Za-z_]\\w*)\\s*=\\s*(?:${SECRETS_DIR})`, "g")),
+    // The whole initializer: `'<dir>' + '/archive'` names another directory.
+    ...command.matchAll(
+      new RegExp(
+        `(?<![\\w.])([A-Za-z_]\\w*)\\s*=\\s*(?:${SECRETS_DIR})(?=[ \\t]*(?:[;\\n#]|$))`,
+        "g",
+      ),
+    ),
   ]
     .filter((match) => code.startsWith(match[1]!, match.index))
     .map((match) => match[1]!);
