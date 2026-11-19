@@ -4,9 +4,12 @@ import {
   isReasoningControl,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import type { ModelSelection, ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
-import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import {
+  getModelSelectionStringOptionValue,
+  getProviderOptionCurrentLabel,
+} from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
@@ -260,7 +263,10 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
   next.scrollIntoView({ block: "nearest" });
 }
 
-function EffortLevels(props: { traits: TraitsSelectionInput }) {
+function EffortLevels(props: {
+  traits: TraitsSelectionInput;
+  threadDefaultModelSelection?: ModelSelection | null | undefined;
+}) {
   const traits = useTraitsSelection(props.traits);
   const { effort, others } = columnControls(traits.selectDescriptors, traits.booleanDescriptors);
   if (traits.modelIsUnavailable) {
@@ -284,7 +290,19 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
     effort?.descriptor.id === traits.primarySelectDescriptor?.id && traits.ultrathinkInBodyText;
   return (
     <>
-      {effort ? <EffortRows control={effort} traits={traits} locked={locked} /> : null}
+      {effort ? (
+        <EffortRows
+          control={effort}
+          traits={traits}
+          locked={locked}
+          defaultSelection={
+            props.threadDefaultModelSelection?.instanceId === props.traits.instanceId &&
+            props.threadDefaultModelSelection?.model === props.traits.model
+              ? props.threadDefaultModelSelection
+              : undefined
+          }
+        />
+      ) : null}
       {others.length > 0 ? (
         <div
           className={cn("flex flex-col gap-0.5", effort && "mt-1 border-t border-border/70 pt-1")}
@@ -314,7 +332,12 @@ function EffortLevels(props: { traits: TraitsSelectionInput }) {
 
 type TraitsSelection = ReturnType<typeof useTraitsSelection>;
 
-function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; locked: boolean }) {
+function EffortRows(props: {
+  control: ColumnControl;
+  traits: TraitsSelection;
+  locked: boolean;
+  defaultSelection: ModelSelection | null | undefined;
+}) {
   const gt = useGT();
   const messages = useMessages();
   const { control, traits } = props;
@@ -341,6 +364,11 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
   const { locked } = props;
   const value = traits.selectValue(control.descriptor);
   const choices = selectableProviderOptionChoices(control.descriptor);
+  const configuredDefault = getModelSelectionStringOptionValue(
+    props.defaultSelection,
+    descriptor.id,
+  );
+  const defaultChoice = choices.find((option) => option.id === configuredDefault);
   // An "Ultrathink:" prefix selects a level the column does not offer.
   const shown = choices.some((option) => option.id === value);
   return (
@@ -357,7 +385,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
           selected={option.id === value}
           tabStop={shown ? option.id === value : index === 0}
           description={option.description}
-          isDefault={option.isDefault}
+          isDefault={defaultChoice ? option === defaultChoice : option.isDefault}
           disabled={locked}
           onPick={() => traits.changeSelect(control.descriptor, option.id)}
         />
@@ -522,7 +550,10 @@ function NoEffortRow() {
 }
 
 /** The model picker's effort column: the selected model's levels and its other options. */
-export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+export function ComposerEffortColumn(props: {
+  traits: TraitsSelectionInput | null;
+  threadDefaultModelSelection?: ModelSelection | null | undefined;
+}) {
   const gt = useGT();
   const messages = useMessages();
   const picker = use(DockedPickerContext);
@@ -555,7 +586,14 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+        {props.traits ? (
+          <EffortLevels
+            traits={props.traits}
+            threadDefaultModelSelection={props.threadDefaultModelSelection}
+          />
+        ) : (
+          <NoEffortRow />
+        )}
       </div>
     </>
   );

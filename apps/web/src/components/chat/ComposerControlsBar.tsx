@@ -51,6 +51,7 @@ export function ComposerControlsBar(props: {
   selectedModel: string;
   selectedProviderModels: ServerProvider["models"];
   composerModelOptions: ReturnType<typeof useComposerProviderModel>["composerModelOptions"];
+  threadDefaultModelSelection: ModelSelection | null;
   reportedModelSelection: ChatComposerProps["reportedModelSelection"];
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
@@ -224,7 +225,12 @@ export function ComposerControlsBar(props: {
       triggerShortcuts={
         pickerOwnsModeShortcut ? "composer.effort composer.mode" : "composer.effort"
       }
-      effortColumn={<ComposerEffortColumn traits={traitsInput} />}
+      effortColumn={
+        <ComposerEffortColumn
+          traits={traitsInput}
+          threadDefaultModelSelection={props.threadDefaultModelSelection}
+        />
+      }
       footer={
         <ComposerPickerFooter
           traits={traitsInput}

@@ -122,3 +122,57 @@ it("draws an agent's reasoning as bars and keeps its mode out of the levels", as
     .toBeInTheDocument();
   await expect.element(page.getByRole("menuitemradio")).not.toBeInTheDocument();
 });
+
+it("marks the configured effort independently of the selected effort for the same model", async () => {
+  const traits = traitsInput([{ id: "thought_level", value: "high" }], () => {});
+  const providerModels = models.map((model) => ({
+    ...model,
+    capabilities: createModelCapabilities({
+      optionDescriptors: [
+        {
+          id: "thought_level",
+          label: "Thinking",
+          type: "select",
+          role: "reasoning",
+          currentValue: "low",
+          options: [
+            { id: "low", label: "Low", isDefault: true },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+          ],
+        },
+      ],
+    }),
+  }));
+  const renderColumn = (model: string) => (
+    <ComposerEffortColumn
+      traits={{ ...traits, models: providerModels }}
+      threadDefaultModelSelection={{
+        instanceId: ProviderInstanceId.make("devin"),
+        model,
+        options: [{ id: "thought_level", value: "medium" }],
+      }}
+    />
+  );
+  await using screen = await render(
+    <>
+      <section aria-label="Matching model">{renderColumn("fusion")}</section>
+      <section aria-label="Different model">{renderColumn("other")}</section>
+    </>,
+    { router: false },
+  );
+
+  const matching = screen.getByRole("region", { name: "Matching model" });
+  await expect
+    .element(matching.getByRole("radio", { name: /^Medium\s*Default$/ }))
+    .toHaveAttribute("aria-checked", "false");
+  await expect
+    .element(matching.getByRole("radio", { name: "High" }))
+    .toHaveAttribute("aria-checked", "true");
+  await expect.element(matching.getByRole("radio", { name: "Low" })).toBeInTheDocument();
+
+  const different = screen.getByRole("region", { name: "Different model" });
+  await expect
+    .element(different.getByRole("radio", { name: /^Low\s*Default$/ }))
+    .toBeInTheDocument();
+});

@@ -253,7 +253,11 @@ import { assistantCitationNavigation } from "../../lib/assistantCitationNavigati
 import { Button } from "../ui/button";
 import { useManagedPolicy } from "../../state/managedPolicy";
 import { hasProviderSetup } from "./ProviderStatusBanner";
-import { type AppModelOption, getAppModelOptionsForInstance } from "../../modelSelection";
+import {
+  type AppModelOption,
+  getAppModelOptionsForInstance,
+  resolveEffectiveDefaultModelSelection,
+} from "../../modelSelection";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { isVideoAttachment, type SessionPhase, type Thread } from "../../types";
 import { type ComposerPromptHistoryPosition } from "./composerPromptHistory";
@@ -418,6 +422,7 @@ export interface ChatComposerProps {
   providerStatuses: ServerProvider[];
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
+  threadDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
   activeProjectId: ProjectId | null;
@@ -2514,6 +2519,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModel={selectedModel}
       selectedProviderModels={selectedProviderModels}
       composerModelOptions={composerModelOptions}
+      threadDefaultModelSelection={
+        props.threadDefaultModelSelection
+          ? resolveEffectiveDefaultModelSelection(
+              settings,
+              props.providerStatuses,
+              props.threadDefaultModelSelection,
+            )
+          : null
+      }
       reportedModelSelection={reportedModelSelection}
       promptUltrathink={promptUltrathink}
       onPromptEdit={editPromptFromTraitsStable}
