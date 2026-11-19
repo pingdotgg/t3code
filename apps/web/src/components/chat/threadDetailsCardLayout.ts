@@ -1,7 +1,7 @@
 import type { PreviewMiniPlayerFrame } from "../preview/previewMiniPlayerLayout";
 import { DETAILS_CARD_CLEARANCE } from "./chatCanvasLayout";
 
-export const THREAD_DETAILS_CARD_GAP = 6;
+export const THREAD_DETAILS_CARD_GAP = 12;
 // The docked card is fixed; popovers and find bars use --thread-details-panel-width.
 const THREAD_DETAILS_CARD_WIDTH = 272;
 const THREAD_DETAILS_BOTTOM_GAP = 18;

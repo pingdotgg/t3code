@@ -56,9 +56,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
-import { Dialog } from "~/components/ui/dialog";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
-import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
@@ -92,7 +90,6 @@ export function DevicePanel(props: {
   readonly threadRef: ScopedThreadRef;
   readonly surface: Extract<RightPanelSurface, { kind: "device" }>;
   readonly visible: boolean;
-  readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
   const gt = useGT();
@@ -300,16 +297,9 @@ export function DevicePanel(props: {
 
   if (loaded && (!state.onboardingCompleted || hostDisabled)) {
     return (
-      <Dialog
-        open={props.visible}
-        onOpenChange={(isOpen) => {
-          if (!isOpen) props.onDismissSetup();
-        }}
-      >
-        <WizardPopup>
-          <DeviceSetup environmentId={environmentId} state={state} />
-        </WizardPopup>
-      </Dialog>
+      <PreviewPanelShell mode={props.mode}>
+        <DeviceSetup environmentId={environmentId} state={state} layout="pane" />
+      </PreviewPanelShell>
     );
   }
 
