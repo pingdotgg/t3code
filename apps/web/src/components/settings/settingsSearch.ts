@@ -685,6 +685,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/threads",
     searchTerms: [msg("context rollover handoff automatic continuation expensive")],
     scope: "environment-defaults",
+    environmentOnly: true,
   },
   {
     id: "auto-settle-inactive-threads",

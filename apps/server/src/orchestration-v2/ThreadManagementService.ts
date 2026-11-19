@@ -1307,20 +1307,23 @@ const make = Effect.gen(function* () {
         untilDelegatedWorkSettled: true,
       });
       if (waited.timedOut || waited.run?.status !== "completed") return;
-      if (!(yield* serverSettings.getSettings).autoContinueHeavyThreads) return;
-      yield* dispatch({
-        type: "thread.fork",
-        commandId: CommandId.make(`${targetThreadId}:fork`),
-        sourceThreadId: input.threadId,
-        targetThreadId,
-        sourcePoint: { type: "run", runId: run.id },
-        continuationAfterRunId: run.id,
-        continuationMessageCount: source.messages.filter((message) => message.role === "user")
-          .length,
-        continuationHandoff: handoff,
-        createdBy: "agent",
-        creationSource: "server",
-      });
+      yield* serverSettings.withSettingsSnapshot((current) =>
+        current.autoContinueHeavyThreads
+          ? dispatch({
+              type: "thread.fork",
+              commandId: CommandId.make(`${targetThreadId}:fork`),
+              sourceThreadId: input.threadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId: run.id },
+              continuationAfterRunId: run.id,
+              continuationMessageCount: source.messages.filter((message) => message.role === "user")
+                .length,
+              continuationHandoff: handoff,
+              createdBy: "agent",
+              creationSource: "server",
+            })
+          : Effect.void,
+      );
     }).pipe(
       Effect.ensuring(Effect.sync(() => continuationRequests.delete(input.threadId))),
       Effect.ignoreCause({ log: true }),
