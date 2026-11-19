@@ -46,9 +46,15 @@ import {
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
 import { restoreAttachmentOnlyBootstrapPrompt } from "@t3tools/shared/composerContextReferences";
-import { composerContextSendBlockReason, reidentifyComposerContext } from "../lib/composerContext";
+import {
+  composerContextSendBlockReason,
+  reidentifyComposerContext,
+  serializeComposerMessageForServer,
+  uploadedComposerContext,
+} from "../lib/composerContext";
 import { uuidv4 } from "../lib/uuid";
 import { useNowMinuteMs } from "../lib/clock";
 
@@ -58,7 +64,11 @@ import {
   isModelSelectionUnavailable,
 } from "../lib/modelOptions";
 
-import type { DraftComposerImageAttachment } from "../lib/composerImages";
+import {
+  type DraftComposerImageAttachment,
+  isFileBackedComposerAttachment,
+} from "../lib/composerImages";
+import { retainComposerAttachmentFileForPreview } from "../lib/composerAttachmentPreviewRetention";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { buildThreadFeed, createThreadFeedCache } from "../lib/threadActivity";
 import {
@@ -72,6 +82,7 @@ import {
 import { threadAllowsProviderSwitch } from "./thread-provider-switching";
 import { appAtomRegistry } from "./atom-registry";
 import { pendingThreadCreationMessage } from "./pending-thread-creation";
+import type { SideChatMessage } from "../features/threads/useStartSideChat";
 import {
   composerAttachmentUploadBlockReason,
   composerAttachmentUploadsAtom,
@@ -212,10 +223,10 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState(input: {
-  /** Forks the thread into a side chat that gets `prompt`; resolves false when it did not start. */
+  /** Forks the thread into a side chat that gets `message`; resolves false when it did not start. */
   readonly startSideChat: (
     source: ScopedThreadRef,
-    prompt: string,
+    message: SideChatMessage,
     settings: { readonly runtimeMode: RuntimeMode; readonly modelSelection: ModelSelection },
   ) => Promise<boolean>;
 }) {
@@ -637,6 +648,8 @@ export function useThreadComposerState(input: {
       return null;
     }
 
+    // Until a side chat start settles, its draft may be only partly back in the composer.
+    if (startingSideChatRef.current) return null;
     const threadKey = scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id);
     const draft = getComposerDraftSnapshot(threadKey);
     if (appAtomRegistry.get(composerContextImportsAtom)[threadKey]) return null;
@@ -669,63 +682,6 @@ export function useThreadComposerState(input: {
       );
       Dialog.alert(title, detail);
     };
-    // A redirect's text answers its approval, so `/side` there is that text, not the command.
-    const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
-    if (sideChatCommand) {
-      if (sideChatUnavailableReason !== null) {
-        Dialog.alert(m(msg("Side chat not started")), sideChatUnavailableReason);
-      } else if (attachments.length > 0 || (draft.context?.records.length ?? 0) > 0) {
-        Dialog.alert(
-          m(msg("Side chats take text only")),
-          m(msg("Remove the attachments and context, then send it again.")),
-        );
-      } else if (sideChatCommand.prompt.length === 0) {
-        Dialog.alert(
-          m(msg("Ask a side question")),
-          m(msg("Type the question after {command}, then send it.", { command: "/side" })),
-        );
-      } else if (modelUnavailable) {
-        alertModelUnavailable();
-      } else if (!startingSideChatRef.current) {
-        startingSideChatRef.current = true;
-        const started = await input
-          .startSideChat(
-            { environmentId: thread.environmentId, threadId: thread.id },
-            sideChatCommand.prompt,
-            {
-              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
-              modelSelection,
-            },
-          )
-          .finally(() => {
-            startingSideChatRef.current = false;
-          });
-        // Clear only what was sent; the draft may have changed while the side chat started.
-        const current = getComposerDraftSnapshot(threadKey);
-        if (
-          started &&
-          current.text === draft.text &&
-          current.attachments.length === 0 &&
-          (current.context?.records.length ?? 0) === 0
-        ) {
-          clearComposerDraftContent(threadKey);
-        }
-      }
-      return null;
-    }
-    // A redirect's text answers its approval, so /clear there is that text, not the command.
-    if (
-      beforeDispatch === undefined &&
-      selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.freshContext === true &&
-      thread.latestRun != null &&
-      attachments.length === 0 &&
-      draft.context === undefined &&
-      isClearComposerCommand(text)
-    ) {
-      setFreshSessionPending(threadKey, true);
-      clearComposerDraftContent(threadKey);
-      return null;
-    }
     // Recovery preserves over-cap attachments; require trimming or outbox delivery would reject indefinitely.
     if (attachments.length > PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
       Dialog.alert(
@@ -742,6 +698,98 @@ export function useThreadComposerState(input: {
     const contextBlockReason = composerContextSendBlockReason(draft.context);
     if (contextBlockReason) {
       Dialog.alert(m(msg("Too much context")), contextBlockReason);
+      return null;
+    }
+
+    // A redirect's text answers its approval, so `/side` there is that text, not the command.
+    const sideChatCommand = beforeDispatch === undefined ? parseSideChatCommand(text) : null;
+    if (sideChatCommand) {
+      if (sideChatUnavailableReason !== null) {
+        Dialog.alert(m(msg("Side chat not started")), sideChatUnavailableReason);
+      } else if (
+        sideChatCommand.prompt.length === 0 &&
+        attachments.length === 0 &&
+        (draft.context?.records.length ?? 0) === 0
+      ) {
+        Dialog.alert(
+          m(msg("Ask a side question")),
+          m(msg("Type the question after {command}, then send it.", { command: "/side" })),
+        );
+      } else if (modelUnavailable) {
+        alertModelUnavailable();
+      } else {
+        startingSideChatRef.current = true;
+        // Cleared at send, like a queued message, so nothing in it can vanish mid-start. The
+        // holds keep the local files until the side chat has them or the draft has them back.
+        const fileHolds = attachments
+          .filter(isFileBackedComposerAttachment)
+          .map(retainComposerAttachmentFileForPreview);
+        clearComposerDraftContent(threadKey, { deferAttachmentCleanup: true });
+        const started = await settlePromise(async () => {
+          const prepared = await Effect.runPromise(
+            prepareTurnAttachments({
+              environmentId: thread.environmentId,
+              attachments,
+              supportsImageUploads: true,
+              uploadAttachment: (attachment) =>
+                uploadComposerAttachmentShared(thread.environmentId, attachment),
+            }),
+          );
+          if (prepared.status !== "ready") return false;
+          return input.startSideChat(
+            { environmentId: thread.environmentId, threadId: thread.id },
+            {
+              ...serializeComposerMessageForServer(
+                restoreAttachmentOnlyBootstrapPrompt(
+                  sideChatCommand.prompt,
+                  prepared.attachments.length > 0,
+                ),
+                uploadedComposerContext(draft.context, attachments, prepared.attachments),
+              ),
+              attachments: prepared.attachments,
+              titleSeed: deriveThreadTitleSeed({ text: sideChatCommand.prompt, attachments }, m),
+            },
+            {
+              runtimeMode: draft.runtimeMode ?? thread.runtimeMode,
+              modelSelection,
+            },
+          );
+        });
+        if (AsyncResult.isSuccess(started) && started.value) {
+          scheduleUnusedComposerAttachmentCleanup(attachments);
+        } else {
+          // Restore with uncapped append; a capped merge could drop attachments added meanwhile.
+          // A failed disk write still leaves the merged draft in memory, and the append saves again.
+          await mergeComposerDraftContent(threadKey, {
+            text: draft.text,
+            context: draft.context,
+            attachments: [],
+          }).catch(() => undefined);
+          appendComposerDraftAttachments(threadKey, attachments, { restore: true });
+          if (AsyncResult.isFailure(started)) {
+            const error = squashAtomCommandFailure(started);
+            Dialog.alert(
+              m(msg("Side chat not started")),
+              error instanceof Error ? error.message : m(msg("Could not start a side chat.")),
+            );
+          }
+        }
+        startingSideChatRef.current = false;
+        for (const release of fileHolds) release();
+      }
+      return null;
+    }
+    // A redirect's text answers its approval, so /clear there is that text, not the command.
+    if (
+      beforeDispatch === undefined &&
+      selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.freshContext === true &&
+      thread.latestRun != null &&
+      attachments.length === 0 &&
+      draft.context === undefined &&
+      isClearComposerCommand(text)
+    ) {
+      setFreshSessionPending(threadKey, true);
+      clearComposerDraftContent(threadKey);
       return null;
     }
 
