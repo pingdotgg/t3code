@@ -2575,6 +2575,101 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("does not restore a pre-plan mode above the current runtime policy", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-plan-exit-ceiling");
+      const threadId = ThreadId.make("thread-acp-plan-exit-ceiling");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            protocolEvents,
+            environment: { T3_ACP_ANTIGRAVITY_CLI_MODES: "1" },
+          }),
+          sessionModeForPolicy: (policy) =>
+            policy.runtimeMode === "full-access" ? "auto" : "default",
+          runtimeModeForSessionMode: (modeId) =>
+            modeId === "auto"
+              ? "full-access"
+              : modeId === "default"
+                ? "approval-required"
+                : undefined,
+        },
+        selfInvocation,
+      });
+      const policy = (
+        runtimeMode: "full-access" | "approval-required",
+        interactionMode: "default" | "plan",
+      ) =>
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode,
+          interactionMode,
+          cwd: process.cwd(),
+        });
+      const fullAccess = policy("full-access", "default");
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-plan-exit-ceiling"),
+        modelSelection,
+        runtimePolicy: fullAccess,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy: fullAccess,
+      });
+      const now = yield* DateTime.now;
+      const modeSets: Array<unknown> = [];
+      const runTurn = Effect.fnUntraced(function* (
+        ordinal: number,
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
+      ) {
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now,
+            ordinal,
+            messageText: `Turn ${ordinal}.`,
+            modelSelection,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        while (true) {
+          const event = yield* Queue.take(protocolEvents);
+          if (event.direction !== "outgoing") continue;
+          const method = rawProtocolMethod(event);
+          if (
+            method === "session/set_config_option" &&
+            rawProtocolRequestParam(event, "configId") === "mode"
+          ) {
+            modeSets.push(rawProtocolRequestParam(event, "value"));
+          }
+          if (method === "session/prompt") return;
+        }
+      });
+
+      yield* runTurn(0, fullAccess);
+      yield* runTurn(1, policy("full-access", "plan"));
+      yield* runTurn(2, policy("approval-required", "default"));
+      assert.deepEqual(modeSets, ["auto", "plan", "default"]);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live.each(["cancelled", "refusal", "error"] as const)(
     "reinjects ACP instructions after protocol compaction, during reinjection, prompt preparation, or while idle (%s)",
     (stopReason) =>

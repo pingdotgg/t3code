@@ -196,12 +196,14 @@ export function antigravityCliSessionMode(
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
 }
 
-/** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
+/** The runtime mode a managed runtime or agy CLI session mode grants. */
 export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
   switch (modeId) {
     case "yolo":
+    case "auto":
       return "full-access";
     case "auto_edit":
+    case "accept-edits":
       return "auto-accept-edits";
     case "default":
       return "approval-required";
