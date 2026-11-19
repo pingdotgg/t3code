@@ -10,7 +10,11 @@ import { act, render } from "../../test/render";
 import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
-import { useRightPanelStore } from "../rightPanelStore";
+import {
+  hostRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import {
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
   remarkEnableOrderedListNumbers,
@@ -530,6 +534,38 @@ describe("ChatMarkdown workspace file opens", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    ["its own panel", "thread-own-panel", false],
+    ["its parent's panel from a side chat", "thread-side-chat", true],
+  ])(
+    "keeps a file opened elsewhere in %s when an earlier link lookup finishes",
+    async (_, threadId, sideChat) => {
+      setup();
+      const host = { environmentId: threadRef.environmentId, threadId: ThreadId.make(threadId) };
+      const linkRef = sideChat ? { ...host, threadId: ThreadId.make(`${threadId}-guest`) } : host;
+      using _hosted = { [Symbol.dispose]: sideChat ? hostRightPanel(linkRef, host) : () => {} };
+      const result = AsyncResult.success({
+        entries: [{ path: "notes/cited-note.txt", kind: "file" }],
+        truncated: false,
+      });
+      const { promise: pending, resolve: resolvePending } = Promise.withResolvers<typeof result>();
+      workspaceSearch.mockReturnValueOnce(pending);
+      await using screen = await renderText("[Cited](cited-note.txt)", {
+        cwd: "/repo",
+        threadRef: linkRef,
+      });
+      await act(async () => screen.container.querySelector("a")!.click());
+      expect(workspaceSearch).toHaveBeenCalledOnce();
+
+      useRightPanelStore.getState().openFile(host, "picker-note.txt");
+      await act(async () => resolvePending(result));
+
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, host),
+      ).toMatchObject({ kind: "file", relativePath: "picker-note.txt" });
+    },
+  );
 });
 
 describe("ChatMarkdown skill chips", () => {
