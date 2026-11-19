@@ -314,7 +314,7 @@ describe("PreviewView", () => {
     expect(enter.defaultPrevented).toBe(true);
   });
 
-  it("keeps a typed address after blur until the page navigates", async () => {
+  it("keeps a typed address while focused and after blur until the page navigates", async () => {
     const chromeRow = (url: string) => (
       <PreviewChromeRow
         url={url}
@@ -333,13 +333,15 @@ describe("PreviewView", () => {
     await using screen = await render(chromeRow("http://a.test/"));
     const input = page.getByPlaceholder("Search or enter URL");
     await input.fill("http://typed.test/");
+    await screen.rerender(chromeRow("http://b.test/"));
+    await expect.element(input).toHaveValue("http://typed.test/");
     (input.element() as HTMLInputElement).blur();
     await expect.element(input).toHaveValue("http://typed.test/");
 
+    await screen.rerender(chromeRow("http://c.test/"));
+    await expect.element(input).toHaveValue("http://c.test/");
     await screen.rerender(chromeRow("http://b.test/"));
     await expect.element(input).toHaveValue("http://b.test/");
-    await screen.rerender(chromeRow("http://a.test/"));
-    await expect.element(input).toHaveValue("http://a.test/");
   });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {

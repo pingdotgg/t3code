@@ -83,9 +83,11 @@ export function PreviewChromeRow({
   const [edit, setEdit] = useState<{ text: string; baseUrl: string } | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
 
-  // A typed edit survives blur, but a navigation discards it so returning to its URL cannot revive it.
-  if (edit !== null && edit.baseUrl !== url) setEdit(null);
-  const addressText = edit !== null && edit.baseUrl === url ? edit.text : url;
+  // A typed edit survives blur and in-page navigations while focused; a navigation after blur discards it.
+  if (edit !== null && edit.baseUrl !== url) {
+    setEdit(inputFocused ? { text: edit.text, baseUrl: url } : null);
+  }
+  const addressText = edit?.text ?? url;
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
