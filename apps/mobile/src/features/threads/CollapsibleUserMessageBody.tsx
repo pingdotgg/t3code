@@ -1,3 +1,4 @@
+import { T } from "gt-react-native";
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import {
   Pressable,
@@ -66,7 +67,7 @@ export function CollapsibleUserMessageBody(props: {
           className="mt-1.5 min-h-11 items-end justify-center active:opacity-70"
         >
           <Text className="font-t3-medium text-xs text-user-bubble-foreground-muted">
-            {props.expanded ? "Show less" : "Show full message"}
+            {props.expanded ? <T>Show less</T> : <T>Show full message</T>}
           </Text>
         </Pressable>
       ) : null}
