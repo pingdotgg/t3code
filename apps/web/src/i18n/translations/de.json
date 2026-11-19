@@ -1840,6 +1840,18 @@
   "480646ceb98c7163": "Schließen",
   "32fc9124998ebc18": "Lokal",
   "1c4158d741eec5da": "{label} (lokal)",
+  "a12a4958ca6b924b": "Port {port} weitergeleitet",
+  "0f14a51b016f825d": "Apps auf diesem Rechner erreichen ihn unter localhost:{port}.",
+  "4bdb9a086e77ee6d": "Port {port} auf {environment}",
+  "7a462e32dba47f4c": "Im Browser öffnen",
+  "4b8087450e97c995": "Adresse kopieren",
+  "c170720e67d01733": "Weiterleitung beenden",
+  "1e5c6d1c33667b17": "localhost:{port} weiterleiten",
+  "e76f45b6a412a0b6": "Port {port} von {environment} weiterleiten",
+  "ecf3b95b3d9e6e74": "Weitergeleitet",
+  "b3123e5b8602a134": "Gib eine Portnummer ein, um sie weiterzuleiten",
+  "1bdeef9819b4a055": "Port weiterleiten",
+  "de8a46b66f8ec455": "Weitergeleitete Ports",
   "f844c41fac2d339c": "Aktuell",
   "69154433587763c0": "Keine passenden Aktionen.",
   "90c3a382ecefa0ce": "Keine passenden Befehle, Projekte oder Threads.",
@@ -2975,6 +2987,8 @@
   "314cdccee9c14774": "Dieser Server unterstützt keine Registry-Abfragen. Aktualisiere ihn, bevor du den Kanal wechselst.",
   "22da1d00403ab2fd": "Die npm-Registry dieser Umgebung konnte nicht geprüft werden. Prüfe die Verbindung und die Registry-Einstellungen.",
   "2fc0f7a698c95c90": "Verbinde dich mit einem Server, um nach Releases zu suchen.",
+  "35cade9cc8a01363": "Portweiterleitung braucht die Desktop-App.",
+  "9e303e0a794898d4": "Diese Umgebung läuft auf diesem Computer, daher erreicht localhost:{port} sie bereits.",
   "7280baf7517dad1c": "Refs konnten nicht geladen werden.",
   "567c0fed6ab8efc1": "Diese Verbindung kann keine Host-Dateien durchsuchen.",
   "5189720b9436f98c": "Die Suche ist auf {count} Zeichen begrenzt.",
@@ -4024,6 +4038,15 @@
     }
   ],
   "e58a1d884fa1d8f2": "Thread-Details",
+  "43c5fbd02c6f330a": "Weniger anzeigen",
+  "de45b075b016cb14": [
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " weitere anzeigen"
+  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} Kommentar} other {{count} Kommentare}}",
   "42f634397f3960aa": "In Thread-Details anzeigen",
@@ -4063,15 +4086,6 @@
   ],
   "159ddd0d146a0f22": "Beobachtet: Der Agent wird geweckt, wenn Checks fertig sind, jemand kommentiert oder der Branch Konflikte hat. Klicke zum Beenden.",
   "1cbc8b5db51b4c77": "Mergen",
-  "43c5fbd02c6f330a": "Weniger anzeigen",
-  "de45b075b016cb14": [
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " weitere anzeigen"
-  ],
   "a3d040c4ef4fc6e9": "Über dem Tempo",
   "b16fdf56b16d99c9": "Im Tempo",
   "90f977e97ae8b6c6": "Unter dem Tempo",
@@ -4086,6 +4100,7 @@
   "66be4fb43249bbd2": "{used} von {max} Tokens",
   "ee3ae58c8b38a425": "{left} % übrig",
   "ebb26f93fb83a71b": "{label}: {left} % übrig",
+  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "728c6cc1431e76c8": "Wird in {duration} zurückgesetzt · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Die Zwischenablage-API ist beim Kopieren der Admin-Anfrage nicht verfügbar.",
@@ -4179,12 +4194,16 @@
   ],
   "3237699bd13dd4bb": "Subagent stoppen",
   "075398ac562d74b0": "Agentensitzung trennen",
+  "1d2025060ba3d1c3": "Port {port} konnte nicht weitergeleitet werden",
   "086ecbb6f4c2e959": "Kann nicht im Browser geöffnet werden",
   "51052c00ab1ac8cc": "Vorschau kann nicht geöffnet werden",
   "0ccd37739f9cf2b6": "Server konnte nicht gestoppt werden",
   "a610a81c4061bb4c": "Server",
+  "253bc8b5e99002dc": "Weitergeleitet an :{port}",
   "bd1ca8ccb6d0b87c": "Agent",
   "e25e045607262b40": "Terminal",
+  "194a9791a83d3f79": "Weiterleitung von localhost:{port} beenden",
+  "95bbbac2f2e17273": "localhost:{port} an diesen Rechner weiterleiten",
   "95b263aa683271cc": "localhost:{port} stoppen",
   "f94866e17faddc05": [
     "Im Browser-Panel öffnen. ",
@@ -4195,6 +4214,16 @@
     },
     " für deinen Browser."
   ],
+  "781fba367a220012": [
+    "An localhost:",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " auf diesem Rechner weitergeleitet. Klicke zum Beenden."
+  ],
+  "92347683e33e9f02": "An diesen Rechner weiterleiten, für jede App hier",
   "3c7763243445b28d": "Server stoppen",
   "991cc9fb37606c91": "(leere Antwort)",
   "36e4b8d2db087296": "Ab dieser Antwort forken",
@@ -5932,7 +5961,6 @@
   "a74538a7917c1c96": "Video abspielen",
   "11a5a4d340e6397d": "Original öffnen",
   "1b74242b0d303272": "Video herunterladen",
-  "7a462e32dba47f4c": "Im Browser öffnen",
   "f9ca1e61d515445e": "Nutzdaten der Data-URL fehlen.",
   "1b547c297573369c": "Dieses eingebettete Medium konnte nicht decodiert werden.",
   "84f7c359e5f050b1": "Die Datei konnte nicht abgerufen werden (HTTP {status}).",
@@ -11860,7 +11888,6 @@
   "0bd938825ffcf992": "+{percent} % des Kontingents",
   "09c0e00d7fb55402": "Reset-Guthaben wird verwendet…",
   "4df3ff1be768a7ab": "{name}: {remaining} % übrig",
-  "1b16346722b65812": "{timeLeft} % des Zeitfensters übrig",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "0-$-Limit",
   "a16b48709357a5a7": "Nutzung verwalten",

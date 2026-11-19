@@ -1,21 +1,28 @@
 // Renders another environment's localhost pages in a local webview: the partition's loopback
 // traffic goes to a SOCKS5 listener here, and each connection rides one WebSocket to the
-// environment's /api/preview/tunnel. The page keeps its localhost origin.
+// environment's /api/preview/tunnel. The page keeps its localhost origin. Forwarded ports take
+// the same route from a plain listener, for any client on this machine.
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeSocketServer from "@effect/platform-node/NodeSocketServer";
 import * as NodeWS from "@effect/platform-node/NodeWS";
-import type { DesktopPreviewTunnelAccessRequest } from "@t3tools/contracts";
+import type {
+  DesktopPortForward,
+  DesktopPreviewTunnelAccessRequest,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { NonEmptyReadonlyArray } from "effect/Array";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as NetAddress from "effect/net/NetAddress";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Socket from "effect/socket/Socket";
@@ -24,6 +31,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL } from "../ipc/channels.ts";
 
 const ACCESS_TIMEOUT = "15 seconds";
+const PROBE_TIMEOUT = "3 seconds";
 const CONNECT_TIMEOUT = "10 seconds";
 
 const REPLY_SUCCEEDED = 0;
@@ -224,6 +232,24 @@ export class LoopbackTunnelRouteError extends Schema.TaggedError<LoopbackTunnelR
   }
 }
 
+export class LoopbackTunnelForwardError extends Schema.TaggedError<LoopbackTunnelForwardError>()(
+  "LoopbackTunnelForwardError",
+  { environmentId: Schema.String, port: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to forward port ${this.port} of environment "${this.environmentId}".`;
+  }
+}
+
+export class LoopbackTunnelSameMachineError extends Schema.TaggedError<LoopbackTunnelSameMachineError>()(
+  "LoopbackTunnelSameMachineError",
+  { environmentId: Schema.String, port: Schema.Number },
+) {
+  override get message(): string {
+    return `This environment runs on this computer, so localhost:${this.port} already reaches it.`;
+  }
+}
+
 export class LoopbackTunnel extends Context.Service<
   LoopbackTunnel,
   {
@@ -237,6 +263,22 @@ export class LoopbackTunnel extends Context.Service<
       readonly requestId: string;
       readonly url: string | null;
     }) => Effect.Effect<void>;
+    /** Listens on this machine's loopback, on the same port when it is free. */
+    readonly forward: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly remotePort: number;
+    }) => Effect.Effect<
+      DesktopPortForward,
+      LoopbackTunnelForwardError | LoopbackTunnelSameMachineError
+    >;
+    readonly stopForward: (input: {
+      readonly environmentId: EnvironmentId;
+      readonly remotePort: number;
+    }) => Effect.Effect<void>;
+    readonly forwards: Effect.Effect<ReadonlyArray<DesktopPortForward>>;
+    readonly subscribeForwards: (
+      listener: (forwards: ReadonlyArray<DesktopPortForward>) => Effect.Effect<void>,
+    ) => Effect.Effect<void, never, Scope.Scope>;
   }
 >()("@t3tools/desktop/preview/LoopbackTunnel") {}
 
@@ -245,8 +287,17 @@ const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const userId = yield* HostProcess.UserId;
+  const random = yield* SecureRandom.SecureRandom;
   const listenerScope = yield* Effect.scope;
   const routing = yield* Semaphore.make(1);
+  const forwarding = yield* Semaphore.make(1);
+  const forwarded = new Map<
+    string,
+    { readonly forward: DesktopPortForward; readonly scope: Scope.Closeable }
+  >();
+  const forwardListeners = new Set<
+    (forwards: ReadonlyArray<DesktopPortForward>) => Effect.Effect<void>
+  >();
   const pending = new Map<string, Deferred.Deferred<string | null>>();
   const listenerPorts = new Map<string, number>();
   const routed = new WeakSet<Electron.Session>();
@@ -318,6 +369,128 @@ const make = Effect.gen(function* () {
       (effect) => Effect.ignoreCause(effect),
     );
 
+  /** Serves one connection to a forwarded port; closes it when the environment is out of reach. */
+  const serveForward = (environmentId: string, port: number) =>
+    Effect.fn("LoopbackTunnel.serveForward")(
+      function* (socket: Socket.Socket) {
+        const pull = yield* Socket.readerBytes(socket);
+        const writer = yield* socket.writer;
+        if (!(yield* isOwnConnection())) return;
+        const tunnelUrl = yield* requestAccess(environmentId);
+        if (tunnelUrl === null) return;
+        const destination = yield* dialDestination(tunnelUrl, port);
+        return yield* Effect.raceFirst(
+          pump(pull, destination.writer.writeAll),
+          pump(destination.pull, writer.writeAll),
+        );
+      },
+      Effect.scoped,
+      (effect) => Effect.ignoreCause(effect),
+    );
+
+  /**
+   * Whether the environment's loopback is this machine's, by tunnelling a nonce to a local probe.
+   * A forward there would accept the environment's own dials and loop through the tunnel.
+   */
+  const sharesLoopback = Effect.fn("LoopbackTunnel.sharesLoopback")(
+    function* (environmentId: string) {
+      const tunnelUrl = yield* requestAccess(environmentId);
+      if (tunnelUrl === null) return false;
+      const nonce = new TextEncoder().encode(yield* random.uuidV4());
+      const arrived = yield* Deferred.make<void>();
+      const probe = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" });
+      yield* probe
+        .run(
+          Effect.fnUntraced(
+            function* (socket: Socket.Socket) {
+              const pull = yield* Socket.readerBytes(socket);
+              let received = Buffer.alloc(0);
+              while (received.length < nonce.length) {
+                received = Buffer.concat([received, ...(yield* pull)]);
+              }
+              if (received.subarray(0, nonce.length).equals(nonce)) {
+                yield* Deferred.succeed(arrived, undefined);
+              }
+            },
+            Effect.scoped,
+            (effect) => Effect.ignoreCause(effect),
+          ),
+        )
+        .pipe(Effect.forkScoped);
+      const destination = yield* dialDestination(
+        tunnelUrl,
+        (probe.address as NetAddress.InetAddress).port,
+      );
+      yield* destination.writer.write(nonce);
+      // Any answer or a close means another machine's service took the connection.
+      return yield* Effect.raceFirst(
+        Deferred.await(arrived).pipe(Effect.as(true)),
+        destination.pull.pipe(Effect.as(false)),
+      ).pipe(Effect.timeoutOption(PROBE_TIMEOUT), Effect.map(Option.getOrElse(() => false)));
+    },
+    Effect.scoped,
+    // An unreachable probe port is another machine, or one the forward can't loop through.
+    Effect.orElseSucceed(() => false),
+  );
+
+  const forwardKey = (environmentId: string, port: number) => `${environmentId}:${port}`;
+  const currentForwards = () => [...forwarded.values()].map(({ forward }) => forward);
+  const announceForwards = Effect.suspend(() => {
+    const forwards = currentForwards();
+    return Effect.forEach([...forwardListeners], (listener) => listener(forwards), {
+      discard: true,
+    });
+  });
+
+  const forward: LoopbackTunnel["Service"]["forward"] = Effect.fn("LoopbackTunnel.forward")(
+    function* ({ environmentId, remotePort }) {
+      const existing = forwarded.get(forwardKey(environmentId, remotePort));
+      if (existing) return existing.forward;
+      if (yield* sharesLoopback(environmentId)) {
+        return yield* new LoopbackTunnelSameMachineError({ environmentId, port: remotePort });
+      }
+      const scope = yield* Scope.fork(listenerScope);
+      const bind = (port: number) =>
+        NodeSocketServer.make({ port, host: "127.0.0.1" }).pipe(Scope.provide(scope));
+      const server = yield* bind(remotePort).pipe(
+        // Taken here, or privileged: any free port still reaches the environment's.
+        Effect.catch(() => bind(0)),
+        Effect.onError(() => Scope.close(scope, Exit.void)),
+        Effect.mapError(
+          (cause) => new LoopbackTunnelForwardError({ environmentId, port: remotePort, cause }),
+        ),
+      );
+      yield* server.run(serveForward(environmentId, remotePort)).pipe(Effect.forkIn(scope));
+      const forward = {
+        environmentId,
+        remotePort,
+        localPort: (server.address as NetAddress.InetAddress).port,
+      };
+      forwarded.set(forwardKey(environmentId, remotePort), { forward, scope });
+      yield* announceForwards;
+      return forward;
+    },
+    forwarding.withPermits(1),
+  );
+
+  const stopForward: LoopbackTunnel["Service"]["stopForward"] = Effect.fn(
+    "LoopbackTunnel.stopForward",
+  )(function* ({ environmentId, remotePort }) {
+    const key = forwardKey(environmentId, remotePort);
+    const existing = forwarded.get(key);
+    if (!existing) return;
+    forwarded.delete(key);
+    // Closing the scope also ends the connections it carries.
+    yield* Scope.close(existing.scope, Exit.void);
+    yield* announceForwards;
+  }, forwarding.withPermits(1));
+
+  const subscribeForwards: LoopbackTunnel["Service"]["subscribeForwards"] = (listener) =>
+    Effect.acquireRelease(
+      Effect.sync(() => forwardListeners.add(listener)),
+      () => Effect.sync(() => forwardListeners.delete(listener)),
+    ).pipe(Effect.asVoid);
+
   const listen = Effect.fn("LoopbackTunnel.listen")(function* (environmentId: string) {
     const existing = listenerPorts.get(environmentId);
     if (existing !== undefined) return existing;
@@ -375,7 +548,14 @@ const make = Effect.gen(function* () {
     return answer ? Deferred.succeed(answer, url).pipe(Effect.asVoid) : Effect.void;
   };
 
-  return LoopbackTunnel.of({ route, resolveAccess });
+  return LoopbackTunnel.of({
+    route,
+    resolveAccess,
+    forward,
+    stopForward,
+    forwards: Effect.sync(currentForwards),
+    subscribeForwards,
+  });
 });
 
 export const layer = Layer.effect(LoopbackTunnel, make);

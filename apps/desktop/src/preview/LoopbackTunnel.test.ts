@@ -1,5 +1,6 @@
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeWS from "@effect/platform-node/NodeWS";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect, it } from "@effect/vitest";
 import * as NodeNet from "node:net";
@@ -8,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as LoopbackTunnel from "./LoopbackTunnel.ts";
@@ -74,8 +76,8 @@ const unusedPort = Effect.promise(
     }),
 );
 
-/** Routes a stand-in session through the tunnel and returns its SOCKS listener port. */
-const routeThroughTunnel = (
+/** The tunnel service, with every access request answered with `tunnelUrl`. */
+const makeTunnel = (
   tunnelUrl: string | null,
   host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
 ) =>
@@ -96,6 +98,7 @@ const routeThroughTunnel = (
               currentMainOrFirst: Effect.succeedSome(window as unknown as Electron.BrowserWindow),
             }),
             NodeFileSystem.layer,
+            SecureRandom.layerWebCrypto,
             host ?? Layer.empty,
           ),
         ),
@@ -107,6 +110,16 @@ const routeThroughTunnel = (
       Effect.forever,
       Effect.forkScoped,
     );
+    return tunnel;
+  });
+
+/** Routes a stand-in session through the tunnel and returns its SOCKS listener port. */
+const routeThroughTunnel = (
+  tunnelUrl: string | null,
+  host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
+) =>
+  Effect.gen(function* () {
+    const tunnel = yield* makeTunnel(tunnelUrl, host);
     let proxyRules = "";
     const session = {
       setProxy: async (config: Electron.ProxyConfig) => {
@@ -282,5 +295,113 @@ it.effect("connects straight to the environment's own forwarded origin port", ()
     );
     expect(echoed).toEqual([7, 8]);
     expect(received).toEqual([7, 8]);
+  }),
+);
+
+/** Connects to a local port, sends `bytes`, and resolves with the first chunk back. */
+const exchange = (port: number, bytes: Uint8Array) =>
+  Effect.promise(
+    () =>
+      new Promise<number[]>((resolve, reject) => {
+        const socket = NodeNet.connect(port, "127.0.0.1", () => socket.write(bytes));
+        socket.once("data", (chunk) => {
+          resolve([...chunk]);
+          socket.destroy();
+        });
+        socket.on("error", reject);
+      }),
+  );
+
+const refusesConnections = (port: number) =>
+  Effect.promise(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const socket = NodeNet.connect(port, "127.0.0.1", () => {
+          socket.destroy();
+          resolve(false);
+        });
+        socket.on("error", () => resolve(true));
+      }),
+  );
+
+it.effect("forwards a port over the tunnel on the same local port until stopped", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenEndpoint;
+    const remotePort = yield* unusedPort;
+    const tunnel = yield* makeTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel?wsTicket=t`,
+    );
+    const announced: number[][] = [];
+    yield* tunnel.subscribeForwards((forwards) =>
+      Effect.sync(() => announced.push(forwards.map((forward) => forward.localPort))),
+    );
+    const environmentId = EnvironmentId.make("remote");
+    const forward = yield* tunnel.forward({ environmentId, remotePort });
+    expect(forward).toEqual({ environmentId, remotePort, localPort: remotePort });
+
+    expect(yield* exchange(remotePort, Uint8Array.of(4, 5))).toEqual([0xee, 4, 5]);
+    // The first request is the same-machine probe.
+    expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?wsTicket=t&port=${remotePort}`);
+
+    yield* tunnel.stopForward({ environmentId, remotePort });
+    expect(yield* refusesConnections(remotePort)).toBe(true);
+    expect(yield* tunnel.forwards).toEqual([]);
+    expect(announced).toEqual([[remotePort], []]);
+  }),
+);
+
+it.effect("moves a forward to a free port when its own is taken here", () =>
+  Effect.gen(function* () {
+    const decoy = yield* listenDecoy;
+    const endpoint = yield* listenEndpoint;
+    const remotePort = addressPort(decoy.server);
+    const tunnel = yield* makeTunnel(
+      `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`,
+    );
+    const forward = yield* tunnel.forward({
+      environmentId: EnvironmentId.make("remote"),
+      remotePort,
+    });
+    expect(forward.localPort).not.toBe(remotePort);
+
+    expect(yield* exchange(forward.localPort, Uint8Array.of(6))).toEqual([0xee, 6]);
+    expect(endpoint.requests.at(-1)).toBe(`/api/preview/tunnel?port=${remotePort}`);
+    expect(decoy.connections()).toBe(0);
+  }),
+);
+
+/** An environment on this machine: each tunnel connection dials the requested local port. */
+const listenSameMachineEndpoint = Effect.acquireRelease(
+  Effect.promise(
+    () =>
+      new Promise<NodeWS.WebSocketServer>((resolve) => {
+        const server: NodeWS.WebSocketServer = new NodeWS.WebSocketServer(
+          { port: 0, host: "127.0.0.1" },
+          () => resolve(server),
+        );
+        server.on("connection", (socket: NodeWS.WebSocket, request: { url?: string }) => {
+          const port = Number(new URL(request.url ?? "", "ws://x").searchParams.get("port"));
+          const local = NodeNet.connect(port, "127.0.0.1");
+          local.on("data", (chunk) => socket.send(chunk));
+          local.on("error", () => socket.close());
+          socket.on("message", (data: Buffer) => local.write(data));
+          socket.on("close", () => local.destroy());
+        });
+      }),
+  ),
+  closeServer,
+);
+
+it.effect("refuses to forward from an environment that shares this machine's loopback", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* listenSameMachineEndpoint;
+    const remotePort = yield* unusedPort;
+    const tunnel = yield* makeTunnel(`ws://127.0.0.1:${addressPort(endpoint)}/api/preview/tunnel`);
+    const error = yield* tunnel
+      .forward({ environmentId: EnvironmentId.make("remote"), remotePort })
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("LoopbackTunnelSameMachineError");
+    expect(yield* refusesConnections(remotePort)).toBe(true);
+    expect(yield* tunnel.forwards).toEqual([]);
   }),
 );

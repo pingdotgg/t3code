@@ -303,6 +303,16 @@ do. These tabs ignore your system proxy settings, so they can't reach a host
 you connect to only through a proxy or over HTTPS with a privately issued
 certificate. The web app keeps streaming.
 
+The desktop app can also forward a port on the host to your computer, so any
+app there, such as your own browser, `curl`, or a database client, reaches it
+at `localhost`. Use the forward button on a server in the thread's **Servers**
+list, or **Forwarded ports** in the command palette, where you can also type
+any port number and stop forwards. A forward keeps the host's port number
+unless that port is taken on your computer, in which case it uses a free one
+and shows it. Forwards listen only on your computer's loopback and end when you
+stop them or quit the app. ⌘-click (Ctrl-click on Windows and Linux) on a
+remote server forwards it and opens it in your browser.
+
 On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
 has **Open on this device** in its menu. So does a long press on a `localhost`
 link in a chat. It opens the page in the phone's own browser view, at the same

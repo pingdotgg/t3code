@@ -23,6 +23,8 @@ import {
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewTunnelAccessResolutionInputSchema,
+  DesktopPortForwardInputSchema,
+  DesktopPortForwardSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
@@ -65,6 +67,10 @@ export const installPreviewEventForwarding = Effect.fn(
   );
   yield* manager.subscribeFindResults((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, event),
+  );
+  const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+  yield* tunnel.subscribeForwards((forwards) =>
+    electronWindow.sendAll(IpcChannels.PORT_FORWARD_CHANGE_CHANNEL, forwards),
   );
 });
 
@@ -379,6 +385,36 @@ const resolveTunnelAccess = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const forwardPort = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_START_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: DesktopPortForwardSchema,
+  handler: Effect.fn("desktop.ipc.preview.forwardPort")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forward(input);
+  }),
+});
+
+const stopPortForward = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_STOP_CHANNEL,
+  payload: DesktopPortForwardInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.stopPortForward")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    yield* tunnel.stopForward(input);
+  }),
+});
+
+const listPortForwards = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_LIST_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.Array(DesktopPortForwardSchema),
+  handler: Effect.fn("desktop.ipc.preview.listPortForwards")(function* () {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.forwards;
+  }),
+});
+
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
   payload: Schema.Void,
@@ -523,6 +559,9 @@ export const methods = [
   clearCache,
   getPreviewConfig,
   resolveTunnelAccess,
+  forwardPort,
+  stopPortForward,
+  listPortForwards,
   setAnnotationTheme,
   setAnnotationSendEnabled,
   pickElement,
