@@ -15,6 +15,7 @@ import {
   profileSnapshotContentHash,
 } from "./ProfileSnapshotContent.ts";
 import { APP_NAME } from "@t3tools/shared/branding";
+import { matchModelLabel, withReasoningEffortOption } from "@t3tools/shared/model";
 
 /**
  * Selects an agent's current revision for a new thread. Fields the caller set
@@ -85,8 +86,10 @@ export function resolveThreadCreateProfile<
       message: `Gateway profile '${selection.profileId}' requested a model override without a model selection.`,
     });
   }
-  const reasoningEffort = profile.reasoningEffort;
-  const readableMatches: ReadonlyArray<NonNullable<McpGatewayProfile["modelSelection"]>> =
+  const readableMatches: ReadonlyArray<{
+    readonly selection: NonNullable<McpGatewayProfile["modelSelection"]>;
+    readonly effort: string | undefined;
+  }> =
     profile.providerLabel === undefined || profile.modelLabel === undefined
       ? []
       : providers.flatMap((provider) => {
@@ -98,20 +101,20 @@ export function resolveThreadCreateProfile<
           ) {
             return [];
           }
-          return provider.models
-            .filter(
-              (model) => model.slug === profile.modelLabel || model.name === profile.modelLabel,
-            )
-            .map((model) => ({ instanceId: provider.instanceId, model: model.slug }));
+          return matchModelLabel(provider.models, profile.modelLabel!).map(({ model, effort }) => ({
+            selection: { instanceId: provider.instanceId, model: model.slug },
+            effort,
+          }));
         });
   if (readableMatches.length > 1) {
     throw new OrchestrationDispatchCommandError({
       message: `Gateway profile '${selection.profileId}' has an ambiguous provider/model selection (${profile.providerLabel} / ${profile.modelLabel}).`,
     });
   }
+  const readableMatch = profile.modelSelection === undefined ? readableMatches[0] : undefined;
   const profileModelSelection =
     profile.modelSelection ??
-    readableMatches[0] ??
+    readableMatch?.selection ??
     (overrides.has("modelSelection") ||
     (profile.providerLabel === undefined && profile.modelLabel === undefined)
       ? command.modelSelection
@@ -125,16 +128,21 @@ export function resolveThreadCreateProfile<
     overrides.has("modelSelection") && command.modelSelection !== undefined
       ? command.modelSelection
       : profileModelSelection;
-  const inheritedOptions = baseModelSelection.options ?? [];
+  const reasoningEffort = profile.reasoningEffort ?? readableMatch?.effort;
+  const descriptors = providers
+    .find((provider) => provider.instanceId === baseModelSelection.instanceId)
+    ?.models.find((model) => model.slug === baseModelSelection.model)
+    ?.capabilities?.optionDescriptors;
   const modelSelection =
     reasoningEffort === undefined || overrides.has("reasoningEffort")
       ? baseModelSelection
       : {
           ...baseModelSelection,
-          options: [
-            ...inheritedOptions.filter((option) => option.id !== "reasoningEffort"),
-            { id: "reasoningEffort", value: reasoningEffort },
-          ],
+          options: withReasoningEffortOption(
+            baseModelSelection.options,
+            reasoningEffort,
+            descriptors,
+          ),
         };
   const runtimeMode = overrides.has("runtimeMode") ? command.runtimeMode : profile.runtimeMode;
   const interactionMode = overrides.has("interactionMode")

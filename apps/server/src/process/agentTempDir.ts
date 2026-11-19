@@ -3,6 +3,7 @@ import { AgentTempDir, type AgentTempDirShape } from "@t3tools/shared/AgentTempD
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
@@ -16,6 +17,16 @@ import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 // directory instead: inside its linked worktree, which removing the worktree deletes,
 // or under the server's state directory. Claude Code reads CLAUDE_CODE_TMPDIR, not TMPDIR.
 
+/**
+ * Thread ids like `thread:delegated-task:…` contain `:`, which breaks PATH-style lists and
+ * DYLD variables built from TMPDIR, so unsafe ids become a sanitised name plus a short hash.
+ */
+function agentTempFolderName(threadId: string) {
+  if (/^[A-Za-z0-9._-]+$/.test(threadId)) return threadId;
+  const hash = (Hash.string(threadId) >>> 0).toString(16).padStart(8, "0");
+  return `${threadId.replace(/[^A-Za-z0-9._-]+/g, "-").slice(0, 64)}-${hash}`;
+}
+
 /** Subagent chains share a worktree, so each thread keeps its own folder within it. */
 function agentTempDirectories(
   path: Path.Path,
@@ -25,13 +36,17 @@ function agentTempDirectories(
     readonly worktreePath: string | null;
   },
 ) {
-  const shared = path.join(input.stateDir, "tmp", input.threadId);
-  return input.worktreePath === null
-    ? { launch: shared, all: [shared] }
-    : (() => {
-        const inWorktree = path.join(input.worktreePath, ".t3", "tmp", input.threadId);
-        return { launch: inWorktree, all: [inWorktree, shared] };
-      })();
+  const roots = [
+    ...(input.worktreePath === null ? [] : [path.join(input.worktreePath, ".t3", "tmp")]),
+    path.join(input.stateDir, "tmp"),
+  ];
+  const folder = agentTempFolderName(input.threadId);
+  // Folders named by the raw id predate the safe name; cleanup still removes them.
+  const folders = folder === input.threadId ? [folder] : [folder, input.threadId];
+  return {
+    launch: path.join(roots[0]!, folder),
+    all: roots.flatMap((root) => folders.map((name) => path.join(root, name))),
+  };
 }
 
 export const make = Effect.gen(function* () {

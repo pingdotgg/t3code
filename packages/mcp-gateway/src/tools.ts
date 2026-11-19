@@ -197,8 +197,22 @@ const profileInput = z.object(profileFields);
 
 const skillInput = z.object(skillFields);
 
+interface SyncFailure {
+  readonly environmentId: string;
+  readonly reason: string;
+}
+
+/** Each failed environment keeps why, so an old build or an unroutable link reads as itself. */
+function syncResult(failures: ReadonlyArray<SyncFailure>) {
+  return { failedEnvironmentIds: failures.map((failure) => failure.environmentId), failures };
+}
+
+function syncFailure(environmentId: string, error: unknown): SyncFailure {
+  return { environmentId, reason: error instanceof Error ? error.message : String(error) };
+}
+
 async function shareSkills(context: GatewayToolContext, sourceId: string) {
-  const failedEnvironmentIds: string[] = [];
+  const failures: SyncFailure[] = [];
   const grants = currentGrants(context.grants);
   for (const environment of await context.port.listEnvironments()) {
     const id = environment.environmentId;
@@ -211,11 +225,11 @@ async function shareSkills(context: GatewayToolContext, sourceId: string) {
     try {
       if (!context.port.syncAgentLibrary) throw new Error("Skill sharing unavailable.");
       await context.port.syncAgentLibrary(id);
-    } catch {
-      failedEnvironmentIds.push(id);
+    } catch (error) {
+      failures.push(syncFailure(id, error));
     }
   }
-  return { failedEnvironmentIds };
+  return syncResult(failures);
 }
 
 async function shareProfiles(
@@ -225,7 +239,7 @@ async function shareProfiles(
 ) {
   const profiles = await authoritativeProfiles(context, sourceId);
   const environments = await context.port.listEnvironments();
-  const failedEnvironmentIds: string[] = [];
+  const failures: SyncFailure[] = [];
   const grants = currentGrants(context.grants);
   for (const environment of environments) {
     const id = environment.environmentId;
@@ -239,11 +253,11 @@ async function shareProfiles(
       if (!context.port.replicateProfiles) throw new Error("Profile sharing unavailable.");
       if (deletedAt) await context.port.replicateProfiles(id, profiles, deletedAt);
       else await context.port.replicateProfiles(id, profiles);
-    } catch {
-      failedEnvironmentIds.push(id);
+    } catch (error) {
+      failures.push(syncFailure(id, error));
     }
   }
-  return { failedEnvironmentIds };
+  return syncResult(failures);
 }
 
 function currentGrants(source: GatewayGrantSource): GatewayGrants {

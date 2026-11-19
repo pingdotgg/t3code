@@ -70,6 +70,7 @@ import type {
   GatewayThreadExecutionState,
 } from "./port.ts";
 import { APP_NAME } from "@t3tools/shared/branding";
+import { findReasoningEffortDescriptor, matchModelLabel } from "@t3tools/shared/model";
 
 /**
  * Agent tools act on an environment this gateway already connected to, so the
@@ -293,9 +294,14 @@ export function resolveGatewayProfileModelSelection(
     ) {
       return [];
     }
-    return provider.models
-      .filter((model) => model.slug === profile.modelLabel || model.name === profile.modelLabel)
-      .map((model) => ({ instanceId: provider.instanceId, model: model.slug }));
+    return matchModelLabel(provider.models, profile.modelLabel!).map(({ model, effort }) => {
+      const id = findReasoningEffortDescriptor(model.capabilities?.optionDescriptors)?.id;
+      return {
+        instanceId: provider.instanceId,
+        model: model.slug,
+        ...(effort === undefined || id === undefined ? {} : { options: [{ id, value: effort }] }),
+      };
+    });
   });
   return matches.length === 1 ? matches[0] : undefined;
 }

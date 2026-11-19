@@ -4,14 +4,19 @@ import {
   ExecutionEnvironmentDescriptor,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  ServerProvider,
   ServerSettings,
   ServerSettingsPatch,
 } from "@t3tools/contracts";
+import { APP_NAME } from "@t3tools/shared/branding";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ServerEnvironment from "../../../environment/ServerEnvironment.ts";
 import * as ThreadCommandExecutor from "../../../orchestration-v2/ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
+import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as Settings from "../../../serverSettings.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
@@ -36,6 +41,7 @@ const shared = {
     ServerEnvironment.ServerEnvironment,
     Settings.ServerSettingsService,
     ThreadCommandExecutor.ThreadCommandExecutor,
+    ProviderRegistry.ProviderRegistry,
   ],
 };
 const EnvironmentReadTool = Tool.make("t3_environment_read", {
@@ -67,4 +73,27 @@ const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update"
   }),
   success: Schema.Struct(PreferenceFields),
 }).annotate(Tool.Destructive, true);
-export const EnvironmentToolkit = Toolkit.make(EnvironmentReadTool, EnvironmentPreferencesTool);
+const ProviderRefreshTool = Tool.make("t3_provider_refresh", {
+  ...shared,
+  description: `Recheck this server's providers and re-discover their models, as Refresh in ${APP_NAME}'s provider settings does. Use when an expected model is missing or a list looks stale, such as after a plan change. Omit \`providerInstanceId\` for all. Can take a minute.`,
+  parameters: Schema.Struct({
+    environmentId: OrchestratorMcpEnvironmentTarget,
+    providerInstanceId: Schema.optionalKey(ProviderInstanceId),
+  }),
+  success: Schema.Struct({
+    providers: Schema.Array(
+      Schema.Struct({
+        instanceId: ProviderInstanceId,
+        driver: ProviderDriverKind,
+        status: ServerProvider.fields.status,
+        message: ServerProvider.fields.message,
+        models: Schema.Array(Schema.String),
+      }),
+    ),
+  }),
+}).annotate(Tool.Destructive, false);
+export const EnvironmentToolkit = Toolkit.make(
+  EnvironmentReadTool,
+  EnvironmentPreferencesTool,
+  ProviderRefreshTool,
+);
