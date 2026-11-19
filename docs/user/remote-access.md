@@ -280,6 +280,27 @@ directly. Every other device, and the desktop app for other environments,
 streams them from the host. Agents keep using them while no device is
 connected, and `localhost` addresses reach servers on the host.
 
+A tab you open yourself in the desktop app for another environment loads on
+your computer instead, so the element picker, screenshots, and annotations work
+as they do locally. Its `localhost` addresses still reach servers on the host,
+over the connection the app already has, whichever way you connected. If the
+host cannot be reached, the tab shows a connection error; a `localhost`,
+`127.0.0.1`, or `[::1]` address never opens a server on your own computer.
+Other names that point at your computer, such as `/etc/hosts` entries, still
+do. These tabs ignore your system proxy settings, so they can't reach a host
+you connect to only through a proxy or over HTTPS with a privately issued
+certificate. The web app keeps streaming.
+
+On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
+has **Open on this device** in its menu. So does a long press on a `localhost`
+link in a chat. It opens the page in the phone's own browser view, at the same
+`localhost` address, so it scrolls and responds to touch natively. Like the
+desktop app, it never opens a server on the phone itself. The streamed tab
+stays where it was, and agents keep using it. Each host keeps its own cookies
+and site data on the phone. On iPhone and iPad the page runs under a stand-in
+address while the address bar shows `localhost`, so browser features that need
+a secure page, such as the clipboard or service workers, aren't available there.
+
 The first tab downloads a headless Chrome, about 120 MB, into the T3 home. It
 is the same browser [HTML renders](html-renders.md) use, so a host downloads it
 only once. Some Linux hosts need [setup](#browser-host-setup) before it can
