@@ -1280,7 +1280,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       <TooltipPopup
         side="top"
         sideOffset={0}
-        variant="glass"
+        variant="popover"
         className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
         onContextMenu={(event) => event.stopPropagation()}
       >

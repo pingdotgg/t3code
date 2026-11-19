@@ -105,27 +105,29 @@ function LinkedIssueRow({
     </>
   );
   return compact ? (
-    <div className="pb-1.5">
-      <Tooltip>
-        <TooltipTrigger
-          render={<ThreadDetailsControl part="title" render={<a {...anchorProps} />} />}
-        >
-          {glyph}
-          <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
-        </TooltipTrigger>
-        <TooltipPopup
-          side="top"
-          align="start"
-          variant="glass"
-          className="w-80 max-w-[calc(100vw-2rem)]"
-        >
-          <div className="flex min-w-0 items-center gap-2">{lines}</div>
-        </TooltipPopup>
-      </Tooltip>
-      <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
-        <span className="shrink-0 tabular-nums">{link.displayKey}</span>
-        {trackerIcon}
-        {comments}
+    <div className="flex min-h-9 min-w-0 items-center gap-2.5 ps-2.5 pe-1">
+      {glyph}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <Tooltip>
+          <TooltipTrigger
+            render={<ThreadDetailsControl part="heading" render={<a {...anchorProps} />} />}
+          >
+            <span className="truncate text-meta text-foreground">{title}</span>
+          </TooltipTrigger>
+          <TooltipPopup
+            side="top"
+            align="start"
+            variant="popover"
+            className="w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
+          >
+            <div className="flex min-w-0 items-center gap-2">{lines}</div>
+          </TooltipPopup>
+        </Tooltip>
+        <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
+          <span className="shrink-0 tabular-nums">{link.displayKey}</span>
+          {trackerIcon}
+          {comments}
+        </div>
       </div>
     </div>
   ) : (

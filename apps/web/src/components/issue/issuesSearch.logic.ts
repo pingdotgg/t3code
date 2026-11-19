@@ -1,4 +1,3 @@
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -36,14 +35,31 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
+const distinguishTitles = <Project extends { readonly title: string }>(
+  projects: ReadonlyArray<Project>,
+  suffix: (project: Project) => string,
+) => {
+  const counts = new Map<string, number>();
+  for (const project of projects) counts.set(project.title, (counts.get(project.title) ?? 0) + 1);
+  return projects.map((project) =>
+    (counts.get(project.title) ?? 0) > 1
+      ? { ...project, title: `${project.title} · ${suffix(project)}` }
+      : project,
+  );
+};
+
 /** One choice per project: projects on one repository can read different Linear teams. */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-) =>
-  pullRequestFilterProjects(
-    projects
-      .filter((project) => !project.isScratch)
-      .map((project) => ({ ...project, repositoryIdentity: null })),
-    environmentLabels,
+) => {
+  const byServer = distinguishTitles(
+    projects.filter((project) => !project.isScratch),
+    (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
+  const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
+  const byEnvironment = distinguishTitles(byPath, (project) => project.environmentId);
+  return distinguishTitles(byEnvironment, (project) => project.id).toSorted((left, right) =>
+    left.title.localeCompare(right.title),
+  );
+};
