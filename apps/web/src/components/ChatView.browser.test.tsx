@@ -1034,6 +1034,9 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
   await page.viewport(1400, 900);
+  // Side chats an earlier test left in the pane layout would count as open tabs.
+  useLayoutStore.getState().reset();
+  using _layout = { [Symbol.dispose]: () => useLayoutStore.getState().reset() };
   const thread = threadWithHistory("side-attachments", 1);
   let holdFork = false;
   using _environment = installFakeEnvironment([thread], {
