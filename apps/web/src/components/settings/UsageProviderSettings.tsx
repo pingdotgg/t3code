@@ -66,10 +66,7 @@ export function UsageProviderSettings({
                         ? gt("MiniMax")
                         : CLI_PROXY_NAME
                       : gt("{name} · Disabled", {
-                          name:
-                            source.kind === "minimax"
-                              ? gt("MiniMax")
-                              : CLI_PROXY_NAME,
+                          name: source.kind === "minimax" ? gt("MiniMax") : CLI_PROXY_NAME,
                         })}
                     {label !== source.url ? ` · ${source.url}` : ""}
                   </span>
