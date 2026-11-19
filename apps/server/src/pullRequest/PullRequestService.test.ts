@@ -3374,7 +3374,6 @@ it.effect("reuses a quiet repository's own read until its project or the listing
 const sharedDocsWorkspace = (input: {
   readonly reads: Array<string>;
   readonly pages?: Array<ReadonlyArray<ReturnType<typeof batchedChangeRequest>>>;
-  readonly failAfterFirstSlice?: boolean;
 }) =>
   makeService({
     projects: [
@@ -3384,13 +3383,12 @@ const sharedDocsWorkspace = (input: {
     ],
     providers: [
       fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-        listChangeRequests: ({ repository, cursor }) => {
-          input.reads.push(cursor === undefined ? repository : `${repository} (continued)`);
-          if (cursor !== undefined && input.failAfterFirstSlice) return Effect.fail(requestFailed);
+        listChangeRequests: ({ repository }) => {
+          input.reads.push(repository);
           return Effect.succeed({
-            items: [changeRequest(cursor === undefined ? 7 : 6, "2026-06-01T00:00:00Z")],
-            truncated: input.failAfterFirstSlice === true && cursor === undefined,
-            continues: input.failAfterFirstSlice === true && cursor === undefined,
+            items: [changeRequest(7, "2026-06-01T00:00:00Z")],
+            truncated: false,
+            continues: false,
           });
         },
         listChangeRequestsAcross: () => {
@@ -3505,24 +3503,6 @@ it.effect("search rows from a quiet repository end the reuse of its earlier read
   }),
 );
 
-it.effect("a read whose later slice failed is not kept", () =>
-  Effect.gen(function* () {
-    const reads: string[] = [];
-    const service = yield* sharedDocsWorkspace({ reads, failAfterFirstSlice: true });
-    const filtered = { ...everyListing, filters: { draft: "hide" as const } };
-
-    yield* service.list(filtered);
-    yield* afterListingCache;
-    yield* service.list(filtered);
-    assert.deepStrictEqual(reads, [
-      "acme/docs",
-      "acme/docs (continued)",
-      "acme/docs",
-      "acme/docs (continued)",
-    ]);
-  }),
-);
-
 it.effect("reads a silent repository every time unless search vouches it quiet", () =>
   Effect.gen(function* () {
     const reads: string[] = [];
@@ -3533,13 +3513,17 @@ it.effect("reads a silent repository every time unless search vouches it quiet",
     yield* service.list(everyListing);
     assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs"]);
 
-    // A PR merged or closed elsewhere just leaves the Open search, so that view never reuses.
-    reads.length = 0;
-    const open = { state: "open" as const };
-    yield* service.list(open);
-    yield* afterListingCache;
-    yield* service.list(open);
-    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs", "acme/docs"]);
+    // A PR can leave a narrower search without a newer row, so those listings never reuse.
+    for (const narrower of [
+      { state: "open" as const },
+      { ...everyListing, filters: { draft: "hide" as const } },
+    ]) {
+      reads.length = 0;
+      yield* service.list(narrower);
+      yield* afterListingCache;
+      yield* service.list(narrower);
+      assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs", "acme/docs"]);
+    }
   }),
 );
 

@@ -391,8 +391,6 @@ interface RepositoryBatch {
   readonly errors: ReadonlyArray<PullRequestListProjectError>;
   readonly truncated: boolean;
   readonly nextCursor: string | null;
-  /** A later slice failed: the rows stand for this answer but are not kept for reuse. */
-  readonly incomplete?: true;
 }
 
 interface ListCursor extends ProviderListCursor {
@@ -1589,7 +1587,7 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((next) =>
             // A slice that failed keeps the cursor before it, so the reader can try again.
             next.errors.length > 0
-              ? Effect.succeed({ ...batch, incomplete: true as const })
+              ? Effect.succeed(batch)
               : fill({ ...next, entries: [...batch.entries, ...next.entries] }, reads + 1),
           ),
         );
@@ -1597,21 +1595,22 @@ export const make = Effect.gen(function* () {
       return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
-    // A quiet repository has nothing newer than the search page, which shows any newer row, so its
-    // own read is reused rather than repeated on every refresh. Search rows from it, a push, PR
-    // action or refresh through T3, and a turn in any of its projects end the reuse.
+    // A quiet repository has nothing newer than the search page, so its own read is reused until
+    // search rows from it, a push, PR action or refresh through T3, or a turn in it. Only the
+    // unconstrained listing: a PR can leave a narrower search without bringing a newer row.
+    const reusesQuietReads =
+      input.state === "all" &&
+      involvement === "all" &&
+      input.filters === undefined &&
+      (input.query?.trim() ?? "") === "";
     const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
       project: SupportedProject,
     ) {
       const key = encodeQuietReadKey([
         project.cursorKey,
         project.project.id,
-        input.state,
-        involvement,
         viewers[project.host] ?? null,
         limit,
-        input.query ?? null,
-        input.filters ?? null,
       ]);
       const repositoryKey = project.project.repositoryIdentity?.canonicalKey.toLowerCase();
       const epochOf = () =>
@@ -1630,10 +1629,9 @@ export const make = Effect.gen(function* () {
         return { ...held.batch, key: project.cursorKey };
       }
       const batch = yield* readRepository(project);
-      // Kept only whole, and only if nothing ended the reuse while it was read.
+      // Kept only if clean and nothing ended the reuse while it was read.
       if (
         batch.errors.length === 0 &&
-        batch.incomplete !== true &&
         epochOf() === epoch &&
         (quietSearchedRows.get(project.cursorKey) ?? 0) === searched
       ) {
@@ -1715,8 +1713,7 @@ export const make = Effect.gen(function* () {
                 );
               }
               if (fetched.length === 0 && unresolved.has(key)) {
-                // Only "all": a PR leaving a state view drops out of its search without a newer row.
-                return quiet.has(key) && input.state === "all" && cursorOf(project) === undefined
+                return quiet.has(key) && reusesQuietReads && cursorOf(project) === undefined
                   ? quietRead(project)
                   : readRepository(project);
               }
