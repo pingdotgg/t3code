@@ -1232,7 +1232,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const archive = Buffer.from(zipFixtures.windows, "base64");
+      const archive = Buffer.from(serverContents);
       const releaseRenameDenied = yield* Deferred.make<void>();
       let releaseRenameDenials = 3;
       const { installation } = yield* makeHarness({
@@ -1271,9 +1271,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("Antigravity inst
       yield* TestClock.adjust("30 seconds");
       expect(yield* Fiber.join(terminal)).toMatchObject({
         phase: "succeeded",
-        installedVersion: "fixture-new",
+        installedVersion: assetVersion,
       });
-      expect((yield* installation.resolve()).version).toBe("fixture-new");
+      expect((yield* installation.resolve()).version).toBe(assetVersion);
     }),
   );
 
