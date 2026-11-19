@@ -113,7 +113,7 @@ const readAntigravityDisabledPlugins = Effect.fn("readAntigravityDisabledPlugins
 });
 
 /** agy skips a plugin folder without one of these manifests. */
-export const ANTIGRAVITY_PLUGIN_MANIFESTS = [
+const ANTIGRAVITY_PLUGIN_MANIFESTS = [
   "plugin.json",
   ".antigravity-plugin/plugin.json",
   ".gemini-plugin/plugin.json",

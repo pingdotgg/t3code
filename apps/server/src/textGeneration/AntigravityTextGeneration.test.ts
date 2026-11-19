@@ -571,11 +571,15 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
 
   it.effect.each([
     {
-      case: "a skills-only plugin",
-      files: { "skills/review/SKILL.md": "---\n---\n" },
+      case: "files agy never loads",
+      files: {
+        "skills/review/SKILL.md": "---\n---\n",
+        "hooks/hooks.json": '{"hooks":{"Stop":[]}}',
+        ".mcp.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}',
+        "plugin.json": '{"name":"p","hooks":"./h.json","mcpServers":{"s":{"command":"false"}}}',
+      },
       available: true,
     },
-    { case: "a hooks folder", files: { "hooks/hooks.json": "{}" }, available: false },
     { case: "hooks.json", files: { "hooks.json": '{"hooks":{"Stop":[]}}' }, available: false },
     {
       case: "mcp_config.json",
@@ -583,23 +587,8 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       available: false,
     },
     {
-      case: ".mcp.json",
-      files: { ".mcp.json": '{"s":{"command":"do-not-run"}}' },
-      available: false,
-    },
-    {
-      case: "manifest MCP servers",
-      files: { "plugin.json": '{"name":"p","mcpServers":{"s":{"command":"do-not-run"}}}' },
-      available: false,
-    },
-    {
-      case: "manifest hooks",
-      files: { ".gemini-plugin/plugin.json": '{"name":"p","hooks":"./hooks.json"}' },
-      available: false,
-    },
-    {
       case: "a disabled plugin with MCP servers",
-      files: { ".mcp.json": '{"s":{"command":"do-not-run"}}' },
+      files: { "mcp_config.json": '{"mcpServers":{"s":{"command":"do-not-run"}}}' },
       disabled: true,
       available: true,
     },

@@ -17,10 +17,7 @@ import {
   ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
   isAntigravitySignInRequiredError,
 } from "../provider/antigravityAuthSupport.ts";
-import {
-  ANTIGRAVITY_PLUGIN_MANIFESTS,
-  readAntigravityPlugins,
-} from "../provider/Drivers/AntigravitySkills.ts";
+import { readAntigravityPlugins } from "../provider/Drivers/AntigravitySkills.ts";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
@@ -69,72 +66,44 @@ export interface AntigravityTextGenerationOptions {
   ) => Effect.Effect<A, E | ProviderSetupError, R | Scope.Scope>;
 }
 
-type Configuration = typeof Configuration.Type;
-const hooksIn = (configuration: Configuration) => [configuration.hooks ?? configuration];
-const mcpServersIn = (configuration: Configuration) => [configuration.mcpServers ?? configuration];
-const pluginConfigurations = [
-  ["hooks.json", hooksIn],
-  ["mcp_config.json", mcpServersIn],
-  [".mcp.json", mcpServersIn],
-  ...ANTIGRAVITY_PLUGIN_MANIFESTS.map(
-    (manifest) =>
-      [
-        manifest,
-        (configuration: Configuration) => [
-          configuration.hooks ?? {},
-          configuration.mcpServers ?? {},
-        ],
-      ] as const,
-  ),
-] as const;
-
 /** Global and plugin hooks and MCP servers can run before a helper can deny a tool request. */
 export const isAntigravityTextGenerationAvailable = Effect.fn(
   "isAntigravityTextGenerationAvailable",
 )(function* (input: { readonly profileDirectory: string; readonly userHome: string }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const isUnconfigured = Effect.fn("isAntigravityConfigurationEmpty")(function* (
-    configurationPath: string,
-    select: (configuration: Configuration) => ReadonlyArray<unknown>,
-  ) {
-    if (!(yield* fs.exists(configurationPath))) {
-      return true;
-    }
-    const info = yield* fs.stat(configurationPath);
-    if (info.type !== "File" || info.size > 64_000n) {
-      return false;
-    }
-    // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
-    return yield* fs.readFileString(configurationPath).pipe(
-      Effect.flatMap((text) =>
-        text.trim().length === 0
-          ? Effect.succeed(true)
-          : decodeConfiguration(text).pipe(
-              Effect.flatMap((configuration) =>
-                Effect.forEach(select(configuration), (value) => decodeConfigurationObject(value)),
+  // agy 1.5.12 reads plugin hooks and MCP servers only from these files at the plugin root.
+  const directories = [
+    path.join(input.profileDirectory, "config"),
+    ...(yield* readAntigravityPlugins(input)),
+  ];
+  for (const directory of directories) {
+    for (const name of ["hooks.json", "mcp_config.json"]) {
+      const configurationPath = path.join(directory, name);
+      if (!(yield* fs.exists(configurationPath))) {
+        continue;
+      }
+      const info = yield* fs.stat(configurationPath);
+      if (info.type !== "File" || info.size > 64_000n) {
+        return false;
+      }
+      // CLI 1.5.8 writes a 0-byte mcp_config.json before any server exists.
+      const empty = yield* fs.readFileString(configurationPath).pipe(
+        Effect.flatMap((text) =>
+          text.trim().length === 0
+            ? Effect.succeed(true)
+            : decodeConfiguration(text).pipe(
+                Effect.flatMap((configuration) =>
+                  decodeConfigurationObject(
+                    configuration[name === "hooks.json" ? "hooks" : "mcpServers"] ?? configuration,
+                  ),
+                ),
+                Effect.map((configuration) => Object.keys(configuration).length === 0),
               ),
-              Effect.map((values) => values.every((value) => Object.keys(value).length === 0)),
-            ),
-      ),
-      Effect.orElseSucceed(() => false),
-    );
-  });
-
-  const config = path.join(input.profileDirectory, "config");
-  if (
-    !(yield* isUnconfigured(path.join(config, "hooks.json"), hooksIn)) ||
-    !(yield* isUnconfigured(path.join(config, "mcp_config.json"), mcpServersIn))
-  ) {
-    return false;
-  }
-  for (const pluginDirectory of yield* readAntigravityPlugins(input)) {
-    const hooks = yield* fs
-      .readDirectory(path.join(pluginDirectory, "hooks"))
-      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed([])));
-    if (hooks.length > 0) return false;
-    for (const [file, select] of pluginConfigurations) {
-      if (!(yield* isUnconfigured(path.join(pluginDirectory, file), select))) return false;
+        ),
+        Effect.orElseSucceed(() => false),
+      );
+      if (!empty) return false;
     }
   }
   return true;
