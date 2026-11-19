@@ -2607,6 +2607,7 @@
   "d62631cab06d2b80": "Update {version} heruntergeladen. Klicke zum Neustarten und Installieren.",
   "52e1d4a487c0cf4b": "Installation von {version} fehlgeschlagen. Klicke, um es erneut zu versuchen.",
   "78a04e0e625c0990": "Update fehlgeschlagen",
+  "c24de5eb69373a55": "Dieser {build}-Build ignoriert {track}-Releases. Prüfe den Update-Kanal in den Einstellungen, um den Wechsel abzuschließen.",
   "b02ae45a6109c93b": "Auf dem neuesten Stand",
   "edcda9e8ee4ccad8": "Update {version} installieren und T3 Code neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
   "02eba0f7cc90f759": "Update installieren und T3 Code neu starten?\n\nLaufende Aufgaben werden unterbrochen. Stelle sicher, dass du bereit bist, bevor du fortfährst.",
