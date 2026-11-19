@@ -954,9 +954,9 @@ function withReplayRequestId(
 describe("CodexAdapterV2 process exit", () => {
   it.effect.each([
     { exit: "numeric", active: false },
-    { exit: "SIGKILL", active: false },
+    { exit: "unknown exit status", active: false },
     { exit: "numeric", active: true },
-    { exit: "SIGKILL", active: true },
+    { exit: "unknown exit status", active: true },
   ] as const)("retires the shared session after $exit (active turn: $active)", ({ exit, active }) =>
     Effect.gen(function* () {
       const scenario = `process-exit-${exit}-${active}`;
@@ -982,7 +982,7 @@ describe("CodexAdapterV2 process exit", () => {
                 _tag: "Unknown",
                 module: "ChildProcess",
                 method: "exitCode",
-                cause: new Error("Process terminated by SIGKILL"),
+                cause: new Error("Exit status unavailable"),
               }),
             });
       const client = yield* CodexClient.make(
@@ -1089,11 +1089,11 @@ describe("CodexAdapterV2 process exit", () => {
       // Without the fix the stream never ends, so this waits until the project timeout.
       const readerExit = yield* Fiber.await(eventReader);
       // A failure, not a clean end, carries the Codex error into the session's lastError.
-      assert.isTrue(
-        Exit.isFailure(readerExit) &&
-          isProviderAdapterEventStreamError(Cause.squash(readerExit.cause)),
-        "the session manager must receive process death so it can retire the shared process",
-      );
+      if (Exit.isSuccess(readerExit)) assert.fail("Expected the session event stream to fail");
+      const failure = Cause.squash(readerExit.cause);
+      if (!isProviderAdapterEventStreamError(failure))
+        assert.fail("Expected a provider stream error");
+      assert.equal(failure.processExited, exit === "numeric");
     }).pipe(
       Effect.scoped,
       Effect.provide(

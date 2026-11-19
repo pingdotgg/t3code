@@ -157,8 +157,11 @@ function curatedCauseMessages(cause: unknown): {
           }
           break;
         }
+        case "CodexAppServerProcessExitedError":
         case "AcpProcessExitedError": {
-          const exit = `provider process exited${processExitStatus(cause)}`;
+          const process =
+            tag === "CodexAppServerProcessExitedError" ? "Codex app-server" : "provider process";
+          const exit = `${process} exited${processExitStatus(cause)}`;
           const stage = category === undefined ? `The ${exit}` : `${category.summary}: the ${exit}`;
           return {
             known: `${stage}. Check the server logs for the provider's output, then retry the turn.`,

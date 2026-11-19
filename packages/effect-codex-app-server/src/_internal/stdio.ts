@@ -5,6 +5,7 @@ import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
@@ -108,29 +109,29 @@ export const makeStderrTail = Effect.fn("makeStderrTail")(function* (
 
 type ChildProcessTerminationHandle = Pick<
   ChildProcessSpawner.ChildProcessHandle,
-  "exitCode" | "pid"
+  "exitCode" | "isRunning" | "pid"
 >;
 
-export const makeTerminationError = (
+export const makeTerminationError = Effect.fn("CodexAppServer.makeTerminationError")(function* (
   handle: ChildProcessTerminationHandle,
   stderrTail: Effect.Effect<string>,
-): Effect.Effect<CodexError.CodexAppServerError> =>
-  Effect.matchEffect(handle.exitCode, {
-    onFailure: (cause) =>
-      Effect.succeed(
-        new CodexError.CodexAppServerTransportError({
-          operation: "read-process-exit-status",
-          pid: handle.pid,
-          cause,
-        }),
-      ),
-    onSuccess: (code) =>
-      Effect.map(stderrTail, (tail) => {
-        const stderr = stderrExcerpt(tail);
-        return new CodexError.CodexAppServerProcessExitedError({
-          code,
-          pid: handle.pid,
-          ...(stderr ? { stderr } : {}),
-        });
-      }),
+) {
+  const status = yield* Effect.result(handle.exitCode);
+  // A signal exit and a failed stdin write can both fail the exit-code read.
+  if (
+    Result.isFailure(status) &&
+    (yield* handle.isRunning.pipe(Effect.orElseSucceed(() => true)))
+  ) {
+    return new CodexError.CodexAppServerTransportError({
+      operation: "read-process-exit-status",
+      pid: handle.pid,
+      cause: status.failure,
+    });
+  }
+  const stderr = stderrExcerpt(yield* stderrTail);
+  return new CodexError.CodexAppServerProcessExitedError({
+    ...(Result.isSuccess(status) ? { code: status.success } : { cause: status.failure }),
+    pid: handle.pid,
+    ...(stderr ? { stderr } : {}),
   });
+});

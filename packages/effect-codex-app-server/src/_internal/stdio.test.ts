@@ -35,6 +35,7 @@ describe("Codex App Server child process termination", () => {
         terminationError: makeTerminationError(
           {
             pid: ChildProcessSpawner.ProcessId(55),
+            isRunning: Effect.succeed(false),
             exitCode: Deferred.await(exited),
           },
           tail.read,
@@ -62,7 +63,7 @@ describe("Codex App Server child process termination", () => {
     }),
   );
 
-  it.effect("retains the process identifier and exact exit-status cause", () =>
+  it.effect.each([true, false])("retains exit-status diagnostics when isRunning is %s", (running) =>
     Effect.gen(function* () {
       const rootCause = new Error("private process diagnostics");
       const cause = PlatformError.systemError({
@@ -74,17 +75,23 @@ describe("Codex App Server child process termination", () => {
       const error = yield* makeTerminationError(
         {
           pid: ChildProcessSpawner.ProcessId(52),
+          isRunning: Effect.succeed(running),
           exitCode: Effect.fail(cause),
         },
         Effect.succeed(""),
       );
 
-      assert.instanceOf(error, CodexError.CodexAppServerTransportError);
+      assert.equal(
+        error._tag,
+        running ? "CodexAppServerTransportError" : "CodexAppServerProcessExitedError",
+      );
       assert.equal(error.pid, 52);
       assert.strictEqual(error.cause, cause);
       assert.equal(
         error.message,
-        "Codex App Server transport operation 'read-process-exit-status' failed.",
+        running
+          ? "Codex App Server transport operation 'read-process-exit-status' failed."
+          : "Codex App Server process exited",
       );
       assert.notInclude(error.message, rootCause.message);
     }),
@@ -95,6 +102,7 @@ describe("Codex App Server child process termination", () => {
       const error = yield* makeTerminationError(
         {
           pid: ChildProcessSpawner.ProcessId(53),
+          isRunning: Effect.succeed(false),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
         },
         Effect.succeed("Error: Missing optional dependency @openai/codex-darwin-arm64.\n"),
@@ -114,6 +122,7 @@ describe("Codex App Server child process termination", () => {
       const error = yield* makeTerminationError(
         {
           pid: ChildProcessSpawner.ProcessId(54),
+          isRunning: Effect.succeed(false),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
         },
         Effect.succeed(" \n\n"),

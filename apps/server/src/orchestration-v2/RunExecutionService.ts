@@ -2088,12 +2088,16 @@ export const layer: Layer.Layer<
                   const routing = yield* Ref.get(eventRouting);
                   const rootProviderTurn = yield* Ref.get(latestRootProviderTurn);
                   const squashed = Cause.squash(cause);
+                  const streamError =
+                    isRunExecutionIngestError(squashed) &&
+                    isProviderEventStreamError(squashed.cause)
+                      ? squashed.cause
+                      : undefined;
                   // An exclusive session closes when its thread detaches, and no terminal
                   // follows. The process is gone, so a handoff settles here with no interrupt.
                   if (
-                    isRunExecutionIngestError(squashed) &&
-                    isProviderEventStreamError(squashed.cause) &&
-                    squashed.cause.detachedThreadId === input.run.threadId &&
+                    streamError !== undefined &&
+                    streamError.detachedThreadId === input.run.threadId &&
                     (yield* workspaceHandedOff)
                   ) {
                     const handedOff = yield* finalizeRootRun(
@@ -2139,50 +2143,42 @@ export const layer: Layer.Layer<
                   // An adapter fails its stream when its runtime is gone. A failed write, or a session T3
                   // released or saw end, leaves work that can still report or that the releaser settles.
                   const runtimeLost =
-                    !detached &&
-                    isRunExecutionIngestError(squashed) &&
-                    isProviderEventStreamError(squashed.cause) &&
-                    squashed.cause.raisedByT3 !== true;
+                    !detached && streamError !== undefined && streamError.raisedByT3 !== true;
                   if (yield* Ref.get(rootRunFinalized)) {
                     if (runtimeLost) yield* endWorkLostAfterRootRun(completedAt);
                     return;
                   }
                   const providerThread = yield* Ref.get(latestProviderThread);
                   // Stop background work too; the failed consumer cannot persist terminal events.
+                  const turnStopped =
+                    routing.rootProviderTurnId !== null &&
+                    !routing.rootTurnEnded &&
+                    ((runtimeLost && streamError.processExited === true) ||
+                      (yield* input.session
+                        .interruptTurn({
+                          providerThread,
+                          providerTurnId: routing.rootProviderTurnId,
+                          requestRuntimeRestart: true,
+                        })
+                        .pipe(
+                          Effect.as(true),
+                          Effect.catchCauseIf(
+                            (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
+                            (interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
+                          ),
+                        )));
+                  // A failed interrupt leaves the turn open for recovery. Preserve a terminal
+                  // snapshot if its original write failed.
                   const abandonedProviderTurn =
-                    routing.rootProviderTurnId !== null && !routing.rootTurnEnded
-                      ? yield* input.session
-                          .interruptTurn({
-                            providerThread,
-                            providerTurnId: routing.rootProviderTurnId,
-                            requestRuntimeRestart: true,
-                          })
-                          .pipe(
-                            Effect.as(true),
-                            Effect.catchCauseIf(
-                              (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                              (interruptCause) =>
-                                Effect.logWarning(
-                                  "orchestration V2 failed to interrupt turn after ingestion failure",
-                                  { runId: input.run.id, cause: interruptCause },
-                                ).pipe(Effect.as(false)),
-                            ),
-                            // A failed interrupt leaves the stored turn running so the next start
-                            // retries it. The snapshot is cached before it is published, so it may
-                            // not be stored: replay a terminal one as-is.
-                            Effect.map((interrupted) =>
-                              !interrupted || rootProviderTurn === null
-                                ? null
-                                : isTerminalProviderTurnStatus(rootProviderTurn.status)
-                                  ? rootProviderTurn
-                                  : {
-                                      ...rootProviderTurn,
-                                      status: "interrupted" as const,
-                                      completedAt,
-                                    },
-                            ),
-                          )
-                      : null;
+                    !turnStopped || rootProviderTurn === null
+                      ? null
+                      : isTerminalProviderTurnStatus(rootProviderTurn.status)
+                        ? rootProviderTurn
+                        : { ...rootProviderTurn, status: "interrupted" as const, completedAt };
                   const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                   const openSubagents = yield* Ref.get(openRunOwnedSubagents);
                   const lostToolCalls = runtimeLost

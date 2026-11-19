@@ -43,7 +43,10 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { CodexAppServerRequestError } from "effect-codex-app-server/errors";
+import {
+  CodexAppServerProcessExitedError,
+  CodexAppServerRequestError,
+} from "effect-codex-app-server/errors";
 import { SqlError, classifySqliteError } from "effect/sql/SqlError";
 
 import { toPersistenceSqlError } from "../persistence/Errors.ts";
@@ -3618,59 +3621,80 @@ it.effect("does not interrupt an ended provider when its terminal write fails", 
   }),
 );
 
-it.effect("ends a running root command when the provider stream fails mid-turn", () =>
-  Effect.gen(function* () {
-    const now = yield* DateTime.now;
-    const { written, observed } = yield* captureRootRunTermination({
-      key: "stream-error-running-command",
-      shouldFinalizeRun: () => Effect.succeed(true),
-      events: (ids) =>
-        Stream.make(
-          {
-            type: "provider_turn.updated" as const,
-            driver,
-            providerTurn: {
-              id: ids.rootProviderTurnId,
-              providerThreadId: ids.providerThreadId,
-              nodeId: ids.rootNodeId,
-              runAttemptId: ids.attemptId,
-              nativeTurnRef: null,
-              ordinal: 1,
-              status: "running" as const,
-              startedAt: now,
-              completedAt: null,
+it.effect.each([true, false])(
+  "ends a running root command after stream failure (confirmed exit: %s)",
+  (processExited) =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const interrupts = yield* Ref.make(0);
+      const { written, observed, finalEvents } = yield* captureRootRunTermination({
+        key: "stream-error-running-command",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.make(
+            {
+              type: "provider_turn.updated" as const,
+              driver,
+              providerTurn: {
+                id: ids.rootProviderTurnId,
+                providerThreadId: ids.providerThreadId,
+                nodeId: ids.rootNodeId,
+                runAttemptId: ids.attemptId,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running" as const,
+                startedAt: now,
+                completedAt: null,
+              },
             },
-          },
-          backgroundTurnItemEvent(ids, "command_execution", "running", 1),
-        ).pipe(
-          Stream.concat(
-            Stream.fail(
-              new ProviderAdapter.ProviderAdapterEventStreamError({
-                driver,
-                providerSessionId: ProviderSessionId.make("session:stream-error-running-command"),
-                cause: "provider process exited",
-              }),
+            backgroundTurnItemEvent(ids, "command_execution", "running", 1),
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make("session:stream-error-running-command"),
+                  processExited,
+                  cause: processExited
+                    ? new CodexAppServerProcessExitedError({ code: 0, stderr: "private stderr" })
+                    : "provider stream failed",
+                }),
+              ),
             ),
           ),
-        ),
-      // The dead process cannot take the interrupt either.
-      interruptTurn: (input) =>
-        Effect.fail(
-          new ProviderAdapter.ProviderAdapterInterruptError({
-            driver,
-            providerThreadId: input.providerThread.id,
-            providerTurnId: input.providerTurnId,
-            cause: "provider already exited",
-          }),
-        ),
-    });
-    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
-    const ids = backgroundScenarioIds("stream-error-running-command");
-    const endedCommand = written.find(
-      (item) => item.id === ids.itemId && item.status !== "running",
-    );
-    assert.isDefined(endedCommand);
-  }),
+        interruptTurn: (input) =>
+          Ref.update(interrupts, (count) => count + 1).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderAdapter.ProviderAdapterInterruptError({
+                  driver,
+                  providerThreadId: input.providerThread.id,
+                  providerTurnId: input.providerTurnId,
+                  cause: "interrupt unavailable",
+                }),
+              ),
+            ),
+          ),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      const ids = backgroundScenarioIds("stream-error-running-command");
+      const endedCommand = written.find(
+        (item) => item.id === ids.itemId && item.status !== "running",
+      );
+      assert.isDefined(endedCommand);
+      assert.equal(yield* Ref.get(interrupts), processExited ? 0 : 1);
+      const turn = finalEvents.find((event) => event.type === "provider-turn.updated");
+      if (!processExited) {
+        assert.isUndefined(turn);
+        return;
+      }
+      assert.equal(turn?.payload.id, ids.rootProviderTurnId);
+      assert.equal(turn?.payload.status, "interrupted");
+      assert.deepEqual(turn?.payload.completedAt, now);
+      const error = written.find((item) => item.type === "error");
+      assert.include(error?.failure.message ?? "", "Codex app-server exited with code 0");
+      assert.notInclude(error?.failure.message ?? "", "private stderr");
+    }),
 );
 
 it.effect("keeps a running root command open when a write fails under a live provider", () =>
