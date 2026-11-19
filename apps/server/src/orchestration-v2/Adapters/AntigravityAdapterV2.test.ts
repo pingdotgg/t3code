@@ -628,6 +628,15 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(sharedConfig), "the parent repository's config stays denied");
+      yield* fileSystem.writeFileString(path.join(workspace, ".git"), `gitdir: ${commonGitDir}\n`);
+      const forgedConfig = yield* readTextFile(
+        { sessionId: "mock-session-1", path: path.join(commonGitDir, "config") },
+        context("fs/read_text_file"),
+      ).pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isFailure(forgedConfig),
+        "a .git file naming the common dir grants nothing",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 });

@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
@@ -33,7 +34,10 @@ import {
   describeAntigravitySubagentLaunches,
   readAntigravityChildrenAtWork,
 } from "../../provider/acp/AntigravityChildWork.ts";
-import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
+import {
+  linkedWorktreeGitDir,
+  readAntigravityClientTextFile,
+} from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
@@ -143,8 +147,17 @@ export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
-  const antigravityClientFileRoots = (cwd: string | null) =>
-    cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
+  const antigravityClientFileRoots = Effect.fn("AntigravityAdapterV2.clientFileRoots")(function* (
+    cwd: string | null,
+  ) {
+    if (cwd === null) return [options.host.paths.attachmentsDir];
+    const worktreeGitDir = yield* linkedWorktreeGitDir({
+      fileSystem: options.fileSystem,
+      path: options.path,
+      cwd,
+    });
+    return [cwd, options.host.paths.attachmentsDir, ...Option.toArray(worktreeGitDir)];
+  });
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
     function* (input: AcpAdapterV2RuntimeInput) {
       const scope = yield* Scope.fork(yield* Effect.scope);
@@ -272,12 +285,16 @@ export function makeAntigravityAcpAdapterFlavor(
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
-        readAntigravityClientTextFile({
-          fileSystem: options.fileSystem,
-          path: options.path,
-          allowedRoots: antigravityClientFileRoots(cwd),
-          request,
-        }),
+        antigravityClientFileRoots(cwd).pipe(
+          Effect.flatMap((allowedRoots) =>
+            readAntigravityClientTextFile({
+              fileSystem: options.fileSystem,
+              path: options.path,
+              allowedRoots,
+              request,
+            }),
+          ),
+        ),
     },
     approvalOptions: antigravityApprovalOptions,
     extractPermissionQuestion: (request) => {
