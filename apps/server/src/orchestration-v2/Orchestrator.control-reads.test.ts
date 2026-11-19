@@ -3201,6 +3201,7 @@ it.effect.each([
   "watch",
   "background",
   "unread-steer",
+  "consumed-steer",
   "provider-disabled",
   "permission",
   "client",
@@ -3324,7 +3325,7 @@ it.effect.each([
         },
       });
     }
-    if (scenario === "unread-steer") {
+    if (scenario === "unread-steer" || scenario === "consumed-steer") {
       const original = initial.turnItems.find((item) => item.type === "user_message");
       assert.isDefined(original);
       yield* projections.apply({
@@ -3338,7 +3339,7 @@ it.effect.each([
           id: TurnItemId.make("continuation:unread-steer-item"),
           messageId: MessageId.make("continuation:unread-steer-message"),
           inputIntent: "steer",
-          status: "pending",
+          status: scenario === "unread-steer" ? "pending" : "completed",
           text: "Finish this before continuing.",
         },
       });
@@ -3415,7 +3416,11 @@ it.effect.each([
         Effect.result,
       );
     const finalSource = yield* projections.getThreadProjection(sourceThreadId);
-    if (scenario !== "success" && scenario !== "acknowledged-delivery") {
+    if (
+      scenario !== "success" &&
+      scenario !== "acknowledged-delivery" &&
+      scenario !== "consumed-steer"
+    ) {
       assert.isTrue(Result.isFailure(result));
       assert.notEqual(finalSource.thread.settledOverride, "settled");
       assert.deepEqual(yield* outbox.listByCommandId(commandId), []);

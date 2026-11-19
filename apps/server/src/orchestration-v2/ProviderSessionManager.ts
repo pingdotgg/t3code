@@ -2543,6 +2543,21 @@ export const layerWithOptions = (
           steerTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
               Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              Effect.tap(() =>
+                runtime.reportsSteerStatus
+                  ? Effect.void
+                  : publishToSubscribers(eventSubscribers, {
+                      type: "event",
+                      event: {
+                        type: "steer.updated",
+                        driver: runtime.driver,
+                        threadId: input.threadId,
+                        runId: input.runId,
+                        messageId: input.message.messageId,
+                        status: "completed",
+                      },
+                    }),
+              ),
             ),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>

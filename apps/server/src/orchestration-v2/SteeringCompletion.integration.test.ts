@@ -333,6 +333,15 @@ it.effect.each(
           : {}),
       });
       if (timing !== "before dispatch") yield* dispatchSteer;
+      if (!mailbox && !question && timing !== "before dispatch") {
+        const pending = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          pending.turnItems.find(
+            (item) => item.type === "user_message" && item.messageId === messageId,
+          )?.status,
+          "pending",
+        );
+      }
       if (timing === "during continuation") {
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const turn = projection.providerTurns[0]!;
@@ -356,7 +365,20 @@ it.effect.each(
         );
         return;
       }
-      if (timing === "after delivery") yield* worker.drain();
+      if (timing === "after delivery") {
+        const consumed =
+          !mailbox && !question
+            ? yield* watch(
+                (event) =>
+                  event.type === "turn-item.updated" &&
+                  event.payload.type === "user_message" &&
+                  event.payload.messageId === messageId &&
+                  event.payload.status === "completed",
+              )
+            : null;
+        yield* worker.drain();
+        if (consumed !== null) yield* Fiber.join(consumed);
+      }
       const delivery =
         timing === "during delivery" ? yield* worker.runOnce().pipe(Effect.forkScoped) : null;
       if (delivery !== null) yield* Deferred.await(steerEntered);
@@ -1122,6 +1144,19 @@ it.effect("force sends multiple queued messages and can force send a requeued me
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       const threadId = yield* startFirstTurn;
+      const consumedSteer = (messageId: MessageId) =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.type === "user_message" &&
+              event.payload.messageId === messageId &&
+              event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
       const queue = (text: string, commandId: string) =>
         orchestrator.dispatch({
           type: "message.dispatch",
@@ -1151,7 +1186,11 @@ it.effect("force sends multiple queued messages and can force send a requeued me
       });
       yield* promote("one", "promote-one");
       yield* promote("two", "promote-two");
+      const firstConsumed = yield* consumedSteer(MessageId.make("message:one"));
+      const secondConsumed = yield* consumedSteer(MessageId.make("message:two"));
       yield* worker.drain();
+      yield* Fiber.join(firstConsumed);
+      yield* Fiber.join(secondConsumed);
       assert.deepEqual(steered, ["one", "two"]);
 
       // The completion-race fallback redispatches the same message into the queue.
@@ -1164,7 +1203,9 @@ it.effect("force sends multiple queued messages and can force send a requeued me
         "pending",
       );
       yield* promote("one", "promote-one-again");
+      const reconsumed = yield* consumedSteer(MessageId.make("message:one"));
       yield* worker.drain();
+      yield* Fiber.join(reconsumed);
       assert.deepEqual(steered, ["one", "two", "one"]);
       assert.lengthOf(started, 1);
       const final = yield* orchestrator.getThreadProjection(threadId);

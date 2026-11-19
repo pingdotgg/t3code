@@ -6505,6 +6505,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         readonly providerTurnId: typeof providerTurn.id | null;
         readonly providerThreadId: OrchestrationV2ProviderThread["id"];
         readonly providerInstanceId: ProviderInstanceId;
+        readonly status: "pending" | "completed";
         readonly modelSwitch?: OrchestrationV2ModelSwitch | undefined;
         readonly ordinal?: number;
       }) {
@@ -6551,10 +6552,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           nativeItemRef: null,
           parentItemId: null,
           ordinal: messageInput.ordinal ?? (yield* nextTurnItemOrdinal(input.projection)),
-          status: "completed",
+          status: messageInput.status,
           title: null,
           startedAt: now,
-          completedAt: now,
+          completedAt: messageInput.status === "pending" ? null : now,
           updatedAt: now,
           type: "user_message",
           messageId: input.messageId,
@@ -6643,6 +6644,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         providerTurnId: providerTurn.id,
         providerThreadId: providerThread.id,
         providerInstanceId: targetRun.providerInstanceId,
+        status: "pending",
       });
       yield* Ref.update(input.effects, (existing) => [
         ...existing,
@@ -7109,6 +7111,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerTurnId: null,
       providerThreadId: restartProviderThread.id,
       providerInstanceId: input.modelSelection.instanceId,
+      status: "completed",
       // Measured on the pre-restart projection, so the rewritten run is not its own baseline.
       ...(restartHandoff === null ? modelSwitchSince(input.projection, input.modelSelection) : {}),
       ordinal: restartHandoff === null ? steeringOrdinal : steeringOrdinal + 1,

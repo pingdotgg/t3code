@@ -755,6 +755,8 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly steerTurn: (
     input: ProviderAdapterV2SteerInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;
+  /** True when the adapter emits steer.updated to track queued steer consumption. */
+  readonly reportsSteerStatus?: true;
   /** Applies a thread's new selection to its running process where the provider can; otherwise it waits for the next turn. */
   readonly applyModelSelection?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
