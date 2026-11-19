@@ -116,6 +116,43 @@ const withCloudServices = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(layerCloudClient()));
 
+const linkedSupervisor = Effect.gen(function* () {
+  const target = new PrimaryConnectionTarget({
+    environmentId: savedConnection.environmentId,
+    label: savedConnection.environmentLabel,
+    httpBaseUrl: savedConnection.httpBaseUrl,
+    wsBaseUrl: savedConnection.wsBaseUrl,
+  });
+  return EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target,
+    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+    prepared: yield* SubscriptionRef.make(
+      Option.some<PreparedConnection>({
+        environmentId: savedConnection.environmentId,
+        label: savedConnection.environmentLabel,
+        httpBaseUrl: savedConnection.httpBaseUrl,
+        socketUrl: savedConnection.wsBaseUrl,
+        httpAuthorization: { _tag: "Bearer", token: "local-bearer" },
+        target,
+      }),
+    ),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  });
+});
+
+const linkPreparedEnvironment = (liveActivitiesEnabled: boolean) =>
+  Effect.flatMap(linkedSupervisor, (supervisor) =>
+    withCloudServices(
+      linkEnvironmentToCloudWithPreference({
+        clerkToken: "clerk-token",
+        liveActivitiesEnabled,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor)),
+    ),
+  );
+
 function validLinkProof() {
   return "signed-environment-link-jwt";
 }
@@ -125,18 +162,25 @@ function validLinkResponse(environmentId = "env-1") {
     ok: true,
     environmentId,
     endpoint: {
-      httpBaseUrl: "https://managed.example.test/",
-      wsBaseUrl: "wss://managed.example.test/ws",
-      providerKind: "cloudflare_tunnel",
+      httpBaseUrl: "https://desktop.example.test/",
+      wsBaseUrl: "wss://desktop.example.test/ws",
+      providerKind: "manual",
     },
-    endpointRuntime: {
-      providerKind: "cloudflare_tunnel",
-      connectorToken: "connector-token",
-    },
+    endpointRuntime: null,
     relayIssuer: "https://relay.example.test",
     cloudUserId: "user_123",
     environmentCredential: "environment-credential",
     cloudMintPublicKey: "cloud-mint-public-key",
+  };
+}
+
+function linkStateResponse() {
+  return {
+    linked: false,
+    cloudUserId: null,
+    relayUrl: null,
+    relayIssuer: null,
+    publishAgentActivity: true,
   };
 }
 
@@ -189,6 +233,9 @@ describe("mobile cloud link environment client", () => {
     () =>
       Effect.gen(function* () {
         const fetchMock = vi.fn((url: string | URL) => {
+          if (String(url).endsWith("/api/connect/preferences")) {
+            return Promise.resolve(Response.json(linkStateResponse()));
+          }
           if (String(url).endsWith("/v1/client/environment-link-challenges")) {
             return Promise.resolve(Response.json(validLinkChallengeResponse()));
           }
@@ -199,24 +246,21 @@ describe("mobile cloud link environment client", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
 
-        const error = yield* withCloudServices(
-          linkEnvironmentToCloudWithPreference({
-            clerkToken: "clerk-token",
-            connection: savedConnection,
-            liveActivitiesEnabled: true,
-          }),
-        ).pipe(Effect.flip);
+        const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "CloudEnvironmentLinkError",
           message: "Relay returned credentials for a different environment.",
         });
-        expect(fetchMock).toHaveBeenCalledTimes(3);
+        expect(fetchMock).toHaveBeenCalledTimes(4);
       }),
   );
 
   it.effect("rejects relay link credentials for a different managed endpoint provider", () =>
     Effect.gen(function* () {
       const fetchMock = vi.fn((url: string | URL) => {
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(linkStateResponse()));
+        }
         if (String(url).endsWith("/v1/client/environment-link-challenges")) {
           return Promise.resolve(Response.json(validLinkChallengeResponse()));
         }
@@ -228,25 +272,19 @@ describe("mobile cloud link environment client", () => {
             ...validLinkResponse(),
             endpoint: {
               ...validLinkResponse().endpoint,
-              providerKind: "manual",
+              providerKind: "cloudflare_tunnel",
             },
           }),
         );
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
+      const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "CloudEnvironmentLinkError",
         message: "Relay returned credentials for a different endpoint provider.",
       });
-      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock).toHaveBeenCalledTimes(4);
     }),
   );
 
@@ -266,38 +304,36 @@ describe("mobile cloud link environment client", () => {
         if (String(url).endsWith("/v1/client/environment-links")) {
           return Promise.resolve(Response.json(validLinkResponse()));
         }
+        if (String(url).endsWith("/api/connect/preferences")) {
+          return Promise.resolve(Response.json(linkStateResponse()));
+        }
         return Promise.resolve(
           Response.json({ ok: true, endpointRuntimeStatus: { status: "configured" } }),
         );
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: false,
-        }),
-      );
+      yield* linkPreparedEnvironment(false);
 
-      expect(bodies[1]).toMatchObject({
+      expect(bodies[0]).toEqual({ publishAgentActivity: true });
+      expect(bodies[2]).toMatchObject({
         endpoint: {
           httpBaseUrl: "https://desktop.example.test/",
           wsBaseUrl: "wss://desktop.example.test/ws",
-          providerKind: "cloudflare_tunnel",
+          providerKind: "manual",
         },
         origin: {
           localHttpHost: "127.0.0.1",
           localHttpPort: 443,
         },
       });
-      expect(bodies[2]).toMatchObject({
+      expect(bodies[3]).toMatchObject({
         deviceId: "device-1",
         notificationsEnabled: true,
         liveActivitiesEnabled: false,
-        managedTunnelsEnabled: true,
+        managedTunnelsEnabled: false,
       });
-      expect(bodies[3]).toMatchObject({
+      expect(bodies[4]).toMatchObject({
         cloudUserId: "user_123",
         environmentCredential: "environment-credential",
       });
