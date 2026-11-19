@@ -184,12 +184,12 @@ export function antigravityEditPatch(input: {
       // Line numbers do not depend on CRLF, so search with LF on both sides.
       if (!fileRead) file = input.readPreEditFile(input.path)?.replaceAll("\r\n", "\n");
       fileRead = true;
-      start = uniqueStartLine(
-        file,
-        chunk.TargetContent.replaceAll("\r\n", "\n"),
-        chunk.StartLine,
-        chunk.EndLine,
-      );
+      const target = chunk.TargetContent.replaceAll("\r\n", "\n");
+      start = uniqueStartLine(file, target, chunk.StartLine, chunk.EndLine);
+      // The runtime may write before T3 reads the file. A lone replacement starts on the same
+      // line before and after it, so an already-applied edit is placed by its new text.
+      if (start === undefined && chunks.length === 1 && file?.includes(target) === false)
+        start = uniqueStartLine(file, chunk.ReplacementContent.replaceAll("\r\n", "\n"));
     }
     if (start === undefined) snippets.push(...hunks);
     else placed.push({ start, hunks });

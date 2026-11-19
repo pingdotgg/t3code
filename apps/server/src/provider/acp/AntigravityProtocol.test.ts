@@ -473,10 +473,15 @@ describe("Antigravity tool results", () => {
     const located = (line: number) =>
       `--- ${path}\n+++ ${path}\n@@ -${line},1 +${line},1 @@\n-const target = 10;\n+const target = 100;\n`;
     // Over 8 KB, the completion's whole-file texts arrive cut, so only the announcement can place it.
-    for (const lines of [12, 400]) {
+    // The runtime does not wait for T3, so the announcement may be read after the write.
+    for (const [lines, written] of [
+      [12, rawInput.Target],
+      [400, rawInput.Target],
+      [400, rawInput.Replacement],
+    ] as const) {
       let toolCall = normalizeAntigravityToolCall(
         parseToolUpdate(frame(lines, "in_progress")).toolCall,
-        () => fileOf(lines, rawInput.Target),
+        () => fileOf(lines, written),
       );
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(located(lines - 2));
       toolCall = normalizeAntigravityToolCall(
