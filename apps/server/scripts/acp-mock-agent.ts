@@ -23,11 +23,18 @@ const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
   `https://agentclientprotocol.com/protocol/session-modes#${name}`;
 const modeOptionCategory = process.env.T3_ACP_MODE_OPTION_CATEGORY ?? "mode";
+// Comma-separated command names the mock advertises, so `/compact` support is testable.
+const advertisedCommandNames = (process.env.T3_ACP_AVAILABLE_COMMANDS ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter((name) => name.length > 0);
+const loadedCommandNames = process.env.T3_ACP_LOADED_COMMANDS?.split(",").filter(Boolean);
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
 const emitV2Fidelity = process.env.T3_ACP_EMIT_V2_FIDELITY === "1";
 const emitNotice = process.env.T3_ACP_EMIT_NOTICE === "1";
+const hangCloseSession = process.env.T3_ACP_HANG_CLOSE_SESSION === "1";
 const vibeRetryOutcome = process.env.T3_ACP_VIBE_RETRY_OUTCOME;
 const emitGenericToolPlaceholders = process.env.T3_ACP_EMIT_GENERIC_TOOL_PLACEHOLDERS === "1";
 const emitInTurnTaskOutputThenLateDuplicate =
@@ -63,6 +70,9 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
+const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
+const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 // JSON for the `data` of an "Internal error" response to `session/new`, as
 // Antigravity sends when its runtime cannot reach its local harness.
@@ -76,6 +86,10 @@ const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
+// These prompts end while their compaction is still in progress.
+const openCompactionPromptOrdinals = new Set(
+  (process.env.T3_ACP_OPEN_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
+);
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
@@ -85,6 +99,7 @@ const supportsSessionLifecycle = process.env.T3_ACP_SESSION_LIFECYCLE === "1";
 const supportsAcpMcp = process.env.T3_ACP_MCP_ACP === "1";
 const supportsHttpMcp = process.env.T3_ACP_MCP_HTTP === "1";
 const supportsV2Management = process.env.T3_ACP_V2_MANAGEMENT === "1";
+const failDeleteSession = process.env.T3_ACP_FAIL_DELETE_SESSION === "1";
 const advertisedAuthMethodId = process.env.T3_ACP_AUTH_METHOD_ID?.trim();
 const initializeAuthMethodId =
   advertisedAuthMethodId ?? (supportsSessionLifecycle ? "test" : undefined);
@@ -110,6 +125,7 @@ let currentAgent = "";
 let authenticated = !requiresAuthentication;
 let promptCount = 0;
 const cancelledSessions = new Set<string>();
+const sessionsLoading = new Set<string>();
 let configuredProvider: AcpSchema.ProviderCurrentConfig | null = null;
 
 function promptIdFromRequestMeta(
@@ -608,6 +624,18 @@ const program = Effect.gen(function* () {
       if (antigravityProfile) {
         yield* publishAntigravityCommands(sessionId);
       }
+      if (advertisedCommandNames.length > 0) {
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: advertisedCommandNames.map((name) => ({
+              name,
+              description: `${name} command`,
+            })),
+          },
+        });
+      }
       return {
         sessionId,
         configOptions: configOptions(),
@@ -663,6 +691,16 @@ const program = Effect.gen(function* () {
   yield* agent.handleLoadSession((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      sessionsLoading.add(requestedSessionId);
+      if (loadedCommandNames !== undefined) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: loadedCommandNames.map((name) => ({ name, description: name })),
+          },
+        });
+      }
       if (failLoadSession) {
         return yield* AcpError.AcpRequestError.internalError("Mock load session failure");
       }
@@ -696,6 +734,13 @@ const program = Effect.gen(function* () {
           content: { type: "text", text: "replay" },
         },
       });
+      if (loadNeverReplies) {
+        return yield* Effect.never;
+      }
+      if (Number.isFinite(loadReplyDelayMs) && loadReplyDelayMs > 0) {
+        yield* Effect.sleep(`${loadReplyDelayMs} millis`);
+      }
+      sessionsLoading.delete(requestedSessionId);
       return {
         configOptions: configOptions(),
       };
@@ -731,6 +776,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleCloseSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (hangCloseSession) {
+        return yield* Effect.never;
+      }
       return {};
     }),
   );
@@ -738,6 +786,9 @@ const program = Effect.gen(function* () {
   yield* agent.handleDeleteSession(() =>
     Effect.gen(function* () {
       yield* requireAuthentication();
+      if (failDeleteSession) {
+        return yield* AcpError.AcpRequestError.internalError("delete failed");
+      }
       return {};
     }),
   );
@@ -829,6 +880,12 @@ const program = Effect.gen(function* () {
   yield* agent.handlePrompt((request) =>
     Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
+      if (rejectPromptUntilLoaded && sessionsLoading.has(requestedSessionId)) {
+        return yield* new AcpError.AcpRequestError({
+          code: -32002,
+          errorMessage: `Resource not found: ${requestedSessionId}`,
+        });
+      }
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
       if (idleError === "grok-background" && promptCount === 1) {
@@ -1309,8 +1366,27 @@ const program = Effect.gen(function* () {
             status: "in_progress",
           },
         });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            title: "Failing command",
+            kind: "execute",
+            status: "in_progress",
+          },
+        });
         yield* Deferred.await(nativeCancelRequested);
         yield* Deferred.await(nativeCancelRelease);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-failed-tool",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Permission denied" } }],
+          },
+        });
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
@@ -1318,6 +1394,26 @@ const program = Effect.gen(function* () {
             toolCallId: "native-cancel-tool",
             status: "failed",
             content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-unseen-cancel-tool",
+            title: "Cancelled command",
+            kind: "execute",
+            status: "failed",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled." } }],
+          },
+        });
+        // A later output-only update must not undo the interrupted status.
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "native-cancel-tool",
+            content: [{ type: "content", content: { type: "text", text: "Cancelled. exit 130" } }],
           },
         });
         yield* agent.client.sessionUpdate({
@@ -1334,6 +1430,16 @@ const program = Effect.gen(function* () {
         yield* Effect.sleep(`${promptDelayMs} millis`);
       }
 
+      if (openCompactionPromptOrdinals.has(promptCount)) {
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: `compact-${promptCount}`,
+            status: "in_progress",
+          },
+        });
+      }
       if (compactionPromptOrdinals.has(promptCount)) {
         for (const status of ["in_progress", "completed"] as const) {
           yield* agent.client.sessionUpdate({
@@ -1345,10 +1451,6 @@ const program = Effect.gen(function* () {
             },
           });
         }
-      }
-
-      if (failPrompt || promptCount === failPromptOrdinal) {
-        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (emitTrackedToolCallKindThenHang !== undefined) {
@@ -1363,7 +1465,11 @@ const program = Effect.gen(function* () {
             rawInput: { command: "git status" },
           },
         });
-        return yield* Effect.never;
+        if (!failPrompt && promptCount !== failPromptOrdinal) return yield* Effect.never;
+      }
+
+      if (failPrompt || promptCount === failPromptOrdinal) {
+        return yield* AcpError.AcpRequestError.internalError("Mock prompt failure");
       }
 
       if (hangPromptForever || (emitEmptySuccessfulBashThenHang && promptCount === 2)) {

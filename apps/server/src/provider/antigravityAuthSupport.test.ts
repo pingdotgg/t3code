@@ -118,7 +118,13 @@ describe("Antigravity process environment", () => {
     });
 
     expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual(["acp"]);
+    expect(spawn.args).toEqual([
+      "acp",
+      "--gemini-dir",
+      profile.geminiHome,
+      "--app-data-dir",
+      "antigravity-acp",
+    ]);
     expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
   });
@@ -297,6 +303,14 @@ describe("Antigravity authorization URL", () => {
 describe("Antigravity sign-in errors", () => {
   it("recognizes native auth-required errors and the blocked-login transport error", () => {
     expect(isAntigravitySignInRequiredError(AcpErrors.AcpRequestError.authRequired())).toBe(true);
+    // The 1.5 CLI's `authenticate` answer when it has no sign-in and no display to open a browser on.
+    expect(
+      isAntigravitySignInRequiredError(
+        AcpErrors.AcpRequestError.internalError(
+          "No browser is available here (no graphical display is available to open a browser). Run `agy acp --login` in a terminal on this machine, then retry; or use a Gemini API key.",
+        ),
+      ),
+    ).toBe(true);
     expect(
       isAntigravitySignInRequiredError(
         new AcpErrors.AcpTransportError({
