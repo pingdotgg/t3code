@@ -13,6 +13,7 @@ import {
   CircleAlertIcon,
   CircleDashedIcon,
   CircleIcon,
+  FileDiffIcon,
   GaugeIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -30,6 +31,8 @@ import {
   type ReactNode,
 } from "react";
 
+import { T, useGT, useMessages } from "gt-react";
+
 import ChatMarkdown from "~/components/ChatMarkdown";
 import { ProviderInstanceIcon } from "~/components/chat/ProviderInstanceIcon";
 import { ThreadDetailsControl } from "~/components/chat/ThreadDetailsControl";
@@ -39,13 +42,19 @@ import {
 } from "~/components/chat/threadDetailsPanelStyles";
 import {
   PullRequestDiffStat,
+  pullRequestChecksStatePresentation,
   resolvePullRequestState,
 } from "~/components/pullRequest/pullRequestPresentation";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { observeResize } from "~/lib/observeResize";
+import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
+import { usePrimaryEnvironmentId } from "~/state/environments";
+import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
+import { useEnvironmentQuery } from "~/state/query";
 import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
@@ -60,7 +69,6 @@ import {
   subtaskLead,
   subtaskStatusText,
   subtaskUsageText,
-  taskLevelAgents,
   agentRowInteraction,
   taskUsage,
   type AgentRowModel,
@@ -238,8 +246,8 @@ export function TaskDetail(props: {
 }
 
 /**
- * Content on the left, contents sidebar on the right. Below the container breakpoint the sidebar
- * stacks above the content and the whole body scrolls as one.
+ * One scroller, like the PR panel: the title stays put, the key-value list scrolls away under it,
+ * and the tabs stick right below the title.
  */
 function TaskDetailBody(props: {
   threadKey: string;
@@ -248,29 +256,17 @@ function TaskDetailBody(props: {
 }) {
   const { task, navigation } = props;
   const actions = use(NavigationContext);
-  const outerRef = useRef<HTMLDivElement>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- puts the DOM scroller back where the store says when the shown brief or tab changes
   useLayoutEffect(() => {
-    const top = navigation.detailScrollTop;
-    for (const element of [outerRef.current, contentRef.current]) {
-      if (element) element.scrollTop = top;
-    }
+    if (scrollRef.current) scrollRef.current.scrollTop = navigation.detailScrollTop;
   }, [navigation.detailScrollTop]);
-  const saveScroll = (event: React.UIEvent<HTMLDivElement>) => {
-    if (event.target === event.currentTarget) {
-      tasksPanelActions().saveDetailScroll(props.threadKey, event.currentTarget.scrollTop);
-    }
-  };
   const subtask =
     navigation.subtaskId === null
       ? null
       : (task.subtasks.find((entry) => entry.id === navigation.subtaskId) ?? null);
   const saveCurrentScroll = () =>
-    tasksPanelActions().saveDetailScroll(
-      props.threadKey,
-      Math.max(outerRef.current?.scrollTop ?? 0, contentRef.current?.scrollTop ?? 0),
-    );
+    tasksPanelActions().saveDetailScroll(props.threadKey, scrollRef.current?.scrollTop ?? 0);
   const openAgent = async (ref: Parameters<NonNullable<typeof actions>["openAgent"]>[0]) => {
     saveCurrentScroll();
     await actions?.openAgent(ref);
@@ -279,113 +275,199 @@ function TaskDetailBody(props: {
     saveCurrentScroll();
     actions?.openPullRequest(url);
   };
+  // A subtask has no Subtasks tab; the task's own tab comes back on the way up.
+  const tab = subtask && navigation.tab === "subtasks" ? "brief" : navigation.tab;
   return (
     <NavigationContext value={actions ? { ...actions, openAgent, openPullRequest } : null}>
-      <div className="@container/task flex min-h-0 flex-1">
-        <div
-          ref={outerRef}
-          role="region"
-          aria-label="Task detail"
-          tabIndex={0}
-          onScrollEnd={saveScroll}
-          className="scrollbar-inset flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto @3xl/task:flex-row @3xl/task:overflow-hidden"
-        >
-          <div
-            ref={contentRef}
-            onScrollEnd={saveScroll}
-            className="scrollbar-inset order-2 min-w-0 flex-1 px-6 pt-6 pb-8 @3xl/task:order-1 @3xl/task:overflow-y-auto"
-          >
-            <TaskContent
-              threadKey={props.threadKey}
-              task={task}
-              subtask={subtask}
-              tab={navigation.tab}
-            />
-          </div>
-          <TaskSidebar threadKey={props.threadKey} task={task} subtaskId={subtask?.id ?? null} />
-        </div>
+      <div
+        ref={scrollRef}
+        role="region"
+        aria-label="Task detail"
+        tabIndex={0}
+        onScrollEnd={(event) => {
+          if (event.target === event.currentTarget) saveCurrentScroll();
+        }}
+        className="scrollbar-inset min-h-0 flex-1 overflow-y-auto px-4.5 pt-4 pb-8 outline-none"
+      >
+        <TaskPage threadKey={props.threadKey} task={task} subtask={subtask} tab={tab} />
       </div>
     </NavigationContext>
   );
 }
 
-function TaskContent(props: {
+/**
+ * The page in the scroller. It is at least tall enough for the key-value list to scroll fully
+ * away, so the tabs always reach the title, even under a short brief.
+ */
+function TaskPage(props: {
   threadKey: string;
   task: OrbitTaskDetail;
   subtask: OrbitSubtask | null;
   tab: TasksDetailTab;
 }) {
   const { task, subtask } = props;
+  const articleRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLDivElement>(null);
+  const travelRef = useRef<HTMLDivElement>(null);
+  const [titleHeight, setTitleHeight] = useState(0);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the sticky tabs sit under the measured title, and the page grows to the scroller's measured height
+  useLayoutEffect(() => {
+    const article = articleRef.current;
+    const scroller = article?.parentElement;
+    const title = titleRef.current;
+    const travel = travelRef.current;
+    if (!article || !scroller || !title || !travel) return;
+    const measure = () => {
+      const style = getComputedStyle(scroller);
+      const padding = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      // Set here, not rendered, so the parent's scroll restore already sees the full height.
+      // One pixel more, because the stuck tabs overlap the title's line.
+      const height = scroller.clientHeight - padding + travel.offsetHeight + 1;
+      article.style.minHeight = `${Math.max(0, height)}px`;
+      setTitleHeight(title.offsetHeight);
+    };
+    measure();
+    return observeResize([scroller, title, travel], measure);
+  }, []);
   const agents = agentsFor(task, subtask?.id ?? null);
+  return (
+    <article ref={articleRef} className="flex flex-col">
+      {/* Sticky at the scroller's padding edge, so it covers what scrolls under it. */}
+      <div
+        ref={titleRef}
+        className={cn(
+          "sticky -top-4 z-20 -mx-4.5 -mt-4 bg-background px-4.5 py-4",
+          !subtask && "border-b border-(--shell-divider)!",
+        )}
+      >
+        <h2 className="m-0 text-lg leading-6 font-medium text-foreground [overflow-wrap:anywhere]">
+          {subtask ? subtask.title : task.title}
+        </h2>
+      </div>
+      {/* What scrolls away before the tabs stick: the key-value list and the space above the tabs. */}
+      <div ref={travelRef} className="pb-4">
+        {subtask ? null : (
+          <div className="pt-4">
+            <TaskKeyValues task={task} />
+          </div>
+        )}
+      </div>
+      <TaskTabs
+        threadKey={props.threadKey}
+        task={task}
+        subtask={subtask}
+        tab={props.tab}
+        agents={agents.current.length + agents.earlier.length}
+        // The stuck row's top line slides 1px under the title's line.
+        stickyTop={titleHeight - 17}
+      />
+      <div className="pt-4.5">
+        {props.tab === "agents" ? (
+          <AgentsList agents={agents} />
+        ) : props.tab === "subtasks" && !subtask ? (
+          <SubtasksList threadKey={props.threadKey} task={task} />
+        ) : (
+          <TaskBrief task={task} subtask={subtask} />
+        )}
+      </div>
+    </article>
+  );
+}
+
+function TaskBrief(props: { task: OrbitTaskDetail; subtask: OrbitSubtask | null }) {
+  const { task, subtask } = props;
   const attention = subtask ? subtask.attention : task.attention;
   const attentionText =
     attention && attention.kind !== "observation" ? (attention.question ?? attention.reason) : null;
   const brief = subtask ? subtask.brief : task.brief;
   return (
-    <article className="flex flex-col gap-6">
-      <header className="flex flex-col gap-2">
-        <h2 className="m-0 text-lg leading-6 font-medium text-foreground [overflow-wrap:anywhere]">
-          {subtask ? subtask.title : task.title}
-        </h2>
-      </header>
-      <div
-        role="tablist"
-        aria-label="Show"
-        className="-mt-2 flex items-center gap-5 border-b border-(--shell-divider)!"
-      >
-        <ContentTab threadKey={props.threadKey} tab="brief" selected={props.tab === "brief"}>
-          Overview
-        </ContentTab>
-        <ContentTab threadKey={props.threadKey} tab="agents" selected={props.tab === "agents"}>
-          Agents
-          <span className="font-normal text-muted-foreground tabular-nums">
-            {agents.current.length}
-          </span>
-        </ContentTab>
-      </div>
-      {props.tab === "agents" ? (
-        <AgentsList agents={agents} />
-      ) : (
-        <>
-          {subtask ? <SubtaskSummaryRows task={task} subtask={subtask} /> : null}
-          {attentionText ? (
-            <p
-              className={cn(
-                "m-0 rounded-lg px-3 py-2 text-ui",
-                attention?.kind === "question" || attention?.kind === "direction"
-                  ? "bg-warning/10 text-warning-foreground"
-                  : "bg-destructive/10 text-destructive-foreground",
-              )}
-            >
-              {attentionText}
-            </p>
-          ) : null}
-          <h2 className="m-0 -mb-2 text-base leading-6 font-medium text-foreground">Brief</h2>
-          {brief.trim().length > 0 ? (
-            // Headings inside a brief stay below the Brief heading: body size, medium weight.
-            <div className="[&_:is(h1,h2,h3,h4,h5,h6)]:text-sm! [&_:is(h1,h2,h3,h4,h5,h6)]:font-medium!">
-              <ChatMarkdown text={brief} cwd={undefined} headingLevelOffset={2} />
-            </div>
-          ) : (
-            <p className="m-0 text-ui text-muted-foreground">No brief.</p>
+    <div className={cn("flex flex-col gap-6", subtask ? "-mt-1.5" : "pt-1")}>
+      {subtask ? <SubtaskSummaryRows task={task} subtask={subtask} /> : null}
+      {attentionText ? (
+        <p
+          className={cn(
+            "m-0 rounded-lg px-3 py-2 text-ui",
+            attention?.kind === "question" || attention?.kind === "direction"
+              ? "bg-warning/10 text-warning-foreground"
+              : "bg-destructive/10 text-destructive-foreground",
           )}
-          {subtask && subtask.deliverables.length > 0 ? (
-            <section className="flex flex-col gap-4">
-              <h2 className="m-0 text-base leading-6 font-medium text-foreground">Deliverables</h2>
-              <ul className="m-0 flex list-disc flex-col gap-1 ps-5 text-sm text-foreground/85">
-                {subtask.deliverables.map((item) => (
-                  <li key={item.id}>{item.description}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </>
+        >
+          {attentionText}
+        </p>
+      ) : null}
+      {brief.trim().length > 0 ? (
+        // The tab names the brief, so it has no heading; its own headings stay body size.
+        <div
+          className={cn(
+            "[&_:is(h1,h2,h3,h4,h5,h6)]:text-sm! [&_:is(h1,h2,h3,h4,h5,h6)]:font-medium! [&>*:first-child>*:first-child]:mt-0!",
+            subtask && "mt-2.5",
+          )}
+        >
+          <ChatMarkdown text={brief} cwd={undefined} headingLevelOffset={2} />
+        </div>
+      ) : (
+        <p className="m-0 text-ui text-muted-foreground">
+          <T>No brief.</T>
+        </p>
       )}
-    </article>
+      {subtask && subtask.deliverables.length > 0 ? (
+        <section className="flex flex-col gap-4">
+          <h3 className="m-0 text-base leading-6 font-medium text-foreground">
+            <T>Deliverables</T>
+          </h3>
+          <ul className="m-0 flex list-disc flex-col gap-1 ps-5 text-sm text-foreground/85">
+            {subtask.deliverables.map((item) => (
+              <li key={item.id}>{item.description}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
   );
 }
 
-/** A subtask's Overview opens with its status and usage, the rows the task keeps in its sidebar. */
+/** Line tabs, 47px between the lines, the line edge to edge; sticky under the title. */
+function TaskTabs(props: {
+  threadKey: string;
+  task: OrbitTaskDetail;
+  subtask: OrbitSubtask | null;
+  tab: TasksDetailTab;
+  agents: number;
+  stickyTop: number;
+}) {
+  const gt = useGT();
+  const done = props.task.subtasks.filter((subtask) => subtask.status === "completed").length;
+  return (
+    <div
+      role="tablist"
+      aria-label={gt("Show")}
+      style={{ top: props.stickyTop }}
+      className={cn(
+        "sticky z-10 -mx-4.5 flex items-center gap-5 border-b border-(--shell-divider)! bg-background px-4.5",
+        // Task level: a line above the tabs too, like the PR header.
+        props.subtask ? null : "border-t",
+      )}
+    >
+      <ContentTab threadKey={props.threadKey} tab="brief" selected={props.tab === "brief"}>
+        <T>Brief</T>
+      </ContentTab>
+      {props.subtask ? null : (
+        <ContentTab threadKey={props.threadKey} tab="subtasks" selected={props.tab === "subtasks"}>
+          <T>Subtasks</T>
+          <span className="font-normal text-muted-foreground tabular-nums">
+            {done}/{props.task.subtasks.length}
+          </span>
+        </ContentTab>
+      )}
+      <ContentTab threadKey={props.threadKey} tab="agents" selected={props.tab === "agents"}>
+        <T>Agents</T>
+        <span className="font-normal text-muted-foreground tabular-nums">{props.agents}</span>
+      </ContentTab>
+    </div>
+  );
+}
+
+/** A subtask's Brief opens with its status and usage, the rows the task keeps in its header. */
 function SubtaskSummaryRows(props: { task: OrbitTaskDetail; subtask: OrbitSubtask }) {
   const { task, subtask } = props;
   const lead = subtaskLead(task, subtask);
@@ -424,7 +506,7 @@ function ContentTab(props: {
       aria-selected={props.selected}
       onClick={() => tasksPanelActions().setTab(props.threadKey, props.tab)}
       className={cn(
-        "-mb-px flex h-9 cursor-pointer items-center gap-1.5 border-b-2 px-0.5 text-ui font-medium transition-colors outline-none focus-visible:text-foreground",
+        "-mb-px flex h-12 cursor-pointer items-center gap-1.5 border-b-2 px-0.5 text-sm font-medium transition-colors outline-none focus-visible:text-foreground",
         props.selected
           ? "border-foreground/80 text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground/85",
@@ -435,10 +517,26 @@ function ContentTab(props: {
   );
 }
 
+/** The Subtasks tab: a row opens the subtask; its agent icon opens the subtask's Agents tab. */
+function SubtasksList(props: { threadKey: string; task: OrbitTaskDetail }) {
+  const { task } = props;
+  return task.subtasks.length > 0 ? (
+    <ul className="-mx-2.5 -mt-2.25 m-0 flex list-none flex-col gap-0.5 p-0">
+      {task.subtasks.map((subtask) => (
+        <SubtaskRow key={subtask.id} threadKey={props.threadKey} task={task} subtask={subtask} />
+      ))}
+    </ul>
+  ) : (
+    <p className="m-0 text-ui text-muted-foreground">
+      <T>No subtasks yet.</T>
+    </p>
+  );
+}
+
 function AgentsList(props: { agents: ReturnType<typeof agentsFor> }) {
   const { current, earlier } = props.agents;
   return (
-    <div className="flex flex-col gap-6">
+    <div className="-mt-2.5 flex flex-col gap-6">
       {current.length > 0 ? (
         <ul className="-mx-2.5 m-0 list-none p-0">
           {current.map((row) => (
@@ -446,11 +544,15 @@ function AgentsList(props: { agents: ReturnType<typeof agentsFor> }) {
           ))}
         </ul>
       ) : (
-        <p className="m-0 text-ui text-muted-foreground">No agent has started.</p>
+        <p className="m-0 text-ui text-muted-foreground">
+          <T>No agent has started.</T>
+        </p>
       )}
       {earlier.length > 0 ? (
         <section className="flex flex-col gap-2">
-          <h3 className="m-0 text-sm font-medium text-muted-foreground">Earlier attempts</h3>
+          <h3 className="m-0 text-sm font-medium text-muted-foreground">
+            <T>Earlier attempts</T>
+          </h3>
           <ul className="-mx-2.5 m-0 list-none p-0">
             {earlier.map((row) => (
               <AgentRow key={row.agent.id} row={row} />
@@ -572,181 +674,175 @@ function AgentRow(props: { row: AgentRowModel; detail?: string }) {
   );
 }
 
-function TaskSidebar(props: {
-  threadKey: string;
-  task: OrbitTaskDetail;
-  subtaskId: number | null;
-}) {
-  const { task } = props;
-  const taskAgents = taskLevelAgents(task);
-  const done = task.subtasks.filter((subtask) => subtask.status === "completed").length;
-  return (
-    <nav
-      aria-label="Task contents"
-      className="order-1 flex shrink-0 flex-col border-b border-(--shell-divider)! @3xl/task:order-2 @3xl/task:w-88 @3xl/task:overflow-y-auto @3xl/task:border-s @3xl/task:border-b-0 scrollbar-inset"
-    >
-      {/* No "Task #id" row: the path leads back to the task. Rows start level with the title. */}
-      <div className="mt-4.75 shrink-0 px-2">
-        <TaskWorkspaceRows task={task} />
-      </div>
-      {/* Full-width dividers; every section keeps the same space above and below its text. */}
-      <div aria-hidden className="mt-4.75 h-px shrink-0 bg-(--shell-divider)" />
-      <div className="mt-4.5 flex h-8 shrink-0 items-center justify-between px-4.5 text-ui text-muted-foreground">
-        <span className="font-medium">Subtasks</span>
-        {task.subtasks.length > 0 ? (
-          <span className="tabular-nums">
-            {done}/{task.subtasks.length}
-          </span>
-        ) : null}
-      </div>
-      <div className="flex flex-col px-2 pb-3">
-        {task.subtasks.length > 0 ? (
-          <ul className="m-0 flex list-none flex-col gap-0.5 p-0">
-            {task.subtasks.map((subtask) => (
-              <SubtaskRow
-                key={subtask.id}
-                threadKey={props.threadKey}
-                task={task}
-                subtask={subtask}
-                selected={subtask.id === props.subtaskId}
-              />
-            ))}
-          </ul>
-        ) : (
-          <p className="m-0 px-2.5 text-ui text-muted-foreground">No subtasks yet.</p>
-        )}
-        {taskAgents.length > 0 ? (
-          <>
-            <div aria-hidden className="-mx-2 mt-4.5 h-px shrink-0 bg-(--shell-divider)" />
-            <div className="mt-4.5 flex h-8 shrink-0 items-center px-2.5 text-ui font-medium text-muted-foreground">
-              Agents
-            </div>
-            <ul className="m-0 list-none p-0">
-              {taskAgents.map((row) => (
-                <AgentRow
-                  key={row.agent.id}
-                  row={row}
-                  detail={[
-                    row.label.endsWith("all subtasks") ? "All subtasks" : "Whole task",
-                    row.agent.model,
-                  ]
-                    .filter((part) => part !== null)
-                    .join(" · ")}
-                />
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </div>
-    </nav>
-  );
-}
-
 const ROW = cn(
   THREAD_DETAILS_PANEL_LOCKED_ROW_CLASS,
   "flex items-center font-normal text-muted-foreground",
 );
 
-const MACHINE_STATE = {
-  "not-started": "No workspace yet",
-  disposed: "removed",
-  stopped: "asleep",
-  unreachable: "offline",
-} as const;
-
-/** Where the task runs and what it led to: the same rows as the Thread details card. */
-function TaskWorkspaceRows(props: { task: OrbitTaskDetail }) {
-  const { task } = props;
-  const environment = orbitTaskEnvironment(task);
-  const usage = taskUsage(task.metrics);
-  const machine = task.workspace?.node?.name ?? task.workspace?.name ?? null;
-  const machineText =
-    environment.kind === "ready"
-      ? machine
-      : environment.kind === "not-started"
-        ? MACHINE_STATE["not-started"]
-        : [machine, MACHINE_STATE[environment.kind]].filter((part) => part !== null).join(" · ");
+/** One key-value row, the same grid as the PR header's. */
+function TaskMetaRow(props: { icon: ReactNode; label: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col">
-      <div className={ROW}>
-        <ServerIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-        <span className="min-w-0 flex-1 truncate">{task.project.name}</span>
-        {machineText ? (
-          <span
-            className={cn(
-              "shrink-0",
-              environment.kind === "disposed" || environment.kind === "unreachable"
-                ? "text-destructive-foreground"
-                : undefined,
-            )}
-          >
-            {machineText}
-          </span>
-        ) : null}
-      </div>
-      {task.workspace?.branch ? (
-        <div className={ROW}>
-          <GitBranchIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className="min-w-0 flex-1 truncate">{task.workspace.branch}</span>
-        </div>
-      ) : null}
-      {task.pullRequest ? <PullRequestRow pr={task.pullRequest} /> : null}
-      <Tooltip>
-        <TooltipTrigger delay={200} render={<div tabIndex={0} className={ROW} />}>
-          <GaugeIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className="min-w-0 flex-1 truncate tabular-nums">{usage.text}</span>
-          {usage.lines ? (
-            <PullRequestDiffStat
-              additions={usage.lines.added}
-              deletions={usage.lines.deleted}
-              className="shrink-0"
-            />
-          ) : null}
-        </TooltipTrigger>
-        <TooltipPopup side="left" className="max-w-72">
-          {usage.description}
-        </TooltipPopup>
-      </Tooltip>
+    <div className="grid min-h-7 min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] items-center gap-2 text-sm">
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        {props.icon}
+        {props.label}
+      </span>
+      <span className="flex min-w-0 items-center gap-1.5 text-foreground">{props.children}</span>
     </div>
   );
 }
 
-/** The task's pull request. It opens in Conn's pull request panel as a tab. */
-function PullRequestRow(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]> }) {
+/** Where the task runs, its branch and PR, and what it cost: rows under the title, like a PR. */
+function TaskKeyValues(props: { task: OrbitTaskDetail }) {
+  const gt = useGT();
+  const { task } = props;
+  const environment = orbitTaskEnvironment(task);
+  const usage = taskUsage(task.metrics);
+  const machine = task.workspace?.node?.name ?? null;
+  const state =
+    environment.kind === "disposed"
+      ? gt("removed")
+      : environment.kind === "stopped"
+        ? gt("asleep")
+        : environment.kind === "unreachable"
+          ? gt("offline")
+          : null;
+  const icon = "size-3.5 shrink-0";
+  return (
+    <div className="flex flex-col gap-2">
+      <TaskMetaRow icon={<ServerIcon aria-hidden className={icon} />} label={gt("Workspace")}>
+        {task.workspace ? (
+          <>
+            <span className="truncate">{task.workspace.name}</span>
+            {machine || state ? (
+              <span
+                className={cn(
+                  "shrink-0",
+                  environment.kind === "disposed" || environment.kind === "unreachable"
+                    ? "text-destructive-foreground"
+                    : "text-muted-foreground",
+                )}
+              >
+                {[machine ? gt("on {machine}", { machine }) : null, state]
+                  .filter((part) => part !== null)
+                  .join(" · ")}
+              </span>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-muted-foreground">
+            {environment.kind === "not-started" ? gt("No workspace yet") : gt("Removed")}
+          </span>
+        )}
+      </TaskMetaRow>
+      {task.workspace?.branch ? (
+        <TaskMetaRow icon={<GitBranchIcon aria-hidden className={icon} />} label={gt("Branch")}>
+          <span className="truncate text-muted-foreground">{task.workspace.branch}</span>
+        </TaskMetaRow>
+      ) : null}
+      {task.pullRequest ? (
+        <TaskMetaRow
+          icon={<PullRequestGlyph.pullRequest aria-hidden className={icon} />}
+          label={gt("Pull request")}
+        >
+          <TaskPullRequestValue pr={task.pullRequest} />
+        </TaskMetaRow>
+      ) : null}
+      <TaskMetaRow icon={<GaugeIcon aria-hidden className={icon} />} label={gt("Usage")}>
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={<span tabIndex={0} className="truncate tabular-nums outline-none" />}
+          >
+            {usage.text}
+          </TooltipTrigger>
+          <TooltipPopup side="bottom" className="max-w-72">
+            {usage.description}
+          </TooltipPopup>
+        </Tooltip>
+      </TaskMetaRow>
+      <TaskMetaRow icon={<FileDiffIcon aria-hidden className={icon} />} label={gt("Changes")}>
+        {usage.lines === null ? (
+          <span className="text-muted-foreground">{gt("Not reported yet")}</span>
+        ) : usage.lines.added === 0 && usage.lines.deleted === 0 ? (
+          <span className="text-muted-foreground">{gt("No changes")}</span>
+        ) : (
+          <PullRequestDiffStat additions={usage.lines.added} deletions={usage.lines.deleted} />
+        )}
+      </TaskMetaRow>
+    </div>
+  );
+}
+
+/**
+ * Title and checks come from the PR's environment when Conn can read it there (Orbit sends only
+ * number, URL and state); without it the state names the PR.
+ */
+function useTaskPullRequestCard(url: string) {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const target = usePullRequestPreviewTarget(primaryEnvironmentId, url);
+  const preview = useEnvironmentQuery(
+    target
+      ? pullRequestEnvironment.previewCard({
+          environmentId: target.environmentId,
+          input: target.input,
+        })
+      : null,
+  ).data;
+  const summary = useSharedPullRequestSummary(target?.environmentId ?? null, target?.input ?? null);
+  return {
+    title: preview?.title ?? summary?.title ?? null,
+    checks: summary?.checksState ?? null,
+  };
+}
+
+/** The task's PR. Opening it is one handler, `openPullRequest` from the navigation context. */
+function TaskPullRequestValue(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]> }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = use(NavigationContext);
   const { pr } = props;
-  const state = pr.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
+  const card = useTaskPullRequestCard(pr.url);
+  const state = pr.state
+    ? resolvePullRequestState({ state: pr.state, isDraft: false }, messages)
+    : null;
+  const checks =
+    pr.state === "open" && card.checks
+      ? pullRequestChecksStatePresentation(card.checks, messages)
+      : null;
   const Icon = state?.Icon;
   return (
-    <Tooltip>
-      <TooltipTrigger
-        delay={200}
-        render={
-          <ThreadDetailsControl
-            size="sm"
-            part="row"
-            variant="ghost"
-            onClick={() => navigation?.openPullRequest(pr.url)}
-            aria-label={`Pull request #${pr.number}. ${state?.label ?? "State unknown"}. Open in the pull request panel`}
-          />
-        }
+    <>
+      <button
+        type="button"
+        onClick={() => navigation?.openPullRequest(pr.url)}
+        aria-label={gt("Pull request #{number}. {state}. Open in the pull request panel", {
+          number: pr.number,
+          state: state?.label ?? gt("State unknown"),
+        })}
+        className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-left hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
       >
         {Icon ? (
-          <Icon aria-hidden className={cn("size-4 shrink-0", state?.toneClassName)} />
+          <Icon aria-hidden className={cn("size-3.5 shrink-0", state.toneClassName)} />
         ) : (
-          <PullRequestGlyph.pullRequest className="size-4 shrink-0 text-muted-foreground" />
+          <PullRequestGlyph.pullRequest className="size-3.5 shrink-0 text-muted-foreground" />
         )}
-        <span className="min-w-0 flex-1 truncate text-left font-normal text-foreground/85">
-          Pull request
-        </span>
-        <span className="shrink-0 font-normal text-muted-foreground tabular-nums">
-          #{pr.number}
-        </span>
-      </TooltipTrigger>
-      <TooltipPopup side="left" className="max-w-72">
-        {state?.label ?? "State unknown"}. Opens in the pull request panel.
-      </TooltipPopup>
-    </Tooltip>
+        <span className="truncate">{card.title ?? state?.label ?? gt("Pull request")}</span>
+        <span className="shrink-0 text-muted-foreground tabular-nums">#{pr.number}</span>
+      </button>
+      {checks ? (
+        <Tooltip>
+          <TooltipTrigger
+            delay={200}
+            render={<span tabIndex={0} className="flex shrink-0 outline-none" />}
+          >
+            <checks.Icon aria-hidden className={cn("size-3.5", checks.toneClassName)} />
+            <span className="sr-only">{checks.label}</span>
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{checks.label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
+    </>
   );
 }
 
@@ -817,38 +913,28 @@ function SubtaskMeta(props: { metrics: OrbitSubtask["metrics"] }) {
 }
 
 /**
- * A subtask: the row opens its Overview; an agent icon in front opens its Agents tab. Lines and
- * the quiet line show a dash for what Orbit does not report.
+ * A subtask: the row opens its Brief; an agent icon in front opens its Agents tab. Lines and
+ * the quiet line show a dash for what Orbit does not report, and stay off until it starts.
  */
-function SubtaskRow(props: {
-  threadKey: string;
-  task: OrbitTaskDetail;
-  subtask: OrbitSubtask;
-  selected: boolean;
-}) {
+function SubtaskRow(props: { threadKey: string; task: OrbitTaskDetail; subtask: OrbitSubtask }) {
   const { subtask } = props;
   const lead = subtaskLead(props.task, subtask);
   const usage = subtaskUsageText(subtask.metrics);
   const status = subtaskStatusText(subtask, props.task);
   return (
-    <li
-      className={cn(
-        "flex items-start rounded-lg hover:bg-(--shell-highlight)",
-        props.selected && "bg-(--shell-highlight)",
-      )}
-    >
+    <li className="flex items-start rounded-lg hover:bg-(--shell-highlight)">
       {lead.kind === "agent" ? (
         <button
           type="button"
           aria-label={`${status}. Agents for ${subtask.title}`}
           onClick={() => tasksPanelActions().openSubtask(props.threadKey, subtask.id, "agents")}
-          className="ms-2 mt-1.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+          className="ms-2.25 mt-1.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
         >
           <SubtaskLeadIcon lead={lead} />
         </button>
       ) : (
         <span
-          className="ms-2 mt-1.5 flex size-5 shrink-0 items-center justify-center"
+          className="ms-2.25 mt-1.5 flex size-5 shrink-0 items-center justify-center"
           aria-label={status}
         >
           <SubtaskLeadIcon lead={lead} />
@@ -856,10 +942,9 @@ function SubtaskRow(props: {
       )}
       <button
         type="button"
-        aria-current={props.selected ? "page" : undefined}
         aria-label={`${subtask.title}. ${status}.${usage ? ` ${usage}.` : ""} Open subtask`}
         onClick={() => tasksPanelActions().openSubtask(props.threadKey, subtask.id)}
-        className="flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-lg py-1.5 ps-2 pe-2.5 text-left text-ui focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
+        className="flex min-w-0 flex-1 cursor-pointer flex-col rounded-lg py-1.5 ps-2 pe-2.5 text-left text-ui focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none"
       >
         <span className="flex min-w-0 items-start gap-2">
           <span
@@ -870,9 +955,9 @@ function SubtaskRow(props: {
           >
             {subtask.title}
           </span>
-          <SubtaskDiff metrics={subtask.metrics} />
+          {lead.kind === "not-started" ? null : <SubtaskDiff metrics={subtask.metrics} />}
         </span>
-        <SubtaskMeta metrics={subtask.metrics} />
+        {lead.kind === "not-started" ? null : <SubtaskMeta metrics={subtask.metrics} />}
       </button>
     </li>
   );

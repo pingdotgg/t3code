@@ -285,6 +285,102 @@ const LIST_KEYS = [
   "last_activity_at",
 ] as const;
 
+const INSIGHTS_PERIOD_END = Date.parse("2026-11-19T00:00:00+00:00");
+
+/** Orbit's `/task-insights` answer, shaped like its own fixture; no 6041/6042 fields yet. */
+function insightsOf(period: "7d" | "30d") {
+  const days = period === "7d" ? 7 : 30;
+  const scale = days / 30;
+  const summary = (
+    merged: number,
+    tokensPerPr: number,
+    leadMinutes: number,
+    firstPass: number,
+  ) => ({
+    tasks: Math.round(merged * 1.4),
+    merged,
+    excluded: 2,
+    tokens: Math.round(merged * tokensPerPr * 1.2),
+    cost_usd: merged * 3.1,
+    tokens_per_merged_pr: tokensPerPr,
+    cost_per_merged_pr: 3.1,
+    lead_time_ms: leadMinutes * 60_000,
+    queue_ms: 1_800_000,
+    work_ms: 9_720_000,
+    merge_wait_ms: 3_600_000,
+    yield: 0.71,
+    pr_first_pass: firstPass,
+    wasted_share: 0.15,
+    subtask_first_pass: 0.64,
+    review_rounds: 1.3,
+    handoff_first_try: 0.74,
+    questions_per_task: 0.4,
+    questions_by_cause: {},
+    cache_hit: 0.86,
+    tokens_per_hundred_lines: 4100,
+  });
+  const day = (offset: number) =>
+    new Date(INSIGHTS_PERIOD_END - offset * 86_400_000).toISOString().slice(0, 10);
+  return {
+    data: {
+      period,
+      from: `${day(days)}T00:00:00+00:00`,
+      to: `${day(0)}T00:00:00+00:00`,
+      current: summary(Math.round(117 * scale), 1_410_000, 179, 0.63),
+      previous: {
+        ...summary(Math.round(128 * scale), 1_550_000, 195, 0.63),
+        review_rounds: 1.5,
+        wasted_share: 0.18,
+      },
+      weekly: Array.from({ length: 12 }, (_, index) => ({
+        week_start: day((12 - index) * 7),
+        tasks: 30,
+        merged: 24,
+        tokens_per_merged_pr:
+          index === 4 ? null : 1_900_000 - index * 40_000 + (index % 3) * 90_000,
+      })),
+      daily: Array.from({ length: days }, (_, index) => ({
+        date: day(days - index),
+        merged: [3, 5, 4, 2, 6, 4, 3, 1, 5, 7, 2, 4, 6, 3][index % 14]! + Math.floor(index / 10),
+        not_merged: index % 4 === 0 ? 1 : 0,
+      })),
+      breakdowns: {
+        model: [
+          {
+            key: "gpt-5.5-codex",
+            label: "gpt-5.5-codex",
+            tasks: 70,
+            merged: 61,
+            tokens_per_merged_pr: 1_520_000,
+            lead_time_ms: 9_900_000,
+            yield: 0.87,
+          },
+          {
+            key: "claude-opus-5-5",
+            label: "claude-opus-5-5",
+            tasks: 40,
+            merged: 36,
+            tokens_per_merged_pr: 1_310_000,
+            lead_time_ms: 11_400_000,
+            yield: 0.9,
+          },
+          {
+            key: "gemini-3-pro",
+            label: "gemini-3-pro",
+            tasks: 25,
+            merged: 20,
+            tokens_per_merged_pr: 1_180_000,
+            lead_time_ms: 12_600_000,
+            yield: 0.8,
+          },
+        ],
+        project: [],
+        release: [],
+      },
+    },
+  };
+}
+
 const json = (status: number, body: unknown) => ({ status, body: JSON.stringify(body) });
 const failure = (status: number, code: string, message: string) =>
   json(status, { status, error: { code, message, details: {} } });
@@ -296,6 +392,8 @@ export function fixtureOrbitTasksTransport(
     conversation?: { environmentId: string; threadId: string };
     pullRequest?: { number: number; url: string };
     tokens?: number;
+    /** Answers the insights read the way the Gateway did before Orbit 6040. */
+    insightsFailure?: boolean;
   },
 ): OrbitGatewayTransport {
   return async (request) => {
@@ -339,6 +437,11 @@ export function fixtureOrbitTasksTransport(
         return failure(409, "extension.disabled", "The Tasks extension is disabled.");
       case "unreachable":
         throw new Error("connect ECONNREFUSED");
+    }
+    if (request.path === "/task-insights") {
+      return options?.insightsFailure
+        ? failure(500, "gateway.unhandled", "The gateway could not complete the request.")
+        : json(200, insightsOf(request.query?.period === "7d" ? "7d" : "30d"));
     }
     if (request.path === "/tasks") {
       const rows = details.map((detail) =>

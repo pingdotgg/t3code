@@ -158,4 +158,15 @@ describe("resolveRootUrl", () => {
       resolveRootUrl({ method: "GET", path: "/operations/501", query: { include: "steps" } }),
     ).toBeNull();
   });
+
+  it("allows the board insights with a period and one Project only", () => {
+    const insights = (query: Record<string, string>, method: "GET" | "POST" = "GET") =>
+      resolveRootUrl({ method, path: "/task-insights", query })?.pathname ?? null;
+    expect(insights({})).toBe("/api/v1/task-insights");
+    expect(insights({ period: "7d", project_id: "78" })).toBe("/api/v1/task-insights");
+    expect(insights({ period: "90d" })).toBeNull();
+    expect(insights({ project_id: "0" })).toBeNull();
+    expect(insights({ period: "30d", search: "x" })).toBeNull();
+    expect(insights({ period: "30d" }, "POST")).toBeNull();
+  });
 });

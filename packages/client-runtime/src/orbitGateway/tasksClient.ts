@@ -10,6 +10,7 @@ import type {
 } from "./tasks.ts";
 import {
   decodeOrbitTaskDetail,
+  decodeOrbitTaskInsights,
   decodeOrbitTasksErrorEnvelope,
   decodeOrbitTasksPage,
 } from "./tasksWire.ts";
@@ -49,6 +50,7 @@ export function createOrbitTasksClient(transport: OrbitGatewayTransport): OrbitT
     path: string,
     query: Record<string, string> | undefined,
     decode: (json: unknown) => A | null,
+    root?: true,
   ): Promise<OrbitTasksResult<A>> => {
     let response;
     try {
@@ -56,6 +58,7 @@ export function createOrbitTasksClient(transport: OrbitGatewayTransport): OrbitT
         method: "GET",
         path,
         ...(query && Object.keys(query).length > 0 ? { query } : {}),
+        ...(root ? { root } : {}),
       });
     } catch (cause) {
       return {
@@ -89,6 +92,14 @@ export function createOrbitTasksClient(transport: OrbitGatewayTransport): OrbitT
   return {
     listTasks: (query = {}) => read("/tasks", listQuery(query), decodeOrbitTasksPage),
     getTask: (taskId) => read(`/tasks/${taskId}`, undefined, decodeOrbitTaskDetail),
+    // Outside the Conn routes: the board's numbers come from `/api/v1/task-insights`.
+    getTaskInsights: ({ period, project }) =>
+      read(
+        "/task-insights",
+        project === undefined ? { period } : { period, project_id: String(project) },
+        decodeOrbitTaskInsights,
+        true,
+      ),
     invalidate: async (target) => {
       await Promise.allSettled([...listeners].map((listener) => (async () => listener(target))()));
     },

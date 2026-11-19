@@ -186,6 +186,58 @@ describe("createOrbitTasksClient", () => {
     expect(await odd.listTasks()).toMatchObject({ status: "error", reason: "invalid-response" });
   });
 
+  it("reads insights below /api/v1 and leaves out only what Orbit does not report", async () => {
+    const seen: OrbitGatewayRequest[] = [];
+    const summary = { tasks: 31, merged: 22, tokens: 941_600_000, lead_time_ms: 15_120_000 };
+    const client = createOrbitTasksClient(
+      transport(
+        200,
+        {
+          data: {
+            period: "7d",
+            current: { ...summary, pr_first_pass: "0.5", pr_merge_wait_ms: 3_600_000 },
+            previous: {},
+            weekly: [{ week_start: "2026-11-09", tokens_per_merged_pr: null }, { week: 1 }],
+            daily: [{ date: "2026-11-18", merged: 3, not_merged: 1 }],
+            breakdowns: { model: [{ key: "gpt-5.5", label: "gpt-5.5", merged: 4 }] },
+          },
+        },
+        seen,
+      ),
+    );
+    const result = await client.getTaskInsights({ period: "7d", project: 78 });
+    expect(seen[0]).toMatchObject({
+      method: "GET",
+      path: "/task-insights",
+      query: { period: "7d", project_id: "78" },
+      root: true,
+    });
+    expect(result).toMatchObject({
+      status: "ok",
+      value: {
+        period: "7d",
+        current: {
+          merged: 22,
+          leadTimeMs: 15_120_000,
+          prFirstPass: null,
+          prMergeWaitMs: 3_600_000,
+        },
+        previous: { merged: null, deliveryTimeMs: null },
+        weekly: [{ weekStart: "2026-11-09", tokensPerMergedPr: null }],
+        daily: [{ date: "2026-11-18", merged: 3 }],
+        byModel: [{ key: "gpt-5.5", merged: 4, leadTimeMs: null }],
+      },
+    });
+    const failing = createOrbitTasksClient(
+      transport(500, { error: { code: "gateway.unhandled", message: "Not completed." } }),
+    );
+    expect(await failing.getTaskInsights({ period: "30d" })).toEqual({
+      status: "error",
+      reason: "unreachable",
+      message: "Not completed.",
+    });
+  });
+
   it("skips list rows off the contract and keeps the rest", async () => {
     const client = createOrbitTasksClient(
       transport(200, {

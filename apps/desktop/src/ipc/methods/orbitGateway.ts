@@ -70,8 +70,9 @@ export function resolveConnUrl(path: string): URL | null {
 }
 
 /**
- * Exact calls outside `/api/v1/conn`: lifecycle reads/wake and the private Tasks summary channel.
- * None takes a query; channel authentication also restricts its body.
+ * Exact calls outside `/api/v1/conn`: lifecycle reads/wake, the private Tasks summary channel and
+ * the Tasks board insights.
+ * Only the board insights take a query (`resolveRootUrl`); channel authentication restricts a body.
  */
 const ROOT_CALLS: ReadonlyArray<{ readonly method: "GET" | "POST"; readonly pattern: RegExp }> = [
   { method: "POST", pattern: /^\/instances\/[1-9][0-9]{0,15}\/wake$/ },
@@ -80,12 +81,24 @@ const ROOT_CALLS: ReadonlyArray<{ readonly method: "GET" | "POST"; readonly patt
   { method: "POST", pattern: /^\/broadcasting\/auth$/ },
 ];
 
+/** The Tasks board's insights: a period, and optionally one Project. */
+function isTaskInsightsQuery(query: Readonly<Record<string, string>>): boolean {
+  return Object.entries(query).every(([key, value]) =>
+    key === "period" ? value === "7d" || value === "30d" : key === "project_id" && isOrbitId(value),
+  );
+}
+
 /** The Gateway URL of an allowed call below `/api/v1`, or null for anything else. */
 export function resolveRootUrl(
   request: Pick<typeof OrbitGatewayRequest.Type, "method" | "path" | "query"> & {
     readonly body?: string | null;
   },
 ): URL | null {
+  if (request.method === "GET" && request.path === "/task-insights") {
+    return isTaskInsightsQuery(request.query ?? {})
+      ? new URL(`${DEFAULT_ORBIT_GATEWAY_URL}/api/v1/task-insights`)
+      : null;
+  }
   if (Object.keys(request.query ?? {}).length > 0) return null;
   if (request.path === "/broadcasting/auth") {
     try {

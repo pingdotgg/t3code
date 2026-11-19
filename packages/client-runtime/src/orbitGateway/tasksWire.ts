@@ -8,6 +8,9 @@ import type {
   OrbitTaskAgent,
   OrbitTaskAttention,
   OrbitTaskDetail,
+  OrbitTaskInsights,
+  OrbitTaskInsightsBreakdownRow,
+  OrbitTaskInsightsSummary,
   OrbitTaskMetrics,
   OrbitTasksPage,
   OrbitTaskSummary,
@@ -256,6 +259,111 @@ export function decodeOrbitTaskDetail(json: unknown): OrbitTaskDetail | null {
       metrics: metrics(data.metrics),
       subtasks: [...data.subtasks].sort((a, b) => a.position - b.position).map(subtask),
       agents: data.agents.map(agent),
+    }),
+  });
+}
+
+// `GET /api/v1/task-insights`. Every number decodes on its own, so a field Orbit leaves out or
+// changes shows a dash for that number only.
+const AnyValue = Schema.optionalKey(Schema.Unknown);
+const numberOrNull = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+const InsightsSummary = Schema.Struct({
+  tasks: AnyValue,
+  merged: AnyValue,
+  tokens: AnyValue,
+  tokens_per_merged_pr: AnyValue,
+  lead_time_ms: AnyValue,
+  // Orbit 6041 (deploys per task) and 6042 (PR opened); proposed names until those land.
+  delivery_time_ms: AnyValue,
+  deploy_wait_ms: AnyValue,
+  pr_merge_wait_ms: AnyValue,
+  pr_first_pass: AnyValue,
+  wasted_share: AnyValue,
+  review_rounds: AnyValue,
+});
+
+const InsightsEnvelope = Schema.Struct({
+  data: Schema.Struct({
+    period: Schema.Literals(["7d", "30d"]),
+    current: InsightsSummary,
+    previous: InsightsSummary,
+    weekly: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    daily: Schema.optionalKey(Schema.Array(Schema.Unknown)),
+    breakdowns: Schema.optionalKey(
+      Schema.Struct({ model: Schema.optionalKey(Schema.Array(Schema.Unknown)) }),
+    ),
+  }),
+});
+const InsightsWeek = Schema.Struct({ week_start: Schema.String, tokens_per_merged_pr: AnyValue });
+const InsightsDay = Schema.Struct({ date: Schema.String, merged: Schema.Number });
+const InsightsBreakdownRow = Schema.Struct({
+  key: Schema.String,
+  label: Schema.String,
+  tasks: AnyValue,
+  merged: AnyValue,
+  tokens_per_merged_pr: AnyValue,
+  lead_time_ms: AnyValue,
+});
+
+const decodeInsights = Schema.decodeUnknownOption(InsightsEnvelope);
+const decodeInsightsWeek = Schema.decodeUnknownOption(InsightsWeek);
+const decodeInsightsDay = Schema.decodeUnknownOption(InsightsDay);
+const decodeInsightsBreakdownRow = Schema.decodeUnknownOption(InsightsBreakdownRow);
+
+const insightsSummary = (value: typeof InsightsSummary.Type): OrbitTaskInsightsSummary => ({
+  tasks: numberOrNull(value.tasks),
+  merged: numberOrNull(value.merged),
+  tokens: numberOrNull(value.tokens),
+  tokensPerMergedPr: numberOrNull(value.tokens_per_merged_pr),
+  leadTimeMs: numberOrNull(value.lead_time_ms),
+  deliveryTimeMs: numberOrNull(value.delivery_time_ms),
+  deployWaitMs: numberOrNull(value.deploy_wait_ms),
+  prMergeWaitMs: numberOrNull(value.pr_merge_wait_ms),
+  prFirstPass: numberOrNull(value.pr_first_pass),
+  wastedShare: numberOrNull(value.wasted_share),
+  reviewRounds: numberOrNull(value.review_rounds),
+});
+
+/** Rows decode one by one: a row off the contract is left out, not the whole answer. */
+function eachRow<A, B>(
+  rows: ReadonlyArray<unknown> | undefined,
+  decode: (row: unknown) => Option.Option<A>,
+  map: (value: A) => B,
+): ReadonlyArray<B> {
+  return (rows ?? []).flatMap((row) =>
+    Option.match(decode(row), { onNone: () => [], onSome: (value) => [map(value)] }),
+  );
+}
+
+export function decodeOrbitTaskInsights(json: unknown): OrbitTaskInsights | null {
+  return Option.match(decodeInsights(json), {
+    onNone: () => null,
+    onSome: ({ data }) => ({
+      period: data.period,
+      current: insightsSummary(data.current),
+      previous: insightsSummary(data.previous),
+      weekly: eachRow(data.weekly, decodeInsightsWeek, (week) => ({
+        weekStart: week.week_start,
+        tokensPerMergedPr: numberOrNull(week.tokens_per_merged_pr),
+      })),
+      daily: eachRow(data.daily, decodeInsightsDay, (day) => ({
+        date: day.date,
+        merged: day.merged,
+      })),
+      byModel: eachRow(
+        data.breakdowns?.model,
+        decodeInsightsBreakdownRow,
+        (row): OrbitTaskInsightsBreakdownRow => ({
+          key: row.key,
+          label: row.label,
+          tasks: numberOrNull(row.tasks),
+          merged: numberOrNull(row.merged),
+          tokensPerMergedPr: numberOrNull(row.tokens_per_merged_pr),
+          leadTimeMs: numberOrNull(row.lead_time_ms),
+        }),
+      ),
     }),
   });
 }

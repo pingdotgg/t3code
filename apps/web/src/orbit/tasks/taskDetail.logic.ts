@@ -176,6 +176,7 @@ export function agentsFor(task: OrbitTaskDetail, subtaskId: number | null): Agen
     if (agent === shared) return "Implementer · all subtasks";
     const role = roleText(agent);
     if (subtaskId !== null) return role;
+    if (agent.subtaskIds.length === 0) return `${role} · whole task`;
     const title = agent.subtaskIds.length === 1 ? titles.get(agent.subtaskIds[0]!) : undefined;
     return title ? `${role} · ${title}` : role;
   };
@@ -195,22 +196,6 @@ export function agentsFor(task: OrbitTaskDetail, subtaskId: number | null): Agen
     current: ordered.filter((agent) => agent.current).map((agent) => rowFor(agent, label(agent))),
     earlier: ordered.filter((agent) => !agent.current).map((agent) => rowFor(agent, label(agent))),
   };
-}
-
-/** Agents that belong to the whole task rather than one subtask, for the sidebar. */
-export function taskLevelAgents(task: OrbitTaskDetail): ReadonlyArray<AgentRowModel> {
-  const shared = sharedImplementer(task);
-  return [
-    ...(shared ? [rowFor(shared, "Implementer · all subtasks")] : []),
-    ...task.agents
-      .filter(
-        (agent) =>
-          agent.current &&
-          agent !== shared &&
-          (agent.subtaskIds.length === 0 || (shared !== null && agent.role === "reviewer")),
-      )
-      .map((agent) => rowFor(agent, roleText(agent))),
-  ];
 }
 
 export function agentStateText(agent: OrbitTaskAgent): string {
@@ -268,9 +253,14 @@ export function taskUsage(metrics: OrbitTaskMetrics): {
   readonly lines: { readonly added: number; readonly deleted: number } | null;
   readonly description: string;
 } {
-  const duration =
-    metrics.durationMs === null ? "Duration unknown" : durationText(metrics.durationMs);
-  const tokens = metrics.tokens === null ? "tokens unknown" : tokensText(metrics.tokens);
+  // A dash stands for an unreported value; with neither reported, one dash.
+  const text =
+    metrics.durationMs === null && metrics.tokens === null
+      ? "–"
+      : [
+          metrics.durationMs === null ? "–" : durationText(metrics.durationMs),
+          metrics.tokens === null ? "–" : tokensText(metrics.tokens),
+        ].join(" · ");
   const lines =
     metrics.linesAdded === null || metrics.linesDeleted === null
       ? null
@@ -286,7 +276,7 @@ export function taskUsage(metrics: OrbitTaskMetrics): {
       ? "Branch diff not reported yet."
       : `Branch diff against the default branch at the last report: ${lines.added.toLocaleString()} added, ${lines.deleted.toLocaleString()} removed.`,
   ].join(" ");
-  return { text: `${duration} · ${tokens}`, lines, description };
+  return { text, lines, description };
 }
 
 export function agentRowInteraction(row: AgentRowModel): "button" | "text" {

@@ -1,13 +1,15 @@
-import type { OrbitTaskLane } from "@t3tools/client-runtime/orbit-gateway";
+import type { OrbitTaskInsightsPeriod, OrbitTaskLane } from "@t3tools/client-runtime/orbit-gateway";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../../lib/storage";
+import type { InsightId } from "./tasksInsights.logic";
 
 // Where each thread's Tasks tab is, kept outside the panel because only the active surface
 // mounts. Keyed per thread like the panel's tabs; other panel apps keep their own state.
 
-export type TasksDetailTab = "brief" | "agents";
+/** "subtasks" exists on the task only; a subtask shows Brief and Agents. */
+export type TasksDetailTab = "brief" | "subtasks" | "agents";
 
 export interface TasksNavigation {
   readonly originThreadKey?: string;
@@ -128,7 +130,7 @@ export const useTasksPanelStore = create<TasksPanelState>()(
             return {
               ...current,
               subtaskId,
-              tab: tab ?? current.tab,
+              tab: tab ?? (current.tab === "subtasks" ? "brief" : current.tab),
               taskTab,
               detailScrollTop: 0,
             };
@@ -177,30 +179,42 @@ export const useTasksPanelStore = create<TasksPanelState>()(
   ),
 );
 
+const toggled = <T>(list: ReadonlyArray<T>, entry: T) =>
+  list.includes(entry) ? list.filter((item) => item !== entry) : [...list, entry];
+
 /**
- * Board lanes the user turned off: one setting for every thread and window, under its own key so
- * a toggle never writes thread navigation.
+ * Board settings: lanes and insights the user turned off, and the insights period. One setting
+ * for every thread and window, under its own key so a toggle never writes thread navigation.
+ * Turned-off lists, so a lane or insight added later shows by default.
  */
-export const useTasksBoardLanes = create<{
+export const useTasksBoardSettings = create<{
   readonly hiddenLanes: ReadonlyArray<OrbitTaskLane>;
+  readonly hiddenInsights: ReadonlyArray<InsightId>;
+  readonly insightPeriod: OrbitTaskInsightsPeriod;
   readonly toggleLane: (lane: OrbitTaskLane) => void;
+  readonly toggleInsight: (insight: InsightId) => void;
+  readonly setInsightPeriod: (period: OrbitTaskInsightsPeriod) => void;
 }>()(
   persist(
     (set) => ({
       hiddenLanes: [],
-      toggleLane: (lane) =>
-        set((state) => ({
-          hiddenLanes: state.hiddenLanes.includes(lane)
-            ? state.hiddenLanes.filter((entry) => entry !== lane)
-            : [...state.hiddenLanes, lane],
-        })),
+      hiddenInsights: [],
+      insightPeriod: "30d",
+      toggleLane: (lane) => set((state) => ({ hiddenLanes: toggled(state.hiddenLanes, lane) })),
+      toggleInsight: (insight) =>
+        set((state) => ({ hiddenInsights: toggled(state.hiddenInsights, insight) })),
+      setInsightPeriod: (insightPeriod) => set({ insightPeriod }),
     }),
     {
       name: "conn:tasks-board:v1",
       storage: createJSONStorage(() =>
         resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
       ),
-      partialize: (state) => ({ hiddenLanes: state.hiddenLanes }),
+      partialize: (state) => ({
+        hiddenLanes: state.hiddenLanes,
+        hiddenInsights: state.hiddenInsights,
+        insightPeriod: state.insightPeriod,
+      }),
     },
   ),
 );
@@ -208,7 +222,7 @@ export const useTasksBoardLanes = create<{
 // Another window's toggle lands in storage; read it so this window never writes a stale copy.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
-    if (event.key === "conn:tasks-board:v1") void useTasksBoardLanes.persist.rehydrate();
+    if (event.key === "conn:tasks-board:v1") void useTasksBoardSettings.persist.rehydrate();
   });
 }
 

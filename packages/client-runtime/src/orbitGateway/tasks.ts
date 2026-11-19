@@ -178,6 +178,59 @@ export interface OrbitTasksPage {
   readonly nextCursor: string | null;
 }
 
+export type OrbitTaskInsightsPeriod = "7d" | "30d";
+
+/**
+ * One period of Orbit's task insights (`GET /api/v1/task-insights`), over the tasks that ended in
+ * it. Every number is null when Orbit does not report it; durations and tokens are medians.
+ */
+export interface OrbitTaskInsightsSummary {
+  readonly tasks: number | null;
+  readonly merged: number | null;
+  readonly tokens: number | null;
+  readonly tokensPerMergedPr: number | null;
+  /** Ready to merged. */
+  readonly leadTimeMs: number | null;
+  /** Orbit 6041: ready to deployed, once deploys are stamped per task. */
+  readonly deliveryTimeMs: number | null;
+  /** Orbit 6041: merged to deployed. */
+  readonly deployWaitMs: number | null;
+  /** Orbit 6042: PR opened to merged. Orbit's own `merge_wait_ms` starts when subtasks settle. */
+  readonly prMergeWaitMs: number | null;
+  readonly prFirstPass: number | null;
+  readonly wastedShare: number | null;
+  readonly reviewRounds: number | null;
+}
+
+export interface OrbitTaskInsightsBreakdownRow {
+  readonly key: string;
+  readonly label: string;
+  readonly tasks: number | null;
+  readonly merged: number | null;
+  readonly tokensPerMergedPr: number | null;
+  readonly leadTimeMs: number | null;
+}
+
+export interface OrbitTaskInsights {
+  readonly period: OrbitTaskInsightsPeriod;
+  readonly current: OrbitTaskInsightsSummary;
+  readonly previous: OrbitTaskInsightsSummary;
+  /** The last 12 weeks, oldest first, whatever the period. */
+  readonly weekly: ReadonlyArray<{
+    readonly weekStart: string;
+    readonly tokensPerMergedPr: number | null;
+  }>;
+  /** Each day of the period, oldest first. */
+  readonly daily: ReadonlyArray<{ readonly date: string; readonly merged: number }>;
+  readonly byModel: ReadonlyArray<OrbitTaskInsightsBreakdownRow>;
+}
+
+export interface OrbitTaskInsightsQuery {
+  readonly period: OrbitTaskInsightsPeriod;
+  /** Orbit Project id. Without it the numbers cover every task this Node may read. */
+  readonly project?: number;
+}
+
 /** Realtime notices only invalidate; the read that follows is authoritative. */
 export type OrbitTasksInvalidation =
   | { readonly kind: "list" }
@@ -186,6 +239,9 @@ export type OrbitTasksInvalidation =
 export interface OrbitTasksClient {
   readonly listTasks: (query?: OrbitTasksListQuery) => Promise<OrbitTasksResult<OrbitTasksPage>>;
   readonly getTask: (taskId: number) => Promise<OrbitTasksResult<OrbitTaskDetail>>;
+  readonly getTaskInsights: (
+    query: OrbitTaskInsightsQuery,
+  ) => Promise<OrbitTasksResult<OrbitTaskInsights>>;
   /** Tells subscribers to read again: a Reverb notice, a reconnect, or a poll tick. */
   readonly invalidate: (target: OrbitTasksInvalidation) => Promise<void>;
   readonly onInvalidate: (listener: (target: OrbitTasksInvalidation) => unknown) => () => void;

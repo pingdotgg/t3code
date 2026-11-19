@@ -14,7 +14,6 @@ import {
   observeOrbitTask,
   subtaskLead,
   subtaskUsageText,
-  taskLevelAgents,
   taskUsage,
 } from "./taskDetail.logic";
 
@@ -44,6 +43,13 @@ describe("task detail", () => {
     expect(agentsFor(task, task.subtasks[0]!.id).earlier.map((row) => row.label)).toEqual([
       "Reviewer",
     ]);
+    const wholeTask = {
+      ...task,
+      agents: task.agents.map((agent) =>
+        agent.role === "reviewer" ? { ...agent, subtaskIds: [], current: true } : agent,
+      ),
+    };
+    expect(agentsFor(wholeTask, null).current.at(-1)?.label).toBe("Reviewer · whole task");
     const waiting = await fixture(465);
     expect(subtaskLead(waiting, waiting.subtasks[1]!)).toMatchObject({
       kind: "agent",
@@ -72,9 +78,9 @@ describe("task detail", () => {
       { kind: "done" },
       { kind: "agent", tone: "info" },
     ]);
-    expect(taskLevelAgents(task).map((row) => row.label)).toEqual([
+    expect(agentsFor(task, null).current.map((row) => row.label)).toEqual([
       "Implementer · all subtasks",
-      "Reviewer",
+      "Reviewer · Attachment chips in the composer",
     ]);
     expect(subtaskLead({ ...task, status: "waiting_for_review" }, task.subtasks[1]!)).toMatchObject(
       { kind: "agent", tone: "warning" },
@@ -107,10 +113,13 @@ describe("task detail", () => {
   it("distinguishes unknown metrics from zero and keeps Orbit's task totals", async () => {
     const task = await fixture(482);
     expect(taskUsage(task.metrics)).toMatchObject({
-      text: "38m · tokens unknown",
+      text: "38m · –",
       lines: { added: 610, deleted: 88 },
     });
     expect(taskUsage(task.metrics).description).toContain("across all attempts");
+    const none = { durationMs: null, tokens: null, linesAdded: null, linesDeleted: null };
+    expect(taskUsage(none).text).toBe("–");
+    expect(taskUsage({ ...none, tokens: 2_000_000 }).text).toBe("– · 2M tokens");
     expect(taskUsage({ durationMs: 0, tokens: 0, linesAdded: 0, linesDeleted: 0 })).toMatchObject({
       text: "0s · 0 tokens",
       lines: { added: 0, deleted: 0 },
