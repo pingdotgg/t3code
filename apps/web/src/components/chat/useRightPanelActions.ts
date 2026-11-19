@@ -17,6 +17,7 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
+  browserSurfaceThreadRef,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
@@ -167,7 +168,12 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openFileSurfaceStable = useStableCallback(openFileSurface);
   const closePreviewPanel = () => {
     if (activeThreadRef) {
-      if (activeRightPanelSurface?.kind === "preview" && activeRightPanelSurface.resourceId) {
+      if (
+        activeRightPanelSurface?.kind === "preview" &&
+        activeRightPanelSurface.resourceId &&
+        // Another thread's tab cannot float here: the floating browser shows this thread's sessions.
+        browserSurfaceThreadRef(activeThreadRef, activeRightPanelSurface) === activeThreadRef
+      ) {
         usePreviewMiniPlayerStore
           .getState()
           .open(activeThreadRef, browserMiniPlayerSource(activeRightPanelSurface.resourceId));
@@ -202,7 +208,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
     if (surface.kind === "preview" && surface.resourceId) {
-      setActivePreviewTab(activeThreadRef, surface.resourceId);
+      setActivePreviewTab(browserSurfaceThreadRef(activeThreadRef, surface), surface.resourceId);
     }
     if (surface.kind === "terminal") {
       focusTerminal(activeThreadRef, surface.activeTerminalId);

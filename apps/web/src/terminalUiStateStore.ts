@@ -3,6 +3,7 @@ import { type ScopedThreadRef } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
+import { panelScopeKey } from "./panelScope";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -232,7 +233,7 @@ function isValidTerminalId(terminalId: string): boolean {
 }
 
 function terminalThreadKey(threadRef: ScopedThreadRef): string {
-  return scopedThreadKey(threadRef);
+  return panelScopeKey(threadRef);
 }
 
 function copyTerminalGroups(groups: ThreadTerminalGroup[]): ThreadTerminalGroup[] {
@@ -599,7 +600,7 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
     (set, get) => {
       const removeTerminalUiState = (threadRef: ScopedThreadRef) =>
         set((state) => {
-          const threadKey = terminalThreadKey(threadRef);
+          const threadKey = scopedThreadKey(threadRef);
           if (
             state.terminalUiStateByThreadKey[threadKey] === undefined &&
             state.suppressedTerminalIdsByThreadKey[threadKey] === undefined &&
