@@ -217,6 +217,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
+  readonly mergeCommitSha?: string | null;
+  readonly mergedBy?: PullRequestActor | null;
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
@@ -249,6 +251,7 @@ export interface ProviderDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface ProviderDiffFileContents {
@@ -455,6 +458,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      readonly path?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
 
