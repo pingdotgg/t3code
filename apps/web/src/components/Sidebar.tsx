@@ -2622,7 +2622,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
-        // Only sidebar rows act on the sidebar's selection; other surfaces pass options.
+        // Only sidebar rows act on the sidebar's selection; search and other surfaces pass options.
         if (
           options === undefined &&
           selectionState.hasSelection() &&
@@ -2632,7 +2632,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
           return;
         }
-        // The task board also opens this menu for threads the list is not showing.
+        // Search results and the task board reach threads that are not rendered rows.
         const thread =
           threadByKeyRef.current.get(threadKey) ??
           threads.find((candidate) => threadShellKey(candidate) === threadKey);
@@ -2693,6 +2693,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 canShareWithGuestAtom(threadRef.environmentId),
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
+              // Renaming needs a surface that shows the title: a sidebar row or one passing onStartRename.
+              canRename: options === undefined || options.onStartRename !== undefined,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -2920,6 +2922,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     },
   );
   useProvideThreadContextMenu(handleThreadContextMenu);
+  const handleSearchResultContextMenu = useStableCallback(
+    (threadRef: ScopedThreadRef, position: { x: number; y: number }, source: ContextMenuSource) =>
+      handleThreadContextMenu(threadRef, position, source, {}),
+  );
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for thread navigation shortcuts using the current thread list
   useEffect(() => {
@@ -3307,6 +3313,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           searchMatchQuery={threadSearch.query}
                           onHighlight={() => setActiveSearchResultIndex(index)}
                           onSelect={() => selectThreadSearchResult(thread)}
+                          onContextMenu={handleSearchResultContextMenu}
                           onFileDropThreads={handleThreadFileDrop}
                         />
                       );

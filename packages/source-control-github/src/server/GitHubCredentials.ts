@@ -23,6 +23,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubClient from "../shared/definition.ts";
+import { makeGhProcess } from "./gitHubCliProcess.ts";
 
 /**
  * Every gh run on the server shares this. A burst of them (a status poll across many checkouts)
@@ -81,11 +82,21 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
+export class GitHubCliTimeoutError extends Schema.TaggedError<GitHubCliTimeoutError>()(
+  "GitHubCliTimeoutError",
+  { host: Schema.String, timeoutMs: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `The GitHub CLI did not hand over a credential for ${this.host} within ${this.timeoutMs / 1000} seconds. The server may be overloaded; try again.`;
+  }
+}
+
 export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
   | GitHubCliFailedError
+  | GitHubCliTimeoutError
   | SettingsSecretUnresolvedError;
 
 export class GitHubCredentials extends Context.Service<
@@ -139,7 +150,7 @@ export function environmentToken(
 /** @public */
 export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
-  const process = sourceControlHost.process;
+  const process = yield* makeGhProcess;
   const crypto = yield* Digest.Digest;
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
@@ -177,7 +188,9 @@ export const make = Effect.gen(function* () {
             : // gh exits non-zero with "no oauth token" when it has no login for the host.
               error._tag === "VcsProcessExitError"
               ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
-              : new GitHubCliFailedError({ host, cause: error }),
+              : error._tag === "VcsProcessTimeoutError"
+                ? new GitHubCliTimeoutError({ host, timeoutMs: error.timeoutMs, cause: error })
+                : new GitHubCliFailedError({ host, cause: error }),
         ),
         Effect.map((output) => output.stdout.trim()),
         Effect.filterOrFail(
@@ -239,7 +252,10 @@ export const make = Effect.gen(function* () {
       Exit.isSuccess(exit)
         ? TOKEN_TTL
         : Exit.findErrorOption(exit).pipe(
-              Option.exists((error) => error._tag === "GitHubCliFailedError"),
+              Option.exists(
+                (error) =>
+                  error._tag === "GitHubCliFailedError" || error._tag === "GitHubCliTimeoutError",
+              ),
             )
           ? Duration.zero
           : MISSING_TTL,
