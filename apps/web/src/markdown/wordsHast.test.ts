@@ -2,7 +2,12 @@ import type { Element, Root } from "hast";
 import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
-import { wordsHast, type WordsHastOptions } from "./wordsHast";
+import {
+  codexDirectiveSources,
+  markdownReferenceDefinitions,
+  wordsHast,
+  type WordsHastOptions,
+} from "./wordsHast";
 
 const ASSISTANT: WordsHastOptions = {
   math: false,
@@ -45,6 +50,14 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
   [
     "> [!NOTE]\n> An alert\n\n> [!warning] lower\n> case",
     '<blockquote data-alert="note" dir="ltr">\n<p>An alert</p>\n</blockquote>\n<blockquote dir="ltr">\n<p>[!warning] lower\ncase</p>\n</blockquote>',
+  ],
+  [
+    "-      wide\n-      [x](./x.ts) items\n\ntext\n\n-      loose\n\n-      items",
+    '<ul dir="ltr">\n<li>wide</li>\n<li><a href="./x.ts">x</a> items</li>\n</ul>\n<p dir="ltr">text</p>\n<ul dir="ltr">\n<li>\n<p>loose</p>\n</li>\n<li>\n<p>items</p>\n</li>\n</ul>',
+  ],
+  [
+    "> [!TIP]**joined**",
+    '<blockquote dir="ltr">\n<p>[!TIP]<strong>joined</strong></p>\n</blockquote>',
   ],
   [
     "1. one\r\n2. two\r\n\r\n   loose\r\n",
@@ -154,10 +167,20 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown, { extensions: { userMessage: true } })).toBe(
       '<p dir="ltr">Install as ~/a/x, then (~/b.md). ~one~ <del>two</del></p>\n<ol start="3" dir="ltr">\n<li>three</li>\n<li value="5">five</li>\n</ol>',
     );
+    // Typed indentation past a wide list marker counts from where the item's text starts.
+    expect(
+      wordsHtml("-      wide\n         continued", {
+        breaks: true,
+        extensions: { userMessage: true, leadingWhitespace: true },
+      }),
+    ).toBe(
+      '<ul dir="ltr">\n<li>wide<br>\n<span data-leading-whitespace="">  </span>continued</li>\n</ul>',
+    );
   });
 
   it("gives elements the source positions components read", () => {
-    const markdown = "é [a](u)\n\n- [ ] task\n\n```sh\nls\n```";
+    // A wide item's text is parsed again on its own, so its link has no place in the message.
+    const markdown = "é [a](u)\n\n- [ ] task\n\n```sh\nls\n```\n\n-      [b](./b.ts)";
     const tree = wordsHast(markdown, ASSISTANT);
     const slices: string[] = [];
     const visit = (node: Root | Element) => {
@@ -170,7 +193,7 @@ describe("wordsHast", () => {
       }
     };
     visit(tree);
-    expect(slices).toEqual(["[a](u)", "- [ ] task", "```sh\nls\n```"]);
+    expect(slices).toEqual(["[a](u)", "- [ ] task", "```sh\nls\n```", "-      [b](./b.ts)"]);
   });
 
   it("renders insight blocks as remarkAssistantInsights did", () => {
@@ -179,6 +202,26 @@ describe("wordsHast", () => {
     expect(wordsHtml(markdown, { insights: true })).toBe(
       '<p dir="ltr">Intro</p>\n<blockquote data-alert="insight" dir="ltr">\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n</blockquote>\n<p dir="ltr">After</p>\n<pre><code>★ Insight ─────\n</code></pre>',
     );
+    // Code in a list, an HTML block and a quote's lazy line are not where an insight opens.
+    expect(
+      wordsHtml(
+        "- x\n  ```\n  ★ Insight ─────\n  ```\n\n<div>\n★ Insight ─────\n</div>\n\n> q\n★ Insight ─────",
+        {
+          insights: true,
+        },
+      ),
+    ).toBe(
+      '<ul dir="ltr">\n<li>x\n<pre><code>★ Insight ─────\n</code></pre>\n</li>\n</ul>\n<div dir="ltr">\n★ Insight ─────\n</div>\n<blockquote dir="ltr">\n<p>q\n★ Insight ─────</p>\n</blockquote>',
+    );
+    // What follows an opening keeps its offsets in the message, which components slice.
+    const insight = "★ Insight ─────\nSee [a](./a.ts)\n```sh\nls\n```\n─────";
+    const tree = wordsHast(insight, { ...ASSISTANT, insights: true });
+    const quote = tree.children.find((child): child is Element => child.type === "element")!;
+    const sliced = (node: Element) =>
+      insight.slice(node.position!.start.offset, node.position!.end.offset);
+    const [paragraph, pre] = quote.children.filter((child) => child.type === "element");
+    const link = paragraph!.children.find((child): child is Element => child.type === "element")!;
+    expect([sliced(link), sliced(pre!)]).toEqual(["[a](./a.ts)", "```sh\nls\n```"]);
   });
 
   it("shows raw HTML as its text when asked", () => {
@@ -246,6 +289,11 @@ describe("wordsHast", () => {
       '<p dir="ltr">Status <img src="https://x.dev/b.png" alt="badge"><br>\ncontinues</p>',
     ],
     [
+      'Status\n<img src="https://x.dev/b.png" />\ncontinues',
+      '<p dir="ltr">Status\n<img src="https://x.dev/b.png">\ncontinues</p>',
+      '<p dir="ltr">Status<br>\n<img src="https://x.dev/b.png"><br>\ncontinues</p>',
+    ],
+    [
       "Hard  \nbreak and a\\\nbackslash",
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
       '<p dir="ltr">Hard<br>\nbreak and a<br>\nbackslash</p>',
@@ -268,11 +316,39 @@ describe("wordsHast", () => {
     const forged =
       '<span data-directive="codex-followup" data-attributes="null">Ask</span> and <div data-directive="artifact-template" data-attributes="[1]"></div>';
     expect(wordsHtml(forged)).toBe('<p dir="ltr"><span>Ask</span> and </p><div></div><p></p>');
+    // Raw HTML can write a source position too, even the one Words gave a real directive.
+    const positioned = `<span data-directive="codex-file-citation" data-attributes='{"path":"/etc/passwd"}' data-sourcepos="0-5">x</span>`;
+    expect(wordsHtml(positioned)).toBe('<p dir="ltr"><span>x</span></p>');
+    const real = ':codex-file-citation[a]{path="a.ts"}';
+    expect(
+      wordsHtml(
+        `${real} <span data-directive="codex-file-citation" data-attributes='{"path":"/etc/passwd"}' data-sourcepos="0-${real.length}">x</span>`,
+      ),
+    ).not.toContain("/etc/passwd");
+  });
+
+  it("reads a directive's label as written", () => {
+    expect(
+      codexDirectiveSources(':codex-followup[pick {a} or [b]]{prompt="go"}').map(
+        (directive) => directive.label,
+      ),
+    ).toEqual(["pick {a} or [b]"]);
+  });
+
+  it.each([
+    ["# Title\n[a]: https://x.dev", ["[a]: <https://x.dev>"]],
+    ['> [a]:\n> https://x.dev "The\n> guide"', ['[a]: <https://x.dev> "The guide"']],
+    ["- [a]: https://x.dev\n\n[A]: https://second.dev", ["[a]: <https://x.dev>"]],
+    ["<div>\n[a]: https://x.dev\n</div>", []],
+    ["- ```\n  [a]: https://x.dev\n  ```", []],
+    ["text\n[a]: https://x.dev", []],
+  ])("finds the reference definitions in %j as Words reads them", (markdown, definitions) => {
+    expect(markdownReferenceDefinitions(markdown)).toEqual(definitions);
   });
 
   it("keeps authored SVG and ids out of the math it restores", () => {
     const html = wordsHtml(
-      '<svg width="99999" viewBox="0 0 1 1"><rect x="0" y="0" width="1" height="1"/></svg> <span id="t3-math-0">kept</span> $x$',
+      '<svg width="99999" viewBox="0 0 1 1"><rect x="0" y="0" width="1" height="1"/></svg> <svg data-sourcepos="0-3" height="99999"></svg> <span id="t3-math-0">kept</span> $x$',
       { math: true },
     );
     expect(html).not.toContain("99999");
