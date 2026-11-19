@@ -1013,6 +1013,7 @@ export function useThreadComposerState(input: {
       messageId,
       commandId: CommandId.make(metadata.commandId),
       text,
+      restoreToDraft: false,
       attachments: [],
       modelSelection,
       runtimeMode: thread.runtimeMode,
