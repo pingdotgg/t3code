@@ -141,6 +141,8 @@ describe("DesktopLifecycle", () => {
         Effect.gen(function* () {
           const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
           yield* lifecycle.register;
+          // DesktopUpdates sets this before calling quitAndInstall.
+          yield* Ref.set((yield* DesktopState.DesktopState).quitting, true);
 
           appListeners.get("before-quit-for-update")?.();
           yield* Effect.yieldNow;
@@ -164,6 +166,57 @@ describe("DesktopLifecycle", () => {
         }),
       ).pipe(Effect.provide(layer));
     },
+  );
+
+  it.effect("shuts down in order on a quit after the updater refused to install", () =>
+    Effect.gen(function* () {
+      const appListeners = new Map<string, (...args: readonly unknown[]) => void>();
+      const quitRequested = yield* Deferred.make<void>();
+      const layerEnvironment = Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+        platform: "darwin",
+        isDevelopment: false,
+      } as DesktopEnvironment.DesktopEnvironment["Service"]);
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          layerElectronApp(
+            appListeners,
+            Deferred.succeed(quitRequested, undefined).pipe(Effect.asVoid),
+          ),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(layerEnvironment),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+          const state = yield* DesktopState.DesktopState;
+          const shutdown = yield* DesktopShutdown.DesktopShutdown;
+          yield* lifecycle.register;
+
+          yield* Ref.set(state.quitting, true);
+          appListeners.get("before-quit-for-update")?.();
+          // DesktopUpdates.recoverFailedInstall after Squirrel reports an install error.
+          yield* Ref.set(state.quitting, false);
+
+          let prevented = false;
+          appListeners.get("before-quit")?.({
+            preventDefault: () => {
+              prevented = true;
+            },
+          } as Electron.Event);
+
+          assert.isTrue(prevented, "the recovered backends must stop before the app quits");
+          yield* shutdown.awaitRequest;
+          yield* shutdown.markComplete;
+          yield* Deferred.await(quitRequested);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
   );
 
   it.effect("destroys windows before waiting for backend shutdown", () =>
