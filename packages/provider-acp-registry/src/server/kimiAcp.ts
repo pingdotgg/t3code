@@ -28,13 +28,27 @@ const KimiTurnEnded = Schema.fromJsonString(
 );
 const decodeTurnEnded = Schema.decodeUnknownOption(KimiTurnEnded);
 type KimiTurnEnded = typeof KimiTurnEnded.Type;
+const decodePromptSteered = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({ type: Schema.Literal("prompt.steered"), agentId: Schema.Literal("main") }),
+  ),
+);
 
 class KimiTurnNotEnded extends Schema.TaggedError<KimiTurnNotEnded>()("KimiTurnNotEnded", {}) {}
 
 const noOutcome = (_result: EffectAcpSchema.PromptResponse) =>
   Effect.succeed<OrchestrationV2ProviderFailure | undefined>(undefined);
 
-function turnFailure(ended: KimiTurnEnded): OrchestrationV2ProviderFailure | undefined {
+// Kimi runs that work in turns it never reports over ACP, so T3 cannot show it.
+const hiddenWorkFailure = (message: string) =>
+  makeProviderFailure({ message, code: null, class: "provider_error", retryable: false });
+
+function turnFailure(ended: KimiTurnEnded, steered: boolean) {
+  if (steered && ended.reason === "completed") {
+    return hiddenWorkFailure(
+      "Kimi ended this turn early to handle a background task and kept working out of view. Its further output can't be shown here.",
+    );
+  }
   if (ended.reason !== "failed") return undefined;
   const code = ended.error?.code;
   return makeProviderFailure({
@@ -53,7 +67,8 @@ function turnFailure(ended: KimiTurnEnded): OrchestrationV2ProviderFailure | und
 /**
  * Kimi Code (2.5.3, 2.6.1) answers a failed turn with `end_turn` and no error. Its main
  * agent's `wire.jsonl` records the real outcome, so the check reads the `turn.ended`
- * this prompt appended.
+ * this prompt appended. Kimi 2.6.1 also answers `end_turn` when a steered notice ends the
+ * turn, and at once for a prompt it only queues; neither is a completed turn.
  */
 export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(function* (
   configuredHome: string | undefined,
@@ -91,6 +106,7 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
       if (Option.isNone(wire)) return undefined;
       let offset = startOffset;
       let ended: KimiTurnEnded | undefined;
+      let steered = false;
       // Each poll decodes only the complete lines appended since the last one.
       const readAppended = Effect.scoped(
         Effect.gen(function* () {
@@ -107,9 +123,12 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           const complete = bytes.lastIndexOf(0x0a) + 1;
           offset += BigInt(complete);
           for (const line of bytes.subarray(0, complete).toString("utf8").split("\n")) {
+            if (ended === undefined && line.includes('"prompt.steered"')) {
+              steered ||= Option.isSome(decodePromptSteered(line));
+            }
             if (!line.includes('"turn.ended"')) continue;
             const record = decodeTurnEnded(line);
-            if (Option.isSome(record)) ended = record.value;
+            if (Option.isSome(record)) ended ??= record.value;
           }
           if (ended === undefined) return yield* new KimiTurnNotEnded();
           return ended;
@@ -122,7 +141,15 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           schedule: Schedule.spaced("50 millis"),
           while: (error) => error._tag === "KimiTurnNotEnded",
         }),
-        Effect.map(turnFailure),
+        Effect.map((ended) => turnFailure(ended, steered)),
+        Effect.catchTags({
+          KimiTurnNotEnded: () =>
+            Effect.succeed(
+              hiddenWorkFailure(
+                "Kimi queued this message behind work it was still doing and answered before running it. Its reply can't be shown here.",
+              ),
+            ),
+        }),
         Effect.catch(() =>
           Effect.logWarning("Kimi's session log has no outcome for this turn.").pipe(
             Effect.as(undefined),
