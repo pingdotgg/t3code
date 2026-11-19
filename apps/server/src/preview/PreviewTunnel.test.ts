@@ -81,6 +81,23 @@ const openTunnel = (url: string) =>
     (socket) => Effect.sync(() => socket.terminate()),
   );
 
+/** How the route turned down a tunnel: its status, and whether it marked the port as the reason. */
+const refusal = (client: NodeWS.WebSocket) =>
+  Effect.promise(
+    () =>
+      new Promise<{ status: number | undefined; portRefused: boolean }>((resolve, reject) => {
+        client.on("unexpected-response", (_request, response) =>
+          resolve({
+            status: response.statusCode,
+            portRefused:
+              response.headers[PreviewTunnel.PREVIEW_TUNNEL_PORT_REFUSED_HEADER] !== undefined,
+          }),
+        );
+        client.on("open", () => reject(new Error("tunnel opened")));
+        client.on("error", reject);
+      }),
+  );
+
 it.effect("pipes bytes both ways between the WebSocket and the loopback port", () =>
   Effect.gen(function* () {
     const upstreamReceived: number[] = [];
@@ -108,9 +125,14 @@ it.effect("pipes bytes both ways between the WebSocket and the loopback port", (
 );
 
 it.effect.each([
-  { case: "the server's own port", target: "self", ticket: "operator" },
-  { case: "a session without terminal:operate", target: "listed", ticket: "reader" },
-] as const)("refuses $case with 403 before dialling", ({ target, ticket }) =>
+  { case: "the server's own port", target: "self", ticket: "operator", portRefused: true },
+  {
+    case: "a session without terminal:operate",
+    target: "listed",
+    ticket: "reader",
+    portRefused: false,
+  },
+] as const)("refuses $case with 403 before dialling", ({ target, ticket, portRefused }) =>
   Effect.gen(function* () {
     let dialled = 0;
     const countDial = (socket: NodeNet.Socket) => {
@@ -123,16 +145,28 @@ it.effect.each([
     const client = yield* openTunnel(
       `${tunnel.origin}/api/preview/tunnel?port=${port}&wsTicket=${ticket}`,
     );
-    const status = yield* Effect.promise(
+    const response = yield* refusal(client);
+    expect(response).toEqual({ status: 403, portRefused });
+    expect(dialled).toBe(0);
+  }),
+);
+
+it.effect("answers a port nothing listens on with 502, marked as about the port", () =>
+  Effect.gen(function* () {
+    const closed = yield* Effect.promise(
       () =>
-        new Promise<number | undefined>((resolve, reject) => {
-          client.on("unexpected-response", (_request, response) => resolve(response.statusCode));
-          client.on("open", () => reject(new Error("tunnel opened")));
-          client.on("error", reject);
+        new Promise<number>((resolve) => {
+          const server = NodeNet.createServer();
+          server.listen(0, "127.0.0.1", () => {
+            const { port } = server.address() as NodeNet.AddressInfo;
+            server.close(() => resolve(port));
+          });
         }),
     );
-    expect(status).toBe(403);
-    expect(dialled).toBe(0);
+    const tunnel = yield* serveTunnel();
+    const client = yield* openTunnel(`${tunnel.origin}/api/preview/tunnel?port=${closed}`);
+    const response = yield* refusal(client);
+    expect(response).toEqual({ status: 502, portRefused: true });
   }),
 );
 
