@@ -129,6 +129,8 @@ export class ThemeDestinationDirectoryError extends Schema.TaggedError<ThemeDest
   }
 }
 
+const isThemeDestinationDirectoryError = Schema.is(ThemeDestinationDirectoryError);
+
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
 
@@ -325,7 +327,6 @@ const publishThemeFile = Effect.fn(function* (input: {
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
 
-  // The rollback below moves and deletes single entries, so a directory would be moved away.
   const destinationIsDirectory = yield* Effect.try({
     try: () => NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory() ?? false,
     catch: publishFailure,
@@ -356,19 +357,36 @@ const publishThemeFile = Effect.fn(function* (input: {
     catch: publishFailure,
   });
 
-  // Atomic rename avoids a check/replace race and preserves the exact entry for rollback.
   const hadPrevious = yield* Effect.try({
     try: () => {
+      // A rename onto a regular file rejects a directory even if it appeared after lstat.
+      const fd = NodeFS.openSync(backupPath, "wx", 0o600);
+      let saved = false;
       try {
+        NodeFS.closeSync(fd);
         NodeFS.renameSync(destinationPath, backupPath);
+        saved = true;
         return true;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        if (NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory()) {
+          throw new ThemeDestinationDirectoryError({ themeId, destinationPath });
+        }
         throw error;
+      } finally {
+        if (!saved) NodeFS.unlinkSync(backupPath);
       }
     },
-    catch: publishFailure,
-  });
+    catch: (cause) => (isThemeDestinationDirectoryError(cause) ? cause : publishFailure(cause)),
+  }).pipe(
+    Effect.onError(() =>
+      Effect.sync(() => {
+        try {
+          NodeFS.unlinkSync(stagingPath);
+        } catch {}
+      }),
+    ),
+  );
 
   const revert = Effect.sync(() => {
     try {
