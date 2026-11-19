@@ -76,7 +76,15 @@ const appDir = stageApp();
 // WSLENV is what carries these variables across to the Windows process.
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
-const forwarded = ["VITE_DEV_SERVER_URL", "AGENT_BOARD_CDP_PORT"];
+const forwarded = [
+  "VITE_DEV_SERVER_URL",
+  "AGENT_BOARD_CDP_PORT",
+  "AGENT_BOARD_ENGINE_URL",
+  "AGENT_BOARD_TOKEN",
+  "AGENT_BOARD_T3_HOME",
+  "AGENT_BOARD_T3_CLI",
+  "AGENT_BOARD_WSL_DISTRO",
+];
 env.WSLENV = [env.WSLENV, ...forwarded].filter(Boolean).join(":");
 
 const child = NodeChildProcess.spawn(

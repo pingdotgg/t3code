@@ -2,7 +2,9 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, net, protocol } from "electron";
+import { app, BrowserWindow, Menu, nativeTheme, net, protocol } from "electron";
+
+import { registerEngineIpc } from "./ipc";
 
 const SCHEME = "agentboard";
 // oxlint-disable-next-line t3code/no-global-process-runtime -- The board has no Effect runtime.
@@ -72,21 +74,16 @@ function openWindow(): void {
   void window.loadURL(devServerUrl ?? `${SCHEME}://app/index.html`);
 }
 
-const isEpochMs = (value: unknown): value is number => Number.isFinite(value);
-
-// The renderer reports wall-clock time because its performance clock starts at navigation.
-// process.getCreationTime() is skewed under WSL (it once came out negative), so the clock
-// starts at Node's init in the main process instead.
-ipcMain.on("board:first-paint", (_event, epochMs) => {
-  if (!isEpochMs(epochMs)) return;
-  console.log(`board:first-paint ${Math.round(epochMs - performance.timeOrigin)} ms`);
-});
+const engine = registerEngineIpc({ env: process.env, platform });
 
 app.on("window-all-closed", () => app.quit());
+
+app.on("before-quit", () => engine.release());
 
 void app.whenReady().then(() => {
   // macOS keeps its menu for the standard Cmd shortcuts.
   if (platform !== "darwin") Menu.setApplicationMenu(null);
   protocol.handle(SCHEME, serveRenderer);
+  engine.start();
   openWindow();
 });

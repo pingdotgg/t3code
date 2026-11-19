@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { ProjectList } from "./ProjectList";
 import { Section } from "./Section";
 
 export function Sidebar({ footer }: { footer?: ReactNode }) {
@@ -14,13 +15,13 @@ export function Sidebar({ footer }: { footer?: ReactNode }) {
         </div>
         Agent Board
       </div>
-      <Section title="Projects" empty="No projects yet" />
-      <Section title="Workspace" empty="Nothing here yet" />
+      <Section title="Projects" className="min-h-0 shrink">
+        <ProjectList />
+      </Section>
+      <Section title="Workspace" empty="Nothing here yet" className="shrink-0" />
       <div className="flex-1" />
       {footer && (
-        <div className="flex items-center gap-2 border-t border-line p-2 text-xs text-muted">
-          {footer}
-        </div>
+        <div className="shrink-0 border-t border-line p-2 text-xs text-muted">{footer}</div>
       )}
     </aside>
   );

@@ -21,8 +21,12 @@
     "standards:deps": "cd ../.. && depcruise --config standards/.dependency-cruiser.cjs --ignore-known standards/dependency-baseline.json apps packages"
   },
   "dependencies": {
+    "@effect/atom-react": "catalog:",
     "@fontsource-variable/inter": "^5.3.0",
+    "@t3tools/client-runtime": "workspace:*",
+    "@t3tools/contracts": "workspace:*",
     "@tailwindcss/vite": "catalog:",
+    "effect": "catalog:",
     "electron": "44.10.1",
     "lucide-react": "^0.564.0",
     "react": "catalog:",

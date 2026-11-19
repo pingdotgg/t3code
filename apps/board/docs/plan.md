@@ -326,7 +326,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends K1 to the base-branch stack and the operator lands it bottom-up.
 
-## Boot or join the WSL engine and list its projects (B2)
+## Join T3's engine in WSL and list its projects (B2)
 
 **Depends on.** K1.
 
@@ -342,34 +342,36 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Build.**
 
 - [ ] In `wslEngine.ts`, run every engine command inside WSL through `wsl.exe -d <distro> --cd ~ --exec`, with the login-shell `PATH`, the way T3 desktop does (`apps/desktop/src/backend/DesktopBackendConfiguration.ts:727-752`). The distro is WSL's default, and a setting picks another from `wsl.exe --list --verbose`. On Linux, run the same commands directly.
-- [ ] In `engine.ts`, find the engine in this order, so installing the app is enough to reach the WSL dev environment.
+- [ ] In `engine.ts`, reach T3's own engine, never a copy the board runs. That engine is T3's background service in WSL, the same `t3` server T3 desktop runs, with no UI. T3 keeps it updated through `t3 update`. Find it in this order, so installing the app is enough to reach the WSL dev environment.
   - [ ] `AGENT_BOARD_ENGINE_URL`, when set.
-  - [ ] Join a running engine. Read `~/.t3/userdata/server-runtime.json` in the distro, and use its `origin` when its `pid` is alive and the origin answers. That shares projects and threads with T3 desktop's WSL backend or T3's service. `AGENT_BOARD_T3_HOME` overrides `~/.t3` for lanes.
-  - [ ] Boot one. Start `t3 serve` from the login `PATH`, or else the newest T3 runtime T3 desktop installed under `~/.t3/wsl-runtime/`, as a child process the app owns. Stop it when the app quits. Never stop an engine the app joined.
-  - [ ] Install one. When WSL has no T3 runtime, ask once, then run T3's install script (`curl -fsSL https://t3.codes/install.sh | sh`) inside WSL and boot it.
+  - [ ] Join a running engine. Read `~/.t3/userdata/server-runtime.json` in the distro, and use its `origin` when its `pid` is alive and the origin answers. `AGENT_BOARD_T3_HOME` overrides `~/.t3` for lanes.
+  - [ ] Start the service. When `t3` is installed and current but the service is stopped or missing, run `t3 service install`, which also repairs a broken service, then join.
+  - [ ] Install T3. When `t3` is missing, ask once, then run T3's install script (`curl -fsSL https://t3.codes/install.sh | sh`) and `t3 service install` inside WSL, then join.
+  - [ ] Update T3. When `t3` or the running engine is older than this client accepts, by the rule in `@t3tools/client-runtime/connection`, ask once, then run `t3 update --yes`, then join.
+- [ ] Keep WSL running while the app is open. Hold one idle `wsl.exe` process for the distro, and end it on quit, so WSL does not shut down under the service. Never stop the service itself.
 - [ ] Mint a bearer with that runtime's `auth session issue --token-only --label agent-board --ttl 30d` through `wslEngine.ts`. `AGENT_BOARD_T3_CLI` overrides the command. Store the token with Electron `safeStorage`. On a 401, mint a new token once, then surface `auth_failed`.
 - [ ] In `platform.ts` and `runtime.ts`, build the connection runtime the way `apps/mobile/src/connection/platform.ts` and `runtime.ts` do, with a bearer target registered through `ConnectionOnboarding`.
 - [ ] In `state/projects.ts`, read projects with `createEnvironmentProjectAtoms`. `ProjectList.tsx` lists them.
-- [ ] In `EngineStatus.tsx`, show how the app reached the engine and its phase, as `Engine connected · joined`, `Engine connected · booted`, `Starting engine in WSL`, `Connecting`, or `Offline`.
+- [ ] In `EngineStatus.tsx`, show the phase, as `Engine connected`, `Starting T3 in WSL`, `Installing T3 in WSL`, `Updating T3 in WSL`, `Connecting`, or `Offline` with the reason.
 
 **You see.**
 
-- [ ] On a fresh launch with nothing running, the app starts the engine in WSL itself, and the sidebar lists the projects from that environment.
+- [ ] On a fresh launch, the app finds or starts T3's service in WSL, and the sidebar lists the projects from that environment.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
-- [ ] `engine.test.ts` uses a fake `wsl.exe` runner and a fake fetch. It asserts the discovery order, that a stale `server-runtime.json` (dead `pid`) leads to a boot, that the app stops only an engine it booted, exactly one reissue on the first 401, and the `auth_failed` error on the second 401. Run `vp test run electron/engine.test.ts` from `apps/board`.
+- [ ] `engine.test.ts` uses a fake `wsl.exe` runner and a fake fetch. It asserts the discovery order, that a stale `server-runtime.json` (dead `pid`) leads to `t3 service install`, that an old `t3` leads to the update prompt, that the app never stops the service, exactly one reissue on the first 401, and the `auth_failed` error on the second 401. Run `vp test run electron/engine.test.ts` from `apps/board`.
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk does not have the app, so record that fact. Seed three projects in the lane engine and open the head app. Save `b2-regression.png`. Pass when the sidebar lists the three seeded project names.
-- [ ] Lane 2. Start the Windows app with no engine running in WSL. Save `b2-boot.png`. Pass when the footer shows `Starting engine in WSL`, then `Engine connected · booted` within 15 s, and the WSL process list shows the child engine.
-- [ ] Lane 3. Quit the app after lane 2. Save `b2-quit.txt`. Pass when the booted engine process is gone within 5 s.
+- [ ] Lane 2. Stop the lane service, then start the Windows app. Save `b2-start-service.png`. Pass when the footer shows `Starting T3 in WSL`, then `Engine connected` within 15 s, and `t3 service status` reports it running.
+- [ ] Lane 3. Quit the app after lane 2. Save `b2-quit.txt`. Pass when the service is still running and the app's idle `wsl.exe` process is gone.
 - [ ] Lane 4. Revoke the lane token with `auth session revoke`. Save `b2-reissue.png`. Pass when the app logs one reissue and reconnects.
 - [ ] Lane 5. Add a project through the engine CLI while the app runs. Save `b2-add-project.png`. Pass when the project appears within 2 s.
 - [ ] Lane 6. Archive a project through the engine. Save `b2-archive-project.png`. Pass when the project leaves the list within 2 s.
-- [ ] Lane 7. Start an engine in WSL first, as T3 desktop's WSL backend does, then open the app. Save `b2-join.png`. Pass when the footer shows `Engine connected · joined`, and quitting the app leaves that engine running.
-- [ ] Lane 8. Point `AGENT_BOARD_T3_HOME` at an empty folder with no T3 runtime on the `PATH`. Save `b2-install.png`. Pass when the app asks before installing, and a decline leaves the footer on `Offline` with the reason.
+- [ ] Lane 7. Give the lane only T3 desktop's old `0.0.30` runtime and an old `t3`. Save `b2-update.png`. Pass when the app asks to update T3, and a decline leaves `Offline` with the found version and nothing changed.
+- [ ] Lane 8. Point `AGENT_BOARD_T3_HOME` at an empty folder with no `t3` on the `PATH`. Save `b2-install.png`. Pass when the app asks before installing, and a decline leaves the footer on `Offline` with the reason.
 - [ ] Lane 9. Seed 50 projects. Save `b2-many.png`. Pass when the list scrolls and the footer stays visible.
 - [ ] Lane 10. Run the boundary check at head. Save `b2-boundary.txt`. Pass when it exits 0.
 
@@ -466,7 +468,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Build.**
 
 - [ ] In `engineUpdate.ts`, read the engine version and the `serverSelfUpdate` capability from the server config, and the newest release from `server.getNpmRelease`. Follow `packages/client-runtime/src/connection/outdatedHostUpdate.ts`.
-- [ ] Update the way the engine was reached. For T3's service, start `server.updateServerWithProgress`, keep its `updateId`, and match it to the `ready` lifecycle event after the reconnect to report committed or rolled back. For an engine the app booted from `t3` on the `PATH`, run `t3 update` in WSL, then restart the child. For an engine joined from T3 desktop's runtime, show the version only, because T3 desktop updates its own runtime.
+- [ ] Update T3's service through T3's own path. Start `server.updateServerWithProgress`, keep its `updateId`, and match it to the `ready` lifecycle event after the reconnect to report committed or rolled back. For an engine the app reached through `AGENT_BOARD_ENGINE_URL`, show the version only.
 - [ ] In `EngineVersion.tsx`, show `Engine <version>` and, when a newer release exists and the app can update that engine, an `Update to <version>` button with progress.
 
 **You see.**
@@ -480,7 +482,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Trunk does not have the app, so record that fact. Open the head app against a lane engine. Save `b4-regression.png`. Pass when the footer shows the lane engine's version.
-- [ ] Lane 2. Join an engine started from T3 desktop's runtime under `~/.t3/wsl-runtime/`. Save `b4-joined-desktop.png`. Pass when the version shows and no update button shows.
+- [ ] Lane 2. Reach a lane engine through `AGENT_BOARD_ENGINE_URL`. Save `b4-url-engine.png`. Pass when the version shows and no update button shows.
 - [ ] Lane 3. Install the previous `t3` release as a user service in a scratch home, then open the app. Save `b4-outdated.png`. Pass when the button names the newest release.
 - [ ] Lane 4. Click the update button on the lane 3 service. Save `b4-progress.png`. Pass when progress shows downloading, then installing.
 - [ ] Lane 5. Wait for the reconnect after lane 4. Save `b4-committed.png`. Pass when the footer shows the new version and the outcome reads committed.
@@ -1084,6 +1086,7 @@ These stay unproven until B3 runs.
 
 - Editing T3's `apps/web` and `apps/desktop` lost, because T3 changes them faster than we could merge, and every upstream pull would conflict.
 - Bundling the engine inside our app lost, because engine updates would then wait on our releases. T3's own background service updates itself.
+- A child engine that the board boots and owns lost, because only one server can hold a T3 home's ownership lock, and current T3 desktop then refuses to start (`apps/desktop/src/backend/DesktopBackendPool.ts:249-258`). T3 desktop as the owner lost, because it is not installed here and brings its own UI. T3's background service is the same engine with no UI, and T3 updates it.
 - Storing boards in the engine lost, because it needs an engine change.
 - Storing boards in `~/.agentboard` lost, because `projects.writeFile` writes only inside a project. Boards live in `<project>/.agentboard/<slug>/` with a self-ignoring `.gitignore`.
 - Layouts A (free board) and C (orchestrator hub) lost to layout B in the prototype.
@@ -1103,9 +1106,10 @@ These stay unproven until B3 runs.
 
 - `packages/client-runtime` has no stable API. An upstream merge can break the board build. Every owner runs `vp run --filter @agent-board/app typecheck` after merging upstream, and the fix always lands in `apps/board`.
 - Electron lanes run on the Windows PC and depend on WSL's mirrored networking, which `.wslconfig` sets today. If it changes to NAT, the app can't reach the WSL engine or Vite server on 127.0.0.1, and the lanes fail until it is set back.
-- T3 desktop starts its own WSL backend on `~/.t3` and may not join one the board booted. Two engines on one state folder would fight over `state.sqlite`. B2 lane 7 proves the board joins T3 desktop's engine. If T3 desktop launched second also starts its own, the board stops its child and joins T3 desktop's engine.
+- If T3 desktop is installed later, it refuses to start on the `~/.t3` the service holds. Its fix is T3's own, documented in `docs/user/remote-access.md:540-544`. Turn the desktop's **Local environment** off, and it uses the service on the same home.
 - B4's update lanes need systemd user services in WSL. If they are missing, B4 records the gap and proves the update path on a machine that has them.
 - CLI sessions from `t3 auth session issue` never renew. B2 mints a new token on the first 401.
+- The board builds against upstream `main`, which can move ahead of the newest T3 release. Today both are `0.1.10`, and nightly is `0.1.11`. If a merge from upstream raises the protocol the client needs past the latest release, even an updated service is too old. Merge upstream at release tags when that happens.
 - The orchestrator can write a malformed store file. B5, B7, B8, and B9 parse every file at the boundary, keep the last valid state, and show a banner.
 - T3 cannot limit a child's tools. Read-only roles such as `scout`, `reviewer`, and `security-reviewer` stay read-only only because their role file says so. B12 lane 7 reads the reviewer child's thread and fails when it shows an edit.
 - Lanes in B3, B6, B8, and B12 use the operator's Claude Code and Codex subscriptions, which costs usage. Run them once per head.
