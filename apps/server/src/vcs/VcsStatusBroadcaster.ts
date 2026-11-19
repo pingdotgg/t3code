@@ -531,10 +531,16 @@ export const make = Effect.gen(function* () {
     );
   }, Effect.scoped);
 
+  const requestLocalRefresh = (cwd: string) => {
+    const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
+    localRefreshRequests.set(cwd, requestedAt);
+    return requestedAt;
+  };
+
+  // `earlierRequest` lets a caller that learned of a change earlier share any read started since.
   const refreshLocalStatusCore = Effect.fn("VcsStatusBroadcaster.refreshLocalStatusCore")(
-    function* (cwd: string) {
-      const requestedAt = (localRefreshRequests.get(cwd) ?? 0) + 1;
-      localRefreshRequests.set(cwd, requestedAt);
+    function* (cwd: string, earlierRequest?: number) {
+      const requestedAt = earlierRequest ?? requestLocalRefresh(cwd);
       return yield* localRefreshLocks.withLock(
         cwd,
         Effect.gen(function* () {
@@ -561,14 +567,14 @@ export const make = Effect.gen(function* () {
   // snapshot there is nothing to compare, so the read always happens.
   const refreshLocalStatusUnlessRefsUnchanged = Effect.fn(
     "VcsStatusBroadcaster.refreshLocalStatusUnlessRefsUnchanged",
-  )(function* (cwd: string, refsBeforeLocalRead: string | null) {
+  )(function* (cwd: string, refsBeforeLocalRead: string | null, localRequestedAt?: number) {
     if (
       refsBeforeLocalRead !== null &&
       (yield* workflow.readRefSnapshot(cwd)) === refsBeforeLocalRead
     ) {
       return;
     }
-    yield* refreshLocalStatusCore(cwd);
+    yield* refreshLocalStatusCore(cwd, localRequestedAt);
   });
 
   const refreshLocalStatus: VcsStatusBroadcaster["Service"]["refreshLocalStatus"] = Effect.fn(
@@ -693,6 +699,7 @@ export const make = Effect.gen(function* () {
       readonly policyCwds?: ReadonlyArray<string>;
       /** Refs before a local read the caller just made, which a read of unmoved refs would repeat. */
       readonly refsBeforeLocalRead?: string | null;
+      readonly localRequestedAt?: number;
     },
   ) {
     return yield* withRemoteWriteLock(
@@ -705,7 +712,11 @@ export const make = Effect.gen(function* () {
             : yield* maybeAutoPull(cwd, remoteRead, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
         // Base refs and merge bases can move without changing divergence counts.
-        yield* refreshLocalStatusUnlessRefsUnchanged(cwd, options?.refsBeforeLocalRead ?? null);
+        yield* refreshLocalStatusUnlessRefsUnchanged(
+          cwd,
+          options?.refsBeforeLocalRead ?? null,
+          options?.localRequestedAt,
+        );
         return yield* updateCachedRemoteStatus(cwd, remoteRead, { publish: true });
       }),
     );
@@ -1058,12 +1069,12 @@ export const make = Effect.gen(function* () {
   });
 
   const reconcileCheckedOutRef = Effect.fn("VcsStatusBroadcaster.reconcileCheckedOutRef")(
-    function* (cwd: string) {
+    function* (cwd: string, localRequestedAt: number) {
       if (!detailedSubscribers.has(cwd)) return;
       if ((yield* getCachedStatus(cwd))?.remote) {
-        yield* refreshRemoteStatus(cwd, { refreshUpstream: false });
+        yield* refreshRemoteStatus(cwd, { refreshUpstream: false, localRequestedAt });
       } else {
-        yield* refreshLocalStatusCore(cwd);
+        yield* refreshLocalStatusCore(cwd, localRequestedAt);
       }
     },
   );
@@ -1097,12 +1108,16 @@ export const make = Effect.gen(function* () {
             : Effect.succeed(false),
         ),
         Stream.filter((event) => path.basename(event.path) === "HEAD"),
+        // Requested on arrival, so a checkout's own refresh that starts later also serves this move.
+        Stream.map(() => requestLocalRefresh(cwd)),
         // A rebase moves HEAD many times; refresh once for whatever arrived during a refresh.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.mapEffect(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
+        Stream.tap(() => retryCheckedOutRef(cwd, publishCheckedOutRef(cwd))),
         // Detailed status waits behind its own reads; the branch keeps up on the stage above.
         Stream.buffer({ capacity: 1, strategy: "sliding" }),
-        Stream.runForEach(() => retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd))),
+        Stream.runForEach((requestedAt) =>
+          retryCheckedOutRef(cwd, reconcileCheckedOutRef(cwd, requestedAt)),
+        ),
       );
   });
 

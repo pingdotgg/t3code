@@ -1982,6 +1982,55 @@ describe("VcsStatusBroadcaster", () => {
     }),
   );
 
+  it.effect("a checkout's own refresh also serves the HEAD watch it set off", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<FileSystem.WatchEvent>();
+      const state: Parameters<typeof layerTestFor>[0] = {
+        currentLocalStatus: { ...baseLocalStatus, isDefaultRef: true, refName: "main" },
+        currentRemoteStatus: baseRemoteStatus,
+        localStatusCalls: 0,
+        remoteStatusCalls: 0,
+        localInvalidationCalls: 0,
+        remoteInvalidationCalls: 0,
+        headPath: "/repo/.git/HEAD",
+        fileSystem: FileSystem.makeNoop({
+          realPath: (target) => Effect.succeed(target),
+          exists: () => Effect.succeed(true),
+          watch: (_target, options) =>
+            Stream.fromQueue(events).pipe(Stream.onStart(Effect.sync(() => options?.onReady?.()))),
+        }),
+      };
+
+      yield* Effect.gen(function* () {
+        const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+        yield* broadcaster.getStatus({ cwd: "/repo" });
+        const subscribed = yield* Deferred.make<void>();
+        yield* broadcaster.streamStatus({ cwd: "/repo" }).pipe(
+          Stream.runForEach(() => Deferred.succeed(subscribed, undefined)),
+          Effect.forkScoped,
+        );
+        yield* Deferred.await(subscribed);
+
+        // `git switch` moves HEAD before the switchRef RPC starts its own refresh.
+        state.currentLocalStatus = { ...baseLocalStatus, isDefaultRef: false, refName: "other" };
+        state.localStatusCalls = 0;
+        const watchReading = yield* Deferred.make<void>();
+        const releaseWatch = yield* Deferred.make<void>();
+        state.beforeRemoteStatus = Deferred.succeed(watchReading, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseWatch)),
+        );
+        yield* Queue.offer(events, { _tag: "Update", path: "HEAD" });
+        yield* Deferred.await(watchReading);
+        state.beforeRemoteStatus = Effect.void;
+        yield* broadcaster.refreshAfterCheckout("/repo");
+        yield* Deferred.succeed(releaseWatch, undefined);
+        // Queued behind the watch's and the checkout's remote reads.
+        yield* broadcaster.refreshPullRequestStatus("/repo");
+        assert.strictEqual(state.localStatusCalls, 1);
+      }).pipe(Effect.provide(layerTestFor(state)), Effect.scoped);
+    }),
+  );
+
   it.effect("subscribers share one HEAD watch that ends with the last of them", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
