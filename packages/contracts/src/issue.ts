@@ -232,7 +232,7 @@ export const IssueDetail = Schema.Struct({
   /** Where older comments carry on; null once the conversation is whole. */
   commentsCursor: Schema.NullOr(TrimmedNonEmptyString),
   /** The issue was read but its comments were not, so `comments` is not the conversation. */
-  commentsUnavailable: Schema.optional(Schema.Boolean),
+  commentsUnavailable: Schema.optionalKey(Schema.Boolean),
   events: Schema.Array(IssueEvent),
   linkedPullRequests: Schema.Array(IssueLinkedPullRequest),
 });

@@ -242,7 +242,6 @@ describe("issue toolkit handlers", () => {
                     url,
                     displayKey: key,
                     body: "Repro steps",
-                    commentsUnavailable: true,
                   })
                 : Effect.fail(
                     new IssueTrackerError({
@@ -274,14 +273,7 @@ describe("issue toolkit handlers", () => {
       const result = yield* harness.call("read_issue", { url }).pipe(Effect.result);
       expect(result).toMatchObject({
         _tag: "Success",
-        success: {
-          url,
-          displayKey: "ENG-7",
-          title: "Seven",
-          body: "Repro steps",
-          comments: [],
-          commentsTruncated: true,
-        },
+        success: { url, displayKey: "ENG-7", title: "Seven", body: "Repro steps" },
       });
     }),
   );
