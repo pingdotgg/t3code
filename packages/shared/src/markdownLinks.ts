@@ -1,3 +1,4 @@
+import type { mediaKindFromPath } from "./mediaPreview.ts";
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
@@ -285,6 +286,71 @@ export function markdownDestinationHostPath(source: string): string | null {
   );
 }
 
+const DIRECT_IMAGE_SOURCE_PATTERN = /^(?:https?:|data:|blob:|\/\/)/i;
+const URI_SCHEME_PATTERN = /^[A-Za-z][A-Za-z0-9+.-]*:/;
+
+export type MarkdownImageSource =
+  | { readonly _tag: "Direct"; readonly uri: string }
+  | { readonly _tag: "WorkspaceFile"; readonly path: string; readonly relative?: true }
+  | { readonly _tag: "Blocked" };
+
+function joinWorkspacePath(workspaceRoot: string, relativePath: string): string {
+  const separator = isWindowsAbsolutePath(workspaceRoot) ? "\\" : "/";
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  const path = relativePath.replace(/[\\/]/g, separator).replace(/^[\\/]+/, "");
+  return `${root}${separator}${path}`;
+}
+
+/** Rendering is not a click, so a network path loads only from the project's own share. */
+function hostFileSource(
+  path: string,
+  workspaceRoot: string | null | undefined,
+): MarkdownImageSource {
+  return isNetworkPath(path) && workspaceRelativeFilePath(path, workspaceRoot) === null
+    ? { _tag: "Blocked" }
+    : { _tag: "WorkspaceFile", path };
+}
+
+/**
+ * Filesystem paths belong to the environment host and must never reach a
+ * browser or native image component without first becoming a signed asset URL.
+ */
+export function classifyMarkdownImageSource(
+  value: string | null | undefined,
+  workspaceRoot?: string | null,
+): MarkdownImageSource {
+  if (value === null || value === undefined) return { _tag: "Blocked" };
+
+  const source = normalizeMarkdownLinkDestination(value);
+  if (source.length === 0 || source.startsWith("#") || source.startsWith("?")) {
+    return { _tag: "Blocked" };
+  }
+  if (DIRECT_IMAGE_SOURCE_PATTERN.test(source)) {
+    return { _tag: "Direct", uri: source };
+  }
+
+  const path = markdownDestinationHostPath(source);
+  if (path === null) return { _tag: "Blocked" };
+  if (/^file:/i.test(source)) return hostFileSource(path, workspaceRoot);
+  if (path.length === 0) return { _tag: "Blocked" };
+  if (path.startsWith("/") || isWindowsAbsolutePath(path)) {
+    return hostFileSource(path, workspaceRoot);
+  }
+  if (URI_SCHEME_PATTERN.test(path) || path.startsWith("~/") || path.startsWith("~\\")) {
+    return { _tag: "Blocked" };
+  }
+  if (!workspaceRoot) return { _tag: "Blocked" };
+
+  return { _tag: "WorkspaceFile", path: joinWorkspacePath(workspaceRoot, path), relative: true };
+}
+
+export function shouldRenderMarkdownImageAsFileLink(
+  source: MarkdownImageSource,
+  mediaKind: ReturnType<typeof mediaKindFromPath>,
+): boolean {
+  return source._tag === "WorkspaceFile" && mediaKind === null;
+}
+
 export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const destination = parseMarkdownFileLink(href);
   if (!destination) return false;
@@ -494,10 +560,35 @@ export function resolveMarkdownFileLinkTarget(
   cwd?: string,
   baseDir: string | undefined = cwd,
 ): string | null {
-  if (!href) return null;
-  const target = parseMarkdownFileLink(href);
-  if (!target) return null;
+  return resolveMarkdownFileLink(href, cwd, baseDir)?.targetPath ?? null;
+}
 
+/** Resolves the displayed position and the editor target, which opens at the start line. */
+export function resolveMarkdownFileLink(
+  href: string | undefined,
+  cwd?: string,
+  baseDir: string | undefined = cwd,
+): { sourcePath: string; targetPath: string; position: FilePathPosition } | null {
+  const source = href ? parseMarkdownFileLink(href) : null;
+  if (!source) return null;
+
+  const targetPath = resolveParsedFileLinkTarget(source, cwd, baseDir);
+  if (!targetPath) return null;
+  return {
+    sourcePath: source.path,
+    targetPath,
+    position: {
+      ...splitFilePathPosition(targetPath),
+      ...(source.endLine !== undefined ? { endLine: source.endLine } : {}),
+    },
+  };
+}
+
+function resolveParsedFileLinkTarget(
+  target: FilePathPosition,
+  cwd: string | undefined,
+  baseDir: string | undefined,
+): string | null {
   const pathWithPosition = formatFilePathPosition(target);
   if (!isRelativeFilePath(pathWithPosition)) {
     // Opening a network path makes Windows sign in to its host with the user's
