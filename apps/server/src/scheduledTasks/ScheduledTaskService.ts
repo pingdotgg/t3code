@@ -312,6 +312,8 @@ function iso(value: DateTime.DateTime): string {
 }
 
 const RUN_OUTCOME_WAIT_MS = 24 * 60 * 60 * 1_000;
+const HELD_OCCURRENCE_ERROR =
+  "A previous occurrence is held in the thread queue. Resume or remove it to run this task again.";
 const UNSUCCESSFUL_RUN_ERRORS = {
   failed: "The run failed.",
   interrupted: "The run was stopped.",
@@ -856,20 +858,28 @@ export const layer = Layer.effect(
 
     // Reads every run row but only the queued runs' messages, so the cost per
     // due interval tracks the thread's run count, not its transcript.
-    const hasQueuedOccurrence = Effect.fn("ScheduledTaskService.hasQueuedOccurrence")(function* (
+    const queuedOccurrence = Effect.fn("ScheduledTaskService.queuedOccurrence")(function* (
       taskId: ScheduledTaskId,
       threadId: ThreadId,
     ) {
       const { runs } = yield* threadManagement.getThreadRecords(threadId, ["runs"]);
       const queued = runs.filter((run) => run.status === "queued");
-      if (queued.length === 0) return false;
+      if (queued.length === 0) return null;
       const queuedMessageIds = new Set(queued.map((run) => run.userMessageId));
       const { messages } = yield* threadManagement.getThreadRecords(threadId, ["messages"], {
         messageIds: [...queuedMessageIds],
       });
-      return messages.some(
-        (message) => queuedMessageIds.has(message.id) && message.scheduledTaskId === taskId,
+      const taskMessageIds = new Set(
+        messages
+          .filter((message) => message.scheduledTaskId === taskId)
+          .map((message) => message.id),
       );
+      const occurrences = queued.filter((run) => taskMessageIds.has(run.userMessageId));
+      return occurrences.some((run) => run.queueHeld === true)
+        ? "held"
+        : occurrences.length > 0
+          ? "queued"
+          : null;
     });
 
     // The run already started the thread, so a failed write only costs the binding.
@@ -955,7 +965,9 @@ export const layer = Layer.effect(
         const updated = yield* sql`
           UPDATE scheduled_tasks
           SET last_run_status = 'failed', last_run_error = ${error}
-          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso} AND last_run_status = 'succeeded'
+          WHERE task_id = ${taskId} AND last_run_at = ${startedAtIso}
+            AND (last_run_status = 'succeeded'
+              OR (last_run_status = 'failed' AND last_run_error = ${HELD_OCCURRENCE_ERROR}))
           RETURNING task_id
         `;
         if (updated.length > 0) yield* notifyChanged;
@@ -1015,13 +1027,21 @@ export const layer = Layer.effect(
         if (
           trigger === "scheduled" &&
           active.schedule.type !== "once" &&
-          active.threadId !== null &&
-          (yield* hasQueuedOccurrence(active.id, ThreadId.make(active.threadId)).pipe(
-            Effect.orElseSucceed(() => false),
-          ))
+          active.threadId !== null
         ) {
-          yield* rescheduleMissedRun(active, startedAt, "previous occurrence still queued");
-          return { task: active, threadId: null, dispatchFailed: false };
+          const occurrence = yield* queuedOccurrence(
+            active.id,
+            ThreadId.make(active.threadId),
+          ).pipe(Effect.orElseSucceed(() => null));
+          if (occurrence !== null) {
+            yield* rescheduleMissedRun(
+              active,
+              startedAt,
+              "previous occurrence still queued",
+              occurrence === "held" ? HELD_OCCURRENCE_ERROR : undefined,
+            );
+            return { task: active, threadId: null, dispatchFailed: false };
+          }
         }
         // Reject queued deliveries after pause, same-id recreation or trigger changes.
         if (webhook !== undefined) {
@@ -1271,7 +1291,16 @@ export const layer = Layer.effect(
         UPDATE scheduled_tasks
         SET next_run_at = ${next},
             updated_at = ${iso(now)}
-            ${runError === undefined ? sql`` : sql`, last_run_status = 'failed', last_run_error = ${runError}`}
+            ${
+              runError === undefined
+                ? sql``
+                : sql`, last_run_status = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN 'failed' ELSE last_run_status END,
+                  last_run_error = CASE
+                    WHEN last_run_status IS ${task.lastRunStatus} AND last_run_error IS ${task.lastRunError}
+                    THEN ${runError} ELSE last_run_error END`
+            }
         WHERE task_id = ${task.id}
           AND next_run_at IS ${task.nextRunAt}
           AND last_run_at IS ${task.lastRunAt}
