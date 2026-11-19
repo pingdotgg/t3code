@@ -1,4 +1,5 @@
 import type { ChangeRequestTerminology } from "@t3tools/client-runtime/source-control-clients";
+import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import type { PullRequestDiffResult } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
@@ -12,7 +13,7 @@ import {
 
 export interface PullRequestDiffPage {
   readonly cursor: string | null;
-  readonly result: PullRequestDiffResult;
+  readonly result: CachedPullRequestDiff;
 }
 
 interface CachedPullRequestDiffPages {
@@ -61,7 +62,7 @@ export function getCachedPullRequestDiffPages(
 export function retainPullRequestDiffPage(
   pages: readonly PullRequestDiffPage[],
   cursor: string | null,
-  result: PullRequestDiffResult,
+  result: CachedPullRequestDiff,
 ): readonly PullRequestDiffPage[] {
   const index = pages.findIndex((page) => page.cursor === cursor);
   if (index === -1) return [...pages, { cursor, result }];
@@ -71,6 +72,7 @@ export function retainPullRequestDiffPage(
     (previous?.patch === result.patch &&
       previous.truncated === result.truncated &&
       previous.nextCursor === result.nextCursor &&
+      previous.revision === result.revision &&
       previous.withheldFilesReadable === result.withheldFilesReadable &&
       JSON.stringify(previous.omittedFileStats ?? []) ===
         JSON.stringify(result.omittedFileStats ?? []))

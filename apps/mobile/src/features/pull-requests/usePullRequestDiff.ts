@@ -51,10 +51,6 @@ const NO_PATHS: readonly string[] = [];
 
 type PullRequestDiffTarget = Parameters<typeof composerPullRequests.diff>[0];
 
-// Continuation pages cut from a patch that a reload replaced. Each refetches on its next read,
-// not at the reload, where the last one is still mounted and would refetch at once.
-const staleContinuations = new WeakSet<ReturnType<typeof composerPullRequests.diff>>();
-
 // Keyed by the diff's serialized target, which the hook already holds as its scope.
 const withheldFileDiff = (targetKey: string, path: string) => {
   const target = JSON.parse(targetKey) as PullRequestDiffTarget;
@@ -125,12 +121,7 @@ export function usePullRequestDiff(
   const key = JSON.stringify(target);
   const messages = useMessages();
   const locale = useLocale();
-  const pageAtom = (cursor: string | null) =>
-    composerPullRequests.diff({
-      ...target,
-      input: { ...target.input, ...(cursor ? { cursor } : {}) },
-    });
-  const firstPageAtom = pageAtom(null);
+  const firstPageAtom = composerPullRequests.diff(target);
   const refreshFirstPage = useAtomRefresh(firstPageAtom);
   const { refreshing, onRefresh } = usePullToRefresh(firstPageAtom);
   const [state, setState] = useState<{
@@ -139,11 +130,24 @@ export function usePullRequestDiff(
     pages: readonly PullRequestDiffPage[];
   }>({ key, cursor: null, pages: NO_PAGES });
   const cursor = state.key === key ? state.cursor : null;
-  const query = useEnvironmentQuery(pageAtom(cursor));
+  const loaded = state.key === key ? state.pages : NO_PAGES;
+  const revision = loaded[0]?.result.revision;
+  const query = useEnvironmentQuery(
+    cursor === null
+      ? firstPageAtom
+      : composerPullRequests.diff({
+          ...target,
+          input: {
+            ...target.input,
+            cursor,
+            ...(revision === undefined ? {} : { cacheRevision: revision }),
+          },
+        }),
+  );
+  const response = query.successResult?.value;
   const pages = useMemo(() => {
-    const loaded = state.key === key ? state.pages : NO_PAGES;
-    return query.data ? retainPullRequestDiffPage(loaded, cursor, query.data) : loaded;
-  }, [cursor, key, query.data, state.key, state.pages]);
+    return response ? retainPullRequestDiffPage(loaded, cursor, response) : loaded;
+  }, [cursor, loaded, response]);
   if (state.key !== key || state.pages !== pages) setState({ key, cursor, pages });
 
   const [withheldLoads, setWithheldLoads] = useState<{
@@ -199,14 +203,9 @@ export function usePullRequestDiff(
     nextCursor !== null && nextCursor !== cursor && !query.isPending && query.error === null;
   const loadMore = () => {
     if (!canLoadMore) return;
-    const next = pageAtom(nextCursor);
-    if (staleContinuations.delete(next)) registry.refresh(next);
     setState({ key, cursor: nextCursor, pages });
   };
-  // Every page after the first was cut from the patch this replaces, a failed one included.
   const reload = (refreshFirst: () => void) => {
-    for (const stale of [...pages.map((page) => page.cursor), cursor])
-      if (stale !== null) staleContinuations.add(pageAtom(stale));
     setState({ key, cursor: null, pages: NO_PAGES });
     refreshFirst();
     refreshWithheldFiles();

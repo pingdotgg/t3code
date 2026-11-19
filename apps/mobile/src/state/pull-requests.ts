@@ -4,12 +4,14 @@ import {
   createPullRequestStackAtomFamily,
   patchPullRequestListEntries,
   pullRequestPendingEditsAtom,
+  type PullRequestAnswerHandlers,
 } from "@t3tools/client-runtime/state/pull-requests";
 import type { EnvironmentId, PullRequestListInput, PullRequestRef } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { uuidv4 } from "../lib/uuid";
 import {
   EMPTY_PULL_REQUEST_STATS_CACHE,
   pullRequestListHead,
@@ -53,7 +55,7 @@ export const filesViewedReadsFamily = Atom.family((_key: string) =>
   Atom.make(0).pipe(Atom.setIdleTTL(5 * 60_000)),
 );
 
-export const composerPullRequests = createPullRequestEnvironmentAtoms(connectionAtomRuntime, {
+const onPullRequestAnswer = {
   // Rows on pages past each listing's head; the head itself is patched where it is cached.
   actionReply: (target, reply, registry) =>
     Effect.sync(() => {
@@ -124,7 +126,13 @@ export const composerPullRequests = createPullRequestEnvironmentAtoms(connection
         withAnsweredPullRequestStats(previous, target.input, value.stats),
       ),
     ),
-});
+} satisfies PullRequestAnswerHandlers;
+
+export const composerPullRequests = createPullRequestEnvironmentAtoms(
+  connectionAtomRuntime,
+  onPullRequestAnswer,
+  { createDiffRevision: uuidv4 },
+);
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,
   composerPullRequests.refreshes,

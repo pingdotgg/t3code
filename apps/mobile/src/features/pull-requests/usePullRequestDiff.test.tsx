@@ -1,5 +1,7 @@
 import { RegistryContext } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
+import { revalidateOnMount } from "@t3tools/client-runtime/state/runtime";
 import { PullRequestOperationError, type PullRequestDiffResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -31,23 +33,24 @@ function setup() {
   const registry = AtomRegistry.make();
   const requests: {
     cursor: string | null;
-    resolve: (value: PullRequestDiffResult) => void;
+    resolve: (value: CachedPullRequestDiff) => void;
     reject: (error: Error) => void;
   }[] = [];
-  const queries = Atom.family((cursor: string | null) =>
+  const queries = Atom.family((key: string) =>
     Atom.make(
       Effect.tryPromise({
         try: () =>
-          new Promise<PullRequestDiffResult>((resolve, reject) => {
+          new Promise<CachedPullRequestDiff>((resolve, reject) => {
+            const [cursor] = JSON.parse(key) as [string | null, string | null];
             requests.push({ cursor, resolve, reject });
           }),
         catch: (cause) =>
           new PullRequestOperationError({ operation: "diff", detail: "Connection lost", cause }),
       }),
-    ).pipe(Atom.keepAlive),
+    ).pipe(Atom.keepAlive, revalidateOnMount(60_000)),
   );
-  mocks.diff.mockImplementation((target: { input: { cursor?: string } }) =>
-    queries(target.input.cursor ?? null),
+  mocks.diff.mockImplementation((target: { input: { cursor?: string; cacheRevision?: string } }) =>
+    queries(JSON.stringify([target.input.cursor ?? null, target.input.cacheRevision ?? null])),
   );
   const root = createRoot(document.createElement("div"));
   let current: ReturnType<typeof usePullRequestDiff>;
@@ -89,7 +92,8 @@ function setup() {
     },
     async succeed(index: number, result: PullRequestDiffResult) {
       await act(async () => {
-        requests[index]!.resolve(result);
+        const request = requests[index]!;
+        request.resolve(request.cursor === null ? { ...result, revision: String(index) } : result);
       });
     },
     async fail(index: number) {
@@ -268,3 +272,20 @@ it.each(["failed", "loaded"] as const)(
     expect(screen.current.parsed.files.map((file) => file.path)).toEqual(["first.ts", "second.ts"]);
   },
 );
+
+it("keeps another reader's old continuation out of the reloaded diff", async () => {
+  using screen = setup();
+  await screen.succeed(0, patch("first.ts", "second"));
+  act(() => screen.current.loadMore());
+  await screen.succeed(1, patch("second.ts", null, "before-push"));
+  screen.remount();
+
+  act(() => screen.current.refresh());
+  await screen.succeed(2, patch("first.ts", "second"));
+  act(() => screen.current.loadMore());
+
+  expect(screen.current.patch).not.toContain("+before-push");
+  expect(screen.current.isPending).toBe(true);
+  await screen.succeed(3, patch("second.ts", null, "after-push"));
+  expect(screen.current.patch).toContain("+after-push");
+});

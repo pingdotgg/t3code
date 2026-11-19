@@ -3021,3 +3021,70 @@ it.effect("loads the diff again for a new guide head without sending the head", 
     expect(inputs).toEqual([reference, reference]);
   }),
 );
+
+it.effect("reads a reused cursor from the new diff revision after reloading page one", () =>
+  Effect.gen(function* () {
+    const inputs: unknown[] = [];
+    let patch = "before-push";
+    const { runtime, registry, supervisor } = yield* makeTestRuntime(
+      {} as WsRpcProtocolClient,
+      undefined,
+      false,
+      {},
+      null,
+      {
+        load: (_prepared, input) =>
+          Effect.sync(() => {
+            inputs.push(input);
+            return input.cursor === undefined
+              ? { patch: "same first page", truncated: false, nextCursor: "2" }
+              : { patch, truncated: false, nextCursor: null };
+          }),
+      },
+    );
+    yield* SubscriptionRef.set(
+      supervisor.prepared,
+      Option.some({
+        environmentId: TARGET.environmentId,
+        label: TARGET.label,
+        httpBaseUrl: "https://example.test",
+        socketUrl: "wss://example.test",
+        httpAuthorization: null,
+        target: TARGET,
+      }),
+    );
+    let revision = 0;
+    const atoms = createPullRequestEnvironmentAtoms(
+      runtime,
+      {},
+      {
+        createDiffRevision: () => String(++revision),
+      },
+    );
+    const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 };
+    const target = { environmentId: TARGET.environmentId, input: reference };
+    const firstPage = atoms.diff(target);
+    const readContinuation = Effect.fn("Test.readContinuation")(function* (refresh: boolean) {
+      if (refresh) registry.refresh(firstPage);
+      const first = yield* AtomRegistry.getResult(registry, firstPage, {
+        suspendOnWaiting: true,
+      });
+      const cursor = first.nextCursor!;
+      const cacheRevision = first.revision!;
+      const continuation = atoms.diff({
+        ...target,
+        input: { ...reference, cursor, cacheRevision },
+      });
+      return yield* AtomRegistry.getResult(registry, continuation, { suspendOnWaiting: true });
+    });
+    expect((yield* readContinuation(false)).patch).toBe("before-push");
+    patch = "after-push";
+    expect((yield* readContinuation(true)).patch).toBe("after-push");
+    expect(inputs).toEqual([
+      reference,
+      { ...reference, cursor: "2" },
+      reference,
+      { ...reference, cursor: "2" },
+    ]);
+  }),
+);

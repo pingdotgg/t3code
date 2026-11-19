@@ -774,6 +774,13 @@ export interface PullRequestAnswerHandlers {
   readonly acceptedEdit?: QueryAnswerHandler<PullRequestRef, PullRequestPendingEdit>;
 }
 
+const CachedPullRequestDiff = Schema.Struct({
+  ...PullRequestDiffResult.fields,
+  /** Identifies the continuation pages that follow this first page, including offline. */
+  revision: Schema.optionalKey(Schema.String),
+});
+export type CachedPullRequestDiff = typeof CachedPullRequestDiff.Type;
+
 export function createPullRequestStackAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
   refreshes = createPullRequestRefreshAtomFamily(runtime),
@@ -827,6 +834,7 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     E
   >,
   onAnswer: PullRequestAnswerHandlers = {},
+  options: { readonly createDiffRevision?: () => string } = {},
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
   const sessions = createEnvironmentSessionAtoms(runtime);
@@ -1292,15 +1300,28 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     diff: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:diff",
-      persistence: persistQuery(PullRequestDiffResult),
+      persistence: persistQuery(CachedPullRequestDiff),
       staleTimeMs: 60_000,
-      // A guide tied to a commit must not reuse another push's cached pages.
+      // Guide heads and pagination revisions namespace the client cache only.
       execute: ({
         cacheHeadSha: _cacheHeadSha,
+        cacheRevision: _cacheRevision,
         ...input
       }: PullRequestDiffInput & {
         readonly cacheHeadSha?: string;
-      }) => loadDiff(input),
+        readonly cacheRevision?: string;
+      }) =>
+        loadDiff(input).pipe(
+          Effect.map((diff): CachedPullRequestDiff => {
+            const createRevision = options.createDiffRevision;
+            return createRevision &&
+              diff.nextCursor !== null &&
+              input.cursor === undefined &&
+              input.path === undefined
+              ? { ...diff, revision: createRevision() }
+              : diff;
+          }),
+        ),
     }),
     diffFileContents: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:diff-file-contents",
