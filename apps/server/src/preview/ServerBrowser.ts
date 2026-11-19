@@ -2967,14 +2967,15 @@ const make = Effect.gen(function* () {
         return;
       }
       if (event.type === "resized") {
-        // Desktop tabs only record the setting, so status need not wait behind an agent action.
-        if (tab.desktop) tab.setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
+        const setting = event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT;
+        // Desktop tabs record the setting at once, so status need not wait behind an agent action.
+        // The desktop still hears about a changed setting in turn.
+        const desktopChanged = tab.desktop && !viewportSettingsEqual(setting, tab.setting);
+        if (tab.desktop) tab.setting = setting;
         await tab.control
           .system(async () => {
-            if (
-              !viewportSettingsEqual(event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT, tab.setting)
-            ) {
-              await applySetting(tab, event.snapshot.viewport ?? FILL_PREVIEW_VIEWPORT);
+            if (desktopChanged || !viewportSettingsEqual(setting, tab.setting)) {
+              await applySetting(tab, setting);
             }
             await applyRendering(tab, event.snapshot);
             const request = event.request;
@@ -3370,9 +3371,11 @@ const make = Effect.gen(function* () {
               await taking;
               pushFileChooser(tab);
             } else if (message.type === "releaseControl") {
-              const releasing = tab.control.release(viewer.id, () =>
-                releaseViewerInput(viewer, session),
-              );
+              const releasing = tab.control.release(viewer.id, async () => {
+                await releaseViewerInput(viewer, session);
+                // The released viewer's size no longer applies to a hidden desktop tab.
+                if (tab.desktop && !tab.closing) await applySetting(tab, tab.setting);
+              });
               broadcastControl(tab);
               await releasing;
             } else if (
