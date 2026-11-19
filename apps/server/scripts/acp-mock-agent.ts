@@ -19,6 +19,8 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
 const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
+// The native agy CLI (1.5.4+) advertises these instead of the managed runtime's modes.
+const antigravityCliModesProfile = process.env.T3_ACP_ANTIGRAVITY_CLI_MODES === "1";
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -365,35 +367,42 @@ const antigravityModels = [
   { modelId: "gemini-test-high", name: "Gemini Test High" },
 ] satisfies ReadonlyArray<AcpCompat.ModelInfo>;
 
-const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityProfile
+const availableModes: ReadonlyArray<AcpCompat.SessionMode> = antigravityCliModesProfile
   ? [
       { id: "default", name: "Default" },
-      { id: "auto_edit", name: "Auto edit" },
-      { id: "yolo", name: "YOLO" },
+      { id: "accept-edits", name: "Accept edits" },
+      { id: "auto", name: "Auto" },
+      { id: "plan", name: "Plan" },
     ]
-  : copilotModesProfile
+  : antigravityProfile
     ? [
-        { id: copilotModeId("agent"), name: "Agent" },
-        { id: copilotModeId("plan"), name: "Plan" },
-        { id: copilotModeId("autopilot"), name: "Autopilot" },
+        { id: "default", name: "Default" },
+        { id: "auto_edit", name: "Auto edit" },
+        { id: "yolo", name: "YOLO" },
       ]
-    : [
-        {
-          id: "ask",
-          name: "Ask",
-          description: "Request permission before making any changes",
-        },
-        {
-          id: "architect",
-          name: "Architect",
-          description: "Design and plan software systems without implementation",
-        },
-        {
-          id: "code",
-          name: "Code",
-          description: "Write and modify code with full tool access",
-        },
-      ];
+    : copilotModesProfile
+      ? [
+          { id: copilotModeId("agent"), name: "Agent" },
+          { id: copilotModeId("plan"), name: "Plan" },
+          { id: copilotModeId("autopilot"), name: "Autopilot" },
+        ]
+      : [
+          {
+            id: "ask",
+            name: "Ask",
+            description: "Request permission before making any changes",
+          },
+          {
+            id: "architect",
+            name: "Architect",
+            description: "Design and plan software systems without implementation",
+          },
+          {
+            id: "code",
+            name: "Code",
+            description: "Write and modify code with full tool access",
+          },
+        ];
 
 function modeState(): AcpCompat.SessionModeState {
   return {
