@@ -361,6 +361,53 @@ it.effect("keeps a detached download exclusive until the transfer finishes", () 
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("reports cancellation even after the speech weights are installed", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    readyModels.delete("fallback-model");
+    const weightsInstalled = yield* Deferred.make<void>();
+    const helperStarted = yield* Deferred.make<void>();
+    download
+      .mockImplementationOnce(() =>
+        Effect.sync(() => {
+          readyModels.add("fallback-model");
+        }).pipe(
+          Effect.andThen(Deferred.succeed(weightsInstalled, undefined)),
+          Effect.as("test.gguf"),
+        ),
+      )
+      .mockImplementationOnce(() =>
+        Deferred.succeed(helperStarted, undefined).pipe(Effect.andThen(Effect.never)),
+      );
+
+    const request = yield* speech.downloadModel("fallback-model").pipe(Effect.forkChild);
+    yield* Deferred.await(weightsInstalled);
+    yield* Deferred.await(helperStarted);
+    yield* speech.cancelDownload("fallback-model");
+
+    expect(yield* Fiber.join(request)).toMatchObject({
+      cancelled: true,
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: "fallback-model", state: "installed", active: false }),
+        expect.objectContaining({ id: "test-model", active: true }),
+      ]),
+    });
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("preserves the current model when another client removes a selection candidate", () =>
+  Effect.gen(function* () {
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.removeModel("fallback-model");
+    const selection = yield* Effect.result(speech.selectModel("fallback-model"));
+    expect(Result.isFailure(selection) && selection.failure).toMatchObject({
+      _tag: "SpeechModelNotFoundError",
+      modelId: "fallback-model",
+    });
+    expect((yield* speech.status).modelId).toBe("test-model");
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("bounds missing Silero recovery during recording and continues with raw audio", () =>
   Effect.gen(function* () {
     const helperStarted = yield* Deferred.make<void>();
@@ -404,6 +451,7 @@ it.effect("keeps the installed speech model usable when optional Silero acquisit
       );
     const speech = yield* SpeechService.SpeechService;
     const installed = yield* speech.downloadModel("test-model");
+    expect(installed).toHaveProperty("cancelled", false);
     expect(installed.models.find((model) => model.id === "test-model")?.state).toBe("installed");
     expect(yield* speech.transcribe(pcm(), DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS)).toBe("hello");
     yield* Effect.scoped(

@@ -450,13 +450,13 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
-      const { models } = await runEnvironmentSpeech(
+      const { models, cancelled } = await runEnvironmentSpeech(
         downloadEnvironmentSpeechModel(prepared, modelId),
       );
       if (request !== startRequestRef.current) return;
-      // A download cancelled from elsewhere still resolves, so select the model only once it landed.
-      const installed = models.some(({ id, state }) => id === modelId && state === "installed");
-      if (installed && modelId !== currentStatus.modelId) {
+      const completed =
+        !cancelled && models.some(({ id, state }) => id === modelId && state === "installed");
+      if (completed && modelId !== currentStatus.modelId) {
         try {
           await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
         } catch {
@@ -476,7 +476,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       if (request !== startRequestRef.current) return;
       setStatus({ prepared, value: next });
       const ready =
-        installed && next.supported && next.modelId === modelId && next.state !== "missing-model";
+        completed && next.supported && next.modelId === modelId && next.state !== "missing-model";
       setSetup((current) => ({
         ...current,
         downloading: false,

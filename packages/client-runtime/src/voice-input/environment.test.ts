@@ -79,4 +79,26 @@ describe("installEnvironmentSpeechModel", () => {
       expect(models[0]?.active).toBe(selects || downloaded.active);
     }),
   );
+
+  it.effect("keeps the current model when cancellation leaves the weights installed", () =>
+    Effect.gen(function* () {
+      const downloaded = model("installed", false);
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            Response.json(
+              new URL(request.url).pathname.endsWith("/select")
+                ? { models: [model("installed", true)] }
+                : { models: [downloaded], cancelled: true },
+            ),
+          ),
+        ),
+      );
+      const { models } = yield* installEnvironmentSpeechModel(PREPARED, downloaded.id).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+      );
+      expect(models).toEqual([downloaded]);
+    }),
+  );
 });
