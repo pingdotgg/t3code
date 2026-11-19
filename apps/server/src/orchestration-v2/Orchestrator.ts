@@ -1601,12 +1601,7 @@ const nativeSubagentRef = (subagent: OrchestrationV2Subagent): DyingNativeSubage
 });
 
 const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
-  subagents.some(
-    (task) =>
-      task.origin === "app_owned" &&
-      task.childThreadId !== null &&
-      isOrchestrationV2WorkActive(task.status),
-  );
+  subagents.some((task) => task.origin === "app_owned" && isOrchestrationV2WorkActive(task.status));
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
