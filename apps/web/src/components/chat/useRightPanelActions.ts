@@ -19,6 +19,7 @@ import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
   browserSurfaceThreadRef,
   selectThreadPanelOpen,
+  selectThreadRightPanelState,
   type RightPanelSurface,
   useRightPanelStore,
 } from "../../rightPanelStore";
@@ -199,6 +200,16 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     const activeTabId = activePreviewState.activeTabId;
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
+    } else if (
+      selectThreadRightPanelState(
+        useRightPanelStore.getState().byThreadKey,
+        activeThreadRef,
+      ).surfaces.some(
+        (surface) => browserSurfaceThreadRef(activeThreadRef, surface) !== activeThreadRef,
+      )
+    ) {
+      // Another thread's tab is already in the shared panel: show it instead of adding one.
+      useRightPanelStore.getState().open(activeThreadRef, "preview");
     } else {
       createBrowserSurface();
     }
