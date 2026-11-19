@@ -1628,7 +1628,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("studio unity unreal blender forgegui editors")],
   },
   {
-    id: "mobile-access",
+    id: "mobile-connection-attempts",
     title: msg("Mobile Access"),
     to: "/settings/mobile-access",
     targetId: "mobile-connection-attempts",
