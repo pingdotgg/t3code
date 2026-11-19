@@ -2246,6 +2246,142 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  // A provider can report a subagent's thread after its parent was deleted. Its checkout was
+  // renamed too, so the branch correction must not undo the delete.
+  it.effect("records a subagent thread of a deleted parent as deleted", () =>
+    Effect.gen(function* () {
+      const { worktreePath, command } = yield* makeSharedWorktree;
+      yield* command(worktreePath, ["branch", "-m", "generated-branch"]);
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "workflow-member-after-delete",
+      });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+      });
+      yield* eventSink.write({
+        events: [
+          rootEvent,
+          {
+            ...rootEvent,
+            id: yield* idAllocator.allocate.event({ threadId: rootEvent.threadId }),
+            type: "thread.deleted",
+            payload: { ...rootEvent.payload, deletedAt: now, updatedAt: now },
+          },
+        ],
+      });
+
+      const stored = yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: rootEvent.threadId,
+        event: {
+          type: "app_thread.created",
+          driver: CODEX_DRIVER,
+          appThread: {
+            ...rootEvent.payload,
+            id: childThreadId,
+            title: "Inspect checkout",
+            branch: "t3/abcd1234",
+            worktreePath,
+            activeProviderThreadId: null,
+            createdBy: "agent",
+            creationSource: "provider",
+            lineage: {
+              parentThreadId: rootEvent.threadId,
+              relationshipToParent: "subagent",
+              rootThreadId: rootEvent.threadId,
+            },
+          },
+        },
+      });
+      assert.deepEqual(
+        stored.map((event) => event.event.type),
+        ["thread.created", "thread.deleted"],
+      );
+      assert.isNotNull((yield* projectionStore.getThread(childThreadId)).deletedAt);
+    }),
+  );
+
+  // A parent's delete holds the parent's lock while it reads the parent's subagent threads, so a
+  // subagent thread committed in between would stay live.
+  it.effect("holds a subagent thread's parent until the thread is committed", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const rootEvent = yield* threadCreatedEvent(now);
+      if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+      const childThreadId = idAllocator.derive.threadFromProviderThread({
+        driver: CODEX_DRIVER,
+        nativeThreadId: "workflow-member-parent-lock",
+      });
+      yield* eventSink.write({ events: [rootEvent] });
+      const beforeCommit = yield* Deferred.make<void>();
+      const allowCommit = yield* Deferred.make<void>();
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+        Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+        Effect.provideService(
+          EventSink.EventSinkV2,
+          EventSink.EventSinkV2.of({
+            ...eventSink,
+            write: (input) =>
+              input.events.some((event) => event.threadId === childThreadId)
+                ? Deferred.succeed(beforeCommit, undefined).pipe(
+                    Effect.andThen(Deferred.await(allowCommit)),
+                    Effect.andThen(eventSink.write(input)),
+                  )
+                : eventSink.write(input),
+          }),
+        ),
+      );
+      const creation = yield* ingestor
+        .ingestNormalized({
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId: rootEvent.threadId,
+          }),
+          providerInstanceId: modelSelection.instanceId,
+          threadId: rootEvent.threadId,
+          event: {
+            type: "app_thread.created",
+            driver: CODEX_DRIVER,
+            appThread: {
+              ...rootEvent.payload,
+              id: childThreadId,
+              title: "Inspect checkout",
+              activeProviderThreadId: null,
+              createdBy: "agent",
+              creationSource: "provider",
+              lineage: {
+                parentThreadId: rootEvent.threadId,
+                relationshipToParent: "subagent",
+                rootThreadId: rootEvent.threadId,
+              },
+            },
+          },
+        })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(beforeCommit);
+      assert.sameMembers(
+        [...(yield* threadCommands.activeKeys)],
+        [rootEvent.threadId, childThreadId],
+      );
+      yield* Deferred.succeed(allowCommit, undefined);
+      yield* Fiber.join(creation);
+      assert.deepEqual([...(yield* threadCommands.activeKeys)], []);
+    }),
+  );
+
   it.effect(
     "recovers a missing Claude child once and preserves saved metadata on later recovery",
     () =>
