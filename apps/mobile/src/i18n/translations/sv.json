@@ -3753,7 +3753,7 @@
   "c8c52fccfab3ed12": "Inaktiva dagar",
   "bd1801b4c1402c9f": "Standardvärdena för automatisk markering som klar skiljer sig åt",
   "a39859173ceced06": "Fäll in arbetande och övervakande trådar i avsnittet Arbetar. De återvänder överst i listan när de behöver dig. När detta är på sorteras aktiva trådar efter tid och kan inte flyttas.",
-  "d5794d7be3c3e25e": "Rapporter skickas till T3-teamet. En rapport du ber om visas för dig först med en översikt över de senaste omgångarna. Meddelandetext tas bara med om du också ber om det.",
+  "d86d6cf23cd6e118": "Rapporter skickas till T3-teamet. En rapport du ber om visas för dig först i ett kort med en översikt över de senaste omgångarna. Slå på Ta med konversationen där för att lägga till meddelandena.",
   "eb4898101556e51c": "Ladda ned {model}?",
   "8dde46fc67352f68": "{environment} laddar ned {size} och använder den som transkriberingsmodell.",
   "c7b23984157bfd35": "Ladda ned",

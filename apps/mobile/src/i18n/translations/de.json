@@ -3752,7 +3752,7 @@
   "c8c52fccfab3ed12": "Inaktive Tage",
   "bd1801b4c1402c9f": "Standards für automatisches Erledigen unterscheiden sich",
   "a39859173ceced06": "Laufende und überwachende Threads im Bereich „In Arbeit“ bündeln. Sie rücken in der Liste wieder nach oben, sobald sie dich brauchen. Solange das aktiv ist, werden aktive Threads nach Zeit sortiert und können nicht verschoben werden.",
-  "d5794d7be3c3e25e": "Berichte gehen an das T3-Team. Ein von dir angeforderter Bericht wird dir zuerst angezeigt. Eine Übersicht der letzten Runden und ihrer Nachrichten wird nur beigefügt, wenn du auch darum bittest.",
+  "d86d6cf23cd6e118": "Berichte gehen an das T3-Team. Ein von dir angeforderter Bericht wird dir zuerst in einer Karte mit einer Übersicht der letzten Runden angezeigt. Aktiviere dort „Unterhaltung mitsenden“, um ihre Nachrichten hinzuzufügen.",
   "eb4898101556e51c": "{model} herunterladen?",
   "8dde46fc67352f68": "{environment} lädt {size} herunter und verwendet es als Transkriptionsmodell.",
   "c7b23984157bfd35": "Herunterladen",

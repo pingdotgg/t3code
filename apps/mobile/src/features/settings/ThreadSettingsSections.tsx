@@ -335,8 +335,8 @@ function AgentFeedbackSection() {
       })}
       <Text className="px-2 text-sm text-foreground-muted">
         <T>
-          Reports go to the T3 team. A report you ask for is shown to you first, with an outline of
-          recent turns and their messages only if you ask for that too.
+          Reports go to the T3 team. A report you ask for is shown to you first in a card, with an
+          outline of recent turns. Turn on Include the conversation there to add their messages.
         </T>
       </Text>
     </View>

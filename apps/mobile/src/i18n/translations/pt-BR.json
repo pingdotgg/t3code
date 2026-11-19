@@ -3747,7 +3747,7 @@
   "c8c52fccfab3ed12": "Dias inativos",
   "bd1801b4c1402c9f": "Os padrões de conclusão automática diferem",
   "a39859173ceced06": "Agrupa as threads em andamento e em monitoramento em uma seção Trabalhando. Elas voltam ao topo da lista quando precisam de você. Enquanto isso estiver ativado, as threads ativas são ordenadas por tempo e não podem ser movidas.",
-  "d5794d7be3c3e25e": "Os relatórios vão para a equipe do T3. Um relatório que você pede é mostrado primeiro para você. Um resumo dos turnos recentes e de suas mensagens só é incluído se você também pedir.",
+  "d86d6cf23cd6e118": "Os relatórios vão para a equipe do T3. Um relatório que você pede é mostrado primeiro para você em um cartão, com um resumo dos turnos recentes. Ative \"Incluir a conversa\" nele para adicionar as mensagens.",
   "eb4898101556e51c": "Baixar {model}?",
   "8dde46fc67352f68": "{environment} vai baixar {size} e usá-lo como modelo de transcrição.",
   "c7b23984157bfd35": "Baixar",
