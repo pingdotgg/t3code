@@ -12140,5 +12140,10 @@
   "27d76249d09eb69f": "Review-Leitfaden bereit",
   "faa3bb26abb39c93": "Review-Leitfaden fehlgeschlagen",
   "b7df38b7d8792d78": "Leitfaden öffnen",
-  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden"
+  "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
+  "9554d9a34785f4aa": "Issues werden gesucht...",
+  "ffdb91f33881fca0": "Issues",
+  "9bdda1485bc5a5a8": "Die Issues dieses Projekts konnten nicht gelesen werden.",
+  "7721796d4ab2dde5": "Kein Issue passt zu {query}.",
+  "6af065b99e23023e": "In diesem Repository wurden keine Issues gefunden."
 }

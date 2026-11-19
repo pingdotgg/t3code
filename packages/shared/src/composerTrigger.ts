@@ -1,6 +1,6 @@
 import type { PullRequestReferenceSigil } from "@t3tools/contracts";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind = "path" | "pull-request" | "issue" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -67,23 +67,26 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
-const PULL_REQUEST_TRIGGER: Record<PullRequestReferenceSigil, RegExp> = {
-  "#": /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u,
-  "!": /(?:^|\p{Ps})!([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u,
-};
+const REFERENCE_TRIGGER = /(?:^|\p{Ps})([#!])([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u;
 
-/** `sigil` is the one the project's host links change requests with, such as GitLab's `!12`. */
+/**
+ * `sigil` is the one the project's host links change requests with. Where that is not `#`, as
+ * with GitLab's `!12`, `#` references the host's issues instead.
+ */
 export function detectComposerPullRequestTrigger(
   token: string,
   cursor: number,
   sigil: PullRequestReferenceSigil = "#",
 ) {
   if (/^[@\p{Sc}]/u.test(token)) return null;
-  const match = PULL_REQUEST_TRIGGER[sigil].exec(token);
+  const match = REFERENCE_TRIGGER.exec(token);
   if (!match) return null;
-  const query = match[1] ?? "";
+  const kind: "pull-request" | "issue" | null =
+    match[1] === sigil ? "pull-request" : match[1] === "#" ? "issue" : null;
+  if (kind === null) return null;
+  const query = match[2] ?? "";
   return {
-    kind: "pull-request" as const,
+    kind,
     query,
     rangeStart: cursor - query.length - 1,
     rangeEnd: cursor,

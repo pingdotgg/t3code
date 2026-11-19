@@ -12140,5 +12140,10 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "9554d9a34785f4aa": "Recherche des tickets...",
+  "ffdb91f33881fca0": "Tickets",
+  "9bdda1485bc5a5a8": "Impossible de lire les tickets de ce projet.",
+  "7721796d4ab2dde5": "Aucun ticket ne correspond à {query}.",
+  "6af065b99e23023e": "Aucun ticket trouvé dans ce dépôt."
 }

@@ -6,6 +6,7 @@ vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
 vi.mock("../../state/queries", () => ({
   useComposerPathSearch: () => ({ entries: [], isPending: false }),
   useComposerPullRequestSearch: () => ({ entries: [], isPending: false, error: null }),
+  useComposerIssueReferenceSearch: () => ({ candidates: [], isPending: false }),
   useThreadSearch: () => undefined,
 }));
 vi.mock("../../state/use-composer-drafts", () => ({

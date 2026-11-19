@@ -95,7 +95,7 @@ function useCompletions(
   };
 }
 
-function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCandidate }) {
+export function ReferenceStateIcon({ candidate }: { candidate: PullRequestReferenceCandidate }) {
   const m = useMessages();
   const presentation =
     candidate.kind === "change-request"

@@ -11,6 +11,7 @@ import {
   type ProviderDriverKind,
   type ProviderInstanceId,
   type PullRequestContextMetadata,
+  type PullRequestReferenceCandidate,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
@@ -37,6 +38,7 @@ import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
+import { ReferenceStateIcon } from "../pullRequest/PullRequestMarkdownTextarea";
 
 export type ComposerCommandItem =
   | {
@@ -75,6 +77,13 @@ export type ComposerCommandItem =
       id: string;
       type: "pull-request";
       pullRequest: PullRequestContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "issue-reference";
+      candidate: PullRequestReferenceCandidate;
       label: string;
       description: string;
     }
@@ -176,7 +185,9 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                   ? gt("Searching workspace skills...")
                   : props.triggerKind === "pull-request"
                     ? gt("Finding pull request...")
-                    : gt("Searching workspace files...")
+                    : props.triggerKind === "issue"
+                      ? gt("Finding issues...")
+                      : gt("Searching workspace files...")
                 : (props.emptyStateText ??
                   (props.triggerKind === "skill"
                     ? gt("No skills found. Try / to browse provider commands.")
@@ -261,6 +272,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           iconClassName="size-4"
         />
       ) : null}
+      {props.item.type === "issue-reference" ? (
+        <ReferenceStateIcon candidate={props.item.candidate} />
+      ) : null}
       {pullRequestPresentation ? (
         <pullRequestPresentation.Icon
           role="img"
@@ -312,6 +326,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   path: msg("Files and folders"),
   "pull-request": msg("Pull requests"),
+  issue: msg("Issues"),
   "slash-command": msg("Commands"),
   skill: msg("Skills"),
 };

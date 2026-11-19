@@ -35,6 +35,13 @@ export type ComposerCommandItem =
     }
   | {
       readonly id: string;
+      readonly type: "issue-reference";
+      readonly reference: string;
+      readonly label: string;
+      readonly description: string;
+    }
+  | {
+      readonly id: string;
       readonly type: "path";
       readonly path: string;
       readonly kind: "file" | "directory";
@@ -131,6 +138,7 @@ function itemIcon(item: ComposerCommandItem): AppSymbolName | null {
       return SKILL_SOURCE_SYMBOL_BY_KIND[resolveProviderSkillSourceKind(item.skill)];
     case "path":
     case "model":
+    case "issue-reference":
       return null;
     case "thread":
       return "text.bubble";
@@ -147,6 +155,8 @@ function groupLabel(
   switch (triggerKind) {
     case "pull-request":
       return resolve(msg("Pull requests"));
+    case "issue":
+      return resolve(msg("Issues"));
     case "slash-command":
       return resolve(msg("Commands"));
     case "skill":
@@ -171,6 +181,8 @@ function emptyText(
   switch (triggerKind) {
     case "pull-request":
       return resolve(msg("No matching pull requests."));
+    case "issue":
+      return resolve(msg("No matching issues."));
     case "path":
       return resolve(msg("No matching mentions."));
     case "skill":

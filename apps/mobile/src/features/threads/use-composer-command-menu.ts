@@ -63,6 +63,7 @@ import type { ComposerEditorSelection } from "../../components/ComposerEditor";
 import { providerWorkspaceSnapshotRefresh } from "../../state/provider-workspace-snapshot-refresh";
 import {
   useComposerPathSearch,
+  useComposerIssueReferenceSearch,
   useComposerPullRequestSearch,
   useThreadSearch,
 } from "../../state/queries";
@@ -243,6 +244,8 @@ export function resolveComposerCommandSelection(input: {
     replacement = `/${item.command} `;
   } else if (item.type === "provider-slash-command") {
     replacement = `/${item.command.name} `;
+  } else if (item.type === "issue-reference") {
+    replacement = `${item.reference} `;
   } else if (item.type === "model") {
     replacement = `${formatComposerModelMention(item.option.selection.instanceId, item.option.selection.model)} `;
   }
@@ -375,8 +378,24 @@ export function useComposerCommandMenu({
     query: trigger?.kind === "pull-request" ? trigger.query : null,
   });
 
+  const issueSearch = useComposerIssueReferenceSearch({
+    environmentId,
+    projectId: pullRequestProjectId,
+    query: trigger?.kind === "issue" ? trigger.query : null,
+  });
+
   const items = ((): ComposerCommandItem[] => {
     if (!trigger) return [];
+
+    if (trigger.kind === "issue") {
+      return issueSearch.candidates.map((candidate) => ({
+        id: `issue-reference:${candidate.reference}`,
+        type: "issue-reference",
+        reference: candidate.reference,
+        label: candidate.reference,
+        description: candidate.title,
+      }));
+    }
 
     if (trigger.kind === "pull-request") {
       return pullRequestSearch.entries.map((entry) => ({
@@ -701,7 +720,11 @@ export function useComposerCommandMenu({
     items,
     skills,
     isLoading:
-      trigger?.kind === "pull-request" ? pullRequestSearch.isPending : pathSearch.isPending,
+      trigger?.kind === "issue"
+        ? issueSearch.isPending
+        : trigger?.kind === "pull-request"
+          ? pullRequestSearch.isPending
+          : pathSearch.isPending,
     error:
       trigger?.kind === "pull-request"
         ? pullRequestProjectId === null || pullRequestRepository === null

@@ -2091,6 +2091,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       return;
     }
+    if (item.type === "issue-reference") {
+      if (trigger.kind !== "issue") return;
+      const replacement = `${item.candidate.reference} `;
+      const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+        snapshot.value,
+        trigger.rangeEnd,
+        replacement,
+      );
+      const applied = applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+        expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+      return;
+    }
     if (item.type === "thread") {
       if (trigger.kind !== "path") return;
       const shell = readThreadShell(item.thread);
@@ -3652,9 +3668,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ? isComposerMenuLoading
                     ? composerTriggerKind === "pull-request"
                       ? gt("Finding pull request...")
-                      : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
-                        ? gt("Searching workspace skills...")
-                        : gt("Searching workspace files...")
+                      : composerTriggerKind === "issue"
+                        ? gt("Finding issues...")
+                        : composerTriggerKind === "skill" || composerTriggerKind === "slash-command"
+                          ? gt("Searching workspace skills...")
+                          : gt("Searching workspace files...")
                     : composerMenuEmptyState
                   : ""}
               </div>

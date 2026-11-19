@@ -12,6 +12,7 @@ import { useState } from "react";
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestFilterOptionsInput,
   ProviderDriverKind,
   ProviderInstanceId,
   PullRequestListInput,
@@ -26,6 +27,7 @@ import {
   withLinkedComposerPullRequestsFirst,
 } from "@t3tools/shared/composerPullRequestMatches";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
+import { narrowPullRequestReferences } from "@t3tools/shared/pullRequestComposerTrigger";
 
 import type { ComposerTrigger } from "../../composer-logic";
 import type { DraftId } from "../../composerDraftStore";
@@ -40,6 +42,7 @@ import { useEnvironmentIdentities, useEnvironmentMachines } from "~/state/enviro
 import { offersLinkedEnvironmentsAtom } from "~/state/peerLinks";
 import {
   pullRequestEnvironment,
+  usePullRequestFilterOptions,
   usePullRequestList,
   type EnvironmentQueryTarget,
 } from "~/state/pullRequests";
@@ -62,8 +65,11 @@ const COMPOSER_PULL_REQUEST_LIST_LIMIT = 99;
 const COMPOSER_PULL_REQUEST_RESULT_LIMIT = 12;
 const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<PullRequestListInput>> =
   [];
+const EMPTY_ISSUE_REFERENCE_TARGETS: ReadonlyArray<
+  EnvironmentQueryTarget<PullRequestFilterOptionsInput>
+> = [];
 
-/** Builds the @, /, $ and # suggestion lists, running the searches each trigger needs. */
+/** Builds the @, /, $, # and ! suggestion lists, running the searches each trigger needs. */
 export function useComposerMenuItems({
   composerTrigger,
   environmentId,
@@ -172,6 +178,26 @@ export function useComposerMenuItems({
           },
         ];
   const pullRequestLookup = usePullRequestList(pullRequestListTargets);
+  // Hosts whose change requests take another sigil complete their issues on `#`.
+  const issueTriggerQuery =
+    composerTrigger?.kind === "issue" ? composerTrigger.query.slice(0, 100) : null;
+  const debouncedIssueTriggerQuery = useDebouncedValue(issueTriggerQuery, 180);
+  const issueReferenceLookup = usePullRequestFilterOptions(
+    issueTriggerQuery === null || pullRequestProjectId === null
+      ? EMPTY_ISSUE_REFERENCE_TARGETS
+      : [
+          {
+            environmentId,
+            input: {
+              kind: "references",
+              projectId: pullRequestProjectId,
+              sigil: "#",
+              // Older answers narrow locally while the debounced search catches up.
+              ...(debouncedIssueTriggerQuery ? { query: debouncedIssueTriggerQuery } : {}),
+            },
+          },
+        ],
+  );
   const pullRequestTriggerNumber = (() => {
     if (composerTrigger?.kind !== "pull-request" || composerTrigger.query.length === 0) {
       return null;
@@ -344,6 +370,19 @@ export function useComposerMenuItems({
           (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : gt("Run provider skill")),
       }));
     }
+    if (composerTrigger.kind === "issue") {
+      return narrowPullRequestReferences(
+        issueReferenceLookup.references,
+        { sigil: "#", query: composerTrigger.query },
+        COMPOSER_PULL_REQUEST_RESULT_LIMIT,
+      ).map((candidate) => ({
+        id: `issue-reference:${candidate.reference}`,
+        type: "issue-reference" as const,
+        candidate,
+        label: candidate.reference,
+        description: candidate.title,
+      }));
+    }
     if (
       composerTrigger.kind === "pull-request" &&
       pullRequestProjectId !== null &&
@@ -419,6 +458,9 @@ export function useComposerMenuItems({
     (composerTriggerKind === "path" && workspaceEntries.isPending) ||
     ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
       workspaceSkillsScanning) ||
+    (composerTriggerKind === "issue" &&
+      pullRequestProjectId !== null &&
+      (issueReferenceLookup.isPending || issueTriggerQuery !== debouncedIssueTriggerQuery)) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
@@ -429,6 +471,14 @@ export function useComposerMenuItems({
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
       return gt("No skills found. Try / to browse provider commands.");
+    }
+    if (composerTriggerKind === "issue") {
+      if (pullRequestProjectId === null || issueReferenceLookup.error !== null) {
+        return gt("Issues could not be read for this project.");
+      }
+      return composerTrigger?.query
+        ? gt("No issue matches {query}.", { query: composerTrigger.query })
+        : gt("No issues found in this repository.");
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {

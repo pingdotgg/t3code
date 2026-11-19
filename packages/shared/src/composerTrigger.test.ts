@@ -98,7 +98,8 @@ describe("detectComposerTrigger", () => {
   it.each([
     ["Investigate #1", "#", "pull-request"],
     ["Investigate !1", "#", null],
-    ["Investigate #1", "!", null],
+    ["Investigate #1", "!", "issue"],
+    ["Investigate (#login", "!", "issue"],
     ["Investigate !1", "!", "pull-request"],
     ["Investigate (!fix", "!", "pull-request"],
     ["Hello!", "!", null],

@@ -12147,5 +12147,10 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "9554d9a34785f4aa": "Söker ärenden...",
+  "ffdb91f33881fca0": "Ärenden",
+  "9bdda1485bc5a5a8": "Projektets ärenden kunde inte läsas.",
+  "7721796d4ab2dde5": "Inget ärende matchar {query}.",
+  "6af065b99e23023e": "Inga ärenden hittades i det här repot."
 }
