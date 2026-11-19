@@ -43,6 +43,7 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { DraftProjectName } from "./DraftProjectName";
+import { onDraftHeroListKeyDown } from "./draftHeroTabOrder";
 import { TriageDraftHero } from "./TriageDraftHero";
 
 interface DraftHeroHeadlineProps {
@@ -165,6 +166,7 @@ export function ProjectPickerRows({
   onNoProject,
   onAllProjects,
   concise = false,
+  rowTabIndex,
 }: {
   readonly model: ProjectPickerModel;
   readonly groupLabels: boolean;
@@ -179,6 +181,8 @@ export function ProjectPickerRows({
   readonly onAllProjects?: () => void;
   /** The launcher offers usable actions without explanatory copy. */
   readonly concise?: boolean;
+  /** -1 when the composer's Tab order reaches the rows instead of the page's. */
+  readonly rowTabIndex?: number | undefined;
 }) {
   const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -203,6 +207,7 @@ export function ProjectPickerRows({
         detail={formatProjectRootForDisplay(targetProject.workspaceRoot)}
         detailIsPath
         onSelect={() => onChooseEntry(entry)}
+        tabIndex={rowTabIndex}
         onKeyDown={(event) => {
           if (!model.canPinProjectGroup(group) || !isProjectPinShortcut(event, keybindings)) return;
           event.preventDefault();
@@ -224,6 +229,7 @@ export function ProjectPickerRows({
                         : gt("Pin {name}", { name: group.displayName })
                     }
                     aria-pressed={pinned}
+                    tabIndex={rowTabIndex}
                     onClick={() => model.toggleProjectGroupPin(group)}
                   />
                 }
@@ -261,6 +267,7 @@ export function ProjectPickerRows({
           label={gt("All projects…")}
           detail={String(model.menuEntries.length)}
           onSelect={onAllProjects ?? model.openAllProjects}
+          tabIndex={rowTabIndex}
         />
       ) : null}
       {model.menuEntries.length > 0 ? (
@@ -274,6 +281,7 @@ export function ProjectPickerRows({
           detail={concise ? "" : gt("Its own folder, no git")}
           shortcut={model.noProjectShortcut}
           onSelect={onNoProject}
+          tabIndex={rowTabIndex}
           {...(onFocusNoProject ? { onFocus: onFocusNoProject } : {})}
         />
       ) : null}
@@ -282,6 +290,7 @@ export function ProjectPickerRows({
         label={gt("Add project…")}
         detail={concise ? "" : gt("Open a folder or clone a repository")}
         onSelect={model.openAddProject}
+        tabIndex={rowTabIndex}
       />
     </>
   );
@@ -393,11 +402,15 @@ export function DraftHeroHeadline({
       <div
         role="list"
         aria-label={gt("Projects")}
-        className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
+        data-draft-hero-projects=""
+        tabIndex={activeProject === null ? undefined : -1}
+        className="flex min-h-0 flex-col gap-0.5 overflow-y-auto outline-none"
+        onKeyDown={onDraftHeroListKeyDown}
       >
         <ProjectPickerRows
           model={model}
           groupLabels
+          rowTabIndex={activeProject === null ? undefined : -1}
           selectedProjectKey={isScratchDraft ? null : activeProjectKey}
           scratchSelected={isScratchDraft}
           onChooseEntry={chooseEntry}
@@ -483,6 +496,7 @@ export function DraftProjectRow(props: {
   readonly onSelect: () => void;
   readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   readonly onFocus?: () => void;
+  readonly tabIndex?: number | undefined;
 }) {
   return (
     <DraftProjectRowRoot
@@ -495,6 +509,7 @@ export function DraftProjectRow(props: {
         disabled={props.disabled}
         onClick={props.onSelect}
         onFocus={props.onFocus}
+        tabIndex={props.tabIndex}
       >
         {props.icon}
         <DraftProjectRowLabel>
