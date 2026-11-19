@@ -34,7 +34,10 @@ import {
   readAntigravityChildrenAtWork,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
-import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
+import {
+  ANTIGRAVITY_EMPTY_OUTPUT_CODE,
+  watchAntigravityPromptOutcome,
+} from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
   antigravityApprovalOptions,
   antigravityCommandOutlivesPrompt,
@@ -54,6 +57,19 @@ import {
 } from "@t3tools/provider-acp/server/adapter";
 
 const ANTIGRAVITY_PROVIDER = ProviderDriverKind.make("antigravity");
+
+/**
+ * ACP 1.3.0 ends the prompt on the harness's empty-output step, though the harness retries
+ * and keeps working. A new prompt waits for that work, so the model can finish the turn.
+ * One trajectory logged seven empty replies in a row before it recovered.
+ */
+const ANTIGRAVITY_EMPTY_OUTPUT_RESUME = {
+  maxAttempts: 8,
+  prompt: (failure) =>
+    failure.code === ANTIGRAVITY_EMPTY_OUTPUT_CODE
+      ? "Your previous reply was empty, so it never reached the user. Continue the task from where you stopped. If you had already finished, give your final answer again."
+      : undefined,
+} satisfies AcpAdapterV2Flavor["resumeAfterHiddenFailure"];
 
 const AntigravityProviderCapabilitiesV2 = {
   ...AcpProviderCapabilitiesV2,
@@ -310,6 +326,7 @@ export function makeAntigravityAcpAdapterFlavor(
               rootSessionId: sessionId,
               toolCallIds: nativeTaskIds,
             }),
+          resumeAfterHiddenFailure: ANTIGRAVITY_EMPTY_OUTPUT_RESUME,
         }),
   };
 }

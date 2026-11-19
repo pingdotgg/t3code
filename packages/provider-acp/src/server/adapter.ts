@@ -297,6 +297,26 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
+function addPromptUsage(
+  total: EffectAcpSchema.Usage | undefined,
+  next: EffectAcpSchema.Usage | undefined,
+): EffectAcpSchema.Usage | undefined {
+  if (total === undefined || next === undefined) return total ?? next;
+  const sum = (a: number | null | undefined, b: number | null | undefined) =>
+    a == null && b == null ? undefined : (a ?? 0) + (b ?? 0);
+  const thoughtTokens = sum(total.thoughtTokens, next.thoughtTokens);
+  const cachedReadTokens = sum(total.cachedReadTokens, next.cachedReadTokens);
+  const cachedWriteTokens = sum(total.cachedWriteTokens, next.cachedWriteTokens);
+  return {
+    totalTokens: total.totalTokens + next.totalTokens,
+    inputTokens: total.inputTokens + next.inputTokens,
+    outputTokens: total.outputTokens + next.outputTokens,
+    ...(thoughtTokens === undefined ? {} : { thoughtTokens }),
+    ...(cachedReadTokens === undefined ? {} : { cachedReadTokens }),
+    ...(cachedWriteTokens === undefined ? {} : { cachedWriteTokens }),
+  };
+}
+
 /**
  * Maps one per-turn usage sample (flavors with reportsPerTurnPromptUsage)
  * directly onto TurnTokenUsage: the response's counters already cover exactly
@@ -368,6 +388,14 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<
     (result: EffectAcpSchema.PromptResponse) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
   >;
+  /**
+   * For a hidden failure the agent survives, the text of a follow-up prompt. The turn stays
+   * open, shows a provider retry, and sends it on the same session, at most `maxAttempts` times.
+   */
+  readonly resumeAfterHiddenFailure?: {
+    readonly maxAttempts: number;
+    readonly prompt: (failure: OrchestrationV2ProviderFailure) => string | undefined;
+  };
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
@@ -2861,6 +2889,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const reportProviderRetry = Effect.fnUntraced(function* (notice: {
           readonly sessionId: string;
           readonly failure: OrchestrationV2ProviderFailure;
+          readonly maxAttempts?: number;
         }) {
           const context = yield* Ref.get(activeTurn);
           if (
@@ -2876,7 +2905,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             failure: notice.failure,
             retry: {
               attempt: (previous?.retry.attempt ?? 0) + 1,
-              maxAttempts: null,
+              maxAttempts: notice.maxAttempts ?? null,
               retryDelayMs: null,
             },
             startedAt: previous?.startedAt ?? (yield* DateTime.now),
@@ -9140,11 +9169,63 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const compactSession = isCompactionMessage(turnInput.message)
               ? flavor.compactSession
               : undefined;
+            const promptResumingHiddenFailures = Effect.fn("AcpAdapterV2.promptResuming")(
+              function* (prompt: ReadonlyArray<EffectAcpSchema.ContentBlock>) {
+                const resume = flavor.resumeAfterHiddenFailure;
+                const watch = flavor.watchPromptOutcome;
+                let check = checkPromptOutcome;
+                let next = prompt;
+                let usage: EffectAcpSchema.Usage | undefined;
+                for (let resumes = 0; ; resumes += 1) {
+                  const result = yield* sendPromptWhenIdle(context, () =>
+                    runtime.prompt({ prompt: next }, promptOptions),
+                  );
+                  // Per-turn usage counts one prompt, so a resumed turn adds them up.
+                  usage =
+                    flavor.reportsPerTurnPromptUsage === true
+                      ? addPromptUsage(usage, result.usage ?? undefined)
+                      : undefined;
+                  const settled = usage === undefined ? result : { ...result, usage };
+                  if (
+                    resume === undefined ||
+                    watch === undefined ||
+                    check === undefined ||
+                    resumes >= resume.maxAttempts ||
+                    result.stopReason !== "end_turn" ||
+                    context.interrupted ||
+                    context.finalized
+                  )
+                    return settled;
+                  const failure = (yield* check(result))?.failure;
+                  const text = failure === undefined ? undefined : resume.prompt(failure);
+                  if (failure === undefined || text === undefined) return settled;
+                  const reported = yield* runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    Effect.gen(function* () {
+                      context.lastProgressAt = yield* Clock.currentTimeMillis;
+                      yield* reportProviderRetry({
+                        sessionId: requestedSessionId,
+                        failure,
+                        maxAttempts: resume.maxAttempts,
+                      });
+                    }),
+                  );
+                  if (Option.isNone(reported)) return settled;
+                  yield* Effect.logWarning("orchestration-v2.acp-prompt-resumed", {
+                    driver,
+                    providerSessionId: input.providerSessionId,
+                    providerTurnId,
+                    attempt: resumes + 1,
+                    code: failure.code,
+                  });
+                  check = yield* watch(requestedSessionId);
+                  next = [{ type: "text", text }];
+                }
+              },
+            );
             yield* (
               compactSession === undefined
-                ? sendPromptWhenIdle(context, () =>
-                    runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                  )
+                ? promptResumingHiddenFailures(promptParts!.prompt)
                 : Deferred.succeed(context.promptDispatched, undefined).pipe(
                     Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
                     Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),
