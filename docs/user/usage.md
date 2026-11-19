@@ -169,8 +169,9 @@ Sign-in and API keys report limits only with Cursor's default API endpoint. If y
 Cursor endpoint, use an explicit `CURSOR_AUTH_TOKEN` for limits.
 
 Grok reports the remaining subscription allowance and reset time for its current billing period
-after signing in with `grok login`. Explicit `XAI_API_KEY` connections and custom authentication
-or endpoint configurations do not report subscription limits.
+after signing in with `grok login`. Accounts on xAI's unified billing show no limits, because xAI
+does not report how much of their allowance is used. Explicit `XAI_API_KEY` connections and custom
+authentication or endpoint configurations do not report subscription limits.
 
 Muse Code reports its session and weekly windows and its tier once the Muse CLI has run in a thread.
 Until then it shows no limits. Readings are not kept across a server restart.
