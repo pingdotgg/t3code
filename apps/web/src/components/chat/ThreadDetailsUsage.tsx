@@ -7,12 +7,12 @@ import type {
 import {
   collectProviderUsageLimits,
   elapsedShare,
-  formatDuration,
   type LimitPace,
-  limitsNotice,
   paceOf,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { msg, useGT, useLocale, useMessages } from "gt-react";
 import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { usePrimarySettings } from "../../hooks/useSettings";
@@ -27,9 +27,9 @@ import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
 const PACE_LABEL: Record<LimitPace, string> = {
-  ahead: "Ahead of pace",
-  on: "On pace",
-  under: "Under pace",
+  ahead: msg("Ahead of pace"),
+  on: msg("On pace"),
+  under: msg("Under pace"),
 };
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
@@ -45,6 +45,8 @@ export function ThreadDetailsUsage({
   providers,
   sources,
 }: Omit<ThreadDetailsUsageInput, "contextWindow">) {
+  const gt = useGT();
+  const m = useMessages();
   const nowMinute = useNowMinute();
   const now = Date.parse(`${nowMinute}:00Z`);
   const report =
@@ -54,17 +56,19 @@ export function ThreadDetailsUsage({
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
     providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  const notice = limits ? limitsNotice(limits) : "This provider has not reported usage limits.";
+  const notice = limits
+    ? limitsNotice(limits, m)
+    : gt("This provider has not reported usage limits.");
   return (
-    <ThreadDetailsSection title="Usage limits" variant="usage">
+    <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
       {notice || !limits?.windows.length ? (
         <UsageRow
-          label="Limits"
+          label={gt("Limits", { $context: "usage limits row label" })}
           icon={<TimerIcon />}
           fill={null}
           tone={null}
-          value="Unavailable"
-          tooltip={notice ?? "No usage windows reported."}
+          value={gt("Unavailable")}
+          tooltip={notice ?? gt("No usage windows reported.")}
         />
       ) : (
         limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
@@ -85,6 +89,9 @@ export function ThreadDetailsContext({
   readonly compactDisabled?: boolean | undefined;
   readonly compactDisabledReason?: string | null | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
   const maxTokens = usage?.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage?.usedPercentage != null
@@ -97,26 +104,30 @@ export function ThreadDetailsContext({
       : null;
   const usedTokens = usage ? formatContextWindowTokens(usage.usedTokens) : null;
   return (
-    <ThreadDetailsSection title="Context window" variant="usage">
+    <ThreadDetailsSection title={gt("Context window")} variant="usage">
       <UsageRow
-        label="Context"
+        label={gt("Context", { $context: "context window row label" })}
         icon={<GaugeIcon />}
         fill={used}
         tick={tick}
         tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-        value={used !== null ? `${used}%` : (usedTokens ?? "N/A")}
+        value={
+          used !== null
+            ? `${used}%`
+            : (usedTokens ?? gt("N/A", { $context: "context usage not reported" }))
+        }
         ariaValue={
           used !== null
-            ? `${used}% used`
+            ? gt("{used}% used", { used })
             : usedTokens
-              ? `${usedTokens} tokens used`
-              : "Not reported"
+              ? gt("{usedTokens} tokens used", { usedTokens })
+              : gt("Not reported", { $context: "context usage" })
         }
         trailing={
           onCompact && usage ? (
             <ThreadDetailsControl
               part="icon"
-              aria-label="Compact context"
+              aria-label={gt("Compact context")}
               disabled={compactDisabled}
               onClick={onCompact}
             >
@@ -128,19 +139,21 @@ export function ThreadDetailsContext({
           <>
             <span className="text-foreground">
               {used !== null
-                ? `Context: ${used}% used`
+                ? gt("Context: {used}% used", { used })
                 : usedTokens
-                  ? `Context: ${usedTokens} tokens used`
-                  : "The provider has not reported context usage."}
+                  ? gt("Context: {usedTokens} tokens used", { usedTokens })
+                  : gt("The provider has not reported context usage.")}
             </span>
             {usage && maxTokens !== null ? (
               <span>
-                {usage.usedTokens.toLocaleString("en-US")} of {maxTokens.toLocaleString("en-US")}{" "}
-                tokens
+                {gt("{used} of {max} tokens", {
+                  used: usage.usedTokens.toLocaleString(locale),
+                  max: maxTokens.toLocaleString(locale),
+                })}
               </span>
             ) : null}
             {threshold !== null && threshold > 0 ? (
-              <span>{formatContextWindowCompactionMessage(threshold)}</span>
+              <span>{formatContextWindowCompactionMessage(threshold, m)}</span>
             ) : null}
             {compactDisabled && compactDisabledReason ? <span>{compactDisabledReason}</span> : null}
           </>
@@ -157,6 +170,8 @@ function LimitRow({
   readonly window: ServerProviderUsageWindow;
   readonly now: number;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
@@ -168,7 +183,7 @@ function LimitRow({
     remainingMs > 0
       ? weekly
         ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(resetsAt)
-        : formatDuration(remainingMs)
+        : formatDuration(remainingMs, m)
       : null;
   return (
     <UsageRow
@@ -178,7 +193,7 @@ function LimitRow({
       tick={elapsed === null ? null : (1 - elapsed) * 100}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
-      ariaValue={`${left}% left`}
+      ariaValue={gt("{left}% left", { left })}
       trailing={
         reset ? (
           <span className="truncate text-caption text-dim-foreground">{reset}</span>
@@ -187,17 +202,19 @@ function LimitRow({
       tooltip={
         <>
           <span className="text-foreground">
-            {window.label}: {left}% left
+            {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
           {window.resetsAt && remainingMs > 0 ? (
             <span>
-              <span className="block">Resets in {formatDuration(remainingMs)}</span>
               <span className="block">
-                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)}
+                {gt("Resets in {duration}", { duration: formatDuration(remainingMs, m) })}
+              </span>
+              <span className="block">
+                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
               </span>
             </span>
           ) : null}
-          {pace ? <span>{PACE_LABEL[pace]}</span> : null}
+          {pace ? <span>{m(PACE_LABEL[pace])}</span> : null}
         </>
       }
     />
@@ -225,6 +242,7 @@ function UsageRow({
   readonly tooltip: ReactNode;
   readonly trailing?: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <Tooltip>
       <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
@@ -232,7 +250,7 @@ function UsageRow({
           render={
             <div
               tabIndex={0}
-              aria-label={`${label}: ${ariaValue}`}
+              aria-label={gt("{label}: {value}", { label, value: ariaValue })}
               className="flex min-w-0 flex-1 cursor-default items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             />
           }

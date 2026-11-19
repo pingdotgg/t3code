@@ -1,4 +1,5 @@
 import { Outlet, createFileRoute, notFound, redirect, useLocation } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 
 import { SidebarInset } from "../components/ui/sidebar";
 import {
@@ -28,6 +29,7 @@ export const Route = createFileRoute("/design-system")({
 });
 
 function DesignSystemLayout() {
+  const gt = useGT();
   const onScenes = useLocation({
     select: (location) => location.pathname.startsWith("/design-system/scenes"),
   });
@@ -35,15 +37,17 @@ function DesignSystemLayout() {
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
         <WorkspacePageHeader electron={isElectron}>
-          <WorkspaceBreadcrumb ariaLabel="Design system breadcrumb">
+          <WorkspaceBreadcrumb ariaLabel={gt("Design system breadcrumb")}>
             {onScenes ? (
               <>
-                <WorkspaceBreadcrumbItem>Design system</WorkspaceBreadcrumbItem>
+                <WorkspaceBreadcrumbItem>
+                  <T>Design system</T>
+                </WorkspaceBreadcrumbItem>
                 <WorkspaceBreadcrumbSeparator />
               </>
             ) : null}
             <WorkspaceBreadcrumbItem current className="truncate">
-              {onScenes ? "Turn player" : "Design system"}
+              {onScenes ? gt("Turn player") : <T>Design system</T>}
             </WorkspaceBreadcrumbItem>
           </WorkspaceBreadcrumb>
         </WorkspacePageHeader>

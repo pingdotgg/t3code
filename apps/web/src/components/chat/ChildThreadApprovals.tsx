@@ -6,6 +6,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 import { ShieldIcon } from "lucide-react";
 import { ComposerRequestCard } from "./ComposerRequestCard";
@@ -17,15 +18,20 @@ import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions
 function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const canRespond = useEnvironmentScope(entry.thread.environmentId, AuthOrchestrationOperateScope);
   const respond = useAtomCommand(threadEnvironment.respondToApproval, { reportFailure: false });
+  const gt = useGT();
+  const messages = useMessages();
   const [responding, setResponding] = useState(false);
   const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { approval } = entry;
   return (
-    <ComposerRequestCard.Root role="region" aria-label={`Approval from ${entry.title}`}>
+    <ComposerRequestCard.Root
+      role="region"
+      aria-label={gt("Approval from {title}", { title: entry.title })}
+    >
       <ComposerRequestCard.Header
         icon={<ShieldIcon />}
-        title={`Approval needed from ${entry.title}`}
+        title={gt("Approval needed from {title}", { title: entry.title })}
       />
       <ComposerRequestCard.Well>
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 font-mono text-meta text-foreground wrap-anywhere">
@@ -37,7 +43,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       ) : null}
       {approval.responseCapability !== "live" ? (
         <p className="px-2.5 text-meta text-warning-foreground">
-          Provider process is gone. Interrupt or restart the child thread to respond.
+          <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
         </p>
       ) : null}
       {approval.reason ? (
@@ -45,7 +51,7 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
       ) : null}
       {approval.fullAccessOverride ? (
         <p className="px-2.5 text-meta text-muted-foreground">
-          {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+          {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
       <ComposerRequestCard.Footer>
@@ -70,7 +76,9 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
             if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
               const failure = squashAtomCommandFailure(result);
               setError(
-                failure instanceof Error ? failure.message : "Failed to submit approval decision.",
+                failure instanceof Error
+                  ? failure.message
+                  : gt("Failed to submit approval decision."),
               );
             }
             setResponding(false);

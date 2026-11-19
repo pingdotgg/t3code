@@ -2,6 +2,7 @@ import {
   FULL_ACCESS_OVERRIDE_QUESTION,
   fullAccessOverrideExplanation,
 } from "@t3tools/client-runtime/state/thread-requests";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { FileDiffIcon, FileMinusIcon, FilePlusIcon, ShieldIcon } from "lucide-react";
 import { memo, use, useState } from "react";
 import { type PendingApproval } from "../../session-logic";
@@ -16,6 +17,7 @@ import { useTurnItemDetail } from "../../state/queries";
 
 function ApprovalFileDiff({ file }: { file: NonNullable<PendingApproval["files"]>[number] }) {
   const ctx = use(TimelineRowCtx);
+  const gt = useGT();
   const detail = useTurnItemDetail(
     !file.diff && file.source
       ? { environmentId: ctx.activeThreadEnvironmentId, ...file.source }
@@ -34,10 +36,10 @@ function ApprovalFileDiff({ file }: { file: NonNullable<PendingApproval["files"]
       ) : (
         <span className="text-muted-foreground">
           {detail.isPending
-            ? "Loading diff…"
+            ? gt("Loading diff…")
             : detail.error
-              ? "Could not load diff."
-              : "Diff is unavailable."}
+              ? gt("Could not load diff.")
+              : gt("Diff is unavailable.")}
         </span>
       )}
     </div>
@@ -45,18 +47,26 @@ function ApprovalFileDiff({ file }: { file: NonNullable<PendingApproval["files"]
 }
 
 const APPROVAL_PRESENTATION = {
-  command: { icon: "terminal", label: "Command approval", detailLabel: "Command" },
-  "file-change": { icon: "square-pen", label: "File change approval", detailLabel: "File change" },
-  "file-read": { icon: "eye", label: "File read approval", detailLabel: "File to read" },
+  command: {
+    icon: "terminal",
+    label: msg("Command approval"),
+    detailLabel: msg("Command", { $context: "noun, shell command awaiting approval" }),
+  },
+  "file-change": {
+    icon: "square-pen",
+    label: msg("File change approval"),
+    detailLabel: msg("File change"),
+  },
+  "file-read": { icon: "eye", label: msg("File read approval"), detailLabel: msg("File to read") },
   permission: {
     icon: "wrench",
-    label: "App permission approval",
-    detailLabel: "Permission request",
+    label: msg("App permission approval"),
+    detailLabel: msg("Permission request"),
   },
   "mcp-elicitation": {
     icon: "hammer",
-    label: "App access approval",
-    detailLabel: "App access request",
+    label: msg("App access approval"),
+    detailLabel: msg("App access request"),
   },
 } satisfies Record<
   PendingApproval["requestKind"],
@@ -95,6 +105,8 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   const [diffRequestId, setDiffRequestId] = useState<PendingApproval["requestId"] | null>(null);
   const diffOpen = diffRequestId === approval.requestId;
   const { onRespondToApproval } = use(TimelineRowCtx);
+  const gt = useGT();
+  const m = useMessages();
   const presentation = APPROVAL_PRESENTATION[approval.requestKind];
   const canRespond = approval.responseCapability === "live";
   const files = approval.requestKind === "file-change" ? (approval.files ?? []) : [];
@@ -107,7 +119,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
   return (
     <WorkLogRow
       role="group"
-      aria-label={presentation.label}
+      aria-label={m(presentation.label)}
       data-v2-item-type="approval_request"
       wrapLabel
       icon={
@@ -120,12 +132,12 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
       }
       label={
         <code
-          aria-label={presentation.detailLabel}
+          aria-label={m(presentation.detailLabel)}
           className="block max-h-40 min-w-0 overflow-auto whitespace-pre-wrap font-mono text-meta leading-5 text-foreground select-text! wrap-anywhere [scrollbar-width:thin] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
           data-approval-detail="complete"
           tabIndex={0}
         >
-          {approval.detail || presentation.label}
+          {approval.detail || m(presentation.label)}
         </code>
       }
     >
@@ -134,7 +146,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
           <span className="text-muted-foreground wrap-anywhere">{approval.appName}</span>
         ) : null}
         {files.length > 0 ? (
-          <ul aria-label="Files to change" className="max-h-40 overflow-y-auto">
+          <ul aria-label={gt("Files to change")} className="max-h-40 overflow-y-auto">
             {files.map((file) => (
               <li
                 key={`${file.operation ?? ""}:${file.path}`}
@@ -175,7 +187,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
         ) : null}
         {diffOpen ? (
           <div
-            aria-label="Proposed diff"
+            aria-label={gt("Proposed diff")}
             className="max-h-60 overflow-auto font-mono text-caption"
             tabIndex={0}
           >
@@ -192,7 +204,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
             <>
               <span className="inline-flex items-center gap-1 text-warning-foreground">
                 <ShieldIcon aria-hidden className="size-3 shrink-0" />
-                Waiting for approval
+                <T>Waiting for approval</T>
               </span>
               {onRespondToApproval ? (
                 <>
@@ -202,7 +214,7 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
                       aria-pressed={diffOpen}
                       onClick={() => setDiffRequestId(diffOpen ? null : approval.requestId)}
                     >
-                      {diffOpen ? "Hide diff" : "Review diff"}
+                      {diffOpen ? gt("Hide diff") : gt("Review diff")}
                     </InlineButton>
                   ) : null}
                 </>
@@ -210,21 +222,21 @@ export const TimelinePendingApprovalRow = memo(function TimelinePendingApprovalR
             </>
           ) : (
             <span className="text-warning-foreground">
-              Provider process is gone. Interrupt or restart the run to respond.
+              <T>Provider process is gone. Interrupt or restart the run to respond.</T>
             </span>
           )}
           {approval.fullAccessOverride ? (
             <Popover>
               <PopoverTrigger openOnHover render={<InlineButton tone="muted" />}>
-                {FULL_ACCESS_OVERRIDE_QUESTION}
+                {m(FULL_ACCESS_OVERRIDE_QUESTION)}
               </PopoverTrigger>
               <PopoverPopup
-                aria-label={FULL_ACCESS_OVERRIDE_QUESTION}
+                aria-label={m(FULL_ACCESS_OVERRIDE_QUESTION)}
                 tooltipStyle
                 side="top"
                 className="max-w-[min(22rem,calc(100vw-2rem))] whitespace-normal"
               >
-                {fullAccessOverrideExplanation(approval.fullAccessOverride)}
+                {fullAccessOverrideExplanation(approval.fullAccessOverride, m)}
               </PopoverPopup>
             </Popover>
           ) : null}

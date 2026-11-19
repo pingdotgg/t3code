@@ -1,6 +1,7 @@
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 /* oxlint-disable react/no-array-index-key -- Notebook cells and outputs retain their saved source order. */
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { T, useGT, useMessages } from "gt-react";
 import { useEffect, useRef, useState } from "react";
 import type { Root, RootContent } from "mdast";
 import ChatMarkdown from "~/components/ChatMarkdown";
@@ -46,6 +47,8 @@ export default function NotebookPreview(props: {
   readonly notebook: Extract<OfficeWorkerResult, { type: "notebook" }>;
   readonly sizeBytes?: number | undefined;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [visible, setVisible] = useState(20);
   const scroll = useRef<HTMLDivElement>(null);
   const [outputView, setOutputView] = useState(() => ({
@@ -101,31 +104,39 @@ export default function NotebookPreview(props: {
       >
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} />}>
-            {props.notebook.cells.length.toLocaleString()}{" "}
-            {props.notebook.cells.length === 1 ? "cell" : "cells"}
+            {gt("{count, plural, one {{formatted} cell} other {{formatted} cells}}", {
+              count: props.notebook.cells.length,
+              formatted: props.notebook.cells.length.toLocaleString(),
+            })}
           </TooltipTrigger>
           <TooltipPopup>
             <span className="block">{props.notebook.language}</span>
             {props.sizeBytes !== undefined ? (
               <span className="block">
-                {props.sizeBytes === 0 ? "0 bytes" : formatAttachmentSize(props.sizeBytes)}
+                {props.sizeBytes === 0
+                  ? gt("0 bytes")
+                  : formatAttachmentSize(props.sizeBytes, messages)}
               </span>
             ) : null}
           </TooltipPopup>
         </Tooltip>
       </div>
-      <FileSurfaceNotice>Saved outputs only. Code is never executed.</FileSurfaceNotice>
+      <FileSurfaceNotice>
+        <T>Saved outputs only. Code is never executed.</T>
+      </FileSurfaceNotice>
       <div ref={scroll} className="scrollbar-gutter-both min-h-0 flex-1 overflow-auto">
         <div className="mx-auto max-w-4xl space-y-5 px-5 py-6">
           {props.notebook.cells.slice(0, visible).map((cell, index) => (
             <section
               key={index}
-              aria-label={`Cell ${index + 1}`}
+              aria-label={gt("Cell {number}", { number: String(index + 1) })}
               className="min-w-0 overflow-hidden rounded-md border border-border/60"
             >
               <div className="flex items-center gap-3 border-b border-border/60 bg-muted/30 px-3 py-1.5 text-meta text-muted-foreground">
                 <Tooltip>
-                  <TooltipTrigger render={<span tabIndex={0} />}>Cell {index + 1}</TooltipTrigger>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    {gt("Cell {number}", { number: String(index + 1) })}
+                  </TooltipTrigger>
                   <TooltipPopup>
                     {cell.kind === "code" ? props.notebook.language : cell.kind}
                   </TooltipPopup>
@@ -163,14 +174,14 @@ export default function NotebookPreview(props: {
                     !outputView.mounted.has(`${index}-${outputIndex}`) ? null : (
                       <DocumentPages
                         html={output.text}
-                        name={`Cell ${index + 1} HTML output`}
+                        name={gt("Cell {number} HTML output", { number: String(index + 1) })}
                         output
                       />
                     )
                   ) : output.kind === "image" ? (
                     <img
                       src={output.text}
-                      alt={`Cell ${index + 1} output`}
+                      alt={gt("Cell {number} output", { number: String(index + 1) })}
                       loading="lazy"
                       className="max-h-96 max-w-full p-4 object-contain"
                     />
@@ -184,11 +195,16 @@ export default function NotebookPreview(props: {
             </section>
           ))}
           {props.notebook.cells.length === 0 ? (
-            <p className="text-body text-muted-foreground">This notebook is empty.</p>
+            <p className="text-body text-muted-foreground">
+              <T>This notebook is empty.</T>
+            </p>
           ) : null}
           {visible < props.notebook.cells.length ? (
             <Button variant="secondary" size="sm" onClick={() => setVisible((count) => count + 20)}>
-              Show more cells ({props.notebook.cells.length - visible} remaining)
+              {gt(
+                "{count, plural, one {Show more cells ({count} remaining)} other {Show more cells ({count} remaining)}}",
+                { count: props.notebook.cells.length - visible },
+              )}
             </Button>
           ) : null}
         </div>

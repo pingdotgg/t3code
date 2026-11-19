@@ -1,6 +1,7 @@
 import { Spinner } from "~/components/ui/spinner";
 import { AuthFilesystemReadScope, type ProjectContentMatch } from "@t3tools/contracts";
 
+import { T, useGT, useMessages } from "gt-react";
 import { CaseSensitiveIcon, RegexIcon, WholeWordIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
@@ -73,19 +74,20 @@ function SearchOptionButton(props: {
 }
 
 function EmptyContentSearchDialog() {
+  const gt = useGT();
   return (
     <CommandPaletteContent
-      aria-label="Search project contents"
-      escapeLabel="Back"
-      footerActionLabel="Open file"
-      inputProps={{ disabled: true, placeholder: "Search project contents…", iconSize: "sm" }}
+      aria-label={gt("Search project contents")}
+      escapeLabel={gt("Back")}
+      footerActionLabel={gt("Open file")}
+      inputProps={{ disabled: true, placeholder: gt("Search project contents…"), iconSize: "sm" }}
       mode="none"
       panelSize="fill"
       testId="project-content-search"
       value=""
     >
       <p className="m-auto px-6 text-center text-muted-foreground text-sm">
-        Open a project to search its files.
+        <T>Open a project to search its files.</T>
       </p>
     </CommandPaletteContent>
   );
@@ -100,6 +102,8 @@ function OpenContentSearchDialog(props: {
   readonly target: ActiveProjectTarget;
 }) {
   const { target } = props;
+  const gt = useGT();
+  const messages = useMessages();
   const { resolvedTheme } = useTheme();
   const renderedAppearance = useRenderedAppearance();
   const [query, setQuery] = useState("");
@@ -110,14 +114,17 @@ function OpenContentSearchDialog(props: {
 
   const [visibleCount, setVisibleCount] = useState(VISIBLE_MATCH_WINDOW);
 
-  const search = useProjectContentSearch({
-    environmentId: target.environmentId,
-    cwd: target.cwd,
-    query,
-    caseSensitive,
-    wholeWord,
-    useRegex,
-  });
+  const search = useProjectContentSearch(
+    {
+      environmentId: target.environmentId,
+      cwd: target.cwd,
+      query,
+      caseSensitive,
+      wholeWord,
+      useRegex,
+    },
+    messages,
+  );
   const canOpenMatches = search.canReadFiles && !search.isPending && search.error === null;
   const matches = search.matches;
   const [resultsFor, setResultsFor] = useState(matches);
@@ -155,21 +162,38 @@ function OpenContentSearchDialog(props: {
     search.canReadFiles && (search.isPending || search.error !== null || search.invalidRegex);
   const resultCount =
     search.canReadFiles && search.hasQuery && !showSearchStatus
-      ? `${matches.length.toLocaleString()}${search.truncated ? "+" : ""} ${matches.length === 1 ? "result" : "results"} in ${fileCount.toLocaleString()} ${fileCount === 1 ? "file" : "files"}`
+      ? search.truncated
+        ? gt(
+            "{fileCount, plural, one {{results}+ results in {files} file} other {{results}+ results in {files} files}}",
+            {
+              fileCount,
+              results: matches.length.toLocaleString(),
+              files: fileCount.toLocaleString(),
+            },
+          )
+        : gt(
+            "{resultCount, plural, one {{results} result} other {{results} results}} in {fileCount, plural, one {{files} file} other {{files} files}}",
+            {
+              resultCount: matches.length,
+              results: matches.length.toLocaleString(),
+              fileCount,
+              files: fileCount.toLocaleString(),
+            },
+          )
       : null;
 
   return (
     <CommandPaletteContent
-      aria-label={`Search file contents in ${target.projectName}`}
+      aria-label={gt("Search file contents in {project}", { project: target.projectName })}
       // Escape returns to the command palette, so the hint says Back rather than the pen's Close.
-      escapeLabel="Back"
-      footerActionLabel="Open file"
+      escapeLabel={gt("Back")}
+      footerActionLabel={gt("Open file")}
       inputAccessory={
         <div className="absolute inset-e-2.5 top-1/2 flex shrink-0 -translate-y-1/2 items-center gap-0.5 rounded-control border border-border surface-well p-0.5">
           <SearchOptionButton
             active={caseSensitive}
             disabled={!search.canReadFiles}
-            label="Match case"
+            label={gt("Match case")}
             onClick={() => setCaseSensitive((current) => !current)}
           >
             <CaseSensitiveIcon aria-hidden="true" />
@@ -177,7 +201,7 @@ function OpenContentSearchDialog(props: {
           <SearchOptionButton
             active={wholeWord}
             disabled={!search.canReadFiles}
-            label="Match whole word"
+            label={gt("Match whole word")}
             onClick={() => setWholeWord((current) => !current)}
           >
             <WholeWordIcon aria-hidden="true" />
@@ -185,7 +209,7 @@ function OpenContentSearchDialog(props: {
           <SearchOptionButton
             active={useRegex}
             disabled={!search.canReadFiles}
-            label="Use regular expression"
+            label={gt("Use regular expression")}
             onClick={() => setUseRegex((current) => !current)}
           >
             <RegexIcon aria-hidden="true" />
@@ -196,7 +220,7 @@ function OpenContentSearchDialog(props: {
         iconSize: "sm",
         className: "pe-30",
         disabled: !search.canReadFiles,
-        placeholder: `Search in ${target.projectName}`,
+        placeholder: gt("Search in {project}", { project: target.projectName }),
         onKeyDown: (event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (event.key === "ArrowDown" && matches.length > 0) {
@@ -235,12 +259,14 @@ function OpenContentSearchDialog(props: {
         <div className="flex h-9 shrink-0 items-center border-b border-divider px-3 text-xs text-dim-foreground">
           {search.isPending ? (
             <span className="flex items-center gap-2">
-              <Spinner size="sm" /> Searching…
+              <Spinner size="sm" /> <T>Searching…</T>
             </span>
           ) : search.error ? (
             <span className="text-destructive">{search.error}</span>
           ) : (
-            <span className="text-destructive">Invalid regular expression</span>
+            <span className="text-destructive">
+              <T>Invalid regular expression</T>
+            </span>
           )}
         </div>
       ) : null}
@@ -248,12 +274,12 @@ function OpenContentSearchDialog(props: {
       {matches.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
           {search.isCheckingAccess
-            ? "Checking file access…"
+            ? gt("Checking file access…")
             : !search.canReadFiles
               ? search.error
               : search.hasQuery && !search.isPending && !search.error
-                ? "No results found."
-                : "Type to search across your project."}
+                ? gt("No results found.")
+                : gt("Type to search across your project.")}
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1" scrollFade>

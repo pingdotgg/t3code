@@ -1,12 +1,13 @@
 import { ArrowLeftIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { observeResize } from "../../lib/observeResize";
-import { usePullRequestsSupported } from "../../state/environments";
+import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -25,6 +26,8 @@ import {
 } from "../ui/sidebar";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "../pullRequest/pullRequestListPreferences";
+import { readIssueListPreferences } from "../issue/issueListPreferences";
+import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import { SidebarThreadUndoNotice } from "./SidebarThreadUndoNotice";
@@ -54,7 +57,8 @@ export function SidebarBrandWidthProbe({
         <span className="inline-flex min-w-0 items-baseline gap-1 text-label tracking-tight">
           <T3Wordmark className="h-[1cap] w-auto shrink-0" />
           <span className="truncate [text-box:trim-both_cap_alphabetic] supports-[text-box:trim-both_cap_alphabetic]:py-1">
-            Code
+            {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product wordmark */}
+            {"Code"}
           </span>
         </span>
         {isElectron ? <div className="w-[calc(2*var(--workspace-titlebar-control-size))]" /> : null}
@@ -70,6 +74,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }) {
   const stageLabel = useEnvironmentStageLabel();
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
+  const gt = useGT();
   const backdropVariant = resolveSidebarStageBackdropVariant(
     stageLabel,
     environmentIdentificationMode,
@@ -97,7 +102,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
         <SidebarTrigger
           variant={backdropVariant ? "media-navigation" : "ghost"}
           className="relative top-auto translate-y-0"
-          aria-label="Toggle main sidebar"
+          aria-label={gt("Toggle main sidebar")}
         />
       </div>
       {pillLabel ? (
@@ -135,11 +140,13 @@ function SidebarUtilityItem({
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
+  const gt = useGT();
   const { isMobile, setOpenMobile } = useSidebar();
   const isOnUtilityPage = useLocation({
     select: (location) => isSidebarUtilityPage(location.pathname),
   });
   const pullRequestsSupported = usePullRequestsSupported();
+  const issuesSupported = useIssuesSupported();
   const closeMobileSidebar = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -151,6 +158,10 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
       to: "/pull-requests",
       search: readPullRequestListPreferences(),
     });
+  };
+  const handleIssuesClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/issues", search: readIssueListPreferences() });
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -175,7 +186,9 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         <SidebarMenuItem className="min-w-0 flex-1">
           <SidebarMenuButton size="control" onClick={handleBackClick}>
             <ArrowLeftIcon />
-            <span>Back</span>
+            <span>
+              <T>Back</T>
+            </span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : (
@@ -184,19 +197,26 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
           <div className="flex gap-1">
             <SidebarUtilityItem
               icon={<SettingsIcon className="size-4" />}
-              label="Settings"
+              label={gt("Settings")}
               onClick={handleSettingsClick}
             />
             {pullRequestsSupported ? (
               <SidebarUtilityItem
                 icon={<PullRequestGlyph.pullRequest className="size-4" />}
-                label="Pull Requests"
+                label={gt("Pull Requests")}
                 onClick={handlePullRequestsClick}
+              />
+            ) : null}
+            {issuesSupported ? (
+              <SidebarUtilityItem
+                icon={<IssueGlyph.issue className="size-4" />}
+                label={gt("Issues", { $context: "sidebar link to the list of issues" })}
+                onClick={handleIssuesClick}
               />
             ) : null}
             <SidebarUtilityItem
               icon={<ChartNoAxesColumnIcon className="size-4" />}
-              label="Usage"
+              label={gt("Usage")}
               onClick={handleUsageClick}
             />
           </div>

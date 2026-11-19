@@ -3,7 +3,7 @@ import { EnvironmentId, ThreadId, type ProjectReadFileResult } from "@t3tools/co
 import { AsyncResult } from "effect/reactivity";
 import { StrictMode, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, fakeTimers, render } from "../../../test/render";
 import appCss from "~/index.css?inline";
 import { isMacPlatform } from "~/lib/utils";
@@ -19,6 +19,8 @@ const state = vi.hoisted(() => ({
   writeFile: vi.fn(),
   assetUrl: { _tag: "Loading" } as import("~/assets/assetUrls").AssetUrlState,
   mintUrl: vi.fn<() => Promise<string | null>>(),
+  browserAssetMints: 0,
+  openedBrowserUrls: [] as string[],
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
@@ -65,6 +67,56 @@ vi.mock(import("~/assets/assetUrls"), async (original) => ({
   useAssetUrlRefresh: () => state.mintUrl,
   useAssetUrlState: () => state.assetUrl,
 }));
+vi.mock(import("~/browser/previewRuntime"), async (original) => ({
+  ...(await original()),
+  usePreviewAvailable: () => true,
+}));
+vi.mock(import("~/state/environments"), async (original) => ({
+  ...(await original()),
+  useEnvironmentHttpBaseUrl: () => "http://environment.test",
+}));
+vi.mock(import("~/state/assets"), async (original) => {
+  const actual = await original();
+  const { Atom } = await import("effect/reactivity");
+  const Effect = await import("effect/Effect");
+  // Like the real query family, a minted URL stays cached until the atom is refreshed.
+  const createUrl = Atom.family((_key: string) =>
+    Atom.make(
+      Effect.sync(() => ({
+        relativeUrl: `/api/assets/mint-${++state.browserAssetMints}/page.html`,
+        expiresAt: Number.MAX_SAFE_INTEGER,
+      })),
+    ).pipe(Atom.keepAlive),
+  );
+  return {
+    ...actual,
+    assetEnvironment: {
+      ...actual.assetEnvironment,
+      createUrl: ((target: { input: { resource: { path: string } } }) =>
+        createUrl(target.input.resource.path)) as never,
+    },
+  };
+});
+vi.mock(import("~/browser/openFileInPreview"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    openFileInPreview: (async (input: Parameters<typeof actual.openFileInPreview>[0]) => {
+      const result = await input.createAssetUrl({
+        environmentId: input.threadRef.environmentId,
+        input: {
+          resource: {
+            _tag: "workspace-file",
+            threadId: input.threadRef.threadId,
+            path: input.filePath,
+          },
+        },
+      });
+      if (result._tag === "Success") state.openedBrowserUrls.push(result.value.relativeUrl);
+      return AsyncResult.success(undefined);
+    }) as never,
+  };
+});
 // The Word engine compiles a large WebAssembly bundle; these tests only need the URL it loads.
 vi.mock(import("./OfficeFilePreview"), () => ({
   OfficeFilePreview: ({ src }: { src: string }) => <div data-testid="office-preview">{src}</div>,
@@ -121,6 +173,7 @@ function setup() {
   state.file = null;
   state.optimistic = null;
   state.assetUrl = { _tag: "Loading" };
+  state.openedBrowserUrls = [];
   let mints = 0;
   state.mintUrl.mockReset().mockImplementation(async () => `/assets/report.docx?mint=${++mints}`);
   state.writeFile.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -406,6 +459,32 @@ describe("workspace document previews", () => {
     await screen.rerender(documentPreview("mutation-2", "revision-2"));
 
     await expect.element(preview).toHaveTextContent("/assets/report.docx?mint=2");
+  });
+});
+
+describe("open file in preview browser", () => {
+  it("mints a fresh asset URL on every click so the browser cannot reuse cached bytes", async () => {
+    using _settings = setup();
+    state.file = {
+      relativePath: "page.html",
+      contents: "<h1>page</h1>",
+      byteLength: 13,
+      truncated: false,
+    };
+    await using screen = await render(filePreview("page.html"));
+    const openInBrowser = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "More file actions" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Open file in preview browser" }));
+    };
+
+    await openInBrowser();
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(1));
+    await openInBrowser();
+    await vi.waitFor(() => expect(state.openedBrowserUrls).toHaveLength(2));
+
+    expect(state.openedBrowserUrls[1], "the second click reused the first signed URL").not.toBe(
+      state.openedBrowserUrls[0],
+    );
   });
 });
 

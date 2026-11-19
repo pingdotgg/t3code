@@ -1,8 +1,10 @@
+import { useGT } from "gt-react";
 import { type CSSProperties, useState } from "react";
 
 import { cn } from "~/lib/utils";
 
 export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
+  const gt = useGT();
   const [panelsOpen, setPanelsOpen] = useState(true);
   const transitionClass =
     "transition-[width,height,border-width] duration-(--preview-duration) ease-out motion-reduce:transition-none";
@@ -10,7 +12,7 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   return (
     <button
       type="button"
-      aria-label="Replay panel animation preview"
+      aria-label={gt("Replay panel animation preview")}
       className="flex h-10 w-full cursor-pointer overflow-hidden rounded-control surface-well p-1 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
       onClick={() => setPanelsOpen((open) => !open)}
       style={{ "--preview-duration": `${durationMs}ms` } as CSSProperties}

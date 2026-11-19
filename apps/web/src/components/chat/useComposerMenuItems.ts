@@ -1,3 +1,4 @@
+import { msg, useGT, useMessages } from "gt-react";
 import {
   legacyThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -45,6 +46,7 @@ import {
 } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useComposerPathSearch, useDebouncedValue, useThreadSearch } from "~/state/queries";
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   matchesPullRequestQuery,
   rankPullRequestMatches,
@@ -64,13 +66,16 @@ const EMPTY_PULL_REQUEST_LIST_TARGETS: ReadonlyArray<EnvironmentQueryTarget<Pull
   [];
 
 /** Describes thread matches during render without retaining the composer's render scope. */
-function makeComposerThreadDescription(projects: ReturnType<typeof useProjects>) {
+function makeComposerThreadDescription(
+  projects: ReturnType<typeof useProjects>,
+  resolve: MessageResolver = m,
+) {
   return (shell: ReturnType<typeof useVisibleThreadShells>[number]) => {
     const project = projects.find(
       (candidate) =>
         candidate.environmentId === shell.environmentId && candidate.id === shell.projectId,
     );
-    return project?.title ?? "Thread";
+    return project?.title ?? resolve(msg("Thread"));
   };
 }
 
@@ -119,6 +124,8 @@ export function useComposerMenuItems({
     readonly modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
   };
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   // Thread mentions rank by recency as of when the composer mounted.
   const [now] = useState(() => Date.now());
   const composerTriggerKind = composerTrigger?.kind ?? null;
@@ -156,7 +163,7 @@ export function useComposerMenuItems({
   const environmentProjects = useProjects();
   const nowMinute = useNowMinute();
   // Thread rows read "project · 2h ago", like the sidebar.
-  const describeComposerThread = makeComposerThreadDescription(environmentProjects);
+  const describeComposerThread = makeComposerThreadDescription(environmentProjects, messages);
   const withThreadAge = (item: Extract<ComposerCommandItem, { type: "thread" }>) => {
     const shell = environmentThreadShells.find(
       (shell) =>
@@ -164,21 +171,24 @@ export function useComposerMenuItems({
     );
     return {
       ...item,
-      description: shell ? describeComposerThread(shell) : "Thread",
+      description: shell ? describeComposerThread(shell) : gt("Thread"),
       environmentLabel:
         item.thread.environmentId === environmentId
           ? undefined
           : linkedEnvironments.get(item.thread.environmentId),
       metadata: shell
-        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`))
+        ? formatRelativeTimeLabel(shell.updatedAt, Date.parse(`${nowMinute}:00.000Z`), messages)
         : undefined,
     };
   };
-  const workspaceEntries = useComposerPathSearch({
-    environmentId,
-    cwd: isPathTrigger ? gitCwd : null,
-    query: isPathTrigger ? pathTriggerQuery : null,
-  });
+  const workspaceEntries = useComposerPathSearch(
+    {
+      environmentId,
+      cwd: isPathTrigger ? gitCwd : null,
+      query: isPathTrigger ? pathTriggerQuery : null,
+    },
+    messages,
+  );
 
   const pullRequestListTargets =
     composerTriggerKind !== "pull-request" ||
@@ -242,22 +252,28 @@ export function useComposerMenuItems({
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
       return [
-        ...matchComposerThreadItems({
-          shells: environmentThreadShells,
-          environmentId,
-          linkedEnvironments,
-          excludeThreadId: activeThreadId,
-          query: composerTrigger.query,
-          now,
-          describe: describeComposerThread,
-        }).map(withThreadAge),
+        ...matchComposerThreadItems(
+          {
+            shells: environmentThreadShells,
+            environmentId,
+            linkedEnvironments,
+            excludeThreadId: activeThreadId,
+            query: composerTrigger.query,
+            now,
+            describe: describeComposerThread,
+          },
+          messages,
+        ).map(withThreadAge),
         // An answer to an agent's question carries thread links, not machines.
         ...(questionAttachmentTarget === null && offersMachines
-          ? matchComposerEnvironmentItems({
-              environments: mentionableEnvironments,
-              environmentId,
-              query: composerTrigger.query,
-            })
+          ? matchComposerEnvironmentItems(
+              {
+                environments: mentionableEnvironments,
+                environmentId,
+                query: composerTrigger.query,
+              },
+              messages,
+            )
           : []),
         ...matchComposerModelItems({
           instanceEntries: modelMentions.instanceEntries,
@@ -282,7 +298,7 @@ export function useComposerMenuItems({
           type: "slash-command",
           command: "model",
           label: "/model",
-          description: "Switch response model for this thread",
+          description: gt("Switch response model for this thread"),
         },
         ...(sideChatAvailable
           ? ([
@@ -291,14 +307,14 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "side",
                 label: "/side",
-                description: sideChatDisabledReason ?? "Ask a side question in a new side chat",
+                description: sideChatDisabledReason ?? gt("Ask a side question in a new side chat"),
               },
               {
                 id: "slash:btw",
                 type: "slash-command",
                 command: "btw",
                 label: "/btw",
-                description: sideChatDisabledReason ?? "Same as /side",
+                description: sideChatDisabledReason ?? gt("Same as /side"),
               },
             ] as const)
           : []),
@@ -309,7 +325,7 @@ export function useComposerMenuItems({
                 type: "slash-command",
                 command: "clear",
                 label: "/clear",
-                description: "Start a fresh session; earlier messages stay visible",
+                description: gt("Start a fresh session; earlier messages stay visible"),
               },
             ] as const)
           : []),
@@ -327,7 +343,7 @@ export function useComposerMenuItems({
         provider: selectedProvider,
         command,
         label: `/${command.name}`,
-        description: command.description ?? command.input?.hint ?? "Run provider command",
+        description: command.description ?? command.input?.hint ?? gt("Run provider command"),
       }));
       const query = composerTrigger.query.trim().toLowerCase();
       const skillItems = slashMenuSkills.map((skill) => ({
@@ -339,7 +355,7 @@ export function useComposerMenuItems({
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : ""),
+          (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : ""),
       }));
       // T3's `/clear` replaces the provider's, which would clear a session T3 still treats as live.
       const visibleProviderSlashCommandItems = providerSlashCommandItems.filter(
@@ -363,22 +379,25 @@ export function useComposerMenuItems({
         description:
           skill.shortDescription ??
           skill.description ??
-          (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+          (skill.scope ? gt("{scope} skill", { scope: skill.scope }) : gt("Run provider skill")),
       }));
     }
     if (composerTrigger.kind === "pull-request") {
       // `#` lists pull requests, then threads. Threads need no git host, so a project without
       // pull requests still gets them, and a bare `#` shows the most recent ones.
-      const threadItems = matchComposerThreadItems({
-        shells: environmentThreadShells,
-        environmentId,
-        linkedEnvironments,
-        excludeThreadId: activeThreadId,
-        query: composerTrigger.query,
-        allowEmptyQuery: true,
-        now,
-        describe: describeComposerThread,
-      }).map(withThreadAge);
+      const threadItems = matchComposerThreadItems(
+        {
+          shells: environmentThreadShells,
+          environmentId,
+          linkedEnvironments,
+          excludeThreadId: activeThreadId,
+          query: composerTrigger.query,
+          allowEmptyQuery: true,
+          now,
+          describe: describeComposerThread,
+        },
+        messages,
+      ).map(withThreadAge);
       if (pullRequestProjectId === null || pullRequestRepository === null) return threadItems;
       const exactPullRequest =
         exactPullRequestLookup.data?.number === pullRequestTriggerNumber
@@ -462,25 +481,25 @@ export function useComposerMenuItems({
         exactPullRequestLookup.isPending));
   const emptyState = (() => {
     if (composerTriggerKind === "skill") {
-      return "No skills found. Try / to browse provider commands.";
+      return gt("No skills found. Try / to browse provider commands.");
     }
     if (composerTriggerKind === "pull-request") {
       if (pullRequestProjectId === null || pullRequestRepository === null) {
-        return "No matching threads. Pull requests are not available for this project.";
+        return gt("No matching threads. Pull requests are not available for this project.");
       }
       if (
         pullRequestLookup.error !== null ||
         pullRequestLookup.data?.errors.some((error) => error.projectId === pullRequestProjectId)
       ) {
-        return "Pull requests could not be read for this project.";
+        return gt("Pull requests could not be read for this project.");
       }
       return composerTrigger?.query
-        ? `No pull request matches ${composerTrigger.query}.`
-        : "No pull requests found in this repository.";
+        ? gt("No pull request matches {query}.", { query: composerTrigger.query })
+        : gt("No pull requests found in this repository.");
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
-      : "No matching command.";
+      ? gt("No matching files or folders.")
+      : gt("No matching command.");
   })();
 
   return { items, isLoading, emptyState };
