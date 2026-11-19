@@ -153,6 +153,7 @@ function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   );
 }
 
+// Images still resolving show the viewer's loading page, and remount by key once their URL arrives.
 function imageViewingProps(source: FilePreviewImages) {
   return {
     images: source.images.map((image) => (image.uri ? { uri: image.uri } : {})),
