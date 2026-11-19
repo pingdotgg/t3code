@@ -49,13 +49,15 @@ export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>):
 }
 
 /**
- * Disabled instances may retain ready status until reconciliation. A warning still offers
- * the models of sub-providers that report no problem of their own.
+ * Disabled instances may retain ready status until reconciliation. A warning from an installed
+ * instance keeps the models the server retained; with sub-providers, only those of backends
+ * that report no problem of their own.
  */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
   if (!entry.enabled || !entry.isAvailable) return false;
   if (entry.status === "ready") return true;
-  if (entry.status !== "warning") return false;
+  if (entry.status !== "warning" || !entry.installed) return false;
+  if (entry.snapshot.subProviders === undefined) return true;
   const usable = new Set(
     entry.snapshot.subProviders?.flatMap((subProvider) =>
       subProvider.unavailableReason === undefined ? [subProvider.name] : [],
@@ -240,6 +242,7 @@ export function resolveSelectableProviderInstanceEntry(
     }
   }
   return (
+    entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status === "ready") ??
     entries.find(isProviderInstancePickerReady) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
   );
