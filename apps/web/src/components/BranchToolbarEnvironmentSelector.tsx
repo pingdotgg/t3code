@@ -50,8 +50,8 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
   onAddToMachine,
   unavailable = false,
 }: BranchToolbarEnvironmentSelectorProps) {
-  const unavailableTone = unavailable;
   const gt = useGT();
+  const unavailableTone = unavailable;
   const composerFloatingLayerProps = useComposerMenuProps();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
