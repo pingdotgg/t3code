@@ -63,13 +63,44 @@ export function normalizeProjectPathForComparison(value: string): string {
 // Windows refuses these as file names, with or without an extension.
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 
+// Latin letters NFKD leaves whole (ł, ø, ß) or splits with a spacing mark (Ŀ, ŉ).
+const LATIN_FOLDS: Record<string, string> = {
+  Ŀ: "L",
+  ŀ: "l",
+  ŉ: "n",
+  Đ: "D",
+  đ: "d",
+  Ð: "D",
+  ð: "d",
+  ß: "ss",
+  ẞ: "SS",
+  Ł: "L",
+  ł: "l",
+  Ø: "O",
+  ø: "o",
+  Æ: "AE",
+  æ: "ae",
+  Œ: "OE",
+  œ: "oe",
+  Þ: "TH",
+  þ: "th",
+  Ħ: "H",
+  ħ: "h",
+  ı: "i",
+  ĸ: "q",
+  Ŋ: "N",
+  ŋ: "n",
+  Ŧ: "T",
+  ŧ: "t",
+};
+const LATIN_FOLD_PATTERN = new RegExp(`[${Object.keys(LATIN_FOLDS).join("")}]`, "g");
+
 /** Folds accented Latin letters to ASCII ("tìm" -> "tim"); other scripts pass through. */
 export function foldLatinDiacritics(text: string): string {
   return text
+    .replace(LATIN_FOLD_PATTERN, (letter) => LATIN_FOLDS[letter] ?? letter)
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d") // d-with-stroke has no Unicode decomposition
-    .replace(/Đ/g, "D");
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 export function newProjectFolderName(name: string): string {
@@ -132,14 +163,19 @@ export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
-/** Home-relative host paths are expanded by the destination server. */
+/** Both ~/ and ~\ home prefixes are expanded by the destination server. */
 export function isHostPath(value: string): boolean {
-  return isAbsolutePath(value) || value.startsWith("~/");
+  return isAbsolutePath(value) || value.startsWith("~/") || value.startsWith("~\\");
 }
 
 // Finder and Explorer copy a path ready for a shell: `'/a b'`, `/a\'s\ b`, or `"C:\a b"`.
 const QUOTED_PATH_AT_END = /(?:'((?:[^']|'\\'')+)'|"([^"]+)")\s*$/;
 const SHELL_ESCAPE = /\\([\s'"\\()[\]{}<>|&;$`!*?#~^=])/g;
+
+// Folder browsers only navigate `~/` home paths, so a pasted `~\` path is not a replacement.
+function isPastedFolderPath(value: string): boolean {
+  return isAbsolutePath(value) || value.startsWith("~/");
+}
 
 /**
  * What a folder box holds after a change. A full path pasted into it replaces the box, even after
@@ -155,13 +191,13 @@ export function resolvePastedPath(previous: string, next: string): string {
   // Text before the quote that wasn't in the box is a search, not a folder to paste after.
   if (match && previous.startsWith(next.slice(0, match.index).trimEnd())) {
     const quoted = match[1]?.replaceAll("'\\''", "'") ?? match[2] ?? "";
-    if (isHostPath(quoted)) return quoted;
+    if (isPastedFolderPath(quoted)) return quoted;
   }
 
   // Without a trailing separator, `/a` then `/a/b` is a longer path, not one pasted after a folder.
   const afterFolder = /[/\\]$/.test(previous) && next.startsWith(previous);
   const path = afterFolder ? next.slice(previous.length) : next;
-  if (!isHostPath(path)) return next;
+  if (!isPastedFolderPath(path)) return next;
   // `\` separates folders in Windows paths, so it only escapes in `/` and `~/` paths.
   return isWindowsAbsolutePath(path) ? path : path.replace(SHELL_ESCAPE, "$1");
 }

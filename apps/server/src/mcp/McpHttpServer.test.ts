@@ -49,6 +49,7 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerConfig from "../config.ts";
+import * as ServerHttp from "../http.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
@@ -603,13 +604,11 @@ it.effect("refuses preview tools to a client outside a thread before they run", 
     const click = yield* server
       .callTool({ name: "preview_act", arguments: { action: "click", locator: "text=Send" } })
       .pipe(
+        Effect.flip,
         Effect.provideService(McpInvocationContext.McpInvocationContext, readOnly),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(click.isError).toBe(true);
-    expect(click.content).toEqual([
-      { type: "text", text: expect.stringContaining("needs an agent running inside T3 Code") },
-    ]);
+    expect(click.message).toContain("Tool 'preview_act' not found");
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -678,6 +677,34 @@ it.effect("decodes null optional arguments the way it decodes omitted ones", () 
     expect(calls[1]).toEqual(calls[0]);
     expect(calls[3]).toEqual(calls[2]);
     expect(calls[4]).toStrictEqual({ projectId: "project-1", projectIcon: null });
+  }).pipe(Effect.provide(layerRecordingTools(calls)));
+});
+
+it.effect("decodes a JSON-stringified delegate target as the same object", () => {
+  const calls: Array<unknown> = [];
+  return Effect.gen(function* () {
+    const task = "Inspect";
+    const target = {
+      providerInstanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: { reasoningEffort: "medium" },
+    };
+    yield* callTool("delegate_task", { task, target });
+    yield* callTool("delegate_task", { task, target: JSON.stringify(target) });
+
+    for (const invalidTarget of ["{model:", '{"model":42}']) {
+      const error = yield* Effect.flip(callTool("delegate_task", { task, target: invalidTarget }));
+      expect(error).toBeInstanceOf(McpSchema.InvalidParams);
+    }
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({
+      task,
+      target: {
+        ...target,
+        options: [{ id: "reasoningEffort", value: "medium" }],
+      },
+    });
+    expect(calls[1]).toEqual(calls[0]);
   }).pipe(Effect.provide(layerRecordingTools(calls)));
 });
 
@@ -1174,6 +1201,38 @@ it.effect("answers 2026-07-28 discovery and keeps 2025-06-18 as the initialize f
         expect.arrayContaining([expect.objectContaining({ name: "probe" })]),
       );
 
+      // The Go MCP SDK sends this without request metadata, though 2026-07-28 does not define it.
+      const rootsChanged = (
+        client: HttpClient.HttpClient,
+        message: object = {},
+        headers: Record<string, string> = {},
+      ) =>
+        client.post("/mcp", {
+          headers: {
+            accept: "application/json, text/event-stream",
+            "mcp-method": "notifications/roots/list_changed",
+            "mcp-protocol-version": "2026-07-28",
+            ...headers,
+          },
+          body: HttpBody.text(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "notifications/roots/list_changed",
+              params: {},
+              ...message,
+            }),
+            "application/json",
+          ),
+        });
+      const acknowledged = yield* rootsChanged(httpClient);
+      expect(acknowledged.status).toBe(202);
+      expect(yield* acknowledged.text).toBe("");
+      expect((yield* rootsChanged(yield* HttpClient.HttpClient)).status).toBe(401);
+      expect((yield* rootsChanged(httpClient, { id: 7 })).status).toBe(400);
+      expect((yield* rootsChanged(httpClient, {}, { origin: "https://example.com" })).status).toBe(
+        403,
+      );
+
       const initializeResponse = yield* httpClient.post("/mcp", {
         headers: { accept: "application/json, text/event-stream" },
         body: HttpBody.text(
@@ -1257,6 +1316,12 @@ it.effect("admits provider and OAuth client credentials and points only clients 
               ),
           }),
         ),
+        Layer.provide(ServerHttp.layerBrowserApiCors),
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-origin-test-" }).pipe(
+            Layer.provide(NodeServices.layer),
+          ),
+        ),
       );
       const traced = recordSpans();
       yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
@@ -1339,6 +1404,30 @@ it.effect("admits provider and OAuth client credentials and points only clients 
           (span) => span.name.startsWith("mcp.tool.") || span.name.startsWith("McpServer."),
         ),
       ).toEqual([]);
+
+      // A present, disallowed Origin is refused with 403 before credentials or CORS answer.
+      const foreignOrigin = (method: "POST" | "OPTIONS", token: string | undefined) =>
+        httpClient.execute(
+          HttpClientRequest.make(method)("/mcp", {
+            headers: {
+              origin: "https://untrusted.invalid",
+              accept: "application/json, text/event-stream",
+              "access-control-request-method": "POST",
+              ...(token === undefined ? {} : { authorization: `Bearer ${token}` }),
+            },
+            ...(method === "POST"
+              ? {
+                  body: HttpBody.text(
+                    `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+                    "application/json",
+                  ),
+                }
+              : {}),
+          }),
+        );
+      expect((yield* foreignOrigin("POST", providerToken)).status).toBe(403);
+      expect((yield* foreignOrigin("POST", undefined)).status).toBe(403);
+      expect((yield* foreignOrigin("OPTIONS", undefined)).status).toBe(403);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

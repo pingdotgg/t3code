@@ -92,6 +92,14 @@ export const ServerProviderModel = Schema.Struct({
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
 
+/** A backend a provider's models run on, such as one of fx's. */
+export const ServerProviderSubProvider = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  /** Why none of its models can run now, such as a signed-out backend. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderSubProvider = typeof ServerProviderSubProvider.Type;
+
 export const ServerProviderUpdateRequiredModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -269,6 +277,8 @@ export const ServerProvider = Schema.Struct({
   availability: Schema.optional(ServerProviderAvailability),
   unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
+  // Pickers group `models` under these, in order, by `subProvider`.
+  subProviders: Schema.optional(Schema.Array(ServerProviderSubProvider)),
   // Kept apart from `models` so clients that predate it never offer them.
   updateRequiredModels: Schema.optionalKey(Schema.Array(ServerProviderUpdateRequiredModel)),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
@@ -276,6 +286,11 @@ export const ServerProvider = Schema.Struct({
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   workspaceSnapshots: Schema.optionalKey(Schema.Array(ServerProviderWorkspaceSnapshot)),
+  /**
+   * Set when the server rescanned a workspace after a session start and its skills or commands
+   * changed. Clients holding fetched workspace snapshots for this provider fetch them again.
+   */
+  workspaceRescannedAt: Schema.optionalKey(IsoDateTime),
   usageLimits: Schema.optional(ServerProviderUsageLimits),
   versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
   compatibilityAdvisory: Schema.optionalKey(ServerProviderCompatibilityAdvisory),
@@ -622,7 +637,7 @@ const EnvironmentThemeColors = Schema.Record(
   TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
 );
 
-export const THEME_CSS_MAX_LENGTH = 50_000;
+export const THEME_CSS_MAX_LENGTH = 100_000;
 
 const environmentThemeFields = {
   version: Schema.optional(Schema.Literal(1)),
@@ -648,6 +663,8 @@ export type EnvironmentThemeFile = typeof EnvironmentThemeFile.Type;
 export const EnvironmentTheme = Schema.Struct({
   id: EnvironmentThemeId,
   ...environmentThemeFields,
+  /** Revision of the image file published beside the theme; absent without one. */
+  background: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type EnvironmentTheme = typeof EnvironmentTheme.Type;
 
@@ -685,6 +702,8 @@ export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,
+  /** The machine's own name, which file URIs from its shells may carry. Older servers omit it. */
+  hostname: Schema.optionalKey(Schema.String),
   keybindingsConfigPath: TrimmedNonEmptyString,
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
