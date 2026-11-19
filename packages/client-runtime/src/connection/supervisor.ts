@@ -45,8 +45,6 @@ import {
 
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
-// The platform's offline report can stay wrong after the network is back, so
-// an offline connection still tries this often instead of waiting for a change.
 const OFFLINE_RECHECK_MS = 30_000;
 const SESSION_LOSS_RETRY_DELAY_MS = 250;
 // Someone is approving this device on the host; check back soon rather than climbing the ladder.
@@ -1219,7 +1217,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       // The platform's offline report can stay wrong after the network is back,
-      // so an explicit retry still tries instead of waiting for it to change.
+      // so an explicit retry, or every OFFLINE_RECHECK_MS, still tries once.
       const ignoreOffline = replacing || retryRequested || offlineRecheckDue;
       if (currentIntent.network === "offline" && !ignoreOffline) {
         yield* clearLease;
