@@ -15,7 +15,9 @@ import { useAuth } from "@clerk/expo";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
 import * as Notifications from "expo-notifications";
 import { useNavigation } from "@react-navigation/native";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState, useSyncExternalStore } from "react";
@@ -90,12 +92,12 @@ const updateEnvironmentPreference = Effect.fn("updateEnvironmentPreference")(fun
   environmentId: EnvironmentId,
   enabled: boolean,
 ) {
-  const result = yield* Effect.promise(() =>
+  const exit = yield* Effect.exit(
     updateLiveActivityPreference.run(appAtomRegistry, { environmentId, input: enabled }),
   );
-  if (result._tag === "Success") return result.value;
+  if (Exit.isSuccess(exit)) return exit.value;
   return yield* toCloudEnvironmentLinkError(
-    squashAtomCommandFailure(result),
+    Cause.squash(exit.cause),
     resolveMessage(msg("Could not update the environment's Live Activity preference.")),
   );
 });
@@ -104,12 +106,12 @@ const linkEnvironmentWithPreference = Effect.fn("linkEnvironmentWithPreference")
   environmentId: EnvironmentId,
   input: { readonly clerkToken: string; readonly liveActivitiesEnabled: boolean },
 ) {
-  const result = yield* Effect.promise(() =>
+  const exit = yield* Effect.exit(
     linkLiveActivityEnvironment.run(appAtomRegistry, { environmentId, input }),
   );
-  if (result._tag === "Success") return;
+  if (Exit.isSuccess(exit)) return;
   return yield* toCloudEnvironmentLinkError(
-    squashAtomCommandFailure(result),
+    Cause.squash(exit.cause),
     resolveMessage(msg("Could not configure environment relay access.")),
   );
 });
