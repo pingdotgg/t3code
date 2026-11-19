@@ -167,7 +167,7 @@ class AntigravityKeyringError extends Schema.TaggedError<AntigravityKeyringError
 }
 
 // A single-executable server resolves packages on disk only through `require`.
-const requireForFfi = NodeModule.createRequire(import.meta.url);
+const requireExternal = NodeModule.createRequire(import.meta.url);
 
 /**
  * go-keyring's Windows target is `gemini:antigravity`; @napi-rs/keyring reads `antigravity.gemini`,
@@ -180,7 +180,7 @@ export function readWindowsCliCredential(
   if (architecture !== "x64" && architecture !== "arm64") {
     throw new Error(`no credential access on ${architecture}`);
   }
-  const { DataType, load, open } = requireForFfi("ffi-rs") as typeof import("ffi-rs");
+  const { DataType, load, open } = requireExternal("ffi-rs") as typeof import("ffi-rs");
   open({ library: "t3-advapi32", path: "advapi32.dll" });
   open({ library: "t3-kernel32", path: "kernel32.dll" });
   const copy = (into: Buffer, from: bigint) =>
@@ -234,9 +234,9 @@ const readCliKeyringSecret = (platform: NodeJS.Platform, architecture: NodeJS.Ar
       const secret =
         platform === "win32"
           ? readWindowsCliCredential(architecture)
-          : await import("@napi-rs/keyring").then(({ AsyncEntry }) =>
-              new AsyncEntry("gemini", "antigravity").getSecret(),
-            );
+          : await new (
+              requireExternal("@napi-rs/keyring") as typeof import("@napi-rs/keyring")
+            ).AsyncEntry("gemini", "antigravity").getSecret();
       return secret ? decodeGoKeyringSecret(secret) : undefined;
     },
     catch: (cause) => new AntigravityKeyringError({ cause }),
