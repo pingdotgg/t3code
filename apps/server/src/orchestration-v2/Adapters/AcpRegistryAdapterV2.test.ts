@@ -456,9 +456,12 @@ describe("AcpRegistryAdapterV2", () => {
     { commandPath: "/root/.local/bin/agy", offers: 1 },
     { commandPath: "C:\\tools\\agy.exe", offers: 1 },
     { commandPath: "/opt/bin/other-agent", offers: 0 },
-  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    { commandPath: "/root/.local/bin/agy", offers: 0, runningCommand: true },
+  ])("routes late output for $commandPath (running: $runningCommand)", (testCase) =>
     Effect.gen(function* () {
+      const { commandPath, offers, runningCommand } = testCase;
       const gate = makeProviderReplayGate(["wake"]);
+      const command = { toolCallId: "command-1", title: "Run command", kind: "execute" };
       const update = (sessionUpdate: Record<string, unknown>) =>
         claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
       const session = yield* openClaudeReplaySession(
@@ -483,6 +486,16 @@ describe("AcpRegistryAdapterV2", () => {
           claudeFrames.open[2],
           claudeFrames.open[3],
           claudeFrames.prompt(1)[0],
+          ...(runningCommand
+            ? [
+                update({
+                  sessionUpdate: "tool_call",
+                  ...command,
+                  status: "in_progress",
+                  rawInput: { WaitMsBeforeAsync: 10000 },
+                }),
+              ]
+            : []),
           {
             type: "emit_inbound",
             frame: {
@@ -491,12 +504,25 @@ describe("AcpRegistryAdapterV2", () => {
               result: { stopReason: "end_turn" },
             },
           },
+          claudeMarker("prompt returned"),
+          ...(runningCommand
+            ? [
+                {
+                  ...update({
+                    sessionUpdate: "tool_call_update",
+                    ...command,
+                    status: "completed",
+                  }),
+                  label: "wake",
+                },
+              ]
+            : []),
           {
             ...update({
               sessionUpdate: "agent_message_chunk",
               content: { type: "text", text: "Background work finished." },
             }),
-            label: "wake",
+            ...(runningCommand ? {} : { label: "wake" }),
           },
           // agy ends each reply with usage_update; this one ends before the continuation run starts.
           update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
@@ -507,6 +533,18 @@ describe("AcpRegistryAdapterV2", () => {
         { source: "local", commandPath, commandArgs: ["acp"] },
       );
       yield* session.runtime.startTurn(session.turnInput(1));
+      if (runningCommand) {
+        const before = yield* session.throughMarker("prompt returned");
+        yield* TestClock.adjust("10 minutes");
+        gate.release("wake");
+        const after = yield* session.throughMarker("late output received");
+        assert.isFalse([...before, ...after].some((event) => event.type === "turn.terminal"));
+        assert.include(JSON.stringify(after), "Background work finished.");
+        yield* TestClock.adjust("3 seconds");
+        assert.equal((yield* session.terminal).status, "completed");
+        assert.lengthOf(session.offers, 0);
+        return;
+      }
       assert.equal((yield* session.terminal).status, "completed");
       gate.release("wake");
       yield* session.throughMarker("late output received");

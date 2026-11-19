@@ -21,6 +21,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * The agent goes on running a command after its prompt ends, and replies by itself when the
+ * command finishes. A daemon may never finish.
+ */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  const input = toolCall.data.rawInput;
+  return toolCall.kind === "execute" && !(isRecord(input) && input.IsDaemon === true);
+}
+
 // Modes were removed from ACP v2, so the v1 wire schema is the source of truth.
 const isSessionModelState = Schema.is(EffectAcpSchema.SessionModelState);
 const isSessionModeState = Schema.is(EffectAcpSchemaV1.SessionModeState);
