@@ -321,12 +321,14 @@ export function deriveResumableRunId(
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  if (run?.status === "interrupted") return run.id;
-  return run?.status === "failed" &&
-    runtime?.lastErrorClass === "usage_limit" &&
-    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
-    ? run.id
-    : null;
+  const resumable =
+    run?.status === "interrupted" ||
+    (run?.status === "failed" &&
+      runtime?.lastErrorClass === "usage_limit" &&
+      latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit");
+  // Fork: offered without native resume too; the server then sends a continue prompt.
+  if (!resumable) return null;
+  return run.id;
 }
 
 /**

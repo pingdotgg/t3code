@@ -184,7 +184,9 @@ describe("pending context handoff", () => {
         status: "ready",
         auth: { status: "authenticated" },
         models: [{ slug: "claude-sonnet-5-5", capabilities: { optionDescriptors: [] } }],
-        usageLimits: { windows: [{ kind: "session", usedPercent }] },
+        usageLimits: {
+          windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent }],
+        },
       }) as unknown as ServerProvider;
     const autoLow = { instanceId: to, model: "auto-low" };
 
