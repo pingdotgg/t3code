@@ -1,7 +1,4 @@
-import type {
-  SourceControlAppSignIn,
-  SourceControlDefinition,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_SERVER_SETTINGS, type SourceControlSignInPrompt } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type { ReactNode } from "react";
@@ -14,7 +11,9 @@ import type { SettingsTarget } from "../settings-environment-filter";
 type Outcome = { _tag: "Success"; value: unknown } | { _tag: "Failure"; cause: Cause.Cause<Error> };
 
 const commands = vi.hoisted(() => new Map<string, (input: unknown) => Promise<unknown>>());
+const navigation = vi.hoisted(() => ({ isFocused: vi.fn(() => true) }));
 
+vi.mock("@react-navigation/native", () => ({ useNavigation: () => navigation }));
 vi.mock("react-native", () => ({ Linking: { openURL: vi.fn(() => Promise.resolve()) } }));
 vi.mock("expo-clipboard", () => ({ setStringAsync: vi.fn(() => Promise.resolve()) }));
 vi.mock("../../../components/ui/Dialog", () => ({ alert: vi.fn() }));
@@ -29,9 +28,9 @@ vi.mock("../../../state/use-atom-command", () => ({
     commands.get(command)?.(input) ?? Promise.resolve({ _tag: "Success", value: undefined }),
 }));
 vi.mock("./SettingsRow", () => ({
-  SettingsRow: (props: { label: string; onPress?: () => void }): ReactNode => (
+  SettingsRow: (props: { label: string; value: string; onPress?: () => void }): ReactNode => (
     <button type="button" onClick={props.onPress}>
-      {props.label}
+      {props.label} <span>{props.value}</span>
     </button>
   ),
 }));
@@ -39,12 +38,11 @@ vi.mock("./SettingsRow", () => ({
 import * as Dialog from "../../../components/ui/Dialog";
 import { AppSignInRow } from "./SourceControlSignInSection";
 
-// @ts-expect-error the row never reads expiresAt, so the fixture leaves its type loose
 const PROMPT: SourceControlSignInPrompt = {
   userCode: "ABCD-1234",
   verificationUri: "https://github.com/login/device",
-  expiresAt: new Date(15 * 60 * 1000).toISOString(),
-} as SourceControlSignInPrompt;
+  expiresAt: 15 * 60 * 1000,
+};
 
 function settle() {
   let resolve: (outcome: Outcome) => void = () => undefined;
@@ -53,6 +51,10 @@ function settle() {
 }
 
 function renderRow() {
+  const definition = sourceControlClients.find("github");
+  const appSignIn = definition?.credentials?.appSignIn;
+  if (!definition || !appSignIn) throw new Error("Missing GitHub app sign-in definition");
+  navigation.isFocused.mockReturnValue(true);
   const container = document.createElement("div");
   const root = createRoot(container);
   act(() =>
@@ -64,16 +66,9 @@ function renderRow() {
             serverConfig: { settings: DEFAULT_SERVER_SETTINGS },
           } as unknown as SettingsTarget
         }
-        label="T3 Code for GitHub"
-        definition={{ kind: "github" } as SourceControlDefinition}
-        appSignIn={
-          // @ts-expect-error the row reads only appName and installUrl, so the fixture omits revokeUrl
-          {
-            appName: "T3 Code for GitHub",
-            hosts: ["github.com"],
-            installUrl: "https://github.com/apps/t3-code/installations/new",
-          } as SourceControlAppSignIn
-        }
+        label={appSignIn.appName}
+        definition={definition}
+        appSignIn={appSignIn}
         disabled={false}
       />,
     ),
@@ -112,4 +107,35 @@ describe("AppSignInRow", () => {
       expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual(alerts);
     },
   );
+
+  it("keeps the pending code on a mounted route and suppresses dialogs while it is blurred", async () => {
+    vi.mocked(Dialog.alert).mockClear();
+    const start = settle();
+    const wait = settle();
+    commands.set("start", () => start.promise);
+    commands.set("wait", () => wait.promise);
+    const { container, root } = renderRow();
+    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+
+    act(() => container.querySelector("button")?.click());
+    navigation.isFocused.mockReturnValue(false);
+    await act(async () => start.resolve({ _tag: "Success", value: PROMPT }));
+    expect(Dialog.alert).not.toHaveBeenCalled();
+
+    navigation.isFocused.mockReturnValue(true);
+    expect(container.querySelector("span")?.textContent).toBe(`Enter ${PROMPT.userCode}`);
+    act(() => container.querySelector("button")?.click());
+    expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual([PROMPT.userCode]);
+
+    navigation.isFocused.mockReturnValue(false);
+    await act(async () =>
+      wait.resolve({
+        _tag: "Failure",
+        cause: Cause.fail(new Error("A newer sign-in replaced this one.")),
+      }),
+    );
+    navigation.isFocused.mockReturnValue(true);
+    expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual([PROMPT.userCode]);
+    expect(container.querySelector("span")?.textContent).toBe("Sign in");
+  });
 });

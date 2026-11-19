@@ -1,3 +1,4 @@
+import { useNavigation } from "@react-navigation/native";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useGT } from "gt-react-native";
 import type { SourceControlSignInPrompt } from "@t3tools/contracts";
@@ -35,6 +36,7 @@ export function AppSignInRow(props: {
   readonly disabled: boolean;
 }) {
   const gt = useGT();
+  const navigation = useNavigation();
   const { environment, definition, appSignIn } = props;
   const environmentId = environment.environmentId;
   const host = appSignIn.hosts[0] ?? "";
@@ -95,17 +97,19 @@ export function AppSignInRow(props: {
     if (attempt.current !== current) return;
     if (started._tag !== "Success") {
       setPending(null);
-      Dialog.alert(gt("Could not start the sign-in"), failureMessage(started.cause));
+      if (navigation.isFocused()) {
+        Dialog.alert(gt("Could not start the sign-in"), failureMessage(started.cause));
+      }
       return;
     }
     const prompt = started.value;
     setPending(prompt);
-    showCode(prompt);
+    if (navigation.isFocused()) showCode(prompt);
     const finished = await wait({ environmentId, input });
     if (attempt.current !== current) return;
     attempt.current = null;
     setPending(null);
-    if (finished._tag !== "Success") {
+    if (finished._tag !== "Success" && navigation.isFocused()) {
       Dialog.alert(gt("Sign-in did not finish"), failureMessage(finished.cause));
     }
   };
