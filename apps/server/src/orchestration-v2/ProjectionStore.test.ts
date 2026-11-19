@@ -7068,7 +7068,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
-      const { projectId } = yield* assertProjectScopedShells("sql-shell-stop-index");
+      const { projectId, activeThreadId } =
+        yield* assertProjectScopedShells("sql-shell-stop-index");
       const { statements, tracer } = traceSqlStatements();
       yield* projectionStore
         .getShellSnapshot({ projectId, location: "active" })
@@ -7120,6 +7121,66 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             );
           }
         }
+      }
+
+      // Settled command, tool, and subagent items stay out of the pending-item read.
+      const pendingQuery = statements.find((statement) =>
+        statement.includes("AS owning_provider_instance_id"),
+      );
+      assert.isDefined(pendingQuery);
+      const pendingPlan = yield* planOf(pendingQuery);
+      assert.include(
+        pendingPlan.find((detail) => detail.startsWith("SEARCH i ")) ?? "",
+        "orchestration_v2_projection_turn_items_shell_pending_idx",
+        pendingPlan.join("\n"),
+      );
+      const nowIso = DateTime.formatIso(yield* DateTime.now);
+      yield* sql`
+        WITH RECURSIVE history(position) AS (
+          SELECT 1 UNION ALL SELECT position + 1 FROM history WHERE position < 1000
+        )
+        INSERT INTO orchestration_v2_projection_turn_items (
+          turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
+          parent_item_id, ordinal, type, status, updated_at, payload_json
+        )
+        SELECT 'item:shell-history:' || position, ${activeThreadId}, NULL, NULL, NULL, NULL,
+          NULL, position, 'command_execution', 'completed', ${nowIso},
+          json_object(
+            'id', 'item:shell-history:' || position, 'threadId', ${activeThreadId},
+            'runId', NULL, 'nodeId', NULL, 'providerThreadId', NULL, 'providerTurnId', NULL,
+            'nativeItemRef', NULL, 'parentItemId', NULL, 'ordinal', position,
+            'status', 'completed', 'title', 'history', 'input', 'echo', 'output', 'ok',
+            'exitCode', 0, 'startedAt', ${nowIso}, 'completedAt', ${nowIso},
+            'updatedAt', ${nowIso}, 'type', 'command_execution'
+          )
+        FROM history
+      `;
+      const shellStatements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+      yield* projectionStore.getThreadShell(activeThreadId).pipe(
+        Effect.provideService(Statement.CurrentTransformer, (statement) => {
+          shellStatements.push(statement.compile());
+          return Effect.succeed(statement);
+        }),
+      );
+      const pendingRead = shellStatements.find(([query]) =>
+        query.includes("AS owning_provider_instance_id"),
+      );
+      assert.isDefined(pendingRead);
+      {
+        // VM steps are deterministic; the read must cost the same without that history.
+        const copyPath = "file:/shell-pending-steps?vfs=memdb";
+        using copy = new NodeSqlite.DatabaseSync(copyPath);
+        yield* sql`VACUUM INTO ${copyPath}`;
+        const pendingSteps = () => {
+          const statement = copy.prepare(pendingRead[0]);
+          statement.all(...(pendingRead[1] as ReadonlyArray<NodeSqlite.SQLInputValue>));
+          return statement.stat("vmStep");
+        };
+        const historySteps = pendingSteps();
+        copy.exec(
+          "DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id LIKE 'item:shell-history:%'",
+        );
+        assert.isAtMost(historySteps, pendingSteps() * 1.1);
       }
     }),
   );
