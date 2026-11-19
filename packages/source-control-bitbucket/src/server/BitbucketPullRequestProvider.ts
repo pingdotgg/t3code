@@ -253,14 +253,25 @@ export const make = Effect.gen(function* () {
                         ) {
                           return Effect.succeed(item);
                         }
-                        return Cache.get(
-                          checksStates,
-                          JSON.stringify([
-                            input.repository,
-                            pullRequest.number,
-                            pullRequest.headSha ?? "",
-                          ]),
-                        ).pipe(Effect.map((checksState) => ({ ...item, checksState })));
+                        // Without a head revision a push cannot invalidate a cached answer, so the
+                        // row is read every time.
+                        const read =
+                          pullRequest.headSha === null
+                            ? api
+                                .listChecks({
+                                  repository: input.repository,
+                                  number: pullRequest.number,
+                                })
+                                .pipe(Effect.map(checksStateOf))
+                            : Cache.get(
+                                checksStates,
+                                JSON.stringify([
+                                  input.repository,
+                                  pullRequest.number,
+                                  pullRequest.headSha,
+                                ]),
+                              );
+                        return read.pipe(Effect.map((checksState) => ({ ...item, checksState })));
                       },
                       { concurrency: 5 },
                     );
