@@ -1343,6 +1343,28 @@ function pendingForkTransferForThread(
   );
 }
 
+/** A fork transfer still pending when a fresh run starts would bring the parent's context back. */
+function forkTransferSupersededEvent(
+  transfer: OrchestrationV2ContextTransfer,
+  runId: RunId,
+  providerInstanceId: ProviderInstanceId,
+  now: DateTime.Utc,
+): Omit<OrchestrationV2DomainEvent, "id"> {
+  return {
+    type: "context-transfer.updated",
+    threadId: transfer.targetThreadId,
+    runId,
+    providerInstanceId,
+    occurredAt: now,
+    payload: {
+      ...transfer,
+      status: "superseded",
+      error: "Superseded by a fresh session.",
+      updatedAt: now,
+    },
+  };
+}
+
 function pendingMergeBackTransfersForThread(
   projection: Pick<OrchestrationV2ThreadProjection, "contextTransfers" | "thread">,
 ): ReadonlyArray<OrchestrationV2ContextTransfer> {
@@ -2617,6 +2639,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       const followsCurrent = followsCurrentConversation(queuedMessage);
       const freshContext = queuedRun.freshContext === true;
+      // A scheduled fresh run is a side conversation, so it must not drop the fork's context.
+      const supersededForkTransfer =
+        freshContext && queuedMessage.scheduledTaskId === undefined
+          ? pendingForkTransferForThread(projection)
+          : undefined;
       const activeProviderThread = dispatchProviderThread(projection, queuedMessage, freshContext);
       const contextBoundary = freshContext ? ordinal : contextBoundaryOrdinal(projection);
       // A run queued before a fresh run started is bound to the conversation that run left behind.
@@ -3192,6 +3219,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   payload: legacyImportRecoveryHandoff,
                 },
               ]),
+          ...(supersededForkTransfer === undefined
+            ? []
+            : [
+                forkTransferSupersededEvent(
+                  supersededForkTransfer,
+                  queuedRun.id,
+                  queuedRun.providerInstanceId,
+                  now,
+                ),
+              ]),
           ...(handoffTurnItem === null
             ? []
             : [
@@ -3371,6 +3408,140 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...run, queueHeld: false },
       })),
     );
+  });
+
+  // A steer still pending after its run ended was never read: the provider marks one it read
+  // completed, and one Stop dropped cancelled. It runs next, in its place among waiting messages.
+  const requeueUnreadSteers = Effect.fn("Orchestrator.requeueUnreadSteers")(function* (
+    threadId: ThreadId,
+    runIds?: ReadonlyArray<RunId>,
+  ) {
+    const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["user_message"],
+      turnItemStatuses: ["pending"],
+      ...(runIds === undefined ? {} : { turnItemRunIds: runIds }),
+    });
+    const unread = turnItems.filter(
+      (item) =>
+        item.type === "user_message" &&
+        (item.inputIntent === "steer" || item.inputIntent === "promoted_queued_to_steer"),
+    );
+    if (unread.length === 0) return;
+    const projection = yield* projectionStore.getThreadRecords(threadId, ["runs", "messages"], {
+      messageIds: unread.flatMap((item) => (item.type === "user_message" ? [item.messageId] : [])),
+    });
+    const placed = [];
+    for (const item of unread) {
+      const run = projection.runs.find((candidate) => candidate.id === item.runId);
+      const message = projection.messages.find(
+        (candidate) =>
+          item.type === "user_message" &&
+          candidate.id === item.messageId &&
+          candidate.runId === item.runId,
+      );
+      if (run === undefined || message === undefined || isActiveRun(run)) continue;
+      // Stop drops a steer it reached; say so, as the adapter does for steers it still held.
+      if (yield* projectionStore.hasRunInterruptRequest(threadId, run.id)) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents([
+          {
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...item, status: "cancelled" as const, completedAt: now, updatedAt: now },
+          },
+          {
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: {
+              id: idAllocator.derive.runSignalTurnItem({
+                runId: run.id,
+                signal: `unread-steer:${message.id}`,
+              }),
+              threadId,
+              runId: run.id,
+              nodeId: item.nodeId,
+              providerThreadId: item.providerThreadId ?? null,
+              providerTurnId: item.providerTurnId ?? null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: item.ordinal,
+              type: "system_notice" as const,
+              status: "completed" as const,
+              title: "Steer delivery not confirmed",
+              message: `The agent did not confirm reading your steer before Stop. It may not have been delivered. Resend it if needed: "${message.text}"`,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+            },
+          },
+        ]);
+        continue;
+      }
+      // The message's first steer effect recorded which runs were queued before it was sent; a
+      // queued message that was promoted also stays behind only the runs queued before its own.
+      const firstSteer = Option.getOrUndefined(
+        yield* effectOutbox.firstSteer(threadId, message.id),
+      )?.request;
+      const steer = firstSteer?.type === "provider-turn.steer" ? firstSteer : undefined;
+      const afterRunOrdinal = Math.max(
+        0,
+        Math.min(
+          steer?.steerFollowUpAfterRunOrdinal ??
+            Math.max(...projection.runs.map((candidate) => candidate.ordinal)),
+          ...projection.runs.flatMap((candidate) =>
+            candidate.userMessageId === message.id ? [candidate.ordinal - 1] : [],
+          ),
+        ),
+      );
+      placed.push({ item, run, message, steer, afterRunOrdinal });
+    }
+    // Each requeue starts the queue once it commits, so earlier places go first.
+    placed.sort(
+      (left, right) =>
+        left.afterRunOrdinal - right.afterRunOrdinal || left.item.ordinal - right.item.ordinal,
+    );
+    for (const { run, message, steer, afterRunOrdinal } of placed) {
+      yield* dispatchWithReceiptEffect({
+        type: "message.dispatch",
+        commandId: CommandId.make(`command:unread-steer:${run.id}:${message.id}`),
+        threadId,
+        messageId: message.id,
+        steerFollowUpOfRunId: run.id,
+        steerFollowUpAfterRunOrdinal: afterRunOrdinal,
+        modelSelection: steer?.modelSelection ?? run.modelSelection,
+        text: message.text,
+        ...(message.context ? { context: message.context } : {}),
+        attachments: message.attachments,
+        ...(message.delegatedCompletion === undefined
+          ? {}
+          : { delegatedCompletion: message.delegatedCompletion }),
+        ...(message.notification === undefined ? {} : { notification: message.notification }),
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: message.createdBy,
+        creationSource: message.creationSource,
+        ...(message.scheduledTaskId === undefined
+          ? {}
+          : { scheduledTaskId: message.scheduledTaskId }),
+        ...(message.senderThreadId === undefined ? {} : { senderThreadId: message.senderThreadId }),
+        ...(message.linkedSender === undefined ? {} : { linkedSender: message.linkedSender }),
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Failed to requeue an unread steer", {
+            threadId,
+            messageId: message.id,
+            cause,
+          }),
+        ),
+      );
+    }
   });
 
   const resumeQueuedRuns = Effect.gen(function* () {
@@ -7576,7 +7747,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       projection.thread.worktreePath === null
         ? latestRun
         : undefined;
-    const queueBehindRun = activeRun ?? worktreeMissingRun;
+    // A steer whose run already ended still keeps its place in the queue.
+    const steerFollowUpSource =
+      command.steerFollowUpOfRunId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
+    const queueBehindRun = activeRun ?? worktreeMissingRun ?? steerFollowUpSource;
     const pendingMergeBackTransfers = pendingMergeBackTransfersForThread(projection);
     const startsOrQueuesRun =
       dispatchMode.type === "defer_start" ||
@@ -7589,6 +7765,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const incomingMessage = { ...command, delegatedCompletion };
     if (
       shouldQueue &&
+      // A steer whose run ended keeps the thread's selection, as it did before it queued.
+      queueBehindRun !== steerFollowUpSource &&
       steerWhenReadyRunId === undefined &&
       command.modelSelection === undefined &&
       queuedRunStop === undefined &&
@@ -7775,7 +7953,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         activeAttemptId: attemptId,
         status: "queued",
         ...(steerWhenReadyRunId === undefined ? {} : { steerWhenReadyRunId }),
+        // A restart cancels its run; nobody knows whether the provider read the steer, so a person decides.
         ...(worktreeMissingRun !== undefined ||
+        steerFollowUpSource?.status === "cancelled" ||
         (heldRunsToRelease.length === 0 &&
           queueIsHeld &&
           !wakeSkipsHold &&
@@ -8379,20 +8559,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? pendingForkTransferForThread(projection)
         : undefined;
       if (supersededForkTransfer !== undefined) {
-        // Superseded, or the next ordinary send would bring the parent's context back.
-        yield* emitEvent({
-          type: "context-transfer.updated",
-          threadId: command.threadId,
-          runId,
-          providerInstanceId: modelSelection.instanceId,
-          occurredAt: now,
-          payload: {
-            ...supersededForkTransfer,
-            status: "superseded",
-            error: "Superseded by a fresh session.",
-            updatedAt: now,
-          },
-        });
+        yield* emitEvent(
+          forkTransferSupersededEvent(
+            supersededForkTransfer,
+            runId,
+            modelSelection.instanceId,
+            now,
+          ),
+        );
       }
       yield* emitEvent({
         type: "run-attempt.created",
@@ -15625,15 +15799,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     // The run-end release can lag behind a new send; start the queue first so the send waits behind it.
     // A restart continuation resumes the ended run, so it must not be overtaken by the queue.
+    // A steer follow-up takes its place first and starts the queue after it commits. A send that
+    // beats the run-end reaction places the ended run's unread steers before it starts anything.
     if (
       command.type === "message.dispatch" &&
       command.restartContinuationOfRunId === undefined &&
+      command.steerFollowUpOfRunId === undefined &&
       (command.dispatchMode.type === "start_immediately" ||
         command.dispatchMode.type === "queue_after_active" ||
         command.dispatchMode.type === "defer_start")
     ) {
       yield* mapDispatchError(command)(
-        startNextQueuedRun(command.threadId, { latestRunEnded: true }),
+        requeueUnreadSteers(command.threadId).pipe(
+          Effect.andThen(startNextQueuedRun(command.threadId, { latestRunEnded: true })),
+        ),
       );
     }
 
@@ -15850,6 +16029,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       yield* mapDispatchError(command)(offerDelegatedCompletionDeliveries(command.parentThreadId));
     }
 
+    if (command.type === "message.dispatch" && command.steerFollowUpOfRunId !== undefined) {
+      yield* mapDispatchError(command)(
+        startNextQueuedRun(command.threadId, { latestRunEnded: true }),
+      );
+    }
+
     return {
       sequence: committed.receipt.resultSequence,
       storedEvents: committed.storedEvents,
@@ -15955,6 +16140,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? releaseUnattendedHolds(threadId, run.id)
               : Effect.void
             ).pipe(
+              Effect.andThen(
+                requeueUnreadSteers(threadId, [run.id]).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Failed to read unread steers", { threadId, cause }),
+                  ),
+                ),
+              ),
               Effect.andThen(
                 startNextQueuedRun(threadId, {
                   endedRunId: run.id,
@@ -16222,6 +16414,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.logWarning("Failed to inspect delegated completion delivery during recovery", {
           cause,
         }),
+      ),
+    );
+    // Recovery leaves a steer the provider had not read pending, and no run update follows it.
+    yield* projectionStore.getRecoveryThreadIds("unread-steers").pipe(
+      Effect.flatMap((threadIds) =>
+        Effect.forEach(
+          threadIds,
+          (threadId) =>
+            threadDispatch.withLock(threadId, requeueUnreadSteers(threadId)).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to requeue an unread steer during recovery", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+          { discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to inspect unread steers during recovery", { cause }),
       ),
     );
   });
