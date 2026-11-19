@@ -971,9 +971,26 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           const home = yield* spawnedHome({
             t3Home: undefined,
             cwd: NodeOS.tmpdir(),
-            ambientHome: "/home/user/.t3",
+            ambientHome: "/srv/t3-dev-home",
           });
-          assert.equal(home, path.resolve("/home/user/.t3"));
+          assert.equal(home, path.resolve("/srv/t3-dev-home"));
+        }),
+      );
+
+      // An explicit home makes the server use <home>/userdata, the live install's database.
+      it.effect.each([
+        { source: "an ambient T3CODE_HOME", t3Home: undefined, ambient: true },
+        { source: "--home-dir", t3Home: "default", ambient: false },
+      ])("never forwards the default ~/.t3 as an explicit home from $source", (input) =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const defaultHome = path.join(NodeOS.homedir(), ".t3");
+          const home = yield* spawnedHome({
+            t3Home: input.t3Home === undefined ? undefined : defaultHome,
+            cwd: NodeOS.tmpdir(),
+            ambientHome: input.ambient ? defaultHome : undefined,
+          });
+          assert.isUndefined(home);
         }),
       );
     });
