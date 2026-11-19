@@ -1,0 +1,12 @@
+{
+  "name": "agent-board",
+  "description": "Local plugins for Agent Board sessions",
+  "owner": { "name": "13kparkin" },
+  "plugins": [
+    {
+      "name": "omp-kit",
+      "source": "./omp-kit",
+      "description": "Applies the omp rules, TypeScript LSP, and the vp environment to every Claude Code session"
+    }
+  ]
+}
