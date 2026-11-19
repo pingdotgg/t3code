@@ -7121,6 +7121,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           }
         }
       }
+
+      // Without the hint the planner walks every settled command, tool, and subagent item.
+      const pendingQuery = statements.find((statement) =>
+        statement.includes("AS owning_provider_instance_id"),
+      );
+      assert.isDefined(pendingQuery);
+      const pendingPlan = yield* planOf(pendingQuery);
+      assert.include(
+        pendingPlan.find((detail) => detail.startsWith("SEARCH i ")) ?? "",
+        "orchestration_v2_projection_turn_items_shell_pending_idx",
+        pendingPlan.join("\n"),
+      );
     }),
   );
 
