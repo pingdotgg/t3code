@@ -104,27 +104,29 @@ it.layer(NodeServices.layer)("makeKimiPromptOutcomeWatch", (it) => {
   );
 
   // Sent while that steered turn runs: Kimi queues it and answers at once, writing nothing.
-  it.effect("waits out Kimi's own turn for a prompt it only queued", () =>
-    Effect.gen(function* () {
-      const { check, append, nextPoll } = yield* makeWire(steeredTurn);
-      const outcome = yield* check(endTurn, notStopped).pipe(Effect.forkChild);
-      yield* nextPoll("250 millis");
-      yield* nextPoll("250 millis");
-      yield* nextPoll("250 millis");
-      yield* append(
-        replyText("FINAL: all steps done") +
-          completedTurn(1) +
-          turnPrompt("Reply with the single word PONG.") +
-          replyText("PONG") +
-          completedTurn(2),
-      );
-      yield* nextPoll("250 millis");
-      yield* nextPoll("250 millis");
-      yield* nextPoll("250 millis");
-      assert.deepStrictEqual(yield* Fiber.join(outcome), {
-        hiddenReply: "FINAL: all steps done\n\nPONG",
-      });
-    }),
+  it.effect(
+    "waits out Kimi's own turn for a prompt it only queued, and returns only its reply",
+    () =>
+      Effect.gen(function* () {
+        const { check, append, nextPoll } = yield* makeWire(steeredTurn);
+        const outcome = yield* check(endTurn, notStopped).pipe(Effect.forkChild);
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
+        yield* append(
+          replyText("FINAL: all steps done") +
+            completedTurn(1) +
+            turnPrompt("Reply with the single word PONG.") +
+            replyText("PONG") +
+            completedTurn(2),
+        );
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
+        assert.deepStrictEqual(yield* Fiber.join(outcome), {
+          hiddenReply: "PONG",
+        });
+      }),
   );
 
   it.effect("stops following Kimi's work once the turn stops", () =>

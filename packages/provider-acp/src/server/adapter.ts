@@ -1624,6 +1624,8 @@ interface ActiveAcpTurn {
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  /** The prompt returned and its outcome check may still be following the agent's work. */
+  checkingPromptOutcome: boolean;
   workAccepted: boolean;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
@@ -2652,6 +2654,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // An open prompt fails with its transport. A turn held open for a running tool
                 // has no prompt, so nothing else ends it.
                 const held = yield* Ref.get(activeTurn);
+                if (held?.checkingPromptOutcome === true && !held.finalized) {
+                  yield* finalizeTurn(
+                    held,
+                    "failed",
+                    makeProviderFailure({ class: "transport_error" }),
+                  );
+                  return;
+                }
                 if (
                   flavor.toolOutlivesPrompt === undefined ||
                   held === null ||
@@ -8965,6 +8975,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               finalizedStatus: null,
               promptSettled: false,
               promptSettledStatus: null,
+              checkingPromptOutcome: false,
               workAccepted: false,
               promptWireSettled,
               promptDispatched,
@@ -9180,6 +9191,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     !context.interrupted &&
                     result.stopReason !== "error" &&
                     result.stopReason !== "cancelled";
+                  context.checkingPromptOutcome = checksPromptOutcome;
                   const promptOutcome = checksPromptOutcome
                     ? yield* checkPromptOutcome(
                         result,

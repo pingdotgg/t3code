@@ -1518,6 +1518,81 @@ describe("AcpAdapterV2", () => {
       );
     }).pipe(Effect.provide(layerTest)),
   );
+  it.live("fails a turn whose outcome check is pending when the runtime terminates", () =>
+    Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+      const baseMakeRuntime = makeMockRuntime({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        mockAgentPath: yield* bundledMockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+        }),
+      });
+      const instanceId = ProviderInstanceId.make("acp-test-outcome-termination");
+      const threadId = ThreadId.make("thread-acp-outcome-termination");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          // Follows work the agent does without ACP updates, as Kimi's check does.
+          watchPromptOutcome: () =>
+            Effect.succeed(() =>
+              Deferred.succeed(checking, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCheck)),
+                Effect.as(undefined),
+              ),
+            ),
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              runtimeInputs.push(runtimeInput);
+            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-outcome-termination"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(checking);
+      yield* runtimeInputs.at(-1)!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({ detail: "Injected agent exit", cause: "test" }),
+      );
+      const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
+      yield* Deferred.succeed(releaseCheck, undefined);
+      assert.equal(ended?.type === "turn.terminal" ? ended.status : null, "failed");
+    }).pipe(Effect.provide(layerTest)),
+  );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("acp-test-prompt-usage-stop");

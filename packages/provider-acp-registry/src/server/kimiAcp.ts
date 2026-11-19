@@ -174,6 +174,9 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
       let ended: KimiTurnEnded | undefined;
       let steered = false;
       let open = turnOpen;
+      // A queued prompt's work starts at its own `turn.prompt`, after Kimi's open turn ends.
+      let queuedStarted = false;
+      let followingHiddenWork = false;
       let lastEnded: KimiTurnEnded | undefined;
       const replies: Array<string> = [];
       const follow = (lines: ReadonlyArray<string>) => {
@@ -184,13 +187,20 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           if (line.includes('"turn.prompt"') || line.includes('"turn.ended"')) {
             const boundary = decodeTurnBoundary(line);
             if (Option.isNone(boundary)) continue;
+            const wasOpen = open;
             open = boundary.value.type === "turn.prompt";
-            if (open) continue;
+            if (open) {
+              queuedStarted ||= turnOpen && !wasOpen;
+              continue;
+            }
             const record = decodeTurnEnded(line);
             if (Option.isNone(record)) continue;
-            lastEnded = record.value;
+            if (!turnOpen || queuedStarted) lastEnded = record.value;
             ended ??= record.value;
-          } else if (line.includes('"content.part"') && (turnOpen || ended !== undefined)) {
+          } else if (
+            line.includes('"content.part"') &&
+            (turnOpen ? queuedStarted : ended !== undefined)
+          ) {
             const part = decodeTextPart(line);
             if (Option.isSome(part)) replies.push(part.value.event.part.text);
           }
@@ -215,6 +225,7 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           return failure === undefined ? undefined : { failure };
         }
         // A steered notice or a queued prompt runs in turns Kimi reports only to its log.
+        followingHiddenWork = true;
         for (let quiet = 0; quiet < HIDDEN_WORK_IDLE_POLLS;) {
           if (yield* stopped) break;
           yield* Effect.sleep(HIDDEN_WORK_POLL_INTERVAL);
@@ -229,7 +240,19 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
       }).pipe(
         Effect.catch(() =>
           Effect.logWarning("Kimi's session log could not be read for this turn.").pipe(
-            Effect.as(undefined),
+            Effect.as(
+              followingHiddenWork
+                ? {
+                    failure: makeProviderFailure({
+                      class: "provider_error",
+                      message:
+                        "Kimi kept working after it answered, and T3 Code lost track of that work.",
+                      code: null,
+                      retryable: null,
+                    }),
+                  }
+                : undefined,
+            ),
           ),
         ),
       );
