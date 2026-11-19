@@ -35,7 +35,7 @@ import { terminalOutputText } from "./terminalOutput.ts";
 
 interface TerminalMetadataFeed {
   readonly terminals: ReadonlyArray<TerminalSummary>;
-  readonly snapshotId: symbol;
+  readonly snapshotId: string | symbol;
 }
 
 export function createTerminalEnvironmentAtoms<R, E>(
@@ -66,7 +66,7 @@ export function createTerminalEnvironmentAtoms<R, E>(
           (): TerminalMetadataFeed => ({ terminals: [], snapshotId: Symbol() }),
           (feed, event): TerminalMetadataFeed => ({
             terminals: applyTerminalMetadataStreamEvent(feed.terminals, event),
-            snapshotId: event.type === "snapshot" ? Symbol() : feed.snapshotId,
+            snapshotId: event.type === "snapshot" ? (event.managerId ?? Symbol()) : feed.snapshotId,
           }),
         ),
         // The scan seed is not an authoritative empty server snapshot.

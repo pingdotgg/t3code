@@ -216,8 +216,8 @@ describe("server terminal reconciliation", () => {
 
   it("preserves a vertical split while the terminals reattach to a restarted server", () => {
     const store = useTerminalUiStateStore.getState();
-    const firstSnapshot = Symbol();
-    const restartSnapshot = Symbol();
+    const firstSnapshot = "manager-1";
+    const restartSnapshot = "manager-2";
     store.setTerminalOpen(THREAD_REF, true);
     store.splitTerminalVertical(THREAD_REF, "split");
     const beforeRestart = layout();
@@ -232,6 +232,36 @@ describe("server terminal reconciliation", () => {
 
     store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], restartSnapshot);
     expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+  });
+
+  it("drops a background terminal that closed before the drawer reloaded", async () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "old"], "manager-1");
+    const { name, storage } = useTerminalUiStateStore.persist.getOptions();
+    if (!name || !storage) throw new Error("Terminal layout storage is unavailable");
+    const saved = await storage.getItem(name);
+    if (!saved) throw new Error("Terminal layout was not saved");
+    store.removeTerminalUiState(THREAD_REF);
+    await storage.setItem(name, saved);
+    await useTerminalUiStateStore.persist.rehydrate();
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "new"], "manager-1");
+
+    expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "new"]);
+  });
+
+  it("keeps the surviving pane active when another client closes its split sibling", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.newTerminal(THREAD_REF, "first");
+    store.newTerminal(THREAD_REF, "second");
+    store.splitTerminalVertical(THREAD_REF, "split");
+    store.reconcileTerminalIds(THREAD_REF, ["first", "second", "split"]);
+
+    store.reconcileTerminalIds(THREAD_REF, ["first", "second"]);
+
+    expect(layout().activeTerminalId).toBe("second");
+    expect(layout().activeTerminalGroupId).toBe("group-second");
   });
 
   it("preserves a pending local split when another client opens a tab", () => {

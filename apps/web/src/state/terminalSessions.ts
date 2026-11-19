@@ -235,7 +235,7 @@ export function useKnownTerminalSessions(input: {
 
 interface TerminalDrawerSessions {
   readonly sessions: ReadonlyArray<KnownTerminalSession>;
-  readonly snapshotId: symbol;
+  readonly snapshotId: string | symbol;
 }
 
 const noTerminalDrawerSessions = Atom.make<TerminalDrawerSessions | null>(null);
