@@ -402,45 +402,56 @@ export function SourceControlHostFieldsForm(props: {
   };
   return (
     <View className="gap-4 p-4">
-      {fields.map((field) => (
-        <View key={field.key} className="gap-1.5">
-          {field.secret ? (
-            <>
-              <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
-                {field.label}
-              </Text>
-              <SecretTextInput
-                accessibilityLabel={field.label}
+      {fields.map((field) => {
+        const forgejoDefault = definition.kind === "forgejo" && field.key === "defaultServer";
+        const label = forgejoDefault
+          ? gt("Default server", { $context: "settings field, a Forgejo server URL" })
+          : field.label;
+        const description = forgejoDefault
+          ? gt(
+              "The fj or tea login used when a project has no Forgejo remote, such as when publishing. A project's remote always uses its own login.",
+            )
+          : field.description;
+        return (
+          <View key={field.key} className="gap-1.5">
+            {field.secret ? (
+              <>
+                <Text className="text-2xs font-t3-bold tracking-[0.8px] uppercase text-foreground-muted">
+                  {label}
+                </Text>
+                <SecretTextInput
+                  accessibilityLabel={label}
+                  placeholder={
+                    isSet(field.key) ? gt("Saved. Enter a new value to replace it") : label
+                  }
+                  value={drafts[field.key] ?? ""}
+                  onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
+                  onSubmitEditing={submit}
+                  editable={!locked}
+                />
+              </>
+            ) : (
+              <ConnectionFormField
+                label={label}
+                autoCapitalize="none"
+                autoCorrect={false}
                 placeholder={
-                  isSet(field.key) ? gt("Saved. Enter a new value to replace it") : field.label
+                  typeof saved[field.key] === "string" && saved[field.key] !== ""
+                    ? String(saved[field.key])
+                    : field.placeholder
                 }
+                editable={!locked}
                 value={drafts[field.key] ?? ""}
                 onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
                 onSubmitEditing={submit}
-                editable={!locked}
               />
-            </>
-          ) : (
-            <ConnectionFormField
-              label={field.label}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder={
-                typeof saved[field.key] === "string" && saved[field.key] !== ""
-                  ? String(saved[field.key])
-                  : field.placeholder
-              }
-              editable={!locked}
-              value={drafts[field.key] ?? ""}
-              onChangeText={(value) => setDrafts({ ...drafts, [field.key]: value })}
-              onSubmitEditing={submit}
-            />
-          )}
-          {field.description ? (
-            <Text className="text-xs text-foreground-muted">{field.description}</Text>
-          ) : null}
-        </View>
-      ))}
+            )}
+            {description ? (
+              <Text className="text-xs text-foreground-muted">{description}</Text>
+            ) : null}
+          </View>
+        );
+      })}
       {failure ? (
         <Text selectable className="text-xs text-danger-foreground">
           {failure}

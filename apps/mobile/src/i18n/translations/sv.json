@@ -5192,6 +5192,8 @@
   "8ea7a295f2739627": "Sparad för {hosts}.",
   "526307cb5a8424a7": "Skapa en token",
   "c65001930bafa424": "Ta bort",
+  "f5ea5597259324a6": "Standardserver",
+  "29283141bc890650": "fj- eller tea-inloggningen som används när ett projekt saknar en Forgejo-fjärr, till exempel vid publicering. Ett projekts fjärr använder alltid sin egen inloggning.",
   "1386dab454716962": "Ta bort",
   "7e93efc9d1b78549": "Ange koden på {host} och godkänn sedan {app}. Den är kopierad. Servern slutför inloggningen även om du lämnar appen.",
   "aafa642d6a47837d": "Kunde inte starta inloggningen",

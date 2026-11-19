@@ -5193,6 +5193,8 @@
   "8ea7a295f2739627": "Saved for {hosts}.",
   "526307cb5a8424a7": "Create a token",
   "c65001930bafa424": "Remove",
+  "f5ea5597259324a6": "Default server",
+  "29283141bc890650": "The fj or tea login used when a project has no Forgejo remote, such as when publishing. A project's remote always uses its own login.",
   "1386dab454716962": "Remove",
   "7e93efc9d1b78549": "Enter this code on {host}, then approve {app}. It is copied. The server finishes signing in even if you leave the app.",
   "aafa642d6a47837d": "Could not start the sign-in",

@@ -5186,6 +5186,8 @@
   "8ea7a295f2739627": "Enregistré pour {hosts}.",
   "526307cb5a8424a7": "Créer un jeton",
   "c65001930bafa424": "Supprimer",
+  "f5ea5597259324a6": "Serveur par défaut",
+  "29283141bc890650": "La connexion fj ou tea utilisée quand un projet n'a pas de remote Forgejo, par exemple lors de la publication. Le remote d'un projet utilise toujours sa propre connexion.",
   "1386dab454716962": "Supprimer",
   "7e93efc9d1b78549": "Saisissez ce code sur {host}, puis approuvez {app}. Il est copié. Le serveur termine la connexion même si vous quittez l’app.",
   "aafa642d6a47837d": "Impossible de démarrer la connexion",

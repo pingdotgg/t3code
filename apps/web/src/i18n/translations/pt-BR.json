@@ -9083,6 +9083,8 @@
   "70752f3aba4894ff": "Com um token de API em vez de um token de acesso.",
   "417f9edb887598bd": "Acessa todos os repositórios que sua conta Atlassian acessa. Dê a ele acesso de leitura e gravação a repositórios e pull requests, além de read:user:bitbucket e read:workspace:bitbucket.",
   "3516b19bb6089d21": "Um token do git.cafe, usado antes de CAFE_TOKEN e do cafe login, para que o GitCafe funcione sem login na CLI.",
+  "f5ea5597259324a6": "Servidor padrão",
+  "29283141bc890650": "O login do fj ou tea usado quando um projeto não tem remote do Forgejo, como ao publicar. O remote de um projeto sempre usa o próprio login.",
   "bc63ccd46ca25a3a": "ex.: --chrome",
   "5cd396217a43a9b3": "ex.: 300000",
   "9da1db099d0ad2c8": "Opcional",

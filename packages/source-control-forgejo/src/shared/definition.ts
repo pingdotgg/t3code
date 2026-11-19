@@ -1,4 +1,10 @@
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  SourceControlProviderKind,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { canonicalRepositoryPath } from "@t3tools/shared/git";
 import {
   buildCommitUrl,
@@ -28,6 +34,19 @@ const ISSUE_PATH = /^\/([^/]+(?:\/[^/]+)+)\/issues\/(\d+)(?:\/|$)/u;
 const REPOSITORY_PAGE_PATH = /^\/([^/]+(?:\/[^/]+)+?)\/src\/(?:branch|tag|commit)\/[^/]/u;
 
 const KIND = SourceControlProviderKind.make("forgejo");
+
+export const settings = makeProviderSettingsSchema({
+  defaultServer: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Default server",
+      description:
+        "The fj or tea login used when a project has no Forgejo remote, such as when publishing. A project's remote always uses its own login.",
+      providerSettingsForm: { placeholder: "https://codeberg.org" },
+    }),
+  ),
+});
+export type ForgejoSettings = typeof settings.Type;
 
 function isForgejoHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
@@ -88,6 +107,7 @@ export const definition = defineSourceControl({
   publishHost: (signedInHost) => signedInHost ?? "your server",
   newRepositoryOwner: (account) => (account ? { owner: account } : null),
   defaultCloneTransport: "https",
+  settings,
   // The server's resolved web URL wins; otherwise an HTTP remote on the same host names the
   // origin, which may carry a port. SSH remotes say nothing about the web origin.
   changeRequestUrl: ({ host, repository, number, remoteUrl, webUrl }) =>

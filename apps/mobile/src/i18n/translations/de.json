@@ -5192,6 +5192,8 @@
   "8ea7a295f2739627": "Gespeichert für {hosts}.",
   "526307cb5a8424a7": "Token erstellen",
   "c65001930bafa424": "Entfernen",
+  "f5ea5597259324a6": "Standardserver",
+  "29283141bc890650": "Der fj- oder tea-Login, der verwendet wird, wenn ein Projekt kein Forgejo-Remote hat, etwa beim Veröffentlichen. Das Remote eines Projekts verwendet immer seinen eigenen Login.",
   "1386dab454716962": "Entfernen",
   "7e93efc9d1b78549": "Gib diesen Code auf {host} ein und genehmige dann {app}. Er wurde kopiert. Der Server schließt die Anmeldung ab, auch wenn du die App verlässt.",
   "aafa642d6a47837d": "Die Anmeldung konnte nicht gestartet werden",
