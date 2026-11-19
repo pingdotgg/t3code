@@ -82,6 +82,32 @@ describe("AgentTempDir", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("keeps colons out of the folder and still cleans up old colon folders", () =>
+    Effect.gen(function* () {
+      const { fileSystem, path, worktree, config, tempDir } = yield* setup;
+      const threadId = "thread:delegated-task:a%2Fb";
+      const environment = yield* tempDir.environment({ threadId, cwd: worktree });
+      const folder = path.basename(environment.TMPDIR!);
+      assert.match(folder, /^[A-Za-z0-9._-]+$/);
+      assert.notStrictEqual(
+        folder,
+        path.basename(
+          (yield* tempDir.environment({ threadId: "thread-delegated-task-a-2Fb", cwd: worktree }))
+            .TMPDIR!,
+        ),
+      );
+
+      const legacy = path.join(config.stateDir, "tmp", threadId);
+      yield* fileSystem.makeDirectory(legacy, { recursive: true });
+      yield* removeThreadTempDirectories(ThreadId.make(threadId)).pipe(
+        Effect.provide(projectionWithWorktree(worktree)),
+        Effect.provideService(ServerConfig.ServerConfig, config),
+      );
+      assert.isFalse(yield* fileSystem.exists(environment.TMPDIR!));
+      assert.isFalse(yield* fileSystem.exists(legacy));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("recreates a settled thread's folder on its next launch", () =>
     Effect.gen(function* () {
       const { fileSystem, worktree, config, tempDir } = yield* setup;
