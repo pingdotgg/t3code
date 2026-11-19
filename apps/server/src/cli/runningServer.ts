@@ -45,7 +45,7 @@ const SESSION_TTL = Duration.minutes(2);
 const REQUEST_TIMEOUT = Duration.seconds(30);
 
 /** A client of the server at `origin`, signed in as a short-lived session for the scope. */
-const serverClient = Effect.fn("RunningServer.serverClient")(function* (
+export const serverClient = Effect.fn("RunningServer.serverClient")(function* (
   origin: string,
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ) {
