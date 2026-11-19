@@ -1,4 +1,5 @@
 import {
+  changeRequestLinkResolver,
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
 } from "@t3tools/client-runtime/pull-request-markdown";
@@ -99,6 +100,40 @@ export function pullRequestMarkdownPlugins(
     plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
     if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
     markdownPlugins.set(key, plugins);
+  }
+  return plugins;
+}
+
+// `dataDarkSrc` and `dataLightSrc` carry a `<picture>`'s theme sources.
+const URL_PROPERTIES = ["href", "src", "poster", "dataDarkSrc", "dataLightSrc"] as const;
+
+// After raw HTML is parsed, so `<img src>` and `<a href>` resolve like markdown's own; code is text.
+function rehypeChangeRequestUrls(options: { readonly resolve: (url: string) => string }) {
+  const visit = (node: Nodes): void => {
+    if (node.type === "element") {
+      for (const key of URL_PROPERTIES) {
+        const value = node.properties[key];
+        if (typeof value === "string") node.properties[key] = options.resolve(value);
+      }
+    }
+    if ("children" in node) node.children.forEach(visit);
+  };
+  return (tree: Nodes) => visit(tree);
+}
+
+const changeRequestRehypePlugins = new Map<string, PluggableList>();
+
+/** One list per change request, since its host can resolve destinations against its page. */
+export function pullRequestRehypePlugins(
+  changeRequest: { readonly provider: string; readonly url: string } | null,
+): PluggableList {
+  const resolve = changeRequestLinkResolver(changeRequest);
+  if (changeRequest === null || resolve === null) return NO_PLUGINS;
+  const key = `${changeRequest.provider}\u0000${changeRequest.url}`;
+  let plugins = changeRequestRehypePlugins.get(key);
+  if (plugins === undefined) {
+    plugins = [[rehypeChangeRequestUrls, { resolve }]];
+    changeRequestRehypePlugins.set(key, plugins);
   }
   return plugins;
 }
