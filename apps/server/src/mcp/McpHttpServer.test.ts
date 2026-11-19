@@ -2088,7 +2088,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
             ),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
-                Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
+                Effect.map((body) => (body as { result: McpSchema.CallToolResult }).result),
               ),
           };
         });
@@ -2100,10 +2100,18 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const readOnly = yield* session("read.only", false);
       expect(yield* readOnly.listed).toEqual(["preview_open", "schedule_task"]);
       expect((yield* readOnly.call("schedule_task", {})).structuredContent).toEqual({});
-      expect(yield* readOnly.call("schedule_task", { write: true })).toMatchObject({
-        isError: true,
-      });
-      expect(yield* readOnly.call("delegate_task", {})).toMatchObject({ isError: true });
+      for (const [name, args] of [
+        ["schedule_task", { write: true }],
+        ["delegate_task", {}],
+      ] as const) {
+        const result = yield* readOnly.call(name, args);
+        const content = result.content[0];
+        expect(result.isError, name).toBe(true);
+        expect(
+          content?.type === "text" ? decodeJsonText(content.text) : undefined,
+          name,
+        ).toMatchObject({ code: "capability_denied" });
+      }
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
