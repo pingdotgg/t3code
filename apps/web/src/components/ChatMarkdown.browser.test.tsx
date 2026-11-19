@@ -137,7 +137,10 @@ vi.mock(import("../hooks/useSettings"), async (original) => {
 });
 
 import ChatMarkdown from "./ChatMarkdown";
-import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
+import {
+  chatMarkdownClipboardPayload,
+  serializeRenderedMarkdownFragment,
+} from "../markdown-clipboard";
 import { AudioPreview } from "./files/AudioPreview";
 
 it("keeps compact audio playback loaded across signed URL renewals", async () => {
@@ -775,33 +778,54 @@ describe("ChatMarkdown copy", () => {
       from: "Deeper",
       text: "2. 2. Deeper\n\nAfter.",
     },
+    {
+      source: "1. Install\n2. Configure\n3. Deploy",
+      from: "Configure",
+      to: "Deploy",
+      text: "2. Configure\n3. Deploy",
+    },
+    {
+      source: "1. A\n2. B\n7. C\n8. D",
+      from: "B",
+      to: "C",
+      userMessage: true,
+      text: "2. B\n7. C",
+    },
+    {
+      source: "- Install\n- Configure\n- Deploy",
+      from: "Configure",
+      to: "Deploy",
+      text: "- Configure\n- Deploy",
+    },
   ])(
-    "keeps the shown numbers when a copy starts at $from and ends past the list",
-    async ({ source, from, userMessage, text }) => {
+    "copies $text with the markers its list shows",
+    async ({ source, from, to, userMessage, text }) => {
       setup();
       await using screen = await renderText(
         source,
         userMessage ? { extraRemarkPlugins: SOURCE_NUMBER_PLUGINS } : {},
       );
-      const start = [...screen.container.querySelectorAll("li")]
-        .flatMap((item) => [...item.childNodes])
-        .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === from)!;
-      const after = [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
+      const itemText = (shown: string) =>
+        [...screen.container.querySelectorAll("li")]
+          .flatMap((item) => [...item.childNodes])
+          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
+      const end = to
+        ? itemText(to)
+        : [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
       const range = document.createRange();
-      range.setStart(start, 0);
-      range.setEnd(after, after.textContent!.length);
+      range.setStart(itemText(from), 0);
+      range.setEnd(end, end.textContent!.length);
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
       const payload = chatMarkdownClipboardPayload(selection);
       expect(payload?.text).toBe(text);
-      // Rich paste numbers its list from the same start.
+      // Rich paste reads back as the same list.
       expect(
-        new DOMParser()
-          .parseFromString(payload!.html, "text/html")
-          .querySelector("li")
-          ?.closest("ol")?.start,
-      ).toBe(Number(text.split(".")[0]));
+        serializeRenderedMarkdownFragment(
+          new DOMParser().parseFromString(payload!.html, "text/html").body,
+        ),
+      ).toBe(text);
     },
   );
 });
