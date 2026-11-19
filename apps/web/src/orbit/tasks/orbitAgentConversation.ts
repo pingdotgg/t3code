@@ -5,7 +5,7 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
 import { pullRequestLinkPanelTarget } from "~/lib/openPullRequestLink";
@@ -17,6 +17,8 @@ import { connectOrbitEnvironment } from "../environmentProvider";
 import { beginSidebarPeek, isSidebarListedNow } from "../sidebarHiddenThreads";
 import { tasksPanelActions, useTasksPanelStore } from "./tasksPanelStore";
 import {
+  createTasksNavigationGuard,
+  tasksNavigationPlace,
   openOrbitAgentConversation,
   prepareOrbitConversationEnvironment,
 } from "./taskNavigation.logic";
@@ -71,31 +73,37 @@ async function prepareKnownEnvironment(
   });
 }
 
-export function useOrbitTaskNavigation(threadKey: string) {
+/**
+ * Clicks that leave the Tasks surface: agents and pull requests. `shown` is the task or subtask
+ * on screen (null on the board); leaving it cancels a pending agent click. Errors stay with the
+ * task they belong to.
+ */
+export function useOrbitTaskNavigation(
+  threadKey: string,
+  shown: { readonly taskId: number; readonly subtaskId: number | null } | null,
+) {
   const router = useRouter();
-  const sequence = useRef({ key: threadKey, id: 0 });
-  const [error, setError] = useState<string | null>(null);
+  const [guard] = useState(createTasksNavigationGuard);
+  const location = tasksNavigationPlace(threadKey, shown);
+  const placeOf = (taskId: number | null) => `${threadKey}|${taskId ?? "board"}`;
+  const place = placeOf(shown?.taskId ?? null);
+  const [error, setError] = useState<{ readonly place: string; readonly message: string } | null>(
+    null,
+  );
   const source = parseScopedThreadKey(threadKey);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending click work when the Tasks surface leaves
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- invalidates pending click work when the task on screen or the Tasks surface leaves
   useEffect(() => {
-    sequence.current = { key: threadKey, id: sequence.current.id + 1 };
-    return () => {
-      sequence.current.id += 1;
-    };
-  }, [threadKey]);
+    guard.enter(location);
+    return guard.leave;
+  }, [guard, location]);
   const navigate = async (ref: OrbitConversationRef, peek = true) => {
     if (!source) return;
-    const request = ++sequence.current.id;
+    const stillHere = guard.begin();
     setError(null);
     const isCurrent = () => {
       const params = router.state.matches.at(-1)?.params ?? {};
       const current = resolveThreadRouteRef(params);
-      return (
-        request === sequence.current.id &&
-        sequence.current.key === threadKey &&
-        current !== null &&
-        scopedThreadKey(current) === threadKey
-      );
+      return stillHere() && current !== null && scopedThreadKey(current) === threadKey;
     };
     try {
       await openOrbitAgentConversation(ref, {
@@ -115,12 +123,16 @@ export function useOrbitTaskNavigation(threadKey: string) {
       });
     } catch (cause) {
       if (isCurrent())
-        setError(cause instanceof Error ? cause.message : "Could not open this conversation.");
+        setError({
+          place,
+          message: cause instanceof Error ? cause.message : "Could not open this conversation.",
+        });
     }
   };
-  const openPullRequest = (url: string) => {
-    if (!source) return;
-    sequence.current.id += 1;
+  /** A task's PR opens one level below the task, inside this Tasks tab. */
+  const openPullRequest = (taskId: number, url: string): boolean => {
+    if (!source) return false;
+    guard.begin();
     const target = pullRequestLinkPanelTarget({
       url,
       environmentId: undefined,
@@ -128,13 +140,16 @@ export function useOrbitTaskNavigation(threadKey: string) {
       lendHostProject: true,
     });
     if (!target) {
-      setError(
-        "No connected project can open this pull request. Connect its repository in Connections, then try again.",
-      );
-      return;
+      // The error belongs to the task, which a board badge opens next.
+      setError({
+        place: placeOf(taskId),
+        message:
+          "No connected project can open this pull request. Connect its repository in Connections, then try again.",
+      });
+      return false;
     }
     setError(null);
-    useRightPanelStore.getState().openPullRequest(source, {
+    tasksPanelActions().openPullRequest(threadKey, taskId, {
       environmentId: target.project.environmentId,
       projectId: target.project.id,
       repository: target.repository,
@@ -142,6 +157,7 @@ export function useOrbitTaskNavigation(threadKey: string) {
       ...(target.host === undefined ? {} : { host: target.host }),
       url,
     });
+    return true;
   };
   const returnToOrigin = () => {
     const key = useTasksPanelStore.getState().byThreadKey[threadKey]?.originThreadKey;
@@ -153,6 +169,6 @@ export function useOrbitTaskNavigation(threadKey: string) {
     openAgent: (ref: OrbitConversationRef) => navigate(ref),
     openPullRequest,
     returnToOrigin,
-    error,
+    error: error?.place === place ? error.message : null,
   };
 }

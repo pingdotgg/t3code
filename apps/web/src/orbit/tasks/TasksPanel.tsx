@@ -49,7 +49,8 @@ import { cn } from "~/lib/utils";
 import { PROJECT_ICON_COLORS } from "~/projectIconColors";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
-import { TaskDetail } from "./TaskDetail";
+import { useOrbitTaskNavigation } from "./orbitAgentConversation";
+import { TaskDetail, type TasksPanelHost } from "./TaskDetail";
 import { TasksInsightsStrip } from "./TasksInsights";
 import { INSIGHT_PERIODS, INSIGHTS } from "./tasksInsights.logic";
 import { INPUT_TONE } from "./taskDetail.logic";
@@ -107,7 +108,13 @@ function useOrbitTaskList(orbitProjectId: number | null) {
  * The Orbit Tasks app in the right panel. `orbitProjectId` scopes the list to the thread's Orbit
  * Project; null lists every task this Node may read. Navigation lives in tasksPanelStore.
  */
-export function TasksPanel(props: { threadKey: string; orbitProjectId: number | null }) {
+type TasksPanelProps = {
+  threadKey: string;
+  orbitProjectId: number | null;
+  host: TasksPanelHost;
+};
+
+export function TasksPanel(props: TasksPanelProps) {
   const availability = orbitTasksAvailability();
   // Same surface as the file and editor tabs beside it.
   return (
@@ -125,9 +132,16 @@ export function TasksPanel(props: { threadKey: string; orbitProjectId: number | 
   );
 }
 
-function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | null }) {
+function TasksPanelContent(props: TasksPanelProps) {
   const { state, retry } = useOrbitTaskList(props.orbitProjectId);
   const navigation = useTasksNavigation(props.threadKey);
+  // One instance for the board and the task, so an error from a card's PR badge shows on the task.
+  const orbitNavigation = useOrbitTaskNavigation(
+    props.threadKey,
+    navigation.view === "task" && navigation.taskId !== null
+      ? { taskId: navigation.taskId, subtaskId: navigation.subtaskId }
+      : null,
+  );
   const [liveStatus, setLiveStatus] = useState<OrbitTasksLiveStatus>("connecting");
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the summary connection only while this Tasks surface is mounted
   useEffect(() => {
@@ -149,6 +163,8 @@ function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | 
         threadKey={props.threadKey}
         liveStatus={liveStatus}
         navigation={{ ...navigation, taskId: navigation.taskId }}
+        orbitNavigation={orbitNavigation}
+        host={props.host}
         listTitle={
           state.status === "ok"
             ? (state.value.tasks.find((task) => task.id === navigation.taskId)?.title ?? null)
@@ -195,6 +211,12 @@ function TasksPanelContent(props: { threadKey: string; orbitProjectId: number | 
       orbitProjectId={props.orbitProjectId}
       tasks={tasks}
       scroll={navigation.boardScroll}
+      onOpenPullRequest={(task, url) => {
+        // Without a project for its repository the task opens, and the task shows the error.
+        if (!orbitNavigation.openPullRequest(task.id, url)) {
+          tasksPanelActions().openTask(props.threadKey, task.id);
+        }
+      }}
     />
   );
 }
@@ -324,6 +346,7 @@ function TasksBoard(props: {
   orbitProjectId: number | null;
   tasks: ReadonlyArray<OrbitTaskSummary>;
   scroll: { readonly top: number; readonly left: number };
+  onOpenPullRequest: (task: OrbitTaskSummary, url: string) => void;
 }) {
   const laneScroll = useTasksLaneScroll((state) => state.byThreadKey[props.threadKey]);
   // The board scrolls down past the insights; the lanes scroll sideways.
@@ -374,11 +397,12 @@ function TasksBoard(props: {
                   <TaskCard
                     key={task.id}
                     task={task}
-                    onOpen={(laneTop) => {
+                    onOpen={(laneTop, pullRequestUrl) => {
                       // The lane unmounts at once, before a running scroll reports its end.
                       useTasksLaneScroll.getState().save(props.threadKey, lane.id, laneTop);
                       saveScroll();
-                      tasksPanelActions().openTask(props.threadKey, task.id);
+                      if (pullRequestUrl) props.onOpenPullRequest(task, pullRequestUrl);
+                      else tasksPanelActions().openTask(props.threadKey, task.id);
                     }}
                   />
                 ))}
@@ -467,16 +491,32 @@ function TaskCardStatus(props: { task: OrbitTaskSummary }) {
   );
 }
 
-function TaskCard(props: { task: OrbitTaskSummary; onOpen: (laneTop: number) => void }) {
+function TaskCard(props: {
+  task: OrbitTaskSummary;
+  /** With a URL the card's PR badge was clicked: the PR opens below the task. */
+  onOpen: (laneTop: number, pullRequestUrl?: string) => void;
+}) {
+  const gt = useGT();
   const { task } = props;
   const pr = task.pullRequest;
   const prState = pr?.state ? resolvePullRequestState({ state: pr.state, isDraft: false }) : null;
   const working = orbitTaskLane(task.status) === "in-progress" && task.attention === null;
+  const laneTop = (element: HTMLElement) => element.closest("ul")?.scrollTop ?? 0;
+  const badge = pr ? (
+    <>
+      {prState ? (
+        <prState.Icon aria-hidden className="size-3.5" />
+      ) : (
+        <PullRequestGlyph.pullRequest className="size-3.5" />
+      )}
+      #{pr.number}
+    </>
+  ) : null;
   return (
-    <li>
+    <li className="relative">
       <button
         type="button"
-        onClick={(event) => props.onOpen(event.currentTarget.closest("ul")?.scrollTop ?? 0)}
+        onClick={(event) => props.onOpen(laneTop(event.currentTarget))}
         className="flex w-full cursor-pointer flex-col gap-1.5 rounded-lg border border-(--shell-divider)! bg-(--shell-card) px-3 py-2.5 text-left transition-colors hover:bg-(--shell-card)/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none dark:bg-(--shell-highlight)/70 dark:hover:bg-(--shell-highlight)"
       >
         <span className="flex items-center gap-1.5 text-ui leading-4">
@@ -499,19 +539,34 @@ function TaskCard(props: { task: OrbitTaskSummary; onOpen: (laneTop: number) => 
         </span>
         <span className="flex items-center gap-2 text-ui leading-4 text-muted-foreground tabular-nums">
           <span className="min-w-0 flex-1 truncate">{taskCardDetail(task)}</span>
-          {pr ? (
-            <span className={cn("flex shrink-0 items-center gap-1", prState?.toneClassName)}>
-              {prState ? (
-                <prState.Icon aria-hidden className="size-3.5" />
-              ) : (
-                <PullRequestGlyph.pullRequest className="size-3.5" />
-              )}
-              <span className="sr-only">Pull request{prState ? ` (${prState.label})` : ""}</span>#
-              {pr.number}
+          {/* Holds the badge's place; the badge itself is its own button over the card. */}
+          {badge ? (
+            <span aria-hidden className="invisible flex shrink-0 items-center gap-1">
+              {badge}
             </span>
           ) : null}
         </span>
       </button>
+      {pr && badge ? (
+        <button
+          type="button"
+          onClick={(event) => props.onOpen(laneTop(event.currentTarget), pr.url)}
+          aria-label={
+            prState
+              ? gt("Pull request #{number} ({state}). Open it in Tasks", {
+                  number: pr.number,
+                  state: prState.label,
+                })
+              : gt("Pull request #{number}. Open it in Tasks", { number: pr.number })
+          }
+          className={cn(
+            "absolute right-3.25 bottom-2.75 flex cursor-pointer items-center gap-1 rounded-sm text-ui leading-4 tabular-nums hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:outline-none",
+            prState?.toneClassName ?? "text-muted-foreground",
+          )}
+        >
+          {badge}
+        </button>
+      ) : null}
     </li>
   );
 }

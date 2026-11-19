@@ -1,3 +1,5 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
+import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   orbitTaskEnvironment,
   type OrbitSubtask,
@@ -49,9 +51,13 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { PullRequestDetailPanel } from "~/components/pullRequest/PullRequestDetailPanel";
+import type { DraftId } from "~/composerDraftStore";
+import type { ShortcutMatchContext } from "~/keybindings";
 import { observeResize } from "~/lib/observeResize";
 import { usePullRequestPreviewTarget } from "~/lib/openPullRequestLink";
 import { cn } from "~/lib/utils";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { pullRequestEnvironment, useSharedPullRequestSummary } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
@@ -59,7 +65,7 @@ import { formatWorkingDurationLabel } from "@t3tools/client-runtime/state/models
 import { formatTokens } from "@t3tools/shared/usageFormat";
 
 import { observeOrbitTask } from "./taskDetail.logic";
-import { useOrbitTaskNavigation } from "./orbitAgentConversation";
+import type { useOrbitTaskNavigation } from "./orbitAgentConversation";
 import { loadOrbitTasksClient } from "./orbitTasksClient";
 import {
   agentStateText,
@@ -76,9 +82,15 @@ import {
   INPUT_TONE,
 } from "./taskDetail.logic";
 import { tasksErrorNotice } from "./tasksBoard.logic";
-import { tasksPanelActions, type TasksDetailTab, type TasksNavigation } from "./tasksPanelStore";
+import {
+  tasksPanelActions,
+  type TasksDetailTab,
+  type TasksNavigation,
+  type TasksPullRequest,
+} from "./tasksPanelStore";
 
-const NavigationContext = createContext<ReturnType<typeof useOrbitTaskNavigation> | null>(null);
+type OrbitTaskNavigation = ReturnType<typeof useOrbitTaskNavigation>;
+const NavigationContext = createContext<OrbitTaskNavigation | null>(null);
 
 type TaskState = { readonly status: "loading" } | OrbitTasksResult<OrbitTaskDetail>;
 
@@ -137,9 +149,16 @@ export function TaskDetail(props: {
   navigation: TasksNavigation & { readonly taskId: number };
   /** The board's row, shown in the path while the detail loads. */
   listTitle: string | null;
+  host: TasksPanelHost;
+  /** Shared with the board, so an error from a card's PR badge shows here. */
+  orbitNavigation: OrbitTaskNavigation;
 }) {
-  const navigation = useOrbitTaskNavigation(props.threadKey);
+  const gt = useGT();
+  const navigation = props.orbitNavigation;
   const { state, retry } = useOrbitTask(props.navigation.taskId);
+  // The task's PR shows one level down, never inside a subtask.
+  const pullRequest =
+    props.navigation.subtaskId === null ? (props.navigation.pullRequest ?? null) : null;
   const title = state.status === "ok" ? state.value.title : props.listTitle;
   const subtaskTitle =
     state.status === "ok" && props.navigation.subtaskId !== null
@@ -195,6 +214,23 @@ export function TaskDetail(props: {
                   </span>
                   <span className="min-w-0 truncate text-foreground/85">{subtaskTitle}</span>
                 </>
+              ) : pullRequest ? (
+                <>
+                  {/* The PR is a level below its task; the task's crumb leads back up. */}
+                  <button
+                    type="button"
+                    onClick={() => tasksPanelActions().closePullRequest(props.threadKey)}
+                    className="max-w-[45%] min-w-0 shrink cursor-pointer truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {title}
+                  </button>
+                  <span aria-hidden className="text-muted-foreground/60">
+                    /
+                  </span>
+                  <span className="min-w-0 truncate text-foreground/85">
+                    {gt("Pull request #{number}", { number: pullRequest.number })}
+                  </span>
+                </>
               ) : (
                 <span className="min-w-0 truncate text-foreground/85">{title}</span>
               )}
@@ -233,6 +269,14 @@ export function TaskDetail(props: {
               Retry
             </Button>
           </div>
+        ) : pullRequest ? (
+          <TaskPullRequest
+            key={`${pullRequest.environmentId}:${pullRequest.repository}#${pullRequest.number}`}
+            threadKey={props.threadKey}
+            task={state.value}
+            pullRequest={pullRequest}
+            host={props.host}
+          />
         ) : (
           <TaskDetailBody
             threadKey={props.threadKey}
@@ -271,9 +315,9 @@ function TaskDetailBody(props: {
     saveCurrentScroll();
     await actions?.openAgent(ref);
   };
-  const openPullRequest = (url: string) => {
+  const openPullRequest = (taskId: number, url: string) => {
     saveCurrentScroll();
-    actions?.openPullRequest(url);
+    return actions?.openPullRequest(taskId, url) ?? false;
   };
   // A subtask has no Subtasks tab; the task's own tab comes back on the way up.
   const tab = subtask && navigation.tab === "subtasks" ? "brief" : navigation.tab;
@@ -371,6 +415,67 @@ function TaskPage(props: {
         )}
       </div>
     </article>
+  );
+}
+
+/** What the right panel gives the pull request opened inside Tasks, as it does its own PR tabs. */
+export interface TasksPanelHost {
+  readonly shortcutsEnabled: boolean;
+  readonly getShortcutContext: () => ShortcutMatchContext;
+  /** Where review comments go with Add to chat. */
+  readonly composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
+}
+
+/**
+ * The task's pull request, one level below the task: Conn's PR panel, whose Task row leads back
+ * up. Its title and key-value list sit where the task's do.
+ */
+function TaskPullRequest(props: {
+  threadKey: string;
+  task: OrbitTaskDetail;
+  pullRequest: TasksPullRequest;
+  host: TasksPanelHost;
+}) {
+  const { pullRequest, task } = props;
+  const threadRef = parseScopedThreadKey(props.threadKey);
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <PullRequestDetailPanel
+        environmentId={pullRequest.environmentId}
+        reference={{
+          projectId: pullRequest.projectId,
+          repository: pullRequest.repository,
+          number: pullRequest.number,
+          ...(pullRequest.host ? { host: pullRequest.host } : {}),
+        }}
+        threadRef={threadRef}
+        context="thread"
+        shortcutsEnabled={props.host.shortcutsEnabled}
+        getShortcutContext={props.host.getShortcutContext}
+        initialTab={pullRequest.tab ?? "summary"}
+        onTabChange={(tab) => tasksPanelActions().setPullRequestTab(props.threadKey, tab)}
+        {...(props.host.composerDraftTarget
+          ? { composerDraftTarget: props.host.composerDraftTarget }
+          : {})}
+        // A stacked PR is not this task's: it opens as its own panel tab, read from the
+        // environment that hosts this one.
+        onSelectPullRequest={(reference) => {
+          if (!threadRef) return;
+          useRightPanelStore.getState().openPullRequest(threadRef, {
+            environmentId: pullRequest.environmentId,
+            projectId: reference.projectId,
+            repository: reference.repository,
+            number: reference.number,
+            ...(reference.host ? { host: reference.host } : {}),
+          });
+        }}
+        task={{
+          number: task.id,
+          title: task.title,
+          onOpen: () => tasksPanelActions().closePullRequest(props.threadKey),
+        }}
+      />
+    </div>
   );
 }
 
@@ -745,7 +850,7 @@ function TaskKeyValues(props: { task: OrbitTaskDetail }) {
           icon={<PullRequestGlyph.pullRequest aria-hidden className={icon} />}
           label={gt("Pull request")}
         >
-          <TaskPullRequestValue pr={task.pullRequest} />
+          <TaskPullRequestValue taskId={task.id} pr={task.pullRequest} />
         </TaskMetaRow>
       ) : null}
       <TaskMetaRow icon={<GaugeIcon aria-hidden className={icon} />} label={gt("Usage")}>
@@ -797,7 +902,10 @@ function useTaskPullRequestCard(url: string) {
 }
 
 /** The task's PR. Opening it is one handler, `openPullRequest` from the navigation context. */
-function TaskPullRequestValue(props: { pr: NonNullable<OrbitTaskDetail["pullRequest"]> }) {
+function TaskPullRequestValue(props: {
+  taskId: number;
+  pr: NonNullable<OrbitTaskDetail["pullRequest"]>;
+}) {
   const gt = useGT();
   const messages = useMessages();
   const navigation = use(NavigationContext);
@@ -815,7 +923,7 @@ function TaskPullRequestValue(props: { pr: NonNullable<OrbitTaskDetail["pullRequ
     <>
       <button
         type="button"
-        onClick={() => navigation?.openPullRequest(pr.url)}
+        onClick={() => navigation?.openPullRequest(props.taskId, pr.url)}
         aria-label={gt("Pull request #{number}. {state}. Open in the pull request panel", {
           number: pr.number,
           state: state?.label ?? gt("State unknown"),

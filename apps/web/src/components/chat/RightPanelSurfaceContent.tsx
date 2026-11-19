@@ -158,9 +158,13 @@ export function RightPanelSurfaceContent(props: {
           getShortcutContext={props.getShortcutContext}
           shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
           key={`${scopedThreadKey(threadRef)}:${surface.id}`}
-          environmentId={props.environmentId}
+          // A PR from another environment (a task's stacked PR) reads from the one that hosts it.
+          environmentId={
+            (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
+          }
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
+              ...(surface.environmentId ? { environmentId: surface.environmentId } : {}),
               projectId: reference.projectId,
               repository: reference.repository,
               number: reference.number,
@@ -275,6 +279,11 @@ export function RightPanelSurfaceContent(props: {
         <TasksPanel
           threadKey={scopedThreadKey(threadRef)}
           orbitProjectId={props.connProject.orbitProjectId}
+          host={{
+            shortcutsEnabled: visible && props.activeSurfaceId === surface.id,
+            getShortcutContext: props.getShortcutContext,
+            composerDraftTarget: props.composerDraftTarget,
+          }}
         />
       );
     case "side-chat":

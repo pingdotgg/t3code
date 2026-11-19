@@ -2,8 +2,10 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  createTasksNavigationGuard,
   openOrbitAgentConversation,
   prepareOrbitConversationEnvironment,
+  tasksNavigationPlace,
   type OrbitAgentNavigationPorts,
 } from "./taskNavigation.logic";
 import { tasksPanelActions, useTasksPanelStore } from "./tasksPanelStore";
@@ -109,6 +111,47 @@ describe("Orbit task navigation", () => {
     await opened;
     expect(navigated).toEqual([]);
     expect(useTasksPanelStore.getState().byThreadKey[scopedThreadKey(remote)]).toBeUndefined();
+  });
+
+  it("drops a pending agent click once the user leaves its task or subtask, also for the board", async () => {
+    const { ports, navigated } = setup();
+    const guard = createTasksNavigationGuard();
+    guard.enter("thread|482");
+    let release!: () => void;
+    const paired = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stillHere = guard.begin();
+    const opened = openOrbitAgentConversation(remote, {
+      ...ports,
+      isCurrent: stillHere,
+      prepare: () => paired,
+    });
+    // Back to the board, then into another task, while the first agent's environment pairs.
+    guard.leave();
+    guard.enter("thread|board");
+    guard.enter("thread|470");
+    release();
+    await opened;
+    expect(navigated).toEqual([]);
+
+    // A subtask's agent click is dropped when the path leads back up to its task.
+    const subtask = tasksNavigationPlace("thread", { taskId: 482, subtaskId: 484 });
+    const task = tasksNavigationPlace("thread", { taskId: 482, subtaskId: null });
+    expect(subtask).not.toBe(task);
+    expect(tasksNavigationPlace("thread", null)).toBe("thread|board");
+    guard.enter(subtask);
+    const fromSubtask = guard.begin();
+    guard.enter(task);
+    expect(fromSubtask()).toBe(false);
+
+    // Staying on the same task keeps a click current; newer work replaces it.
+    guard.enter("thread|470");
+    const current = guard.begin();
+    guard.enter("thread|470");
+    expect(current()).toBe(true);
+    guard.begin();
+    expect(current()).toBe(false);
   });
 
   it("reuses the exact PR surface without losing Tasks selection", () => {
