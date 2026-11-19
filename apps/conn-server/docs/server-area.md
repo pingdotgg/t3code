@@ -167,9 +167,10 @@ that list.
    report prices `unavailable`; also fetch LiteLLM's price table as the T3 server does; or
    leave it.
 3. **Sign-in and install.** The T3 server holds tokens only for managed ChatGPT (its own
-   OAuth) and Cursor (what the SDK returns). Options: never serve `provider.auth.*` for Codex
-   and Claude and send users to `codex login` and the `claude` CLI; or run the Cursor sign-in
-   in the SDK host, where only the SDK touches the credential.
+   OAuth) and Cursor (what the SDK returns). `provider.auth.*` is served as T3 serves it for
+   Claude, Codex and Grok: a `ProviderSetupError`, and users run `codex login` and the
+   `claude` CLI (status.md, "Provider sign-in"). Open: run the Cursor sign-in in the SDK
+   host, where only the SDK touches the credential.
 4. **Updates and restart.** All of them change software or need a supervisor that Orbit
    containers do not have. Options: leave them unserved and unadvertised (now); or let Orbit
    update the image, which needs no server method.

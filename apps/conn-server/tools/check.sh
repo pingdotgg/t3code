@@ -201,6 +201,8 @@ run 3 180 "parity" \
   node crates/conn-mcp/tools/parity.mjs "$release/examples/replay_server"
 # Orbit's idle check: the shell route in 14 states on both servers, Codex on a stub (no model).
 run 4 180 "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
+# Provider sign-in: every provider.auth.* reply and the CLI runs on both servers (stub CLIs).
+run 4 180 "provider-auth-diff" node crates/conn-server/tools/provider-auth-diff.mjs "$release/conn-server"
 run 2 120 "codex instructions --check" \
   node crates/conn-provider-codex/tools/gen-instructions.mjs --check
 run 1 900 "codex conformance" node crates/conn-provider-codex/tools/conformance.mjs

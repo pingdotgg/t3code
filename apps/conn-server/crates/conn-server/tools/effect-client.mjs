@@ -501,7 +501,14 @@ const decodeEach = (client) =>
     yield* call("projects.createFromThread", { threadId: none });
     yield* call("projects.createNew", { name: "effect-client" });
     yield* call("projects.ensureScratch", {});
+    // Sign-in: T3's ProviderSetupError for CLI-owned instances (provider-auth-diff.mjs).
     yield* call("provider.auth.subscribe", { instanceId: "codex" });
+    yield* call("provider.auth.start", { instanceId: "codex" });
+    yield* call("provider.auth.respond", { instanceId: "codex", flowId: "f", interactionId: "i", response: { type: "browser", action: "decline" } });
+    yield* call("provider.auth.complete", { instanceId: "codex", flowId: "f", callbackUrl: "http://localhost/cb" });
+    yield* call("provider.auth.cancel", { instanceId: "codex", flowId: "f" });
+    yield* call("provider.auth.removeMethod", { instanceId: "codex", methodId: "chatgpt" });
+    yield* call("provider.auth.logout", { instanceId: "codex" });
     yield* call("provider.install.subscribe", { instanceId: "codex" });
     yield* call("server.getConfig", {});
     // Grok, switched on with a stub CLI (crates/conn-provider-acp/tools/grok-cli-stub.mjs; no

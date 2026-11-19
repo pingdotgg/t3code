@@ -7,19 +7,31 @@
 //! no model to send with. [`server_providers`] builds those entries; each provider crate adds
 //! its own line there.
 //!
+//! Sign-in (`provider.auth.*`): the T3 server has no in-app sign-in for the providers this
+//! server offers. Claude, Codex (`setupMode` other than `managed`) and Grok are CLI-owned: their
+//! T3 instances carry no `ProviderAuthController`, their entries say
+//! `setup.canAuthenticate: false`, and the clients show no sign-in for them (users run
+//! `claude auth login` or `codex login` on the machine; the `auth.json` watch and the status
+//! probe pick the result up). So every `provider.auth.*` method, the stream included, answers
+//! T3's `ProviderSetupError` from `ProviderAuthService.getController`. No CLI starts.
+//! `crates/conn-server/tools/provider-auth-diff.mjs` compares both servers.
+//!
 //! In an Orbit container the provider CLIs come from Orbit's read-only agent folder and reach
 //! models through Orbit's AI router (`ANTHROPIC_BASE_URL`, `~/.codex/config.toml`), so nobody
-//! signs in or installs anything. Settings › Providers still subscribes to each instance's
-//! sign-in and install state; those streams answer "idle" so the page renders. The flows
-//! themselves (`provider.auth.start|respond|complete|cancel|logout|removeMethod`,
-//! `provider.install.start|cancel|remove`, ChatGPT profiles, `uploadFeedback`,
-//! `consumeResetCredit`) stay unregistered and answer "not supported".
+//! signs in or installs anything. `provider.install.subscribe` answers "idle". The install
+//! flows (`provider.install.start|cancel|remove`), ChatGPT profiles (T3's managed Codex
+//! sign-in, which stores tokens itself), `uploadFeedback` and `consumeResetCredit` stay
+//! unregistered and answer "not supported".
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use conn_support::time::Mark;
 
+use conn_contract::{
+    ProviderAuthCancelInput, ProviderAuthCompleteInput, ProviderAuthRespondInput,
+    ProviderAuthStartInput, ProviderSetupError, ProviderSetupInput, lit,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::sync::{mpsc, watch};
@@ -27,51 +39,122 @@ use tokio::sync::{mpsc, watch};
 use super::Deps;
 use crate::table::{Failure, MethodTable};
 
+/// `ProviderAuthRemoveMethodInput` (not exported by the contract, so not generated).
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct SetupInput {
+struct RemoveMethodInput {
     instance_id: String,
+    /// Required, as in T3; no controller reads it.
+    #[serde(rename = "methodId")]
+    _method_id: String,
+}
+
+/// `ProviderAuthService.getController` for an instance without a sign-in controller: T3's
+/// `ProviderSetupError`, with `operation` as T3 names it.
+fn no_sign_in(deps: &Deps, instance_id: String, operation: &str) -> Failure {
+    let detail = if deps.providers.get(&instance_id).is_some() {
+        "This provider does not support sign-in in T3 Code."
+    } else {
+        "This provider instance is no longer available."
+    };
+    Failure::fail(&ProviderSetupError {
+        tag: lit::ProviderSetupError,
+        instance_id,
+        operation: operation.to_owned(),
+        detail: detail.to_owned(),
+        cause: None,
+    })
+}
+
+/// Registers one `provider.auth.*` unary method that answers [`no_sign_in`].
+macro_rules! no_sign_in_method {
+    ($table:expr, $deps:expr, $tag:literal, $operation:literal, $input:ty) => {{
+        let deps = $deps.clone();
+        $table.unary($tag, move |_, input: $input| {
+            let failure = no_sign_in(&deps, input.instance_id, $operation);
+            async move { Err::<Value, _>(failure) }
+        });
+    }};
 }
 
 pub fn register(table: &mut MethodTable, deps: &Deps) {
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.start",
+        "start",
+        ProviderAuthStartInput
+    );
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.respond",
+        "respond",
+        ProviderAuthRespondInput
+    );
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.complete",
+        "complete",
+        ProviderAuthCompleteInput
+    );
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.cancel",
+        "cancel",
+        ProviderAuthCancelInput
+    );
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.removeMethod",
+        "removeMethod",
+        RemoveMethodInput
+    );
+    no_sign_in_method!(
+        table,
+        deps,
+        "provider.auth.logout",
+        "logout",
+        ProviderSetupInput
+    );
+    {
+        let deps = deps.clone();
+        table.stream(
+            "provider.auth.subscribe",
+            move |_, input: ProviderSetupInput| {
+                let failure = no_sign_in(&deps, input.instance_id, "subscribe");
+                async move { Err(failure) }
+            },
+        );
+    }
+    let deps = deps.clone();
     table.stream(
-        "provider.auth.subscribe",
-        |_, input: SetupInput| async move {
-            // `credentialOwner: provider`: the CLI holds its own credentials (or the router's key).
-            Ok(open_with(json!({
-                "instanceId": input.instance_id,
-                "phase": "idle",
-                "flowId": null,
-                "authorizationUrl": null,
-                "expiresAt": null,
-                "message": null,
-                "interaction": null,
-                "credentialOwner": "provider",
-            })))
+        "provider.install.subscribe",
+        move |_, input: ProviderSetupInput| {
+            let driver = deps
+                .providers
+                .get(&input.instance_id)
+                .map(|p| p.driver().to_owned())
+                .unwrap_or_else(|| input.instance_id.clone());
+            async move {
+                Ok(open_with(json!({
+                    "driver": driver,
+                    "operationId": null,
+                    "phase": "idle",
+                    "downloadedBytes": 0,
+                    "totalBytes": null,
+                    "version": null,
+                    "installedVersion": null,
+                    "source": "local",
+                    "canRemove": false,
+                    "message": null,
+                })))
+            }
         },
     );
-    let deps = deps.clone();
-    table.stream("provider.install.subscribe", move |_, input: SetupInput| {
-        let driver = deps
-            .providers
-            .get(&input.instance_id)
-            .map(|p| p.driver().to_owned())
-            .unwrap_or_else(|| input.instance_id.clone());
-        async move {
-            Ok(open_with(json!({
-                "driver": driver,
-                "operationId": null,
-                "phase": "idle",
-                "downloadedBytes": 0,
-                "totalBytes": null,
-                "version": null,
-                "installedVersion": null,
-                "source": "local",
-                "canRemove": false,
-                "message": null,
-            })))
-        }
-    });
 }
 
 /// One state, then open until the client unsubscribes.
@@ -380,6 +463,74 @@ mod tests {
     use conn_provider_claude::{ClaudeConfig, ClaudeProvider};
 
     use super::*;
+
+    /// T3's `ProviderAuthService` for CLI-owned instances: every sign-in method, the stream
+    /// too, fails with `ProviderSetupError`; an unknown instance gets the other text. The
+    /// comparison with the T3 server itself is `tools/provider-auth-diff.mjs`.
+    #[tokio::test(flavor = "current_thread")]
+    async fn sign_in_methods_answer_t3s_setup_error() {
+        use crate::table::{CallContext, Handler};
+        let deps = Deps {
+            engine: None,
+            providers: vec![Arc::new(ClaudeProvider::new(
+                "claudeAgent".into(),
+                ClaudeConfig::default(),
+            )) as Arc<dyn conn_provider::Provider>]
+            .into(),
+            ..Deps::default()
+        };
+        let mut table = MethodTable::new();
+        register(&mut table, &deps);
+        let calls = [
+            ("provider.auth.start", "start", json!({"methodId": "x"})),
+            (
+                "provider.auth.respond",
+                "respond",
+                json!({"flowId": "f", "interactionId": "i",
+                       "response": {"type": "browser", "action": "accept"}}),
+            ),
+            (
+                "provider.auth.complete",
+                "complete",
+                json!({"flowId": "f", "callbackUrl": "http://localhost/cb"}),
+            ),
+            ("provider.auth.cancel", "cancel", json!({"flowId": "f"})),
+            (
+                "provider.auth.removeMethod",
+                "removeMethod",
+                json!({"methodId": "m"}),
+            ),
+            ("provider.auth.logout", "logout", json!({})),
+            ("provider.auth.subscribe", "subscribe", json!({})),
+        ];
+        for (instance, detail) in [
+            (
+                "claudeAgent",
+                "This provider does not support sign-in in T3 Code.",
+            ),
+            ("nope", "This provider instance is no longer available."),
+        ] {
+            for (tag, operation, input) in &calls {
+                let mut input = input.clone();
+                input["instanceId"] = json!(instance);
+                let failure = match table.get(tag) {
+                    Some(Handler::Unary(call)) => call(CallContext::default(), input).await.err(),
+                    Some(Handler::Stream(call)) => call(CallContext::default(), input).await.err(),
+                    None => panic!("{tag} is not registered"),
+                };
+                assert_eq!(
+                    failure,
+                    Some(Failure::Fail(json!({
+                        "_tag": "ProviderSetupError",
+                        "instanceId": instance,
+                        "operation": operation,
+                        "detail": detail,
+                    }))),
+                    "{tag} {instance}"
+                );
+            }
+        }
+    }
 
     /// Records the periodic probes; the first one fails over a ready entry.
     struct Flaky {
