@@ -161,7 +161,7 @@ export function omitSettledOrDeletedSubagentRelationships(
     if (edge.kind !== "subagent" || isParentThreadRelationship(edge, currentThreadId)) return true;
     const thread = graph.nodes.get(threadId)?.thread;
     if (thread === undefined || thread === null) return true;
-    return thread.settledOverride !== "settled" && thread.deletedAt === null;
+    return thread.settledOverride !== "settled" && thread.deletedAt == null;
   });
 }
 
