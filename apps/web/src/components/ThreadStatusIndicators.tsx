@@ -603,8 +603,11 @@ export function ThreadPullRequestsMiniList({
   );
 }
 
+/** One line of a thread's hover list: a pull request, or an issue with its own key. */
 export function ThreadPullRequestMiniListItem({
   number,
+  keyLabel,
+  ariaLabel,
   url,
   title,
   presentation,
@@ -613,7 +616,10 @@ export function ThreadPullRequestMiniListItem({
   onPressPullRequest,
   children,
 }: {
-  number: number;
+  number?: number;
+  /** In place of `#number`, for an issue whose tracker names it its own way. */
+  keyLabel?: string;
+  ariaLabel?: string;
   url: string;
   title: string;
   presentation: Pick<ThreadPullRequestBadgePresentation, "Icon" | "toneClassName"> | null;
@@ -629,7 +635,9 @@ export function ThreadPullRequestMiniListItem({
         aria-hidden
         className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
       />
-      <span className="shrink-0 font-mono tabular-nums text-foreground">#{number}</span>
+      <span className="shrink-0 font-mono tabular-nums text-foreground">
+        {keyLabel ?? `#${number}`}
+      </span>
       <span className="min-w-0 truncate text-muted-foreground">{title}</span>
       {children}
     </>
@@ -642,6 +650,7 @@ export function ThreadPullRequestMiniListItem({
           target="_blank"
           rel="noopener noreferrer"
           draggable={onPressPullRequest ? false : undefined}
+          aria-label={ariaLabel}
           className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:surface-ghost-hover focus-visible:surface-ghost-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
           onPointerDown={(event) => {
             event.stopPropagation();

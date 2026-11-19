@@ -19,24 +19,26 @@ import {
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
-import {
-  PAGE_ROW_CLASS,
-  PAGE_ROW_HOVER_CLASS,
-  PAGE_ROW_PRESS_CLASS,
-} from "../pullRequest/PullRequestRow";
+import { ThreadPullRequestMiniListItem } from "../ThreadStatusIndicators";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+/**
+ * How a linked issue row is drawn: thread details' two-line row, the linked items panel's
+ * pull request row, or the sidebar hover list's one line.
+ */
+export type LinkedIssueRowVariant = "compact" | "panel" | "mini";
 
 function LinkedIssueRow({
   link,
   threadRef,
-  compact,
+  variant,
   mountScope,
   openWith,
 }: {
   link: ThreadIssueLink;
   threadRef: ScopedThreadRef;
-  compact: boolean;
+  variant: LinkedIssueRowVariant;
   mountScope: "thread-details" | "linked-items" | "sidebar-tooltip";
   openWith: ((open: () => void) => void) | undefined;
 }) {
@@ -110,7 +112,19 @@ function LinkedIssueRow({
       />
     </>
   );
-  return compact ? (
+  if (variant === "mini") {
+    return (
+      <ThreadPullRequestMiniListItem
+        keyLabel={link.displayKey}
+        url={link.url}
+        title={title}
+        presentation={state ?? { Icon: IssueGlyph.issue, toneClassName: "" }}
+        ariaLabel={anchorProps["aria-label"]}
+        onOpenPullRequest={(event) => anchorProps.onClick(event)}
+      />
+    );
+  }
+  return variant === "compact" ? (
     <div className="flex min-h-9 min-w-0 items-center gap-2.5 ps-2.5 pe-1">
       {glyph}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -137,13 +151,12 @@ function LinkedIssueRow({
       </div>
     </div>
   ) : (
+    // The linked items panel's pull request row: content on the panel's 16px lines.
     <a
       {...anchorProps}
       className={cn(
         PULL_REQUEST_ROW_CLASS,
-        PAGE_ROW_CLASS,
-        PAGE_ROW_HOVER_CLASS,
-        PAGE_ROW_PRESS_CLASS,
+        "relative ps-2.5 pr-2.5 hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
       )}
     >
       {lines}
@@ -154,25 +167,26 @@ function LinkedIssueRow({
 export function ThreadDetailsIssueRows({
   links,
   threadRef,
-  compact = true,
+  variant = "compact",
   mountScope = "thread-details",
   openWith,
 }: {
   links: ReadonlyArray<ThreadIssueLink>;
   threadRef: ScopedThreadRef;
-  compact?: boolean;
+  variant?: LinkedIssueRowVariant;
   mountScope?: "thread-details" | "linked-items" | "sidebar-tooltip";
   /** Runs the open itself, for a caller that must show the thread first. */
   openWith?: (open: () => void) => void;
 }) {
-  return links.map((link) => (
+  const rows = links.map((link) => (
     <LinkedIssueRow
       key={threadIssueKeyOf(link)}
       link={link}
       threadRef={threadRef}
-      compact={compact}
+      variant={variant}
       mountScope={mountScope}
       openWith={openWith}
     />
   ));
+  return variant === "mini" ? <ul className="flex flex-col gap-1">{rows}</ul> : rows;
 }
