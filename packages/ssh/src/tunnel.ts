@@ -82,20 +82,28 @@ const REMOTE_UPDATE_WAIT_MS =
   DESKTOP_UPDATE_IN_PROGRESS_TTL_MS +
   2 * (REMOTE_REUSE_READY_TIMEOUT_MS + SSH_READY_PROBE_TIMEOUT_MS) +
   1_000;
+// A launch waits this long for a server that holds the home to answer; its
+// last poll adds a reuse probe.
+const REMOTE_OWNER_WAIT_MS =
+  REMOTE_READY_TIMEOUT_MS + REMOTE_REUSE_READY_TIMEOUT_MS + SSH_READY_PROBE_TIMEOUT_MS;
 // A launch holds the home lock through up to two reuse probes, readiness, two
-// server exit waits, the runtime record wait, and the update wait; each probe
-// may overrun its deadline by one request.
+// server exit waits, the runtime record wait, the update wait, and the owner
+// wait; each probe may overrun its deadline by one request.
 const REMOTE_LAUNCH_LOCK_WAIT_SECONDS = Math.ceil(
   (REMOTE_READY_TIMEOUT_MS +
     2 * REMOTE_REUSE_READY_TIMEOUT_MS +
     2 * REMOTE_PID_EXIT_WAIT_MS +
     REMOTE_RUNTIME_RECORD_WAIT_SECONDS * 1000 +
     4 * SSH_READY_PROBE_TIMEOUT_MS +
-    REMOTE_UPDATE_WAIT_MS) /
+    REMOTE_UPDATE_WAIT_MS +
+    REMOTE_OWNER_WAIT_MS) /
     1000,
 );
 const REMOTE_LAUNCH_TIMEOUT_MS =
-  REMOTE_LAUNCH_LOCK_WAIT_SECONDS * 1000 + REMOTE_UPDATE_WAIT_MS + REMOTE_LAUNCH_BASE_TIMEOUT_MS;
+  REMOTE_LAUNCH_LOCK_WAIT_SECONDS * 1000 +
+  REMOTE_UPDATE_WAIT_MS +
+  REMOTE_OWNER_WAIT_MS +
+  REMOTE_LAUNCH_BASE_TIMEOUT_MS;
 
 export interface RemoteT3RunnerOptions {
   readonly nodeScriptPath?: string | null;
@@ -472,6 +480,12 @@ if [ -z "$T3_ARCHIVE_VERSION" ]; then
   printf 'No t3 release version was provided for the remote runtime.\\n' >&2
   exit 1
 fi
+T3_SYSTEM_EXECUTABLE="$(command -v t3 2>/dev/null || true)"
+if [ -n "$T3_SYSTEM_EXECUTABLE" ] && T3_SYSTEM_VERSION="$("$T3_SYSTEM_EXECUTABLE" --version 2>/dev/null)" && [ "$T3_SYSTEM_VERSION" = "t3 v$T3_ARCHIVE_VERSION" ]; then
+  # A matching host-provided runtime supports platforms such as musl Linux,
+  # where the portable release archive cannot run.
+  exec "$T3_SYSTEM_EXECUTABLE" "$@"
+fi
 # Self-contained release archive: no Node, npm, or compiler on the remote.
 # Unpacked into the pinned-runtime layout so \`t3 service install\` reuses it.
 T3_RELEASE_BASE_URL=@@T3_RELEASE_BASE_URL@@
@@ -534,9 +548,9 @@ if ! t3_runtime_ready; then
   t3_fetch "$T3_RELEASE_BASE_URL/v$T3_ARCHIVE_VERSION/$T3_ARCHIVE" "$T3_STAGING/$T3_ARCHIVE" @@T3_ARCHIVE_DOWNLOAD_SECONDS@@
   T3_EXPECTED="$(grep " \\*\\{0,1\\}$T3_ARCHIVE$" "$T3_STAGING/SHA256SUMS" | cut -d' ' -f1)"
   if command -v sha256sum >/dev/null 2>&1; then
-    T3_ACTUAL="$(sha256sum "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+    T3_ACTUAL="$(sha256sum < "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
   else
-    T3_ACTUAL="$(shasum -a 256 "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
+    T3_ACTUAL="$(shasum -a 256 < "$T3_STAGING/$T3_ARCHIVE" | cut -d' ' -f1)"
   fi
   if [ -z "$T3_EXPECTED" ] || [ "$T3_ACTUAL" != "$T3_EXPECTED" ]; then
     printf 'Checksum mismatch for %s.\\n' "$T3_ARCHIVE" >&2; exit 1
@@ -707,7 +721,45 @@ server_running() {
     *Z*) return 1 ;;
   esac
 }
+# An older client replacing a same-or-newer server would run below the database's migrations.
+keeps_running_server() {
+  [ "$T3_ARCHIVE_MODE" = "1" ] &&
+    "$RUNNER_FILE" __ssh-helper keep-server "$DEFAULT_RUNTIME_FILE" "$REMOTE_PID" >/dev/null 2>&1
+}
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
+# Both are SQLite locks the OS drops with their holder: a server holds
+# server-owner.sqlite, and a boot service holds service-serving.lock from
+# before it starts a server, between two of them during its own update, until
+# it stops or idles behind another server.
+home_owned() {
+  if [ "$T3_ARCHIVE_MODE" = "1" ]; then
+    "$RUNNER_FILE" __ssh-helper home-owned "$DEFAULT_SERVER_HOME" 2>/dev/null
+    return
+  fi
+  node - "$DEFAULT_SERVER_HOME" 2>/dev/null <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
+const held = (file) => {
+  if (!fs.existsSync(file)) return false;
+  const db = new DatabaseSync(file);
+  try {
+    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    return false;
+  } catch (error) {
+    return error?.errcode === 5;
+  } finally {
+    db.close();
+  }
+};
+const home = process.argv[2];
+process.exitCode =
+  held(path.join(home, "runtime", "service-serving.lock")) ||
+  held(path.join(home, "userdata", "server-owner.sqlite"))
+    ? 0
+    : 1;
+NODE
+}
 resolve_default_runtime_port() {
   if [ "$T3_ARCHIVE_MODE" = "1" ]; then
     "$RUNNER_FILE" __ssh-helper runtime-port "$DEFAULT_RUNTIME_FILE"
@@ -837,8 +889,8 @@ if [ "$REMOTE_MANAGED" = "external" ]; then
   fi
 elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   # Reconnect owns the local tunnel, not the lifetime of an already running
-  # server. A changed runner is the update path and still replaces it.
-  if [ "$RUNNER_CHANGED" -eq 1 ]; then
+  # server. A changed runner is the update path and replaces an older server.
+  if [ "$RUNNER_CHANGED" -eq 1 ] && ! keeps_running_server; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
@@ -896,6 +948,25 @@ if [ -z "$REMOTE_PORT" ]; then
     REMOTE_MANAGED=""
   fi
 fi
+# A server that holds the home without answering yet is still starting, and a
+# boot service holds it between two servers while it updates. A second server
+# would lose the home to it or take the home from it, so wait while the home is
+# held and start one only once it is free. The managed server an update just
+# stopped may still be exiting. The sleep count bounds a host clock that stops.
+OWNER_WAITED=0
+OWNER_DEADLINE=$(($(date +%s) + @@T3_READY_TIMEOUT_SECONDS@@))
+while [ -z "$REMOTE_PORT" ] && ! managed_server_running "$(cat "$PID_FILE" 2>/dev/null || true)" && home_owned; do
+  if adopt_default_server; then break; fi
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+  if [ "$OWNER_WAITED" -ge @@T3_READY_TIMEOUT_SECONDS@@ ] || [ "$(date +%s)" -ge "$OWNER_DEADLINE" ]; then
+    printf 'A T3 server or boot service holds %s but did not become ready, so no second server was started. Retry once it has started.\\n' "$DEFAULT_SERVER_HOME" >&2
+    exit 1
+  fi
+  sleep 1
+  OWNER_WAITED=$((OWNER_WAITED + 1))
+done
 if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
@@ -906,6 +977,9 @@ if [ -z "$REMOTE_PORT" ]; then
     fi
     exit 1
   fi
+  # Start this launch's log empty. Unlink rather than truncate: a process from an
+  # earlier launch can still hold the old log open and keep writing to it.
+  rm -f "$LOG_FILE"
   nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
@@ -933,6 +1007,19 @@ if [ -z "$REMOTE_PORT" ]; then
   while [ "$(date +%s)" -lt "$RECORD_DEADLINE" ]; do
     DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
     [ "\${DEFAULT_RUNTIME_INFO%% *}" = "$REMOTE_PID" ] && break
+    # A host wrapper can spawn the server instead of replacing itself.
+    RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
+    if [ "\${DEFAULT_RUNTIME_INFO#* }" = "$REMOTE_PORT" ] && managed_server_running "$RUNTIME_PID"; then
+      RUNTIME_ANCESTOR="$RUNTIME_PID"
+      while [ -n "$RUNTIME_ANCESTOR" ] && [ "$RUNTIME_ANCESTOR" != "1" ] && [ "$RUNTIME_ANCESTOR" != "$REMOTE_PID" ]; do
+        RUNTIME_ANCESTOR="$(ps -o ppid= -p "$RUNTIME_ANCESTOR" 2>/dev/null | tr -d '[:space:]')"
+      done
+      if [ "$RUNTIME_ANCESTOR" = "$REMOTE_PID" ]; then
+        REMOTE_PID="$RUNTIME_PID"
+        printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
+        break
+      fi
+    fi
     sleep 0.1
   done
 fi
@@ -1043,7 +1130,7 @@ export function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string 
   );
 }
 
-function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
+export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
     T3_UPDATE_MARKER_FILE: DESKTOP_UPDATE_IN_PROGRESS_MARKER_FILE,
     T3_UPDATE_TTL_MS: String(DESKTOP_UPDATE_IN_PROGRESS_TTL_MS),
@@ -1057,6 +1144,7 @@ function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
     T3_DEFAULT_REMOTE_PORT: String(DEFAULT_REMOTE_PORT),
     T3_REMOTE_PORT_SCAN_WINDOW: String(REMOTE_PORT_SCAN_WINDOW),
     T3_READY_TIMEOUT_MS: String(REMOTE_READY_TIMEOUT_MS),
+    T3_READY_TIMEOUT_SECONDS: String(REMOTE_READY_TIMEOUT_MS / 1000),
     T3_REUSE_READY_TIMEOUT_MS: String(REMOTE_REUSE_READY_TIMEOUT_MS),
     T3_READY_PROBE_TIMEOUT_MS: String(SSH_READY_PROBE_TIMEOUT_MS),
     T3_PID_EXIT_WAIT_TICKS: String(REMOTE_PID_EXIT_WAIT_MS / 100),
@@ -1085,6 +1173,16 @@ function buildRemoteLogTailScript(stateKey: string): string {
   });
 }
 
+// Shells known to take `-l -c` with a POSIX-style `exec` read their own login
+// profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
+const remoteLoginShellArgs = (args = "") => [
+  "sh",
+  "-c",
+  shellSingleQuote(
+    `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s${args ? ` -- ${args}` : ""}" ;; *) exec sh -l -s${args ? ` -- ${args}` : ""} ;; esac`,
+  ),
+];
+
 export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemoteServer")(
   function* (
     target: DesktopSshEnvironmentTarget,
@@ -1108,15 +1206,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
       stateKey,
     });
     const result = yield* runSshCommand(target, {
-      // Shells known to take `-l -c` with a POSIX-style `exec` read their own login
-      // profiles first; any other shell (csh, pwsh, ...) keeps the plain `sh -l` launch.
-      remoteCommandArgs: [
-        "sh",
-        "-c",
-        shellSingleQuote(
-          `case "\${SHELL##*/}" in bash|zsh|ksh|fish|nu) exec "$SHELL" -l -c "exec sh -s -- ${launchArgs}" ;; *) exec sh -l -s -- ${launchArgs} ;; esac`,
-        ),
-      ],
+      remoteCommandArgs: remoteLoginShellArgs(launchArgs),
       stdin: buildRemoteLaunchScript(runner),
       timeoutMs: isNodeScriptRunner(runner)
         ? REMOTE_LAUNCH_TIMEOUT_MS
@@ -1177,7 +1267,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
     stateKey,
   });
   const result = yield* runSshCommand(target, {
-    remoteCommandArgs: ["sh", "-s"],
+    remoteCommandArgs: remoteLoginShellArgs(),
     stdin: buildRemotePairingScript(stateKey, runner),
     ...(isNodeScriptRunner(runner) ? {} : { timeoutMs: REMOTE_ARCHIVE_LAUNCH_TIMEOUT_MS }),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),

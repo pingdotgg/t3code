@@ -51,6 +51,7 @@ import {
 import { EnvironmentSigningKey } from "../cloud/environmentKeys.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 
@@ -96,6 +97,7 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.metadata-updated":
     case "thread.pull-request-link-updated":
     case "thread.pull-request-synced":
+    case "thread.issue-synced":
     case "thread.settled":
     case "thread.model-selection-updated":
     case "thread.provider-switched":
@@ -385,10 +387,25 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     state?.phase !== projectThreadAwarenessV2(awarenessInput)?.phase;
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(state),
+    state: snoozedCompletion(input.thread.value, state)
+      ? null
+      : sanitizeRelayAgentActivityState(state),
     subagentWait: childDrivesWait ? input.pendingSubagentRequest : null,
     reason: "snapshot",
   };
+}
+
+// Checked at completion time, so a completion processed after the wake stays silent too.
+function snoozedCompletion(
+  thread: AgentAwarenessThread,
+  state: { readonly phase: string } | null,
+): boolean {
+  if (state?.phase !== "completed" || thread.latestRunCompletedAt == null) return false;
+  const completedAt = DateTime.toEpochMillis(thread.latestRunCompletedAt);
+  if (thread.snoozedAt != null && completedAt < DateTime.toEpochMillis(thread.snoozedAt)) {
+    return false;
+  }
+  return isSnoozed(thread, completedAt);
 }
 
 function terminalWorkSinceStart(thread: AgentAwarenessThread, startedAt: number): boolean {
