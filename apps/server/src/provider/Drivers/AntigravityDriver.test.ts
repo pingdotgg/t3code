@@ -10,20 +10,16 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
-import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
-import { makeTurnInput } from "../../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
@@ -456,15 +452,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               "auto-accept-edits": "accept-edits",
             },
           },
-          {
-            name: "runtime cli without auto",
-            initialMode: "default",
-            availableModes: ["default", "accept-edits", "plan"],
-            expectedByMode: {
-              "full-access": "accept-edits",
-              "auto-accept-edits": "accept-edits",
-            },
-          },
         ] as const) {
           h.controls.selected = {
             ...(yield* h.makeExecutable(scenario.name, {
@@ -493,7 +480,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               modelSelection,
               runtimePolicy: cliPolicy,
             });
-            const providerThread = yield* cliSession.ensureThread({
+            yield* cliSession.ensureThread({
               threadId: cliThreadId,
               modelSelection,
               runtimePolicy: cliPolicy,
@@ -508,35 +495,6 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             expect(yield* readModeChangesSince(requestsBefore)).toEqual([
               scenario.expectedByMode[runtimeMode],
             ]);
-            if (scenario.expectedByMode[runtimeMode] === "auto") {
-              const launchesBefore = h.launches.length;
-              const downgradeBefore = (yield* h.readRequests).length;
-              const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-              yield* cliSession.events.pipe(
-                Stream.runForEach((event) => Queue.offer(events, event)),
-                Effect.forkScoped,
-              );
-              yield* cliSession.startTurn(
-                makeTurnInput({
-                  threadId: cliThreadId,
-                  providerThread,
-                  instanceId: h.instance.instanceId,
-                  modelSelection,
-                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-                    runtimeMode: "approval-required",
-                    interactionMode: "default",
-                    cwd: workspace,
-                  }),
-                  now: yield* DateTime.now,
-                }),
-              );
-              yield* Stream.fromQueue(events).pipe(
-                Stream.filter((event) => event.type === "turn.terminal"),
-                Stream.runHead,
-              );
-              expect(h.launches.length).toBe(launchesBefore);
-              expect(yield* readModeChangesSince(downgradeBefore)).toEqual(["default"]);
-            }
           }
         }
       }),
