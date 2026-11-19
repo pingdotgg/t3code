@@ -151,6 +151,13 @@ describe("toolCallDiff", () => {
     expect(
       paths(toolCallDiff({ fileName: `${root}/a.ts`, diffStr: twoFiles }, root).patch),
     ).toEqual(["a.ts", `backup${root}/b.ts`]);
+    // Only where a name starts: a quoted name with a space before the root.
+    expect(
+      paths(toolCallDiff({ fileName: `${root}/docs ${root}/a.md`, diffStr: hunk }, root).patch),
+    ).toEqual([`docs ${root}/a.md`]);
+    expect(
+      paths(toolCallDiff({ fileName: `/backup ${root}/a.md`, diffStr: hunk }, root).patch),
+    ).toEqual([`/backup ${root}/a.md`]);
     // Windows paths, which a quoted header escapes, compared without case.
     const windows = toolCallDiff(
       { fileName: "C:\\repo\\src\\a.ts", diffStr: hunk },

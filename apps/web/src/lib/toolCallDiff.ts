@@ -71,17 +71,22 @@ function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | 
         .join(String.raw`\\\\?`),
     )
     .join(separator);
-  const prefix = new RegExp(
-    String.raw`((?:^|[ "])(?:[ab]/)?)${root}${separator}`,
-    windows ? "gi" : "g",
-  );
+  const prefix = new RegExp(String.raw`^("?(?:[ab]/)?)${root}${separator}`, windows ? "i" : "");
+  const relative = (name: string) => name.replace(prefix, "$1");
   let inHeader = true;
   return patch
     .split("\n")
     .map((line) => {
-      if (line.startsWith("diff --git ")) inHeader = true;
-      else if (line.startsWith("@@")) inHeader = false;
-      return inHeader ? line.replace(prefix, "$1") : line;
+      if (line.startsWith("diff --git ")) {
+        inHeader = true;
+        // Split the names as Pierre's parser does, so a name containing a space stays whole.
+        const names =
+          /^diff --git ("a\/(?:[^"\\]|\\.)*"|a\/.+?) ("b\/(?:[^"\\]|\\.)*"|b\/.+?)$/.exec(line);
+        return names ? `diff --git ${relative(names[1]!)} ${relative(names[2]!)}` : line;
+      }
+      if (line.startsWith("@@")) inHeader = false;
+      const name = inHeader ? /^(---|\+\+\+)(\s+)(.*)$/.exec(line) : null;
+      return name ? `${name[1]}${name[2]}${relative(name[3]!)}` : line;
     })
     .join("\n");
 }
