@@ -608,9 +608,13 @@ function ConfiguredCloudLinkRow({
   const turnOn = useT3ConnectTurnOn(environmentId);
   // Turning on links from this desktop's own backend only; turning off works from anywhere.
   const showSwitch = isElectron && (turnOn.kind !== "on-host" || managedTunnelActive);
-  // The managed tunnel state being applied, shown on the switch until the relay settles.
-  const [pendingManagedTunnel, setPendingManagedTunnel] = useState<boolean | null>(null);
-  const isUpdating = pendingManagedTunnel !== null;
+  const [tunnelChange, setTunnelChange] = useState<{
+    readonly enabled: boolean;
+    readonly settling: boolean;
+  } | null>(null);
+  if (tunnelChange?.settling && !cloudLinkState.isPending) setTunnelChange(null);
+  const pendingManagedTunnel = tunnelChange?.enabled ?? null;
+  const isUpdating = tunnelChange !== null;
   const [isUpdatingPreference, setIsUpdatingPreference] = useState(false);
 
   const disabledReason = canManageRelay
@@ -673,7 +677,7 @@ function ConfiguredCloudLinkRow({
 
   const updateManagedTunnel = async (enabled: boolean) => {
     if (!readEnvironmentScope(environmentId, AuthRelayWriteScope)) return;
-    setPendingManagedTunnel(enabled);
+    setTunnelChange({ enabled, settling: false });
     const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
     if (ok) {
       toastManager.add({
@@ -690,7 +694,7 @@ function ConfiguredCloudLinkRow({
             : gt("This environment is no longer available through T3 Connect."),
       });
     }
-    setPendingManagedTunnel(null);
+    setTunnelChange(ok ? { enabled, settling: true } : null);
   };
 
   const updatePublishAgentActivity = async (enabled: boolean) => {
