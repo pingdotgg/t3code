@@ -45,6 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
+import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -5529,6 +5530,65 @@ describe("AcpAdapterV2", () => {
       assert.equal(next?.status, "completed");
       assert.lengthOf(harness.natives, 2);
     }).pipe(Effect.provide(layerTest)),
+  );
+
+  // regression: #34160 a turn failed as silent right after the computer woke from sleep
+  it.effect.each([
+    { label: "a timer due during sleep fires on wake", timerCountsSleep: true, asleep: "2 hours" },
+    { label: "the host wakes before the deadline", timerCountsSleep: true, asleep: "9 minutes" },
+    {
+      label: "timers pause while only wall time jumps",
+      timerCountsSleep: false,
+      asleep: "2 hours",
+    },
+  ] as const)(
+    "does not count host sleep as prompt inactivity when $label",
+    ({ timerCountsSleep, asleep }) =>
+      Effect.gen(function* () {
+        const testClock = yield* TestClock.testClockWith(Effect.succeed);
+        const awake = yield* Latch.make(true);
+        let wallJumpMillis = 0;
+        // macOS and Windows timers count sleep and fire on the first tick after wake; on Linux
+        // timers pause while the wall clock jumps.
+        const hostClock: TestClock.TestClock = {
+          ...testClock,
+          currentTimeMillisUnsafe: () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          currentTimeMillis: Effect.sync(
+            () => testClock.currentTimeMillisUnsafe() + wallJumpMillis,
+          ),
+          sleep: (duration) => testClock.sleep(duration).pipe(Effect.andThen(awake.await)),
+        };
+        yield* Effect.gen(function* () {
+          const harness = yield* makePromptInactivityHarness({
+            environment: (runtimeOrdinal) =>
+              runtimeOrdinal === 1 ? { T3_ACP_HANG_PROMPT_FOREVER: "1" } : {},
+          });
+          yield* harness.startTurn(1);
+          yield* TestClock.adjust("5 minutes");
+          yield* harness.emitUpdate({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Still working." },
+            },
+          });
+          if (timerCountsSleep) {
+            yield* awake.close;
+            yield* TestClock.adjust(asleep);
+            yield* awake.open;
+          } else {
+            wallJumpMillis = Duration.toMillis(asleep);
+          }
+          yield* TestClock.adjust(Duration.millis(15 * 60_000 - 1));
+          assert.isTrue(yield* harness.nextTurnRejected(2));
+
+          yield* TestClock.adjust("2 minutes");
+          yield* harness.startTurn(2);
+          const [silent, next] = yield* harness.terminals(2);
+          assert.equal(silent?.status, "failed");
+          assert.equal(next?.status, "completed");
+        }).pipe(Effect.provideService(Clock.Clock, hostClock));
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect(
