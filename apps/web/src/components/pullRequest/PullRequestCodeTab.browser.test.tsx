@@ -59,6 +59,8 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
 });
 
 const mocks = vi.hoisted(() => ({
+  // Folds and scroll persist per pull request for the session, so each test gets its own scope.
+  session: 0,
   paged: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
@@ -172,6 +174,7 @@ const detail: PullRequestDetailView = {
 function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+  mocks.session += 1;
   mocks.paged = paged;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
@@ -186,7 +189,7 @@ const tab = (
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
-    environmentId={EnvironmentId.make("environment")}
+    environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
     reference={detail}
     detail={detail}
     selectedCommitOid={null}
@@ -253,11 +256,23 @@ it("restores saved Viewed folds, follows cleared marks, and allows explicit expa
   await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 
+  // Switching right-panel tabs remounts the Code tab; Expand all holds for the session.
   await screen.rerender(<div />);
   await screen.rerender(tab(1));
-  await expect
-    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
-    .toHaveAttribute("aria-expanded", "false");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+});
+
+it("keeps a file opened by hand when the tab remounts", async () => {
+  setup({ paged: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Expand diff", exact: true }).click();
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  await screen.rerender(<div />);
+  await screen.rerender(tab(0));
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 });
 
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
@@ -349,7 +364,7 @@ it("never requests the diff of a selected commit the pull request no longer has"
   await using screen = await render(
     <PullRequestCodeTab
       scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
       reference={detail}
       detail={{
         ...detail,
@@ -389,7 +404,7 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
   const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
       reference={detail}
       detail={withCommit}
       selectedCommitOid={selectedCommitOid}
@@ -428,7 +443,7 @@ it("hides a resolved conversation behind avatars on its line until they are clic
   const withThread = (isResolved: boolean, oldSideToo = false) => (
     <PullRequestCodeTab
       scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
       reference={detail}
       detail={{
         ...detail,
@@ -517,7 +532,7 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
   await using screen = await render(
     <PullRequestCodeTab
       scrollerRef={() => {}}
-      environmentId={EnvironmentId.make("environment")}
+      environmentId={EnvironmentId.make(`environment-${mocks.session}`)}
       reference={detail}
       detail={{
         ...detail,

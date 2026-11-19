@@ -68,6 +68,38 @@ describe("createCodeViewScrollRestore", () => {
     expect(shrunk.scrolls).toEqual([{ type: "position", position: 1500 }]);
   });
 
+  it("lets a reader who scrolls while more files load keep their own position", () => {
+    const first = viewer(10_000);
+    mount("thread-e", first).onScroll(4000, first.instance);
+
+    const loading = viewer(700);
+    const restore = mount("thread-e", loading, false, () => {});
+    restore.cancel();
+    restore.onScroll(150, loading.instance);
+    loading.instance.scrollHeight = 10_000;
+    restore.update("thread-e", true, null);
+    restore.flush();
+    expect(loading.scrolls).toEqual([]);
+
+    const again = viewer(10_000);
+    mount("thread-e", again);
+    expect(again.scrolls).toEqual([{ type: "position", position: 182 }]);
+  });
+
+  it("moves a viewer kept across a scope change to that scope's position, not the old one", () => {
+    const commitA = viewer(10_000);
+    mount("commit-a", commitA).onScroll(3000, commitA.instance);
+    const commitB = viewer(10_000);
+    mount("commit-b", commitB).onScroll(800, commitB.instance);
+
+    const kept = viewer(700);
+    const restore = mount("commit-a", kept, false, () => {});
+    restore.update("commit-b", true, null);
+    kept.instance.scrollHeight = 10_000;
+    restore.flush();
+    expect(kept.scrolls).toEqual([{ type: "position", position: 832 }]);
+  });
+
   it("forgets a position that a reveal or collapsing every file replaced", () => {
     const first = viewer(10_000);
     const restore = mount("thread-d", first);

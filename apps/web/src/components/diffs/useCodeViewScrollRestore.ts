@@ -40,6 +40,10 @@ export function createCodeViewScrollRestore() {
   };
   return {
     update(nextScopeKey: string | null, nextSettled: boolean, nextLoadMore: (() => void) | null) {
+      // A viewer kept across a scope change takes the new scope's position, never the old one's.
+      if (viewer && nextScopeKey !== scopeKey) {
+        pending = nextScopeKey === null ? null : (scrollTopByScopeKey.get(nextScopeKey) ?? null);
+      }
       scopeKey = nextScopeKey;
       settled = nextSettled;
       loadMore = nextLoadMore;
@@ -56,6 +60,10 @@ export function createCodeViewScrollRestore() {
     onScroll(scrollTop: number, source: object) {
       if (source !== viewer || pending !== null || scopeKey === null) return;
       scrollTopByScopeKey.set(scopeKey, scrollTop);
+    },
+    /** The reader scrolled before the saved position was reached; their scroll wins. */
+    cancel() {
+      pending = null;
     },
     /** Something else positions the viewer, such as a file reveal or collapsing every file. */
     discard() {

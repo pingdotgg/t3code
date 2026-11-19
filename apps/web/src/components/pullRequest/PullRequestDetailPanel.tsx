@@ -271,6 +271,10 @@ const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
 
+// The Code tab restores its scroll on remount; a header left expanded would condense over the
+// restored position and shift it up.
+const codeCondensedByScopeKey = new Map<string, boolean>();
+
 function reportCheckoutCommandError(error: Error) {
   toastManager.add({
     type: "error",
@@ -539,7 +543,7 @@ export function PullRequestDetailPanel({
   // Each tab restores the condensed state its own scrolling left behind.
   const [condensedByTab, setCondensedByTab] = useState<
     Partial<Record<PullRequestDetailTab, boolean>>
-  >({});
+  >(() => ({ code: codeCondensedByScopeKey.get(tabScopeKey) ?? false }));
   const condensed = condensedByTab[tab] ?? false;
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
@@ -2042,7 +2046,9 @@ export function PullRequestDetailPanel({
             compensationRef.current = { tab, scroller, target: top - chromeDelta };
             next = true;
           }
-          if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
+          if (next === previous) return;
+          if (tab === "code") codeCondensedByScopeKey.set(tabScopeKey, next);
+          setCondensedByTab({ ...condensedByTab, [tab]: next });
         }}
       >
         {detailQuery.error && !detail ? (
