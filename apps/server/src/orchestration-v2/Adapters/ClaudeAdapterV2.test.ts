@@ -18159,6 +18159,46 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  it.effect("nothing is owed once the wake continuation's live result arrives", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makeWakeHarness.pipe(Scope.provide(sessionScope));
+      yield* settleWithBackgroundTask(harness);
+      yield* harness.offerAndWait(wakeNotification);
+      yield* harness.offerAndWait(wakeTurnInit);
+      assert.lengthOf(harness.continuationRequests, 1);
+
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-owed-wake-live-result"),
+          text: WAKE_SUMMARY,
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+      yield* harness.offerAndWait(wakeAssistant);
+      yield* harness.offerAndWait(wakeResult);
+      yield* harness.awaitTerminal(2);
+      yield* Scope.close(sessionScope, Exit.void);
+
+      assert.lengthOf(messageTextWakes(harness), 0);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("prompts with the result once when Claude exits partway through its wake turn", () =>
     Effect.gen(function* () {
       const sessionScope = yield* Scope.make();
