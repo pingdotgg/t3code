@@ -1327,15 +1327,17 @@ export function claudeResumeSessionAt(
 
 // Transcript lines can exceed 100 KB; the tail only has to reach this process's last message.
 const CLAUDE_TRANSCRIPT_TAIL_BYTES = 2 * 1024 * 1024;
+// A long terminal exchange pushes that message out of the tail; one wider read looks for it.
+const CLAUDE_TRANSCRIPT_WIDE_TAIL_BYTES = 32 * 1024 * 1024;
 
 /** Whether a live process missed messages a terminal `claude --resume` appended to its session.
  * Anchors on the last message the process emitted; Claude flushes the file after streaming, so
  * an emitted message can be missing from it. Lines with no anchor before them prove nothing:
- * they can all predate the process. */
+ * they can all predate the process, so the answer is undefined. */
 function claudeTranscriptHasUnseenMessages(
   lines: ReadonlyArray<string>,
   emittedUuids: ReadonlySet<string>,
-): boolean {
+): boolean | undefined {
   let anchored = false;
   let unseen: Array<ClaudeHistoryMessage> = [];
   for (const line of lines) {
@@ -1361,7 +1363,7 @@ function claudeTranscriptHasUnseenMessages(
     }
     unseen.push({ type: entry.type, uuid, message: { content: entry.message.content } });
   }
-  return anchored && claudeMessagesBeforeTrailingAborts(unseen) > 0;
+  return anchored ? claudeMessagesBeforeTrailingAborts(unseen) > 0 : undefined;
 }
 
 const claudeConfigDirOf = (
@@ -12797,24 +12799,37 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             live.transcriptPath ??= yield* locateClaudeTranscript(live.nativeThreadId);
             const transcriptPath = live.transcriptPath;
             if (transcriptPath === undefined) return false;
-            const tail = yield* Effect.scoped(
-              Effect.gen(function* () {
-                const handle = yield* fileSystem.open(transcriptPath, { flag: "r" });
-                const size = Number((yield* handle.stat).size);
-                const start = Math.max(0, size - CLAUDE_TRANSCRIPT_TAIL_BYTES);
-                yield* handle.seek(BigInt(start), "start");
-                const bytes = yield* handle.readAlloc(size - start);
-                return {
-                  start,
-                  text: Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : "",
-                };
-              }),
-            );
-            const lines = tail.text.split("\n");
-            // The last piece is empty or a line Claude is still writing; a cut tail starts mid-line.
-            lines.pop();
-            if (tail.start > 0) lines.shift();
-            return claudeTranscriptHasUnseenMessages(lines, live.emittedMessageUuids);
+            const readTail = (maxBytes: number) =>
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const handle = yield* fileSystem.open(transcriptPath, { flag: "r" });
+                  const size = Number((yield* handle.stat).size);
+                  const start = Math.max(0, size - maxBytes);
+                  yield* handle.seek(BigInt(start), "start");
+                  const bytes = yield* handle.readAlloc(size - start);
+                  const lines = (
+                    Option.isSome(bytes) ? new TextDecoder().decode(bytes.value) : ""
+                  ).split("\n");
+                  // The last piece is empty or a line Claude is still writing; a cut tail starts
+                  // mid-line.
+                  lines.pop();
+                  if (start > 0) lines.shift();
+                  return { lines, wholeFile: start === 0 };
+                }),
+              );
+            for (const maxBytes of [
+              CLAUDE_TRANSCRIPT_TAIL_BYTES,
+              CLAUDE_TRANSCRIPT_WIDE_TAIL_BYTES,
+            ]) {
+              const tail = yield* readTail(maxBytes);
+              const missed = claudeTranscriptHasUnseenMessages(
+                tail.lines,
+                live.emittedMessageUuids,
+              );
+              if (missed !== undefined) return missed;
+              if (tail.wholeFile) break;
+            }
+            return false;
           },
           Effect.orElseSucceed(() => false),
         );

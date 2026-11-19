@@ -10509,17 +10509,28 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       NodeCrypto.layer,
     );
 
-    it.effect(
-      "replaces a warm process when the session transcript gained messages outside T3",
-      () =>
-        Effect.gen(function* () {
-          const harness = yield* nextTurnAfter({
-            transcript: (promptUuid) => t3Turn(promptUuid) + terminalExchange,
-          });
-          assert.lengthOf(harness.processQueues, 2, "the next turn must open a fresh process");
-          assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
-          assert.isUndefined(harness.getOpenedOptions()?.resumeSessionAt);
-        }).pipe(Effect.provide(layer)),
+    it.effect.each([
+      {
+        name: "the session transcript gained messages outside T3",
+        transcript: (promptUuid: string) => t3Turn(promptUuid) + terminalExchange,
+      },
+      {
+        // The terminal's rows alone are longer than the tail T3 reads first.
+        name: "a long terminal exchange followed its last message",
+        transcript: (promptUuid: string) =>
+          t3Turn(promptUuid) +
+          entry("user", terminalPrompt, secondReply, "x".repeat(1_200_000)) +
+          entry("assistant", terminalReply, terminalPrompt, [
+            { type: "text", text: "y".repeat(1_200_000) },
+          ]),
+      },
+    ])("replaces a warm process when $name", (row) =>
+      Effect.gen(function* () {
+        const harness = yield* nextTurnAfter(row);
+        assert.lengthOf(harness.processQueues, 2, "the next turn must open a fresh process");
+        assert.equal(harness.getOpenedOptions()?.resume, WAKE_NATIVE_SESSION);
+        assert.isUndefined(harness.getOpenedOptions()?.resumeSessionAt);
+      }).pipe(Effect.provide(layer)),
     );
 
     it.effect.each([
