@@ -5,6 +5,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 import { namedClipboardTarget, useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { Spinner } from "~/components/ui/spinner";
 import {
+  type AssetResource,
   AuthPreviewOperateScope,
   type EditorId,
   type EnvironmentId,
@@ -296,7 +297,56 @@ export function WorkspaceBrowserPreview(props: {
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
+      pdfActions={
+        <WorkspacePdfSaveAction
+          environmentId={props.environmentId}
+          resource={resource}
+          name={props.title}
+        />
+      }
     />
+  );
+}
+
+function WorkspacePdfSaveAction(props: {
+  readonly environmentId: EnvironmentId;
+  readonly resource: AssetResource;
+  readonly name: string;
+}) {
+  const gt = useGT();
+  const [saving, setSaving] = useState(false);
+  const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  return (
+    <FileSurfaceAction
+      label={saving ? gt("Preparing file…") : gt("Save file")}
+      disabled={saving}
+      onPress={() => {
+        setSaving(true);
+        void (async () => {
+          const url = await refreshAssetUrl();
+          if (!url) throw new Error(gt("Reconnect to the environment and try again."));
+          const response = await fetch(url);
+          if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
+          // Blob downloads keep desktop's custom app scheme from navigating to an external browser.
+          const downloadUrl = URL.createObjectURL(await response.blob());
+          setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+          const anchor = document.createElement("a");
+          anchor.href = downloadUrl;
+          anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
+          anchor.click();
+        })()
+          .catch((cause: unknown) =>
+            toastManager.add({
+              type: "error",
+              title: gt("Could not save file"),
+              description: thrownErrorMessage(cause, m) ?? gt("Please try again."),
+            }),
+          )
+          .finally(() => setSaving(false));
+      }}
+    >
+      <DownloadIcon className="size-3.5" />
+    </FileSurfaceAction>
   );
 }
 
@@ -1202,6 +1252,7 @@ export default function FilePreviewPanel({
   const previewAvailable = usePreviewAvailable(environmentId);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
+    refresh: true,
   });
   const openPreview = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
