@@ -282,13 +282,13 @@ export const test = base.extend<{ t3: T3 }>({
       ...state,
       editorText: (scopeSelector) =>
         browser.evaluate((selector) => {
-          const scope = selector === undefined ? document : document.querySelector(selector);
+          const scope = selector === null ? document : document.querySelector(selector);
           for (const host of scope?.querySelectorAll("*") ?? []) {
             const content = host.shadowRoot?.querySelector("[data-content]");
             if (content) return content.textContent ?? "";
           }
           return null;
-        }, scopeSelector),
+        }, scopeSelector ?? null),
       open: async (target = "/") => {
         await app.open(await runPromise(readPairingPath));
         // The pairing page signs in and then leaves itself. Going anywhere before it has done
