@@ -81,23 +81,13 @@ test(
     await browser.evaluate(async () => {
       const release = await window.projectActionImportFailure!;
       release();
-      // Let the RPC failure and React's resulting update reach the screen before sampling it.
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-      });
       return null;
     });
 
     await screen.getByText("Server settings write-file failed at settings.json.").waitFor();
     await app.screenshot("action-draft-after-import-fails");
-    // oxfmt-ignore
     const name = await browser.evaluate(
-      () => {
-        const readJsonValue = (read: () => string | undefined) => read() ?? null;
-        return readJsonValue(
-      () => document.querySelector<HTMLInputElement>("#script-name")?.value,
-        );
-      },
+      () => document.querySelector<HTMLInputElement>("#script-name")?.value ?? null,
     );
     expect(name, "The failed import preserves the manual action name").toBe(draftName);
   },

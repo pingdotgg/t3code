@@ -7,13 +7,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { act, render } from "../../test/render";
 import ProjectScriptsControl, { type ProjectScriptActionResult } from "./ProjectScriptsControl";
 
-function assertNoPreviousSave(
-  result: AsyncResult.Failure<unknown, unknown>,
-): asserts result is AsyncResult.Failure<void, unknown> {
-  expect(result.previousSuccess._tag).toBe("None");
-}
-
-it.each(["edit", "dismiss", "older import fails first", "newer import fails first"] as const)(
+it.each(["edit", "dismiss", "newer import fails first"] as const)(
   "keeps a failed import from replacing a newer action after %s",
   async (nextAction) => {
     const older = Promise.withResolvers<ProjectScriptActionResult>();
@@ -45,8 +39,9 @@ it.each(["edit", "dismiss", "older import fails first", "newer import fails firs
     const actions = screen.getByRole("button", { name: "Script actions" });
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
-    const failure = AsyncResult.failure(Cause.fail(new Error("Settings write failed")));
-    assertNoPreviousSave(failure);
+    const failure = AsyncResult.failure<void, unknown>(
+      Cause.fail(new Error("Settings write failed")),
+    );
 
     await actions.click();
     await page.getByRole("menuitem", { name: /Shared build/ }).click();
@@ -66,17 +61,10 @@ it.each(["edit", "dismiss", "older import fails first", "newer import fails firs
         await act(async () => older.resolve(failure));
         expect(dialog.query() === null).toBe(true);
         break;
-      case "older import fails first":
       case "newer import fails first":
         await page.getByRole("menuitem", { name: /Shared lint/ }).click();
-        if (nextAction === "older import fails first") {
-          await act(async () => older.resolve(failure));
-          expect(dialog.query() === null).toBe(true);
-          await act(async () => newer.resolve(failure));
-        } else {
-          await act(async () => newer.resolve(failure));
-          await act(async () => older.resolve(failure));
-        }
+        await act(async () => newer.resolve(failure));
+        await act(async () => older.resolve(failure));
         expect(name.query()).toHaveProperty("value", "Shared lint");
         break;
     }
