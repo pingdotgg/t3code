@@ -2,12 +2,13 @@ import type { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { useMessages } from "gt-react";
 import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
+import type { EnvironmentId, PullRequestActor, PullRequestRef } from "@t3tools/contracts";
 import {
   cloneElement,
   useRef,
   useState,
   type ComponentPropsWithoutRef,
+  type ElementType,
   type MouseEvent,
   type ReactElement,
   type ReactNode,
@@ -127,12 +128,6 @@ export function PullRequestLinkPreview({
     card === null
       ? null
       : resolvePullRequestState({ state: card.state, isDraft: card.isDraft ?? false }, messages);
-  const authorLabel =
-    card?.author === null
-      ? "ghost"
-      : card?.author?.name && card.author.name !== card.author.login
-        ? `${card.author.name} (@${card.author.login})`
-        : (card?.author?.login ?? null);
 
   return (
     <PreviewCard open={open} onOpenChange={setOpen} actionsRef={previewActionsRef}>
@@ -156,21 +151,11 @@ export function PullRequestLinkPreview({
               fallback
             ) : (
               <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
-                  <span className="min-w-0 truncate">{card.repository}</span>
-                  <span className="shrink-0">#{card.number}</span>
-                  {state === null ? null : (
-                    <Tooltip>
-                      <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
-                        <state.Icon
-                          aria-label={state.label}
-                          className={`size-3 ${state.toneClassName}`}
-                        />
-                      </TooltipTrigger>
-                      <TooltipPopup>{state.label}</TooltipPopup>
-                    </Tooltip>
-                  )}
-                </div>
+                <WorkItemPreviewCardHeader
+                  scope={card.repository}
+                  keyLabel={`#${card.number}`}
+                  state={state}
+                />
                 {pendingSubject === "comment" ? (
                   <LinkedCommentSkeleton />
                 ) : pendingSubject === "commit" ? (
@@ -180,16 +165,13 @@ export function PullRequestLinkPreview({
                 ) : subject?.kind === "commit" ? (
                   <LinkedCommit commit={subject.commit} />
                 ) : (
-                  <p className="mt-1 text-label leading-snug text-foreground text-pretty">
-                    {card.title}
-                  </p>
+                  <WorkItemPreviewCardTitle>{card.title}</WorkItemPreviewCardTitle>
                 )}
                 {card.author === undefined || subject !== null || pendingSubject !== null ? null : (
-                  <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
-                    <PullRequestActorAvatar actor={card.author} className="size-4" />
-                    <span className="min-w-0">
-                      <span className="block truncate">{authorLabel}</span>
-                      {preview !== null ? (
+                  <WorkItemPreviewCardAuthor
+                    actor={card.author}
+                    opened={
+                      preview !== null ? (
                         <span className="block">
                           opened <RelativeTime timestamp={preview.createdAt} />
                         </span>
@@ -197,9 +179,9 @@ export function PullRequestLinkPreview({
                         <SkeletonLine>
                           <Skeleton className="h-3 w-20" />
                         </SkeletonLine>
-                      ) : null}
-                    </span>
-                  </div>
+                      ) : null
+                    }
+                  />
                 )}
               </div>
             )}
@@ -207,6 +189,77 @@ export function PullRequestLinkPreview({
         </PreviewCardPopup>
       ) : null}
     </PreviewCard>
+  );
+}
+
+/** A hover card's first line, shared by pull requests and issues: scope, key and state. */
+export function WorkItemPreviewCardHeader({
+  scope,
+  keyLabel,
+  state,
+  stateLabel = false,
+}: {
+  scope: string;
+  keyLabel: string;
+  /** Says the state in words, for a tracker whose workflow names its own states. */
+  stateLabel?: boolean;
+  state: {
+    readonly Icon: ElementType<{
+      className?: string;
+      "aria-label"?: string;
+      "aria-hidden"?: boolean;
+    }>;
+    readonly label: string;
+    readonly toneClassName: string;
+  } | null;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5 text-caption text-muted-foreground">
+      <span className="min-w-0 truncate">{scope}</span>
+      <span className="shrink-0">{keyLabel}</span>
+      {state === null ? null : stateLabel ? (
+        <span className="ms-1 inline-flex shrink-0 items-center gap-1">
+          <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
+          {state.label}
+        </span>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex shrink-0" />}>
+            <state.Icon aria-label={state.label} className={`size-3 ${state.toneClassName}`} />
+          </TooltipTrigger>
+          <TooltipPopup>{state.label}</TooltipPopup>
+        </Tooltip>
+      )}
+    </div>
+  );
+}
+
+export function WorkItemPreviewCardTitle({ children }: { children: ReactNode }) {
+  return <p className="mt-1 text-label leading-snug text-foreground text-pretty">{children}</p>;
+}
+
+/** Who opened it, and when once that is known. */
+export function WorkItemPreviewCardAuthor({
+  actor,
+  opened,
+}: {
+  actor: PullRequestActor | null;
+  opened: ReactNode;
+}) {
+  const label =
+    actor === null
+      ? "ghost"
+      : actor.name && actor.name !== actor.login
+        ? `${actor.name} (@${actor.login})`
+        : actor.login;
+  return (
+    <div className="mt-2 flex min-w-0 items-center gap-1.5 text-meta text-muted-foreground">
+      <PullRequestActorAvatar actor={actor} className="size-4" />
+      <span className="min-w-0">
+        <span className="block truncate">{label}</span>
+        {opened}
+      </span>
+    </div>
   );
 }
 

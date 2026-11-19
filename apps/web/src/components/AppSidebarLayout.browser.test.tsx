@@ -23,7 +23,7 @@ vi.mock(import("../layout/WorkspacePlane"), () => ({
 import { AppSidebarLayout } from "./AppSidebarLayout";
 
 describe("sidebar toggle shortcut", () => {
-  it("leaves the key to a focused terminal when its rule excludes terminalFocus", async () => {
+  it("leaves the key to a focused terminal when its rule excludes terminalFocus, and swallows held repeats", async () => {
     await page.viewport(1280, 800);
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(
@@ -43,5 +43,19 @@ describe("sidebar toggle shortcut", () => {
     await userEvent.click(screen.getByRole("button", { name: "Outside" }));
     await userEvent.keyboard("{Control>}b{/Control}");
     await vi.waitFor(() => expect(wrapper.getAttribute("data-sidebar-state")).toBe("collapsed"));
+
+    const repeat = new KeyboardEvent("keydown", {
+      key: "b",
+      code: "KeyB",
+      ctrlKey: true,
+      repeat: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    expect(screen.getByRole("button", { name: "Outside" }).element().dispatchEvent(repeat)).toBe(
+      false,
+    );
+    await userEvent.keyboard("{Control>}b{/Control}");
+    await vi.waitFor(() => expect(wrapper.getAttribute("data-sidebar-state")).toBe("expanded"));
   });
 });

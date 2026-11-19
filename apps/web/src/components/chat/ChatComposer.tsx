@@ -156,7 +156,6 @@ import {
   useSpeechUnavailableReason,
 } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton } from "./ComposerSpeechButton";
-import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
@@ -300,6 +299,7 @@ import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
 import {
   countPreparingComposerImages,
   usePreparingComposerImages,
+  useSubmitAfterPreparingImages,
 } from "./preparingComposerImages";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
@@ -1988,6 +1988,10 @@ export function ChatComposer(props: ChatComposerProps) {
     attachmentBlockReason,
     environmentUnavailable: environmentUnavailable !== null,
   });
+  const submitAfterPreparingImages = useSubmitAfterPreparingImages(
+    attachmentTargetKey,
+    submissionBlocked,
+  );
   // The pending Submit button follows the answer's own blockers, matching submitComposer.
   const primaryActionSendDisabledReason =
     (activePendingProgress ? attachmentBlockReason : sendDisabledReason) ??
@@ -2273,16 +2277,12 @@ export function ChatComposer(props: ChatComposerProps) {
       event?.preventDefault();
       return false;
     }
-    // A send while a pasted image is still compressing would strand that image:
-    // the turn snapshot wouldn't include it, and it would surface in the *next*
-    // draft instead.
-    if (activeThreadId && countPreparingComposerImages(attachmentTargetKey) > 0) {
+    // Sending now would leave a still-compressing image out of the turn, so wait for it.
+    if (
+      activeThreadId &&
+      submitAfterPreparingImages(() => submitComposerRef.current(dispatchMode, submissionIntent))
+    ) {
       event?.preventDefault();
-      toastManager.add({
-        type: "info",
-        title: gt("Still compressing a pasted image."),
-        description: gt("Send again once its thumbnail appears."),
-      });
       return false;
     }
     if (pendingDraftWork.has(attachmentTargetKey)) {
@@ -2933,7 +2933,7 @@ export function ChatComposer(props: ChatComposerProps) {
       (!pastedContext &&
         activeThreadId &&
         files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({ files, plainText }))
+        shouldHandleComposerAttachmentPaste({ files, plainText, bypassAutoAttachment }))
     ) {
       event.preventDefault();
       event.stopPropagation();
@@ -3732,31 +3732,18 @@ export function ChatComposer(props: ChatComposerProps) {
                       <button
                         type="button"
                         className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                        hidden={voiceInputActive && !canInterrupt}
-                        disabled={
-                          voiceInputActive ? !canInterrupt : collapsedComposerPrimaryActionDisabled
-                        }
-                        aria-label={
-                          voiceInputActive
-                            ? gt("Stop generation")
-                            : collapsedComposerPrimaryActionLabel
-                        }
+                        disabled={collapsedComposerPrimaryActionDisabled}
+                        aria-label={collapsedComposerPrimaryActionLabel}
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (voiceInputActive) onInterrupt();
-                          else if (showResumeAction) onResume();
+                          if (showResumeAction) onResume();
                           else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                             expandMobileComposer();
                           else submitComposer();
                         }}
                       >
-                        {voiceInputActive ? (
-                          <span
-                            className="size-2.5 rounded-xs bg-error-foreground"
-                            aria-hidden="true"
-                          />
-                        ) : showResumeAction ? (
+                        {showResumeAction ? (
                           <PlayIcon className="size-4 fill-current" aria-hidden="true" />
                         ) : (
                           <svg
@@ -3986,7 +3973,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   sendDisabledReason={primaryActionSendDisabledReason}
                   isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
+                  hasSendableContent={composerSendState.hasSendableContent}
                   canResume={showResumeAction}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   isEditingQueuedMessage={isEditingQueuedMessage}
@@ -3998,16 +3985,6 @@ export function ChatComposer(props: ChatComposerProps) {
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                 >
-                  {speechInput.available && speechInput.state.phase === "error" ? (
-                    <VoiceInputErrorPill
-                      error={speechInput.state.error}
-                      errorAction={speechInput.state.errorAction}
-                      disabled={dictationDisabled}
-                      cancelShortcutLabel="Esc"
-                      onRetry={() => void speechInput.start()}
-                      onDismiss={() => speechInput.cancel()}
-                    />
-                  ) : null}
                   <VoiceInputSetup
                     environmentId={speechInput.transcriptionEnvironmentId}
                     open={speechInput.setup.open}

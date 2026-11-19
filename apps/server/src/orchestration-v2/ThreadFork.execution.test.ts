@@ -10,10 +10,12 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -935,6 +937,66 @@ it.effect("resolves an explicit checkpoint fork to its source run", () =>
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect("a fresh send in a fork that has not run yet starts without the fork's context", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const parentId = ThreadId.make("fresh-fork-parent");
+    const forkId = ThreadId.make("fresh-fork-child");
+    yield* createParent(parentId);
+    yield* writeParentRun({
+      threadId: parentId,
+      runId: RunId.make("fresh-fork-parent-run"),
+      ordinal: 1,
+      status: "completed",
+      text: "Work",
+      stable: true,
+    });
+    yield* orchestrator.dispatch({
+      type: "thread.fork",
+      commandId: CommandId.make("fresh-fork"),
+      sourceThreadId: parentId,
+      targetThreadId: forkId,
+      sourcePoint: { type: "latest_stable" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const scheduled = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("fresh-fork-scheduled"),
+        threadId: forkId,
+        messageId: MessageId.make("fresh-fork-scheduled"),
+        scheduledTaskId: ScheduledTaskId.make("fresh-fork-task"),
+        text: "Scheduled",
+        attachments: [],
+        freshContext: true,
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(String(scheduled.cause), "still being applied");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("fresh-fork-send"),
+      threadId: forkId,
+      messageId: MessageId.make("fresh-fork-send"),
+      text: "Start over",
+      attachments: [],
+      freshContext: true,
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const fork = yield* orchestrator.getThreadProjection(forkId);
+    assert.isTrue(fork.runs.at(-1)?.freshContext === true);
+    assert.deepEqual(
+      fork.contextTransfers.filter((transfer) => transfer.type === "fork").map((t) => t.status),
+      ["superseded"],
+    );
+  }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat of a busy parent points history recovery at the parent", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1169,6 +1231,151 @@ it.effect("closing a side chat deletes it only while unused; a deleted parent ta
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
+it.effect(
+  "archiving a parent stops and archives its side chats; unarchiving brings them back",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const { driver, instanceId } = forkCases[0]!;
+      const parentId = ThreadId.make("side-chat-archive-parent");
+      const busy = ThreadId.make("side-chat-archive-busy");
+      const archivedFirst = ThreadId.make("side-chat-archive-archived-first");
+      const delegating = ThreadId.make("side-chat-archive-delegating");
+      yield* createParent(parentId);
+      yield* writeParentRun({
+        threadId: parentId,
+        runId: RunId.make("side-chat-archive-parent-run"),
+        ordinal: 1,
+        status: "completed",
+        text: "Parent work",
+        stable: true,
+      });
+      yield* forkSideChat("side-chat-archive-fork-busy", parentId, busy);
+      yield* forkSideChat("side-chat-archive-fork-archived-first", parentId, archivedFirst);
+      yield* forkSideChat("side-chat-archive-fork-delegating", parentId, delegating);
+      const runningRunId = RunId.make("side-chat-archive-busy-running");
+      const queuedRunId = RunId.make("side-chat-archive-busy-queued");
+      yield* writeParentRun({
+        threadId: busy,
+        runId: runningRunId,
+        ordinal: 1,
+        status: "running",
+        text: "Run a long command",
+      });
+      yield* writeParentRun({
+        threadId: busy,
+        runId: queuedRunId,
+        ordinal: 2,
+        status: "queued",
+        text: "Then this",
+      });
+      const now = yield* DateTime.now;
+      for (const threadId of [parentId, busy]) {
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:session`),
+              type: "provider-session.attached",
+              threadId,
+              driver,
+              providerInstanceId: instanceId,
+              occurredAt: now,
+              payload: {
+                id: ProviderSessionId.make(`${threadId}:session`),
+                driver,
+                providerInstanceId: instanceId,
+                status: "running",
+                cwd: "/workspace",
+                model: "test-model",
+                capabilities: CodexProviderCapabilitiesV2,
+                createdAt: now,
+                updatedAt: now,
+                lastError: null,
+              },
+            },
+          ],
+        });
+      }
+      const delegatingRunId = RunId.make("side-chat-archive-delegating-run");
+      yield* writeParentRun({
+        threadId: delegating,
+        runId: delegatingRunId,
+        ordinal: 1,
+        status: "completed",
+        text: "Delegate a review",
+      });
+      const taskId = NodeId.make("side-chat-archive-delegated-task");
+      yield* eventSink.write({
+        events: [
+          {
+            id: EventId.make(`${taskId}:running`),
+            type: "subagent.updated",
+            threadId: delegating,
+            occurredAt: now,
+            payload: {
+              id: taskId,
+              threadId: delegating,
+              runId: delegatingRunId,
+              parentNodeId: NodeId.make("side-chat-archive-delegating-node"),
+              origin: "app_owned",
+              createdBy: "agent",
+              driver,
+              providerInstanceId: instanceId,
+              providerThreadId: null,
+              childThreadId: ThreadId.make("side-chat-archive-delegated-child"),
+              nativeTaskRef: null,
+              prompt: "Review the changes",
+              title: null,
+              model: null,
+              status: "running",
+              result: null,
+              startedAt: now,
+              completedAt: null,
+              updatedAt: now,
+            },
+          },
+        ],
+      });
+      const archive = (commandId: string, threadId: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make(commandId),
+          threadId,
+        });
+      const archivedAt = (threadId: ThreadId) =>
+        orchestrator
+          .getThreadProjection(threadId)
+          .pipe(Effect.map(({ thread }) => thread.archivedAt));
+
+      // Archiving a side chat on its own leaves its parent alone.
+      yield* archive("side-chat-archive-only-child", archivedFirst);
+      const childArchivedAt = yield* archivedAt(archivedFirst);
+      assert.isNotNull(childArchivedAt);
+      assert.isNull(yield* archivedAt(parentId));
+      yield* TestClock.adjust("1 second");
+
+      yield* archive("side-chat-archive-parent", parentId);
+      assert.isNotNull(yield* archivedAt(parentId));
+      const archivedBusy = yield* orchestrator.getThreadProjection(busy);
+      assert.isNotNull(archivedBusy.thread.archivedAt);
+      assert.equal(archivedBusy.runs.find((run) => run.id === queuedRunId)?.status, "cancelled");
+      assert.isEmpty(archivedBusy.providerSessions);
+      assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
+      // Archive refuses a thread still waiting on delegated tasks, so the cascade leaves it active.
+      assert.isNull(yield* archivedAt(delegating));
+
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("side-chat-archive-unarchive-parent"),
+        threadId: parentId,
+      });
+      assert.isNull(yield* archivedAt(parentId));
+      assert.isNull(yield* archivedAt(busy));
+      assert.deepEqual(yield* archivedAt(archivedFirst), childArchivedAt);
+    }).pipe(Effect.provide(forkCases[0]!.layer)),
+);
+
 it.effect("a side chat opened during the parent's first turn starts from a digest", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -1363,6 +1570,24 @@ it.effect("merge-back rejects a second fork's context until the first is consume
     const second = yield* forkAndRun("second");
 
     yield* mergeBack("merge-back-guard-first", first);
+    const refusedFresh = yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("merge-back-guard-fresh-send"),
+        threadId: parentId,
+        messageId: MessageId.make("merge-back-guard-fresh-send"),
+        text: "Start over",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        freshContext: true,
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.flip);
+    assert.include(
+      String(refusedFresh.cause),
+      "Send a message without /clear to apply the merged context first.",
+    );
     const rejected = yield* mergeBack("merge-back-guard-second", second).pipe(Effect.flip);
     assert.include(String(rejected.cause), "pending context from another side chat or fork");
     yield* mergeBack("merge-back-guard-first-again", first);

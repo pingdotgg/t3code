@@ -33,7 +33,7 @@ export const ko: Messages = {
     alsoOnPhone: "휴대폰에서도:",
     screenshotAlt:
       "스레드 목록 옆에 Claude 스레드를 연 T3 Code. 고정된 세부 정보 카드에 브랜치, 변경 사항, 검사를 통과한 연결된 풀 리퀘스트, 사용 한도, 컨텍스트, 자동화, 포크가 표시됩니다",
-    endorsementsTitle: "{users}명이 넘는 개발자가 참고 쓰는 중",
+    endorsementsTitle: "{users}명이 넘는 개발자가 나쁘지 않다고 합니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",
     readPost: "X에서 {handle}님의 게시물 읽기",
@@ -94,7 +94,7 @@ export const ko: Messages = {
     iphoneIpad: "iPhone & iPad",
     terminal: "터미널",
     tryOnce: "설치 없이 한 번 실행해 보려면:",
-    allBuilds: "모든 빌드는 {link}에 있습니다",
+    allBuilds: "모든 빌드: {link}",
     releasesPage: "GitHub 릴리스 페이지",
     builtAgo: "{age} 빌드됨",
     releasesFallback: "릴리스",

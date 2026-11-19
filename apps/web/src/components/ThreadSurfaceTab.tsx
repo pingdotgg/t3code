@@ -111,6 +111,7 @@ import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { IssueDetailGhost } from "./issue/IssueDetailGhost";
+import { IssueGlyph } from "./issue/issuePresentation";
 import {
   pullRequestPanelContext,
   threadPullRequestPanelTarget,
@@ -288,7 +289,10 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
     // Outside a Git repository it opens on its empty state.
     diff: (context.isServerThread || context.threadless) && context.gitCwd !== null,
     "pull-request": pullRequestTarget !== null,
-    "pull-requests": context.isServerThread && serverConfigLoaded && linkedCount > 0,
+    "pull-requests":
+      context.isServerThread &&
+      serverConfigLoaded &&
+      (linkedCount > 0 || (shell?.issues?.length ?? 0) > 0),
     device: true,
     "side-chat": sideChat.available,
   };
@@ -835,10 +839,11 @@ function ThreadSurfaceContent({
         </Suspense>
       );
     case "issue":
-      if (!context.serverConfig) return <PullRequestDetailGhost />;
+      if (!context.serverConfig) return <IssueDetailGhost />;
       if (context.serverConfig.environment.capabilities.issues !== true) {
         return (
           <PullRequestsUnavailableState
+            icon={IssueGlyph.issue}
             title={gt("Issues unavailable")}
             error={gt("Update this environment's T3 Code server to browse issues.")}
           />
@@ -847,7 +852,7 @@ function ThreadSurfaceContent({
       return (
         <Suspense fallback={<IssueDetailGhost />}>
           <IssueDetailPanel
-            key={surface.id}
+            key={`${surface.environmentId ?? threadRef.environmentId}:${surface.id}`}
             environmentId={
               (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
             }
@@ -867,6 +872,16 @@ function ThreadSurfaceContent({
                 ...(reference.host ? { host: reference.host } : {}),
               })
             }
+            // Back to the linked items, as a pull request among several goes back to them.
+            {...(openers.available["pull-requests"] &&
+            visibleThreadPullRequests(shell?.pullRequests ?? []).length +
+              (shell?.issues?.length ?? 0) >
+              1
+              ? {
+                  onBack: () => openInPane("pull-requests"),
+                  backLabel: gt("Back to linked items"),
+                }
+              : {})}
           />
         </Suspense>
       );
@@ -882,7 +897,6 @@ function ThreadSurfaceContent({
             key={surface.id}
             surface={surface}
             visible={visible}
-            onDismissSetup={() => void closeThreadSurface(threadRef, surface.id)}
           />
         </Suspense>
       );

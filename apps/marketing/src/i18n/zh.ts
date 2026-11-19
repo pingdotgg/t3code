@@ -33,7 +33,7 @@ export const zh: Messages = {
     alsoOnPhone: "手机上也能用：",
     screenshotAlt:
       "T3 Code 的线程列表旁打开着一个 Claude 线程，停靠的详情卡片显示了分支、改动、检查已通过的关联拉取请求、用量限制、上下文、一个自动化任务和一个分叉",
-    endorsementsTitle: "超过 {users} 名开发者表示还能忍",
+    endorsementsTitle: "超过 {users} 名开发者觉得还行",
     endorsementsSub: "有些人甚至发推夸了它。",
     endorsementsLabel: "开发者评价",
     readPost: "在 X 上阅读 {handle} 的帖子",
@@ -91,7 +91,7 @@ export const zh: Messages = {
     iphoneIpad: "iPhone 和 iPad",
     terminal: "终端",
     tryOnce: "或者无需安装，直接试用一次：",
-    allBuilds: "所有版本都在 {link}上",
+    allBuilds: "所有版本都在 {link}",
     releasesPage: "GitHub 发布页面",
     builtAgo: "{age}构建",
     releasesFallback: "发布页面",

@@ -34,7 +34,7 @@ export const ja: Messages = {
     alsoOnPhone: "スマホでも使えます：",
     screenshotAlt:
       "スレッド一覧の横で Claude のスレッドを開いた T3 Code。ドッキングされた詳細カードに、ブランチ、変更、チェックを通過したリンク済みのプルリクエスト、使用量の上限、コンテキスト、オートメーション、フォークが表示されています",
-    endorsementsTitle: "{users} 人以上の開発者が我慢して使っています",
+    endorsementsTitle: "{users}人以上の開発者たちが「悪くない」と言っています",
     endorsementsSub: "ツイートまでしてくれた人もいます。",
     endorsementsLabel: "開発者の声",
     readPost: "X で {handle} の投稿を読む",
@@ -97,7 +97,7 @@ export const ja: Messages = {
     iphoneIpad: "iPhone と iPad",
     terminal: "ターミナル",
     tryOnce: "インストールせずに試すなら：",
-    allBuilds: "すべてのビルドは {link} にあります",
+    allBuilds: "すべてのビルド：{link}",
     releasesPage: "GitHub のリリースページ",
     builtAgo: "{age}にビルド",
     releasesFallback: "リリース",

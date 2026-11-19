@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { issuesSearchFromUrl } from "./issuesSearch.logic";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
+import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+
+import { issueFilterProjects, issuesSearchFromUrl } from "./issuesSearch.logic";
 
 describe("issuesSearchFromUrl", () => {
   it("replaces a malformed filter instead of letting the raw value through", () => {
@@ -16,5 +19,28 @@ describe("issuesSearchFromUrl", () => {
       label: ["bug", "ui"],
       order: "created",
     });
+  });
+});
+
+describe("issueFilterProjects", () => {
+  it("keeps every project on one repository as its own choice", () => {
+    const environmentId = EnvironmentId.make("env");
+    const project = (id: string, isScratch = false) =>
+      ({
+        id: ProjectId.make(id),
+        environmentId,
+        title: "t3code",
+        workspaceRoot: `/work/${id}`,
+        repositoryIdentity: { canonicalKey: "github.com/pingdotgg/t3code" },
+        isScratch,
+      }) as unknown as EnvironmentProject;
+    const choices = issueFilterProjects(
+      [project("main"), project("worktree"), project("scratch", true)],
+      new Map([[environmentId, "laptop"]]),
+    );
+    expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
+      ["main", "t3code (…/main)"],
+      ["worktree", "t3code (…/worktree)"],
+    ]);
   });
 });

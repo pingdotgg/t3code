@@ -152,6 +152,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
   const layoutShowing = () =>
     readRouteTarget() !== null ||
     router.state.location.pathname === "/pull-requests" ||
+    router.state.location.pathname === "/issues" ||
     (router.state.location.pathname === "/" && readProjects().length > 0);
   const layoutCommand =
     (action: () => void, allowRepeat = false): CommandHandler =>
@@ -216,6 +217,7 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
       },
       "preview.toggle": (event) => {
         claim(event);
+        if (event.repeat) return;
         const threadRef = readRouteThreadRef();
         if (!threadRef || (!canOperatePreview(threadRef.environmentId) && !readPreviewOpen())) {
           return;
