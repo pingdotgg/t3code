@@ -2427,7 +2427,9 @@ it.effect("steers a promoted scheduled delivery with the thread's current select
         yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(steered, ["scheduled"]);
+        assert.deepEqual(steered, [
+          '[T3 Code: scheduled task "task:scheduled" sent this prompt, not the user typing in this chat.]\n\nscheduled',
+        ]);
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
       }).pipe(Effect.provide(layer));
     }),
@@ -3180,7 +3182,16 @@ it.effect("starts a restart that stops the running turn ahead of an older held q
       const { queue, started: startedTexts } = yield* read(threadId);
       assert.deepEqual(
         { queue, started: startedTexts },
-        { queue: ["queued"], started: ["first", "second", "do this instead"] },
+        {
+          queue: ["queued"],
+          started: [
+            "first",
+            ...["second", "do this instead"].map(
+              (text) =>
+                `[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\n${text}`,
+            ),
+          ],
+        },
       );
     }).pipe(Effect.provide(layer));
   }),
@@ -3215,6 +3226,95 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
 
       assert.equal(started.length, 1);
       assert.deepEqual([sent.delivery, replayed.delivery], ["restarted", "restarted"]);
+    }).pipe(
+      Effect.provide(
+        ThreadManagementService.layer.pipe(
+          Layer.provideMerge(layer),
+          Layer.provide(ServerSettings.layerTest()),
+          Layer.provide(
+            CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("replays an accepted steer after its target turn completes", () =>
+  Effect.gen(function* () {
+    const name = "steer-retry-after-completion";
+    const { events, started, steered, layer, startFirstTurn } =
+      yield* nextTurnSelectionHarness(name);
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const threadId = yield* startFirstTurn;
+      const input = {
+        projectId: ProjectId.make(`project:${name}`),
+        commandId: CommandId.make("steer"),
+        threadId,
+        messageId: MessageId.make("message:steer"),
+        text: "Please report the test result",
+        attachments: [],
+        mode: "steer",
+        createdBy: "agent",
+        creationSource: "mcp",
+      } as const;
+      const accepted = yield* threadManagement.sendToThread(input);
+      assert.equal(accepted.delivery, "steered");
+      yield* worker.drain();
+
+      const waiting = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run.updated" &&
+            event.payload.id === accepted.run.id &&
+            event.payload.status === "waiting",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      const turn = (yield* orchestrator.getThreadProjection(threadId)).providerTurns[0]!;
+      yield* Queue.offer(events, {
+        type: "provider_turn.updated",
+        driver,
+        providerTurn: { ...turn, status: "completed", completedAt: yield* DateTime.now },
+      });
+      yield* Queue.offer(events, {
+        type: "turn.terminal",
+        driver,
+        providerThreadId: turn.providerThreadId,
+        providerTurnId: turn.id,
+        runOrdinal: accepted.run.ordinal,
+        status: "completed",
+        failure: null,
+        threadDisposition: "reusable",
+      });
+      yield* Fiber.join(waiting);
+      yield* worker.drain();
+
+      const replayed = yield* threadManagement.sendToThread(input);
+      assert.equal(replayed.dispatch.replayed, true);
+      assert.equal(replayed.delivery, accepted.delivery);
+      assert.equal(replayed.message.id, accepted.message.id);
+      assert.equal(replayed.run.id, accepted.run.id);
+      assert.equal(replayed.run.status, "completed");
+
+      const fresh = yield* threadManagement
+        .sendToThread({
+          ...input,
+          commandId: CommandId.make("fresh-steer"),
+          messageId: MessageId.make("message:fresh-steer"),
+        })
+        .pipe(Effect.flip);
+      assert.equal(fresh._tag, "ThreadManagementNoSteerableRunError");
+      yield* worker.drain();
+      assert.deepEqual(steered, [
+        `[T3 Code: this message came through T3 Code's tools, not from the user typing in this chat.]\n\n${input.text}`,
+      ]);
+      assert.lengthOf(started, 1);
     }).pipe(
       Effect.provide(
         ThreadManagementService.layer.pipe(
