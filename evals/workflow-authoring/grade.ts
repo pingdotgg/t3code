@@ -11,14 +11,14 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
-import Migration0099 from "../../apps/server/src/persistence/Migrations/106_Workflows.ts";
-import Migration0100 from "../../apps/server/src/persistence/Migrations/107_WorkflowTriggers.ts";
-import Migration0101 from "../../apps/server/src/persistence/Migrations/108_WorkflowStepEnvironment.ts";
-import Migration0102 from "../../apps/server/src/persistence/Migrations/109_WorkflowRunInput.ts";
-import Migration0103 from "../../apps/server/src/persistence/Migrations/110_WorkflowStore.ts";
-import Migration0104 from "../../apps/server/src/persistence/Migrations/111_WorkflowRunParent.ts";
-import Migration0105 from "../../apps/server/src/persistence/Migrations/112_WorkflowStepResult.ts";
-import Migration0106 from "../../apps/server/src/persistence/Migrations/113_WorkflowWaitWatch.ts";
+import Migration0100 from "../../apps/server/src/persistence/Migrations/106_Workflows.ts";
+import Migration0101 from "../../apps/server/src/persistence/Migrations/107_WorkflowTriggers.ts";
+import Migration0102 from "../../apps/server/src/persistence/Migrations/108_WorkflowStepEnvironment.ts";
+import Migration0103 from "../../apps/server/src/persistence/Migrations/109_WorkflowRunInput.ts";
+import Migration0104 from "../../apps/server/src/persistence/Migrations/110_WorkflowStore.ts";
+import Migration0105 from "../../apps/server/src/persistence/Migrations/111_WorkflowRunParent.ts";
+import Migration0106 from "../../apps/server/src/persistence/Migrations/112_WorkflowStepResult.ts";
+import Migration0107 from "../../apps/server/src/persistence/Migrations/113_WorkflowWaitWatch.ts";
 import type { WorkflowDefinition } from "../../apps/server/src/workflows/workflow.ts";
 import {
   type AgentResult,
@@ -77,7 +77,6 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
   yield* Effect.provide(
     Effect.all(
       [
-        Migration0099,
         Migration0100,
         Migration0101,
         Migration0102,
@@ -85,6 +84,7 @@ const world = Effect.fn("gradeWorkflow.world")(function* (
         Migration0104,
         Migration0105,
         Migration0106,
+        Migration0107,
       ],
       {
         discard: true,
