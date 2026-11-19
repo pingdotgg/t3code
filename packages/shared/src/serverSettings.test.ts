@@ -38,6 +38,25 @@ describe("fallbackTextGenerationModelSelection", () => {
     expect(
       fallbackTextGenerationModelSelection({}, (instanceId) => instanceId === "opencode"),
     ).toEqual({ instanceId: "opencode", model: "opencode/big-pickle" });
+    const threadDefault = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "opencode-go/glm-5.3",
+    };
+    const providerInstances = {
+      [threadDefault.instanceId]: {
+        driver: ProviderDriverKind.make("opencode"),
+        config: { customModels: [threadDefault.model] },
+      },
+    };
+    // An exhausted Go quota leaves the custom model unusable but Big Pickle still works.
+    expect(
+      fallbackTextGenerationModelSelection(
+        providerInstances,
+        (instanceId, _driver, model) =>
+          instanceId === "opencode" && !model.startsWith("opencode-go/"),
+        { defaultModelSelection: threadDefault },
+      ),
+    ).toEqual({ instanceId: "opencode", model: "opencode/big-pickle" });
   });
 
   it("replaces and clears the fallback without carrying model options", () => {
@@ -356,6 +375,23 @@ describe("serverSettings helpers", () => {
       settings.textGenerationModelSelection,
     );
     expect(settings.sourceControlWriterModelSelection).toBe(sourceControlWriterModelSelection);
+  });
+
+  it("falls back from a removed instance whose id matches an inherited object key", () => {
+    for (const id of ["constructor", "toString", "valueOf"]) {
+      const speechPostProcessingModelSelection = createModelSelection(
+        ProviderInstanceId.make(id),
+        "gpt-5.4-mini",
+      );
+      const settings = { ...DEFAULT_SERVER_SETTINGS, speechPostProcessingModelSelection };
+
+      expect(isModelSelectionProviderEnabled(settings, speechPostProcessingModelSelection)).toBe(
+        false,
+      );
+      expect(resolveSpeechPostProcessingModelSelection(settings)).toBe(
+        settings.textGenerationModelSelection,
+      );
+    }
   });
 
   it("falls back from a writer provider that cannot generate application text", () => {
