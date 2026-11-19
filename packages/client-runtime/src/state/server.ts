@@ -48,6 +48,7 @@ import {
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
+import { createGuestShare } from "../operations/commands.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
@@ -1874,6 +1875,7 @@ export function createServerEnvironmentAtoms<R, E>(
     createGuestShare: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,
+      execute: createGuestShare,
     }),
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.

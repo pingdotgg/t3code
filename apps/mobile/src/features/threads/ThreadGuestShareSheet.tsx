@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, usePreventRemove, type StaticScreenProps } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -68,6 +69,8 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
   );
   const threadLoadError = useAtomValue(environmentThreadDetails.errorAtom(threadRef));
   const canCreate = useAtomValue(serverEnvironment.createGuestShare.permissionAtom(environmentId));
+  const host = useAtomValue(serverEnvironment.configValueAtom(environmentId))?.environment;
+  const canStopSelectedShare = host?.capabilities.guestShareCloseById === true;
   const createGuestShare = useAtomCommand(serverEnvironment.createGuestShare, {
     reportFailure: false,
   });
@@ -100,7 +103,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
     const error = squashAtomCommandFailure(result);
     setState({
       status: "failed",
-      message: error instanceof Error ? error.message : gt("Could not create a guest link."),
+      message: errorDisplayMessage(error, m) ?? gt("Could not create a guest link."),
     });
   };
 
@@ -198,6 +201,12 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
                   ? gt("This thread was deleted.")
                   : (threadLoadError ?? gt("Checking for an active link…"))}
               </Text>
+            ) : host === undefined ? (
+              <Text className="text-sm text-foreground-muted">{gt("Connecting…")}</Text>
+            ) : !canStopSelectedShare ? (
+              <Text className="text-sm text-foreground-muted">
+                {gt("Update T3 Code on {host}.", { host: host.label })}
+              </Text>
             ) : activeShare !== null ? (
               <Text className="text-sm text-foreground">
                 {activeShare.guestName !== null
@@ -233,7 +242,7 @@ export function ThreadGuestShareSheet({ route }: StaticScreenProps<GuestShareTar
             tone="primary"
             fullWidth
             loading={creating}
-            disabled={!canCreate || !threadLoaded || hasPendingMessages}
+            disabled={!canCreate || !canStopSelectedShare || !threadLoaded || hasPendingMessages}
             onPress={() => void create()}
           />
         </>

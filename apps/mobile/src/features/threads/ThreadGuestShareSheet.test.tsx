@@ -4,7 +4,7 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
-const { Slot, sharing, created } = vi.hoisted(() => ({
+const { Slot, sharing, created, host } = vi.hoisted(() => ({
   Slot: ({ children }: { children?: ReactNode }) => children,
   created: {
     share: undefined as ThreadGuestShare | null | undefined,
@@ -12,6 +12,7 @@ const { Slot, sharing, created } = vi.hoisted(() => ({
     command: vi.fn(),
   },
   sharing: { messages: [] as Array<{ status: "pending" | "dismissed" }> },
+  host: { closeById: true },
 }));
 
 vi.mock("react-native", () => ({
@@ -34,8 +35,14 @@ vi.mock("@effect/atom-react", () => ({
         : atom.value,
 }));
 vi.mock("../../state/server", () => ({
-  serverEnvironment: { createGuestShare: { permissionAtom: () => ({ value: true }) } },
-  environmentServerConfigsAtom: {},
+  serverEnvironment: {
+    configValueAtom: () => ({
+      value: {
+        environment: { label: "Test host", capabilities: { guestShareCloseById: host.closeById } },
+      },
+    }),
+    createGuestShare: { permissionAtom: () => ({ value: true }) },
+  },
 }));
 vi.mock("../../state/threads", () => ({
   environmentThreadDetails: {
@@ -117,7 +124,13 @@ it("stops treating a retained guest link as active when it expires", async () =>
     sharing.messages = [{ status: "dismissed" }];
     await act(renderSheet);
     expect(container.querySelector("button")?.disabled).toBe(false);
+
+    host.closeById = false;
+    await act(renderSheet);
+    expect(container.querySelector("button")?.disabled).toBe(true);
+    expect(container.textContent).toContain("Update T3 Code on Test host.");
   } finally {
+    host.closeById = true;
     act(() => root.unmount());
     vi.useRealTimers();
     vi.unstubAllGlobals();
