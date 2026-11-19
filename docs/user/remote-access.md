@@ -309,9 +309,16 @@ at `localhost`. Use the forward button on a server in the thread's **Servers**
 list, or **Forwarded ports** in the command palette, where you can also type
 any port number and stop forwards. A forward keeps the host's port number
 unless that port is taken on your computer, in which case it uses a free one
-and shows it. Forwards listen only on your computer's loopback, accept only apps
-running as your user on Linux, and end when you stop them or quit the app. ⌘-click (Ctrl-click on Windows and Linux) on a
-remote server forwards it and opens it in your browser.
+and shows it. Forwards end when you stop them or quit the app. ⌘-click
+(Ctrl-click on Windows and Linux) on a remote server forwards it and opens it
+in your browser.
+
+A forwarded port behaves like a server running on your computer: anything on
+your computer can reach it, including web pages open in your browser, so a
+forwarded service is exposed the same way a local dev server is. Forwards
+listen only on your computer's loopback, never on your network. On Linux they
+accept only apps running as your user; on macOS and Windows, other users signed
+in to the same computer can reach them too.
 
 On iPhone, iPad, and Android, a tab showing one of the host's `localhost` pages
 has **Open on this device** in its menu. So does a long press on a `localhost`
