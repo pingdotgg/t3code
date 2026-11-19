@@ -80,6 +80,17 @@ const AGENT_OPTIONS = [
   "interactionMode",
 ];
 
+// What only shapes a new thread: a continued one keeps its project, machine, model and modes.
+const NEW_THREAD_OPTIONS = [
+  "project",
+  "environment",
+  "model",
+  "title",
+  "workspace",
+  "runtimeMode",
+  "interactionMode",
+] as const;
+
 const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   name: string,
   options: AgentOptions<A, I>,
@@ -87,6 +98,16 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
   onFailure: "pause" | "return",
 ): Effect.fn.Return<Attempt<A>, StepFailed, InRun> {
   checkOptions(`agent("${name}")`, options, AGENT_OPTIONS);
+  if (options.thread !== undefined) {
+    const shaping = NEW_THREAD_OPTIONS.filter((key) => options[key] !== undefined);
+    if (shaping.length > 0) {
+      return yield* Effect.die(
+        new Error(
+          `agent("${name}") continues \`thread\`, which keeps how it started. Drop ${shaping.map((key) => `\`${key}\``).join(", ")}.`,
+        ),
+      );
+    }
+  }
   const run = yield* claim(name);
   const quiet = options.quiet === undefined ? undefined : Duration.fromInputUnsafe(options.quiet);
   const agents = yield* WorkflowAgents;

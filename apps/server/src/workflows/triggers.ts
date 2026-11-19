@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 
 import { parseTimeOfDay } from "../scheduledTasks/Schedule.ts";
+import { checkOptions } from "./options.ts";
 import type { Issue, PullRequest } from "./WorkflowForge.ts";
 
 /** The time a scheduled run was due, which is not the time it started. */
@@ -53,6 +54,10 @@ export type Trigger<Fires> = (ScheduleTrigger | WebhookTrigger | OpenedTrigger) 
 /** A run every so often, counted from when the last one was started. At least a minute. */
 export const every = (interval: Duration.Input): Trigger<Tick> => {
   const everyMs = Duration.toMillis(Duration.fromInputUnsafe(interval));
+  // The sweep would quietly stretch a shorter one to a minute.
+  if (everyMs < 60_000) {
+    throw new Error(`every(${JSON.stringify(interval)}) is shorter than the shortest, one minute.`);
+  }
   return { kind: "schedule", id: `every:${everyMs}`, schedule: { type: "interval", everyMs } };
 };
 
@@ -64,6 +69,7 @@ export const daily = (
   timeOfDay: string,
   options?: { readonly weekdays?: ReadonlyArray<number> },
 ): Trigger<Tick> => {
+  checkOptions(`daily("${timeOfDay}")`, options, ["weekdays"]);
   const weekdays = options?.weekdays;
   // Read once here: a time the schedule cannot read would otherwise never fire, without a word.
   if (parseTimeOfDay(timeOfDay) === null) {
@@ -87,7 +93,10 @@ export const daily = (
 export const webhook = (
   name: string,
   options?: { readonly key?: (request: WebhookRequest) => string | undefined },
-): Trigger<WebhookRequest> => ({ kind: "webhook", name, key: options?.key });
+): Trigger<WebhookRequest> => {
+  checkOptions(`webhook("${name}")`, options, ["key"]);
+  return { kind: "webhook", name, key: options?.key };
+};
 
 const openedId = (
   kind: OpenedTrigger["kind"],
@@ -110,7 +119,10 @@ export const issuesOpened = (options: {
   readonly project: string;
   readonly labels?: ReadonlyArray<string>;
   readonly query?: string;
-}): Trigger<Issue> => ({ kind: "issues", id: openedId("issues", options), ...options });
+}): Trigger<Issue> => {
+  checkOptions("issues.opened", options, ["project", "labels", "query"]);
+  return { kind: "issues", id: openedId("issues", options), ...options };
+};
 
 /**
  * A run for each pull request opened against the project's repository from now on, with the pull
@@ -119,8 +131,7 @@ export const issuesOpened = (options: {
 export const pullRequestsOpened = (options: {
   readonly project: string;
   readonly query?: string;
-}): Trigger<PullRequest> => ({
-  kind: "pullRequests",
-  id: openedId("pullRequests", options),
-  ...options,
-});
+}): Trigger<PullRequest> => {
+  checkOptions("pullRequests.opened", options, ["project", "query"]);
+  return { kind: "pullRequests", id: openedId("pullRequests", options), ...options };
+};

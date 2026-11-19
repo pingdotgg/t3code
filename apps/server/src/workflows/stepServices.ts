@@ -381,9 +381,13 @@ export const start = <P>(
   payload: P,
   options: { readonly key: string },
 ) =>
-  Effect.flatMap(Runs, (runs) =>
-    runs.start(workflow.name, payload, { idempotencyKey: options.key, version: workflow.version }),
-  );
+  Effect.flatMap(Runs, (runs) => {
+    checkOptions("start", options, ["key"]);
+    return runs.start(workflow.name, payload, {
+      idempotencyKey: options.key,
+      version: workflow.version,
+    });
+  });
 
 /**
  * Wake every run that waits on `channel`, in one workflow or, without `workflow`, in all of them.
@@ -423,10 +427,11 @@ export const runs = (filter?: {
   readonly status?: WorkflowRunStatus;
   readonly keyPrefix?: string;
 }) =>
-  Effect.flatMap(Runs, (all) =>
-    all.list({
+  Effect.flatMap(Runs, (all) => {
+    checkOptions("runs", filter, ["workflow", "status", "keyPrefix"]);
+    return all.list({
       workflow: filter?.workflow === undefined ? undefined : nameOf(filter.workflow),
       status: filter?.status,
       keyPrefix: filter?.keyPrefix,
-    }),
-  );
+    });
+  });
