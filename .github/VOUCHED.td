@@ -52,14 +52,17 @@ github:lnieuwenhuis
 github:Lucenx9
 github:mackinleysmith
 github:maria-rcks
+github:maschwenk
 github:MatthewFeroz
 github:maxwellyoung
+github:mvanhorn
 github:mweinbach
 github:mwolson
 github:myacoub91
 github:naMqe-h
 github:nateEc
 github:naveed949
+github:navidnadali
 github:nexxeln
 github:nmggithub
 github:Noojuno
