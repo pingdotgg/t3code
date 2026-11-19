@@ -246,7 +246,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
     <nav
       {...navArea}
       role="navigation"
-      aria-label="Settings sections"
+      aria-label={gt("Settings sections")}
       data-chrome-scope=""
       className={cn(
         "flex w-60 shrink-0 flex-col border-e bg-sidebar text-sidebar-foreground max-md:w-14",
