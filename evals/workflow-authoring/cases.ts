@@ -167,6 +167,7 @@ export const cases: ReadonlyArray<Case> = [
               const ignored = yield* world.reaches(
                 workflows,
                 fine.runId,
+                "skipped",
                 "stopped",
                 "completed",
                 "paused",
