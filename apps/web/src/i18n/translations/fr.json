@@ -3002,6 +3002,7 @@
   "c83f08486162e679": "{title} nécessite un environnement compatible. Connectez ou mettez à jour un environnement pour continuer.",
   "93723f58bafe1568": "{title} n’est pas disponible pour la cible sélectionnée. Choisissez sa portée d’origine pour continuer.",
   "22a6870eaaa85f1f": "Contenu des paramètres",
+  "56f0e287ba1daf3f": "Tous les paramètres",
   "dc06ede61ff5d1cc": "Rétablir les valeurs par défaut de l’appareil",
   "c4b395da633cf4d3": [
     "Reconnectez ",
@@ -10385,6 +10386,7 @@
   "858561b97fdd72f2": "Rechercher dans les paramètres",
   "fed2d32de2b0c566": "Effacer la recherche dans les paramètres",
   "833639e235c97484": "Résultats de la recherche dans les paramètres",
+  "8a135e63b19b5636": "Paramètres",
   "be82bbfef472ab44": "Aucun paramètre trouvé",
   "4e811ba442250819": "Ajouter un hôte Simlock",
   "0c9fe2452393d9d1": "Modifier l’hôte Simlock",

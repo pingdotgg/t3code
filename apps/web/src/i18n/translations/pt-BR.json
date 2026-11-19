@@ -3002,6 +3002,7 @@
   "c83f08486162e679": "{title} exige um ambiente compatível. Conecte ou atualize um ambiente para continuar.",
   "93723f58bafe1568": "{title} não está disponível para o destino selecionado. Escolha o escopo correspondente para continuar.",
   "22a6870eaaa85f1f": "Conteúdo das configurações",
+  "56f0e287ba1daf3f": "Todas as configurações",
   "dc06ede61ff5d1cc": "Restaurar padrões do dispositivo",
   "c4b395da633cf4d3": [
     "Reconecte ",
@@ -10385,6 +10386,7 @@
   "858561b97fdd72f2": "Buscar configurações",
   "fed2d32de2b0c566": "Limpar pesquisa de configurações",
   "833639e235c97484": "Resultados da pesquisa de configurações",
+  "8a135e63b19b5636": "Configurações",
   "be82bbfef472ab44": "Nenhuma configuração encontrada",
   "4e811ba442250819": "Adicionar host Simlock",
   "0c9fe2452393d9d1": "Editar host Simlock",
