@@ -82,4 +82,30 @@ describe("primary environment HTTP layer", { concurrent: false }, () => {
       expect(request.headers.get("authorization")).toBe("Bearer desktop-bearer-token");
     }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()));
   });
+
+  it.effect("reports a failed desktop credential read as a transport error", () => {
+    vi.stubGlobal("fetch", vi.fn());
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      value: {
+        location: { origin: "t3code://app" },
+        desktopBridge: {
+          getLocalEnvironmentBootstrap: () => ({
+            label: "Local environment",
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+            bootstrapToken: "desktop-bootstrap-token",
+          }),
+          getLocalEnvironmentBearerToken: () => Promise.reject(new Error("IPC closed")),
+        } as unknown as DesktopBridge,
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* HttpClient.get("http://127.0.0.1:3773/api/auth/session").pipe(
+        Effect.flip,
+      );
+      expect(error.reason._tag).toBe("TransportError");
+    }).pipe(Effect.provide(PrimaryEnvironmentHttpLayer.layerForCurrentOrigin()));
+  });
 });

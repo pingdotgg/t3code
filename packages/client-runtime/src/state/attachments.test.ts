@@ -5,6 +5,7 @@ import {
   type AttachmentCreateUploadUrlResult,
   type AttachmentDeleteInput,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -139,6 +140,31 @@ describe("verifyPersistedAttachmentUpload", () => {
       expect(yield* verify).toMatchObject({ status: "failed" });
       expect(yield* verify).toEqual({ status: "verified" });
       expect(lookups).toBe(2);
+    }),
+  );
+
+  it.effect("stops the lookup when its caller is interrupted", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const released = yield* Deferred.make<void>();
+      const assetUrlAtom = Atom.make(
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() => Deferred.succeed(released, undefined)),
+        ),
+      );
+      const fiber = yield* Effect.forkChild(
+        verifyPersistedAttachmentUpload({
+          registry: AtomRegistry.make(),
+          createAssetUrl: () => assetUrlAtom,
+          environmentId,
+          attachmentId: "pending-1",
+        }),
+      );
+
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      yield* Deferred.await(released);
     }),
   );
 });

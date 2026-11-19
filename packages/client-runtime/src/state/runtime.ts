@@ -398,13 +398,16 @@ export interface AtomQueryOptions extends AtomCommandOptions {
   readonly signal?: AbortSignal;
 }
 
-export async function executeAtomQuery<A, E>(
+/**
+ * The settled value of a query atom, for callers already in Effect. Interrupting the caller
+ * releases its mount; `executeAtomQuery` is the Promise form for React handlers.
+ */
+export const awaitAtomResult = <A, E>(
   registry: AtomRegistry.AtomRegistry,
   atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
-  options: AtomQueryOptions = {},
-  reporter: AtomCommandReporter = console,
-): Promise<AtomCommandResult<A, E>> {
-  const query = Effect.scoped(
+  options: Pick<AtomQueryOptions, "refresh"> = {},
+): Effect.Effect<A, E> =>
+  Effect.scoped(
     Effect.gen(function* () {
       yield* AtomRegistry.mount(registry, atom);
       if (options.refresh) {
@@ -420,8 +423,16 @@ export async function executeAtomQuery<A, E>(
       });
     }),
   );
+
+export async function executeAtomQuery<A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  options: AtomQueryOptions = {},
+  reporter: AtomCommandReporter = console,
+): Promise<AtomCommandResult<A, E>> {
   return executeAtomCommand(
-    () => Effect.runPromiseExit(query, { signal: options.signal }),
+    () =>
+      Effect.runPromiseExit(awaitAtomResult(registry, atom, options), { signal: options.signal }),
     options,
     reporter,
   );
