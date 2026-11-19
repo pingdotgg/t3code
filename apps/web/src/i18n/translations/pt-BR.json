@@ -1841,6 +1841,18 @@
   "480646ceb98c7163": "Fechar",
   "32fc9124998ebc18": "Local",
   "1c4158d741eec5da": "{label} (local)",
+  "a12a4958ca6b924b": "Porta {port} encaminhada",
+  "0f14a51b016f825d": "Os apps desta máquina a acessam em localhost:{port}.",
+  "4bdb9a086e77ee6d": "Porta {port} em {environment}",
+  "7a462e32dba47f4c": "Abrir no navegador",
+  "4b8087450e97c995": "Copiar endereço",
+  "c170720e67d01733": "Parar de encaminhar",
+  "1e5c6d1c33667b17": "Encaminhar localhost:{port}",
+  "e76f45b6a412a0b6": "Encaminhar a porta {port} de {environment}",
+  "ecf3b95b3d9e6e74": "Encaminhadas",
+  "b3123e5b8602a134": "Digite um número de porta para encaminhá-la",
+  "1bdeef9819b4a055": "Encaminhar uma porta",
+  "de8a46b66f8ec455": "Portas encaminhadas",
   "f844c41fac2d339c": "Atual",
   "69154433587763c0": "Nenhuma ação correspondente.",
   "90c3a382ecefa0ce": "Nenhum comando, projeto ou thread correspondente.",
@@ -2974,6 +2986,10 @@
   "314cdccee9c14774": "Este servidor não permite consultas ao registro. Atualize-o antes de trocar de canal.",
   "22da1d00403ab2fd": "Não foi possível verificar o registro npm deste ambiente. Verifique a conexão e as configurações do registro.",
   "2fc0f7a698c95c90": "Conecte-se a um servidor para verificar as versões.",
+  "922269f8691aa3ba": "Não foi possível saber se este ambiente roda neste computador.",
+  "35cade9cc8a01363": "O encaminhamento de portas precisa do app para desktop.",
+  "9e303e0a794898d4": "Este ambiente roda neste computador, então localhost:{port} já o alcança.",
+  "2d49965e0e27e23b": "Não é possível acessar este ambiente agora. Tente novamente quando ele se reconectar.",
   "7280baf7517dad1c": "Falha ao carregar as refs.",
   "567c0fed6ab8efc1": "Esta conexão não pode pesquisar arquivos do host.",
   "5189720b9436f98c": "A pesquisa é limitada a {count} caracteres.",
@@ -4021,6 +4037,15 @@
     }
   ],
   "e58a1d884fa1d8f2": "Detalhes da thread",
+  "43c5fbd02c6f330a": "Mostrar menos",
+  "de45b075b016cb14": [
+    "Mostrar mais ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comentário} other {{count} comentários}}",
   "42f634397f3960aa": "Mostrar nos detalhes da thread",
@@ -4060,15 +4085,6 @@
   ],
   "159ddd0d146a0f22": "Acompanhando: o agente é ativado quando as verificações terminam, alguém comenta ou o branch entra em conflito. Clique para parar.",
   "1cbc8b5db51b4c77": "Mesclar",
-  "43c5fbd02c6f330a": "Mostrar menos",
-  "de45b075b016cb14": [
-    "Mostrar mais ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
   "a3d040c4ef4fc6e9": "Acima do ritmo",
   "b16fdf56b16d99c9": "No ritmo",
   "90f977e97ae8b6c6": "Abaixo do ritmo",
@@ -4083,6 +4099,7 @@
   "66be4fb43249bbd2": "{used} de {max} tokens",
   "ee3ae58c8b38a425": "{left}% restante",
   "ebb26f93fb83a71b": "{label}: {left}% restante",
+  "1b16346722b65812": "{timeLeft}% da janela restante",
   "728c6cc1431e76c8": "Renova em {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "A API da área de transferência não está disponível ao copiar o pedido para o administrador.",
@@ -4176,12 +4193,16 @@
   ],
   "3237699bd13dd4bb": "Parar subagente",
   "075398ac562d74b0": "Desconectar a sessão do agente",
+  "1d2025060ba3d1c3": "Não foi possível encaminhar a porta {port}",
   "086ecbb6f4c2e959": "Não foi possível abrir no navegador",
   "51052c00ab1ac8cc": "Não foi possível abrir a pré-visualização",
   "0ccd37739f9cf2b6": "Não foi possível parar o servidor",
   "a610a81c4061bb4c": "Servidores",
+  "253bc8b5e99002dc": "Encaminhada para :{port}",
   "bd1ca8ccb6d0b87c": "Agente",
   "e25e045607262b40": "Terminal",
+  "194a9791a83d3f79": "Parar de encaminhar localhost:{port}",
+  "95bbbac2f2e17273": "Encaminhar localhost:{port} para esta máquina",
   "95b263aa683271cc": "Parar localhost:{port}",
   "f94866e17faddc05": [
     "Abrir no painel do navegador. ",
@@ -4192,6 +4213,16 @@
     },
     " para o seu navegador."
   ],
+  "781fba367a220012": [
+    "Encaminhada para localhost:",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " nesta máquina. Clique para parar."
+  ],
+  "92347683e33e9f02": "Encaminhar para esta máquina, para qualquer app aqui",
   "3c7763243445b28d": "Parar servidor",
   "991cc9fb37606c91": "(resposta vazia)",
   "36e4b8d2db087296": "Criar fork a partir desta resposta",
@@ -5931,7 +5962,6 @@
   "a74538a7917c1c96": "Reproduzir vídeo",
   "11a5a4d340e6397d": "Abrir original",
   "1b74242b0d303272": "Baixar vídeo",
-  "7a462e32dba47f4c": "Abrir no navegador",
   "f9ca1e61d515445e": "Falta o conteúdo da data URL.",
   "1b547c297573369c": "Não foi possível decodificar esta mídia em linha.",
   "84f7c359e5f050b1": "Não foi possível buscar o arquivo (HTTP {status}).",
@@ -11857,7 +11887,6 @@
   "0bd938825ffcf992": "+{percent}% do total",
   "09c0e00d7fb55402": "Usando crédito de redefinição…",
   "4df3ff1be768a7ab": "{name}: {remaining}% restante",
-  "1b16346722b65812": "{timeLeft}% da janela restante",
   "7aaaff1c6484f25c": "Segmento",
   "8bcab2ef61de6518": "Limite de $0",
   "a16b48709357a5a7": "Gerenciar uso",
