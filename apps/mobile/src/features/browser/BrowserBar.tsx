@@ -11,6 +11,7 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useGT } from "gt-react-native";
 import { withUniwind } from "uniwind";
 
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
@@ -113,6 +114,7 @@ function BrowserBar(
     readonly inPane: boolean;
   },
 ) {
+  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
   const layout = useBrowserBarLayout(props.inPane);
   const reduceMotion = useReducedMotion();
@@ -178,15 +180,20 @@ function BrowserBar(
               : "flex-row items-center gap-2 px-3"
           }
         >
-          <RoundButton icon="xmark" label="Close browser" ink={ink} onPress={props.onClose} />
+          <RoundButton icon="xmark" label={gt("Close browser")} ink={ink} onPress={props.onClose} />
           {props.canGoBack ? (
-            <RoundButton icon="chevron.left" label="Back" ink={ink} onPress={props.onBack} />
+            <RoundButton
+              icon="chevron.left"
+              label={gt("Back", { $context: "browser history" })}
+              ink={ink}
+              onPress={props.onBack}
+            />
           ) : null}
           {/* On a tablet the address stays a readable width, centered between the buttons. */}
           <View className="min-w-0 flex-1 items-center">
             <Glass ink={ink} className="h-11 w-full max-w-2xl flex-row items-center rounded-full">
               <TextInput
-                accessibilityLabel="Address"
+                accessibilityLabel={gt("Address", { $context: "browser address bar" })}
                 editable={props.editable}
                 // Unfocused, the field shows only the host, like Safari; editing starts from the URL.
                 value={draft ?? hostOf(props.url)}
@@ -198,7 +205,7 @@ function BrowserBar(
                   setDraft(null);
                   props.onSubmit(value);
                 }}
-                placeholder="Enter a URL"
+                placeholder={gt("Enter a URL")}
                 placeholderTextColor={themeColorWithAlpha(inkColor, 0.45)}
                 selectionColor={themeVariables["--color-primary"]}
                 autoCapitalize="none"
@@ -214,7 +221,7 @@ function BrowserBar(
               />
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Reload page"
+                accessibilityLabel={gt("Reload page")}
                 disabled={!props.editable}
                 onPress={props.onReload}
                 className="h-11 w-9 items-center justify-center"
@@ -231,7 +238,7 @@ function BrowserBar(
           {props.onMaximize ? (
             <RoundButton
               icon="arrow.up.left.and.arrow.down.right"
-              label="Maximize page"
+              label={gt("Maximize page")}
               ink={ink}
               onPress={props.onMaximize}
             />
@@ -248,7 +255,7 @@ function BrowserBar(
       >
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Address ${props.url}. Show the browser controls`}
+          accessibilityLabel={gt("Address {url}. Show the browser controls", { url: props.url })}
           onPress={props.onExpand}
         >
           <Glass ink={ink} className="h-7 justify-center rounded-full px-3.5">

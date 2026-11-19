@@ -1,6 +1,7 @@
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -8,6 +9,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { AppText } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { m } from "../../i18n/messages";
 import { useEnvironments } from "../../state/environments";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { BrowserChrome } from "./BrowserBar";
@@ -41,9 +43,11 @@ export function LocalPreviewScreen(props: {
   readonly onMaximize?: (url: string) => void;
 }) {
   const { environmentId, onMaximize } = props;
+  const gt = useGT();
   const initialUrl = forDevice(props.url);
   const environmentLabel =
-    useEnvironments().presentationById.get(environmentId)?.entry.target.label ?? "the environment";
+    useEnvironments().presentationById.get(environmentId)?.entry.target.label ??
+    gt("the environment", { $context: "stands in for an environment name in a sentence" });
   const { themeVariables } = useAppearancePreferences();
   const webView = useRef<TunnelWebViewRef>(null);
   const [requested, setRequested] = useState(initialUrl);
@@ -59,7 +63,7 @@ export function LocalPreviewScreen(props: {
     const normalized = normalizedOrNull(value);
     const next = normalized === null ? null : forDevice(normalized);
     if (next === null) {
-      Dialog.alert("Could not open this address", "Enter an http or https URL.");
+      Dialog.alert(m(msg("Could not open this address")), m(msg("Enter an http or https URL.")));
       return;
     }
     setFailed(false);
@@ -129,8 +133,10 @@ export function LocalPreviewScreen(props: {
                 <View className="w-full max-w-md">
                   <EmptyState
                     variant="plain"
-                    title="This device can't open localhost pages"
-                    detail={`${unsupported} You can still use the streamed browser for this tab.`}
+                    title={gt("This device can't open localhost pages")}
+                    detail={gt("{reason} You can still use the streamed browser for this tab.", {
+                      reason: unsupported,
+                    })}
                   />
                 </View>
               </View>
@@ -145,15 +151,21 @@ export function LocalPreviewScreen(props: {
                     variant="plain"
                     title={
                       disconnected
-                        ? `Not connected to ${environmentLabel}`
-                        : `Can't reach ${hostOf(current)}`
+                        ? gt("Not connected to {environment}", { environment: environmentLabel })
+                        : gt("Can't reach {host}", { host: hostOf(current) })
                     }
                     detail={
                       disconnected
-                        ? `Pages on ${environmentLabel}'s localhost load through its connection. Try again once it reconnects.`
-                        : `Nothing is listening on ${portOf(current)} on ${environmentLabel}. Start the server there, then try again.`
+                        ? gt(
+                            "Pages on {environment}’s localhost load through its connection. Try again once it reconnects.",
+                            { environment: environmentLabel },
+                          )
+                        : gt(
+                            "Nothing is listening on port {port} on {environment}. Start the server there, then try again.",
+                            { port: portOf(current), environment: environmentLabel },
+                          )
                     }
-                    actionLabel="Try again"
+                    actionLabel={gt("Try again")}
                     onAction={retry}
                   />
                   {debug ? (
@@ -177,9 +189,9 @@ export function LocalPreviewScreen(props: {
 function portOf(value: string): string {
   try {
     const url = new URL(value);
-    return `port ${url.port || (url.protocol === "https:" ? "443" : "80")}`;
+    return url.port || (url.protocol === "https:" ? "443" : "80");
   } catch {
-    return "this port";
+    return "?";
   }
 }
 

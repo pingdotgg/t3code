@@ -144,7 +144,10 @@ function BrowserPreviewScreen({
           onSubmit: (value) => {
             const url = normalizedOrNull(value);
             if (url === null)
-              Dialog.alert(m(msg("Could not open this address")), m(msg("Enter an http or https URL.")));
+              Dialog.alert(
+                m(msg("Could not open this address")),
+                m(msg("Enter an http or https URL.")),
+              );
             else command({ type: "navigate", url });
           },
           trailing: (

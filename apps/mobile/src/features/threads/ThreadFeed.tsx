@@ -3543,8 +3543,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         return {
           title: href,
           actions: [
-            { id: "open-on-device", title: "Open on this device" },
-            { id: "copy-link", title: "Copy link" },
+            { id: "open-on-device", title: gt("Open on this device") },
+            { id: "copy-link", title: gt("Copy link") },
           ],
         };
       }
