@@ -112,6 +112,21 @@ describe("isProviderInstancePickerReady", () => {
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
   });
+
+  it("offers a failed provider's models only while the server marks them retained", () => {
+    const failed = provider({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: "codex",
+      status: "error",
+      models: [model("gpt-5.5", false, true)],
+    });
+    const ready = (snapshot: ServerProvider) =>
+      deriveProviderInstanceEntries([snapshot]).map(isProviderInstancePickerReady)[0];
+
+    expect(ready({ ...failed, modelsRetained: true })).toBe(true);
+    expect(ready(failed)).toBe(false);
+    expect(ready({ ...failed, status: "warning", auth: { status: "unknown" } })).toBe(false);
+  });
 });
 
 describe("applyProviderInstanceSettings", () => {
