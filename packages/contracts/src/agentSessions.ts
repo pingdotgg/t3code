@@ -48,6 +48,17 @@ export const AgentSessionScanResult = Schema.Struct({
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 
+export const PROJECT_DISCOVERY_ROOTS_LIMIT = 8;
+
+// Folders the user picked to look for Git repositories in. Absolute host paths, including ~/.
+export const ProjectDiscoveryInput = Schema.Struct({
+  roots: Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(512))).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PROJECT_DISCOVERY_ROOTS_LIMIT),
+  ),
+});
+export type ProjectDiscoveryInput = typeof ProjectDiscoveryInput.Type;
+
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),

@@ -71,6 +71,12 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("keeps repository discovery, which walks host folders, behind filesystem read", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.filesystemDiscoverRepositories)).toBe(
+      AuthFilesystemReadScope,
+    );
+  });
+
   it("lets thread readers observe and refresh checkout branches", () => {
     for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
