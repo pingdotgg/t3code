@@ -33,39 +33,37 @@ parent.postMessage(
 );
 </script>`;
 
-let appHtml = APP_HTML;
-const serveAppHtml = (html: string): Disposable => {
-  appHtml = html;
-  return {
-    [Symbol.dispose]: () => {
-      appHtml = APP_HTML;
-    },
-  };
-};
+const state = vi.hoisted(() => ({
+  appHtml: "",
+  runCommand: vi.fn(),
+  requestConfirmDialog: vi.fn(),
+}));
+
+function setup(appHtml = APP_HTML) {
+  state.appHtml = appHtml;
+  state.runCommand.mockReset().mockResolvedValue({
+    _tag: "Success",
+    value: { callable: true, readOnly: false, content: [] },
+  });
+  state.requestConfirmDialog.mockReset().mockResolvedValue(true);
+}
 
 vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
   useLongLivedAssetUrl: () => ({
     _tag: "Success",
-    url: `data:text/html,${encodeURIComponent(appHtml)}`,
+    url: `data:text/html,${encodeURIComponent(state.appHtml)}`,
     expiresAt: Date.now() + 60 * 60_000,
   }),
 }));
 
-const { runCommand, requestConfirmDialog } = vi.hoisted(() => ({
-  runCommand: vi.fn(async (_command: unknown, _value: unknown) => ({
-    _tag: "Success" as const,
-    value: { callable: true, readOnly: false, content: [] },
-  })),
-  requestConfirmDialog: vi.fn(() => Promise.resolve(true)),
-}));
-
 vi.mock(import("~/state/use-atom-command"), () => ({
-  useAtomCommand: ((command: unknown) => (value: unknown) => runCommand(command, value)) as never,
+  useAtomCommand: ((command: unknown) => (value: unknown) =>
+    state.runCommand(command, value)) as never,
 }));
 
 vi.mock(import("~/confirmDialog"), () => ({
   isConfirmDialogActive: () => false,
-  requestConfirmDialog: requestConfirmDialog as never,
+  requestConfirmDialog: state.requestConfirmDialog as never,
 }));
 
 import { mcpAppEnvironment } from "~/state/mcpApps";
@@ -90,7 +88,7 @@ const APP = {
 
 describe("McpAppFrame", () => {
   it("refuses a tool call made without a click instead of asking for approval", async () => {
-    using _html = serveAppHtml(CALL_ON_LOAD_HTML);
+    setup(CALL_ON_LOAD_HTML);
     const reply = new Promise<{ readonly error?: { readonly message: string } }>((resolve) => {
       const listen = (event: MessageEvent) => {
         if (event.data?.loadCallReply === undefined) return;
@@ -112,13 +110,14 @@ describe("McpAppFrame", () => {
     );
 
     expect((await reply).error?.message).toBe("This tool runs only from a click in the app.");
-    expect(requestConfirmDialog).not.toHaveBeenCalled();
-    expect(runCommand.mock.calls.map(([command]) => command)).not.toContain(
+    expect(state.requestConfirmDialog).not.toHaveBeenCalled();
+    expect(state.runCommand.mock.calls.map(([command]) => command)).not.toContain(
       mcpAppEnvironment.callTool,
     );
   });
 
   it("keeps a reopened app when the old document's second teardown finishes late", async () => {
+    setup();
     const firstInitialized = nextInitializedFrom();
     await using screen = await render(
       <McpAppFrame
