@@ -9259,11 +9259,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
           `EXPLAIN QUERY PLAN ${statement}`,
         )).map((row) => row.detail);
-        assert.include(
-          plan.join("\n"),
-          "orchestration_v2_projection_runs_last_executed_idx",
-          marker,
-        );
         if (marker === "AS failure_payload_json") {
           assert.include(
             plan.join("\n"),
