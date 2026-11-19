@@ -765,7 +765,8 @@ function useOpenNewTaskDraft() {
     },
     originRoute: NavigationState<ParamListBase>["routes"][number] | undefined,
   ) => {
-    const activeRoute = getActiveRoute(navigation);
+    const state = navigation.getState();
+    const activeRoute = state?.routes[state.index];
     // A warm link can change the task without replacing its native route key.
     if (
       !originRoute ||
@@ -774,6 +775,34 @@ function useOpenNewTaskDraft() {
       activeRoute.params !== originRoute.params
     )
       return;
+    const routes = state.routes.slice(0, state.index);
+    const pickerIndex = routes.findLastIndex((route) => !route.name.startsWith("AddProject"));
+    const picker = routes[pickerIndex];
+    if (picker?.name === "NewTaskProject") {
+      const pickerParams = picker.params as ReactNavigation.RootParamList["NewTaskProject"];
+      // The first picker can inherit the share from the draft underneath it.
+      const previous = routes[pickerIndex - 1];
+      const draftParams =
+        previous?.name === "Thread"
+          ? (previous.params as ReactNavigation.RootParamList["Thread"])?.draft
+          : undefined;
+      const incomingShareId = stringParam(
+        pickerParams?.incomingShareId ?? draftParams?.incomingShareId,
+      );
+      if (incomingShareId) {
+        navigation.dispatch(
+          StackActions.popTo(
+            "NewTaskProject",
+            {
+              incomingShareId,
+              addedProject: params,
+            } satisfies ReactNavigation.RootParamList["NewTaskProject"],
+            { merge: true },
+          ),
+        );
+        return;
+      }
+    }
     selectDetail({ name: "Thread", params: { draft: params } });
   };
 }

@@ -35,6 +35,8 @@ const state = vi.hoisted(() => ({
   connectionStates: {} as Record<string, EnvironmentConnectionPhase>,
   newProjectsRoot: null as string | null,
   waitForProject: vi.fn(),
+  setProject: vi.fn(),
+  goBack: vi.fn(),
   dispatch: vi.fn(),
   alert: vi.fn(),
   navigationState: undefined as NavigationState | undefined,
@@ -64,6 +66,9 @@ vi.mock("../../native/StackHeader", () => ({
 }));
 vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: "NavigationRow" }));
 vi.mock("../../components/ui/Button", () => ({ Button: "Button" }));
+vi.mock("../../components/ui/AppBar", () => ({ AppBar: "AppBar" }));
+vi.mock("../../components/ui/ScreenContent", () => ({ ScreenContent: "ScreenContent" }));
+vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: "ProjectFavicon" }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: "ScrollView" }));
 vi.mock("../settings/components/SettingsScreen", () => ({ SettingsScreen: "SettingsScreen" }));
 vi.mock("../../components/ui/ThemedSwitch", () => ({ ThemedSwitch: "Switch" }));
@@ -78,6 +83,8 @@ vi.mock("react-native", () => ({
 vi.mock("@react-navigation/native", () => ({
   useNavigation: () => ({
     dispatch: state.dispatch,
+    goBack: state.goBack,
+    setParams: (params: object) => state.dispatch(loadRouters().CommonActions.setParams(params)),
     getState: () =>
       state.navigationState ?? {
         index: 4,
@@ -91,8 +98,12 @@ vi.mock("@react-navigation/native", () => ({
       },
   }),
   CommonActions: { reset: (input: unknown) => input },
+  useFocusEffect: () => {},
+  useIsFocused: () => true,
   StackActions: {
     push: (name: string, params: unknown) => ({ type: "PUSH", payload: { name, params } }),
+    popTo: (...args: Parameters<ReturnType<typeof loadRouters>["StackActions"]["popTo"]>) =>
+      loadRouters().StackActions.popTo(...args),
   },
 }));
 vi.mock("react-native-safe-area-context", () => ({
@@ -185,6 +196,19 @@ vi.mock("../../state/use-composer-drafts", () => ({
   createNewTaskDraft: () => "prompt-draft",
   setComposerDraftText: () => {},
 }));
+vi.mock("../../state/workspace", () => ({
+  useWorkspaceState: () => ({ state: { hasReadyEnvironment: true, hasConnections: true } }),
+}));
+vi.mock("../connection/environmentStatusText", () => ({ runtimeConnectionErrorText: () => null }));
+vi.mock("../sharing/IncomingShareProvider", () => ({
+  useIncomingShare: () => ({
+    getShare: (id: string) => ({ id, attachments: [] }),
+    releaseShareReservation: vi.fn(),
+  }),
+}));
+vi.mock("../threads/new-task-flow-provider", () => ({
+  useNewTaskFlow: () => ({ projectScopes: [], setProject: state.setProject }),
+}));
 
 import {
   AddProjectNewScreen,
@@ -193,6 +217,7 @@ import {
   AddProjectSourceScreen,
 } from "./AddProjectScreen";
 import { AddProjectSourceRoute } from "./AddProjectSourceRoute";
+import { NewTaskRouteScreen } from "../threads/NewTaskRouteScreen";
 
 function findAction(
   node: ReactNode,
@@ -327,7 +352,8 @@ function mountProjectFlow(
   withDraft: boolean,
   withChooser = true,
   withPullRequest = false,
-  screenName = "AddProjectLocal",
+  screenName: string | null = "AddProjectLocal",
+  incomingShareId?: string,
 ) {
   const { StackRouter, StackActions, CommonActions } = loadRouters();
   const base = StackRouter({});
@@ -361,20 +387,23 @@ function mountProjectFlow(
   }
   const underlyingRoutes = current.routes;
   if (withDraft) {
-    apply(StackActions.push("Thread", { draft: { projectId: "previous-project" } }));
+    apply(
+      StackActions.push("Thread", {
+        draft: incomingShareId ? { incomingShareId } : { projectId: "previous-project" },
+      }),
+    );
   }
   const draftKey = withDraft ? current.routes[current.index]!.key : null;
-  for (const name of [...(withChooser ? ["NewTaskProject"] : []), "AddProject", screenName]) {
-    apply(StackActions.push(name));
+  if (withChooser) apply(StackActions.push("NewTaskProject", { incomingShareId }));
+  if (screenName !== null) {
+    apply(StackActions.push("AddProject"));
+    apply(StackActions.push(screenName));
   }
   state.navigationState = current;
   state.dispatch.mockImplementation((action) =>
-    apply(
-      action.type === "PUSH" || action.type === "SELECT_WORKSPACE_DETAIL"
-        ? action
-        : CommonActions.reset(action),
-    ),
+    apply(action.type ? action : CommonActions.reset(action)),
   );
+  state.goBack.mockImplementation(() => apply(StackActions.pop()));
   return {
     home,
     draftKey,
@@ -693,6 +722,61 @@ describe("local project navigation", () => {
       state.createNewResult = null;
     }
   });
+
+  it.each(["initial", "reopened"])(
+    "chooses the first project added from the %s share picker for the original draft",
+    async (picker) => {
+      const { created, projected, submit } = setup();
+      const navigation = mountProjectFlow(true, true, false, null, "pending-share");
+      if (picker === "initial") navigation.setParams({ incomingShareId: undefined });
+      state.setProject.mockClear();
+      state.existingProjects = [];
+      const renderPicker = () =>
+        renderScreen(() =>
+          NewTaskRouteScreen({
+            route: navigation.getState().routes.at(-1) as Parameters<
+              typeof NewTaskRouteScreen
+            >[0]["route"],
+          }),
+        );
+      const addProject = findAction(renderPicker(), "Add new project");
+      if (!addProject) throw new Error("Empty picker add project action missing");
+      addProject();
+      const localFolder = findAction(
+        renderScreen(() => AddProjectSourceScreen({})),
+        "Local folder",
+      );
+      if (!localFolder) throw new Error("Local folder action missing");
+      localFolder();
+      const project = {
+        environmentId: "environment",
+        id: "project",
+        title: "t3-mobile-audit-fixture",
+        workspaceRoot: "/tmp/t3-mobile-audit-fixture",
+      };
+      try {
+        await act(async () => {
+          const submission = submit();
+          created.resolve(AsyncResult.success(undefined));
+          await created.promise;
+          state.existingProjects = [project];
+          projected.resolve(project);
+          await submission;
+        });
+
+        expect(navigation.getState().routes.at(-1)).toMatchObject({ name: "NewTaskProject" });
+        renderPicker();
+        expect(state.setProject).toHaveBeenCalledExactlyOnceWith(project);
+        expect(navigation.getState().routes.map((route) => route.name)).toEqual(["Home", "Thread"]);
+        expect(navigation.getState().routes.at(-1)).toMatchObject({
+          key: navigation.draftKey,
+          params: { draft: { incomingShareId: "pending-share" } },
+        });
+      } finally {
+        state.existingProjects = [];
+      }
+    },
+  );
 
   it.each([
     { origin: "Thread", withDraft: true, withChooser: true },

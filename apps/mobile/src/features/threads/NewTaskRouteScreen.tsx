@@ -10,6 +10,7 @@ import {
   useFocusEffect,
   useIsFocused,
   useNavigation,
+  type NavigationProp,
   type StaticScreenProps,
 } from "@react-navigation/native";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -20,7 +21,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useCallback, useEffect, useRef, useState } from "react";
+import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -48,10 +50,19 @@ import {
 } from "./new-task-project-selection";
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 
+type AddedProject = {
+  readonly environmentId: EnvironmentId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly cloning?: "1";
+  readonly draftId?: string;
+};
+
 type NewTaskRouteParams = {
   readonly incomingShareId?: string | string[];
   /** An existing draft whose project is gone; the chosen project takes it over. */
   readonly draftId?: string | string[];
+  readonly addedProject?: AddedProject;
   readonly prompt?: string | string[];
   readonly repo?: string | string[];
   readonly pr?: string | string[];
@@ -173,7 +184,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   const [searchText, setSearchText] = useState("");
   const { projectScopes, selectedEnvironmentId, setProject } = useNewTaskFlow();
   const { state: catalogState } = useWorkspaceState();
-  const navigation = useNavigation();
+  const navigation =
+    useNavigation<NavigationProp<ReactNavigation.RootParamList, "NewTaskProject">>();
   const selectDetail = useSelectWorkspaceDetail();
   const isFocused = useIsFocused();
   const insets = useSafeAreaInsets();
@@ -236,14 +248,18 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
-  const pendingScratchRef = useRef<AbortController | null>(null);
-  const cancelPendingScratch = useCallback(() => {
-    pendingScratchRef.current?.abort();
-    pendingScratchRef.current = null;
+  const pendingProjectSelectionRef = useRef<AbortController | null>(null);
+  const cancelPendingProjectSelection = useCallback(() => {
+    pendingProjectSelectionRef.current?.abort();
+    pendingProjectSelectionRef.current = null;
   }, []);
-  useFocusEffect(useCallback(() => cancelPendingScratch, [cancelPendingScratch]));
+  useFocusEffect(useCallback(() => cancelPendingProjectSelection, [cancelPendingProjectSelection]));
 
-  async function selectProject(project: EnvironmentProject, signal?: AbortSignal): Promise<void> {
+  async function selectProject(
+    project: EnvironmentProject,
+    signal?: AbortSignal,
+    addedProject?: AddedProject,
+  ): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
@@ -288,11 +304,12 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       );
       return;
     }
-    const draftId = retargeted ? routeDraftId : undefined;
+    const draftId = retargeted ? routeDraftId : addedProject?.draftId;
     selectDetail({
       name: "Thread",
       params: {
         draft: {
+          ...addedProject,
           environmentId: String(project.environmentId),
           projectId: String(project.id),
           draftId,
@@ -303,19 +320,19 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
   }
 
   function chooseProject(project: EnvironmentProject): void {
-    cancelPendingScratch();
+    cancelPendingProjectSelection();
     void selectProject(project);
   }
 
   async function startScratch(): Promise<void> {
-    if (!canStartScratch || !scratchOption || pendingScratchRef.current) return;
+    if (!canStartScratch || !scratchOption || pendingProjectSelectionRef.current) return;
     const environmentId = scratchOption.environmentId;
     const request = new AbortController();
-    pendingScratchRef.current = request;
+    pendingProjectSelectionRef.current = request;
     const result = await openScratch({ environmentId, input: {} });
     if (request.signal.aborted) return;
     if (result._tag === "Failure") {
-      pendingScratchRef.current = null;
+      pendingProjectSelectionRef.current = null;
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
@@ -327,8 +344,33 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       return;
     }
     await selectProject(result.value, request.signal);
-    if (pendingScratchRef.current === request) pendingScratchRef.current = null;
+    if (pendingProjectSelectionRef.current === request) pendingProjectSelectionRef.current = null;
   }
+
+  const addedProject = route.params?.addedProject;
+  const addedProjectTarget = addedProject
+    ? projects.find(
+        (project) =>
+          project.environmentId === addedProject.environmentId &&
+          project.id === addedProject.projectId,
+      )
+    : undefined;
+  const chooseAddedProject = useEffectEvent((project: EnvironmentProject, result: AddedProject) => {
+    cancelPendingProjectSelection();
+    const request = new AbortController();
+    pendingProjectSelectionRef.current = request;
+    navigation.setParams({ addedProject: undefined });
+    void selectProject(project, request.signal, result).finally(() => {
+      if (pendingProjectSelectionRef.current === request) pendingProjectSelectionRef.current = null;
+    });
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the Add Project result when the picker regains focus
+  useEffect(() => {
+    if (isFocused && addedProject && addedProjectTarget) {
+      chooseAddedProject(addedProjectTarget, addedProject);
+    }
+  }, [isFocused, addedProject, addedProjectTarget]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates to the incoming share's reserved destination draft once its project loads and the screen is focused
   useEffect(() => {
@@ -346,7 +388,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     if (resumedDestinationKeyRef.current === destinationKey) {
       return;
     }
-    if (!reservedDestinationProject) {
+    if (!reservedDestinationProject || addedProject || pendingProjectSelectionRef.current) {
       return;
     }
     resumedDestinationKeyRef.current = destinationKey;
@@ -361,7 +403,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         },
       },
     });
-  }, [incomingShare, isFocused, reservedDestinationProject, selectDetail]);
+  }, [addedProject, incomingShare, isFocused, reservedDestinationProject, selectDetail]);
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
