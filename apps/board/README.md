@@ -23,6 +23,8 @@ vp run --filter @agent-board/app build    # renderer to dist/, Electron main to 
 vp run --filter @agent-board/app start    # production build, loaded from agentboard://app
 ```
 
+On a Windows machine, run the same commands from WSL with `dev:windows` and `start:windows` (after `build`) to get Windows' own window frame. They download Electron for `win32-x64` once into `%LOCALAPPDATA%\agent-board\` and copy the bundle there, so Electron never runs from a `\\wsl.localhost` path. This needs WSL mirrored networking, so the Windows app can reach the dev server on `127.0.0.1`.
+
 `PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
 
 ## Tests

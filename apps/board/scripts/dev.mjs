@@ -27,7 +27,7 @@ while (!(await portOpen())) {
 
 const electron = NodeChildProcess.spawn(
   process.execPath,
-  [NodePath.join(scriptsDir, "launch-electron.mjs")],
+  [NodePath.join(scriptsDir, process.argv[2] ?? "launch-electron.mjs")],
   { stdio: "inherit", env: { ...process.env, VITE_DEV_SERVER_URL: url } },
 );
 electron.on("exit", (code) => process.exit(code ?? 0));

@@ -10,8 +10,10 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vp dev",
+    "dev:windows": "node scripts/dev.mjs launch-windows.mjs",
     "build": "vp build && vp pack",
     "start": "node scripts/launch-electron.mjs",
+    "start:windows": "node scripts/launch-windows.mjs",
     "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run && node --test scripts/*.test.mjs",
     "check:boundary": "node scripts/check-engine-untouched.mjs"
