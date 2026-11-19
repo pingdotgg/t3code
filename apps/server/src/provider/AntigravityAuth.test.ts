@@ -264,6 +264,48 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth"
     }),
   );
 
+  it.effect("shows the provider's reason when authenticate rejects the account", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.complete(owner, { flowId: state.flowId!, callbackUrl });
+      yield* Deferred.fail(
+        harness.authenticated,
+        new AcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage:
+            "Onboarding failed: User is ineligible for free-tier. Reason: Your current account is not eligible for Antigravity. Try signing in with another personal Google account.",
+          method: "authenticate",
+        }),
+      );
+      const failed = yield* phase(harness.auth, "failed");
+      assert.include(failed.message ?? "", "not eligible for Antigravity");
+      yield* Deferred.await(harness.closed);
+    }),
+  );
+
+  it.effect("tells the user why a redirect URL was rejected", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      const result = yield* harness.auth.controller
+        .complete(owner, {
+          flowId: state.flowId!,
+          callbackUrl: callbackUrl.replace("test-state", "earlier-state"),
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(result));
+      const current = yield* harness.auth.controller.subscribe(owner).pipe(Stream.runHead);
+      assert.include(
+        Option.getOrThrow(current).message ?? "",
+        "does not belong to the current sign-in",
+      );
+      yield* harness.auth.controller.cancel(owner, state.flowId!);
+    }),
+  );
+
   it.effect("tells the user when the agent cannot reach Google", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ interactive: false });
