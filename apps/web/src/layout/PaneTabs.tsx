@@ -252,6 +252,7 @@ function markStripOverflow(strip: HTMLElement): void {
   strip.style.setProperty("--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
   strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
   strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  strip.style.setProperty("--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
   const entry = stripEntries.get(strip);
   if (!entry) return;
   markJoinAtStart(entry);
@@ -269,8 +270,8 @@ function markJoinAtStart(entry: PaneStrip): void {
   if (!row) return;
   const atStart =
     shown !== null &&
-    shown.x <= PANE_JOIN_EAR_PX + 1 &&
-    strip.scrollLeft < 1 &&
+    shown.x - strip.scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
+    shown.x + shown.w - strip.scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
     stripAtPaneEdge(strip, row);
   if (row.hasAttribute("data-pane-join-start") !== atStart) {
     row.toggleAttribute("data-pane-join-start", atStart);
@@ -281,7 +282,10 @@ function markJoinAtStart(entry: PaneStrip): void {
 function stripAtPaneEdge(strip: HTMLElement, row: HTMLElement | null): boolean {
   const notch = strip.closest<HTMLElement>('[data-pane-notch=""]');
   if (!notch || !row) return false;
-  return Math.abs(notch.getBoundingClientRect().left - row.getBoundingClientRect().left) < 1;
+  const style = getComputedStyle(row);
+  if (style.getPropertyValue("--pane-titlebar-inset").trim() === "1") return false;
+  const lead = notch.getBoundingClientRect().left - row.getBoundingClientRect().left;
+  return Math.abs(lead - Number.parseFloat(style.paddingLeft)) < 1;
 }
 
 function measurePaneLit(entry: PaneStrip): void {
