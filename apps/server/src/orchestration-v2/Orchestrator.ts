@@ -937,25 +937,32 @@ function delegatedCompletionWakeDetail(
   tasks: ReadonlyArray<OrchestrationV2Subagent>,
 ): string {
   let remainingBytes = DELEGATED_RESULT_INLINE_BYTES;
-  return taskIds
-    .map((taskId) => {
-      const task = tasks.find((candidate) => candidate.id === taskId);
-      const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
-      if (task?.result != null) {
-        // An inlined result needs no task_status pointer; a short id suffix still tells
-        // same-titled siblings apart without the ~127-char encoded node id.
-        const inlineLabel =
-          task.title == null
-            ? label
-            : `Delegated task "${task.title}" [${task.status}] (…${taskId.slice(-8)})`;
-        const detail = `${inlineLabel}:\n${task.result}`;
-        const bytes = Buffer.byteLength(detail);
-        if (bytes <= remainingBytes) {
-          remainingBytes -= bytes;
-          return detail;
-        }
+  const entries = taskIds.map((taskId) => {
+    const task = tasks.find((candidate) => candidate.id === taskId);
+    const label = `Delegated task ${taskId}${task?.title == null ? "" : ` (${task.title})`}${task === undefined ? " reached a terminal state" : ` [${task.status}]`}`;
+    if (task?.result != null) {
+      const bytes = Buffer.byteLength(`${label}:\n${task.result}`);
+      if (bytes <= remainingBytes) {
+        remainingBytes -= bytes;
+        return { taskId, task, label, inline: true };
       }
-      return `${label}. Use task_status with taskId ${taskId} to read the result.`;
+    }
+    return { taskId, task, label, inline: false };
+  });
+  const inlineTitles = entries.flatMap((entry) =>
+    entry.inline && entry.task?.title != null ? [entry.task.title] : [],
+  );
+  return entries
+    .map(({ taskId, task, label, inline }) => {
+      if (!inline || task?.result == null) {
+        return `${label}. Use task_status with taskId ${taskId} to read the result.`;
+      }
+      // The long node id is dropped only where the title alone still tells inlined results apart.
+      const title = task.title;
+      const uniqueTitle =
+        title != null && inlineTitles.indexOf(title) === inlineTitles.lastIndexOf(title);
+      const inlineLabel = uniqueTitle ? `Delegated task "${title}" [${task.status}]` : label;
+      return `${inlineLabel}:\n${task.result}`;
     })
     .join("\n\n");
 }
