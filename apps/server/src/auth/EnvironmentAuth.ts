@@ -13,7 +13,7 @@ import {
   type AuthEnvironmentScope,
   type AuthPairingLink,
   type AuthPairingCredentialResult,
-  AuthSessionId,
+  type AuthSessionId,
   type AuthSessionState,
   authScopeResponse,
   type ServerAuthDescriptor,
@@ -63,15 +63,11 @@ export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstr
 export const CLOUD_CONNECT_SUBJECT = "cloud-connect";
 
 const unsafeSession: AuthenticatedSession & { readonly audience?: undefined } = {
-  sessionId: AuthSessionId.make("unsafe-no-auth"),
+  sessionId: SessionStore.UNSAFE_NO_AUTH_SESSION_ID,
   subject: "unsafe-no-auth",
   method: "browser-session-cookie",
   scopes: AuthStandardClientScopes,
 };
-
-/** The no-auth session has no stored row, so nothing can revoke it. */
-export const isUnsafeNoAuthSession = (sessionId: AuthSessionId) =>
-  sessionId === unsafeSession.sessionId;
 
 export interface IssuedPairingLink {
   readonly id: string;

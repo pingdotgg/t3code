@@ -3757,18 +3757,16 @@ export const layer = Layer.unwrap(
         return yield* Effect.acquireUseRelease(
           sessions.markConnected(session.sessionId),
           () =>
-            EnvironmentAuth.isUnsafeNoAuthSession(session.sessionId)
-              ? framedRpcWebSocketHttpEffect
-              : Effect.raceFirst(
-                  framedRpcWebSocketHttpEffect,
-                  sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
-                    Effect.as(HttpServerResponse.empty()),
-                    Effect.catchTags({
-                      SessionCredentialVerificationError: (error) =>
-                        failEnvironmentInternal("internal_error", error),
-                    }),
-                  ),
-                ),
+            Effect.raceFirst(
+              framedRpcWebSocketHttpEffect,
+              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
+                Effect.as(HttpServerResponse.empty()),
+                Effect.catchTags({
+                  SessionCredentialVerificationError: (error) =>
+                    failEnvironmentInternal("internal_error", error),
+                }),
+              ),
+            ),
           () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(

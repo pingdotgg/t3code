@@ -478,6 +478,9 @@ export class SessionStore extends Context.Service<
   }
 >()("t3/auth/SessionStore") {}
 
+/** The session `T3CODE_UNSAFE_NO_AUTH` grants. */
+export const UNSAFE_NO_AUTH_SESSION_ID = AuthSessionId.make("unsafe-no-auth");
+
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
@@ -1208,6 +1211,8 @@ const make = Effect.gen(function* () {
     sessionId: AuthSessionId,
     proofKeyThumbprint?: string,
   ) {
+    // It has no stored row, which the read below takes as revoked.
+    if (sessionId === UNSAFE_NO_AUTH_SESSION_ID) return yield* Effect.never;
     return yield* Effect.scoped(
       Effect.gen(function* () {
         // Subscribe before reading: revocation can race with the WebSocket upgrade.
