@@ -5450,9 +5450,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               attempts,
               providerTurns,
             });
-            const messageIds = [run, unsentSource].flatMap((source) =>
-              source === undefined ? [] : [source.userMessageId],
-            );
+            const messageIds = [
+              ...[run, unsentSource].flatMap((source) =>
+                source === undefined ? [] : [source.userMessageId],
+              ),
+              // Fresh runs' messages tell a /clear from a fresh-session schedule.
+              ...runs.flatMap((source) =>
+                source.freshContext === true ? [source.userMessageId] : [],
+              ),
+            ];
             const messages = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_messages
               WHERE thread_id = ${threadId} AND (
