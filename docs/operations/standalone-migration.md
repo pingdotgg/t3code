@@ -98,7 +98,7 @@ newer server starts, so a version rollback must use a backup made before that st
    [telemetry](../user/telemetry.md) and [service environment](../user/background-service.md#configure-the-service-environment).
    `off` uses the bundled model catalog without a background fetch. An HTTPS URL can instead
    point to a catalog you operate. Keep these explicit settings for source-run servers; a
-   standalone server build can supply safe defaults once that build support is integrated.
+   `T3CODE_STANDALONE=1` server build supplies safe defaults even when bundled in the desktop app.
 
    For a foreground staging server, use an absolute path to a copied, isolated home:
 
@@ -121,8 +121,8 @@ The repository's `.env.example` contains the production T3 relay URL. Do not cop
 build. Set `T3CODE_STANDALONE=1` for each client build and set
 `GITHUB_REPOSITORY` or `T3CODE_DESKTOP_UPDATE_REPOSITORY` to your `owner/repo`. The build rejects
 T3-operated relay, diagnostics, hosted-app, and mobile legal-site URLs, T3's Expo project ID, and
-an upstream release repository. Use the same switch when building a server revision that supports
-it. A build made without the switch retains the official defaults.
+an upstream release repository. Use the same switch for server builds. A build made without the
+switch retains the official defaults.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
@@ -131,15 +131,17 @@ it. A build made without the switch retains the official defaults.
 - **Desktop:** build and sign the fork's app under an identity you control. Set the fork release
   repository at build time. Disable automatic updates with `T3CODE_DISABLE_AUTO_UPDATE=true`
   until your feed is ready, or point the managed `updates.feedUrl` at your feed. The bundled
-  server needs the runtime settings above until the standalone server build supplies their safe
-  defaults. Verify those defaults in the packaged app, not only in a source-run server.
+  server inherits the standalone build's safe telemetry and model-catalog defaults. Verify them
+  in the packaged app, not only in a source-run server.
 - **CLI and SSH hosts:** distribute the fork's server/CLI archive with its checksums.
-  A standalone server build with release-repository support points `t3 update`, self-update,
-  SSH provisioning, and triage at the configured fork. Its install scripts accept
-  `T3CODE_RELEASE_REPOSITORY=owner/repo`. Until that support and fork artifacts are in place, do
-  not use `t3 update`, `npx t3`, official install scripts, or desktop-managed SSH installation
-  as a fork delivery mechanism.
+  A standalone server build points `t3 update`, self-update, SSH provisioning, and triage at the
+  configured fork. Its install scripts accept `T3CODE_RELEASE_REPOSITORY=owner/repo`. Do not use
+  these update and installation paths until fork archives and checksums are published and tested;
+  `npx t3` still launches the official npm package.
 - **Mobile:** build and distribute forked iOS/Android apps with your signing and identifiers.
+  On revisions with standalone mobile identity support, set `T3CODE_MOBILE_BUNDLE_ID` to your
+  app identifier; the build rejects an unset value. Set `T3CODE_IOS_TEAM_ID` to your Apple team
+  when signing for iOS. The release check then uses your configured fork repository.
   Set `T3CODE_EAS_PROJECT_ID` and `T3CODE_EAS_OWNER` only for an Expo project you operate;
   without them, standalone builds disable OTA updates. Set `EXPO_PUBLIC_MARKETING_SITE_URL`
   only for your legal site. Leave `T3CODE_RELAY_URL`, Clerk, and OTLP tracing values unset for
@@ -159,7 +161,8 @@ These paths need configuration, implementation, or an egress test before declari
   compatibility information is not fetched.
 - **Updates and installers:** publish and verify fork-owned release archives, checksums, and
   desktop feeds before enabling updates. The `t3` npm launcher belongs to the official package;
-  the Intel Mac install hint and mobile maintenance release lookup still need fork paths.
+  the Intel Mac install hint still points to T3. On older mobile revisions, the maintenance
+  release lookup also points upstream.
 - **Links and fallbacks:** a standalone client build removes the ordinary hosted-app,
   download/legal, issue, prompt/thread, and crash-recovery links to T3. Audit less common routes
   such as T3 Connect account pages, the `t3.json` schema URL, MCP approval redirects, and
