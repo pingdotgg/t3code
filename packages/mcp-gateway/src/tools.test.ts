@@ -2383,7 +2383,10 @@ describe("agent profile tools", () => {
       ),
     ).toMatchObject({
       profile: { profileId: "write" },
-      sync: { failedEnvironmentIds: ["remote"] },
+      sync: {
+        failedEnvironmentIds: ["remote"],
+        failures: [{ environmentId: "remote", reason: "offline" }],
+      },
     });
   });
 
@@ -3149,7 +3152,13 @@ describe("shared skill tools", () => {
         "t3_create_skill",
         input,
       ),
-    ).toMatchObject({ skill: { skillId: "review" }, sync: { failedEnvironmentIds: ["remote"] } });
+    ).toMatchObject({
+      skill: { skillId: "review" },
+      sync: {
+        failedEnvironmentIds: ["remote"],
+        failures: [{ environmentId: "remote", reason: "Disconnected" }],
+      },
+    });
   });
 });
 

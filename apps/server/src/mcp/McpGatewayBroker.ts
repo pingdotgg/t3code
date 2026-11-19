@@ -514,6 +514,12 @@ export const make = Effect.gen(function* () {
     const holding = [...ordered.filter(reaches), ...ordered.filter((c) => !reaches(c))];
     const host = holding[0];
     if (!host) {
+      const linkOnly = envs.find((id) => evaluated.links.has(id));
+      if (linkOnly !== undefined) {
+        return yield* unavailable(
+          `Environment ${linkOnly} is reached only over this server's link, which does not carry ${method}. Open ${APP_NAME} on a device connected to it and grant it ${APP_NAME} gateway access.`,
+        );
+      }
       const unmet = requirements.find(({ environmentId }) =>
         [...bound.values()].every(({ grants }) => grants[environmentId] === undefined),
       );
