@@ -7,6 +7,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { ASSET_ROUTE_PREFIX } from "../../assets/AssetAccess.ts";
 import * as EnvironmentAuth from "../../auth/EnvironmentAuth.ts";
 import { assetFileResponse } from "../../http.ts";
+import { FILE_PAGE_NETWORK_POLICY } from "../filePagePolicy.ts";
 import * as HostFiles from "./HostFiles.ts";
 import { FRAME_SANDBOX, framePage, listingPage, openPage, signInPage } from "./hostFilesPages.ts";
 
@@ -64,7 +65,7 @@ const kindHeaders = (kind: HostFiles.FileKind): Record<string, string> => {
       return {
         ...BASE_HEADERS,
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": `sandbox ${FRAME_SANDBOX}`,
+        "Content-Security-Policy": `sandbox ${FRAME_SANDBOX}; ${FILE_PAGE_NETWORK_POLICY}`,
       };
     case "Typed":
       return { ...BASE_HEADERS, "Content-Type": kind.mimeType };

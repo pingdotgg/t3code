@@ -282,6 +282,7 @@ describe("AssetAccess", () => {
           kind: "file",
           path: canonicalFile,
           mimeType,
+          htmlPolicy: "file-page",
         });
         yield* fs.writeFileString(path.join(outside, "sibling.png"), "private sibling");
         expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
@@ -1087,11 +1088,13 @@ describe("AssetAccess", () => {
         kind: "file",
         path: canonicalHtmlPath,
         renderIntent: "file-preview",
+        htmlPolicy: "file-page",
       });
       expect(yield* resolveAsset(token, "report.css")).toEqual({
         kind: "file",
         path: canonicalCssPath,
         renderIntent: "file-preview",
+        htmlPolicy: "file-page",
       });
       yield* fileSystem.makeDirectory(path.join(root, "clips"));
       for (const mediaName of ["clips/clip.mp4", "clips/clip.webm", "clips/clip.mp3"]) {
@@ -1117,6 +1120,7 @@ describe("AssetAccess", () => {
             kind: "file",
             path: canonicalFontPath,
             renderIntent: "file-preview",
+            htmlPolicy: "file-page",
           });
         }
       }
@@ -1259,7 +1263,11 @@ describe("AssetAccess", () => {
           const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
           const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
           const token = suffix.slice(0, suffix.indexOf("/"));
-          expect(yield* resolveAsset(token, name)).toEqual({ kind: "file", path: canonicalPath });
+          expect(yield* resolveAsset(token, name)).toEqual({
+            kind: "file",
+            path: canonicalPath,
+            htmlPolicy: "file-page",
+          });
           expect(yield* resolveAsset(token, siblingName)).toBeNull();
           expect(yield* resolveAsset(token, "private.docx")).toBeNull();
           expect(yield* resolveAsset(token, `../${name}`)).toBeNull();
@@ -1311,7 +1319,11 @@ describe("AssetAccess", () => {
         const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
         const token = suffix.slice(0, suffix.indexOf("/"));
 
-        expect(yield* resolveAsset(token, name)).toEqual({ kind: "file", path: canonicalFile });
+        expect(yield* resolveAsset(token, name)).toEqual({
+          kind: "file",
+          path: canonicalFile,
+          htmlPolicy: "file-page",
+        });
         if (name.endsWith(".png")) {
           expect(yield* resolveAsset(token, "other.png")).toBeNull();
         }

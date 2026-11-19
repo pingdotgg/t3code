@@ -40,6 +40,7 @@ import {
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
+import { FILE_PAGE_NETWORK_POLICY } from "./fork/filePagePolicy.ts";
 import { spaFrameHeaders } from "./fork/sameOriginFrame.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -101,10 +102,15 @@ export function assetResponseHeaders(
     readonly download?: boolean;
     readonly fileName?: string;
     readonly mimeType?: string;
+    readonly htmlPolicy?: "file-page";
   },
 ): Record<string, string> {
   const lowerPath = filePath.toLowerCase();
   const inlineMimeType = options?.mimeType?.split(";", 1)[0]?.trim();
+  const htmlContentSecurityPolicy =
+    options?.htmlPolicy === "file-page"
+      ? `${HTML_CONTENT_SECURITY_POLICY}; ${FILE_PAGE_NETWORK_POLICY}`
+      : HTML_CONTENT_SECURITY_POLICY;
   return {
     "Cache-Control": "private, max-age=3600",
     "X-Content-Type-Options": "nosniff",
@@ -126,13 +132,13 @@ export function assetResponseHeaders(
                   ? "text/html; charset=utf-8"
                   : "application/pdf",
               ...(inlineMimeType.toLowerCase() === "text/html"
-                ? { "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY }
+                ? { "Content-Security-Policy": htmlContentSecurityPolicy }
                 : {}),
             }
           : lowerPath.endsWith(".html") || lowerPath.endsWith(".htm")
             ? {
                 "Content-Type": "text/html; charset=utf-8",
-                "Content-Security-Policy": HTML_CONTENT_SECURITY_POLICY,
+                "Content-Security-Policy": htmlContentSecurityPolicy,
               }
             : {}),
     ...(!options?.download && lowerPath.endsWith(".svg")
@@ -171,6 +177,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
     readonly renderIntent?: "mcp-app" | "file-preview";
+    readonly htmlPolicy?: "file-page";
   },
   rangeHeader?: string,
   ifRangeHeader?: string,

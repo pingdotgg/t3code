@@ -215,6 +215,7 @@ export type ResolvedAsset =
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
       readonly renderIntent?: "mcp-app" | "file-preview";
+      readonly htmlPolicy?: "file-page";
     }
   | {
       readonly kind: "bytes";
@@ -1069,6 +1070,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           path: canonicalFile,
           mimeType,
           file,
+          htmlPolicy: "file-page",
           ...(claims.download ? { download: true, fileName: path.basename(canonicalFile) } : {}),
         } satisfies ResolvedAsset)
       : null;
@@ -1080,7 +1082,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
       relativePath: claims.relativePath,
     });
     return exactWorkspaceFile
-      ? ({ kind: "file", path: exactWorkspaceFile } satisfies ResolvedAsset)
+      ? ({
+          kind: "file",
+          path: exactWorkspaceFile,
+          htmlPolicy: "file-page",
+        } satisfies ResolvedAsset)
       : null;
   }
   if (!isPreviewDependencyPath(decodedPath, path)) return null;
@@ -1092,6 +1098,11 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
     previewDependency: true,
   });
   return workspaceFile
-    ? ({ kind: "file", path: workspaceFile, renderIntent: "file-preview" } satisfies ResolvedAsset)
+    ? ({
+        kind: "file",
+        path: workspaceFile,
+        renderIntent: "file-preview",
+        htmlPolicy: "file-page",
+      } satisfies ResolvedAsset)
     : null;
 });

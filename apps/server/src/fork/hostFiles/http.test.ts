@@ -350,7 +350,9 @@ describe("host file routes", () => {
       expect(report.response.headers.get("content-type")).toBe("text/html; charset=utf-8");
       for (const html of [report, old]) {
         expect(html.response.headers.get("content-type")).toBe("text/html; charset=utf-8");
-        expect(html.response.headers.get("content-security-policy")).toBe(`sandbox ${SANDBOX}`);
+        const policy = html.response.headers.get("content-security-policy");
+        expect(policy?.startsWith(`sandbox ${SANDBOX}; `)).toBe(true);
+        expect(policy).toContain("connect-src data: blob:");
       }
       expect(report.response.headers.get("cache-control")).toBe("no-store");
       expect(text(report.body)).toBe("<link rel=stylesheet href=style.css><img src=fig.png>");
