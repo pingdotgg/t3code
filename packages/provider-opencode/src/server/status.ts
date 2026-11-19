@@ -283,6 +283,7 @@ function openCodeCapabilitiesForModel(input: {
 
 interface OpenCodeRelease {
   readonly providerID: string;
+  readonly id: string;
   readonly family?: string | undefined;
   readonly released?: number | undefined;
   readonly deprecated?: boolean | undefined;
@@ -299,8 +300,9 @@ function markOpenCodeLegacy(
     readonly release: OpenCodeRelease;
   }>,
 ): Array<ServerProviderModel> {
-  const familyKey = ({ providerID, family }: OpenCodeRelease) =>
-    family ? `${providerID}/${family}` : undefined;
+  // A `-latest` alias's release date is the alias's creation date, not its target's.
+  const familyKey = ({ providerID, id, family }: OpenCodeRelease) =>
+    family && !id.endsWith("-latest") ? `${providerID}/${family}` : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
     const key = familyKey(release);
@@ -349,6 +351,7 @@ function flattenOpenCodeModels(
         },
         release: {
           providerID: provider.id,
+          id: model.id,
           family: model.family,
           released: Number.isNaN(released) ? undefined : released,
           deprecated: model.status === "deprecated",
