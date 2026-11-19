@@ -67,11 +67,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      pull-requests: read
     name: Lint
     runs-on: ${{ github.repository == 'pingdotgg/t3code' && 'blacksmith-8vcpu-ubuntu-2404' || 'ubuntu-24.04' }}
-    permissions:
-      contents: read
-      pull-requests: read
     timeout-minutes: 10
     steps:
       - name: Checkout
