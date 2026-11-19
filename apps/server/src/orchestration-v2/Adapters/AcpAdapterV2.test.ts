@@ -5817,8 +5817,6 @@ describe("AcpAdapterV2", () => {
       const statuses = Option.getOrElse(yield* Fiber.join(after), () => []);
       // regression: #39410 the handoff's tool call stayed running after the session closed.
       assert.include(["completed", "failed", "interrupted", "cancelled"], statuses.at(-1));
-      // Release subscribers are gone before this close, so the manager ends the persisted item.
-      assert.isTrue(harness.runtime.backgroundTasksEndWithProcess);
     }).pipe(Effect.provide(layerTest)),
   );
 

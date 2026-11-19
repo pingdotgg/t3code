@@ -9705,7 +9705,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
-          backgroundTasksEndWithProcess: true,
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {
