@@ -1,7 +1,7 @@
 import type { OrchestrationV2Run, OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 export function unsentManualContinuationSource(
-  run: OrchestrationV2Run | undefined,
+  run: Pick<OrchestrationV2Run, "manualContinuationOfRunId"> | undefined,
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "attempts" | "providerTurns">,
 ) {
   let sourceId = run?.manualContinuationOfRunId;

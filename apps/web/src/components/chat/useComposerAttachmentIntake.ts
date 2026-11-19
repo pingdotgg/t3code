@@ -322,6 +322,7 @@ export function useComposerAttachmentIntake(input: {
     const stillPreparingIds = removePreparingComposerImages(
       attachmentTargetKey,
       new Set(preparingImages.map((image) => image.id)),
+      { cancelSubmission: compressionErrors.size > 0 || questionDiscarded },
     );
     if (questionAttachmentTarget)
       changeQuestionAttachmentPreparation(questionAttachmentTarget, -stillPreparingIds.size);
@@ -372,7 +373,11 @@ export function useComposerAttachmentIntake(input: {
   };
 
   const removeComposerImage = (imageId: string) => {
-    if (removePreparingComposerImages(attachmentTargetKey, new Set([imageId])).size > 0) {
+    if (
+      removePreparingComposerImages(attachmentTargetKey, new Set([imageId]), {
+        cancelSubmission: true,
+      }).size > 0
+    ) {
       // Its compression finishes in the background and is dropped.
       if (questionAttachmentTarget)
         changeQuestionAttachmentPreparation(questionAttachmentTarget, -1);
