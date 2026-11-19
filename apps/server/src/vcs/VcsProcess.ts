@@ -42,6 +42,7 @@ export interface VcsProcessInput {
   readonly appendTruncationMarker?: boolean;
   readonly classifyFailure?: SourceControlProcessInput["classifyFailure"];
   readonly notFoundDetail?: string;
+  readonly failureDetail?: SourceControlProcessInput["failureDetail"];
   readonly concurrency?: SourceControlProcessInput["concurrency"];
 }
 
@@ -369,6 +370,10 @@ export const make = Effect.gen(function* () {
           ...error,
           detail: GIT_INDEX_LOCKED_DETAIL,
         });
+      }
+      const failureDetail = input.failureDetail?.(result.stderr) ?? null;
+      if (failureDetail !== null) {
+        return yield* new VcsProcessExitError({ ...error, detail: failureDetail });
       }
       return yield* error;
     }
