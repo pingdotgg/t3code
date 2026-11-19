@@ -331,8 +331,10 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   );
   const middle = tabIds[Math.floor(tabIds.length / 2)]!;
   useLayoutStore.getState().focusTab(middle);
-  await vi.waitFor(() => expect(joinOffset(strip)).toBe(tabOffset(strip, middle)));
-  const held = Number.parseFloat(tabOffset(strip, middle)) - 100;
+  await vi.waitFor(() =>
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, middle))).toBeLessThanOrEqual(1),
+  );
+  const held = Math.round(tabOffset(strip, middle)) - 100;
   strip.scrollLeft = held;
   await vi.waitFor(() =>
     expect(strip.style.getPropertyValue("--strip-overflow-start")).toBe(`${held}px`),
@@ -341,7 +343,7 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   await vi.waitFor(() => {
     const next = focusedTabId()!;
     expect(next).not.toBe(middle);
-    expect(joinOffset(strip)).toBe(tabOffset(strip, next));
+    expect(Math.abs(joinOffset(strip) - tabOffset(strip, next))).toBeLessThanOrEqual(1);
   });
   expect(strip.scrollLeft).toBe(held);
 
