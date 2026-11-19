@@ -3218,6 +3218,9 @@
   "79e87310525279f8": "Direcionar",
   "a1e23f7b109d5925": "Sua mensagem chega ao agente imediatamente, mudando o que ele está fazendo.",
   "683838755eb7fe37": "Enquanto o agente está em execução",
+  "b4851a540d5320db": "Links de pull requests",
+  "8d5d22328771bfb6": "Abrir no app do GitHub",
+  "f962ae026cef0292": "Abra links de pull requests no app do GitHub quando ele estiver instalado, em vez de no T3 Code.",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Mantenha pressionado o botão de enviar para usar a outra opção em uma única mensagem. Com um teclado físico, segure ",
@@ -3803,6 +3806,8 @@
   "4c2495d10dfbf72f": "fila",
   "4ebe2aa17b91e168": "direcionar",
   "48f04bb3132077ef": "enquanto o agente está em execução",
+  "7644d62ec661fd44": "links de pull requests",
+  "59944f23cfc6878a": "abrir no app do github",
   "ffb1ded95eb81974": "arquivar",
   "3d5aeb06f2128b12": "arquivadas",
   "2a34f68d985e9fde": "restaurar",

@@ -1,6 +1,9 @@
 import { EnvironmentId, ProjectId, SourceControlProviderKind } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { nativePullRequestDestination as destination } from "../../lib/pullRequestNavigation";
+import {
+  nativePullRequestDestination as destination,
+  shouldOpenPullRequestInGitHubApp,
+} from "../../lib/pullRequestNavigation";
 
 const context = { environmentId: "remote", projectId: "project" };
 const project = (id: string, canonicalKey: string, provider: string, remoteUrl: string) => ({
@@ -76,4 +79,17 @@ describe("native PR entry points", () => {
       nativePullRequestDestination("https://github.com/org/repo/pull/12", null, projects),
     ).toBeNull();
   });
+});
+
+it.each([
+  ["https://github.com/org/repo/pull/12/files#diff", true, true],
+  ["https://github.com/org/repo/pull/12", false, false],
+  ["https://github.com/org/repo/pull/12", undefined, false],
+  ["https://git.example/group/sub/repo/-/merge_requests/9", true, false],
+  ["http://forgejo.test:3000/org/repo/pulls/3", true, false],
+  ["https://git.cafe/org/repo/pull/12", true, false],
+  ["https://github.com/org/repo/issues/12", true, false],
+  ["invalid", true, false],
+])("routes %s externally with GitHub preference %s: %s", (url, enabled, expected) => {
+  expect(shouldOpenPullRequestInGitHubApp(url, enabled)).toBe(expected);
 });

@@ -3218,6 +3218,9 @@
   "79e87310525279f8": "Redirigir",
   "a1e23f7b109d5925": "Tu mensaje llega al agente al instante y cambia aquello en lo que está trabajando.",
   "683838755eb7fe37": "Mientras el agente trabaja",
+  "b4851a540d5320db": "Enlaces de solicitudes de incorporación de cambios",
+  "8d5d22328771bfb6": "Abrir en la app de GitHub",
+  "f962ae026cef0292": "Abre los enlaces de solicitudes de incorporación de cambios en la app de GitHub cuando esté instalada, en lugar de en T3 Code.",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Mantén pulsado el botón de enviar para usar la otra opción con un solo mensaje. Con un teclado físico, mantén ",
@@ -3803,6 +3806,8 @@
   "4c2495d10dfbf72f": "cola",
   "4ebe2aa17b91e168": "redirigir",
   "48f04bb3132077ef": "mientras el agente trabaja",
+  "7644d62ec661fd44": "enlaces de solicitudes de incorporación de cambios",
+  "59944f23cfc6878a": "abrir en la app de github",
   "ffb1ded95eb81974": "archivar",
   "3d5aeb06f2128b12": "archivados",
   "2a34f68d985e9fde": "restaurar",

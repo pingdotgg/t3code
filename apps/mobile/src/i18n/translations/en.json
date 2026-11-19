@@ -3224,6 +3224,9 @@
   "79e87310525279f8": "Steer",
   "a1e23f7b109d5925": "Your message reaches the agent right away, changing what it is working on.",
   "683838755eb7fe37": "While the agent is running",
+  "b4851a540d5320db": "Pull request links",
+  "8d5d22328771bfb6": "Open in GitHub app",
+  "f962ae026cef0292": "Open pull request links in the GitHub app when it is installed, instead of in T3 Code.",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Long-press the send button to use the other option for a single message. With a hardware keyboard, hold ",
@@ -3809,6 +3812,8 @@
   "4c2495d10dfbf72f": "queue",
   "4ebe2aa17b91e168": "steer",
   "48f04bb3132077ef": "while the agent is running",
+  "7644d62ec661fd44": "pull request links",
+  "59944f23cfc6878a": "open in github app",
   "ffb1ded95eb81974": "archive",
   "3d5aeb06f2128b12": "archived",
   "2a34f68d985e9fde": "restore",

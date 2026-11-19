@@ -143,6 +143,8 @@ export interface Preferences {
   readonly pullRequestActivityVisibility?: PullRequestActivityVisibility;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
+  /** Open pull request links in the GitHub app instead of T3 Code's own pull request view. */
+  readonly openPullRequestsInGitHubApp?: boolean;
   readonly themeId?: MobileThemeId;
   readonly lightThemeId?: MobileThemeId;
   readonly darkThemeId?: MobileThemeId;
@@ -236,6 +238,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestActivityVisibility?: PullRequestActivityVisibility;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
+    openPullRequestsInGitHubApp?: boolean;
     themeId?: MobileThemeId;
     lightThemeId?: MobileThemeId;
     darkThemeId?: MobileThemeId;
@@ -282,6 +285,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.navigationTabOrder = parsed.navigationTabOrder.filter(
       (tab): tab is string => typeof tab === "string",
     );
+  }
+
+  if (typeof parsed.openPullRequestsInGitHubApp === "boolean") {
+    preferences.openPullRequestsInGitHubApp = parsed.openPullRequestsInGitHubApp;
   }
 
   if (parsed.sharedSlotTab === "pullRequests" || parsed.sharedSlotTab === "issues") {

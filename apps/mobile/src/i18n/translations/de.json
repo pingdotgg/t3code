@@ -3223,6 +3223,9 @@
   "79e87310525279f8": "Umlenken",
   "a1e23f7b109d5925": "Deine Nachricht erreicht den Agenten sofort und ändert, woran er arbeitet.",
   "683838755eb7fe37": "Während der Agent läuft",
+  "b4851a540d5320db": "Pull-Request-Links",
+  "8d5d22328771bfb6": "In der GitHub-App öffnen",
+  "f962ae026cef0292": "Pull-Request-Links in der GitHub-App öffnen, wenn sie installiert ist, statt in T3 Code.",
   "afda415d2d75a5d3": "Chat",
   "85163bc64c8c56a1": [
     "Drücke lange auf die Senden-Schaltfläche, um für eine einzelne Nachricht die andere Option zu verwenden. Mit einer Hardware-Tastatur halte beim Senden ",
@@ -3808,6 +3811,8 @@
   "4c2495d10dfbf72f": "warteschlange",
   "4ebe2aa17b91e168": "umlenken",
   "48f04bb3132077ef": "während der agent läuft",
+  "7644d62ec661fd44": "pull-request-links",
+  "59944f23cfc6878a": "in der github-app öffnen",
   "ffb1ded95eb81974": "archivieren",
   "3d5aeb06f2128b12": "archiviert",
   "2a34f68d985e9fde": "wiederherstellen",

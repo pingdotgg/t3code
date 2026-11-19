@@ -3224,6 +3224,9 @@
   "79e87310525279f8": "Styr om",
   "a1e23f7b109d5925": "Ditt meddelande når agenten direkt och ändrar det den arbetar med.",
   "683838755eb7fe37": "Medan agenten körs",
+  "b4851a540d5320db": "Länkar till pull requests",
+  "8d5d22328771bfb6": "Öppna i GitHub-appen",
+  "f962ae026cef0292": "Öppna länkar till pull requests i GitHub-appen när den är installerad, i stället för i T3 Code.",
   "afda415d2d75a5d3": "Chatt",
   "85163bc64c8c56a1": [
     "Tryck länge på skicka-knappen för att använda det andra alternativet för ett enskilt meddelande. Med ett fysiskt tangentbord håller du ned ",
@@ -3809,6 +3812,8 @@
   "4c2495d10dfbf72f": "köa",
   "4ebe2aa17b91e168": "styr om",
   "48f04bb3132077ef": "medan agenten körs",
+  "7644d62ec661fd44": "länkar till pull requests",
+  "59944f23cfc6878a": "öppna i github-appen",
   "ffb1ded95eb81974": "arkivera",
   "3d5aeb06f2128b12": "arkiverade",
   "2a34f68d985e9fde": "återställ",

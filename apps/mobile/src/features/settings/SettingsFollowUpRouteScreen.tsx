@@ -10,6 +10,7 @@ import { DEFAULT_FOLLOW_UP_BEHAVIOR, type FollowUpBehavior } from "../../lib/fol
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { ListChoiceRow as SettingsChoiceRow } from "../../components/ui/ListChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 
 const FOLLOW_UP_OPTIONS: ReadonlyArray<{
@@ -40,6 +41,10 @@ export function SettingsFollowUpRouteScreen() {
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
     : null;
 
+  const openInGitHubApp =
+    AsyncResult.isSuccess(preferencesResult) &&
+    preferencesResult.value.openPullRequestsInGitHubApp === true;
+
   const content = (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -67,6 +72,18 @@ export function SettingsFollowUpRouteScreen() {
           keyboard, hold <Var>{Platform.OS === "android" ? "Ctrl" : "Command"}</Var> while sending.
         </T>
       </Text>
+      <SettingsSection title={gt("Pull request links")}>
+        <SettingsSwitchRow
+          icon="arrow.up.right"
+          label={gt("Open in GitHub app")}
+          subtitle={gt(
+            "Open pull request links in the GitHub app when it is installed, instead of in T3 Code.",
+          )}
+          value={openInGitHubApp}
+          disabled={!preferencesReady}
+          onValueChange={(value) => savePreferences({ openPullRequestsInGitHubApp: value })}
+        />
+      </SettingsSection>
     </ScrollView>
   );
 

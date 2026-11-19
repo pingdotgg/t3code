@@ -52,3 +52,9 @@ export function pullRequestCandidateForIssueLink(
     navigationUrl: parsePullRequestAnchor(candidateUrl) ? candidateUrl : undefined,
   };
 }
+
+export function shouldOpenPullRequestInGitHubApp(url: string, enabled: boolean | undefined) {
+  if (enabled !== true) return false;
+  const parsed = sourceControlClients.parseChangeRequestUrl(url);
+  return parsed?.definition.kind === "github" && parsed.link.host === "github.com";
+}
