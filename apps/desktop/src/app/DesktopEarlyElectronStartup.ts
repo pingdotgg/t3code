@@ -25,6 +25,7 @@ interface EarlyDesktopSettingsInput {
 
 type EarlyLinuxElectronOptionsInput = EarlyDesktopSettingsInput & {
   readonly sessionBus: LinuxSessionBus;
+  readonly fileExists: (path: string) => boolean;
 };
 
 export interface EarlyLinuxElectronOptions {
@@ -153,6 +154,10 @@ export function resolveEarlyLinuxElectronOptions(
       preference,
       env: input.env,
       sessionBus: input.sessionBus,
+      hasSavedSecrets: () =>
+        ["connection-catalog.json", "saved-environments.json"].some((name) =>
+          input.fileExists(input.joinPath(resolveEarlyDesktopSettingsPath(input), "..", name)),
+        ),
     }),
   };
 }

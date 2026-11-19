@@ -8,8 +8,13 @@ import {
 
 const emptyBus: LinuxSessionBus = { listNames: () => [], getNameOwner: () => null };
 
-const autoSwitch = (env: NodeJS.ProcessEnv, sessionBus = emptyBus) =>
-  resolveLinuxPasswordStoreSwitch({ preference: "auto", env, sessionBus });
+const autoSwitch = (env: NodeJS.ProcessEnv, sessionBus = emptyBus, hasSavedSecrets = false) =>
+  resolveLinuxPasswordStoreSwitch({
+    preference: "auto",
+    env,
+    sessionBus,
+    hasSavedSecrets: () => hasSavedSecrets,
+  });
 
 const busWith = (
   owners: Record<string, string>,
@@ -71,6 +76,13 @@ describe("linuxSecretStorage", () => {
     expect(autoSwitch(lxqt, busWith({}, ["org.kde.kwalletd6", "org.freedesktop.secrets"]))).toBe(
       "gnome-libsecret",
     );
+    expect(
+      autoSwitch(
+        lxqt,
+        busWith({ "org.kde.kwalletd6": ":1.4", "org.freedesktop.secrets": ":1.4" }),
+        true,
+      ),
+    ).toBe("gnome-libsecret");
     expect(
       autoSwitch(lxqt, {
         listNames: () => {
