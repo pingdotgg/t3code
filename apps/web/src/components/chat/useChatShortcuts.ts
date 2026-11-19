@@ -27,6 +27,8 @@ const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   "rightPanel.toggle",
   "rightPanel.close",
   "rightPanel.toggleMaximized",
+  "rightPanel.nextTab",
+  "rightPanel.previousTab",
 ]);
 
 interface ChatShortcutsInput {
@@ -90,7 +92,13 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     }
 
     const command = resolveChatShortcutCommand(event, keybindings, input.scriptKeybindings, {
-      context: shortcutContext,
+      context: inSideChatPane
+        ? {
+            ...shortcutContext,
+            composerFocus:
+              document.activeElement?.getAttribute("data-testid") === "composer-editor",
+          }
+        : shortcutContext,
     });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
     const run =
