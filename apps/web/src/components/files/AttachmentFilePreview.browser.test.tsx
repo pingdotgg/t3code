@@ -1561,6 +1561,7 @@ it("keeps a workspace PDF open across URL renewals and reloads it when the file 
     assetUrlState.mockReturnValue({ _tag: "Success", url: original, expiresAt: 0 });
     await screen.rerender(preview("fourth"));
     expect(screen.container.querySelector("iframe")?.src.startsWith(original)).toBe(true);
+    await expect.element(colors).toHaveAttribute("aria-pressed", String(!initiallyDark));
   } finally {
     URL.revokeObjectURL(original);
     URL.revokeObjectURL(edited);

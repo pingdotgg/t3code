@@ -280,10 +280,7 @@ export function WorkspaceBrowserPreview(props: {
       </div>
     );
   }
-  if (
-    assetUrl._tag !== "Success" ||
-    (pdf && assetUrl.fileRevision === undefined && assetUrl.waiting)
-  ) {
+  if (assetUrl._tag !== "Success") {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground">
         <Spinner size="lg" />
@@ -297,6 +294,7 @@ export function WorkspaceBrowserPreview(props: {
       documentId={`${props.environmentId}:${resource._tag}:${props.threadRef.threadId}:${props.absolutePath}`}
       title={props.title}
       pdf={pdf}
+      pdfPending={pdf && assetUrl.fileRevision === undefined && assetUrl.waiting === true}
       pdfActions={
         <WorkspacePdfSaveAction
           environmentId={props.environmentId}

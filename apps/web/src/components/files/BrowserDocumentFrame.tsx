@@ -91,6 +91,7 @@ function PdfDocument(props: {
   title: string;
   documentKey: string;
   actions?: ReactNode;
+  pending?: boolean;
 }) {
   const gt = useGT();
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
@@ -100,6 +101,7 @@ function PdfDocument(props: {
   const dark =
     override ??
     (appearance === "dark" || (appearance === "match-app" && themeAppearance === "dark"));
+  if (props.pending) return <FileSurfaceLoading />;
   return (
     <div
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
@@ -194,6 +196,7 @@ export function BrowserDocumentFrame(props: {
   readonly documentId?: string | undefined;
   /** Toolbar actions for the in-app PDF viewer; Chromium's own viewer brings its own. */
   readonly pdfActions?: ReactNode;
+  readonly pdfPending?: boolean;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -203,6 +206,7 @@ export function BrowserDocumentFrame(props: {
       src={props.src}
       title={props.title}
       actions={props.pdfActions}
+      pending={props.pdfPending === true}
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
