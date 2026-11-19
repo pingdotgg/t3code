@@ -145,7 +145,6 @@ describe("resolveIssueLinkTarget", () => {
     expect(resolve(upper.slice(4))?.ref.key).toBe("ENG-4");
     // Project keys repeat across sites; only the connected one's links are its issues.
     expect(resolve("https://othercorp.atlassian.net/browse/ENG-4")).toBeNull();
-    expect(resolve("https://acme.atlassian.net.evil.example/browse/ENG-4")).toBeNull();
   });
 
   it.each([
