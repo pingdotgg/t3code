@@ -10808,6 +10808,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           yield* trackClaudeGoal({ nativeThreadId: liveQuery.nativeThreadId, context, message });
+          // A CLI that reports success but sends no boundary moves on to other frames.
+          if (
+            context.compaction?.status === "completed" &&
+            context.heldSteers.length > 0 &&
+            !(
+              message.type === "system" &&
+              (message.subtype === "compact_boundary" || message.subtype === "status")
+            ) &&
+            !(yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+          ) {
+            yield* offerHeldSteers(context);
+          }
 
           if (message.type === "stream_event" && !message.parent_tool_use_id) {
             const event = message.event;
@@ -11077,8 +11089,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 if (budget !== undefined) budget.compacting = null;
               }
             }
-            // Stop settles held steers with the turn instead.
-            if (!interrupted) yield* offerHeldSteers(context);
+            // Stop settles held steers with the turn instead. A success waits for its boundary,
+            // which clears the app notes history lost, so a held steer carries them again.
+            if (!interrupted && message.compact_result !== "success") {
+              yield* offerHeldSteers(context);
+            }
           }
 
           // Every trigger discards the conversation, so reset whatever the trigger is.
@@ -13989,7 +14004,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             });
             yield* emitSteerStatus(currentTurn, messageId, "pending");
             // Returns without waiting: a running steer effect would block this thread's Stop.
-            if (currentTurn.compaction?.status === "running" || currentTurn.releasingHeldSteers) {
+            // A compaction that succeeded still holds steers until its boundary; one that arrives
+            // while earlier steers wait joins them, whatever the flags say mid-release.
+            if (
+              currentTurn.compaction !== null ||
+              currentTurn.releasingHeldSteers ||
+              currentTurn.heldSteers.length > 0
+            ) {
               held = true;
               const release = Scope.close(reservationScope, Exit.void);
               const delivered = yield* Deferred.make<

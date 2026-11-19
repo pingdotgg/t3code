@@ -11049,42 +11049,112 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each(["boundary", "failed", "interrupt", "query exit"] as const)(
-    "holds a steer until Claude's auto-compaction settles: %s",
-    (outcome) =>
-      Effect.gen(function* () {
-        const harness = yield* makeWakeHarnessWithOptions({
-          close: (sdkMessages) => Queue.shutdown(sdkMessages),
-        });
-        const idAllocator = yield* IdAllocator.IdAllocatorV2;
-        const appContext = [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }];
-        const input = {
-          ...makeClaudeTestTurnInput({
-            threadId: harness.threadId,
+  it.effect.each([
+    "boundary",
+    "success then boundary",
+    "failed",
+    "interrupt",
+    "query exit",
+  ] as const)("holds a steer until Claude's auto-compaction settles: %s", (outcome) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+      });
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const appContext = [{ key: "mcp_app_item-1", text: "Created Jira issue PROJ-42" }];
+      const input = {
+        ...makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make(`claude-held-steer-${outcome}`),
+          text: "Keep orchestrating.",
+          attachments: [],
+        }),
+        appContext,
+      };
+      yield* harness.runtime.startTurn(input);
+      const providerTurnId = idAllocator.derive.providerTurn({
+        driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+        nativeTurnId: `turn:${input.attemptId}`,
+      });
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: "00000000-0000-4000-8000-000000038701",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      // A "now" steer would abort the compaction, so it waits without blocking Stop.
+      const held = yield* harness.runtime.steerTurn({
+        threadId: harness.threadId,
+        runId: input.runId,
+        providerThread: harness.providerThread,
+        providerTurnId,
+        message: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          messageId: MessageId.make("held-steer"),
+          text: "Subagent finished.",
+          attachments: [],
+        },
+        appContext,
+      });
+      assert.lengthOf(harness.offeredMessages, 1);
+      assert.isDefined(held);
+      const delivery = yield* held!.delivered.pipe(Effect.exit, Effect.forkScoped);
+      const steerStatuses = () =>
+        harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : []));
+
+      if (outcome === "interrupt" || outcome === "query exit") {
+        if (outcome === "interrupt") {
+          yield* harness.runtime.interruptTurn({
             providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`claude-held-steer-${outcome}`),
-            text: "Keep orchestrating.",
-            attachments: [],
-          }),
-          appContext,
-        };
-        yield* harness.runtime.startTurn(input);
-        const providerTurnId = idAllocator.derive.providerTurn({
-          driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
-          nativeTurnId: `turn:${input.attemptId}`,
-        });
+            providerTurnId,
+          });
+        } else {
+          yield* Queue.shutdown(harness.sdkMessages);
+        }
+        assert.equal(
+          (yield* Queue.take(harness.terminalReceipts)).status,
+          outcome === "interrupt" ? "interrupted" : "failed",
+        );
+        assert.lengthOf(harness.offeredMessages, 1);
+        // Declined, it comes back as a follow-up, or the orchestrator reports it after Stop.
+        const exit = yield* Fiber.join(delivery);
+        const failure = Exit.isFailure(exit)
+          ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
+          : undefined;
+        assert.equal(failure?._tag, "ProviderAdapterSteerDeclinedError");
+        const notice = harness.events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
+              ? [event.turnItem]
+              : [],
+          )
+          .find((item) => item.message?.includes("Subagent finished."));
+        // Pending while held; a declined hold leaves its outcome to the follow-up or Stop.
+        assert.deepEqual(steerStatuses(), ["pending"]);
+        assert.isUndefined(notice);
+        return;
+      }
+      const boundary = outcome === "boundary" || outcome === "success then boundary";
+      if (outcome === "success then boundary") {
         yield* harness.offerAndWait(
           claudeSdkFrame({
             type: "system",
             subtype: "status",
-            status: "compacting",
-            uuid: "00000000-0000-4000-8000-000000038701",
+            status: null,
+            compact_result: "success",
+            uuid: "00000000-0000-4000-8000-000000038703",
             session_id: WAKE_NATIVE_SESSION,
           }),
         );
-        // A "now" steer would abort the compaction, so it waits without blocking Stop.
-        const held = yield* harness.runtime.steerTurn({
+        // Still held until the boundary clears the notes history lost; a newer steer
+        // joins it rather than going first.
+        yield* harness.runtime.steerTurn({
           threadId: harness.threadId,
           runId: input.runId,
           providerThread: harness.providerThread,
@@ -11092,87 +11162,51 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           message: {
             createdBy: "agent",
             creationSource: "mcp",
-            messageId: MessageId.make("held-steer"),
-            text: "Subagent finished.",
+            messageId: MessageId.make("held-steer-later"),
+            text: "Second subagent finished.",
             attachments: [],
           },
-          appContext,
         });
         assert.lengthOf(harness.offeredMessages, 1);
-        assert.isDefined(held);
-        const delivery = yield* held!.delivered.pipe(Effect.exit, Effect.forkScoped);
-        const steerStatuses = () =>
-          harness.events.flatMap((event) => (event.type === "steer.updated" ? [event.status] : []));
-
-        if (outcome === "interrupt" || outcome === "query exit") {
-          if (outcome === "interrupt") {
-            yield* harness.runtime.interruptTurn({
-              providerThread: harness.providerThread,
-              providerTurnId,
-            });
-          } else {
-            yield* Queue.shutdown(harness.sdkMessages);
-          }
-          assert.equal(
-            (yield* Queue.take(harness.terminalReceipts)).status,
-            outcome === "interrupt" ? "interrupted" : "failed",
-          );
-          assert.lengthOf(harness.offeredMessages, 1);
-          // Declined, it comes back as a follow-up, or the orchestrator reports it after Stop.
-          const exit = yield* Fiber.join(delivery);
-          const failure = Exit.isFailure(exit)
-            ? Option.getOrUndefined(Cause.findErrorOption(exit.cause))
-            : undefined;
-          assert.equal(failure?._tag, "ProviderAdapterSteerDeclinedError");
-          const notice = harness.events
-            .flatMap((event) =>
-              event.type === "turn_item.updated" && event.turnItem.type === "system_notice"
-                ? [event.turnItem]
-                : [],
-            )
-            .find((item) => item.message?.includes("Subagent finished."));
-          // Pending while held; a declined hold leaves its outcome to the follow-up or Stop.
-          assert.deepEqual(steerStatuses(), ["pending"]);
-          assert.isUndefined(notice);
-          return;
-        }
-        yield* harness.offerAndWait(
-          outcome === "boundary"
-            ? claudeSdkFrame({
-                type: "system",
-                subtype: "compact_boundary",
-                compact_metadata: { trigger: "auto", pre_tokens: 3000, post_tokens: 600 },
-                uuid: "00000000-0000-4000-8000-000000038702",
-                session_id: WAKE_NATIVE_SESSION,
-              })
-            : claudeSdkFrame({
-                type: "system",
-                subtype: "status",
-                status: null,
-                compact_result: "failed",
-                compact_error: "Compaction failed.",
-                uuid: "00000000-0000-4000-8000-000000038702",
-                session_id: WAKE_NATIVE_SESSION,
-              }),
-        );
-        assert.lengthOf(harness.offeredMessages, 2);
-        assert.equal(harness.offeredMessages[1]?.priority, "now");
-        assert.isTrue(Exit.isSuccess(yield* Fiber.join(delivery)));
-        const sent = JSON.stringify(harness.offeredMessages[1]?.message.content);
-        assert.include(sent, "Subagent finished.");
-        // The boundary drops the root prompt's note from history; a failed compaction keeps it.
-        (outcome === "boundary" ? assert.include : assert.notInclude)(sent, "PROJ-42");
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            IdAllocator.layer,
-            McpProviderSessions.layer,
-            NodeServices.layer,
-            NodeCrypto.layer,
-          ),
+      }
+      yield* harness.offerAndWait(
+        boundary
+          ? claudeSdkFrame({
+              type: "system",
+              subtype: "compact_boundary",
+              compact_metadata: { trigger: "auto", pre_tokens: 3000, post_tokens: 600 },
+              uuid: "00000000-0000-4000-8000-000000038702",
+              session_id: WAKE_NATIVE_SESSION,
+            })
+          : claudeSdkFrame({
+              type: "system",
+              subtype: "status",
+              status: null,
+              compact_result: "failed",
+              compact_error: "Compaction failed.",
+              uuid: "00000000-0000-4000-8000-000000038702",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+      );
+      assert.lengthOf(harness.offeredMessages, outcome === "success then boundary" ? 3 : 2);
+      assert.equal(harness.offeredMessages[1]?.priority, "now");
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(delivery)));
+      const sent = JSON.stringify(harness.offeredMessages[1]?.message.content);
+      assert.include(sent, "Subagent finished.");
+      assert.notInclude(sent, "Second subagent");
+      // The boundary drops the root prompt's note from history; a failed compaction keeps it.
+      (boundary ? assert.include : assert.notInclude)(sent, "PROJ-42");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
         ),
       ),
+    ),
   );
 
   it.effect.each(["newer steer", "stop", "query close"] as const)(
@@ -11280,9 +11314,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           .offerAndWait(
             claudeSdkFrame({
               type: "system",
-              subtype: "status",
-              status: null,
-              compact_result: "success",
+              subtype: "compact_boundary",
+              compact_metadata: { trigger: "auto", pre_tokens: 3000, post_tokens: 600 },
               uuid: "00000000-0000-4000-8000-000000038712",
               session_id: WAKE_NATIVE_SESSION,
             }),
