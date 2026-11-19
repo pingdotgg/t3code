@@ -69,7 +69,7 @@ const minimalPng = Uint8Array.from([
 ]);
 
 it.effect.each([400, 500])(
-  "retries a hub-rejected (%s) screenshot with simctl only on iOS 26 and older",
+  "retries a hub-rejected (%s) screenshot with simctl only on iOS and watchOS 26 and older",
   (status) =>
     Effect.gen(function* () {
       const operations = makeDeviceHubOperations({
@@ -100,7 +100,70 @@ it.effect.each([400, 500])(
       expect(yield* screenshot("iOS 26.3")).toMatchObject({
         success: new Uint8Array([137, 80, 78, 71]),
       });
+      expect(yield* screenshot("watchOS 27.2")).toMatchObject({
+        failure: { _tag: "DeviceOperationError", reason: "hub_rejected" },
+      });
+      expect(yield* screenshot("watchOS 26.2")).toMatchObject({
+        success: new Uint8Array([137, 80, 78, 71]),
+      });
     }),
+);
+
+it.effect("lists watchOS simulators that the hub's device list leaves out", () =>
+  Effect.gen(function* () {
+    const iPhone = {
+      id: "PHONE",
+      name: "iPhone 17",
+      version: "iOS 26.0",
+      platform: "ios",
+      booted: false,
+      physical: false,
+    } as const;
+    const operations = makeDeviceHubOperations({
+      hostId: LOCAL_DEVICE_HOST_ID,
+      origin: "http://device.test",
+      http: HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.endsWith("/vendor/serve-sim/grid/api")
+              ? Response.json({
+                  devices: [
+                    { device: "PHONE", name: "iPhone 17", runtime: "iOS-26-0", state: "Shutdown" },
+                    {
+                      device: "WATCH",
+                      name: "Apple Watch Series 11 (46mm)",
+                      runtime: "watchOS-26-0",
+                      state: "Booted",
+                    },
+                    {
+                      device: "VISION",
+                      name: "Apple Vision Pro",
+                      runtime: "xrOS-26-0",
+                      state: "Shutdown",
+                    },
+                  ],
+                  total: 3,
+                })
+              : Response.json({ simulators: [iPhone], emulators: [] }),
+          ),
+        ),
+      ),
+      run: () => Effect.die("unused"),
+      platformAvailable: () => Effect.succeed(false),
+    });
+    expect((yield* operations.list).devices).toEqual([
+      iPhone,
+      {
+        id: "WATCH",
+        name: "Apple Watch Series 11 (46mm)",
+        version: "watchOS 26.0",
+        platform: "ios",
+        booted: true,
+        physical: false,
+      },
+    ]);
+  }),
 );
 
 const fixture = Effect.fn("fixture")(function* (
