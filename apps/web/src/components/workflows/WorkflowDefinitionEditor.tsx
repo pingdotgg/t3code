@@ -7,11 +7,13 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { useBlocker } from "@tanstack/react-router";
 import { T, useGT, Var } from "gt-react";
 import { FileCode2Icon, PlusIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 
+import { requestConfirmDialog } from "../../confirmDialog";
 import { useTheme } from "../../hooks/useTheme";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
@@ -21,7 +23,6 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
-import { requestConfirmDialog } from "../../confirmDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { WorkflowsEmpty } from "./WorkflowRunsView";
@@ -146,6 +147,9 @@ function Surface({
 
   const saveNow = async () => {
     if (!dirty || saving || !canSave || edited === null) return;
+    // Saving over a change on disk that was already shown is a choice. One that lands while this
+    // save is out is not, and stays shown.
+    const overwrote = stale;
     setSaving(true);
     setFailure(null);
     const result = await save({ environmentId, input: { name, source: edited } });
@@ -157,7 +161,7 @@ function Surface({
     setProblems(result.value.problems);
     if (result.value.problems.length > 0) return;
     setBaseline(edited);
-    setStale(false);
+    setStale((now) => now && !overwrote);
     setSavedOnce(true);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -166,13 +170,18 @@ function Surface({
     event.preventDefault();
     void saveNow();
   };
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- warns before the tab closes on an unsaved draft, which only the browser's own event can do
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+  // Leaving with an unsaved draft, by a link in the app or by closing the tab, asks first.
+  useBlocker({
+    shouldBlockFn: async () =>
+      dirty &&
+      !(await (requestConfirmDialog(
+        gt("Leave without saving? Your changes to this file are lost."),
+        {
+          variant: "destructive",
+        },
+      ) ?? Promise.resolve(false))),
+    enableBeforeUnload: () => dirty,
+  });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the editor draws markers itself and takes them only through its own method
   useEffect(() => {
