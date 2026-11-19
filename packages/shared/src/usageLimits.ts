@@ -24,7 +24,7 @@ import { isLocalLoopbackHost, isWildcardHost } from "./hostClassification.ts";
 const MINUTE = 60_000;
 
 /** Whether `window` limits `model`; a window for some models or one pool limits only those. */
-function usageWindowLimitsModel(
+export function usageWindowLimitsModel(
   provider: ServerProvider,
   window: ServerProviderUsageWindow,
   model: string,
