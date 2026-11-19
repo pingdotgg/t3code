@@ -147,6 +147,7 @@ const OpenCode2ProviderCapabilities = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
@@ -652,6 +653,19 @@ const OWNED_RECOVERY_RETRY = {
   schedule: OWNED_RECONNECT_SCHEDULE,
   while: (error: unknown) => !isPermanentRecoveryError(error),
 };
+// Retries an owned server's request until it answers or the process exits.
+const whileAlive = <A, E, R>(
+  processExit: Effect.Effect<unknown> | undefined,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  processExit === undefined
+    ? effect
+    : effect.pipe(
+        Effect.retry(OWNED_RECOVERY_RETRY),
+        Effect.raceFirst(
+          processExit.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
+        ),
+      );
 class OpenCode2ServerExitedError extends Schema.TaggedError<OpenCode2ServerExitedError>()(
   "OpenCode2ServerExitedError",
   {},
@@ -1499,6 +1513,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
@@ -3767,7 +3791,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const scope = yield* Scope.make();
       const { next, stream } = yield* Effect.gen(function* () {
         const next = yield* borrow.pipe(Effect.provideService(Scope.Scope, scope));
-        return { next, stream: yield* next.events.pipe(Effect.provideService(Scope.Scope, scope)) };
+        const events = next.events.pipe(Effect.provideService(Scope.Scope, scope));
+        return { next, stream: yield* whileAlive(next.processExit, events) };
       }).pipe(Effect.onError(() => Scope.close(scope, Exit.void)));
       const previous = currentScope;
       connection = next;
@@ -3803,15 +3828,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
       // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
-      const exited = next.processExit;
-      yield* exited === undefined
+      yield* next.processExit === undefined
         ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : reconcile().pipe(
-            Effect.retry(OWNED_RECOVERY_RETRY),
-            Effect.raceFirst(
-              exited.pipe(Effect.andThen(Effect.fail(new OpenCode2ServerExitedError()))),
-            ),
-          );
+        : whileAlive(next.processExit, reconcile());
       return stream;
     }).pipe(
       // Borrows and process exits stay bounded; only a live owned process is waited on above.
