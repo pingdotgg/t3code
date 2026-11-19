@@ -921,20 +921,7 @@ export function BranchToolbarBranchSelector({
           />
         ) : null}
         {displayMode === "panel" ? (
-          <ThreadDetailsIssueRows
-            links={linkedIssues}
-            onOpenLink={(event, link) => {
-              event.stopPropagation();
-              useRightPanelStore.getState().openIssue(threadRef, {
-                projectId: link.projectId,
-                tracker: link.tracker,
-                host: link.host,
-                scope: link.scope,
-                key: link.key,
-                url: link.url,
-              });
-            }}
-          />
+          <ThreadDetailsIssueRows links={linkedIssues} threadRef={threadRef} />
         ) : null}
       </div>
     </BranchPicker>

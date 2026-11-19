@@ -138,6 +138,8 @@ export function resolveDraftProjectSelection(
     readonly incomingShareId: string | undefined;
     /** The draft's first project picker closed and the draft is showing again. */
     readonly pickerClosed: boolean;
+    readonly useLastProject?: boolean | undefined;
+    readonly lastProject?: ProjectRef | undefined;
   },
 ): DraftProjectSelectionResolution {
   const hasExplicitProjectSelection =
@@ -153,8 +155,22 @@ export function resolveDraftProjectSelection(
     return { kind: "dismiss" };
   }
 
-  const onlyScope =
-    draft.incomingShareId !== undefined && projectScopes.length === 1 ? projectScopes[0] : null;
+  if (draft.incomingShareId === undefined) {
+    return { kind: "pick" };
+  }
+  const last =
+    draft.useLastProject === false
+      ? undefined
+      : projects.find(
+          (project) =>
+            project.environmentId === draft.lastProject?.environmentId &&
+            project.id === draft.lastProject.projectId &&
+            project.archivedAt == null,
+        );
+  if (last) {
+    return { kind: "select", project: last };
+  }
+  const onlyScope = projectScopes.length === 1 ? projectScopes[0] : null;
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
