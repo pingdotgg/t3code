@@ -10,10 +10,7 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: agent-context-budget-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
-
+# No concurrency group: label events arrive in bursts, and a cancelled run reports as a failed check.
 jobs:
   budget:
     name: Agent context budget

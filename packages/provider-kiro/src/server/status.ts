@@ -90,7 +90,7 @@ const snapshot = (
     enabled: settings.enabled,
     checkedAt,
     models: kiroModels(settings, listed, agents),
-    // `/compact` runs `_kiro/session/compact`; see compactKiroSession.
+    // `/compact` runs `_kiro/session/compact`; see kiroCompactSession.
     slashCommands: [COMPACT_SLASH_COMMAND],
     probe,
   });
