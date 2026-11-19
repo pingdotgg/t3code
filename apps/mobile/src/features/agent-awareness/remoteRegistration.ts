@@ -660,7 +660,8 @@ function startPendingDeviceRegistration(): void {
     );
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       // Refresh failures leave the relay's accepted registration intact; preserve registered status.
-      if (registrationStatus !== "registered") {
+      // A sign-out or account switch meanwhile owns the status, so an obsolete run leaves it alone.
+      if (generation === deviceRegistrationGeneration && registrationStatus !== "registered") {
         setRegistrationStatus("failed");
       }
       logRegistrationError(next.context, squashAtomCommandFailure(result));
@@ -759,14 +760,6 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   );
 });
 
-function registerDeviceForCurrentUser(): Effect.Effect<
-  void,
-  AgentAwarenessRegistrationError,
-  ManagedRelay.ManagedRelayClient
-> {
-  return registerDevice(undefined);
-}
-
 function ensurePushTokenListener(): void {
   if (pushTokenSubscription || !canRegisterPushNotifications()) {
     return;
@@ -842,31 +835,37 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
   never,
   ManagedRelay.ManagedRelayClient
 > {
-  return registerDeviceForCurrentUser().pipe(
-    Effect.catch((error) =>
-      Effect.sync(() => {
-        if (registrationStatus !== "registered") {
-          setRegistrationStatus("failed");
-        }
-        logRegistrationError("device registration refresh failed", error);
-      }),
-    ),
-  );
+  return Effect.suspend(() => {
+    const generation = deviceRegistrationGeneration;
+    return registerDevice(undefined, generation).pipe(
+      Effect.catch((error) =>
+        Effect.sync(() => {
+          if (generation === deviceRegistrationGeneration && registrationStatus !== "registered") {
+            setRegistrationStatus("failed");
+          }
+          logRegistrationError("device registration refresh failed", error);
+        }),
+      ),
+    );
+  });
 }
 
 export function updateAgentAwarenessRegistrationPreferences(
   preferencesOverride: Partial<Preferences>,
 ): Effect.Effect<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
-  return registerDevice({ preferencesOverride }).pipe(
-    Effect.tapError((error) =>
-      Effect.sync(() => {
-        if (registrationStatus !== "registered") {
-          setRegistrationStatus("failed");
-        }
-        logRegistrationError("device preference registration refresh failed", error);
-      }),
-    ),
-  );
+  return Effect.suspend(() => {
+    const generation = deviceRegistrationGeneration;
+    return registerDevice({ preferencesOverride }, generation).pipe(
+      Effect.tapError((error) =>
+        Effect.sync(() => {
+          if (generation === deviceRegistrationGeneration && registrationStatus !== "registered") {
+            setRegistrationStatus("failed");
+          }
+          logRegistrationError("device preference registration refresh failed", error);
+        }),
+      ),
+    );
+  });
 }
 
 export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
