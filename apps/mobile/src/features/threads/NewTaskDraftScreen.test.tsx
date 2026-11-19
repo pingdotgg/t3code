@@ -43,7 +43,9 @@ vi.mock("expo-crypto", () => ({ randomUUID: () => "00000000-0000-4000-8000-00000
 vi.mock("react-native-keyboard-controller", () => ({
   KeyboardController: { dismiss: vi.fn() },
 }));
-vi.mock("../../components/ComposerEditor", () => ({ ComposerEditor: () => null }));
+vi.mock("../../components/ComposerEditor", () => ({
+  ComposerEditor: ({ readOnly }: { readOnly?: boolean }) => <textarea readOnly={readOnly} />,
+}));
 vi.mock("../../components/ComposerToolbar", () => ({ ComposerInlineControl: TestButton }));
 vi.mock("../../components/EnvironmentMachineSymbol", () => ({
   EnvironmentMachineSymbol: () => null,
@@ -106,6 +108,7 @@ vi.mock("./DraftEnvironmentControl", () => ({ DraftEnvironmentControl: () => nul
 vi.mock("./DraftThreadHeader", () => ({ DraftThreadHeader: () => null }));
 vi.mock("./ProjectCloneBanner", () => ({ ProjectCloneBanner: () => null }));
 vi.mock("./ThreadScreenHost", () => ({
+  ThreadScreenFallback: ({ children }: { children?: ReactNode }) => children,
   // Render the draft slots at a short viewport height, as when the keyboard is up.
   ThreadScreenBinding: ({ draftMode }: ComponentProps<typeof ThreadScreenBinding>) => (
     <>
@@ -248,6 +251,7 @@ it("reopens a dismissed share picker and unlocks the draft after importing into 
   act(() => root.render(render(false)));
   act(() => root.render(render(true)));
 
+  expect(editor().readOnly).toBe(true);
   expect(button("Project: fallback")?.disabled).toBe(false);
   act(() => button("Project: fallback").click());
   expect(harness.navigation.navigate).toHaveBeenCalledExactlyOnceWith("NewTaskProject", {
