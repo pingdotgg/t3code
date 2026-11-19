@@ -723,12 +723,15 @@ const threadJumpModifierHold = createModifierHoldStore(THREAD_JUMP_HINT_SHOW_DEL
 
 function subscribeToThreadJumpHintInputs(listener: () => void): () => void {
   const unsubscribeHold = threadJumpModifierHold.subscribe(listener);
+  // The snapshot reads the modifiers; the hold stays silent when it is true across a change.
+  const unsubscribeModifiers = shortcutModifierStore.subscribe(listener);
   const unsubscribeFocus = subscribeToTerminalFocusChanges(listener);
   const unsubscribeTerminals = useTerminalUiStateStore.subscribe(listener);
   const unsubscribeRightPanels = useRightPanelStore.subscribe(listener);
   const unsubscribeModelPicker = subscribeToModelPickerVisibility(listener);
   return () => {
     unsubscribeHold();
+    unsubscribeModifiers();
     unsubscribeFocus();
     unsubscribeTerminals();
     unsubscribeRightPanels();
@@ -1241,18 +1244,15 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (
-    (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) ||
-    backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])
-  ) {
-    return {
-      label: msg("Waiting"),
-      colorClass: "text-sidebar-muted-foreground",
-      dotClass: "bg-sidebar-muted-foreground",
-      pulse: false,
-    };
-  }
+  const waiting = {
+    label: msg("Waiting"),
+    colorClass: "text-sidebar-muted-foreground",
+    dotClass: "bg-sidebar-muted-foreground",
+    pulse: false,
+  };
+  if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) return waiting;
 
+  // A failed run goes to the inbox even while background work holds the thread.
   if (hasUnseenRunFailure(thread)) {
     return {
       label: msg("Failed"),
@@ -1261,6 +1261,8 @@ export function resolveThreadStatusPill(input: {
       pulse: false,
     };
   }
+
+  if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return waiting;
 
   const hasPlanReadyPrompt =
     !thread.hasPendingUserInput &&
