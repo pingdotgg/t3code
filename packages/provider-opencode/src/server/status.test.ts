@@ -20,6 +20,7 @@ import { buildProviderOptionSelectionsFromDescriptors } from "@t3tools/shared/mo
 import { settingsSecretLiteral } from "@t3tools/contracts";
 
 import { OpenCodeSettings } from "../settings.ts";
+import type { ProviderCompatibilityLookup } from "@t3tools/provider-core/server/compatibility";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import {
@@ -507,6 +508,7 @@ const checkProvider = Effect.fn("checkProvider")(function* (
     ReadonlyArray<OpenCode2Model>,
     OpenCodeRuntime.OpenCodeRuntimeError
   > = Effect.succeed([]),
+  compatibility?: ProviderCompatibilityLookup,
 ) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -520,9 +522,14 @@ const checkProvider = Effect.fn("checkProvider")(function* (
         Effect.provideService(HttpClient.HttpClient, server),
         Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, OpenCodeRuntimeTestDouble),
       );
-      return yield* checkOpenCodeProviderStatus(settings, cwd, probe, openCode2Models).pipe(
-        Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
-      );
+      return yield* checkOpenCodeProviderStatus(
+        settings,
+        cwd,
+        probe,
+        openCode2Models,
+        environment,
+        compatibility,
+      ).pipe(Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner));
     }),
   );
 });
@@ -1090,6 +1097,29 @@ it.layer(layerTest)("checkOpenCodeProviderStatus with configured server URL", (i
         snapshot.message,
         "OpenCode server rejected authentication. Check the server URL and password.",
       );
+    }),
+  );
+
+  it.effect("reports a version the policy rates broken before loading inventory", () =>
+    Effect.gen(function* () {
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        () =>
+          Effect.succeed({
+            status: "broken",
+            message: null,
+            recommendedVersion: null,
+            recommendedRange: ">=2.0.18",
+          }),
+      );
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.match(snapshot.message ?? "", /OpenCode 1\.14\.19 does not work/);
+      NodeAssert.equal(runtimeMock.state.sdkClientInputs.length, 0);
     }),
   );
 

@@ -7,6 +7,7 @@ import {
   type ServerProvider,
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 import packageJson from "../../package.json" with { type: "json" };
@@ -115,14 +116,10 @@ export function brokenRuntimeError(input: {
   readonly advisory: ServerProviderCompatibilityAdvisory | undefined;
   readonly action?: string;
 }): ProviderSetupError | undefined {
-  if (input.advisory?.status !== "broken") return undefined;
-  const target =
-    input.advisory.recommendedVersion ?? input.advisory.recommendedRange ?? "a newer version";
-  return new ProviderSetupError({
-    instanceId: input.instanceId,
-    operation: "runtime",
-    detail: `${input.name} ${input.version} does not work with this T3 Code release. ${input.action ?? `Update ${input.name}`} to ${target}, then retry.`,
-  });
+  const detail = brokenVersionDetail(input);
+  return detail === undefined
+    ? undefined
+    : new ProviderSetupError({ instanceId: input.instanceId, operation: "runtime", detail });
 }
 
 export function applyProviderCompatibility(

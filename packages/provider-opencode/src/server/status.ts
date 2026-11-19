@@ -1,5 +1,6 @@
 import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
+  ProviderDriverKind,
   type ModelCapabilities,
   type ServerProviderModel,
   type ServerProviderSkill,
@@ -15,7 +16,11 @@ import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { compareSemverVersions } from "@t3tools/shared/semver";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
@@ -779,6 +784,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
     OpenCodeRuntime.OpenCodeRuntimeError
   >,
   environment?: NodeJS.ProcessEnv,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -853,7 +859,12 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   if (probed.generation === "v2") {
     return yield* checkOpenCode2(openCodeSettings, probed.version, checkedAt, loadOpenCode2Models);
   }
-  if (compareSemverVersions(probed.version, OpenCodeRuntime.MINIMUM_OPENCODE_VERSION) < 0) {
+  const broken = brokenVersionDetail({
+    name: "OpenCode",
+    version: probed.version,
+    advisory: yield* compatibility(ProviderDriverKind.make("opencode"), probed.version),
+  });
+  if (broken !== undefined) {
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
       enabled: openCodeSettings.enabled,
@@ -864,7 +875,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         version: probed.version,
         status: "error",
         auth: { status: "unknown" },
-        message: `OpenCode v${probed.version} is too old. Upgrade to v${OpenCodeRuntime.MINIMUM_OPENCODE_VERSION} or newer.`,
+        message: broken,
       },
     });
   }
