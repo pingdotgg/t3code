@@ -993,6 +993,29 @@ it.layer(
       }),
   );
 
+  it.effect.each([
+    ["linux", ["SIGHUP", "SIGTERM"]],
+    ["win32", ["SIGTERM"]],
+  ] as const)("closing a %s terminal hangs up the shell's jobs", ([platform, signals]) =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5).pipe(
+        Effect.provide(layerWithHostPlatform(platform)),
+      );
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const terminated = yield* Deferred.make<void>();
+      shell.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(terminated, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(terminated);
+
+      expect(shell.killSignals).toEqual(signals);
+      shell.emitExit({ exitCode: 0, signal: 0 });
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps a terminal whose shell was replaced by exec open on settlement", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager(5, {
@@ -2790,7 +2813,10 @@ it.layer(
       yield* TestClock.adjust("1 second");
       yield* Fiber.join(shutdown);
 
-      expect(process.killSignals).toEqual(["SIGTERM", "SIGKILL"]);
+      const platform = yield* HostProcess.Platform;
+      expect(process.killSignals).toEqual(
+        platform === "win32" ? ["SIGTERM", "SIGKILL"] : ["SIGHUP", "SIGTERM", "SIGKILL"],
+      );
       expect(process.exitListenerCount).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );

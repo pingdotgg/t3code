@@ -59,6 +59,17 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/**
+ * A message that signs a provider account out at turn start, as `providerAuthLogout` does.
+ * With attachments the same text is an ordinary prompt.
+ */
+export function isProviderSignOutPrompt(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && message.text.trim().toLowerCase() === "/logout";
+}
+
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -120,6 +131,20 @@ export function isActiveRun(run: OrchestrationV2Run): boolean {
     run.status === "starting" ||
     run.status === "running" ||
     run.status === "waiting"
+  );
+}
+
+/**
+ * Providers that key forks on native turn ids can only fork a busy source from a turn with one;
+ * a synthetic or missing boundary would fork the live conversation, including the running turn.
+ */
+export function canForkBusySourceNatively(
+  capabilities: OrchestrationV2ProviderCapabilities,
+  hasNativeTurnBoundary: boolean,
+): boolean {
+  return (
+    capabilities.threads.canForkWhileSourceRunning === true &&
+    (hasNativeTurnBoundary || !capabilities.turns.exposesNativeTurnId)
   );
 }
 
@@ -226,9 +251,10 @@ export interface CommandPolicyV2Shape {
     input: CapabilityCheckInput & {
       readonly sameProvider: boolean;
       readonly hasStrongNativeSource: boolean;
+      readonly hasNativeTurnBoundary: boolean;
       readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
-      /** Later source runs are still active; providers cannot fork a thread mid-turn. */
+      /** Later source runs are still active. */
       readonly sourceBusy: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
@@ -395,7 +421,8 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
-    (!input.sourceBusy || input.capabilities.threads.canForkWhileSourceRunning === true) &&
+    (!input.sourceBusy ||
+      canForkBusySourceNatively(input.capabilities, input.hasNativeTurnBoundary)) &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
     input.capabilities.identity.nativeThreadIds === "strong";

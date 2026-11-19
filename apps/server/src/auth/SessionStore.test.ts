@@ -138,6 +138,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
   it.effect.each([
     { name: "a renewal for the same key", renewal: {}, closesAtMinute: 119 },
     {
+      name: "a renewal for the same key, on a media ticket",
+      renewal: {},
+      closesAtMinute: 119,
+      ticket: "media",
+    },
+    {
       name: "a renewal for another key",
       renewal: { proofKeyThumbprint: "other-proof-key" },
       closesAtMinute: 60,
@@ -164,8 +170,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("SessionStore.lay
       const sessions = yield* SessionStore.SessionStore;
       const client = yield* sessions.issue(relaySessionInput);
       const invalidated = yield* Deferred.make<void>();
+      // Media tickets carry no proof key, so their routes wait without one.
+      const watched =
+        "ticket" in testCase
+          ? yield* sessions.verifyWebSocketToken(
+              (yield* sessions.issueWebSocketToken(client.sessionId, { audience: "media" })).token,
+            )
+          : {
+              sessionId: client.sessionId,
+              proofKeyThumbprint: relaySessionInput.proofKeyThumbprint,
+            };
       const watcher = yield* sessions
-        .awaitInvalidation(client.sessionId, relaySessionInput.proofKeyThumbprint)
+        .awaitInvalidation(watched.sessionId, watched.proofKeyThumbprint)
         .pipe(
           Effect.andThen(Deferred.succeed(invalidated, undefined)),
           Effect.forkScoped({ startImmediately: true }),

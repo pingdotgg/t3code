@@ -1943,7 +1943,7 @@ it.effect.each([false, true])("rejects thread.create for an existing id (deleted
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("starts and finishes a delegated task without reading the parent's history", () =>
+it.effect("starts, finishes and follows up a task without reading the parent's history", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -2019,10 +2019,11 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       });
     }
 
-    // Keep the statements of the task start and finish operations, not of the recovery around them.
+    // Keep the statements of the task start, finish and follow-up, not of the recovery around them.
     const taskSpans = [
       "orchestrationV2.dispatch.delegatedTaskRequest",
       "Orchestrator.finalizeAppOwnedSubagent",
+      "test.followUp",
     ];
     const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
     const recordStatements = Effect.provideService(
@@ -2103,9 +2104,38 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       ["completed", "claimed", "completed", "completed", [task.id]],
     );
 
-    // Start and finish read the task's own records, so their VM steps, which are deterministic,
-    // must stay flat on a copy with a long parent history. Left out: the counts that number the
-    // task and its wake, which walk one index.
+    // A person's follow-up to the finished child binds a new task to the parent's running run.
+    yield* orchestrator
+      .dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("follow-up-long-parent"),
+        threadId: childThreadId,
+        messageId: MessageId.make("message:long-parent:follow-up"),
+        text: "One more thing",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.withSpan("test.followUp"), recordStatements);
+    const followedUp = yield* projections.getThreadRecords(parentThreadId, [
+      "subagents",
+      "turnItems",
+    ]);
+    const followUp = followedUp.subagents.find((candidate) => candidate.id !== task.id);
+    assert.deepEqual(
+      [
+        followUp?.runId,
+        followedUp.turnItems.find(
+          (item) => item.type === "subagent" && item.subagentId === followUp?.id,
+        )?.providerTurnId,
+      ],
+      [parentRun.id, providerTurnId],
+    );
+
+    // Start, finish and follow-up read the task's own records and the run it binds to, so their VM
+    // steps, which are deterministic, must stay flat on a copy with a long parent history. Left out:
+    // the counts that number the task and its wake, which walk one index.
     const copyPath = "file:/delegated-task-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
@@ -2146,6 +2176,9 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       "target_thread_id",
     ]);
     addHistory("runs", "run_id");
+    // The history's runs have ended; only the parent's own run is still going.
+    copy.exec(`UPDATE orchestration_v2_projection_runs
+      SET status = 'completed', completed_at = requested_at WHERE run_id LIKE '%:history:%'`);
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
