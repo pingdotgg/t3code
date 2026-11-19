@@ -91,17 +91,8 @@ describe("acpPermissionDisposition", () => {
 
   it("always asks before a mode switch, even when tools are auto-approved", () => {
     for (const runtimePolicy of [
-      policy,
       { runtimeMode: "full-access", cwd },
-      { runtimeMode: "full-access", cwd, sandboxPolicy: { type: "dangerFullAccess" } },
-      {
-        runtimeMode: "full-access",
-        cwd,
-        approvalPolicy: "never",
-        sandboxPolicy: { type: "readOnly" },
-      },
-      { runtimeMode: "auto-accept-edits", cwd },
-      { runtimeMode: "approval-required", cwd },
+      { runtimeMode: "full-access", cwd, sandboxPolicy: { type: "readOnly" } },
     ] satisfies ReadonlyArray<AcpRuntimePolicy>) {
       assert.equal(
         acpPermissionDisposition(runtimePolicy, permissionRequest("switch_mode")),

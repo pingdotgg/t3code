@@ -209,46 +209,29 @@ describe("Antigravity permissions and questions", () => {
     ]);
   });
 
-  it("keeps a mode switch as a question when it offers no allow option", () => {
-    const modeSwitch = {
-      ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
-      options: [
+  it("keeps a mode switch as a question when approvals cannot carry every choice", () => {
+    for (const options of [
+      [
         { optionId: "proceed", name: "Yes", kind: "other" as const },
         { optionId: "stay", name: "No", kind: "other" as const },
       ],
-    };
-    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
-    expect(
-      extractAntigravityUserInputQuestion(modeSwitch)?.options.map((option) => option.value),
-    ).toEqual(["proceed", "stay"]);
-  });
-
-  it("keeps a mode switch as a question when option ids are padded", () => {
-    const modeSwitch = {
-      ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
-      options: [
+      [
         { optionId: " switch-to-build ", name: "Yes", kind: "allow_once" as const },
         { optionId: "stay-in-plan", name: "No", kind: "reject_once" as const },
       ],
-    };
-    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
-    expect(
-      makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: " switch-to-build " }),
-    ).toEqual({ outcome: { outcome: "selected", optionId: " switch-to-build " } });
-  });
-
-  it("keeps every mode-switch choice when permission kinds repeat", () => {
-    const modeSwitch = {
-      ...questionRequest,
-      toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
-    };
-    expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
-    for (const option of modeSwitch.options) {
-      expect(
-        makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: option.optionId }),
-      ).toEqual({ outcome: { outcome: "selected", optionId: option.optionId } });
+      questionRequest.options,
+    ]) {
+      const modeSwitch = {
+        ...questionRequest,
+        toolCall: { ...questionRequest.toolCall, kind: "switch_mode" as const },
+        options,
+      };
+      expect(isAntigravityUserInputRequest(modeSwitch)).toBe(true);
+      for (const option of options) {
+        expect(
+          makeAntigravityUserInputResponse(modeSwitch, { interaction_9960062f: option.optionId }),
+        ).toEqual({ outcome: { outcome: "selected", optionId: option.optionId } });
+      }
     }
   });
 
