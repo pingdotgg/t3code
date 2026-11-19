@@ -105,6 +105,7 @@ export interface PiRpcConnection {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const TERMINATION_GRACE = Duration.seconds(1);
+const TERMINATION_POLL_INTERVAL = Duration.millis(20);
 
 interface PendingPiRequest {
   readonly deferred: Deferred.Deferred<unknown, PiRpcError>;
@@ -196,10 +197,14 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
 const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
+  groupGone: () => boolean,
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_GRACE);
+  yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
+    Effect.repeat({ until: groupGone }),
+    Effect.timeoutOption(TERMINATION_GRACE),
+  );
   if (hasExited()) return;
   kill("SIGKILL");
 });
@@ -253,6 +258,16 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
     }
   };
 
+  // EPERM means a group member is still alive, so only ESRCH ends the SIGTERM grace early.
+  const processGroupGone = (): boolean => {
+    try {
+      signalProcessGroup(Number(child.pid), 0);
+      return false;
+    } catch (cause) {
+      return (cause as NodeJS.ErrnoException | undefined)?.code === "ESRCH";
+    }
+  };
+
   // Windows process.kill leaves extension children and pipes alive; taskkill /T reaps the tree.
   const terminateWindowsTree = Effect.gen(function* () {
     if (hasExited()) return;
@@ -263,7 +278,9 @@ export const makePiRpcConnection = Effect.fnUntraced(function* (options: PiRpcSp
   }).pipe(Effect.scoped, Effect.ignore);
 
   const terminateProcess =
-    platform === "win32" ? terminateWindowsTree : terminatePiProcess(killProcessGroup, hasExited);
+    platform === "win32"
+      ? terminateWindowsTree
+      : terminatePiProcess(killProcessGroup, hasExited, processGroupGone);
 
   // Register teardown immediately after spawn so interrupted setup cannot leak a detached process.
   yield* Scope.addFinalizer(scope, terminateProcess.pipe(Effect.ignore, Effect.uninterruptible));
