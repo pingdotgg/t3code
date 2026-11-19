@@ -386,6 +386,20 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
+  it.effect("shows a thread session's native commands in that workspace's snapshot", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.snapshotForCwd("/workspace", []);
+      // The thread adapter reports the cwd on session start; command updates arrive without one.
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      yield* harness.provider.onAvailableCommands(commands);
+      expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+        expectedCommands,
+      );
+    }),
+  );
+
   it.effect("clears all account metadata on sign-out and authentication failure", () =>
     Effect.gen(function* () {
       const auth = { type: "gemini-api-key", label: "Gemini API key" };
