@@ -158,9 +158,10 @@ function isAgentBusyPromptError(error: EffectAcpErrors.AcpError): boolean {
 function sendPromptWhenIdle<A>(
   turn: { readonly interrupted: boolean; readonly finalized: boolean },
   prompt: () => Effect.Effect<A, EffectAcpErrors.AcpError>,
+  superseded: () => boolean = () => false,
 ): Effect.Effect<A, EffectAcpErrors.AcpError> {
-  // A Stop can land during the wait, so the flags are rechecked before each resend.
-  const stopped = () => turn.interrupted || turn.finalized;
+  // A Stop or a prompt-steer can land during the wait, so both are rechecked before each resend.
+  const stopped = () => turn.interrupted || turn.finalized || superseded();
   return prompt().pipe(
     Effect.catchIf(
       (error) => isAgentBusyPromptError(error) && !stopped(),
@@ -168,7 +169,7 @@ function sendPromptWhenIdle<A>(
         Effect.sleep(ACP_BUSY_PROMPT_RETRY_INTERVAL).pipe(
           Effect.andThen(
             Effect.suspend(() =>
-              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt),
+              stopped() ? Effect.fail(error) : sendPromptWhenIdle(turn, prompt, superseded),
             ),
           ),
         ),
@@ -8698,6 +8699,49 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return blocks;
         });
 
+        const promptAttachmentBlocks = Effect.fnUntraced(function* (
+          messageText: string,
+          attachments: ReadonlyArray<ChatAttachment>,
+        ) {
+          if (!supportsImagePrompts && attachments.some(isProviderNativeImageAttachment)) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver,
+              detail: "ACP driver did not negotiate image prompt support",
+            });
+          }
+          if (!flavor.buildAttachmentPrompt) return yield* imageAttachmentBlocks(attachments);
+          const setup = yield* Ref.get(activeSessionSetup);
+          const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
+          const currentModelId = modelOption?.currentValue;
+          return yield* flavor
+            .buildAttachmentPrompt({
+              text: messageText,
+              attachments,
+              resolveAttachmentPath: host.resolveAttachmentPath,
+              promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
+              agentVersion: setup?.initializeResult.agentInfo?.version,
+              currentModel:
+                typeof currentModelId !== "string" || modelOption === undefined
+                  ? undefined
+                  : {
+                      id: currentModelId,
+                      name: flattenSelectChoices(modelOption.options).find(
+                        (choice) => choice.value === currentModelId,
+                      )?.name,
+                    },
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver,
+                    detail: "Failed to build ACP attachment prompt",
+                    payload: cause,
+                  }),
+              ),
+            );
+        });
+
         const resolvePromptParts = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           sessionId: string,
@@ -8726,51 +8770,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
           const isNativeSlashCommand = userText.trimStart().startsWith("/");
-          if (
-            !supportsImagePrompts &&
-            turnInput.message.attachments.some(isProviderNativeImageAttachment)
-          ) {
-            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-              driver,
-              detail: "ACP driver did not negotiate image prompt support",
-            });
-          }
-          const attachmentBlocks = flavor.buildAttachmentPrompt
-            ? []
-            : yield* imageAttachmentBlocks(turnInput.message.attachments);
-          if (flavor.buildAttachmentPrompt) {
-            const setup = yield* Ref.get(activeSessionSetup);
-            const modelOption = findModelConfigOption(yield* runtime.getConfigOptions);
-            const currentModelId = modelOption?.currentValue;
-            const blocks = yield* flavor
-              .buildAttachmentPrompt({
-                text: messageText,
-                attachments: turnInput.message.attachments,
-                resolveAttachmentPath: host.resolveAttachmentPath,
-                promptCapabilities: setup?.initializeResult.agentCapabilities?.promptCapabilities,
-                agentVersion: setup?.initializeResult.agentInfo?.version,
-                currentModel:
-                  typeof currentModelId !== "string" || modelOption === undefined
-                    ? undefined
-                    : {
-                        id: currentModelId,
-                        name: flattenSelectChoices(modelOption.options).find(
-                          (choice) => choice.value === currentModelId,
-                        )?.name,
-                      },
-              })
-              .pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderAdapter.ProviderAdapterProtocolError({
-                      driver,
-                      detail: "Failed to build ACP attachment prompt",
-                      payload: cause,
-                    }),
-                ),
-              );
-            attachmentBlocks.push(...blocks);
-          }
+          const attachmentBlocks = yield* promptAttachmentBlocks(
+            messageText,
+            turnInput.message.attachments,
+          );
           // Read delivery state after the awaits above, so a compaction that lands
           // while the prompt is prepared still resends the notes in this prompt.
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
@@ -8839,7 +8842,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         /** Follows a turn's `session/prompt`; a prompt-steer's prompt supersedes the one before. */
         const followPrompt = (
           context: ActiveAcpTurn,
-          prompt: Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
+          prompt: (
+            superseded: () => boolean,
+          ) => Effect.Effect<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>,
           settle: {
             readonly generation: number;
             readonly checkPromptOutcome:
@@ -8851,7 +8856,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) => {
           const sequence = ++context.promptSequence;
           const superseded = () => context.promptSequence !== sequence;
-          return prompt.pipe(
+          return prompt(superseded).pipe(
             // Settle the wire before the completion callback's permit so a settled-soft
             // Stop sees the native return. Capture usage only before finalize: a late
             // response must not flip a settled turn.
@@ -9370,14 +9375,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               : undefined;
             yield* followPrompt(
               context,
-              compactSession === undefined
-                ? sendPromptWhenIdle(context, () =>
-                    runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
-                  )
-                : Deferred.succeed(context.promptDispatched, undefined).pipe(
-                    Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
-                    Effect.as({ stopReason: "end_turn" } satisfies EffectAcpSchema.PromptResponse),
-                  ),
+              (superseded) =>
+                compactSession === undefined
+                  ? sendPromptWhenIdle(
+                      context,
+                      () => runtime.prompt({ prompt: promptParts!.prompt }, promptOptions),
+                      superseded,
+                    )
+                  : Deferred.succeed(context.promptDispatched, undefined).pipe(
+                      Effect.andThen(compactSession.compact(runtime, requestedSessionId)),
+                      Effect.as({
+                        stopReason: "end_turn",
+                      } satisfies EffectAcpSchema.PromptResponse),
+                    ),
               { generation: promptGeneration, checkPromptOutcome, promptParts, compactSession },
             ).pipe(Effect.forkIn(sessionScope));
           },
@@ -9411,7 +9421,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             resolveAttachmentPath: host.resolveAttachmentPath,
             resolveExtractedTextPath: host.resolveExtractedTextPath,
           });
-          const images = yield* imageAttachmentBlocks(turnInput.message.attachments);
+          const attachmentBlocks = yield* promptAttachmentBlocks(
+            text,
+            turnInput.message.attachments,
+          );
           const dispatched = yield* runtimeTransitionPermit.withPermit(
             Effect.gen(function* () {
               const context = yield* Ref.get(activeTurn);
@@ -9470,12 +9483,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const releasedForSteer = context.foregroundIdle;
                   yield* followPrompt(
                     context,
-                    sendPromptWhenIdle(context, () =>
-                      runtime.prompt(
-                        { prompt: [{ type: "text", text }, ...images] },
-                        { dispatched, released: releasedForSteer },
+                    (superseded) =>
+                      sendPromptWhenIdle(
+                        context,
+                        () =>
+                          runtime.prompt(
+                            { prompt: [{ type: "text", text }, ...attachmentBlocks] },
+                            { dispatched, released: releasedForSteer },
+                          ),
+                        superseded,
                       ),
-                    ),
                     {
                       generation,
                       checkPromptOutcome,
