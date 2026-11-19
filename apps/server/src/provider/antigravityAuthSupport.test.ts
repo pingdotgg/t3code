@@ -235,6 +235,25 @@ describe("Antigravity process environment", () => {
       ).toBeGreaterThanOrEqual(260);
     }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerWin32))),
   );
+
+  it.effect("leaves agent tools room for a Unix socket under the per-run TMPDIR", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const directories = yield* resolveAntigravityInstanceDirectories(
+        "/home/a-twenty-char-person/.t3/userdata",
+        ProviderInstanceId.make("antigravity"),
+      );
+      // A tool's mkdtemp folder and socket under os.tmpdir(), as Convex's local backend does.
+      const socket = path.join(
+        directories.runtimeTemp,
+        "run-AbC123",
+        "app-backend-tmp-AbC123",
+        "backend-ipc-123456.sock",
+      );
+      // sockaddr_un.sun_path is 104 bytes on macOS and 108 on Linux, including the NUL.
+      expect(socket.length).toBeLessThan(104);
+    }).pipe(Effect.provide(Layer.mergeAll(NodeCrypto.layer, NodePath.layerPosix))),
+  );
 });
 
 describe("Antigravity authorization URL", () => {
