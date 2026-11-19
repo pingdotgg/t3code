@@ -5,6 +5,8 @@ import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
+import { threadEnvironment } from "../../state/threads";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -92,6 +94,9 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setThreadRuntimeMode = useOrchestrationCommand(threadEnvironment.setRuntimeMode, {
+    label: "change permission mode",
+  });
   const applyThreadModelPick = useApplyThreadModelPick();
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
@@ -99,6 +104,16 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
+    } else if (activeThread) {
+      // Applies to a running turn too; a failed save is retried with the next message.
+      void setThreadRuntimeMode({
+        environmentId: activeThread.environmentId,
+        input: {
+          threadId: activeThread.id,
+          runtimeMode: mode,
+          createdAt: new Date().toISOString(),
+        },
+      });
     }
     scheduleComposerFocus();
   };

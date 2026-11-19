@@ -292,7 +292,7 @@ interface ActiveOpenCodeTurn {
   readonly rootNodeId: ProviderAdapter.ProviderAdapterV2TurnInput["rootNodeId"];
   readonly appThread: OrchestrationV2AppThread;
   readonly modelSelection: ModelSelection;
-  readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
   readonly providerThreadId: OrchestrationV2ProviderTurn["providerThreadId"];
   readonly runOrdinal: number;
@@ -3980,6 +3980,20 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
                 );
               }),
           ),
+          applyRuntimeMode: Effect.fn("OpencodeAdapter.applyRuntimeMode")(function* (modeInput) {
+            const state = threads.get(nativeThreadId(modeInput.providerThread));
+            const turn = state?.activeTurn;
+            if (state === undefined || turn === undefined || turn === null || turn.finalized) {
+              return;
+            }
+            // Later Task children copy the turn's policy, so they start under the new mode too.
+            turn.runtimePolicy = { ...turn.runtimePolicy, runtimeMode: modeInput.runtimeMode };
+            yield* applyPermissionRules(state, turn.runtimePolicy).pipe(
+              Effect.mapError((cause) =>
+                protocolError("OpenCode could not apply the runtime mode", cause),
+              ),
+            );
+          }),
           steerTurn: Effect.fn("OpencodeAdapter.steerTurn")(
             function* (steerInput) {
               const sessionId = nativeThreadId(steerInput.providerThread);

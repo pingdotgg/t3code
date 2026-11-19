@@ -5331,6 +5331,44 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
 
+    if (
+      command.type === "thread.runtime-mode.set" &&
+      updatedThread.runtimeMode !== thread.runtimeMode
+    ) {
+      const { providerThread, providerTurn } = yield* projectionStore
+        .getRunningTurnContext(command.threadId)
+        .pipe(mapDispatchError(command));
+      const providerSessionId = providerThread?.providerSessionId;
+      if (providerThread !== undefined && providerTurn !== undefined && providerSessionId) {
+        const session = yield* providerSessions.get(providerSessionId).pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause,
+              }),
+          ),
+        );
+        if (Option.isSome(session) && session.value.applyRuntimeMode !== undefined) {
+          yield* Ref.update(effects, (existing) => [
+            ...existing,
+            {
+              id: `effect:${command.commandId}:provider-session.apply-runtime-mode`,
+              commandId: command.commandId,
+              threadId: command.threadId,
+              request: {
+                type: "provider-session.apply-runtime-mode",
+                providerSessionId,
+                providerThreadId: providerThread.id,
+                runtimeMode: command.runtimeMode,
+              },
+            } satisfies PendingOrchestrationEffectV2,
+          ]);
+        }
+      }
+    }
+
     // Queued even while no session is live: it runs after any in-flight turn start publishes one.
     if (
       (command.type === "thread.metadata.update" ||

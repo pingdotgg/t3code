@@ -79,7 +79,7 @@ function Picker(props: {
   runtime: Parameters<typeof useComposerSelection>[0]["activeRuntime"];
   model?: string;
 }) {
-  const { onProviderModelSelectStable } = useComposerSelection({
+  const { onProviderModelSelectStable, handleRuntimeModeChangeStable } = useComposerSelection({
     environmentId,
     composerDraftTarget: scopeThreadRef(environmentId, props.thread.id),
     draftThread: null,
@@ -99,12 +99,17 @@ function Picker(props: {
     scheduleComposerFocus: () => {},
   });
   return (
-    <button
-      type="button"
-      onClick={() => onProviderModelSelectStable(cursor, props.model ?? stored.model)}
-    >
-      Pick the model
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={() => onProviderModelSelectStable(cursor, props.model ?? stored.model)}
+      >
+        Pick the model
+      </button>
+      <button type="button" onClick={() => handleRuntimeModeChangeStable("auto-accept-edits")}>
+        Pick auto-accept edits
+      </button>
+    </>
   );
 }
 
@@ -204,5 +209,24 @@ it("saves a pick of a seeded model the started thread does not show", async () =
         },
       }),
     ),
+  );
+});
+
+it("saves a started thread's permission mode as soon as it is picked", async () => {
+  const { setModelSelection } = setup();
+  setModelSelection.mockResolvedValue(AsyncResult.success(undefined));
+  const thread = cursorThread("thread-cursor-mode");
+  await using _screen = await render(<Picker thread={thread} runtime={null} />);
+  await page.getByRole("button", { name: "Pick auto-accept edits" }).click();
+
+  await vi.waitFor(() =>
+    expect(setModelSelection).toHaveBeenCalledWith({
+      environmentId,
+      input: {
+        threadId: thread.id,
+        runtimeMode: "auto-accept-edits",
+        createdAt: expect.any(String),
+      },
+    }),
   );
 });

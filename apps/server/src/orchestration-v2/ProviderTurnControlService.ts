@@ -7,6 +7,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunAttemptId,
+  type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
@@ -79,6 +80,18 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerSessionId: ProviderSessionId;
     readonly providerThreadId: ProviderThreadId;
     readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<
+    void,
+    | ProjectionStore.ProjectionStoreV2Error
+    | ProviderSessionManager.ProviderSessionManagerV2Error
+    | ProviderAdapter.ProviderAdapterV2Error
+  >;
+  /** Best effort: a turn that ended or moved sessions picks the mode up when it next starts. */
+  readonly applyRuntimeMode: (input: {
+    readonly threadId: ThreadId;
+    readonly providerSessionId: ProviderSessionId;
+    readonly providerThreadId: ProviderThreadId;
+    readonly runtimeMode: RuntimeMode;
   }) => Effect.Effect<
     void,
     | ProjectionStore.ProjectionStoreV2Error
@@ -262,6 +275,21 @@ export const layer: Layer.Layer<
           });
         },
       ),
+      applyRuntimeMode: Effect.fn("ProviderTurnControlService.applyRuntimeMode")(function* (input) {
+        const { providerThread, providerTurn } = yield* projections.getRunningTurnContext(
+          input.threadId,
+        );
+        if (
+          providerThread?.id !== input.providerThreadId ||
+          providerThread.providerSessionId !== input.providerSessionId ||
+          providerTurn === undefined
+        ) {
+          return;
+        }
+        const session = yield* sessions.get(input.providerSessionId);
+        if (Option.isNone(session) || session.value.applyRuntimeMode === undefined) return;
+        yield* session.value.applyRuntimeMode({ providerThread, runtimeMode: input.runtimeMode });
+      }),
       applyThreadTitle: Effect.fn("ProviderTurnControlService.applyThreadTitle")(function* (input) {
         const { thread, providerThreads } = yield* projections.getThreadRecords(input.threadId, [
           "providerThreads",

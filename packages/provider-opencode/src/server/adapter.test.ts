@@ -675,7 +675,7 @@ describe("OpenCodeAdapterV2", () => {
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
-  it.effect("applies a changed runtime policy to the session on resume and turn start", () =>
+  it.effect("applies a changed runtime policy on resume, turn start and mid-turn", () =>
     Effect.gen(function* () {
       const updates: Array<{ sessionID: string; permission: unknown }> = [];
       const fullAccess = runtimePolicy("full-access", { cwd: "/workspace" });
@@ -724,6 +724,14 @@ describe("OpenCodeAdapterV2", () => {
       yield* harness.startTurn("hello", harness.providerThread, fullAccess);
       assert.deepStrictEqual(updates.slice(1), [
         { sessionID: "root", permission: openCodePermissionRules(fullAccess) },
+      ]);
+
+      yield* harness.runtime.applyRuntimeMode!({
+        providerThread: harness.providerThread,
+        runtimeMode: "approval-required",
+      });
+      assert.deepStrictEqual(updates.slice(2), [
+        { sessionID: "root", permission: openCodePermissionRules(supervised) },
       ]);
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );

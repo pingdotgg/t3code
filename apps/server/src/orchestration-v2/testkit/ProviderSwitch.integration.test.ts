@@ -19,6 +19,7 @@ import {
   ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
+  type RuntimeMode,
   ScheduledTaskId,
   ThreadId,
   TurnItemId,
@@ -134,6 +135,7 @@ function makeTestAdapter(input: {
   readonly backgroundTasksEndWithProcess?: true;
   readonly backgroundWork?: Ref.Ref<boolean>;
   readonly closedSessions?: Ref.Ref<ReadonlyArray<string>>;
+  readonly appliedRuntimeModes?: Ref.Ref<ReadonlyArray<RuntimeMode>>;
   /** Like ACP: opening resumes the initial native id, and forcing a new thread restarts the runtime. */
   readonly runtimeStarts?: Ref.Ref<ReadonlyArray<string>>;
   // ACP cannot truncate, so its rollback answers with a fresh, empty native session.
@@ -190,6 +192,12 @@ function makeTestAdapter(input: {
                   input.subagentOnlyBackgroundWork && options?.includeSubagents !== true
                     ? Effect.succeed(false)
                     : Ref.get(input.pendingBackgroundWork!),
+              }),
+          ...(input.appliedRuntimeModes === undefined
+            ? {}
+            : {
+                applyRuntimeMode: ({ runtimeMode }) =>
+                  Ref.update(input.appliedRuntimeModes!, (modes) => [...modes, runtimeMode]),
               }),
           ...(input.getModelContextWindow === undefined
             ? {}
@@ -4033,6 +4041,97 @@ describe("orchestration v2 provider switching", () => {
             ]),
           ),
         ),
+      );
+    }),
+  );
+
+  it.live("applies a runtime mode change to the running turn's live session", () =>
+    Effect.gen(function* () {
+      const key = "runtime-mode-mid-turn";
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const appliedRuntimeModes = yield* Ref.make<ReadonlyArray<RuntimeMode>>([]);
+      const closedSessions = yield* Ref.make<ReadonlyArray<string>>([]);
+      const started = yield* Deferred.make<void>();
+      const toolCallId = TurnItemId.make(`turn-item:${key}`);
+      const threadId = ThreadId.make(`thread:${key}`);
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: {
+            ...ClaudeProviderCapabilitiesV2,
+            sessions: {
+              ...ClaudeProviderCapabilitiesV2.sessions,
+              supportsRuntimeModeSwitchInSession: true,
+            },
+          },
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {},
+          capturedTurns,
+          closedSessions,
+          appliedRuntimeModes,
+          holdFirstTurn: started,
+          heldRunningToolCall: { id: toolCallId, toolName: "bash" },
+        }),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const toolCallRunning = yield* orchestrator.streamDomainEvents.pipe(
+          Stream.filter(
+            (event) =>
+              event.type === "turn-item.updated" &&
+              event.payload.id === toolCallId &&
+              event.payload.status === "running",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:${key}:create`),
+          threadId,
+          projectId: ProjectId.make(`project:${key}`),
+          title: "Mode change mid-turn",
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          runtimeMode: "auto-accept-edits",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:${key}:message`),
+          threadId,
+          messageId: MessageId.make(`message:${key}`),
+          text: "Run shell commands",
+          attachments: [],
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* Deferred.await(started);
+        yield* Fiber.join(toolCallRunning);
+
+        yield* orchestrator.dispatch({
+          type: "thread.runtime-mode.set",
+          commandId: CommandId.make(`command:${key}:mode`),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        yield* worker.drain();
+
+        assert.deepEqual(yield* Ref.get(appliedRuntimeModes), ["full-access"]);
+        assert.deepEqual(yield* Ref.get(closedSessions), []);
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(projection.thread.runtimeMode, "full-access");
+        assert.equal(projection.runs.at(-1)?.status, "running");
+      }).pipe(
+        Effect.provide(ProviderReplayHarness.layerWithRegistry({ name: key }, layerRegistry)),
       );
     }),
   );

@@ -222,6 +222,24 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
+          case "provider-session.apply-runtime-mode":
+            return providerTurnControl
+              .applyRuntimeMode({
+                threadId: effect.threadId,
+                providerSessionId: effect.request.providerSessionId,
+                providerThreadId: effect.request.providerThreadId,
+                runtimeMode: effect.request.runtimeMode,
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationEffectExecutionError({
+                      effectId: effect.id,
+                      effectType: effect.request.type,
+                      cause,
+                    }),
+                ),
+              );
           case "provider-session.apply-thread-title":
             return providerTurnControl
               .applyThreadTitle({ threadId: effect.threadId, title: effect.request.title })
