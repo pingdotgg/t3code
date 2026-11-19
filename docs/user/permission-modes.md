@@ -30,7 +30,8 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, Cursor, Grok, Antigravity, and fx; providers without
 an equivalent, including OpenCode, fall back to asking. On Grok and Antigravity, actions their review
 does not approve come to you for approval. On fx, prompts it still sends also come to you. Antigravity
-accounts without its Auto mode, such as Gemini Enterprise, ask before every action instead.
+accounts without its Auto mode, such as Gemini Enterprise, run in Antigravity's default mode, and
+every approval request it sends comes to you.
 
 Muse Code offers only **Supervised** and **Full access**. A Muse thread already set to another mode
 runs in **Supervised**.
