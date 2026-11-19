@@ -517,7 +517,7 @@ export const make = Effect.gen(function* () {
       const linkOnly = envs.find((id) => evaluated.links.has(id));
       if (linkOnly !== undefined) {
         return yield* unavailable(
-          `Environment ${linkOnly} is reached only over this server's link, which does not carry ${method}. Open ${APP_NAME} on a device connected to it and grant it ${APP_NAME} gateway access.`,
+          `Environment ${linkOnly} is reached only over this server's link, which does not carry ${method}. In ${APP_NAME} desktop on this machine, open Settings > Machines, add ${linkOnly} as an environment, then turn on it and this machine under MCP Gateway > Environment grants and save. Device network permissions do not relay calls.`,
         );
       }
       const unmet = requirements.find(({ environmentId }) =>
