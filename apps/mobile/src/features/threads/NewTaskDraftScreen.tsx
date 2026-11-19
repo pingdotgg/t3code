@@ -375,7 +375,7 @@ export function NewTaskDraftScreen(props: {
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
-  const isDraftContentLocked = isComposerInteractionLocked || flow.draftKey === null;
+  const isDraftInteractionLocked = isComposerInteractionLocked || flow.draftKey === null;
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
@@ -748,7 +748,10 @@ export function NewTaskDraftScreen(props: {
     navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
   };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
-    if (isComposerInteractionLocked) {
+    if (
+      isComposerInteractionLocked ||
+      (routeName === "NewTaskBranch" && isDraftInteractionLocked)
+    ) {
       return;
     }
     promptInputRef.current?.blur();
@@ -924,7 +927,7 @@ export function NewTaskDraftScreen(props: {
             : gt("Switches to the current checkout")
         }
         accessibilityLabel={workspaceLabel}
-        disabled={isComposerInteractionLocked || !flow.isGitRepo}
+        disabled={isDraftInteractionLocked || !flow.isGitRepo}
         renderIcon={(size) => (
           <NewTaskWorkspaceIcon
             workspaceMode={flow.workspaceMode}
@@ -946,7 +949,7 @@ export function NewTaskDraftScreen(props: {
               : gt("Branch: {branch}", { branch: selectedBranchLabel })
           }
           chevronDirection="right"
-          disabled={isComposerInteractionLocked || !flow.isGitRepo}
+          disabled={isDraftInteractionLocked || !flow.isGitRepo}
           icon="arrow.triangle.branch"
           label={showBranchLoading ? gt("Loading branches…") : selectedBranchLabel}
           maxWidth="100%"
@@ -1003,7 +1006,7 @@ export function NewTaskDraftScreen(props: {
             value={flow.prompt}
             onChangeText={flow.setPrompt}
             placeholder={gt("Ask anything")}
-            readOnly={isDraftContentLocked}
+            readOnly={isDraftInteractionLocked}
             multiline
             style={{ minHeight: 64 }}
           />
@@ -1037,7 +1040,7 @@ export function NewTaskDraftScreen(props: {
           controls: draftControls,
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
-          interactionLocked: isDraftContentLocked,
+          interactionLocked: isDraftInteractionLocked,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}
