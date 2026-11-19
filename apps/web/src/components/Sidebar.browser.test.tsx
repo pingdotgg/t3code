@@ -1,6 +1,6 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -54,6 +54,7 @@ vi.mock(import("../state/server"), async (original) => {
   const keybindings = compileResolvedKeybindingsConfig([
     { key: "mod+1", command: "thread.jump.1" },
     { key: "mod+2", command: "thread.jump.2" },
+    { key: "mod+shift+[", command: "thread.previous" },
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
@@ -143,8 +144,10 @@ describe("sidebar numbered jumps", () => {
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     const web = project("web");
     vi.mocked(useProjects).mockReturnValue([web]);
-    vi.mocked(useQuietThreadShells).mockReturnValue([threadShell(web.id, 0)]);
-    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    const thread = threadShell(web.id, 0);
+    vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
+    const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
     vi.mocked(useHandleNewThread).mockReturnValue({
       activeDraftThread: null,
       activeThread: null,
@@ -152,7 +155,7 @@ describe("sidebar numbered jumps", () => {
       defaultProjectFallbackReady: true,
       handleNewThread: vi.fn(),
       routeDraftId: null,
-      routeThreadRef: null,
+      routeThreadRef: threadRef,
     });
     const draftId = DraftId.make("unsent-draft");
     initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
@@ -174,6 +177,20 @@ describe("sidebar numbered jumps", () => {
     await expect.element(draftRow.getByText("Ctrl+1")).toBeVisible();
     await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
     await userEvent.keyboard("{/Control}");
+
+    // Previous thread from the open thread steps up to the draft above it.
+    await userEvent.keyboard("{Control>}{Shift>}{BracketLeft}{/Shift}{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}2{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).not.toBe(`/draft/${draftId}`),
+    );
+    await userEvent.keyboard("{Control>}1{/Control}");
+    await vi.waitFor(() =>
+      expect(screen.router!.state.location.pathname).toBe(`/draft/${draftId}`),
+    );
   });
 });
 
