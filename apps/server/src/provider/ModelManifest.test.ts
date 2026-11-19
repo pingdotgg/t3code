@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -424,6 +425,70 @@ describe("ModelManifest service", () => {
           prefix: "model-manifest-optout-test",
           response: () => Response.json(REMOTE_MANIFEST),
           settings: { enableProviderUpdateChecks: false },
+        }),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    { env: "off", fetchedFrom: [], manifest: "bundled" },
+    {
+      env: "https://models.example.test/manifest.json",
+      fetchedFrom: ["https://models.example.test/manifest.json"],
+      manifest: "remote",
+    },
+  ])("T3CODE_MODEL_MANIFEST_URL=$env decides where the manifest is fetched", (input) =>
+    Effect.gen(function* () {
+      const fetchedFrom: Array<string> = [];
+      const service = yield* ModelManifest.make.pipe(
+        Effect.provide(
+          Layer.succeed(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              fetchedFrom.push(request.url);
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, Response.json(REMOTE_MANIFEST)),
+              );
+            }),
+          ),
+        ),
+      );
+      assert.deepStrictEqual(
+        yield* service.forceRefresh,
+        input.manifest === "remote" ? REMOTE_MANIFEST : ModelManifest.BUNDLED_MODEL_MANIFEST,
+      );
+      assert.deepStrictEqual(fetchedFrom, input.fetchedFrom);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-url-test",
+          response: () => Response.json(REMOTE_MANIFEST),
+        }),
+      ),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({ env: { T3CODE_MODEL_MANIFEST_URL: input.env } }),
+      ),
+    ),
+  );
+
+  it.effect("refuses to start with a model manifest URL that is not https", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(ModelManifest.make);
+      assert.isTrue(exit._tag === "Failure");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerService({
+          prefix: "model-manifest-invalid-url-test",
+          response: () => Response.json(REMOTE_MANIFEST),
+        }),
+      ),
+      Effect.provideService(
+        ConfigProvider.ConfigProvider,
+        ConfigProvider.fromEnv({
+          env: { T3CODE_MODEL_MANIFEST_URL: "http://models.example.test" },
         }),
       ),
     ),

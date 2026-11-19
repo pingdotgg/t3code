@@ -4,6 +4,7 @@ import {
   type ProviderDriverKind,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
@@ -22,8 +24,29 @@ import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 import { ProviderCompatibilityPolicy } from "./providerCompatibility.ts";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 
-const MODEL_MANIFEST_URL =
+const DEFAULT_MODEL_MANIFEST_URL =
   "https://raw.githubusercontent.com/pingdotgg/t3code/main/apps/server/src/provider/model-manifest.json";
+
+// `off` keeps the bundled manifest. An empty value reads as unset, so it cannot mean off.
+const modelManifestUrlConfig = Config.String("T3CODE_MODEL_MANIFEST_URL").pipe(
+  Config.withDefault(DEFAULT_MODEL_MANIFEST_URL),
+  Config.mapEffect((raw) => {
+    const value = raw.trim();
+    if (value === "off") return Effect.succeed(null);
+    const url = URL.parse(value);
+    if (url?.protocol === "https:") return Effect.succeed(url.href);
+    return Effect.fail(
+      new Config.ConfigError(
+        new Schema.SchemaError(
+          new SchemaIssue.InvalidValue({
+            message:
+              "T3CODE_MODEL_MANIFEST_URL must be an https URL, or `off` to use only the bundled manifest.",
+          }),
+        ),
+      ),
+    );
+  }),
+);
 
 const MANIFEST_TTL_MS = 60 * 60 * 1000;
 
@@ -200,6 +223,7 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig;
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
+  const manifestUrl = yield* modelManifestUrlConfig;
   const serviceScope = yield* Effect.scope;
 
   const cachePath = path.join(config.stateDir, "model-manifest.json");
@@ -239,10 +263,11 @@ export const make = Effect.gen(function* () {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.catchCause(() => Effect.succeed(null)),
     );
+    if (manifestUrl === null) return manifest;
     if (settings !== null && !settings.enableProviderUpdateChecks) return manifest;
 
     lastAttemptMs = now;
-    const fetched = yield* httpClient.get(MODEL_MANIFEST_URL).pipe(
+    const fetched = yield* httpClient.get(manifestUrl).pipe(
       Effect.flatMap(HttpClientResponse.filterStatusOk),
       Effect.flatMap((response) => response.json),
       Effect.flatMap((json) => decodeManifest(json)),
