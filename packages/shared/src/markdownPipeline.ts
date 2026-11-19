@@ -19,10 +19,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
 import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
-import {
-  remarkEnableOrderedListNumbers,
-  remarkKeepOrderedListNumbers,
-} from "./markdownOrderedListNumbers.ts";
+import { remarkKeepOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 import {
   remarkEnableLeadingWhitespace,
   remarkKeepLeadingWhitespace,
@@ -133,12 +130,6 @@ export const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS: PluggableList = [
 export const CHAT_USER_MARKDOWN_REMARK_PLUGINS: PluggableList = [
   [remarkGfm, { singleTilde: false }],
   remarkEnableLeadingWhitespace,
-];
-
-/** What a sent user message adds: the composer's tildes and list numbers. */
-export const CHAT_USER_MESSAGE_REMARK_PLUGINS: PluggableList = [
-  ...CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
 ];
 
 // Start tags an HTML parser closes an open `<p>` for.

@@ -942,14 +942,20 @@ export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] 
 }
 
 /**
- * Words' HTML for `markdown` as hast, unsanitized and without the chat's additions. With
- * `skipHtml`, raw HTML is left out; code blocks, links and list items carry source positions.
+ * Words' HTML for `markdown` as hast, unsanitized and without the chat's additions. Code blocks,
+ * links, list items and math carry source positions.
  */
-export function markdownTree(markdown: string, options: { skipHtml?: boolean } = {}): Root {
+export function markdownTree(
+  markdown: string,
+  options: { skipHtml?: boolean; singleTilde?: boolean; math?: boolean } = {},
+): Root {
   const html = renderToHtml(markdown, {
     windowsPaths: true,
     sourcePositions: true,
     skipHtml: options.skipHtml === true,
+    singleTilde: options.singleTilde !== false,
+    math: options.math === true,
+    texDelimiters: options.math === true,
   });
   return tokenize(decoder.decode(html), utf16Offsets(markdown));
 }
