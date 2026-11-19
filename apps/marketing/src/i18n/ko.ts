@@ -38,7 +38,7 @@ export const ko: Messages = {
     readPost: "X에서 {handle}님의 게시물 읽기",
     harnessTitle: "쓰던 구독 그대로",
     harnessBody:
-      "T3 Code는 토큰을 따로 팔지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
+      "T3 Code는 토큰을 재판매하지 않습니다. 이미 쓰고 있는 계정으로 Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok을 연결하세요. 오케스트레이션은 저희가, 요금제는 그대로.",
     googleSignIn: "Google 로그인",
     harnessPoints: [
       "키 재판매 없음. 사용량 한도 없음.",
@@ -72,7 +72,7 @@ export const ko: Messages = {
     browseSource: "소스 보기",
     ctaTitle: "에이전트에게 터미널보다 나은 작업 공간을.",
     ctaSub:
-      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고 이미 쓰고 있는 에이전트 구독을 연결하면, 에이전트가 바로 일을 시작합니다.",
+      "T3 Code는 무료이고, 오픈 소스이며, 빠릅니다. 설치하고 이미 쓰고 있는 에이전트를 연결하면 바로 일을 시작합니다.",
     otherPlatforms: "다른 플랫폼",
   },
   download: {
