@@ -94,7 +94,10 @@ jobs:
           thread_list_patch="$RUNNER_TEMP/mobile-thread-list.patch"
           git show "$WORKFLOW_SHA:.github/patches/mobile-thread-list.patch" > "$thread_list_patch"
           thread_list_patch_sha="$(sha256sum "$thread_list_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; } \
+          fork_config_patch="$RUNNER_TEMP/mobile-fork-config.patch"
+          git show "$WORKFLOW_SHA:.github/patches/mobile-fork-config.patch" > "$fork_config_patch"
+          fork_config_patch_sha="$(sha256sum "$fork_config_patch" | cut -d' ' -f1)"
+          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; printf '%s\n' "$fork_config_patch_sha"; } \
             | sha256sum | cut -c1-16)"
 
           dry_run=false
@@ -185,6 +188,8 @@ jobs:
           git apply "$lineage_agent_patch"
           git apply --check "$thread_list_patch"
           git apply "$thread_list_patch"
+          git apply --check "$fork_config_patch"
+          git apply "$fork_config_patch"
           git add -A
           git commit -m "patch: apply portable fork fixes to upstream nightly"
           if [[ "$dry_run" == "true" ]]; then
@@ -230,6 +235,7 @@ jobs:
           - Allow named T3 delegate_task targets according to each lead agent's allowlist.
           - Keep mobile thread rows on three lines: project, title, then branch and machine.
           - Show Mark unread in the mobile thread hold menu instead of under More.
+          - Point the mobile app at the fork's bundle ID and Expo project so over-the-air updates reach fork builds.
 
           Agent selection remains explicit. Automatic complexity-based routing is a separate follow-up. The named-target allowlist covers T3 delegate_task, not provider-native subagent tools.
 
@@ -507,3 +513,56 @@ jobs:
           fi
           gh api --method PATCH "repos/$FORK_REPOSITORY/releases/$release_id" \
             -F draft=false -F prerelease=true >/dev/null
+
+  mobile_ota:
+    name: Publish mobile OTA update
+    needs: resolve
+    if: needs.resolve.outputs.should_build == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+      APP_VARIANT: development
+      # Must match the build installed on the devices so the app accepts the update.
+      T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER: com.louisefindlay23.t3code
+      T3CODE_MOBILE_UPDATE_CHANNEL: nightly
+    steps:
+      - name: Check out prepared patched nightly source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - name: Setup EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+          packager: npm
+
+      - name: Publish OTA update
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas update \
+            --branch nightly \
+            --platform ios \
+            --message "Patched nightly $RELEASE_TAG" \
+            --non-interactive
