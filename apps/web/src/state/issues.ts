@@ -44,9 +44,7 @@ const mergedIssueLists = createMergedIssueListAtoms(
 );
 
 /** The same listing read across every connected environment, as the pull-request page does. */
-export function useIssueList(
-  targets: ReadonlyArray<IssueListTarget>,
-): MergedIssueList & {
+export function useIssueList(targets: ReadonlyArray<IssueListTarget>): MergedIssueList & {
   readonly refresh: () => void;
   readonly reload: () => void;
   readonly retry: () => void;
