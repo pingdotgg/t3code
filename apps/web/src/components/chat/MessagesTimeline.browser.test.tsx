@@ -312,7 +312,7 @@ describe("MessagesTimeline work rows", () => {
       latestRun: { runId, status: "running", startedAt, completedAt: null },
     });
 
-    expect(screen.container.textContent).toContain("Elapsed 5s");
+    await expect.element(screen.getByText("Elapsed 5s", { exact: true })).toBeVisible();
   });
 
   it("keeps the elapsed-time heading in place when expanded at the bottom", async () => {
