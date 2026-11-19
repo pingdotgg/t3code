@@ -42,6 +42,7 @@ describe("themeCssLoadsRemoteFiles", () => {
       false,
     ],
     ['@import "x.css";', true],
+    ['.a\\" {} @import "x.css"; .b\\" {}', true],
     ['.a::after { content: "\\\\"; } @import "x.css";', true],
     [".a { background: url(https://example.invalid/x.png); }", true],
   ])("%s", (css, loads) => {

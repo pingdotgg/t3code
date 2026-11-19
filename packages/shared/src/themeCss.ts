@@ -3,11 +3,12 @@ import { THEME_COLOR_ROLES } from "./themePalettes.ts";
 const FETCHES_BY_STRING = /image-set\(|\bsrc\(/i;
 // Only CSS whitespace may come first. \s also matches U+00A0, which makes the address relative.
 const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
-// Read tokens left to right, as CSS does: a url( or /* inside a string loads nothing, and a quote in
-// an unquoted url( is not a string. A quoted url() that is not data: or #id keeps `url(` for the check.
+// Read tokens left to right, as CSS does: a url( or /* inside a string loads nothing, and a quote
+// in an unquoted url( or after a backslash is not a string. A quoted url() that is not data: or #id
+// keeps `url(` for the check.
 const ESCAPE = String.raw`\\(?:(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{1,5}(?![0-9a-fA-F]))(?:\r\n|[\n\r\f])?|\r\n|[^0-9a-fA-F])`;
 const STRING = String.raw`"(?:${ESCAPE}|[^"\\\n\r\f])*"|'(?:${ESCAPE}|[^'\\\n\r\f])*'`;
-const URL_OR_STRING = String.raw`url\((?![ \t\n\f\r]*["'])([^)]*)|url\([ \t\n\f\r]*(${STRING})|${STRING}`;
+const URL_OR_STRING = String.raw`url\((?![ \t\n\f\r]*["'])([^)]*)|url\([ \t\n\f\r]*(${STRING})|${STRING}|${ESCAPE}`;
 const VALUE_TOKENS = new RegExp(URL_OR_STRING, "gi");
 const STYLESHEET_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi");
 
