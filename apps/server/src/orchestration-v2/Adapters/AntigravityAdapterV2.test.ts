@@ -935,6 +935,13 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         rawInput: { CommandLine: "node fetch_throughput.mjs", WaitMsBeforeAsync: 10000 },
       } as const;
       const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
+      const launch = {
+        toolCallId: "call_4605185876614482453",
+        kind: "other",
+        title: "Run invoke_subagent",
+        rawInput: { TypeName: "research", Role: "File Researcher", Prompt: "List the files" },
+      } as const;
+      let prompts = 0;
       const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
       const instanceId = ProviderInstanceId.make("antigravity-wake-test");
       const threadId = ThreadId.make("thread-antigravity-wake");
@@ -966,6 +973,22 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
                 }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
               prompt: () =>
                 Effect.gen(function* () {
+                  prompts += 1;
+                  if (prompts === 2) {
+                    // agy 1.5.12 auto-approves the launch and ends the prompt while the child runs.
+                    yield* send({ sessionUpdate: "tool_call", ...launch, status: "in_progress" });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      ...launch,
+                      status: "completed",
+                    });
+                    yield* send({
+                      sessionUpdate: "agent_message_chunk",
+                      content: { type: "text", text: "I am waiting for the subagent." },
+                    });
+                    yield* send(usage);
+                    return { stopReason: "end_turn" as const };
+                  }
                   yield* send({ sessionUpdate: "tool_call", ...command, status: "in_progress" });
                   yield* send({
                     sessionUpdate: "agent_message_chunk",
@@ -1120,6 +1143,33 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.equal(finished?.type === "turn_item.updated" && finished.turnItem.status, "completed");
       assert.lengthOf(offers, 1, "one wake is one run");
+
+      // A subagent agy is still running holds the run open until agy wakes with its report.
+      yield* startTurn(3, false);
+      yield* TestClock.adjust("10 seconds");
+      const held = yield* Queue.takeAll(events);
+      assert.isFalse(
+        held.some((event) => event.type === "turn.terminal"),
+        "the run must wait for the subagent",
+      );
+      const subagentStatus = (seen: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        seen.findLast((event) => event.type === "subagent.updated")?.subagent;
+      assert.equal(subagentStatus(held)?.status, "running");
+      assert.equal(subagentStatus(held)?.title, "File Researcher");
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "The subagent reported back." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const reported = yield* throughTerminal;
+      const reportedTerminal = reported.at(-1);
+      assert.equal(
+        reportedTerminal?.type === "turn.terminal" && reportedTerminal.status,
+        "completed",
+      );
+      assert.equal(subagentStatus(reported)?.status, "completed");
+      assert.lengthOf(offers, 1, "the report belongs to the held run");
     }).pipe(Effect.provide(layerSession)),
   );
 });
