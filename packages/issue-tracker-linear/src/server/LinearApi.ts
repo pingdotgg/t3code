@@ -55,6 +55,7 @@ export type LinearHistoryEntry = IssueHistory;
 
 export const KIND = LINEAR_KIND;
 const DEFAULT_API_URL = "https://api.linear.app/graphql";
+const FILE_URL_TTL_SECONDS = "3600";
 
 const LinearApiConfig = Config.all({
   apiUrl: Config.String("T3CODE_LINEAR_API_URL").pipe(Config.withDefault(DEFAULT_API_URL)),
@@ -249,7 +250,12 @@ export const make = Effect.gen(function* () {
             Effect.gen(function* () {
               const token = yield* LinearToken;
               // A personal API key goes in as-is; `Bearer` is for OAuth tokens, which this is not.
-              return { ...request, headers: Headers.set(request.headers, "authorization", token) };
+              // Uploads are private unless Linear signs them; the browser loads them with no session.
+              const headers = Headers.setAll(request.headers, {
+                authorization: token,
+                "public-file-urls-expire-in": FILE_URL_TTL_SECONDS,
+              });
+              return { ...request, headers };
             }),
           ),
         ),
