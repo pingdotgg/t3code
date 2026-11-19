@@ -487,6 +487,40 @@ describe("LinearIssueTracker", () => {
     }),
   );
 
+  it.effect("offers as assignees only the team members Linear can assign", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeLinear({
+        T3Team: () => ({
+          teams: {
+            nodes: [
+              {
+                id: "team_eng",
+                key: "ENG",
+                name: "Engineering",
+                states: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                labels: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+                members: {
+                  nodes: [
+                    { ...JULIUS, isAssignable: true },
+                    // An app user without the assignments capability; Linear answers
+                    // "App user not valid" when an issue is assigned to it.
+                    { ...user("usr_review_bot", "review-bot"), isAssignable: false },
+                  ],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+                templates: { nodes: [] },
+              },
+            ],
+          },
+          issueLabels: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } },
+        }),
+      });
+      const api = yield* tracker;
+      const candidates = yield* api.listCandidates(target);
+      expect(candidates.assignees.map((assignee) => assignee.id)).toEqual(["usr_julius"]);
+    }),
+  );
+
   it("offers plain templates as drafts and form or rich ones as links into Linear", () => {
     const labels = new Map([["lbl_bug", "Bug"]]);
     const plain = LinearIssueTracker.toTemplate(
