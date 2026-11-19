@@ -144,7 +144,7 @@ const handler = Effect.gen(function* () {
         pump(upstream.reader, clientWriter, drained(connection)),
         pump(clientReader, upstream.writer),
       ),
-      sessions.awaitInvalidation(session.sessionId),
+      sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint),
     ).pipe(Effect.ignoreCause);
     return HttpServerResponse.empty();
   }).pipe(
