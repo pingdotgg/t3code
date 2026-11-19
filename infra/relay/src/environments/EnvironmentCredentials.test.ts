@@ -56,6 +56,49 @@ describe("EnvironmentCredentials", () => {
     );
   });
 
+  it.effect.each([
+    { name: "a replica hit skips the primary", replica: 1, primary: 1, lookups: [1, 0] },
+    { name: "a replica miss is confirmed on the primary", replica: 0, primary: 1, lookups: [1, 1] },
+    { name: "a miss on both is not found", replica: 0, primary: 0, lookups: [1, 1] },
+  ])("authenticates from the replica: $name", ({ replica, primary, lookups }) => {
+    const row = { credentialId: "cred-1", environmentId: "env-1", environmentPublicKey: "key-1" };
+    const lookupDb = (found: number, calls: { count: number }) =>
+      ({
+        select: () => ({
+          from: () => ({
+            where: () => ({
+              limit: () => {
+                calls.count += 1;
+                return Effect.succeed(found > 0 ? [row] : []);
+              },
+            }),
+          }),
+        }),
+      }) as unknown as RelayDb.RelayDb["Service"];
+    const replicaCalls = { count: 0 };
+    const primaryCalls = { count: 0 };
+
+    return Effect.gen(function* () {
+      const credentials = yield* EnvironmentCredentials.EnvironmentCredentials;
+      const result = yield* credentials.authenticate("t3env_token");
+
+      expect(result._tag).toBe(replica + primary > 0 ? "Some" : "None");
+      expect([replicaCalls.count, primaryCalls.count]).toEqual(lookups);
+    }).pipe(
+      Effect.provide(
+        EnvironmentCredentials.layer.pipe(
+          Layer.provide(NodeCryptoLayer.layer),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(RelayDb.RelayDb, lookupDb(primary, primaryCalls)),
+              Layer.succeed(RelayDb.RelayReadDb, lookupDb(replica, replicaCalls)),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect(
     "creates opaque credentials and revokes only older credentials for the same key",
     () => {

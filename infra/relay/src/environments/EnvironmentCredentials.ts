@@ -84,6 +84,7 @@ export class EnvironmentCredentials extends Context.Service<
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const readDb = yield* RelayDb.readDb;
   const random = yield* SecureRandom.SecureRandom;
   const digest = yield* Digest.Digest;
   const hashToken = (token: string) =>
@@ -188,47 +189,52 @@ const make = Effect.gen(function* () {
             }),
         ),
       );
-      const rows = yield* db
-        .select({
-          credentialId: relayEnvironmentCredentials.credentialId,
-          environmentId: relayEnvironmentCredentials.environmentId,
-          environmentPublicKey: relayEnvironmentCredentials.environmentPublicKey,
-        })
-        .from(relayEnvironmentCredentials)
-        .where(
-          and(
-            eq(relayEnvironmentCredentials.credentialHash, credentialHash),
-            isNull(relayEnvironmentCredentials.revokedAt),
-            exists(
-              new QueryBuilder()
-                .select({ userId: relayEnvironmentLinks.userId })
-                .from(relayEnvironmentLinks)
-                .where(
-                  and(
-                    eq(
-                      relayEnvironmentLinks.environmentId,
-                      relayEnvironmentCredentials.environmentId,
+      const lookup = (source: RelayDb.RelayDb["Service"]) =>
+        source
+          .select({
+            credentialId: relayEnvironmentCredentials.credentialId,
+            environmentId: relayEnvironmentCredentials.environmentId,
+            environmentPublicKey: relayEnvironmentCredentials.environmentPublicKey,
+          })
+          .from(relayEnvironmentCredentials)
+          .where(
+            and(
+              eq(relayEnvironmentCredentials.credentialHash, credentialHash),
+              isNull(relayEnvironmentCredentials.revokedAt),
+              exists(
+                new QueryBuilder()
+                  .select({ userId: relayEnvironmentLinks.userId })
+                  .from(relayEnvironmentLinks)
+                  .where(
+                    and(
+                      eq(
+                        relayEnvironmentLinks.environmentId,
+                        relayEnvironmentCredentials.environmentId,
+                      ),
+                      eq(
+                        relayEnvironmentLinks.environmentPublicKey,
+                        relayEnvironmentCredentials.environmentPublicKey,
+                      ),
+                      isNull(relayEnvironmentLinks.revokedAt),
                     ),
-                    eq(
-                      relayEnvironmentLinks.environmentPublicKey,
-                      relayEnvironmentCredentials.environmentPublicKey,
-                    ),
-                    isNull(relayEnvironmentLinks.revokedAt),
                   ),
-                ),
+              ),
             ),
-          ),
-        )
-        .limit(1)
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentCredentialAuthenticatePersistenceError({
-                stage: "lookup-credential",
-                cause,
-              }),
-          ),
-        );
+          )
+          .limit(1)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new EnvironmentCredentialAuthenticatePersistenceError({
+                  stage: "lookup-credential",
+                  cause,
+                }),
+            ),
+          );
+      // A host can present a credential the instant it is minted, before the
+      // replicas have it, so a replica miss is confirmed on the primary.
+      const replicaRows = yield* lookup(readDb);
+      const rows = replicaRows.length > 0 || readDb === db ? replicaRows : yield* lookup(db);
       const row = rows[0];
       if (row) {
         yield* Effect.annotateCurrentSpan({ "relay.environment_id": row.environmentId });

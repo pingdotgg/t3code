@@ -63,7 +63,10 @@ const make = Effect.gen(function* () {
     readonly state: RelayAgentActivityState | null;
     readonly nowMs: number;
   }) {
-    const targets = yield* liveActivities.listTargets({ userId: input.deliveryUser.userId });
+    const targets = yield* liveActivities.listTargets({
+      userId: input.deliveryUser.userId,
+      fromReplica: true,
+    });
     // Only iOS targets with a running Live Activity read the aggregate, and few users have one,
     // so skip the per-user activity query otherwise.
     const liveActivityAggregate =

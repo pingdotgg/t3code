@@ -103,6 +103,8 @@ export class LiveActivities extends Context.Service<
     }) => Effect.Effect<void, LiveActivityRegistrationPersistenceError>;
     readonly listTargets: (input: {
       readonly userId: string;
+      /** Fan-out only: delivery jobs reread the target on the primary before sending. */
+      readonly fromReplica?: boolean;
     }) => Effect.Effect<ReadonlyArray<TargetRow>, LiveActivityTargetListPersistenceError>;
     readonly listIdleArmedTargets: (input: {
       readonly deliveredBefore: string;
@@ -135,6 +137,7 @@ const encodeRelayAgentActivityAggregateStateJson = Schema.encodeEffect(
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const readDb = yield* RelayDb.readDb;
 
   return LiveActivities.of({
     register: Effect.fn("relay.live_activities.register")(function* (input) {
@@ -212,7 +215,7 @@ const make = Effect.gen(function* () {
     }),
 
     listTargets: Effect.fn("relay.live_activities.list_targets")(function* (input) {
-      return yield* db
+      return yield* (input.fromReplica ? readDb : db)
         .select({
           device_id: relayMobileDevices.deviceId,
           user_id: relayMobileDevices.userId,

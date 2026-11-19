@@ -169,6 +169,7 @@ function agentAwarenessDeliveryUserKeyCondition(input: {
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
+  const readDb = yield* RelayDb.readDb;
 
   return EnvironmentLinks.of({
     upsert: Effect.fn("relay.environment_links.upsert")(function* (input) {
@@ -260,7 +261,8 @@ const make = Effect.gen(function* () {
       "relay.environment_links.list_delivery_users_for_environment",
     )(function* (input) {
       yield* Effect.annotateCurrentSpan({ "relay.environment_id": input.environmentId });
-      return yield* db
+      // A link or preference change can miss the next few milliseconds of fan-out.
+      return yield* readDb
         .select({
           userId: relayEnvironmentLinks.userId,
           notificationsEnabled: relayEnvironmentLinks.notificationsEnabled,

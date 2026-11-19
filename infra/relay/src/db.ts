@@ -3,11 +3,13 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Drizzle from "@alchemy.run/drizzle";
 import * as Planetscale from "@alchemy.run/planetscale";
 import * as Alchemy from "alchemy";
+import * as Output from "alchemy/Output";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { relayDatabaseMode } from "./dbConfig.ts";
 
@@ -17,6 +19,20 @@ export class RelayDb extends Context.Service<
     readonly $client: PgClient;
   }
 >()("t3code-relay/db/RelayDb") {}
+
+/**
+ * The cluster's read replicas, a few milliseconds behind the primary. Only for
+ * hot reads that tolerate missing a write committed just before them.
+ * Unprovided outside prod, where `readDb` falls back to the primary.
+ */
+export class RelayReadDb extends Context.Service<RelayReadDb, RelayDb["Service"]>()(
+  "t3code-relay/db/RelayReadDb",
+) {}
+
+export const readDb = Effect.gen(function* () {
+  const primary = yield* RelayDb;
+  return Option.getOrElse(yield* Effect.serviceOption(RelayReadDb), () => primary);
+});
 
 export class RelayTransactions extends Context.Service<
   RelayTransactions,
@@ -77,6 +93,24 @@ export const RelayHyperdrive = Effect.gen(function* () {
   const { runtimeRole } = yield* PlanetscaleDatabase;
   return yield* Cloudflare.Hyperdrive.Connection("RelayHyperdrive", {
     origin: runtimeRole.origin,
+    caching: {
+      disabled: true,
+    },
+    originConnectionLimit: 40,
+  });
+});
+
+/** Prod only: stage branches have no read replicas. */
+export const RelayReplicaHyperdrive = Effect.gen(function* () {
+  const { stage } = yield* Alchemy.Stack;
+  if (relayDatabaseMode(stage) !== "shared-database") return undefined;
+  const { runtimeRole } = yield* PlanetscaleDatabase;
+  return yield* Cloudflare.Hyperdrive.Connection("RelayReplicaHyperdrive", {
+    // PlanetScale routes a `|replica` username across the cluster's read replicas.
+    origin: Output.map(runtimeRole.origin, (origin) => ({
+      ...origin,
+      user: `${origin.user}|replica`,
+    })),
     caching: {
       disabled: true,
     },

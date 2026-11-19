@@ -181,6 +181,14 @@ export const layer = Api.make(
     const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
       client: { prepare: false },
     });
+    const replicaHyperdriveResource = yield* RelayDb.RelayReplicaHyperdrive;
+    const readDb =
+      replicaHyperdriveResource === undefined
+        ? undefined
+        : yield* Drizzle.Postgres(
+            (yield* Cloudflare.Hyperdrive.Connect(replicaHyperdriveResource)).connectionString,
+            { client: { prepare: false } },
+          );
 
     const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
@@ -344,7 +352,12 @@ export const layer = Api.make(
       Layer.provideMerge(RelayTokens.layer.pipe(Layer.provideMerge(CloudMintSigner.layer))),
       Layer.provideMerge(
         RelayDb.RelayTransactions.layer.pipe(
-          Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
+          Layer.provideMerge(
+            Layer.mergeAll(
+              Layer.succeed(RelayDb.RelayDb, db),
+              readDb === undefined ? Layer.empty : Layer.succeed(RelayDb.RelayReadDb, readDb),
+            ),
+          ),
         ),
       ),
       Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
