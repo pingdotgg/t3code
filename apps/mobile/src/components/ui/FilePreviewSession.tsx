@@ -161,23 +161,22 @@ function ResolvedFilePreview(
     // A viewer that resets image gestures when its sources change waits for every image, and
     // opens without the ones that failed since it has no page to show them on.
     if (!progressiveGallery && uris.some((uri) => uri === undefined)) return null;
-    const pages = items.flatMap((item, index) => {
+    const images = items.map((item, index) => {
       const uri = uris[index];
-      if (!progressiveGallery && uri === null) return [];
-      const image = {
+      return {
         ...item,
         name: filePreviewName(item),
         sourceIdentifier: filePreviewSourceIdentifier(item),
         ...(uri ? { uri } : uri === null ? { failed: true } : {}),
       };
-      return [{ image, selected: index === selectedIndex }];
     });
+    const pages = progressiveGallery ? images : images.filter((image) => !("failed" in image));
     return (
       <Viewer
         source={{
           kind: "image",
-          images: pages.map((page) => page.image),
-          selectedIndex: pages.findIndex((page) => page.selected),
+          images: pages,
+          selectedIndex: pages.indexOf(images[selectedIndex]!),
         }}
         onRequestClose={props.onRequestClose}
         onPresent={props.onPresent}
