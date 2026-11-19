@@ -40,6 +40,7 @@ const GO_DURATION_UNIT_MS: Record<string, number> = {
   h: 3_600_000,
 };
 const NATIVE_SESSION_ID = /^[\w-]+$/;
+const CONNECTION_LOST = "Agent connection was lost and could not be re-established:";
 
 interface LastStep {
   readonly type: number;
@@ -168,6 +169,34 @@ function turnFailure(
       resetAt: resetAtFrom(text, now) ?? null,
     }),
   );
+}
+
+/**
+ * agy_acp_server reports a failed harness rebuild as agent text and `end_turn`, then
+ * forgets the session, so the turn fails and the next one resumes it on a fresh process.
+ */
+export function antigravityConnectionLostFailure(update: EffectAcpSchema.SessionUpdate):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable";
+    }
+  | undefined {
+  if (
+    update.sessionUpdate !== "agent_message_chunk" ||
+    update.content.type !== "text" ||
+    !update.content.text.startsWith(CONNECTION_LOST)
+  ) {
+    return undefined;
+  }
+  return {
+    failure: makeProviderFailure({
+      class: "provider_error",
+      message: update.content.text,
+      retryable: true,
+    }),
+    // The native session survives on disk; only this agent process forgot it.
+    threadDisposition: "reusable",
+  };
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
