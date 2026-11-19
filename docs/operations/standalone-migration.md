@@ -96,13 +96,11 @@ newer server starts, so a version rollback must use a backup made before that st
    Set these in the process environment or the fork's `service.env` before it starts. The server
    otherwise defaults product telemetry to `https://ingest.t3.codes`; see
    [telemetry](../user/telemetry.md) and [service environment](../user/background-service.md#configure-the-service-environment).
-   On fork revisions that support `T3CODE_MODEL_MANIFEST_URL`, `off` uses the bundled model
-   catalog without a background fetch. An HTTPS URL can instead point to a catalog you operate.
-   Older revisions fetch `model-manifest.json` from `pingdotgg/t3code` on GitHub before the
-   provider update checks can be turned off in Settings; do not use them for a strict no-T3 build.
+   `off` uses the bundled model catalog without a background fetch. An HTTPS URL can instead
+   point to a catalog you operate. Keep these explicit settings for source-run servers; a
+   standalone server build can supply safe defaults once that build support is integrated.
 
-   For a foreground staging server built from a revision supporting that setting, use an absolute
-   path to a copied, isolated home:
+   For a foreground staging server, use an absolute path to a copied, isolated home:
 
    ```sh
    T3CODE_HOME=/absolute/path/to/staging-home \
@@ -120,10 +118,11 @@ newer server starts, so a version rollback must use a backup made before that st
 ## Replace the client distributions
 
 The repository's `.env.example` contains the production T3 relay URL. Do not copy it into a fork
-build. On revisions supporting `T3CODE_STANDALONE`, set it to `1` for each client build and set
+build. Set `T3CODE_STANDALONE=1` for each client build and set
 `GITHUB_REPOSITORY` or `T3CODE_DESKTOP_UPDATE_REPOSITORY` to your `owner/repo`. The build rejects
 T3-operated relay, diagnostics, hosted-app, and mobile legal-site URLs, T3's Expo project ID, and
-an upstream release repository. A build made without this switch retains the official defaults.
+an upstream release repository. Use the same switch when building a server revision that supports
+it. A build made without the switch retains the official defaults.
 
 - **Web:** host the fork's static app at an HTTPS origin you control. Set
   `T3CODE_HOSTED_APP_URL` (also read as `VITE_HOSTED_APP_URL`) in the build and server only when
@@ -132,12 +131,14 @@ an upstream release repository. A build made without this switch retains the off
 - **Desktop:** build and sign the fork's app under an identity you control. Set the fork release
   repository at build time. Disable automatic updates with `T3CODE_DISABLE_AUTO_UPDATE=true`
   until your feed is ready, or point the managed `updates.feedUrl` at your feed. The bundled
-  server still needs the runtime settings above; the client build switch alone does not set them.
+  server needs the runtime settings above until the standalone server build supplies their safe
+  defaults. Verify those defaults in the packaged app, not only in a source-run server.
 - **CLI and SSH hosts:** distribute the fork's server/CLI archive with its checksums.
-  `T3CODE_RELEASE_BASE_URL` or a managed update mirror can redirect archive downloads, but the
-  ordinary `t3 update` release-index path still refers to upstream. Do not use `t3 update`,
-  `npx t3`, official install scripts, or desktop-managed SSH installation as a fork delivery
-  mechanism until their release paths are redirected and tested.
+  A standalone server build with release-repository support points `t3 update`, self-update,
+  SSH provisioning, and triage at the configured fork. Its install scripts accept
+  `T3CODE_RELEASE_REPOSITORY=owner/repo`. Until that support and fork artifacts are in place, do
+  not use `t3 update`, `npx t3`, official install scripts, or desktop-managed SSH installation
+  as a fork delivery mechanism.
 - **Mobile:** build and distribute forked iOS/Android apps with your signing and identifiers.
   Set `T3CODE_EAS_PROJECT_ID` and `T3CODE_EAS_OWNER` only for an Expo project you operate;
   without them, standalone builds disable OTA updates. Set `EXPO_PUBLIC_MARKETING_SITE_URL`
@@ -153,19 +154,20 @@ distribution destinations, and release ownership; a fork checkout alone does not
 
 These paths need configuration, implementation, or an egress test before declaring independence:
 
-- **Model manifest:** use `T3CODE_MODEL_MANIFEST_URL=off` on a revision that supports it, or point
-  it at an HTTPS catalog you operate. With `off`, the bundled catalog and any newer disk cache
-  remain available, but new compatibility information is not fetched.
-- **Updates and installers:** make the CLI release index, desktop feed, npm launcher, installer
-  scripts, and SSH runtime downloads use the fork's release source. Until then, keep automatic
-  updates off and use controlled builds.
+- **Model manifest:** use `T3CODE_MODEL_MANIFEST_URL=off` or point it at an HTTPS catalog you
+  operate. With `off`, the bundled catalog and any newer disk cache remain available, but new
+  compatibility information is not fetched.
+- **Updates and installers:** publish and verify fork-owned release archives, checksums, and
+  desktop feeds before enabling updates. The `t3` npm launcher belongs to the official package;
+  the Intel Mac install hint and mobile maintenance release lookup still need fork paths.
 - **Links and fallbacks:** a standalone client build removes the ordinary hosted-app,
   download/legal, issue, prompt/thread, and crash-recovery links to T3. Audit less common routes
   such as T3 Connect account pages, the `t3.json` schema URL, MCP approval redirects, and
   provider sign-in return origins before using them.
 - **Telemetry and diagnostics:** verify that the server, desktop, web, and mobile builds have no
   T3 ingest, relay tracing, or mobile Observe endpoint. Server opt-out alone does not control
-  separate browser or mobile clients.
+  separate browser or mobile clients. If sending product analytics to your own PostHog host,
+  configure both `T3CODE_POSTHOG_HOST` and `T3CODE_POSTHOG_KEY`; otherwise leave it disabled.
 - **T3 Connect replacement, if required:** the relay source is in `infra/relay`, but its current
   deployment uses Clerk, Cloudflare, PlanetScale, and optional APNs/FCM. Operating it and
   rebuilding every client for its URL is a separate project. Direct pairing avoids this entire
