@@ -17,7 +17,7 @@ export function isNetworkPath(value: string): boolean {
 
 /** A `\\wsl.localhost\<distro>` or `\\wsl$\<distro>` share: a WSL distro's files seen from Windows over 9P. */
 export function isWslSharePath(value: string): boolean {
-  return /^[\\/]{2}wsl(\.localhost|\$)[\\/]/i.test(value.trim());
+  return /^[\\/]{2}(?:[?.][\\/]UNC[\\/])?wsl(?:\.localhost|\$)[\\/]/i.test(value.trim());
 }
 
 export function isWindowsAbsolutePath(value: string): boolean {

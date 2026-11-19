@@ -14,6 +14,9 @@ describe("path helpers", () => {
     expect(isWslSharePath("\\\\wsl.localhost\\Ubuntu\\home")).toBe(true);
     expect(isWslSharePath("\\\\wsl$\\Ubuntu")).toBe(true);
     expect(isWslSharePath(" //WSL.LOCALHOST/Ubuntu/home")).toBe(true);
+    expect(isWslSharePath("\\\\?\\UNC\\wsl.localhost\\Ubuntu\\repo")).toBe(true);
+    expect(isWslSharePath("\\\\.\\UNC\\wsl$\\Ubuntu\\repo")).toBe(true);
+    expect(isWslSharePath("\\\\?\\C:\\work\\repo")).toBe(false);
     expect(isWslSharePath("\\\\wslserver\\share")).toBe(false);
     expect(isWslSharePath("\\\\fileserver\\wsl.localhost")).toBe(false);
     expect(isWslSharePath("C:\\work\\repo")).toBe(false);
