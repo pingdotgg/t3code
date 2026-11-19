@@ -183,7 +183,7 @@ export function CloudVoiceConfiguration({
   const [remove, setRemove] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const saveCloudKey = useAtomCommand(saveCloudSpeechKey);
+  const saveCloudKey = useAtomCommand(saveCloudSpeechKey, { reportFailure: false });
   const [model, setModel] = useState(currentModel ?? "");
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
   const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];

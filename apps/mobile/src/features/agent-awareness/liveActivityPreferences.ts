@@ -83,7 +83,7 @@ export const setLiveActivityUpdatesEnabled = Effect.fn("setLiveActivityUpdatesEn
     });
 
     yield* updateRelayPreference(input.enabled).pipe(
-      Effect.andThen(Effect.suspend(() => input.saveLocalPreference(input.enabled))),
+      Effect.andThen(() => input.saveLocalPreference(input.enabled)),
       Effect.onError(() => restoreRelayPreference()),
     );
   },

@@ -799,8 +799,10 @@ function AdvancedSpeechSettings({
   const gt = useGT();
   const settings = useClientSettings();
   const { run, controlsDisabled, status } = catalog;
-  const updateAcceleration = useAtomCommand(updateSpeechAcceleration);
-  const updateUnloadTimeout = useAtomCommand(updateSpeechModelUnloadTimeout);
+  const updateAcceleration = useAtomCommand(updateSpeechAcceleration, { reportFailure: false });
+  const updateUnloadTimeout = useAtomCommand(updateSpeechModelUnloadTimeout, {
+    reportFailure: false,
+  });
   if (!status?.supported) return null;
   const supported = status;
   return (
@@ -916,11 +918,11 @@ function SpeechModelBrowser(props: {
   const [downloadedOnly, setDownloadedOnly] = useState(false);
   const [existingPath, setExistingPath] = useState("");
   const canReadFiles = useEnvironmentScope(prepared.environmentId, AuthFilesystemReadScope);
-  const downloadModel = useAtomCommand(downloadSpeechModel);
-  const selectModel = useAtomCommand(selectSpeechModel);
-  const cancelDownload = useAtomCommand(cancelSpeechModelDownload);
-  const removeModel = useAtomCommand(removeSpeechModel);
-  const linkModels = useAtomCommand(linkSpeechModels);
+  const downloadModel = useAtomCommand(downloadSpeechModel, { reportFailure: false });
+  const selectModel = useAtomCommand(selectSpeechModel, { reportFailure: false });
+  const cancelDownload = useAtomCommand(cancelSpeechModelDownload, { reportFailure: false });
+  const removeModel = useAtomCommand(removeSpeechModel, { reportFailure: false });
+  const linkModels = useAtomCommand(linkSpeechModels, { reportFailure: false });
   const [languageSearch, setLanguageSearch] = useState("");
   const [selection, setSelection] = useState<string[] | null>(null);
   const [preferred] = useState(preferredSpeechLanguages);

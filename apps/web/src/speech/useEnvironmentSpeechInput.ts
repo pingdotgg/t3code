@@ -174,8 +174,8 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     reportFailure: false,
   });
   const readModels = useAtomCommand(readSpeechModels, { reportFailure: false });
-  const setUpModel = useAtomCommand(setUpSpeechModel);
-  const cancelModelDownload = useAtomCommand(cancelSpeechModelDownload);
+  const setUpModel = useAtomCommand(setUpSpeechModel, { reportFailure: false });
+  const cancelModelDownload = useAtomCommand(cancelSpeechModelDownload, { reportFailure: false });
   const [queuedStart, setQueuedStart] = useState<PreparedConnection | null>(null);
   const [setup, setSetup] = useState(INITIAL_SETUP);
   const [previousDestination, setPreviousDestination] = useState({ prepared, grantId });
