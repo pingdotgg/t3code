@@ -231,7 +231,9 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           yield* Effect.sleep(HIDDEN_WORK_POLL_INTERVAL);
           const lines = yield* readAppended;
           follow(lines);
-          quiet = open || lines.length > 0 ? 0 : quiet + 1;
+          // A queued prompt stays pending until its own turn has run.
+          const pending = open || (turnOpen && !queuedStarted);
+          quiet = pending || lines.length > 0 ? 0 : quiet + 1;
         }
         const failure = lastEnded === undefined ? undefined : turnFailure(lastEnded);
         if (failure !== undefined) return { failure };

@@ -113,12 +113,13 @@ it.layer(NodeServices.layer)("makeKimiPromptOutcomeWatch", (it) => {
         yield* nextPoll("250 millis");
         yield* nextPoll("250 millis");
         yield* nextPoll("250 millis");
+        yield* append(replyText("FINAL: all steps done") + completedTurn(1));
+        // The queued prompt's own turn can start well after Kimi's turn ends.
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
+        yield* nextPoll("250 millis");
         yield* append(
-          replyText("FINAL: all steps done") +
-            completedTurn(1) +
-            turnPrompt("Reply with the single word PONG.") +
-            replyText("PONG") +
-            completedTurn(2),
+          turnPrompt("Reply with the single word PONG.") + replyText("PONG") + completedTurn(2),
         );
         yield* nextPoll("250 millis");
         yield* nextPoll("250 millis");
