@@ -10576,11 +10576,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     ) {
       const projection = yield* projectionStore
-        .getThreadRecords(
-          command.threadId,
-          ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
-          { turnItemTypes: ["secret_request"], messageRoles: [] },
-        )
+        .getRunCardRecords(command.threadId, command.runId, command.nodeId, "secret_request")
         .pipe(
           Effect.mapError(
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
@@ -10685,11 +10681,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     ) {
       const projection = yield* projectionStore
-        .getThreadRecords(
-          command.threadId,
-          ["runs", "nodes", "turnItems", "attempts", "providerTurns"],
-          { turnItemTypes: ["link_request"], messageRoles: [] },
-        )
+        .getRunCardRecords(command.threadId, command.runId, command.nodeId, "link_request")
         .pipe(
           Effect.mapError(
             (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
