@@ -1,4 +1,5 @@
 /// <reference lib="dom" />
+import type { EnvironmentId, ProjectSearchEntriesInput } from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { test, WEB } from "./t3.ts";
@@ -21,13 +22,12 @@ test(
     });
 
     await browser.addInitScript((citation) => {
-      const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>();
+      const { promise: requested, resolve: markRequested } =
+        Promise.withResolvers<ProjectSearchEntriesInput>();
       const { promise: released, resolve: release } = Promise.withResolvers<void>();
-      const { promise: replied, resolve: markReplied } = Promise.withResolvers<void>();
       Object.assign(window, {
         citationRequested: requested,
         releaseCitation: release,
-        citationReplied: replied,
       });
 
       // Delay only the citation's real search, so the file picker can search in the meantime.
@@ -37,9 +37,8 @@ test(
           typeof data === "string"
             ? (JSON.parse(data) as {
                 _tag?: string;
-                id?: string;
                 tag?: string;
-                payload?: { query?: string };
+                payload?: ProjectSearchEntriesInput;
               })
             : null;
         if (
@@ -50,18 +49,7 @@ test(
           return send.call(this, data);
         }
 
-        const onReply = (event: MessageEvent) => {
-          if (typeof event.data !== "string") return;
-          const messages = [JSON.parse(event.data)].flat();
-          if (
-            !messages.some((message) => message._tag === "Exit" && message.requestId === request.id)
-          )
-            return;
-          this.removeEventListener("message", onReply);
-          markReplied();
-        };
-        this.addEventListener("message", onReply);
-        markRequested();
+        markRequested(request.payload);
         void released.then(() => send.call(this, data));
       };
     }, CITED);
@@ -71,7 +59,8 @@ test(
     await screen.getByRole("button", /^Agent See/).tap();
     await screen.getByRole("link", /^cited-note\.txt/).tap();
     await browser.evaluate(async () => {
-      await (window as unknown as { citationRequested: Promise<void> }).citationRequested;
+      await (window as unknown as { citationRequested: Promise<ProjectSearchEntriesInput> })
+        .citationRequested;
       return null;
     });
 
@@ -83,10 +72,38 @@ test(
     await browser.evaluate(async () => {
       const test = window as unknown as {
         releaseCitation: () => void;
-        citationReplied: Promise<void>;
+        citationRequested: Promise<ProjectSearchEntriesInput>;
       };
-      test.releaseCitation();
-      await test.citationReplied;
+      const registryModule = "/src/rpc/atomRegistry.ts";
+      const projectsModule = "/src/state/projects.ts";
+      const reactModule = performance
+        .getEntriesByType("resource")
+        .find(({ name }) => /\/\.vite\/deps\/react\.js(?:\?|$)/.test(name))?.name;
+      if (!reactModule) throw new Error("The app's React module has not loaded");
+      const [{ appAtomRegistry }, { projectEnvironment }, { default: react }] = await Promise.all([
+        import(registryModule) as Promise<typeof import("../../apps/web/src/rpc/atomRegistry.ts")>,
+        import(projectsModule) as Promise<typeof import("../../apps/web/src/state/projects.ts")>,
+        import(reactModule) as Promise<{
+          default: { act: (run: () => Promise<void>) => PromiseLike<void> };
+        }>,
+      ]);
+      const atom = projectEnvironment.searchEntries({
+        environmentId: location.pathname.split("/")[1] as EnvironmentId,
+        input: await test.citationRequested,
+      });
+      // Wait for the query used by the citation and flush React before reading the selected tab.
+      await react.act(async () => {
+        const { promise, resolve } = Promise.withResolvers<void>();
+        const unsubscribe = appAtomRegistry.subscribe(atom, (result) => {
+          if (result._tag !== "Initial" && !result.waiting) resolve();
+        });
+        try {
+          test.releaseCitation();
+          await promise;
+        } finally {
+          unsubscribe();
+        }
+      });
       return null;
     });
     await app.screenshot("active-file-after-citation-search");

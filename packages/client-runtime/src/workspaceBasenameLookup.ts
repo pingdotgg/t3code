@@ -7,15 +7,6 @@ import {
 
 export const WORKSPACE_BASENAME_LOOKUP_LIMIT = 25;
 
-// All callers open one panel; the newest click must win across callers.
-let latestLookupSequence = 0;
-
-export function claimWorkspaceBasenameLookup(): () => boolean {
-  latestLookupSequence += 1;
-  const claimed = latestLookupSequence;
-  return () => claimed === latestLookupSequence;
-}
-
 export interface WorkspaceEntryCandidate {
   readonly path: string;
   readonly kind: "file" | "directory";
