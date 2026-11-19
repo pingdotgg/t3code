@@ -476,21 +476,6 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedLocalStatus(cwd, yield* readLocalStatus(cwd), observation, options);
   });
 
-  // Runs a fresh local read with a ref probe started just before it, so the probe's `show-ref` is
-  // queued ahead of the read it certifies. The refs come back only if the probe finished by the end
-  // of the read; otherwise null, and the caller repeats the read as it did before.
-  const withRefProbe = Effect.fn("VcsStatusBroadcaster.withRefProbe")(function* <A, E, R>(
-    cwd: string,
-    read: Effect.Effect<A, E, R>,
-  ) {
-    const probe = yield* workflow
-      .readRefSnapshot(cwd)
-      .pipe(Effect.forkIn(broadcasterScope, { startImmediately: true }));
-    const result = yield* read;
-    const exit = probe.pollUnsafe();
-    return { result, refs: exit !== undefined && Exit.isSuccess(exit) ? exit.value : null };
-  });
-
   const getOrLoadLocalStatusUnlocked = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(
     function* (cwd: string, initialRefs?: InitialRefs) {
       const cached = yield* getCachedStatus(cwd);
@@ -502,11 +487,9 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateLocalStatus(cwd);
         return yield* loadLocalStatus(cwd, { publish: true });
       }
-      if (initialRefs === undefined) return yield* loadLocalStatus(cwd);
-      // Only a read made here can be certified; a cached result may predate the probe.
-      const { result, refs } = yield* withRefProbe(cwd, loadLocalStatus(cwd));
-      initialRefs.refs = refs;
-      return result;
+      // Only a read made here follows the snapshot; a cached result may predate it.
+      if (initialRefs !== undefined) initialRefs.refs = yield* workflow.readRefSnapshot(cwd);
+      return yield* loadLocalStatus(cwd);
     },
   );
 
@@ -770,13 +753,13 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const localDone = yield* Deferred.make<void>();
     // Owned by the broadcaster so a client disconnecting mid-switch still leaves status correct.
-    yield* Effect.gen(function* () {
-      const { refs } = yield* withRefProbe(
-        cwd,
-        refreshLocalStatusCore(cwd).pipe(Effect.ensuring(Deferred.succeed(localDone, undefined))),
-      );
-      yield* refreshRemoteAndLocalTotals(cwd, rawCwd, refs);
-    }).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(broadcasterScope));
+    yield* workflow.readRefSnapshot(cwd).pipe(
+      Effect.tap(() => refreshLocalStatusCore(cwd)),
+      Effect.ensuring(Deferred.succeed(localDone, undefined)),
+      Effect.flatMap((refs) => refreshRemoteAndLocalTotals(cwd, rawCwd, refs)),
+      Effect.ignoreCause({ log: true }),
+      Effect.forkIn(broadcasterScope),
+    );
     yield* Deferred.await(localDone);
   });
 

@@ -80,7 +80,6 @@ function layerTestFor(state: {
   remoteStatusRefreshUpstreamValues?: Array<boolean | undefined>;
   localStatusBranchChanges?: Array<boolean>;
   refSnapshot?: string | null;
-  beforeRefSnapshot?: Effect.Effect<void>;
   remoteStatusError?: GitManagerError;
   backgroundWorkEnabled?: boolean;
   automaticFetchInterval?: Effect.Effect<Duration.Duration>;
@@ -143,11 +142,7 @@ function layerTestFor(state: {
                 Effect.andThen(Effect.sync(() => state.currentLocalStatus.refName)),
               ),
         readRefSnapshot: () =>
-          (state.beforeRefSnapshot ?? Effect.void).pipe(
-            Effect.andThen(
-              Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
-            ),
-          ),
+          Effect.sync(() => (state.refSnapshot === undefined ? "refs" : state.refSnapshot)),
         upstreamDivergence: () =>
           Effect.sync(() =>
             state.currentRemoteStatus?.hasUpstream && state.currentLocalStatus.refName !== null
@@ -2508,7 +2503,7 @@ it.effect("a first subscription's poll re-reads when its load reused a cached re
     // Caches local status without a remote, so the subscription's load reads nothing itself.
     yield* b.refreshStatus("/repo", { localOnly: true });
     yield* Deferred.await(yield* subscribeForFirstPoll(b));
-    // The refresh's read, then the poll's: a probe cannot certify a read it did not precede.
+    // The refresh's read, then the poll's: a snapshot cannot vouch for a read it did not precede.
     assert.strictEqual(state.localStatusCalls, 2);
   }).pipe(Effect.provide(layerTestFor(state)));
 });
@@ -2537,8 +2532,6 @@ it.effect.each([
 it.effect.each([
   { refs: "unchanged", localReads: 1 },
   { refs: "moved", localReads: 2 },
-  // A probe that never finishes certifies nothing and must not hold up the remote read.
-  { refs: "unfinished", localReads: 2 },
 ] as const)(
   "a checkout re-reads local status after its remote read only when refs moved (%j)",
   ({ refs, localReads }) => {
@@ -2548,7 +2541,6 @@ it.effect.each([
       const b = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* b.getStatus({ cwd: "/repo" });
       state.localStatusCalls = 0;
-      if (refs === "unfinished") state.beforeRefSnapshot = Effect.never;
       const remoteStarted = yield* Deferred.make<void>();
       const releaseRemote = yield* Deferred.make<void>();
       state.beforeRemoteStatus = Deferred.succeed(remoteStarted, undefined).pipe(
