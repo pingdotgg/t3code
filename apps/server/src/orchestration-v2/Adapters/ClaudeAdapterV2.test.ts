@@ -2940,6 +2940,7 @@ describe("ClaudeAdapterV2 native fork", () => {
             upToMessageId: sourceCursor,
           },
           environment: { CLAUDE_CONFIG_DIR: configDir },
+          pathToClaudeCodeExecutable: "claude",
           threadId: targetThreadId,
           providerSessionId,
         },
@@ -8880,8 +8881,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   it.effect.each([
     { kind: "fork with inherited head", fork: true, headMessageId: "remapped-inherited-head" },
     { kind: "fork without recorded head", fork: true, headMessageId: undefined },
+    { kind: "fork only the binary can make", fork: true, throughBinary: true },
     { kind: "ordinary thread", fork: false, headMessageId: undefined },
-  ])("rolls back the first run of a $kind", ({ fork, headMessageId }) =>
+  ])("rolls back the first run of a $kind", ({ fork, headMessageId, throughBinary }) =>
     Effect.gen(function* () {
       let allocations = 0;
       const harness = yield* makeWakeHarnessWithOptions({
@@ -8894,6 +8896,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           Effect.succeed({
             sessionId: WAKE_NATIVE_SESSION,
             ...(headMessageId === undefined ? {} : { headMessageId }),
+            ...(throughBinary ? { throughBinary } : {}),
           }),
       });
       const providerThread = fork
@@ -8919,6 +8922,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         nativeThreadHasTurns: false,
       });
       yield* harness.runtime.startTurn(turnInput);
+      const firstOptions = harness.getOpenedOptions();
+      if (throughBinary) {
+        assert.equal(firstOptions?.resume, "source-native-session");
+        assert.equal(firstOptions?.forkSession, true);
+        assert.equal(firstOptions?.sessionId, WAKE_NATIVE_SESSION);
+      } else {
+        assert.isUndefined(firstOptions?.forkSession);
+      }
       yield* harness.offerAndWait(
         makeAssistantTextFrame({ uuid: "own-run-message", text: "Discard this answer." }),
       );
@@ -8966,6 +8977,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.isNull(rolledBack.providerThread.nativeConversationHeadRef);
         assert.equal(options?.sessionId, "fresh-native-session");
         assert.isUndefined(options?.resume);
+        assert.isUndefined(options?.forkSession);
         assert.isUndefined(options?.resumeSessionAt);
       }
     }).pipe(

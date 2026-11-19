@@ -681,6 +681,11 @@ type ClaudeAgentSdkThreadIdentity =
   | {
       readonly sessionId?: never;
       readonly resume: string;
+    }
+  | {
+      readonly sessionId: string;
+      readonly resume: string;
+      readonly forkSession: true;
     };
 
 export type ClaudeAgentSdkQueryOptions = Omit<
@@ -835,10 +840,11 @@ export interface ClaudeAgentSdkQueryRunnerShape {
   readonly open: (
     input: ClaudeAgentSdkQueryOpenInput,
   ) => Effect.Effect<ClaudeAgentSdkQuerySession, ClaudeAgentSdkQueryRunnerError>;
+  /** `throughBinary`: only the configured binary sees the source; its first query forks it. */
   readonly forkSession: (
     input: ClaudeAgentSdkSessionForkInput,
   ) => Effect.Effect<
-    ForkSessionResult & { readonly headMessageId?: string },
+    ForkSessionResult & { readonly headMessageId?: string; readonly throughBinary?: true },
     ClaudeAgentSdkQueryRunnerError
   >;
   readonly subagentLaunchToolUseId: (
@@ -860,6 +866,8 @@ export interface ClaudeAgentSdkSessionForkInput {
   readonly sessionId: string;
   readonly options: ForkSessionOptions;
   readonly environment: NodeJS.ProcessEnv;
+  readonly cwd?: string;
+  readonly pathToClaudeCodeExecutable?: string;
   readonly threadId: ThreadId;
   readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
@@ -1996,9 +2004,53 @@ export const layerQueryRunner: Layer.Layer<
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
               Effect.provideService(Path.Path, path),
             );
-        const result = yield* fork.pipe(
+        const forked = yield* fork.pipe(
           Effect.mapError((cause) => queryRunnerError(cause, "forkSession")),
+          Effect.result,
         );
+        if (forked._tag === "Failure") {
+          // A wrapper binary (a sandbox) can keep sessions where the server cannot read them.
+          // Claude Code writes a resumed fork only once prompted, so this only proves it can fork.
+          const sessionId = yield* random.uuidV4();
+          yield* Effect.tryPromise({
+            try: (signal) => {
+              const abortController = new AbortController();
+              signal.addEventListener("abort", () => abortController.abort(), { once: true });
+              return Array.fromAsync(
+                claudeQueryMessages(
+                  query({
+                    prompt: (async function* () {})(),
+                    options: {
+                      resume: input.sessionId,
+                      forkSession: true,
+                      sessionId,
+                      ...(input.options.upToMessageId === undefined
+                        ? {}
+                        : { resumeSessionAt: input.options.upToMessageId }),
+                      ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
+                      ...(input.pathToClaudeCodeExecutable === undefined
+                        ? {}
+                        : { pathToClaudeCodeExecutable: input.pathToClaudeCodeExecutable }),
+                      env: input.environment,
+                      abortController,
+                    },
+                  }),
+                ),
+              );
+            },
+            catch: (cause) => queryRunnerError(cause, "forkSession"),
+          }).pipe(
+            Effect.timeout("30 seconds"),
+            Effect.mapError(() => forked.failure),
+          );
+          yield* logProtocolEvent({
+            direction: "incoming",
+            stage: "decoded",
+            payload: { type: "session.forked", sessionId },
+          });
+          return { sessionId, throughBinary: true as const };
+        }
+        const result = forked.success;
         yield* logProtocolEvent({
           direction: "incoming",
           stage: "decoded",
@@ -2197,6 +2249,8 @@ export function makeClaudeQueryOptions(input: {
   readonly nativeThreadId: string;
   readonly title?: string;
   readonly resume: boolean;
+  /** Fork this session into `nativeThreadId` on open. */
+  readonly forkSourceSessionId?: string;
   readonly resumeSessionAt?: string;
   readonly cwd: string | null;
   readonly attachmentsDir?: string;
@@ -2248,9 +2302,12 @@ export function makeClaudeQueryOptions(input: {
   if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
     extraArgs["thinking-display"] = "summarized";
   }
-  const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
-    ? { resume: input.nativeThreadId }
-    : { sessionId: input.nativeThreadId };
+  const threadIdentity: ClaudeAgentSdkThreadIdentity =
+    input.forkSourceSessionId !== undefined
+      ? { resume: input.forkSourceSessionId, forkSession: true, sessionId: input.nativeThreadId }
+      : input.resume
+        ? { resume: input.nativeThreadId }
+        : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
   const selectionSettings =
     Object.keys(compiledSelection.settings).length === 0
@@ -13014,15 +13071,27 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           // Idle release loses openedNativeThreads; persisted turns still require resume to avoid "already in use".
           const hasPersistedProviderTurn =
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
+          const forkSourceSessionId =
+            openedWithResume || hasPersistedProviderTurn
+              ? undefined
+              : turnInput.providerThread.nativeMetadata?.claudeForkSourceSessionId;
+          const forkResumeSessionAt =
+            forkSourceSessionId === undefined
+              ? resumeSessionAt
+              : (resumeSessionAt ?? turnInput.providerThread.nativeMetadata?.forkHeadMessageId);
           const shouldResume =
-            resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+            forkSourceSessionId !== undefined ||
+            resumeSessionAt !== undefined ||
+            openedWithResume ||
+            hasPersistedProviderTurn;
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
             nativeThreadId,
             title: turnInput.appThread.title,
             resume: shouldResume,
-            ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
+            ...(forkSourceSessionId === undefined ? {} : { forkSourceSessionId }),
+            ...(forkResumeSessionAt === undefined ? {} : { resumeSessionAt: forkResumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,
             attachmentsDir,
             settings: adapterOptions.settings,
@@ -14708,14 +14777,23 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 sessionId: sourceNativeThreadId,
                 options: forkOptions,
                 environment: adapterOptions.environment,
+                ...(forkInput.runtimePolicy?.cwd ? { cwd: forkInput.runtimePolicy.cwd } : {}),
+                ...(adapterOptions.settings.binaryPath
+                  ? { pathToClaudeCodeExecutable: adapterOptions.settings.binaryPath }
+                  : {}),
                 threadId: forkInput.targetThreadId,
                 providerSessionId: input.providerSessionId,
               });
-              yield* Ref.update(openedNativeThreads, (current) => {
-                const updated = new Set(current);
-                updated.add(forked.sessionId);
-                return updated;
-              });
+              // Claude Code keeps message ids in a fork it makes on resume.
+              const forkHeadMessageId =
+                forked.throughBinary === true ? upToMessageId : forked.headMessageId;
+              if (forked.throughBinary !== true) {
+                yield* Ref.update(openedNativeThreads, (current) => {
+                  const updated = new Set(current);
+                  updated.add(forked.sessionId);
+                  return updated;
+                });
+              }
               const now = yield* DateTime.now;
               // Native forks retain document/image history. Inherit full current
               // usage even at an earlier fork point; this is conservative.
@@ -14734,14 +14812,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ? {}
                     : { providerTurnId: forkInput.providerTurnId }),
                 },
-                ...(forked.headMessageId === undefined && claudeAttachmentBudget === undefined
+                ...(forkHeadMessageId === undefined &&
+                claudeAttachmentBudget === undefined &&
+                forked.throughBinary !== true
                   ? {}
                   : {
                       nativeMetadata: {
-                        ...(forked.headMessageId === undefined
-                          ? {}
-                          : { forkHeadMessageId: forked.headMessageId }),
+                        ...(forkHeadMessageId === undefined ? {} : { forkHeadMessageId }),
                         ...(claudeAttachmentBudget === undefined ? {} : { claudeAttachmentBudget }),
+                        ...(forked.throughBinary === true
+                          ? { claudeForkSourceSessionId: sourceNativeThreadId }
+                          : {}),
                       },
                     }),
                 now,
