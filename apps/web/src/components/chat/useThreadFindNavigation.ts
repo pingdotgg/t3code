@@ -4,7 +4,8 @@ import type { ThreadFindMatch } from "./threadFind";
 import { useThreadFindHighlights } from "./threadFindHighlights";
 
 const FIND_MATCH_VIEW_MARGIN = 96;
-const FIND_SCROLL_VIEWPORT_SELECTOR = "pre, [data-thread-find-scroll-viewport]";
+const FIND_SCROLL_VIEWPORT_SELECTOR =
+  'pre, .chat-markdown-table-container [data-slot="scroll-area-viewport"]';
 
 type FindEntries = readonly { readonly id: string }[];
 
