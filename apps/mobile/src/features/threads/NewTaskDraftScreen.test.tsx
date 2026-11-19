@@ -239,12 +239,22 @@ it("reopens a dismissed share picker and unlocks the draft after importing into 
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
   const editor = () => container.querySelector("textarea")!;
 
+  harness.flow.mockImplementation(() => ({ ...flow, selectedModel: null }));
   act(() => root.render(render(true)));
   expect(harness.navigation.dispatch).toHaveBeenCalledWith({
     type: "NAVIGATE",
     payload: { name: "NewTaskProject" },
   });
   act(() => root.render(render(false)));
+  act(() => root.render(render(true)));
+
+  expect(button("Project: fallback")?.disabled).toBe(false);
+  act(() => button("Project: fallback").click());
+  expect(harness.navigation.navigate).toHaveBeenCalledExactlyOnceWith("NewTaskProject", {
+    incomingShareId: share.id,
+  });
+  harness.navigation.navigate.mockClear();
+  harness.flow.mockImplementation(() => ({ ...flow }));
   act(() => root.render(render(true)));
 
   expect(harness.navigation.dispatch).toHaveBeenCalledTimes(1);
