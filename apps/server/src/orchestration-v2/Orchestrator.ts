@@ -7963,14 +7963,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const pendingMergeBackSourceThreadIds = new Set(
       pendingMergeBackTransfers.map((transfer) => transfer.sourceThreadId),
     );
-    if (pendingMergeBackSourceThreadIds.size > 1) {
+    if (!freshContext && pendingMergeBackSourceThreadIds.size > 1) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
         cause: `Thread ${command.threadId} has pending merge-back transfers from multiple forks.`,
       });
     }
-    const pendingMergeBackTransfer = latestContextTransfer(pendingMergeBackTransfers);
+    // A fresh session drops the conversation, so merged-back context it would have carried is superseded.
+    const pendingMergeBackTransfer = freshContext
+      ? undefined
+      : latestContextTransfer(pendingMergeBackTransfers);
     const supersededMergeBackTransfers = pendingMergeBackTransfers.filter(
       (transfer) => transfer.id !== pendingMergeBackTransfer?.id,
     );
@@ -7998,10 +8001,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         },
       });
     }
-    if (
-      freshContext &&
-      (pendingForkTransfer !== undefined || pendingMergeBackTransfer !== undefined)
-    ) {
+    if (freshContext && pendingForkTransfer !== undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -8335,6 +8335,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerInstanceId: modelSelection.instanceId,
           occurredAt: now,
           payload: legacyImportHandoff,
+        });
+      }
+      for (const supersededTransfer of supersededMergeBackTransfers) {
+        yield* emitEvent({
+          type: "context-transfer.updated",
+          threadId: command.threadId,
+          runId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...supersededTransfer,
+            status: "superseded",
+            error: "Superseded by a fresh session.",
+            updatedAt: now,
+          },
         });
       }
       yield* emitEvent({

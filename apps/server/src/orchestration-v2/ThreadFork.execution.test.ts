@@ -1405,6 +1405,28 @@ it.effect("merge-back rejects a second fork's context until the first is consume
         [first.threadId, "pending"],
       ],
     );
+
+    // A fresh session drops the conversation, so it sets the pending merge-back aside.
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("merge-back-guard-fresh"),
+      threadId: parentId,
+      messageId: MessageId.make("merge-back-guard-fresh"),
+      text: "Start over",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      freshContext: true,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const fresh = yield* orchestrator.getThreadProjection(parentId);
+    assert.isTrue(fresh.runs.at(-1)?.freshContext);
+    assert.deepEqual(
+      fresh.contextTransfers
+        .filter((transfer) => transfer.type === "merge_back")
+        .map((transfer) => transfer.status),
+      ["superseded", "superseded"],
+    );
   }).pipe(Effect.provide(forkCases[0]!.layer)),
 );
 
