@@ -634,6 +634,10 @@
     "./paletteSearchCopy": {
       "types": "./src/paletteSearchCopy.ts",
       "import": "./src/paletteSearchCopy.ts"
+    },
+    "./cuaDriverRelease": {
+      "types": "./src/cuaDriverRelease.ts",
+      "import": "./src/cuaDriverRelease.ts"
     }
   },
   "scripts": {

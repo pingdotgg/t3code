@@ -62,6 +62,8 @@ catalog:
   "@tailwindcss/node": 4.3.3
   "@tailwindcss/oxide": 4.3.3
   "@tailwindcss/vite": 4.3.3
+  "@trycua/cua-driver": 0.38.0
+  "@ubjs/node": 0.31.0-3
   "@types/node": 24.12.4
   "@types/plist": 3.0.5
   "@types/react": ~19.3.0
@@ -132,6 +134,7 @@ overrides:
   app-builder-lib: 26.16.1
   electron-updater: 6.8.9
   expo-modules-core: 58.0.30
+  "@ubjs/node": "catalog:"
   # Keep jsdom's optional peer consistent so Vite+ has one test-runner instance.
   "@exodus/bytes>@noble/hashes": "1.8.0"
   # Earlier React Navigation declarations create a circular type alias in TypeScript 7.
@@ -284,6 +287,7 @@ patchedDependencies:
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  "@ubjs/node@0.31.0-3": patches/@ubjs__node@0.31.0-3.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
