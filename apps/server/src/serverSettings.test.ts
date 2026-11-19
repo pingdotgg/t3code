@@ -3139,25 +3139,32 @@ it.live("reloads a symlinked settings file after its target directory is replace
     );
     yield* fs.writeFileString(
       path.join(restored, "settings.json"),
-      `{ "responseStreamingMode": "turn" }`,
+      `{ "responseStreamingMode": "paragraph" }`,
     );
     yield* fs.remove(config.settingsPath, { force: true });
     yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
     yield* service.start;
     const changes = yield* service.subscribeChanges;
+    const nextMode = (mode: string) =>
+      changes.pipe(
+        Stream.filter((settings) => settings.responseStreamingMode === mode),
+        Stream.runHead,
+      );
+
+    // `start` returns before the watches are registered; a reload proves they are.
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "paragraph" }`,
+    );
+    assert.isTrue(Option.isSome(yield* nextMode("paragraph")));
 
     yield* fs.rename(active, path.join(dotfiles, "previous"));
     yield* fs.rename(restored, active);
     yield* fs.writeFileString(
       path.join(active, "settings.json"),
-      `{ "responseStreamingMode": "paragraph" }`,
+      `{ "responseStreamingMode": "turn" }`,
     );
-
-    const reloaded = yield* changes.pipe(
-      Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
-      Stream.runHead,
-    );
-    assert.isTrue(Option.isSome(reloaded));
+    assert.isTrue(Option.isSome(yield* nextMode("turn")));
   }).pipe(
     Effect.scoped,
     Effect.provide(layerServerSettings()),
