@@ -102,15 +102,12 @@ const fxModels = (
 const fxSubProviders = (
   backends: ReadonlyArray<FxBackendProbe>,
 ): ReadonlyArray<ServerProviderSubProvider> =>
-  backends.map((backend) => {
-    const unavailableReason =
-      backend.signedIn === false
-        ? backend.signInHint
-        : backend.models === undefined
-          ? "fx could not list this backend's models."
-          : undefined;
-    return { name: backend.name, ...(unavailableReason ? { unavailableReason } : {}) };
-  });
+  // A failed listing does not stop a backend's models from running; the server keeps its earlier ones.
+  backends.map((backend) =>
+    backend.signedIn === false
+      ? { name: backend.name, unavailableReason: backend.signInHint }
+      : { name: backend.name },
+  );
 
 const snapshot = (
   settings: FxSettings,

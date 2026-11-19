@@ -293,6 +293,8 @@ describe("checkFxProviderStatus", () => {
         reshaped.draft.models.map((model) => model.slug),
         ["default", "codex:gpt-5.5"],
       );
+      // The server keeps the gateway's earlier models, which can still run.
+      assert.deepEqual(reshaped.draft.subProviders?.[0], { name: "Vercel AI Gateway" });
 
       const empty = yield* check(outputs(models([])));
       assert.equal(empty.draft.status, "ready");
