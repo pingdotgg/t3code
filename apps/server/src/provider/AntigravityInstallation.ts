@@ -62,6 +62,8 @@ const LAUNCHER_SETUP =
   /^[\s@]*(?:|::[^&|<>]*|rem(?:\s[^&|<>]*|$)|set\s+"[^"=&|<>]+=[^"&|<>]*"\s*|(?:echo|set|setlocal|endlocal)(?:\s[^&|<>()]*)?)$/iu;
 const LAUNCHER_COMMAND =
   /^[\s@]*(?:"([^"]*agy_acp_server\.exe)"|([^\s"&|<>()@]*agy_acp_server\.exe))(?:\s[^&|<>()]*)?$/iu;
+const LARGE_PAGE_KERNEL_MESSAGE =
+  "Google's linux-arm64 Antigravity runtime needs a kernel with 4 KiB memory pages, and this kernel uses larger pages (as on Asahi Linux or Raspberry Pi 5). Use a remote environment or a custom Antigravity executable.";
 
 // The launcher runs in the project directory, so a target like `\x\agy_acp_server.exe`
 // whose drive comes from the working directory may not be the file resolved here.
@@ -71,8 +73,6 @@ export const launcherTargetPath = (path: Path.Path, launcher: string, written: s
   const resolved = path.resolve(target);
   return path.parse(path.normalize(target)).root === path.parse(resolved).root ? resolved : null;
 };
-const LARGE_PAGE_KERNEL_MESSAGE =
-  "Google's linux-arm64 Antigravity runtime needs a kernel with 4 KiB memory pages, and this kernel uses larger pages (as on Asahi Linux or Raspberry Pi 5). Use a remote environment or a custom Antigravity executable.";
 
 const ReleaseId = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const ActiveRelease = Schema.Struct({ releaseId: ReleaseId });
