@@ -1,7 +1,16 @@
+import { msg } from "gt-i18n";
+import {
+  MarkedText,
+  markedTextEnglish,
+  messageFromError,
+  translatableMessage,
+  withI18nMessage,
+} from "../errors/translatable.ts";
 import {
   EnvironmentAuthorizationError,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
+  type AuthEnvironmentScope,
   type EnvironmentId,
   type ClientGuardedRpcTag,
   ORCHESTRATION_V2_WS_METHODS,
@@ -26,6 +35,7 @@ export class EnvironmentRpcUnavailableError extends Schema.TaggedError<Environme
   {
     environmentId: Schema.String,
     message: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
   },
 ) {}
 
@@ -107,6 +117,17 @@ export class EnvironmentRpcSubscriptionObserver extends Context.Reference<{
 export const isRpcClientError = Schema.is(RpcClientError.RpcClientError);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationError);
 
+export function scopeRequiredError(scope: AuthEnvironmentScope): EnvironmentAuthorizationError {
+  const text = msg("This connection requires {scope}.", { scope });
+  return withI18nMessage(
+    new EnvironmentAuthorizationError({
+      ...authScopeRequiredResponse(scope),
+      message: markedTextEnglish([text]),
+    }),
+    text,
+  );
+}
+
 /** A subscription never retries an authorization failure on its own. */
 export const isAuthorizationFailure = (cause: Cause.Cause<unknown>) =>
   cause.reasons.some(
@@ -152,7 +173,9 @@ export const currentSession = Effect.fn("EnvironmentRpc.currentSession")(functio
           Effect.fail(
             new EnvironmentRpcUnavailableError({
               environmentId: supervisor.target.environmentId,
-              message: `${supervisor.target.label} is not connected.`,
+              ...translatableMessage(
+                msg("{host} is not connected.", { host: supervisor.target.label }),
+              ),
             }),
           ),
         onSome: Effect.succeed,
@@ -179,14 +202,7 @@ export class RpcPermissionGuard extends Context.Reference<{
   defaultValue: () => ({
     authorize: (_environmentId, method, input) => {
       const scope = clientRpcRequiredScopes(method, input)[0];
-      return scope === undefined
-        ? Effect.void
-        : Effect.fail(
-            new EnvironmentAuthorizationError({
-              ...authScopeRequiredResponse(scope),
-              message: `This connection requires ${scope}.`,
-            }),
-          );
+      return scope === undefined ? Effect.void : Effect.fail(scopeRequiredError(scope));
     },
   }),
 }) {}
@@ -543,7 +559,7 @@ export const refreshVcsBranch = Effect.fn("EnvironmentRpc.refreshVcsBranch")(fun
       (error) =>
         new EnvironmentRpcUnavailableError({
           environmentId: supervisor.target.environmentId,
-          message: error.message,
+          ...messageFromError(error),
         }),
     ),
   );

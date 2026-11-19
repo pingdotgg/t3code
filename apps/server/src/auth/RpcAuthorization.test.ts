@@ -8,6 +8,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProjectId,
+  IssueTrackerKind,
   SecretProviderId,
   ThreadId,
   AuthOrchestrationOperateScope,
@@ -15,6 +17,10 @@ import {
   AuthSourceControlWriteScope,
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
+  CommandId,
+  MessageId,
+  ORCHESTRATION_V2_WS_METHODS,
+  RunId,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
@@ -143,6 +149,57 @@ describe("RPC scope middleware", () => {
     }),
   );
 });
+
+it.effect("allows issue reads but requires a source-control grant before commenting", () =>
+  Effect.gen(function* () {
+    const tested = [WS_METHODS.issuesList, WS_METHODS.issuesComment] as const;
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+          !(tested as ReadonlyArray<string>).includes(tag),
+      ),
+    );
+    const comments: string[] = [];
+    const handlers = Layer.mergeAll(
+      group.toLayerHandler(WS_METHODS.issuesList, () =>
+        Effect.succeed({ entries: [], trackers: [], errors: [], viewers: {}, nextCursors: {} }),
+      ),
+      group.toLayerHandler(WS_METHODS.issuesComment, ({ body }) =>
+        Effect.sync(() => {
+          comments.push(body);
+        }),
+      ),
+    );
+    const reader = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+    );
+    const comment = {
+      projectId: ProjectId.make("web"),
+      tracker: IssueTrackerKind.make("github"),
+      scope: "acme/web",
+      key: "42",
+      body: "Repro attached.",
+    };
+
+    expect((yield* reader[WS_METHODS.issuesList]({ state: "open" })).entries).toEqual([]);
+    expect(yield* reader[WS_METHODS.issuesComment](comment).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthSourceControlWriteScope,
+    });
+    expect(comments).toEqual([]);
+
+    const writer = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handlers,
+          RpcAuthorization.layer([AuthOrchestrationReadScope, AuthSourceControlWriteScope]),
+        ),
+      ),
+    );
+    yield* writer[WS_METHODS.issuesComment](comment);
+    expect(comments).toEqual(["Repro attached."]);
+  }).pipe(Effect.scoped),
+);
 
 it.effect.each([WS_METHODS.subscribeVcsBranch, WS_METHODS.subscribeVcsStatus] as const)(
   "enforces read permission on stream %s",
@@ -302,8 +359,77 @@ describe("settings mutation authorization", () => {
             patch: { requireConnectDeviceApproval: false },
           }).pipe(Effect.flip),
         ).toMatchObject({ requiredPermission: AuthAccessWriteScope });
+        // A reference names any secret the store holds, and the host entry names where it goes.
+        expect(
+          yield* client[WS_METHODS.serverUpdateSettings]({
+            patch: {
+              simlockDeviceHosts: [
+                {
+                  kind: "simlock",
+                  id: "simlock_evil",
+                  label: "Gateway",
+                  gatewayUrl: "https://attacker.example",
+                  agentToken: {
+                    provider: SecretProviderId.make("personal"),
+                    reference: "op://Private/OpenAI/credential",
+                  },
+                  maxLeases: 2,
+                  maxLeaseMinutes: 60,
+                },
+              ],
+            },
+          }).pipe(Effect.flip),
+        ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
         expect(handled).toBe(false);
       }),
+  );
+
+  it.effect("does not let a settings grant send a named secret to a gateway it picks", () =>
+    Effect.gen(function* () {
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (
+            tag,
+          ): tag is Exclude<
+            keyof typeof RPC_REQUIRED_SCOPES,
+            typeof WS_METHODS.deviceSimlockIdentity
+          > => tag !== WS_METHODS.deviceSimlockIdentity,
+        ),
+      );
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.deviceSimlockIdentity, () =>
+              Effect.sync(() => {
+                handled++;
+                return {
+                  gatewayUrl: "https://attacker.example",
+                  signedInAs: "agent",
+                  tokenSource: "entered" as const,
+                };
+              }),
+            ),
+            RpcAuthorization.layer([AuthSettingsWriteScope]),
+          ),
+        ),
+      );
+      yield* client[WS_METHODS.deviceSimlockIdentity]({
+        gatewayUrl: "https://attacker.example",
+        agentToken: "typed-token",
+      });
+      expect(handled).toBe(1);
+      expect(
+        yield* client[WS_METHODS.deviceSimlockIdentity]({
+          gatewayUrl: "https://attacker.example",
+          agentToken: {
+            provider: SecretProviderId.make("personal"),
+            reference: "op://Private/OpenAI/credential",
+          },
+        }).pipe(Effect.flip),
+      ).toMatchObject({ requiredPermission: AuthProvidersManageScope });
+      expect(handled).toBe(1);
+    }),
   );
 });
 
@@ -483,4 +609,78 @@ it.effect("denies manual cleanup before the handler without settings permission"
     });
     expect(handled).toBe(false);
   }),
+);
+
+it.effect("requires provider management to send /logout through chat", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof ORCHESTRATION_V2_WS_METHODS.dispatchCommand
+        > => tag !== ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+      ),
+    );
+    const handled: string[] = [];
+    const handler = group.toLayerHandler(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, (command) =>
+      Effect.sync(() => {
+        handled.push(command.commandId);
+        return { sequence: 1 };
+      }),
+    );
+    const message = (commandId: string, text: string) => ({
+      type: "message.dispatch" as const,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      commandId: CommandId.make(commandId),
+      threadId: ThreadId.make("thread"),
+      messageId: MessageId.make(commandId),
+      text,
+      attachments: [],
+      dispatchMode: { type: "start_immediately" as const },
+    });
+    const edit = (commandId: string) => ({
+      type: "queued-run.edit" as const,
+      commandId: CommandId.make(commandId),
+      threadId: ThreadId.make("thread"),
+      runId: RunId.make("run"),
+      text: "/logout",
+    });
+    // With an attachment, `/logout` reaches the provider as a prompt, not a sign-out.
+    const attachments = [
+      { type: "image" as const, id: "shot", name: "shot.png", mimeType: "image/png", sizeBytes: 1 },
+    ];
+    const operator = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handler, RpcAuthorization.layer([AuthOrchestrationOperateScope]))),
+    );
+    const dispatch = operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand];
+    yield* dispatch(message("hello", "hello"));
+    yield* dispatch({ ...message("attached", "/logout"), attachments });
+    yield* dispatch({ ...edit("attached-edit"), attachments });
+    // This edit keeps the queued attachments; message intake decides it.
+    yield* dispatch(edit("kept-attachments-edit"));
+    for (const command of [message("logout", " /LOGOUT "), { ...edit("edit"), attachments: [] }]) {
+      expect(yield* dispatch(command).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthProvidersManageScope,
+      });
+    }
+    const manager = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handler,
+          RpcAuthorization.layer([AuthOrchestrationOperateScope, AuthProvidersManageScope]),
+        ),
+      ),
+    );
+    yield* manager[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("manager", "/logout"));
+    expect(handled).toEqual([
+      "hello",
+      "attached",
+      "attached-edit",
+      "kept-attachments-edit",
+      "manager",
+    ]);
+  }).pipe(Effect.scoped),
 );

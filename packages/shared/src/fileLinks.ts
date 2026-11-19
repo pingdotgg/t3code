@@ -9,9 +9,13 @@ const POSITION_SUFFIX_CAPTURE_PATTERN = /:(\d+)(?::(\d+)|-(\d+))?$/;
 
 const POSITION_HASH_PATTERN = /^#L(\d+)(?:C(\d+)|-L?(\d+))?$/i;
 
-/** Keeps paths percent-encoded to avoid double decoding; non-localhost authorities become UNC shares. */
+/**
+ * Keeps paths percent-encoded to avoid double decoding. `localhost` and `localHostname` (the
+ * machine the path lives on) are local authorities; any other becomes a UNC share.
+ */
 export function parseFileUrlHref(
   href: string,
+  localHostname?: string,
 ): { readonly path: string; readonly hash: string } | null {
   // Chromium on Windows parses any one-letter scheme as a drive letter
   // (`new URL("d:x")` is `file:///D:/x`), so the protocol check alone would turn
@@ -21,7 +25,16 @@ export function parseFileUrlHref(
     const parsed = new URL(href);
     if (parsed.protocol.toLowerCase() !== "file:") return null;
 
-    const uncHostname = parsed.hostname.toLowerCase() === "localhost" ? "" : parsed.hostname;
+    const host = parsed.hostname.toLowerCase();
+    let localHost = "";
+    if (host && localHostname) {
+      try {
+        localHost = new URL(`file://${encodeURIComponent(localHostname)}/`).hostname;
+      } catch {
+        // System hostnames need not be valid URL authorities; they cannot match a file URI.
+      }
+    }
+    const uncHostname = host === "localhost" || host === localHost ? "" : parsed.hostname;
     const path = uncHostname
       ? `\\\\${uncHostname}${parsed.pathname.replaceAll("/", "\\")}`
       : parsed.pathname;
