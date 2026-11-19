@@ -35,6 +35,7 @@ function asDirectoryHandle(item: unknown): DirectoryHandle | null {
 /**
  * Calls `listener` once per task, however many events the model emitted in it. Expanding every
  * folder emits one event per folder, and a listener that rescans the folders is quadratic otherwise.
+ * Deferring also keeps a listener that expands items from rerunning inside itself.
  */
 export function subscribeOncePerTask(
   model: { subscribe(listener: () => void): () => void },
@@ -80,27 +81,6 @@ export function setAllDirectoriesExpanded(
     if (expanded) item.expand();
     else item.collapse();
   }
-}
-
-/** Calls made while `run` is running rerun it once it returns, instead of nesting. */
-export function coalesceReentrantCalls(run: () => void): () => void {
-  let running = false;
-  let calledAgain = false;
-  return () => {
-    if (running) {
-      calledAgain = true;
-      return;
-    }
-    running = true;
-    try {
-      do {
-        calledAgain = false;
-        run();
-      } while (calledAgain);
-    } finally {
-      running = false;
-    }
-  };
 }
 
 const EXPANDED_DIRECTORIES_STORAGE_KEY = "t3code.fileTreeExpandedDirectories";

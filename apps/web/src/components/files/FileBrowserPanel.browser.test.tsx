@@ -1,4 +1,5 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
+import { FileTree } from "@pierre/trees";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -16,7 +17,7 @@ const entries: readonly ProjectEntry[] = [
 const loadingDirectories: ReadonlySet<string> = new Set();
 const directory: {
   entries: readonly ProjectEntry[];
-  load: () => Promise<void>;
+  load: (path: string) => Promise<void>;
   refresh: () => void;
   ready: boolean;
   error: null;
@@ -24,7 +25,7 @@ const directory: {
   loadingDirectories: ReadonlySet<string>;
 } = {
   entries,
-  load: () => Promise.resolve(),
+  load: (_path) => Promise.resolve(),
   refresh: () => {},
   ready: true,
   error: null,
@@ -54,14 +55,23 @@ function findTreeRow(path: string): HTMLElement | null {
   return null;
 }
 
-function withDirectoryListing(listing: readonly ProjectEntry[]): Disposable {
+function withDirectoryListing(
+  listing: readonly ProjectEntry[],
+  load: typeof directory.load = directory.load,
+): Disposable {
+  const previousLoad = directory.load;
   directory.entries = listing;
+  directory.load = load;
   return {
     [Symbol.dispose]: () => {
       directory.entries = entries;
+      directory.load = previousLoad;
     },
   };
 }
+
+const folders = (count: number): ProjectEntry[] =>
+  Array.from({ length: count }, (_, index) => ({ path: `folder-${index}`, kind: "directory" }));
 
 describe("FileBrowserPanel", () => {
   it("copies with the pointer and returns to the row after keyboard dismissal", async () => {
@@ -235,6 +245,64 @@ describe("FileBrowserPanel", () => {
     await vi.waitFor(() => expect(findTreeRow("src/generated-0000.ts")).not.toBeNull());
     expect(findTreeRow("lib/generated-existing.ts")).not.toBeNull();
     await expect.element(search).toHaveValue("generated-");
+  });
+
+  it("expands every folder without asking the tree about all folders for each one", async () => {
+    const load = vi.fn((_path: string) => Promise.resolve());
+    using _listing = withDirectoryListing(folders(300), load);
+    await using _screen = await render(
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-expand-all-1"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />,
+    );
+    using getItem = vi.spyOn(FileTree.prototype, "getItem");
+    const expandAll = page.getByRole("button", { name: "Expand all folders" });
+    await expect.element(expandAll).toBeVisible();
+    getItem.mockClear();
+    await userEvent.click(expandAll);
+    await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(300));
+    // Each of the 300 expansions used to look up all 300 folders again, about 137,000 lookups.
+    expect(getItem.mock.calls.length).toBeLessThan(300 * 20);
+  });
+
+  it("expands folders that arrive after Expand all without visiting the earlier ones again", async () => {
+    const batches = 5;
+    const perBatch = 60;
+    const load = vi.fn((_path: string) => Promise.resolve());
+    using _listing = withDirectoryListing(folders(perBatch), load);
+    const renderPanel = () => (
+      <FileBrowserPanel
+        environmentId={EnvironmentId.make("env-files")}
+        cwd="/repo-expand-all-2"
+        projectName="repo"
+        selectedPath={null}
+        selectedPathRevealId={0}
+        onOpenFile={() => {}}
+        workspaceMutationId={null}
+      />
+    );
+    await using screen = await render(renderPanel());
+    using getItem = vi.spyOn(FileTree.prototype, "getItem");
+    await userEvent.click(page.getByRole("button", { name: "Expand all folders" }));
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(perBatch));
+    getItem.mockClear();
+    for (let batch = 2; batch <= batches; batch++) {
+      directory.entries = folders(batch * perBatch);
+      await screen.rerender(renderPanel());
+      await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(batch * perBatch));
+    }
+    await expect.element(page.getByRole("button", { name: "Collapse all folders" })).toBeVisible();
+    expect(new Set(load.mock.calls.map(([path]) => path)).size).toBe(batches * perBatch);
+    // About 1,100 lookups. Rescanning every folder for the button state adds about 5,000, and a
+    // second scan of every folder per listing about 800.
+    expect(getItem.mock.calls.length).toBeLessThan(1_400);
   });
 
   it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
