@@ -1,3 +1,5 @@
+import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 import type { IssuesSearch } from "./IssuesPage";
@@ -19,6 +21,8 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   who:
     raw.who === "assigned" || raw.who === "authored" || raw.who === "mentioned" ? raw.who : "all",
   status: raw.status === "closed" || raw.status === "all" ? raw.status : "open",
+  issueServer: bounded(raw.issueServer) as EnvironmentId | undefined,
+  issueProject: bounded(raw.issueProject) as ProjectId | undefined,
   host: bounded(raw.host),
   q: bounded(raw.q),
   label: labels(raw.label),
@@ -31,3 +35,15 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   scope: bounded(raw.scope),
   key: bounded(raw.key),
 });
+
+/** One choice per project: projects on one repository can read different Linear teams. */
+export const issueFilterProjects = (
+  projects: ReadonlyArray<EnvironmentProject>,
+  environmentLabels: ReadonlyMap<EnvironmentId, string>,
+) =>
+  pullRequestFilterProjects(
+    projects
+      .filter((project) => !project.isScratch)
+      .map((project) => ({ ...project, repositoryIdentity: null })),
+    environmentLabels,
+  );
