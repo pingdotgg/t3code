@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import { m } from "../i18n/messages.ts";
 import { BACKEND_QUIT_STOP_TIMEOUT } from "./DesktopBackendManager.ts";
 
@@ -64,19 +65,40 @@ const isHomeOwnershipLocked = Effect.fn("DesktopHomeOwner.isHomeOwnershipLocked"
 const HOME_OWNERSHIP_RELEASE_GRACE = Duration.sum(BACKEND_QUIT_STOP_TIMEOUT, Duration.seconds(3));
 const HOME_OWNERSHIP_RELEASE_POLL_INTERVAL = Duration.millis(250);
 
-/** Whether the ownership lock is free, or frees within the grace a shutting-down server needs. */
+/**
+ * Waits for the ownership lock to free. Once the grace a shutting-down server needs has passed,
+ * `whileOwned` runs alongside; false when it ends while the lock is still held.
+ */
 export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipRelease")(
-  function* () {
-    while (yield* isHomeOwnershipLocked()) {
-      yield* Effect.sleep(HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
-    }
-    return true;
+  function* <R = never>(whileOwned: Effect.Effect<void, never, R> = Effect.never) {
+    const released = Effect.gen(function* () {
+      while (yield* isHomeOwnershipLocked()) {
+        yield* Effect.sleep(HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
+      }
+      return true;
+    });
+    const gaveUp = whileOwned.pipe(
+      Effect.delay(HOME_OWNERSHIP_RELEASE_GRACE),
+      Effect.andThen(isHomeOwnershipLocked()),
+      Effect.map((locked) => !locked),
+    );
+    return yield* Effect.raceFirst(released, gaveUp);
   },
-  Effect.timeoutOrElse({
-    duration: HOME_OWNERSHIP_RELEASE_GRACE,
-    orElse: () => Effect.succeed(false),
-  }),
 );
+
+/** Tells the user which server holds the T3 home, until they dismiss it or the effect is interrupted. */
+export const showHomeOwnedDialog = Effect.fn("DesktopHomeOwner.showHomeOwnedDialog")(function* (
+  owner: Option.Option<HomeOwner>,
+) {
+  yield* (yield* ElectronDialog.ElectronDialog)
+    .showMessageBox({
+      type: "error",
+      message: m(msg("This T3 home is unavailable")),
+      detail: homeOwnedMessage(owner),
+      buttons: [m(msg("OK"))],
+    })
+    .pipe(Effect.ignore);
+});
 
 /** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock is known held: a live PID alone may be reused. */
 export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")(function* () {

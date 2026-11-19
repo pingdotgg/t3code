@@ -112,7 +112,10 @@ describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
 
         const held = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
         held.exec("BEGIN EXCLUSIVE;");
-        const owned = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        // The user dismisses the message while the lock is still held.
+        const owned = yield* Effect.forkChild(
+          DesktopHomeOwner.awaitHomeOwnershipRelease(Effect.void),
+        );
         yield* TestClock.adjust("1 minute");
         assert.isFalse(yield* Fiber.join(owned));
         held.close();

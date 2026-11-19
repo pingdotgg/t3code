@@ -211,16 +211,17 @@ const startLocalBackend = Effect.gen(function* () {
   // A backend started while another server holds this home's lock can only exit with code 78.
   if (
     !(settings.wslOnly && settings.wslBackendEnabled) &&
-    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
+    !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease(
+      DesktopHomeOwner.readLiveHomeOwner().pipe(
+        Effect.tap((owner) =>
+          logBootstrapWarning("bootstrap found another server owning the T3 home", {
+            owner: Option.getOrNull(owner),
+          }),
+        ),
+        Effect.flatMap(DesktopHomeOwner.showHomeOwnedDialog),
+      ),
+    ))
   ) {
-    const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
-    yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
-      owner: Option.getOrNull(owner),
-    });
-    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      m(msg("This T3 home is unavailable")),
-      DesktopHomeOwner.homeOwnedMessage(owner),
-    );
     yield* (yield* ElectronApp.ElectronApp).quit;
     return false;
   }

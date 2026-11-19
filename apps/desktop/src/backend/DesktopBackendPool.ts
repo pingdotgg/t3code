@@ -131,7 +131,10 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
     const homeOwnerContext = yield* Effect.context<
-      FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
+      | FileSystem.FileSystem
+      | Path.Path
+      | DesktopEnvironment.DesktopEnvironment
+      | ElectronDialog.ElectronDialog
     >();
 
     const updateMarkerPath = environment.path.join(
@@ -221,7 +224,7 @@ export const layer = Layer.effect(
       },
     );
 
-    const primary = yield* DesktopBackendManager.makeBackendInstance({
+    const primary: DesktopBackendInstance = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Resolve lazily: startup loads persisted settings after pool initialization.
       label: configuration.resolvePrimaryLabel,
@@ -246,16 +249,17 @@ export const layer = Layer.effect(
           Effect.andThen(desktopWindow.handleBackendNotReady),
         ),
       onPreflightFailed: handlePrimaryPreflightFailure,
+      // Runs under the instance's lock, so the wait and the restart are forked.
       onStateDirOwned: () =>
-        DesktopHomeOwner.readLiveHomeOwner().pipe(
-          Effect.flatMap((owner) =>
-            electronDialog.showErrorBox(
-              m(msg("This T3 home is unavailable")),
-              DesktopHomeOwner.homeOwnedMessage(owner),
-            ),
+        DesktopHomeOwner.awaitHomeOwnershipRelease(
+          DesktopHomeOwner.readLiveHomeOwner().pipe(
+            Effect.flatMap(DesktopHomeOwner.showHomeOwnedDialog),
           ),
+        ).pipe(
           Effect.provideContext(homeOwnerContext),
-          Effect.andThen(electronApp.quit),
+          Effect.flatMap((released) => (released ? primary.start : electronApp.quit)),
+          Effect.forkIn(layerScope),
+          Effect.asVoid,
         ),
     });
 
