@@ -3409,6 +3409,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       if (instructionsPath) openSkillInstructions(instructionsPath);
       return;
     }
+    // Safari would open the phone's own localhost, so these open on the device by default.
+    const deviceUrl = loopbackUrlForDevice(href);
+    if (deviceUrl) {
+      openLocalPreview(
+        { environmentId: String(props.environmentId), threadId: String(props.threadId) },
+        deviceUrl,
+      );
+      return;
+    }
     if (parseThreadLinkHref(href)) {
       const target = resolveLinkedThread(href);
       if (target) {
@@ -3568,6 +3577,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       const deviceUrl = loopbackUrlForDevice(href);
       if (deviceUrl) {
         if (actionId === "open-on-device") {
+          markdownLinkRequest.current?.abort();
           openLocalPreview(
             { environmentId: String(props.environmentId), threadId: String(props.threadId) },
             deviceUrl,

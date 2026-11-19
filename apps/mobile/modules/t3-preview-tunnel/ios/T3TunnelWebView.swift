@@ -291,6 +291,10 @@ private final class T3EnvironmentProxy {
     if let port, listener?.isListening == true { return onReady(port) }
     waiting.append(onReady)
     guard waiting.count == 1 else { return }
+    startListener(attempt: 0)
+  }
+
+  private func startListener(attempt: Int) {
     listener?.stop()
     let listener = T3SocksListener { [weak self] completion in
       T3TunnelAccess.shared.request(
@@ -311,10 +315,19 @@ private final class T3EnvironmentProxy {
       onReady: { [weak self] port in DispatchQueue.main.async { self?.ready(port) } },
       onFailed: { [weak self, weak listener] in
         DispatchQueue.main.async {
-          guard let self, let listener, self.listener === listener, self.waiting.isEmpty else {
+          guard let self, let listener, self.listener === listener else { return }
+          if self.waiting.isEmpty { return self.ensureListening { _ in } }
+          // Startup failed before it was ready: try again shortly, then give the waiters up so
+          // a later reload starts over instead of queueing behind a listener that never came.
+          guard attempt < 4 else {
+            self.listener = nil
+            self.waiting = []
             return
           }
-          self.ensureListening { _ in }
+          DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard self.listener === listener, !self.waiting.isEmpty else { return }
+            self.startListener(attempt: attempt + 1)
+          }
         }
       }
     )

@@ -93,10 +93,12 @@ export function BrowserTabMenu({
     attributes: { destructive: true, disabled: !canClose },
   };
   const deviceUrl = loopbackUrlForDevice(browserTabUrl(tab));
+  // The device preview has its own webview and tunnel, so it doesn't wait for the stream.
+  const openOnDevice: MenuAction[] = deviceUrl
+    ? [{ id: "open-on-device", title: gt("Open on this device"), image: "iphone" }]
+    : [];
   const actions: MenuAction[] = [
-    ...(deviceUrl
-      ? [{ id: "open-on-device", title: gt("Open on this device"), image: "iphone" }]
-      : []),
+    ...openOnDevice,
     ...(onPaste
       ? [{ id: "paste", title: gt("Paste", { $context: "verb" }), image: "doc.on.clipboard" }]
       : []),
@@ -193,7 +195,7 @@ export function BrowserTabMenu({
       accessible
       accessibilityLabel={gt("Browser tab options")}
       accessibilityRole="button"
-      actions={streaming ? actions : [closeAction]}
+      actions={streaming ? actions : [...openOnDevice, closeAction]}
       onPressAction={({ nativeEvent }) => onAction(nativeEvent.event)}
     >
       <ControlPill icon="ellipsis" accessibilityLabel={gt("Browser tab options")} />

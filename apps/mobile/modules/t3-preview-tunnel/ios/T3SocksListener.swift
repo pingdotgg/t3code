@@ -34,7 +34,7 @@ final class T3SocksListener {
     parameters.requiredLocalEndpoint = .hostPort(
       host: "127.0.0.1", port: port.flatMap(NWEndpoint.Port.init(rawValue:)) ?? .any
     )
-    guard let listener = try? NWListener(using: parameters) else { return }
+    guard let listener = try? NWListener(using: parameters) else { return onFailed() }
     self.listener = listener
     listener.stateUpdateHandler = { [weak listener] state in
       switch state {
@@ -220,7 +220,8 @@ private final class T3SocksConnection {
       URLQueryItem(name: "port", value: String(port))
     ]
     guard let url = components.url else { return finish(socksReply(replyFailure)) }
-    let tunnel = URLSession.shared.webSocketTask(with: url)
+    // The same budget as the access request, so a stalled upgrade refuses the page promptly.
+    let tunnel = URLSession.shared.webSocketTask(with: URLRequest(url: url, timeoutInterval: 15))
     tunnel.maximumMessageSize = 16 * 1024 * 1024
     self.tunnel = tunnel
     tunnel.resume()

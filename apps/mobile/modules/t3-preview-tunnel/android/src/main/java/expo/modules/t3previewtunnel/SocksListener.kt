@@ -18,6 +18,8 @@ import okio.ByteString.Companion.toByteString
 
 private const val SEND_HIGH_WATER_BYTES = 1024L * 1024
 private const val HANDSHAKE_TIMEOUT_MS = 10_000
+// Browsers open about six connections per host; this leaves room for several hosts and sockets.
+private const val MAX_CONNECTIONS = 64
 private const val MAX_SOCKS4_STRING = 255
 
 private val client = OkHttpClient.Builder().readTimeout(0, TimeUnit.MILLISECONDS).build()
@@ -49,16 +51,26 @@ internal class SocksListener(private val requestAccess: () -> String?) {
     Thread({
       while (!server.isClosed) {
         val socket = runCatching { server.accept() }.getOrNull() ?: break
-        sockets.add(socket)
+        // Registration and close() take the same lock, so a socket accepted while the listener
+        // closes is dropped instead of starting a worker; a page opens a handful at a time.
+        val admitted = synchronized(sockets) {
+          !server.isClosed && sockets.size < MAX_CONNECTIONS && sockets.add(socket)
+        }
+        if (!admitted) {
+          runCatching { socket.close() }
+          continue
+        }
         Thread({ serve(socket) }, "t3-preview-tunnel").apply { isDaemon = true }.start()
       }
     }, "t3-preview-tunnel-accept").apply { isDaemon = true }.start()
   }
 
   fun close() {
-    runCatching { server.close() }
-    for (socket in sockets) runCatching { socket.close() }
-    sockets.clear()
+    val open = synchronized(sockets) {
+      runCatching { server.close() }
+      sockets.toList().also { sockets.clear() }
+    }
+    for (socket in open) runCatching { socket.close() }
   }
 
   private sealed interface Handshake {
@@ -84,7 +96,7 @@ internal class SocksListener(private val requestAccess: () -> String?) {
       }
     } catch (_: Exception) {
     } finally {
-      sockets.remove(socket)
+      synchronized(sockets) { sockets.remove(socket) }
       runCatching { socket.close() }
     }
   }
