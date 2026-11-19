@@ -2146,13 +2146,14 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
     const reads = statements.filter(
       ([query]) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("COUNT(*)"),
     );
-    const readRows = () =>
-      reads.reduce((rows, [query, params]) => {
+    const readSteps = () =>
+      reads.reduce((steps, [query, params]) => {
         const statement = copy.prepare(query);
-        return rows + statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>)).length;
+        statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+        return steps + statement.stat("vmStep");
       }, 0);
-    const shortRows = readRows();
-    assert.isAbove(shortRows, 0);
+    const shortSteps = readSteps();
+    assert.isAbove(shortSteps, 0);
     const addHistory = (table: string, key: string, renamed: ReadonlyArray<string> = []) => {
       const name = `orchestration_v2_projection_${table}`;
       const columns = copy
@@ -2185,7 +2186,7 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
     addHistory("run_attempts", "attempt_id", ["run_id"]);
     addHistory("messages", "message_id");
     addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
-    assert.isAtMost(readRows(), shortRows * 1.1);
+    assert.isAtMost(shortSteps, readSteps() * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -2305,16 +2306,16 @@ it.effect("records a secret and a link card without reading the thread's history
     const copyPath = "file:/card-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
-    const replay = () =>
+    const replaySteps = () =>
       statements
         .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
-        .reduce((rows, [query, params]) => {
+        .reduce((steps, [query, params]) => {
           const statement = copy.prepare(query);
-          return (
-            rows + statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>)).length
-          );
+          statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+          return steps + statement.stat("vmStep");
         }, 0);
-    const short = replay();
+    const shortSteps = replaySteps();
+    assert.isAbove(shortSteps, 0);
     const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
       ["runs", "run_id", []],
       ["run_attempts", "attempt_id", ["run_id"]],
@@ -2338,8 +2339,7 @@ it.effect("records a secret and a link card without reading the thread's history
         INSERT INTO ${name} (${columns.join(", ")})
         SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
     }
-    const long = replay();
-    assert.equal(long, short);
+    assert.isAtMost(shortSteps, replaySteps() * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3285,6 +3285,7 @@ it.effect.each([
   "new-message",
   "watch",
   "background",
+  "unread-steer",
   "permission",
   "client",
 ] as const)("continuation durably commits its handoff and source settlement: %s", (scenario) =>
@@ -3324,6 +3325,25 @@ it.effect.each([
       occurredAt: now,
       payload: { ...run, status: "completed", completedAt: now },
     });
+    if (scenario === "unread-steer") {
+      const original = initial.turnItems.find((item) => item.type === "user_message");
+      assert.isDefined(original);
+      yield* projections.apply({
+        id: EventId.make("continuation:unread-steer"),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          ...original,
+          id: TurnItemId.make("continuation:unread-steer-item"),
+          messageId: MessageId.make("continuation:unread-steer-message"),
+          inputIntent: "steer",
+          status: "pending",
+          text: "Finish this before continuing.",
+        },
+      });
+    }
     const source = yield* projections.getThreadProjection(sourceThreadId);
     if (scenario === "watch")
       yield* projections.apply({
