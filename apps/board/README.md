@@ -27,12 +27,24 @@ On a Windows machine, run the same commands from WSL with `dev:windows` and `sta
 
 `PORT` moves the dev server. `AGENT_BOARD_CDP_PORT` turns on Electron's remote debugging port. Electron prints `board:first-paint <ms>` once the renderer has painted, measured from the main process start.
 
+## omp rules for Claude Code
+
+The `omp-kit` plugin in `plugins/` gives every Claude Code session the rules in `~/.omp/agent/rules`, the sticky `~/.omp/agent/RULES.md`, a TypeScript language server for the `LSP` tool, and `vp` on the Bash path. Rules are read at hook time, so editing a rule file takes effect in the next session. `OMP_KIT_RULES_DIR` points the engine at another rules folder, and `RULES.md` is read from that folder's parent.
+
+```sh
+node apps/board/scripts/install-omp-kit.mjs                      # user scope, ~/.claude
+node apps/board/scripts/install-omp-kit.mjs --config-dir /tmp/x  # an isolated Claude config
+```
+
+The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
+
 ## Tests
 
 ```sh
 vp run --filter @agent-board/app typecheck
 cd apps/board && vp test run
 node --test apps/board/scripts/*.test.mjs
+node --test apps/board/plugins/omp-kit/engine/
 ```
 
 ## Plan
