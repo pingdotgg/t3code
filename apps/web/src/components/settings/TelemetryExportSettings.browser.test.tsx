@@ -172,6 +172,7 @@ describe("TelemetryExportSettings", () => {
     first.resolve({ _tag: "Success", value: { _tag: "Accepted", latencyMs: 11 } });
     latest.resolve({ _tag: "Success", value: { _tag: "Accepted", latencyMs: 33 } });
 
-    await expect.element(screen.getByText("Connected · 33 ms")).toBeInTheDocument();
+    await expect.element(screen.getByText("Connected")).toBeInTheDocument();
+    await expect.element(screen.getByText("33 ms")).toBeInTheDocument();
   });
 });
