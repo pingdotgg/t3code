@@ -118,6 +118,8 @@ export const ThreadPullRequestWatch = Schema.Struct({
    * watch keep its thread waiting; absent on watches not read since it existed.
    */
   checksPending: Schema.optional(Schema.Boolean),
+  /** The agent acts on the PR itself, so the watch holds its thread whatever its checks say. */
+  untilMerged: Schema.optional(Schema.Literal(true)),
 });
 export type ThreadPullRequestWatch = typeof ThreadPullRequestWatch.Type;
 

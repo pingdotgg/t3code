@@ -69,6 +69,7 @@ export class PullRequestWatchService extends Context.Service<
       readonly threadId: ThreadId;
       readonly target: PullRequestTarget;
       readonly watching: boolean;
+      readonly untilMerged?: boolean | undefined;
     }) => Effect.Effect<
       ResolvedTarget & { readonly watching: boolean; readonly wasWatching: boolean },
       | PullRequestWatchFailedError
@@ -104,6 +105,7 @@ const make = Effect.gen(function* () {
     readonly threadId: ThreadId;
     readonly target: PullRequestTarget;
     readonly watching: boolean;
+    readonly untilMerged?: boolean | undefined;
   }) {
     const { watching } = input;
     const thread = yield* requireThread(input.threadId);
@@ -158,6 +160,7 @@ const make = Effect.gen(function* () {
         number: target.number,
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
+        ...(watching && input.untilMerged !== undefined && { untilMerged: input.untilMerged }),
       })
       .pipe(
         Effect.catchCause((cause) =>
