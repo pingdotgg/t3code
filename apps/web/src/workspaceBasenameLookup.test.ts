@@ -108,6 +108,22 @@ describe("chat file links into another project", () => {
     ).toBe("/home/user/app-b/src/api/rules/categories.ts");
   });
 
+  it.each([
+    {
+      outer: "/home/user/reports",
+      inner: "/home/user/reports/docs",
+      found: "/home/user/reports/docs/handoff.txt",
+    },
+    { outer: "C:\\Reports", inner: "c:/reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
+  ])("resolves one file that a project nested in $outer also lists", ({ outer, inner, found }) => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        { root: outer, entries: [{ path: "docs/handoff.txt", kind: "file" }] },
+        { root: inner, entries: [{ path: "handoff.txt", kind: "file" }] },
+      ]),
+    ).toBe(found);
+  });
+
   it("opens nothing when several projects have the file", () => {
     expect(
       pickProjectLinkMatch("rules/categories.ts", [appB, { ...appB, root: "/home/user/app-c" }]),
