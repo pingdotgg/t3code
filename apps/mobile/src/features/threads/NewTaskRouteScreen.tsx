@@ -7,6 +7,7 @@ import { NavigationRow } from "../../components/ui/NavigationRow";
 import { AppBar } from "../../components/ui/AppBar";
 import {
   StackActions,
+  useFocusEffect,
   useIsFocused,
   useNavigation,
   type StaticScreenProps,
@@ -19,7 +20,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { cn } from "../../lib/cn";
@@ -235,13 +236,19 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         })
       : null;
   const canStartScratch = scratchOption?.ready === true;
-  const scratchStartInFlightRef = useRef(false);
+  const pendingScratchRef = useRef<AbortController | null>(null);
+  const cancelPendingScratch = useCallback(() => {
+    pendingScratchRef.current?.abort();
+    pendingScratchRef.current = null;
+  }, []);
+  useFocusEffect(useCallback(() => cancelPendingScratch, [cancelPendingScratch]));
 
-  async function selectProject(project: EnvironmentProject): Promise<void> {
+  async function selectProject(project: EnvironmentProject, signal?: AbortSignal): Promise<void> {
     if (incomingShare?.destination && !reservedDestinationProject) {
       try {
         await releaseShareReservation(incomingShare.id, incomingShare.destination);
       } catch (error) {
+        if (signal?.aborted) return;
         Dialog.alert(
           gt("Could not change project"),
           errorDisplayMessage(error, m) ??
@@ -249,6 +256,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
         );
         return;
       }
+      if (signal?.aborted) return;
     }
     const root = navigation.getState()?.routeNames.includes("NewTaskProject")
       ? navigation
@@ -264,13 +272,15 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     const retargeted =
       routeDraftId === undefined
         ? false
-        : await retargetSavedNewTaskDraft(routeDraftId, {
-            environmentId: project.environmentId,
-            projectId: project.id,
-          }).then(
+        : await retargetSavedNewTaskDraft(
+            routeDraftId,
+            { environmentId: project.environmentId, projectId: project.id },
+            signal,
+          ).then(
             (found) => found,
             () => null,
           );
+    if (signal?.aborted) return;
     if (retargeted === null) {
       Dialog.alert(
         gt("Could not change project"),
@@ -292,13 +302,20 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
     });
   }
 
+  function chooseProject(project: EnvironmentProject): void {
+    cancelPendingScratch();
+    void selectProject(project);
+  }
+
   async function startScratch(): Promise<void> {
-    if (!canStartScratch || !scratchOption || scratchStartInFlightRef.current) return;
+    if (!canStartScratch || !scratchOption || pendingScratchRef.current) return;
     const environmentId = scratchOption.environmentId;
-    scratchStartInFlightRef.current = true;
+    const request = new AbortController();
+    pendingScratchRef.current = request;
     const result = await openScratch({ environmentId, input: {} });
+    if (request.signal.aborted) return;
     if (result._tag === "Failure") {
-      scratchStartInFlightRef.current = false;
+      pendingScratchRef.current = null;
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
@@ -309,9 +326,8 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       }
       return;
     }
-    // selectProject handles its own failures, so this never throws.
-    await selectProject(result.value);
-    scratchStartInFlightRef.current = false;
+    await selectProject(result.value, request.signal);
+    if (pendingScratchRef.current === request) pendingScratchRef.current = null;
   }
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- navigates to the incoming share's reserved destination draft once its project loads and the screen is focused
@@ -545,7 +561,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       subtitleNumberOfLines={1}
                       subtitleEllipsizeMode="middle"
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => chooseProject(selectionTarget)}
                       leading={
                         <ProjectFavicon
                           environmentId={scope.representative.environmentId}
@@ -568,7 +584,7 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       accessibilityRole="button"
                       accessibilityLabel={scope.title}
                       disabled={reservedDestinationProject !== null}
-                      onPress={() => void selectProject(selectionTarget)}
+                      onPress={() => chooseProject(selectionTarget)}
                       className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5"
                     >
                       <View className="h-7 w-7 items-center justify-center">
