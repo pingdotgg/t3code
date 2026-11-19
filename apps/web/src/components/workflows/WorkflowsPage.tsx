@@ -56,12 +56,16 @@ export function WorkflowsPage() {
     connectedIds.includes(environment.environmentId),
   );
   const asked = search.env === undefined ? null : EnvironmentId.make(search.env);
+  // An environment the address names is kept while it is away: its run and file mean nothing on
+  // another server.
   const environmentId =
-    connected.find((environment) => environment.environmentId === asked)?.environmentId ??
-    connected.find((environment) => environment.environmentId === primaryEnvironmentId)
-      ?.environmentId ??
-    connected[0]?.environmentId ??
-    null;
+    asked !== null
+      ? (connected.find((environment) => environment.environmentId === asked)?.environmentId ??
+        null)
+      : (connected.find((environment) => environment.environmentId === primaryEnvironmentId)
+          ?.environmentId ??
+        connected[0]?.environmentId ??
+        null);
   const select = (next: WorkflowsSearch) =>
     void navigate({ to: "/workflows", search: next, replace: true });
   // A level of the page, which the browser's Back should step out of again.
