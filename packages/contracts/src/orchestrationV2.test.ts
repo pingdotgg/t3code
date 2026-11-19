@@ -669,6 +669,12 @@ describe("withMessageSenderNote", () => {
     [thread, "Hi", '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]\n\nHi'],
     [thread, "", '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]'],
     [thread, " /git/review staged", " /git/review staged"],
+    [thread, "$deploy ship it", "$deploy ship it"],
+    [
+      thread,
+      "$25 left",
+      '[T3 Code: the agent in T3 thread "t" sent this message, not the user.]\n\n$25 left',
+    ],
     [
       {
         createdBy: "agent",
