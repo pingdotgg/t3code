@@ -2988,21 +2988,13 @@ html[data-theme-id]:not([data-theme-id=""]) {
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  /* Light palettes' muted text sits closer to the canvas than the default's;
+     84% keeps dim text at the default's contrast. */
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   --well-shade: 2.5%;
   --well-switch-shade: 16%;
-  --raised-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 94%, white),
-    color-mix(in srgb, var(--popover) 94%, white)
-  );
-  --raised-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 90%, white),
-    color-mix(in srgb, var(--popover) 90%, white)
-  );
-  --danger-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 92%, var(--destructive)),
-    color-mix(in srgb, var(--popover) 92%, var(--destructive))
-  );
+  --raised-base: var(--popover);
   --lit-fill: linear-gradient(var(--primary), var(--primary));
   --lit-rim: linear-gradient(
     180deg,
@@ -3042,11 +3034,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --tray-fill: linear-gradient(var(--card), var(--card));
   --composer-fill: linear-gradient(var(--surface-raised), var(--surface-raised));
   --bubble-fill: linear-gradient(var(--message-surface), var(--message-surface));
-  --kbd-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--popover), white 12%),
-    color-mix(in srgb, var(--popover), white 6%)
-  );
   --kbd-popover-fill: linear-gradient(
     180deg,
     color-mix(in srgb, var(--popover), white 8%),
@@ -3128,6 +3115,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   );
 
   @variant dark {
+    --dim-mix: 72%;
     --well-shade: 16%;
     --well-switch-shade: 30%;
     --gloss-off-thumb-fill: linear-gradient(
@@ -3136,11 +3124,84 @@ html[data-theme-id]:not([data-theme-id=""]) {
     );
     --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
     --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
+    /* Some dark palettes paint the overlay role well above the canvas. Controls on
+       the page step up from the surface role instead, as the default's do. */
+    --raised-base: var(--card);
+    /* How far the overlay sits above the raised base, as an oklch lightness:
+       (popover + (1 - base)) / 2, doubled, minus one. Zero when they match. */
+    --overlay-lift: oklch(
+      from color-mix(in oklab, var(--popover), oklch(from var(--raised-base) calc(1 - l) 0 0))
+        calc(l * 2 - 1) 0 0
+    );
   }
 
   /* The default light primary is near-black, so its keycap shows no box. */
   @variant light {
     --kbd-lit-fill: transparent;
+  }
+}
+
+/* Raised controls sit one step above the surface they are on: the page's surface
+   role (dark, above), or the overlay inside menus, popovers and dialogs (below). */
+html[data-theme-id]:not([data-theme-id=""]),
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
+  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
+  --raised-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 94%, white),
+    color-mix(in srgb, var(--raised-base) 94%, white)
+  );
+  --raised-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 90%, white),
+    color-mix(in srgb, var(--raised-base) 90%, white)
+  );
+  --danger-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive)),
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive))
+  );
+  --kbd-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--raised-base), white 12%),
+    color-mix(in srgb, var(--raised-base), white 6%)
+  );
+}
+
+/* Secondary text was tuned for the canvas. On an overlay lifted above it, each
+   tier moves up by the same lightness so it keeps its distance from its ground.
+   Other surface styles repaint overlays from the canvas and keep their own tiers. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  @variant dark {
+    --overlay-muted-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-muted-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-dim-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-dim-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-placeholder: oklab(
+      from color-mix(in oklab, var(--contrast-placeholder), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-secondary-label: oklab(
+      from color-mix(in oklab, var(--contrast-secondary-label), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-icon-muted: oklab(
+      from color-mix(in oklab, var(--contrast-icon-muted), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+  }
+}
+
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"]
+  :is(.surface-popover, .surface-palette, .surface-dialog, .surface-tooltip) {
+  @variant dark {
+    --raised-base: var(--popover);
+    --contrast-muted-foreground: var(--overlay-muted-foreground);
+    --contrast-dim-foreground: var(--overlay-dim-foreground);
+    --contrast-placeholder: var(--overlay-placeholder);
+    --contrast-secondary-label: var(--overlay-secondary-label);
+    --contrast-icon-muted: var(--overlay-icon-muted);
   }
 }
 
@@ -3359,10 +3420,12 @@ html[data-theme-id] [data-app-sidebar] {
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 10%, transparent);
 
   @variant dark {
+    --dim-mix: 72%;
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   }
 }
@@ -3444,6 +3507,7 @@ html:root[data-theme-id="t3-code-classic"] {
        Without those borders they need the default theme's spacing between steps. */
     --card: color-mix(in srgb, var(--background) 97.5%, white);
     --popover: color-mix(in srgb, var(--background) 97%, white);
+    --raised-base: var(--popover);
     --surface-raised: color-mix(in srgb, var(--background) 94%, white);
     --info-foreground: var(--color-blue-400);
     --success-foreground: var(--color-emerald-400);
