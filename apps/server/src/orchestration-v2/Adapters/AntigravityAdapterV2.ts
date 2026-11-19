@@ -221,21 +221,12 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    buildAttachmentPrompt: ({
-      text,
-      attachments,
-      resolveAttachmentPath,
-      promptCapabilities,
-      agentVersion,
-      currentModel,
-    }) =>
+    buildAttachmentPrompt: ({ text, attachments, resolveAttachmentPath, promptCapabilities }) =>
       buildAntigravityPrompt({
         input: text,
         attachments,
         resolveAttachmentPath,
         promptCapabilities,
-        agentVersion,
-        currentModel,
       }).pipe(
         Effect.map((blocks) => (text.trim() ? blocks.slice(1) : blocks)),
         Effect.provideService(FileSystem.FileSystem, options.fileSystem),
@@ -295,7 +286,6 @@ export function makeAntigravityAcpAdapterFlavor(
     requiresSignIn: isAntigravitySignInRequiredError,
     // Antigravity can leave a prompt open without updates; long tools and approvals pause this.
     promptInactivityTimeout: "15 minutes",
-    // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
     ...(profileDirectory === undefined

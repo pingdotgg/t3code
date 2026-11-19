@@ -1487,8 +1487,8 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
 });
 
 describe("AntigravityAdapterV2 session system prompt", () => {
-  it.effect.each(["1.4.5", "1.4.1"])(
-    "carries PR linking once in the %s session setup or once per turn",
+  it.effect.each(["1.5.0"])(
+    "carries PR linking once per turn on %s, which does not advertise a system prompt append",
     (agentVersion) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1606,13 +1606,8 @@ describe("AntigravityAdapterV2 session system prompt", () => {
         const append = JSON.stringify(sessionNew?.params?._meta ?? null);
         // Identity stays per turn either way.
         assert.include(sent, "through the Antigravity harness, as gemini-test-low");
-        if (agentVersion === "1.4.5") {
-          assert.include(append, "pull_request_linking");
-          assert.notInclude(sent, "<pull_request_linking>");
-        } else {
-          assert.notInclude(append, "systemPrompt");
-          assert.include(sent, "<pull_request_linking>");
-        }
+        assert.notInclude(append, "systemPrompt");
+        assert.include(sent, "<pull_request_linking>");
       }).pipe(Effect.provide(layerSession)),
   );
 });

@@ -46,7 +46,7 @@ const initializeResult = {
   agentInfo: {
     name: "antigravity-acp",
     title: "Google Antigravity",
-    version: "agy_acp_server_20260818_01_RC01",
+    version: "1.5.12",
   },
 } satisfies EffectAcpSchema.InitializeResponse;
 
@@ -331,7 +331,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot).toMatchObject({
           installed: true,
           status: "warning",
-          version: "agy_acp_server_20260818_01_RC01",
+          version: "1.5.12",
           auth: { status: "unknown", ...(auth ? { type: auth.type } : {}) },
           message:
             auth?.type === "gemini-api-key" || auth?.type === "agent-platform"
@@ -475,7 +475,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         ...started,
         initializeResult: {
           ...initializeResult,
-          agentInfo: { ...initializeResult.agentInfo, version: "1.4.0" },
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.13" },
         },
       });
       yield* Ref.set(
@@ -485,7 +485,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           agentInfo: { ...initializeResult.agentInfo, version: "unknown" },
         }),
       );
-      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.4.0");
+      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.5.13");
     }),
   );
 

@@ -111,39 +111,6 @@ describe("provider compatibility", () => {
     );
   });
 
-  it("recognizes Antigravity semver release tags while keeping dated candidates unknown", () => {
-    const antigravity = ProviderDriverKind.make("antigravity");
-    const taggedPolicy = {
-      ...policy,
-      driver: antigravity,
-      ranges: [{ range: "=2.0.0", status: "supported" as const }],
-    };
-    for (const [version, expected] of [
-      ["agy_acp_server_2.0.0", "supported"],
-      ["2.0.0", "supported"],
-      ["agy_acp_server_2.0.1", "unknown"],
-      ["agy_acp_server_2.0.0-beta.1", "unknown"],
-      ["agy_acp_server_20260818_01_RC01", "unknown"],
-    ] as const) {
-      assert.strictEqual(
-        resolveProviderCompatibility([taggedPolicy], antigravity, version)?.status,
-        expected,
-      );
-    }
-  });
-
-  it("supports a prefixed native Antigravity runtime in the bundled manifest", () => {
-    const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
-    assert.strictEqual(
-      resolveProviderCompatibility(
-        policies,
-        ProviderDriverKind.make("antigravity"),
-        "agy_acp_server_1.5.7",
-      )?.status,
-      "supported",
-    );
-  });
-
   it("marks Antigravity below 1.5 broken and recommends 1.5.12 in the bundled manifest", () => {
     const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
     const antigravity = ProviderDriverKind.make("antigravity");
@@ -165,7 +132,6 @@ describe("provider compatibility", () => {
       ["v2.0.0", "supported"],
       ["3.0.0", "unknown"],
       ["2.0.0-beta.1", "unknown"],
-      ["agy_acp_server_20260818_01_RC01", "unknown"],
       [null, "unknown"],
     ] as const) {
       assert.strictEqual(resolveProviderCompatibility([policy], driver, version)?.status, expected);

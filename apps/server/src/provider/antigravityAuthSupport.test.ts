@@ -55,7 +55,7 @@ describe("Antigravity process environment", () => {
     browserCommand: "managed-browser-helper",
   };
 
-  it("isolates the profile and harness after merging overrides without changing the base environment", () => {
+  it("runs `agy acp` with an isolated profile without changing the base environment", () => {
     const baseEnv = {
       HOME: "/home/developer",
       PATH: "/usr/bin",
@@ -82,7 +82,7 @@ describe("Antigravity process environment", () => {
     };
     const original = { ...baseEnv };
     const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: "/project",
       baseEnv,
@@ -90,8 +90,8 @@ describe("Antigravity process environment", () => {
 
     expect(baseEnv).toEqual(original);
     expect(spawn).toEqual({
-      command: "/release/acp",
-      args: ["--uid="],
+      command: "/usr/bin/agy",
+      args: ["acp", "--gemini-dir", profile.geminiHome, "--app-data-dir", "antigravity-acp"],
       cwd: "/project",
       extendEnv: false,
       env: {
@@ -100,7 +100,6 @@ describe("Antigravity process environment", () => {
         CUSTOM_SETTING: "keep-this",
         GEMINI_HOME: profile.geminiHome,
         AGY_ACP_FORCE_FILE_STORAGE: "1",
-        ANTIGRAVITY_HARNESS_PATH: "/release/harness",
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
@@ -109,31 +108,11 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` without a harness", () => {
-    const spawn = buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/usr/bin/agy", harnessPath: null },
-      profile,
-      cwd: "/project",
-      baseEnv: { PATH: "/usr/bin", ANTIGRAVITY_HARNESS_PATH: "/stale/harness" },
-    });
-
-    expect(spawn.command).toBe("/usr/bin/agy");
-    expect(spawn.args).toEqual([
-      "acp",
-      "--gemini-dir",
-      profile.geminiHome,
-      "--app-data-dir",
-      "antigravity-acp",
-    ]);
-    expect(spawn.env).not.toHaveProperty("ANTIGRAVITY_HARNESS_PATH");
-    expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
-  });
-
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
       buildAntigravityAcpSpawnInput({
-        installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+        installation: { executablePath: "/usr/bin/agy" },
         profile,
         cwd: "/project",
         baseEnv,
@@ -179,10 +158,7 @@ describe("Antigravity process environment", () => {
       browserCommand: "managed-browser-helper",
     };
     const input = {
-      installation: {
-        executablePath: "C:\\release\\agy_acp_server.exe",
-        harnessPath: "C:\\release\\localharness_external.exe",
-      },
+      installation: { executablePath: "C:\\release\\agy.exe" },
       profile: windowsProfile,
       cwd: "C:\\project",
       baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
@@ -502,7 +478,7 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       }),
     );
     return buildAntigravityAcpSpawnInput({
-      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      installation: { executablePath: "/usr/bin/agy" },
       profile,
       cwd: directory,
       baseEnv,

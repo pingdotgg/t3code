@@ -2042,7 +2042,7 @@ it.layer(
         installed: true,
         auth: { status: "authenticated", type: "oauth-personal", label: "Google account" },
         checkedAt: "2026-09-05T00:00:00.000Z",
-        version: "agy_acp_server_1.1.1",
+        version: "1.5.12",
         models: [
           {
             slug: "gemini-3.7-flash-high",

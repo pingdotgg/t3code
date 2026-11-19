@@ -69,10 +69,12 @@ is available. T3 checks Google's CLI release channel while provider update check
 are enabled. Installing or reinstalling also checks that channel. Updates keep
 your profile and existing runtime available if the new release fails validation.
 
-Updating an older 1.4.5 installation migrates it to the native CLI. You may need to
-sign in again after migration. Threads already running finish with their original
-runtime; new sessions use the updated release. Custom binary paths keep using the
-executable you selected.
+T3 needs Antigravity 1.5 or newer and recommends 1.5.12 or newer. Sessions do not
+start on an older runtime: update the managed runtime here, or update the executable
+a custom binary path or `PATH` points at. You may need to sign in again after
+updating from a runtime older than 1.5. Threads already running finish with their
+original runtime; new sessions use the updated release. Custom binary paths keep
+using the executable you selected.
 
 ## Models and threads
 
@@ -148,8 +150,6 @@ is refused while the runtime is in use.
 
 When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
 objective. Antigravity keeps working until it completes the goal or you cancel it.
-If you still use the older 1.4.5 runtime, update Antigravity in provider settings,
-then refresh provider status.
 
 Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
 before starting more work. Ordinary follow-ups wait until the running turn ends.

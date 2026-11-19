@@ -457,10 +457,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
-  readonly installation: {
-    readonly executablePath: string;
-    readonly harnessPath: string | null;
-  };
+  readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -469,32 +466,21 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
-    args:
-      input.installation.harnessPath === null
-        ? [
-            "acp",
-            "--gemini-dir",
-            input.profile.geminiHome,
-            "--app-data-dir",
-            // The CLI joins this beneath gemini-dir, including when the value is absolute.
-            "antigravity-acp",
-          ]
-        : input.profile.platform === "linux"
-          ? ["--uid="]
-          : [],
+    args: [
+      "acp",
+      "--gemini-dir",
+      input.profile.geminiHome,
+      "--app-data-dir",
+      // The CLI joins this beneath gemini-dir, including when the value is absolute.
+      "antigravity-acp",
+    ],
     cwd: input.cwd,
-    env: {
-      ...antigravityEnvironment(
-        input.profile,
-        input.baseEnv ?? process.env,
-        input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-        input.runtimeTempDirectory,
-      ),
-      ...(input.installation.harnessPath === null
-        ? {}
-        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
-    },
+    env: antigravityEnvironment(
+      input.profile,
+      input.baseEnv ?? process.env,
+      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+      input.runtimeTempDirectory,
+    ),
     extendEnv: false,
   };
 }

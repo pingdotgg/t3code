@@ -84,6 +84,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const profileDirectory = directories.profile;
   const instancePath = `${path.join(root, "instance-bin")}:${baseEnv.PATH ?? ""}`;
 
+  const agentExecutables = new Set<string>();
   const makeExecutable = Effect.fn("AntigravityDriverTest.makeExecutable")(function* (
     name: string,
     options: {
@@ -95,8 +96,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     } = {},
   ) {
     const directory = path.join(root, name);
-    const executablePath = path.join(directory, "agy_acp_server.par");
-    const harnessPath = path.join(directory, "localharness_external");
+    const executablePath = path.join(directory, "agy");
     yield* fs.makeDirectory(directory, { recursive: true });
     const authorizationUrl =
       "https://accounts.google.com/o/oauth2/v2/auth?response_type=code&redirect_uri=http%3A%2F%2F127.0.0.1%3A51234%2F&state=fixture-state";
@@ -120,12 +120,10 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         "",
       ].join("\n"),
     );
-    yield* fs.writeFileString(harnessPath, "#!/bin/sh\nexit 99\n");
     yield* fs.chmod(executablePath, 0o755);
-    yield* fs.chmod(harnessPath, 0o755);
+    agentExecutables.add(executablePath);
     return {
       executablePath,
-      harnessPath,
       source: "managed",
       version: name,
       managedVersionDirectory: directory,
@@ -149,7 +147,6 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     extendEnv: boolean | undefined;
     environment: Record<string, string | undefined>;
     profileDirectory: string | undefined;
-    harnessPath: string | undefined;
     forceFileStorage: string | undefined;
     credentialKeys: ReadonlyArray<string>;
     geminiApiKey: string | undefined;
@@ -213,14 +210,12 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         extendEnv: command.options.extendEnv,
         environment: Object.fromEntries(Object.keys(environment).map((name) => [name, env(name)])),
         profileDirectory: env("GEMINI_HOME"),
-        harnessPath: env("ANTIGRAVITY_HARNESS_PATH"),
         forceFileStorage: env("AGY_ACP_FORCE_FILE_STORAGE"),
         credentialKeys: Object.keys(environment).filter((key) =>
           blockedCredentialKeys.has(key.toUpperCase()),
         ),
         geminiApiKey: env("GEMINI_API_KEY"),
-        tempDirectory:
-          environment.ANTIGRAVITY_HARNESS_PATH === undefined ? undefined : env("TMPDIR"),
+        tempDirectory: agentExecutables.has(command.command) ? env("TMPDIR") : undefined,
         handle,
       });
       return handle;
@@ -342,17 +337,19 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           { binaryPath: "", path: h.instancePath },
           { binaryPath: "", path: h.instancePath },
         ]);
-        const nativeLaunches = h.launches.filter((launch) => launch.harnessPath !== undefined);
-        expect(nativeLaunches.map((launch) => launch.command)).toEqual([
+        const agentLaunches = h.launches.filter((launch) => launch.tempDirectory !== undefined);
+        expect(agentLaunches.map((launch) => launch.command)).toEqual([
           h.first.executablePath,
           h.second.executablePath,
         ]);
-        expect(nativeLaunches.map((launch) => launch.harnessPath)).toEqual([
-          h.first.harnessPath,
-          h.second.harnessPath,
-        ]);
-        for (const launch of nativeLaunches) {
-          expect(launch.args).toEqual(hostPlatform === "linux" ? ["--uid="] : []);
+        for (const launch of agentLaunches) {
+          expect(launch.args).toEqual([
+            "acp",
+            "--gemini-dir",
+            h.profileDirectory,
+            "--app-data-dir",
+            "antigravity-acp",
+          ]);
           expect(launch.profileDirectory).toBe(h.profileDirectory);
           expect(launch.forceFileStorage).toBe("1");
           expect(launch.extendEnv).toBe(false);
@@ -425,10 +422,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         ]);
 
         // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        h.controls.selected = {
-          ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
-          harnessPath: null,
-        };
+        h.controls.selected = yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" });
         for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
