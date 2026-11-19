@@ -28,6 +28,7 @@ import Migration0104 from "../persistence/Migrations/110_WorkflowStore.ts";
 import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
+import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import { Issue, unavailable, WorkflowForge, WorkflowForgeError } from "./WorkflowForge.ts";
 import { agent, ask } from "./workflowAgent.ts";
@@ -360,6 +361,7 @@ const fakeAgents = () => {
   const interrupted: Array<{
     readonly threadId: string;
     readonly environment?: string | undefined;
+    readonly turnId?: string | undefined;
   }> = [];
   let threads = 0;
   let refusals = 0;
@@ -561,6 +563,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
         Migration0105,
         Migration0106,
         Migration0107,
+        Migration0108,
       ],
       {
         discard: true,
@@ -1315,8 +1318,9 @@ it.effect("an agent step in a linked environment keeps its thread there", () =>
           ["env-b", "env-b"],
         );
         yield* workflows.cancel(run.runId, "not needed");
+        // Only the step's own turn: someone else's turn on that thread is left alone.
         assert.deepStrictEqual(agents.interrupted, [
-          { threadId: "thread-1", environment: "env-b" },
+          { threadId: "thread-1", environment: "env-b", turnId: `${run.runId}/land/0` },
         ]);
       }),
     );
@@ -1338,10 +1342,9 @@ it.effect("cancelling a run stops its agent, and a turn a person stopped is not 
         yield* workflows.waitFor(cancelled.runId, (run) => run.detail === "agent write");
         const { steps } = yield* workflows.get(cancelled.runId);
         yield* workflows.cancel(cancelled.runId, "not needed");
-        assert.deepStrictEqual(
-          agents.interrupted.map((thread) => thread.threadId),
-          [steps[0]?.threadId],
-        );
+        assert.deepStrictEqual(agents.interrupted, [
+          { threadId: steps[0]?.threadId ?? "no thread", turnId: `${cancelled.runId}/write/0` },
+        ]);
 
         const stopped = yield* workflows.start("fix", { project: "p1" }, { idempotencyKey: "x2" });
         yield* agents.started(stopped.runId, "write/0");

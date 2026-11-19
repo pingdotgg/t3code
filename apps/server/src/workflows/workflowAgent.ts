@@ -87,7 +87,13 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       })
       .pipe(
         Effect.tap((turn) =>
-          run.store.stepThread(run.runId, name, turn.threadId, turn.environment ?? null),
+          run.store.stepThread(
+            run.runId,
+            name,
+            turn.threadId,
+            turn.environment ?? null,
+            turn.turnId,
+          ),
         ),
         Effect.flatMap((turn) =>
           Effect.map(Clock.currentTimeMillis, (startedAt): AgentTurn => ({ ...turn, startedAt })),

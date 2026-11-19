@@ -17,7 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
-import { DurableDeferred, type WorkflowEngine } from "effect/workflow";
+import { DurableDeferred, WorkflowEngine } from "effect/workflow";
 
 import { checkOutput, rejectionText } from "../orchestration-v2/runOutput.ts";
 import { isMissedFixedTimeRun, nextScheduledRunAt } from "../scheduledTasks/Schedule.ts";
@@ -500,12 +500,15 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     }
   }).pipe(Effect.withSpan("Workflows.sweep"));
 
-  yield* sweep.pipe(
-    Effect.catchCause((cause) => Effect.logWarning("Workflow sweep failed", cause)),
-    Effect.andThen(Effect.sleep(SWEEP_EVERY)),
-    Effect.forever,
-    Effect.forkScoped,
-  );
+  // With nothing registered there is nothing to resume, end or start: only history to read.
+  if (registered.length > 0) {
+    yield* sweep.pipe(
+      Effect.catchCause((cause) => Effect.logWarning("Workflow sweep failed", cause)),
+      Effect.andThen(Effect.sleep(SWEEP_EVERY)),
+      Effect.forever,
+      Effect.forkScoped,
+    );
+  }
 
   const questions = Effect.flatMap(store.requests, (waits) =>
     Effect.forEach(
@@ -782,8 +785,13 @@ export const layer = (
     Layer.provide(layerDefinitions),
     Layer.provide(store),
     Layer.provide(Layer.merge(layerKeyValues, layerEngineLink)),
-    Layer.provide(ClusterWorkflowEngine.layer),
-    Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
+    Layer.provide(
+      registered.length === 0
+        ? WorkflowEngine.layerMemory
+        : ClusterWorkflowEngine.layer.pipe(
+            Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
+          ),
+    ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
   );
 };

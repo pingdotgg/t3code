@@ -19,6 +19,7 @@ import Migration0104 from "../persistence/Migrations/110_WorkflowStore.ts";
 import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
+import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -58,6 +59,7 @@ const setup = Effect.fn("setup")(function* (
         Migration0105,
         Migration0106,
         Migration0107,
+        Migration0108,
       ],
       { discard: true },
     ),
@@ -73,6 +75,7 @@ const setup = Effect.fn("setup")(function* (
         ),
       ),
       directory,
+      Effect.succeed(true),
     ).pipe(Effect.provideService(FileSystem.FileSystem, wrap(fileSystem))),
   );
   return { fileSystem, at, runtime };
@@ -92,29 +95,37 @@ it.effect(
 
         // A file that does not parse is not written, and says where it breaks.
         const broken = yield* definitions.save("greet.ts", "T3.workflow(\n  'x',\n];\n");
+        assert.isFalse(broken.changed);
         assert.deepStrictEqual(
-          broken.map((problem) => [problem.file, problem.line]),
+          broken.problems.map((problem) => [problem.file, problem.line]),
           [["greet.ts", 3]],
         );
         // Nor is one that defines what another file already does, or drops what a run needs.
         const twice = yield* definitions.save("again.ts", hold);
-        assert.include(twice[0]?.message ?? "", "hold@1 is defined twice, in again.ts and hold.ts");
+        assert.include(
+          twice.problems[0]?.message ?? "",
+          "hold@1 is defined twice, in again.ts and hold.ts",
+        );
         const dropped = yield* definitions.save("hold.ts", greet("hello"));
-        assert.include(dropped[0]?.message ?? "", "hold@1 is no longer defined, and 1 of its runs");
+        assert.include(
+          dropped.problems[0]?.message ?? "",
+          "hold@1 is no longer defined, and 1 of its runs",
+        );
         // Nor one that exports something shaped like a workflow without what the engine walks.
         const shaped = yield* definitions.save(
           "shaped.ts",
           'export default [{ name: "shaped", version: 1, body: () => Effect.void }];\n',
         );
-        assert.include(shaped[0]?.message ?? "", "is not a workflow");
-        assert.include((yield* definitions.remove("hold.ts"))[0]?.message ?? "", "hold@1");
+        assert.include(shaped.problems[0]?.message ?? "", "is not a workflow");
+        assert.include((yield* definitions.remove("hold.ts")).problems[0]?.message ?? "", "hold@1");
         assert.deepStrictEqual(
           (yield* definitions.read).files.map((file) => file.name),
           ["hold.ts"],
         );
 
         // A new file that passes is there from now on, and what it defines can be started.
-        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hello")), []);
+        const saved = { changed: true, problems: [] };
+        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hello")), saved);
         assert.equal(yield* fileSystem.readFileString(at("greet.ts")), greet("hello"));
         const greeted = yield* workflows.start("greet", {}, { idempotencyKey: "g" });
         const done = yield* workflows.waitFor(greeted.runId, (run) => run.status === "completed");
@@ -158,11 +169,18 @@ it.effect(
           "hi",
         );
         // A file taken away takes its workflows with it.
-        assert.deepStrictEqual(yield* definitions.remove("greet.ts"), []);
+        assert.deepStrictEqual(yield* definitions.remove("greet.ts"), saved);
         const gone = yield* workflows
           .start("greet", {}, { idempotencyKey: "g4" })
           .pipe(Effect.flip);
         assert.equal(gone._tag, "WorkflowNotRegisteredError");
+        // With no file left, nothing runs, and the runs that ended can still be read.
+        assert.deepStrictEqual(yield* definitions.remove("hold.ts"), saved);
+        assert.equal((yield* workflows.get(held.runId)).run.status, "completed");
+        assert.includeMembers(
+          (yield* workflows.list()).map((run) => run.runId),
+          [held.runId, greeted.runId],
+        );
       }).pipe(
         Effect.provide(runtime),
         Effect.scoped,
@@ -201,7 +219,10 @@ it.effect(
           (snapshot) => Option.getOrThrow(snapshot).definition?.revision ?? 0,
         );
         refuse = true;
-        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hi")), []);
+        // Written, but the folder could not be listed, so it is not said to run.
+        const unlisted = yield* definitions.save("greet.ts", greet("hi"));
+        assert.isTrue(unlisted.changed);
+        assert.include(unlisted.problems[0]?.message ?? "", "could not be read");
         // The folder could not be listed: what was loaded stays, and greet is not taken in yet.
         const held = yield* workflows.start("hold", {}, { idempotencyKey: "h" });
         yield* workflows.waitFor(held.runId, (run) => run.status === "waiting");
@@ -222,7 +243,9 @@ it.effect(
           at("broken.ts"),
           'const made = T3.workflow("broken", { version: 1, payload: Schema.Struct({}) }, () => Effect.void);\nmade.triggers.push(null);\n',
         );
-        assert.deepStrictEqual(yield* definitions.save("greet.ts", greet("hello")), []);
+        const fellBack = yield* definitions.save("greet.ts", greet("hello"));
+        assert.isTrue(fellBack.changed);
+        assert.include(fellBack.problems[0]?.message ?? "", "did not start");
         const still = yield* workflows.start("hold", {}, { idempotencyKey: "h2" });
         yield* workflows.waitFor(still.runId, (run) => run.status === "waiting");
         assert.include(
@@ -236,4 +259,19 @@ it.effect(
         Effect.raceFirst(Effect.forever(TestClock.adjust("1 second"))),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.effect("a file that never finishes loading is given up on, and later files still load", () =>
+  Effect.gen(function* () {
+    const { at, fileSystem } = yield* setup();
+    yield* fileSystem.writeFileString(at("stuck.ts"), "await new Promise(() => {});\n");
+    yield* fileSystem.writeFileString(at("greet.ts"), greet("hi"));
+    const stuck = yield* WorkflowRuntime.loadDefinitions(at("stuck.ts"), 0, 50).pipe(Effect.flip);
+    assert.include(String(stuck.cause), "did not finish loading");
+    const loaded = yield* WorkflowRuntime.loadDefinitions(at("greet.ts"));
+    assert.deepStrictEqual(
+      loaded.map((definition) => definition.name),
+      ["greet"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
 );

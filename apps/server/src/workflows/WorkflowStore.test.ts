@@ -15,6 +15,7 @@ import Migration0104 from "../persistence/Migrations/110_WorkflowStore.ts";
 import Migration0105 from "../persistence/Migrations/111_WorkflowRunParent.ts";
 import Migration0106 from "../persistence/Migrations/112_WorkflowStepResult.ts";
 import Migration0107 from "../persistence/Migrations/113_WorkflowWaitWatch.ts";
+import Migration0108 from "../persistence/Migrations/114_WorkflowStepTurn.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
 const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
@@ -34,6 +35,7 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
           Migration0105,
           Migration0106,
           Migration0107,
+          Migration0108,
         ],
         {
           discard: true,
@@ -128,9 +130,9 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
 
       assert.isNull(yield* store.latestThread("r2"));
       yield* store.stepStarted("r2", "write", "agent");
-      yield* store.stepThread("r2", "write", "thread-1", null);
+      yield* store.stepThread("r2", "write", "thread-1", null, "turn-1");
       yield* store.stepStarted("r2", "review", "agent");
-      yield* store.stepThread("r2", "review", "thread-2", "env-b");
+      yield* store.stepThread("r2", "review", "thread-2", "env-b", "turn-2");
       assert.deepStrictEqual(yield* store.latestThread("r2"), {
         threadId: "thread-2",
         environmentId: "env-b",

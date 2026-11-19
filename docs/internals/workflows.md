@@ -16,8 +16,8 @@ journal is the engine's to read. Clients follow runs the way they follow schedul
 list that is sent again when something changes.
 
 **Off until something is defined.** The server registers what the files in the home's `workflows`
-folder define. While they define nothing the `Workflows` service is the disabled one and the
-engine's modules are never imported
+folder define. While they define nothing and no runs are kept, the `Workflows` service is the
+disabled one and the engine's modules are never imported
 ([`WorkflowRuntime.ts`](../../apps/server/src/workflows/WorkflowRuntime.ts)). Keep it that way:
 anything a light module imports from `effect/workflow` or `effect/cluster` is paid for by every
 server and CLI start.
@@ -74,7 +74,8 @@ the engine `onEnd` is an ordinary last step.
 definitions, so a changed folder closes it and builds a new one on the same database, which is
 what a restart does; runs come through it as they come through a restart. The service the rest
 of the server holds forwards to whichever engine is current, and callers during the swap wait
-for the new one. With nothing defined there is no engine, and its modules are never loaded.
+for the new one. With nothing defined but runs kept, an engine with nothing registered and no
+cluster runner serves their history.
 
 **Each file keeps its last good version.** A file that stops loading does not take its workflows
 down, and does not hold back the other files. What is checked across files, a workflow defined
@@ -113,7 +114,8 @@ puts back a run that still says `running` while the engine holds it as failed.
 
 **A step in flight cannot be interrupted.** The engine runs a step's body to its end. `cancel`
 therefore ends the run's row first, so nothing the step still does is recorded as the outcome, and
-stops the agent's thread, which is what makes a long agent step return.
+stops the step's own turn, which is what makes a long agent step return. Only that turn: someone
+else's turn on the same thread is left alone.
 
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
 same key is for the next run that waits on that key, and is kept until one does or its `ttl` runs

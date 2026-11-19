@@ -2388,11 +2388,8 @@ export const layerWsRpc = (
             .pipe(Effect.mapError(toWorkflowRequestError)),
         [WS_METHODS.workflowsGetDefinition]: (_input) => workflowDefinitions.read,
         [WS_METHODS.workflowsSaveDefinition]: (input) =>
-          Effect.map(workflowDefinitions.save(input.name, input.source), (problems) => ({
-            problems,
-          })),
-        [WS_METHODS.workflowsDeleteDefinition]: (input) =>
-          Effect.map(workflowDefinitions.remove(input.name), (problems) => ({ problems })),
+          workflowDefinitions.save(input.name, input.source),
+        [WS_METHODS.workflowsDeleteDefinition]: (input) => workflowDefinitions.remove(input.name),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
