@@ -81,6 +81,7 @@ const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
+const isProviderSetupError = Schema.is(ProviderSetupError);
 const isAcpErrorDetails = Schema.is(Schema.Struct({ details: Schema.String }));
 const REFRESH_FAILED =
   "Could not refresh Antigravity models. The previous model list is unchanged.";
@@ -566,7 +567,7 @@ export const AntigravityDriver: ProviderDriver<
                     (cause.operation === "configure" || cause.operation === "start")
                   ? cause.detail
                   : cause._tag === "AcpTransportError" &&
-                      cause.cause instanceof ProviderSetupError &&
+                      isProviderSetupError(cause.cause) &&
                       cause.cause.operation === "runtime"
                     ? cause.cause.detail
                     : refreshFailureDetail(cause),
