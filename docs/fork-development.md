@@ -1,6 +1,6 @@
 # T3 Dulli development
 
-T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. The retired Dulli provider is not part of it, and T3 itself is the harness.
+T3 Dulli is the `YJJosh/t3dulli` community fork of **T3 Code v0.1.10** (`7d32075e37`). It uses T3's native provider, subagent, schedule, usage, and MCP infrastructure. T3 itself is the harness.
 
 ## Identity and coexistence
 
@@ -71,7 +71,7 @@ If Portler is installed and `portler.yml` is present, use the repository's Portl
 
 ## Fork database migrations
 
-Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade keeps retired Dulli-provider threads and archives Dulli-only data in `dulli_archived_*` tables; there is no Dulli provider compatibility bridge. Back up state read-only before testing upgrades, and run only against a sandbox copy.
+Fork migrations belong in `apps/server/src/persistence/Migrations/dulli/` and the fork's separate migration ledger. Never allocate an ID in upstream's numbered sequence for a fork feature. Keep the upstream sequence intact so later upstream upgrades remain unambiguous. The upgrade keeps every thread and archives data that cannot be shown in `dulli_archived_*` tables. Back up state read-only before testing upgrades, and run only against a sandbox copy.
 
 ## Fork features
 
