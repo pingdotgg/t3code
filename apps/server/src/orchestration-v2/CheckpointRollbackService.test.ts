@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
@@ -32,6 +33,8 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
@@ -651,9 +654,17 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
 
 /** `restartedAtRun` starts a fresh native conversation at that run, as a context restart does. */
 const seedRollbackHistory = Effect.fn(function* (
-  options: { readonly restartedAtRun?: number } = {},
+  options: {
+    readonly restartedAtRun?: number;
+    readonly cwd?: string;
+    readonly checkpoints?: Pick<
+      CheckpointService.CheckpointServiceV2Shape,
+      "restore" | "deleteStaleRefs"
+    >;
+  } = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
+  const eventSink = yield* EventSink.EventSinkV2;
   const now = yield* DateTime.now;
   const threadId = ThreadId.make("rollback-history");
   const providerThreadId = ProviderThreadId.make("rollback-history-provider");
@@ -693,7 +704,7 @@ const seedRollbackHistory = Effect.fn(function* (
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
-      worktreePath: process.cwd(),
+      worktreePath: options.cwd ?? process.cwd(),
       activeProviderThreadId: providerThreadId,
       lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
       forkedFrom: null,
@@ -743,7 +754,7 @@ const seedRollbackHistory = Effect.fn(function* (
         kind: id === scopeId ? "root_run" : "subagent",
         ordinalWithinParent: 0,
         advancesAppRunCount: id === scopeId,
-        cwd: process.cwd(),
+        cwd: options.cwd ?? process.cwd(),
         createdAt: now,
       },
     });
@@ -889,30 +900,24 @@ const seedRollbackHistory = Effect.fn(function* (
         ThreadCommandExecutor.layer,
         IdAllocator.layer,
         Layer.mock(CheckpointService.CheckpointServiceV2)({
-          restore: ({ checkpoint }) =>
-            Effect.sync(() => {
-              restored.push(checkpoint.id);
-            }),
-          deleteStaleRefs: ({ checkpoints }) =>
-            Effect.sync(() => {
-              deletedRefs.push(...checkpoints.map((checkpoint) => checkpoint.id));
-            }),
+          restore: (input) =>
+            (options.checkpoints?.restore(input) ?? Effect.void).pipe(
+              Effect.tap(() => Effect.sync(() => restored.push(input.checkpoint.id))),
+            ),
+          deleteStaleRefs: (input) =>
+            (options.checkpoints?.deleteStaleRefs(input) ?? Effect.void).pipe(
+              Effect.tap(() =>
+                Effect.sync(() =>
+                  deletedRefs.push(...input.checkpoints.map((checkpoint) => checkpoint.id)),
+                ),
+              ),
+            ),
         }),
         Layer.mock(EventSink.EventSinkV2)({
           write: ({ events }) =>
-            Effect.gen(function* () {
-              for (const event of events) yield* store.apply(event);
-              committed.push(...events);
-              return [];
-            }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new EventSink.EventSinkWriteError({
-                    eventCount: events.length,
-                    cause,
-                  }),
-              ),
-            ),
+            eventSink
+              .write({ events })
+              .pipe(Effect.tap(() => Effect.sync(() => committed.push(...events)))),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open: (input) =>
@@ -960,9 +965,123 @@ const seedRollbackHistory = Effect.fn(function* (
   };
 });
 
-it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
+const layerRollbackHistory = EventSink.layer.pipe(
+  Layer.provideMerge(Layer.mergeAll(EventStore.layer, ProjectionStore.layer)),
+);
+it.layer(layerRollbackHistory.pipe(Layer.provideMerge(SqlitePersistence.layerMemory)))(
   "rollback history reads",
   (it) => {
+    it.effect.each(["commit", "ref cleanup"] as const)(
+      "preserves recovery checkpoints when rollback %s fails",
+      (failure) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const sql = yield* SqlClient.SqlClient;
+          const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-rollback-refs-" });
+          const driver = yield* GitVcsDriver.makeVcsDriverShape();
+          const checkpointRef = (ordinal: number) =>
+            CheckpointRef.make(`refs/t3/rollback-history/${ordinal}`);
+          yield* driver.execute({ operation: "test.init", cwd, args: ["init"] });
+          yield* fs.writeFileString(path.join(cwd, "work.txt"), "rollback target");
+          yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: checkpointRef(2) });
+          yield* fs.writeFileString(path.join(cwd, "work.txt"), "later saved work");
+          yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: checkpointRef(6) });
+          for (const ordinal of [3, 4, 5]) {
+            yield* driver.execute({
+              operation: "test.create-checkpoint-ref",
+              cwd,
+              args: ["update-ref", checkpointRef(ordinal), checkpointRef(6)],
+            });
+          }
+          const history = yield* seedRollbackHistory({
+            cwd,
+            checkpoints: {
+              restore: ({ scope, checkpoint }) =>
+                driver.checkpoints
+                  .restoreCheckpoint({ cwd: scope.cwd, checkpointRef: checkpoint.ref })
+                  .pipe(
+                    Effect.asVoid,
+                    Effect.mapError(
+                      (cause) =>
+                        new CheckpointService.CheckpointRestoreError({
+                          scopeId: scope.id,
+                          checkpointId: checkpoint.id,
+                          cause,
+                        }),
+                    ),
+                  ),
+              deleteStaleRefs: ({ scope, checkpoints }) =>
+                driver.checkpoints
+                  .deleteCheckpointRefs({
+                    cwd: scope.cwd,
+                    checkpointRefs: checkpoints.map((checkpoint) => checkpoint.ref),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new CheckpointService.CheckpointDeleteStaleRefsError({
+                          scopeId: scope.id,
+                          checkpointIds: checkpoints.map((checkpoint) => checkpoint.id),
+                          cause,
+                        }),
+                    ),
+                  ),
+            },
+          });
+          if (failure === "commit") {
+            yield* sql`CREATE TEMP TRIGGER fail_rollback_commit
+              BEFORE UPDATE ON orchestration_v2_projection_checkpoints
+              WHEN NEW.status = 'stale'
+              BEGIN SELECT RAISE(ABORT, 'rollback storage unavailable'); END`;
+            yield* Effect.addFinalizer(() =>
+              sql`DROP TRIGGER IF EXISTS fail_rollback_commit`.pipe(Effect.orDie),
+            );
+          } else {
+            yield* fs.writeFileString(path.join(cwd, ".git", `${checkpointRef(6)}.lock`), "held");
+          }
+
+          const result = yield* Effect.exit(history.rollback(2));
+          const checkpoints = yield* sql<{ status: string }>`
+            SELECT status FROM orchestration_v2_projection_checkpoints
+            WHERE thread_id = ${history.threadId} AND ordinal_within_scope BETWEEN 3 AND 6
+            ORDER BY ordinal_within_scope`;
+          assert.deepEqual(
+            checkpoints.map((checkpoint) => checkpoint.status),
+            Array.from({ length: 4 }, () => (failure === "commit" ? "ready" : "stale")),
+          );
+          assert.equal(result._tag, failure === "commit" ? "Failure" : "Success");
+          assert.isTrue(
+            yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: checkpointRef(6) }),
+          );
+          assert.equal(yield* fs.readFileString(path.join(cwd, "work.txt")), "rollback target");
+          if (failure === "commit") {
+            assert.deepEqual(
+              yield* sql`SELECT event_type FROM orchestration_events WHERE stream_id = ${history.threadId}`,
+              [],
+            );
+            yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef: checkpointRef(6) });
+            assert.equal(yield* fs.readFileString(path.join(cwd, "work.txt")), "later saved work");
+            yield* sql`DROP TRIGGER fail_rollback_commit`;
+            yield* history.rollback(2);
+            assert.isFalse(
+              yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: checkpointRef(6) }),
+            );
+          } else {
+            assert.isFalse(
+              yield* driver.checkpoints.hasCheckpointRef({ cwd, checkpointRef: checkpointRef(3) }),
+            );
+          }
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            VcsProcess.layer.pipe(
+              Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+            ),
+          ),
+        ),
+    );
+
     it.effect("rolls back later terminal runs despite obsolete unrelated SQLite payloads", () =>
       Effect.gen(function* () {
         const history = yield* seedRollbackHistory();

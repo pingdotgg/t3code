@@ -345,7 +345,9 @@ export function resolveDefaultableModelSelection(
   }
   const provider = config.providers.find((candidate) => candidate.instanceId === usable.instanceId);
   const model = provider?.models.find((candidate) => candidate.slug === usable.model);
-  return provider?.driver !== "antigravity" && model?.isLegacy === true ? null : usable;
+  return model?.isUnavailable || (provider?.driver !== "antigravity" && model?.isLegacy)
+    ? null
+    : usable;
 }
 
 export function resolveNewTaskModelSelection(input: {
@@ -592,6 +594,7 @@ export function groupByProvider(options: ReadonlyArray<ModelOption>): ReadonlyAr
     }
   >();
   for (const option of options) {
+    if (option.isUnavailable) continue;
     const existing = groups.get(option.providerKey);
     if (existing) {
       existing.models.push(option);

@@ -117,7 +117,7 @@ async function prepare(home: string) {
 }
 
 test(
-  "Hosted Codex models get display names and stay visible during a cooldown",
+  "Hosted Codex models get display names and leave the picker during a cooldown",
   WEB,
   async ({ t3, app, browser, screen }) => {
     await t3.project("demo");
@@ -157,14 +157,17 @@ test(
       await astraRow.scrollIntoView();
       await app.screenshot("hosted-models-after-refresh");
 
-      await app.open("/");
+      await browser.keyboard.press("Escape");
       await screen.getByRole("button", "New thread", { exact: true }).tap();
       await screen.getByRole("option", /Hosted models/).tap();
       await expect(browser).toHaveURL(/\/draft\//);
+      await expect(browser.locator("[data-command-palette]")).toHaveCount(0);
       const draft = await browser.evaluate(() => window.location.pathname);
       const picker = browser.locator("[data-chat-provider-model-picker]");
       const astraOption = screen.getByRole("option", /gpt-6\.2-astra/i);
       const openPicker = async () => {
+        await expect(picker).toBeVisible();
+        await expect(screen.getByRole("button", "Environment disconnected")).toBeHidden();
         await picker.tap();
         await screen.getByPlaceholder("Search models...").fill("6.2");
       };
@@ -182,7 +185,7 @@ test(
       };
       await updateCatalog(astra);
       await app.screenshot("astra-during-cooldown");
-      await expect(astraOption).toBeDisabled();
+      await expect(astraOption).toBeHidden();
       await expect(picker).toHaveAttribute("aria-label", /GPT-6\.2-Astra.*Unavailable/);
       await expect(screen.getByRole("option", /gpt-6\.2-sol/i)).toBeEnabled();
       await updateCatalog();

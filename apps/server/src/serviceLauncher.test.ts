@@ -1406,6 +1406,94 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  it.effect.each([false, true])(
+    "preserves the live database when a backup has lost its main file, restore pending %s",
+    (restoring) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-partial-backup-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        const backupDir = path.join(root, "runtime", "db-backup", "partial-update");
+        const trialStarted = path.join(root, "trial-started");
+        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        {
+          using database = new NodeSqlite.DatabaseSync(databasePath);
+          database.exec("CREATE TABLE saved (value TEXT); INSERT INTO saved VALUES ('keep');");
+        }
+        // A killed recursive discard can leave its directory after deleting the backup file.
+        yield* fs.makeDirectory(backupDir, { recursive: true });
+        if (restoring) yield* fs.writeFileString(path.join(backupDir, ".restore-pending"), "");
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.0.0"),
+          'process.send("active"); setInterval(() => {}, 1_000);',
+        );
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.1.0"),
+          `require("node:fs").writeFileSync(${JSON.stringify(trialStarted)}, ""); process.exit(1);`,
+        );
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "partial-update",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: databasePath,
+              status: "pending",
+            },
+          }),
+        );
+        const active = Promise.withResolvers<void>();
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            spawnHook.current = (child) =>
+              child.on("message", (message) => message === "active" && active.resolve());
+          }),
+          () =>
+            Effect.sync(() => {
+              spawnHook.current = undefined;
+            }),
+        );
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+        const running = launcher.run().then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            await launcher.stop("SIGTERM");
+            await running;
+          }),
+        );
+        const result = yield* Effect.promise(() => Promise.race([running, active.promise]));
+
+        assert.isTrue(yield* fs.exists(databasePath));
+        using restored = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+        assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+        assert.deepEqual(restored.prepare("SELECT value FROM saved").all(), [{ value: "keep" }]);
+        assert.isFalse(yield* fs.exists(trialStarted));
+        assert.include(
+          result instanceof Error ? result.message : "",
+          "Database backup is incomplete",
+        );
+        assert.equal(
+          (yield* Effect.promise(() => readServiceState(statePath))).update?.status,
+          "pending",
+        );
+        assert.isTrue(yield* fs.exists(backupDir));
+      }),
+  );
+
   it.effect.each(["file", "symlink", "dangling symlink"] as const)(
     "restores the database when a migrating trial exits, with the database a %s",
     (kind) =>

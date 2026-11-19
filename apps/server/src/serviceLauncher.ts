@@ -282,6 +282,14 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+async function databaseBackupExists(backupDir: string): Promise<boolean> {
+  if (!(await pathExists(backupDir))) return false;
+  if (!(await pathExists(databaseBackupFile(backupDir, "")))) {
+    throw new Error(`Database backup is incomplete: ${backupDir} has no main database file.`);
+  }
+  return true;
+}
+
 const MANAGED_SERVICE_ENV_NAMES = new Set([
   "PATH",
   "T3CODE_HOME",
@@ -481,7 +489,7 @@ async function startOnlineDatabaseBackup(
   probe: Partial<BackupSpaceProbe> = {},
 ): Promise<(() => Promise<void>) | undefined> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return undefined;
+  if (await databaseBackupExists(backupDir)) return undefined;
   const { canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   if (await canClone(pending.dbPath, NodePath.dirname(backupDir)).catch(() => true))
     return undefined;
@@ -548,7 +556,7 @@ async function backupDatabaseOnce(
   signal: AbortSignal,
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
+  if (await databaseBackupExists(backupDir)) return;
 
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
@@ -619,7 +627,7 @@ async function restoreDatabaseBackup(
   pending: PendingServiceUpdate,
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  if (!(await databaseBackupExists(backupDir))) return;
 
   await markDatabaseRestorePending(backupDir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);

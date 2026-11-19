@@ -370,9 +370,6 @@ export const layer: Layer.Layer<
             providerThreadTurns,
           });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
-      }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.
       yield* threadCommands.withLock(
@@ -452,6 +449,18 @@ export const layer: Layer.Layer<
             ),
             Effect.uninterruptible,
           );
+          // Ready checkpoints must remain recoverable if the rollback transaction fails.
+          if (staleCheckpoints.length > 0) {
+            yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Rollback left stale checkpoint refs", {
+                  threadId: input.threadId,
+                  scopeId: scope.id,
+                  cause,
+                }),
+              ),
+            );
+          }
         }),
       );
     }, Effect.scoped);
