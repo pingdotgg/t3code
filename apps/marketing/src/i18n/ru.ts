@@ -31,7 +31,8 @@ export const ru: Messages = {
     downloadForAndroid: "Скачать для Android",
     sourceLink: "Украдите наш код (легально)",
     alsoOnPhone: "Есть и для телефона:",
-    screenshotAlt: "T3 Code с завершённым тредом Claude и тредами Claude и Codex на боковой панели",
+    screenshotAlt:
+      "T3 Code в двух панелях: тред Claude, в карточке деталей которого видны ветка, связанный пул-реквест, лимиты использования, контекст, автоматизация и форк, а рядом этот пул-реквест открыт во вкладке",
     endorsementsTitle: "Нас терпят более {users} разработчиков",
     endorsementsSub: "Некоторые даже написали об этом в X.",
     endorsementsLabel: "Отзывы разработчиков",

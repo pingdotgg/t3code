@@ -31,7 +31,8 @@ export const zh: Messages = {
     downloadForAndroid: "下载 Android 版",
     sourceLink: "来偷我们的代码（合法的）",
     alsoOnPhone: "手机上也能用：",
-    screenshotAlt: "T3 Code 显示一个已完成的 Claude 线程，侧边栏中有 Claude 和 Codex 的线程",
+    screenshotAlt:
+      "分成两个窗格的 T3 Code：一个 Claude 线程的详情卡片显示了分支、关联的拉取请求、用量限制、上下文、一个自动化任务和一个分叉，旁边的标签页中打开着这个拉取请求",
     endorsementsTitle: "超过 {users} 名开发者表示还能忍",
     endorsementsSub: "有些人甚至发推夸了它。",
     endorsementsLabel: "开发者评价",

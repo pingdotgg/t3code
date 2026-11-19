@@ -32,7 +32,7 @@ export const ptBR: Messages = {
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
     screenshotAlt:
-      "T3 Code com uma thread do Claude concluída e threads do Claude e do Codex na barra lateral",
+      "T3 Code em dois painéis: uma thread do Claude cujo cartão de detalhes mostra a branch, o pull request vinculado, os limites de uso, o contexto, uma automação e um fork, ao lado desse pull request aberto em uma aba",
     endorsementsTitle: "Tolerado por mais de {users} devs",
     endorsementsSub: "Alguns até tuitaram sobre isso.",
     endorsementsLabel: "Depoimentos de desenvolvedores",
