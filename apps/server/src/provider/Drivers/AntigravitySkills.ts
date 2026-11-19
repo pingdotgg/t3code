@@ -115,26 +115,22 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
   }
 }
 
-/**
- * Antigravity leaves user-only skills out of the model's catalog and expands a native `/name`
- * only when it opens the prompt, so point the model at the file the user invoked.
- */
-export function annotateAntigravityUserOnlySkillMentions(
+/** Enabled user-only skills the text mentions, once each, in mention order. */
+export function antigravityUserOnlySkillMentions(
   text: string,
   skills: ReadonlyArray<ServerProviderSkill>,
-): string {
-  const paths = new Map(
+): ReadonlyArray<ServerProviderSkill> {
+  const byName = new Map(
     skills.flatMap((skill) =>
-      skill.enabled && skill.userInvocationOnly === true ? [[skill.name, skill.path]] : [],
+      skill.enabled && skill.userInvocationOnly === true ? [[skill.name, skill]] : [],
     ),
   );
-  const annotated = new Set<string>();
-  return text.replace(SKILL_MENTION_PATTERN, (mention, _prefix: string, name: string) => {
-    const path = paths.get(name);
-    if (path === undefined || annotated.has(name)) return mention;
-    annotated.add(name);
-    return `${mention} [The user invoked this skill. Follow the instructions at: ${path}]`;
-  });
+  const mentioned = new Set<ServerProviderSkill>();
+  for (const match of text.matchAll(SKILL_MENTION_PATTERN)) {
+    const skill = byName.get(match[2] ?? "");
+    if (skill !== undefined) mentioned.add(skill);
+  }
+  return [...mentioned];
 }
 
 /** The native loader orders child paths with Go's URL.EscapedPath encoding. */

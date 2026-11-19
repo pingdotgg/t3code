@@ -456,6 +456,68 @@ describe("AntigravityAdapterV2 compaction", () => {
   );
 });
 
+describe("AntigravityAdapterV2 user-only skills", () => {
+  it.effect("inlines a user-only skill from outside the workspace that this turn invokes", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const userHome = yield* fileSystem.makeTempDirectoryScoped();
+      const skillPath = path.join(userHome, ".gemini", "config", "skills", "ship", "SKILL.md");
+      yield* fileSystem.makeDirectory(path.dirname(skillPath), { recursive: true });
+      yield* fileSystem.writeFileString(skillPath, "Deploy with ./ship.sh.\n");
+      const skillFlavor = makeAntigravityAcpAdapterFlavor({
+        instanceId: ProviderInstanceId.make("antigravity-test"),
+        random: undefined as never,
+        fileSystem,
+        path,
+        host: undefined as never,
+        selfInvocation: undefined as never,
+        makeRuntime: () => Effect.die("not spawned in this test"),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+        discoverSkills: () =>
+          Effect.succeed([
+            {
+              name: "ship",
+              path: skillPath,
+              scope: "user",
+              enabled: true,
+              userInvocationOnly: true,
+            },
+          ]),
+      });
+      const instanceId = ProviderInstanceId.make("antigravity-test");
+      const threadId = ThreadId.make("thread-antigravity-skills");
+      const history = "<history>\nuser: $ship\n</history>\n\n";
+      const rewrite = (messageText: string) => {
+        const turnInput = {
+          ...makeTurnInput({
+            threadId,
+            // Only the id is read when building the input.
+            providerThread: { id: "provider-thread" } as never,
+            instanceId,
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+            now: DateTime.makeUnsafe(0),
+            messageText,
+          }),
+          inlineContextLength: history.length,
+        };
+        return skillFlavor.rewriteUserText!(messageText, turnInput);
+      };
+
+      assert.equal(yield* rewrite(`${history}fix the typo`), `${history}fix the typo`);
+      assert.equal(
+        yield* rewrite(`${history}Fix X. $ship`),
+        `${history}Fix X. $ship\n\nThe user invoked these skills. Follow their instructions:\n\n<skill name="ship" path="${skillPath}">\nDeploy with ./ship.sh.\n</skill>`,
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+});
+
 describe("AntigravityAdapterV2 session open", () => {
   it.effect.each([
     {

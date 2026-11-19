@@ -48,7 +48,7 @@ import {
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
-import { annotateAntigravityUserOnlySkillMentions } from "../../provider/Drivers/AntigravitySkills.ts";
+import { antigravityUserOnlySkillMentions } from "../../provider/Drivers/AntigravitySkills.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -226,15 +226,29 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
-    rewriteUserText: (text, turnInput) => {
+    // Antigravity keeps user-only skills out of the model's catalog and expands a native `/name`
+    // only at the start of a prompt. Inline the file: client reads outside the cwd are refused.
+    rewriteUserText: Effect.fnUntraced(function* (text, turnInput) {
       const cwd = turnInput.runtimePolicy.cwd;
-      if (options.discoverSkills === undefined || !cwd || !text.includes("$")) {
-        return Effect.succeed(text);
-      }
-      return options
-        .discoverSkills(cwd)
-        .pipe(Effect.map((skills) => annotateAntigravityUserOnlySkillMentions(text, skills)));
-    },
+      // Mentions in inline handoff history were invoked on an earlier turn.
+      const ownText = text.slice(turnInput.inlineContextLength ?? 0);
+      if (options.discoverSkills === undefined || !cwd || !ownText.includes("$")) return text;
+      const mentioned = antigravityUserOnlySkillMentions(
+        ownText,
+        yield* options.discoverSkills(cwd),
+      );
+      const blocks = (yield* Effect.forEach(mentioned, (skill) =>
+        options.fileSystem.readFileString(skill.path).pipe(
+          Effect.map((contents) => [
+            `<skill name="${skill.name}" path="${skill.path}">\n${contents.trim()}\n</skill>`,
+          ]),
+          Effect.orElseSucceed(() => []),
+        ),
+      )).flat();
+      return blocks.length === 0
+        ? text
+        : `${text}\n\nThe user invoked these skills. Follow their instructions:\n\n${blocks.join("\n\n")}`;
+    }),
     buildAttachmentPrompt: ({
       text,
       attachments,
