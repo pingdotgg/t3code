@@ -108,40 +108,6 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 ) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
-  t3_thread_continue: McpToolAccess.writesThreads(
-    () => [undefined],
-    (input) =>
-      Effect.gen(function* () {
-        const { threads, projection, caller } = yield* readThread();
-        if (caller?.id !== projection.thread.id)
-          return yield* new OrchestratorMcpFailure({
-            code: "invalid_request",
-            message: "Continuation acts only as the calling thread's agent.",
-          });
-        const result = yield* threads
-          .requestContinuation({ threadId: projection.thread.id, ...input })
-          .pipe(
-            Effect.mapError(
-              (error) =>
-                new OrchestratorMcpFailure({
-                  code: "invalid_request",
-                  message:
-                    error._tag === "OrchestratorDispatchError" && typeof error.cause === "string"
-                      ? error.cause
-                      : "The continuation request could not be completed.",
-                }),
-            ),
-          );
-        const scope = yield* McpInvocationContext.McpInvocationContext;
-        return result.targetThreadId === undefined
-          ? result
-          : {
-              ...result,
-              continuesWhenTurnEnds: true as const,
-              link: McpInvocationContext.threadLinkFor(scope, result.targetThreadId),
-            };
-      }),
-  ),
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
@@ -214,7 +180,37 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       (input) =>
         Effect.gen(function* () {
           const sourcePoint = input.sourcePoint ?? { type: "latest_stable" as const };
-          const { threads, projection } = yield* readThread(input.threadId);
+          const { threads, projection, caller } = yield* readThread(input.threadId);
+          if (input.action === "continue") {
+            if (caller?.id !== projection.thread.id)
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Continuation acts only as the calling thread's agent.",
+              });
+            const result = yield* threads
+              .requestContinuation({ threadId: projection.thread.id, handoff: input.handoff })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestratorMcpFailure({
+                      code: "invalid_request",
+                      message:
+                        error._tag === "OrchestratorDispatchError" &&
+                        typeof error.cause === "string"
+                          ? error.cause
+                          : "The continuation request could not be completed.",
+                    }),
+                ),
+              );
+            const scope = yield* McpInvocationContext.McpInvocationContext;
+            return result.targetThreadId === undefined
+              ? result
+              : {
+                  ...result,
+                  continuesWhenTurnEnds: true as const,
+                  link: McpInvocationContext.threadLinkFor(scope, result.targetThreadId),
+                };
+          }
           const commandId = yield* newCommandId();
           if (input.action === "merge_back") {
             const targetThreadId = yield* required(input.targetThreadId, "targetThreadId");

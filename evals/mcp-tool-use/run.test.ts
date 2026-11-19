@@ -156,6 +156,42 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   assert.deepEqual(failed({ anyOf }, run([combinedField])), ["anyOf"]);
 });
 
+it("matches callSequence in order and distinguishes missing arguments", () => {
+  const callSequence = [
+    { tool: "t3_thread_transfer", args: { action: "continue", handoff: null } },
+    { tool: "t3_thread_transfer", args: { action: "continue", handoff: "~auth" } },
+  ];
+  const run = (calls: SampleRun["calls"]) => ({ calls, text: "", stopReason: "end_turn" });
+  assert.deepEqual(
+    failed(
+      { callSequence },
+      run([
+        { step: 0, tool: "t3_thread_transfer", input: { action: "continue" } },
+        {
+          step: 1,
+          tool: "t3_thread_transfer",
+          input: { action: "continue", handoff: "Continue auth" },
+        },
+      ]),
+    ),
+    [],
+  );
+  assert.deepEqual(
+    failed(
+      { callSequence },
+      run([
+        {
+          step: 0,
+          tool: "t3_thread_transfer",
+          input: { action: "continue", handoff: "Continue auth" },
+        },
+        { step: 1, tool: "t3_thread_transfer", input: { action: "continue" } },
+      ]),
+    ),
+    ["callSequence"],
+  );
+});
+
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {
   const calls = [
     {

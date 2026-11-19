@@ -218,6 +218,8 @@ const McpToolUseCallsExpect = Schema.Struct({
   calls: Schema.optional(Schema.Array(McpToolUseExpectedCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
+  /** Expected calls must occur in this order; other calls may appear between them. */
+  callSequence: Schema.optional(Schema.Array(McpToolUseCall)),
   minCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
   maxCalls: Schema.optional(Schema.Record(Schema.String, Schema.Number)),
 });
@@ -2565,6 +2567,21 @@ export const gradeSample = (
     const passes = (alternative: (typeof expect.anyOf)[number]) =>
       gradeSample(alternative, run, pasted, worldFiles).every((check) => check.pass);
     add("anyOf", expect.anyOf.some(passes));
+  }
+  if (expect.callSequence !== undefined) {
+    let nextIndex = 0;
+    const ordered = expect.callSequence.every((expected) => {
+      const index = calls.findIndex(
+        (call, at) =>
+          at >= nextIndex &&
+          expected.tool.split("|").includes(call.tool) &&
+          matches(expected.args ?? {}, call.input),
+      );
+      if (index < 0) return false;
+      nextIndex = index + 1;
+      return true;
+    });
+    add("callSequence", ordered);
   }
   for (const call of expect.callsMustNot ?? [])
     add(`callsMustNot ${label(call)}`, !found(call, attempted));
