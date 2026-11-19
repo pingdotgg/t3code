@@ -360,7 +360,7 @@ export const make: Effect.Effect<
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
-  // A warm list can use the last good workflow while an explicit refresh is in flight.
+  // Shares one in-flight workflow read per project; only a success replaces the cached states.
   const workflowReads = yield* Cache.makeWith(
     (key: string) => {
       const [cwd, organization, project] = JSON.parse(key) as [string, string, string];
@@ -371,7 +371,7 @@ export const make: Effect.Effect<
     },
     { capacity: Infinity, timeToLive: () => Duration.zero },
   );
-  // Cache misses and explicit refreshes share the same in-flight read and publication.
+  // Each `az` call costs seconds of startup, and a project's states rarely change.
   const listClosedStates: Cache.Cache<string, ClosedStates, IssueTrackerError> =
     yield* Cache.makeWith((key: string) => Cache.get(workflowReads, key), {
       capacity: 256,

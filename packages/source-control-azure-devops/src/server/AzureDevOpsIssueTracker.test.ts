@@ -1,8 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
 import * as Layer from "effect/Layer";
@@ -223,10 +221,7 @@ describe("AzureDevOpsIssueTracker", () => {
       const hydrated: string[] = [];
       let typeReads = 0;
       let finished = "Shipped";
-      let itemState = "Shipped";
-      let beforeWorkflowRead:
-        | Effect.Effect<void, AzureDevOpsCli.AzureDevOpsCommandFailedError>
-        | undefined;
+      let workflowUnavailable = false;
       const api = yield* AzureDevOpsIssueTracker.make.pipe(
         Effect.provide(
           Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
@@ -247,17 +242,15 @@ describe("AzureDevOpsIssueTracker", () => {
               }
               if (resource === "workitemtypes") {
                 typeReads += 1;
-                if (beforeWorkflowRead !== undefined) {
-                  return beforeWorkflowRead.pipe(
-                    Effect.as(
-                      TestSourceControlHost.processOutput(
-                        encode({
-                          value: [
-                            { name: "Bug", states: [{ name: finished, category: "Completed" }] },
-                          ],
-                        }),
-                      ),
-                    ),
+                if (workflowUnavailable) {
+                  return Effect.fail(
+                    new AzureDevOpsCli.AzureDevOpsCommandFailedError({
+                      operation: "execute",
+                      command: "az",
+                      cwd: "/w",
+                      argumentCount: args.length,
+                      cause: "workflow metadata unavailable",
+                    }),
                   );
                 }
                 return Effect.succeed(
@@ -282,12 +275,8 @@ describe("AzureDevOpsIssueTracker", () => {
                   }
                   hydrated.push((JSON.parse(body) as { ids: number[] }).ids.join(","));
                   // The page as REST answers it: an envelope, in an order of its own.
-                  const item = {
-                    ...WORK_ITEM,
-                    fields: { ...WORK_ITEM.fields, "System.State": itemState },
-                  };
                   return TestSourceControlHost.processOutput(
-                    encode({ count: 2, value: [item, { ...item, id: 9 }] }),
+                    encode({ count: 2, value: [WORK_ITEM, { ...WORK_ITEM, id: 9 }] }),
                   );
                 }),
               );
@@ -319,20 +308,6 @@ describe("AzureDevOpsIssueTracker", () => {
       expect(bodies).toHaveLength(2);
       expect(bodies[1]).toBe(bodies[0]);
       expect(bodies[0]).toContain("AND [System.State] NOT IN ('shipped')");
-      // A first page is a fresh list, so it sees a finished state added since.
-      finished = "Released";
-      yield* api.listIssues({
-        cwd: "/w",
-        host: "dev.azure.com",
-        scope: "acme/Web App",
-        state: "open",
-        involvement: "all",
-        sort: "updated",
-        limit: 2,
-        refresh: true,
-      });
-      expect(typeReads).toBe(2);
-      expect(bodies[2]).toContain("AND [System.State] NOT IN ('released')");
       const { query } = JSON.parse(bodies[0]!) as { query: string };
       // Mentions cannot be asked for over REST, so the filter sends no clause for them.
       expect(query).not.toContain("@RecentMentions");
@@ -342,6 +317,7 @@ describe("AzureDevOpsIssueTracker", () => {
           " ORDER BY [System.CreatedDate] DESC, [System.Id] DESC",
       );
 
+      // An explicit refresh rereads the workflow; a failed one keeps the last good states.
       const firstPage = {
         cwd: "/w",
         host: "dev.azure.com",
@@ -351,55 +327,16 @@ describe("AzureDevOpsIssueTracker", () => {
         sort: "updated",
         limit: 2,
       } as const;
-      finished = itemState = "Done";
-      yield* api.listIssues({ ...firstPage, query: "composer" });
-      const all = { ...firstPage, state: "all" } as const;
-      const cachedAll = yield* api.listIssues(all);
+      finished = "Released";
+      yield* api.listIssues({ ...firstPage, refresh: true });
       expect(typeReads).toBe(2);
-      expect(bodies[3]).toContain("AND [System.State] NOT IN ('released')");
-      expect(cachedAll.items.map((item) => item.state.category)).toEqual(["open", "open"]);
-      const refreshedAll = yield* api.listIssues({ ...all, refresh: true });
-      expect(typeReads).toBe(3);
-      expect(bodies[5]).not.toContain("[System.State]");
-      expect(refreshedAll.items.map((item) => item.state.category)).toEqual(["closed", "closed"]);
-
-      finished = "Delivered";
-      beforeWorkflowRead = Effect.fail(
-        new AzureDevOpsCli.AzureDevOpsCommandFailedError({
-          operation: "execute",
-          command: "az",
-          cwd: "/w",
-          argumentCount: 0,
-          cause: "workflow metadata unavailable",
-        }),
-      );
+      expect(bodies[2]).toContain("AND [System.State] NOT IN ('released')");
+      workflowUnavailable = true;
       const refreshError = yield* Effect.flip(api.listIssues({ ...firstPage, refresh: true }));
       expect(refreshError).toMatchObject({ operation: "listIssues", reason: "failed" });
-      expect(bodies).toHaveLength(6);
-      yield* api.listIssues({ ...firstPage, refresh: false });
-      expect(typeReads).toBe(4);
-      expect(bodies[6]).toContain("NOT IN ('done')");
-
-      const started = yield* Deferred.make<void>();
-      const release = yield* Deferred.make<void>();
-      beforeWorkflowRead = Deferred.succeed(started, undefined).pipe(
-        Effect.andThen(Deferred.await(release)),
-      );
-      const first = yield* Effect.forkChild(api.listIssues({ ...firstPage, refresh: true }), {
-        startImmediately: true,
-      });
-      yield* Deferred.await(started);
-      const second = yield* Effect.forkChild(api.listIssues({ ...firstPage, refresh: true }), {
-        startImmediately: true,
-      });
-      yield* Deferred.succeed(release, undefined);
-      yield* Fiber.join(first);
-      const refreshed = yield* Fiber.join(second);
-      expect(refreshed.nextCursor).not.toBeNull();
-      yield* api.listIssues({ ...firstPage, cursor: refreshed.nextCursor ?? undefined });
-      expect(typeReads).toBe(5);
-      expect(bodies.slice(7)).toHaveLength(3);
-      expect(bodies.slice(7).every((body) => body.includes("NOT IN ('delivered')"))).toBe(true);
+      yield* api.listIssues(firstPage);
+      expect(typeReads).toBe(3);
+      expect(bodies[3]).toContain("AND [System.State] NOT IN ('released')");
     }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 

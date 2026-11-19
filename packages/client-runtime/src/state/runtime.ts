@@ -735,11 +735,15 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           get(connectionAtom(target.environmentId)),
           () => null,
         );
-        const previous = () =>
-          Option.flatMap(get.self<AsyncResult.AsyncResult<A, unknown>>(), AsyncResult.value);
         // A refetch that returns equal content keeps the previous value's
         // references, so readers of the data skip re-rendering on idle polls.
-        const share = (value: A): A => reuseUnchanged(Option.getOrUndefined(previous()), value);
+        const share = (value: A): A =>
+          reuseUnchanged(
+            Option.getOrUndefined(
+              Option.flatMap(get.self<AsyncResult.AsyncResult<A, unknown>>(), AsyncResult.value),
+            ),
+            value,
+          );
         const emit = (value: A) =>
           Effect.sync(() => get.setSelf(AsyncResult.success(share(value), { waiting: true }))).pipe(
             // A value set while the atom builds wins over the build's own
@@ -766,7 +770,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
                 ? runInEnvironment(
                     target.environmentId,
                     options
-                      .execute(target.input, emit, previous())
+                      .execute(
+                        target.input,
+                        emit,
+                        Option.flatMap(
+                          get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                          AsyncResult.value,
+                        ),
+                      )
                       .pipe(pendingOnceSessionReplaced(session.value)),
                   )
                 : Effect.never;
@@ -775,7 +786,13 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               // A retry can take minutes. A query with an answer keeps showing it while it
               // waits; one with nothing to show reports the failure the retry is recovering
               // from, so its reader stops loading, and re-runs when the connection settles.
-              return connectionState.lastFailure !== null && Option.isNone(previous())
+              return connectionState.lastFailure !== null &&
+                Option.isNone(
+                  Option.flatMap(
+                    get.self<AsyncResult.AsyncResult<A, unknown>>(),
+                    AsyncResult.value,
+                  ),
+                )
                 ? Effect.fail(connectionState.lastFailure)
                 : Effect.never;
             case "available":
@@ -815,10 +832,13 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         if (!options.persistence) return answer();
         const persistence = options.persistence;
         const cacheKey = queryPersistenceKey(options.label, target.input);
-        const beforeLoad = previous();
+        const previous = Option.flatMap(
+          get.self<AsyncResult.AsyncResult<A, unknown>>(),
+          AsyncResult.value,
+        );
         return Effect.gen(function* () {
-          const cached = Option.isSome(beforeLoad)
-            ? beforeLoad
+          const cached = Option.isSome(previous)
+            ? previous
             : yield* persistence.load(target.environmentId, cacheKey);
           if (
             Option.isSome(cached) &&
@@ -826,7 +846,7 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
           ) {
             return cached.value;
           }
-          if (Option.isNone(beforeLoad) && Option.isSome(cached)) yield* emit(cached.value);
+          if (Option.isNone(previous) && Option.isSome(cached)) yield* emit(cached.value);
           // Readers must not wait on the disk: web saves one IndexedDB row per listed PR's stats.
           // The save ends with the query, so a removed environment's cache stays cleared.
           return yield* answer().pipe(
