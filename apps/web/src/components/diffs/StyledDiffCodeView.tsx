@@ -100,6 +100,7 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   top: 0;
   z-index: 4;
   background-color: var(--code-background) !important;
+  backdrop-filter: blur(12px);
   border-bottom-color: transparent !important;
   align-items: center !important;
   font-family: var(--font-sans) !important;
