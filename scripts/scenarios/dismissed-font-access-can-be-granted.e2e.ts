@@ -55,5 +55,17 @@ test(
 
     await app.screenshot("typography-after-granting-access");
     await expect(screen.getByRole("option", "Scenario Sans")).toBeVisible();
+
+    // Start a fresh page to exercise click retry with no font list cached.
+    await app.open("/settings/appearance");
+    await family.tap();
+    await browser.locator("html[data-font-prompt-dismissed]").waitFor({ state: "attached" });
+    await expect(family).toBeFocused();
+    await browser.evaluate(() => {
+      window.dispatchEvent(new Event("grant-scenario-fonts"));
+      return null;
+    });
+    await family.tap();
+    await expect(screen.getByRole("option", "Scenario Sans")).toBeVisible();
   },
 );
