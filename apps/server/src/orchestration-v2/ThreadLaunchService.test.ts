@@ -45,6 +45,7 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
@@ -457,20 +458,127 @@ it.effect(
   },
 );
 
-it.effect.each(
-  (["new", "existing"] as const).flatMap((target) =>
-    (["user", "agent"] as const).map((createdBy) => ({ target, createdBy })),
+it.effect.each([
+  ...(["new", "existing"] as const).flatMap((target) =>
+    (["user", "agent"] as const).map((createdBy) => ({
+      target,
+      createdBy,
+      delivery: "manual" as const,
+      failure: "none" as const,
+    })),
   ),
-)(
-  "attributes $createdBy-configured automations in $target threads without changing their prompt",
-  ({ target, createdBy }) => {
+  ...(["manual", "once", "immediate", "coalesced"] as const).flatMap((delivery) => [
+    {
+      target: "new" as const,
+      createdBy: "user" as const,
+      delivery,
+      failure: "before preparation" as const,
+    },
+    { target: "new" as const, createdBy: "user" as const, delivery, failure: "reply" as const },
+    {
+      target: "existing" as const,
+      createdBy: "user" as const,
+      delivery,
+      failure: "reply" as const,
+    },
+  ]),
+])(
+  "attributes $createdBy-configured automations once in $target threads ($delivery, failure: $failure)",
+  ({ target, createdBy, delivery, failure }) => {
     const harness = makeHarness();
+    const workers = new Map<string, Effect.Effect<void>>();
+    let failNext = failure !== "none";
+    const layerDispatch = Layer.mergeAll(
+      Layer.effect(
+        ThreadLaunch.ThreadLaunchService,
+        Effect.gen(function* () {
+          const launches = yield* ThreadLaunch.ThreadLaunchService;
+          const threads = yield* ThreadManagement.ThreadManagementService;
+          return {
+            ...launches,
+            launch: (input: ThreadLaunch.ThreadLaunchInput) =>
+              Effect.gen(function* () {
+                if (!failNext) return yield* launches.launch(input);
+                failNext = false;
+                if (failure === "before preparation") {
+                  const initialMessage = input.initialMessage;
+                  if (initialMessage?.messageId === undefined)
+                    return yield* Effect.die("Expected a scheduled initial message.");
+                  yield* threads
+                    .dispatch({
+                      type: "thread.create",
+                      commandId: input.commandId,
+                      threadId: ThreadId.make("thread:accepted-automation"),
+                      projectId: input.projectId,
+                      title: input.title,
+                      modelSelection: input.modelSelection,
+                      runtimeMode: input.runtimeMode,
+                      interactionMode: input.interactionMode,
+                      branch: null,
+                      worktreePath: null,
+                      createdBy: input.createdBy,
+                      creationSource: input.creationSource,
+                      initialMessage: {
+                        ...initialMessage,
+                        messageId: initialMessage.messageId,
+                        workspaceStrategy: input.workspaceStrategy,
+                      },
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new ThreadLaunch.ThreadLaunchError({
+                            commandId: input.commandId,
+                            projectId: input.projectId,
+                            operation: "create-thread",
+                            cause,
+                          }),
+                      ),
+                    );
+                } else yield* launches.launch(input);
+                return yield* new ThreadLaunch.ThreadLaunchError({
+                  commandId: input.commandId,
+                  projectId: input.projectId,
+                  operation: "update-thread",
+                  cause: new Error("injected accepted reply failure"),
+                });
+              }),
+          };
+        }),
+      ),
+      Layer.effect(
+        ThreadManagement.ThreadManagementService,
+        Effect.map(ThreadManagement.ThreadManagementService, (threads) => ({
+          ...threads,
+          sendToThread: (input: Parameters<typeof threads.sendToThread>[0]) =>
+            Effect.gen(function* () {
+              const result = yield* threads.sendToThread(input);
+              if (!failNext) return result;
+              failNext = false;
+              return yield* new ThreadManagement.ThreadManagementProjectionLoadError({
+                projectId: input.projectId,
+                threadId: input.threadId,
+                cause: new Error("injected accepted reply failure"),
+              });
+            }),
+        })),
+      ),
+    ).pipe(Layer.provide(harness.layer));
     const layerScheduledTasks = ScheduledTasks.layer.pipe(
+      Layer.provide(layerDispatch),
       Layer.provide(
         Layer.mergeAll(
           harness.layer,
           NodeCrypto.layer,
-          Scheduler.layer,
+          delivery === "manual"
+            ? Scheduler.layer
+            : Layer.succeed(Scheduler.Scheduler, {
+                register: <E, R>(name: string, work: Effect.Effect<void, E, R>) =>
+                  Effect.gen(function* () {
+                    const context = yield* Effect.context<R>();
+                    workers.set(name, work.pipe(Effect.provideContext(context), Effect.orDie));
+                  }),
+              }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           ManagedPolicy.layerTest(),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -481,6 +589,7 @@ it.effect.each(
       const tasks = yield* ScheduledTasks.ScheduledTaskService;
       const launches = yield* ThreadLaunch.ThreadLaunchService;
       const threads = yield* ThreadManagement.ThreadManagementService;
+      const sql = yield* SqlClient.SqlClient;
       const existing =
         target === "existing"
           ? yield* launches.launch(
@@ -491,8 +600,24 @@ it.effect.each(
         id: ScheduledTaskId.make("scheduled-task:attribution"),
         title: "Daily audit",
         prompt: "Audit performance and crashes.",
-        enabled: false,
-        schedule: { type: "interval", everyMs: 60_000 },
+        enabled: delivery !== "manual",
+        schedule:
+          delivery === "manual"
+            ? { type: "interval", everyMs: 60_000 }
+            : delivery === "once"
+              ? {
+                  type: "once",
+                  runAt: DateTime.formatIso(DateTime.add(yield* DateTime.now, { seconds: 10 })),
+                }
+              : {
+                  type: "webhook",
+                  dedupe: {
+                    replayKey: "{{body}}",
+                    ...(delivery === "coalesced"
+                      ? { coalesceKey: "{{body}}", coalesceWindowSeconds: 10 }
+                      : {}),
+                  },
+                },
         projectId,
         threadId: existing?.threadId ?? null,
         workspaceStrategy: { type: "root" },
@@ -502,8 +627,56 @@ it.effect.each(
         createdBy,
         creationSource: createdBy === "agent" ? "mcp" : "web",
       });
-      const result = yield* tasks.runNow({ id: task.id });
-      assert.equal(result.task.lastRunStatus, "succeeded");
+      const result = delivery === "manual" ? yield* tasks.runNow({ id: task.id }) : null;
+      if (delivery === "once") {
+        yield* TestClock.adjust("10 seconds");
+        yield* workers.get("scheduled-tasks")!;
+        const completed = (yield* tasks.list()).tasks[0];
+        assert.equal(completed?.lastRunStatus, "succeeded");
+        assert.equal(completed?.runCount, 1);
+        assert.isNull(completed?.nextRunAt);
+      } else if (delivery !== "manual") {
+        const finished = yield* Deferred.make<void>();
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            const end = span.end.bind(span);
+            span.end = (...args) => {
+              end(...args);
+              if (
+                span.name ===
+                (delivery === "coalesced"
+                  ? "ScheduledTaskService.dispatchPendingWebhook"
+                  : "ScheduledTaskService.runWebhookDelivery")
+              )
+                Deferred.doneUnsafe(finished, Effect.void);
+            };
+            return span;
+          },
+        });
+        const request = {
+          hookId: task.id,
+          token: task.webhook!.path.split("/").at(-1)!,
+          method: "POST",
+          path: `/api/hooks/${task.id}`,
+          query: "",
+          headers: { "content-type": "application/json" },
+          body: new TextEncoder().encode('{"event":"same"}'),
+          bodyText: '{"event":"same"}',
+        };
+        yield* tasks.triggerWebhook(request).pipe(Effect.withTracer(tracer));
+        if (delivery === "coalesced") {
+          yield* TestClock.adjust("10 seconds");
+          yield* workers.get("webhook-coalescing")!.pipe(Effect.withTracer(tracer));
+        }
+        yield* Deferred.await(finished);
+        assert.lengthOf(yield* sql`SELECT 1 FROM scheduled_task_webhook_replay_keys`, 1);
+        assert.lengthOf(yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`, 0);
+        const repeated = yield* tasks.triggerWebhook(request);
+        assert.equal(repeated._tag === "accepted" && repeated.outcome, "duplicate");
+        assert.equal((yield* tasks.list()).tasks[0]?.lastRunStatus, "succeeded");
+        assert.equal((yield* tasks.list()).tasks[0]?.runCount, 1);
+      } else assert.equal(result?.task.lastRunStatus, "succeeded");
       const projectThreads = yield* threads.listProjectThreads({
         projectId,
         includeSubagents: false,
@@ -512,9 +685,15 @@ it.effect.each(
         projectThreads.find((candidate) => candidate.id === existing?.threadId) ??
         projectThreads[0];
       assert.isDefined(thread);
-      assert.equal(result.threadId, thread!.id);
-      const projection = yield* threads.getThreadProjection(thread!.id);
+      if (result !== null) assert.equal(result.threadId, thread!.id);
+      const projection =
+        failure === "before preparation"
+          ? yield* preparationSettled(thread!.id)
+          : yield* threads.getThreadProjection(thread!.id);
       const wire = yield* encodeThreadProjection(projection);
+      assert.lengthOf(wire.messages, 1);
+      assert.lengthOf(wire.runs, 1);
+      if (failure === "before preparation") assert.notEqual(wire.runs[0]?.status, "preparing");
       assert.equal(wire.messages[0]?.text, task.prompt);
       assert.equal(wire.messages[0]?.scheduledTaskId, task.id);
       assert.equal(wire.messages[0]?.createdBy, createdBy);

@@ -169,6 +169,9 @@ const withService = <A, E>(
       readonly release: Deferred.Deferred<void>;
     };
     readonly completedLaunches?: Set<string>;
+    readonly sent?: Array<
+      Parameters<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>[0]
+    >;
     readonly failLaunches?: { remaining: number };
     readonly gate?: Deferred.Deferred<void>;
     readonly gateForTask?: (input: LaunchInput) => Deferred.Deferred<void> | undefined;
@@ -240,7 +243,19 @@ const withService = <A, E>(
         namedProjectsRoot: "/projects",
         isScratchProject: () => Effect.succeed(false),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)(
+        options.sent === undefined
+          ? {}
+          : {
+              getThreadShell: (id) =>
+                Effect.succeed({ id, projectId: "project-webhook", deletedAt: null } as never),
+              sendToThread: (input) =>
+                Effect.sync(() => {
+                  options.sent!.push(input);
+                  return {} as never;
+                }),
+            },
+      ),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
@@ -1067,40 +1082,155 @@ it.effect("a coalesced window dispatches the prompt saved after it opened", () =
   );
 });
 
-it.effect("retrying a running window keeps the prompt it was dispatched with", () => {
-  const workers = new Map<string, Effect.Effect<void>>();
-  return withService(
-    ({ service, sql, launches }) =>
-      Effect.gen(function* () {
-        const schedule = {
-          type: "webhook",
-          dedupe: { coalesceKey: "{{body}}", coalesceWindowSeconds: 10 },
-        };
-        const save = (prompt: string) =>
-          Effect.flatMap(webhookTaskInput({ prompt, schedule }), service.upsert);
-        const { task } = yield* save("Prompt when the window opened");
-        yield* service.triggerWebhook(requestFor(task));
-        yield* save("Prompt at dispatch");
-        yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
-          WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
-        yield* TestClock.adjust("10 seconds");
-        yield* drainPendingDispatch(workers);
-        const launched = yield* Queue.take(launches);
-        assert.equal(launched.initialMessage?.text, "Prompt at dispatch");
-        yield* save("Prompt saved after dispatch");
-        yield* sql`DROP TRIGGER fail_completion`;
-        yield* drainPendingDispatch(workers);
-        assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
-        const owner = (yield* service.listWebhookDeliveries({ id: task.id })).deliveries[0]!;
-        const { delivery } = yield* service.getWebhookDelivery({
-          id: task.id,
-          deliveryId: owner.id,
-        });
-        assert.equal(delivery.renderedPrompt, "Prompt at dispatch");
-      }),
-    { workers },
-  );
-});
+it.effect.each([
+  { receipt: "accepted", paused: false, recovery: "normal" },
+  { receipt: "accepted", paused: true, recovery: "normal" },
+  { receipt: "missing", paused: true, recovery: "normal" },
+  { receipt: "rejected", paused: true, recovery: "normal" },
+  { receipt: "accepted", paused: true, recovery: "binding" },
+  { receipt: "accepted", paused: true, recovery: "binding edited" },
+  { receipt: "accepted", paused: true, recovery: "rendering" },
+] as const)(
+  "retrying a running window preserves its dispatch and replay claim (receipt: $receipt, paused: $paused, recovery: $recovery)",
+  ({ receipt, paused, recovery }) => {
+    const workers = new Map<string, Effect.Effect<void>>();
+    const completedLaunches = new Set<string>();
+    const sent: Array<
+      Parameters<ThreadManagementService.ThreadManagementService["Service"]["sendToThread"]>[0]
+    > = [];
+    const lostBinding = recovery === "binding" || recovery === "binding edited";
+    let frameUnavailable = false;
+    return withService(
+      ({ service, sql, launches }) =>
+        Effect.gen(function* () {
+          const schedule = {
+            type: "webhook",
+            dedupe: {
+              replayKey: "{{body}}",
+              coalesceKey: "{{body}}",
+              coalesceWindowSeconds: 10,
+            },
+          };
+          const save = (
+            prompt: string,
+            threadMode = lostBinding ? "fresh_session" : "new_thread",
+          ) => Effect.flatMap(webhookTaskInput({ prompt, schedule, threadMode }), service.upsert);
+          const { task } = yield* save("Prompt when the window opened");
+          const accepted = yield* service.triggerWebhook(requestFor(task));
+          if (accepted._tag !== "accepted") throw new Error("Expected an accepted webhook");
+          const commandId = `scheduled-task:${task.id}:webhook:${accepted.deliveryId}`;
+          yield* save("Prompt at dispatch");
+          if (receipt === "accepted") {
+            if (lostBinding)
+              yield* sql`CREATE TRIGGER fail_binding BEFORE UPDATE ON scheduled_tasks
+                WHEN NEW.thread_id IS NOT NULL BEGIN SELECT RAISE(FAIL, 'binding unavailable'); END`;
+            yield* sql`CREATE TRIGGER fail_completion BEFORE UPDATE ON scheduled_tasks
+              WHEN NEW.last_run_status = 'succeeded' BEGIN SELECT RAISE(FAIL, 'completion unavailable'); END`;
+            yield* TestClock.adjust("10 seconds");
+            yield* drainPendingDispatch(workers);
+            const launched = yield* Queue.take(launches);
+            assert.equal(launched.commandId, commandId);
+            assert.equal(launched.initialMessage?.text, "Prompt at dispatch");
+            yield* sql`DROP TRIGGER fail_completion`;
+            if (lostBinding) {
+              yield* sql`DROP TRIGGER fail_binding`;
+              assert.equal((yield* service.list()).tasks[0]!.threadId, null);
+            }
+          } else {
+            // A process can stop after claiming the window but before the command is accepted.
+            const startedAt = DateTime.formatIso(yield* DateTime.now);
+            yield* sql`UPDATE scheduled_task_webhook_pending SET state = 'running'
+              WHERE delivery_id = ${accepted.deliveryId}`;
+            yield* sql`UPDATE scheduled_tasks SET last_run_status = 'running',
+              last_run_at = ${startedAt}, last_run_webhook_delivery_id = ${accepted.deliveryId}
+              WHERE task_id = ${task.id}`;
+          }
+          if (receipt !== "missing") {
+            yield* sql`INSERT INTO orchestration_command_receipts (
+              command_id, aggregate_kind, aggregate_id, command_type, accepted_at,
+              result_sequence, status, error
+            ) VALUES (${commandId}, 'thread', 'thread-1', 'thread.create',
+              ${DateTime.formatIso(yield* DateTime.now)}, 1, ${receipt},
+              ${receipt === "rejected" ? "The command was rejected." : null})`;
+          }
+          yield* save(
+            "Prompt saved after dispatch",
+            recovery === "binding edited"
+              ? "new_thread"
+              : lostBinding
+                ? "fresh_session"
+                : "new_thread",
+          );
+          if (paused) yield* service.setEnabled({ id: task.id, enabled: false });
+          frameUnavailable = recovery === "rendering";
+          yield* drainPendingDispatch(workers);
+          frameUnavailable = false;
+          assert.equal((yield* sql`SELECT 1 FROM scheduled_task_webhook_pending`).length, 0);
+          assert.equal(yield* Queue.size(launches), 0);
+          const { delivery } = yield* service.getWebhookDelivery({
+            id: task.id,
+            deliveryId: accepted.deliveryId,
+            acceptAnyOutcome: true,
+          });
+          yield* service.setEnabled({ id: task.id, enabled: true });
+          const retry = yield* service.triggerWebhook(requestFor(task));
+          assert.equal(
+            retry._tag === "accepted" && retry.outcome,
+            receipt === "accepted" ? "duplicate" : "accepted",
+          );
+          if (receipt === "accepted") {
+            assert.equal(delivery.renderedPrompt, "Prompt at dispatch");
+            assert.equal(delivery.outcome, "accepted");
+            assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+            assert.equal(
+              (yield* service.list()).tasks[0]!.threadId,
+              recovery === "binding" ? "thread-1" : null,
+            );
+          } else {
+            assert.equal(delivery.outcome, "dispatch_failed");
+            assert.equal(delivery.error, "The task was paused before this delivery ran.");
+          }
+          if (receipt !== "accepted") {
+            yield* TestClock.adjust("10 seconds");
+            yield* drainPendingDispatch(workers);
+            const retried = yield* Queue.take(launches);
+            assert.notEqual(retried.commandId, commandId);
+            assert.equal(retried.initialMessage?.text, "Prompt saved after dispatch");
+          }
+          assert.equal(yield* Queue.size(launches), 0);
+          assert.equal((yield* service.list()).tasks[0]!.runCount, 1);
+          if (lostBinding) {
+            const bodyText = '{"value":"next occurrence"}';
+            const next = yield* service.triggerWebhook(
+              requestFor(task, { bodyText, body: new TextEncoder().encode(bodyText) }),
+            );
+            assert.equal(next._tag === "accepted" && next.outcome, "accepted");
+            yield* TestClock.adjust("10 seconds");
+            yield* drainPendingDispatch(workers);
+            if (recovery === "binding") {
+              assert.equal(yield* Queue.size(launches), 0);
+              assert.equal(sent.length, 1);
+              assert.equal(sent[0]!.threadId, "thread-1");
+              assert.isTrue(sent[0]!.freshContext);
+            } else {
+              assert.equal(sent.length, 0);
+              assert.equal(yield* Queue.size(launches), 1);
+              assert.notEqual((yield* Queue.take(launches)).commandId, commandId);
+            }
+            assert.equal((yield* service.list()).tasks[0]!.runCount, 2);
+          }
+        }),
+      {
+        workers,
+        completedLaunches,
+        ...(lostBinding ? { sent } : {}),
+        onFrame: () => {
+          if (frameUnavailable) throw new Error("Frame generation unavailable");
+        },
+      },
+    );
+  },
+);
 
 it.effect("a coalesced window fails its delivery when the task row cannot be read", () => {
   const workers = new Map<string, Effect.Effect<void>>();
