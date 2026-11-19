@@ -341,27 +341,31 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
-it("keeps a hidden test file folded when all shown files expand", async () => {
+it("keeps a hidden test file open when all shown files collapse", async () => {
   setup({ paged: true });
-  using _hidden = {
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
     [Symbol.dispose]() {
       window.localStorage.removeItem("t3code.diffHideTestFiles");
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
   await using screen = await render(tab(0), { container: pagedContainer() });
-  // Files keep their order, so the second header is early-1.test.ts while tests are shown.
-  const testFileToggle = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1);
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
   const filter = screen.getByRole("button", { name: "Hide test files" });
   await filter.click();
   await expect.element(filter).toHaveAttribute("aria-pressed", "true");
 
-  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "true");
+  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand all files", exact: true }))
+    .toBeVisible();
   await filter.click();
 
   await expect.element(filter).toHaveAttribute("aria-pressed", "false");
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
+  // Files keep their order, so the second header is early-1.test.ts's.
+  await expect
+    .element(screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1))
+    .toHaveAttribute("aria-expanded", "true");
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
