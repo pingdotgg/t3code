@@ -6,6 +6,7 @@ import type {
 import {
   buildProjectGroups,
   derivePhysicalProjectKey,
+  isPickableProjectMember,
   resolveScratchProjectScopeKey,
   type ProjectGroupingSettings,
 } from "@t3tools/client-runtime/state/project-grouping";
@@ -221,6 +222,7 @@ export function buildSidebarProjectPickerEntries(input: {
 }) {
   const preferredProjectRef = input.preferredProjectRef;
   const entries = input.groups.flatMap((group): SidebarProjectPickerEntry[] => {
+    const members = group.memberProjects.filter(isPickableProjectMember);
     const isPreferred = preferredProjectRef
       ? group.memberProjectRefs.some(
           (projectRef) =>
@@ -229,21 +231,18 @@ export function buildSidebarProjectPickerEntries(input: {
         )
       : false;
     const preferredProject = preferredProjectRef
-      ? (group.memberProjects.find(
+      ? (members.find(
           (project) =>
             project.environmentId === preferredProjectRef.environmentId &&
             project.id === preferredProjectRef.projectId,
-        ) ??
-        group.memberProjects.find(
-          (project) => project.environmentId === preferredProjectRef.environmentId,
-        ))
+        ) ?? members.find((project) => project.environmentId === preferredProjectRef.environmentId))
       : null;
     const targetProject =
       preferredProject ??
-      group.memberProjects.find(
+      members.find(
         (project) => project.environmentId === group.environmentId && project.id === group.id,
       ) ??
-      group.memberProjects[0];
+      members[0];
     if (!targetProject) return [];
 
     return [{ group, targetProject, isPreferred }];
