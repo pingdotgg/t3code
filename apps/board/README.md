@@ -38,6 +38,23 @@ node apps/board/scripts/install-omp-kit.mjs --config-dir /tmp/x  # an isolated C
 
 The plugin loads in place from this checkout, so install from a checkout that stays. The language server needs `typescript` installed in the project it opens.
 
+## The engine
+
+The app finds the T3 engine in this order and shows how it got there in the sidebar footer.
+
+1. `AGENT_BOARD_ENGINE_URL`, when set. `AGENT_BOARD_TOKEN` supplies its bearer; without it the app issues one.
+2. Join a running engine. The app reads `userdata/server-runtime.json` under the T3 home in WSL, and joins when that `pid` is alive and the origin answers. Quitting the app leaves a joined engine running.
+3. Boot one: `t3 serve` from the WSL login `PATH`, else the newest runtime under `<T3 home>/wsl-runtime/` that runs. The app owns that child and stops it when it quits.
+4. Install one: when WSL has no runnable T3, the footer asks once, then runs `curl -fsSL https://t3.codes/install.sh | sh` in WSL and boots it.
+
+On Windows every command runs through `wsl.exe -d <distro> --cd ~ --exec`, on Linux directly. The distro is WSL's default; `AGENT_BOARD_WSL_DISTRO`, or `wslDistro` in the app's `settings.json`, picks another from `wsl.exe --list --verbose`.
+
+The app issues its bearer with `auth session issue --label agent-board --ttl 30d`, keeps it encrypted with Electron `safeStorage`, and checks it on every connection attempt. A rejected token is reissued once, then the footer shows `auth_failed`.
+
+`AGENT_BOARD_T3_HOME` replaces `~/.t3`, which is how lanes stay off the real state. `AGENT_BOARD_T3_CLI` replaces the discovered `t3` command. `dev:windows` forwards all of these to the Windows process. Two engines cannot share a T3 home: the second exits with code 78, so T3 desktop shows an error rather than starting a second engine on the folder the board booted.
+
+`dev:web` has no main process. Pass `AGENT_BOARD_ENGINE_URL` and `AGENT_BOARD_TOKEN` to point it at an engine.
+
 ## Tests
 
 ```sh

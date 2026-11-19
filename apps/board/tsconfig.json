@@ -11,13 +11,13 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "noPropertyAccessFromIndexSignature": true,
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "plugins": [
       {
         "name": "@effect/language-service",
-        // The board is plain TypeScript, not Effect code.
+        // The board is plain TypeScript with a thin Effect layer, so Effect-style suggestions stay off.
         "diagnosticSeverity": {
+          "effectFnOpportunity": "off",
           "nodeBuiltinImport": "off",
           "globalConsole": "off",
           "globalDate": "off",

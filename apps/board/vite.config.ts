@@ -13,17 +13,25 @@ const electronBundle = {
 
 export default defineConfig({
   plugins: [tailwindcss()],
+  // `dev:web` has no main process, so the lane scripts hand it the engine through these.
+  envPrefix: ["VITE_", "AGENT_BOARD_ENGINE_URL", "AGENT_BOARD_TOKEN"],
   server: {
     host: "127.0.0.1",
     port: Number(process.env["PORT"] ?? 5190),
     strictPort: true,
   },
   pack: [
-    { ...electronBundle, entry: { "electron/main": "electron/main.ts" }, clean: true },
+    {
+      ...electronBundle,
+      entry: { "electron/main": "electron/main.ts" },
+      clean: true,
+      // The staged app has no node_modules, so the main process carries effect itself.
+      deps: { neverBundle: ["electron"], alwaysBundle: [/^effect(\/|$)/], onlyBundle: ["effect"] },
+    },
     { ...electronBundle, entry: { "electron/preload": "electron/preload.ts" }, clean: false },
   ],
   test: {
     // scripts/*.test.mjs run under node:test, not here.
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "electron/**/*.test.ts"],
   },
 });
