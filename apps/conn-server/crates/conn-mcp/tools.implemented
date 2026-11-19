@@ -72,6 +72,10 @@ t3_thread_send_attachments
 t3_worktree_handoff
 t3_worktree_list
 t3_worktree_status
+t3_environment_links
+t3_environment_link
+t3_environment_unlink
+t3_environment_preferences_update
 device_list
 device_open
 device_screenshot

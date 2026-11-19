@@ -56,6 +56,15 @@ pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
 /// settings store.
 pub(super) fn environment(cx: &Cx<'_>) -> Value {
     let config = cx.config();
+    if let Some(settings) = &config.settings {
+        return json!({
+            "environmentId": config.environment_id,
+            "label": config.label,
+            "serverVersion": config.server_version,
+            "platform": config.platform,
+            "preferences": crate::peers::preferences(&(settings.read)()),
+        });
+    }
     json!({
         "environmentId": config.environment_id,
         "label": config.label,

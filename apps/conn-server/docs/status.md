@@ -21,6 +21,58 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Peer links and linked environments (2026-11-19)
+
+An agent or a client here can link another environment and act there with the `/mcp`
+tools that take `environmentId`, as in T3. Both sides are served, so Conn and T3 link each
+other in either direction.
+
+- **Linking here** (`src/peers.rs`): `peerLinks.list`, `link`, `unlink`, `answerRequest`.
+  A link probes the peer's descriptor, needs its `mcpModeLimitHeader` and `linkFence`, and
+  signs in to its `/mcp` with MCP OAuth (register, a `pairing-code` decision, the PKCE code
+  exchange). The token goes to the secret store; the rest to `peer-links.json`, at most 256
+  links. Plain http only on loopback, Tailscale and Orbit WireGuard; redirects never followed.
+- **Forwarding** (`conn-mcp/src/peers.rs`): the 31 tools whose `environmentId` is
+  `OrchestratorMcpEnvironmentTarget` (generated: `linked-targets.txt`) run in the linked
+  environment. Each checks the caller here first, then goes with `T3-Mode-Limit`,
+  `T3-Sender-Thread`, a caller-scoped retry key and a 45 s wait cap. One MCP session per peer
+  and address, at most 64.
+- **Tools:** `t3_environment_links`, `t3_environment_link` (a link card; the engine's new
+  `link_request.record` records it and wakes the agent with a notification),
+  `t3_environment_unlink`, `t3_environment_preferences_update`. `t3_environment_read` now
+  reports the settings (defaults generated from T3: `preference-defaults.json`).
+- **Being linked** (`src/oauth.rs`): `POST /oauth/mcp/register`, `/decision` (pairing code
+  only), `/token`; peer-link codes from `/api/auth/pairing-token` (`purpose: "peer-link"`).
+  `/mcp` takes the MCP client session at its access, narrowed by `T3-Mode-Limit`, and refuses
+  a link with 403 while links are off. The link fence: work a link starts carries its
+  `linkOrigin` (also in the shell row); below full access it changes only that work and never
+  the environment's links, settings or scheduled tasks. Managed access is untouched.
+- **Advertised:** `peerLinks`, `mcpModeLimitHeader`, `linkFence`, `peerLinkPairingCodes`.
+
+Proof: `crates/conn-server/tools/peer-links-diff.mjs` (in `tools/check.sh`) runs the same
+50 steps T3 → T3, Conn → Conn, Conn → T3 and T3 → Conn: the link errors, the link, list,
+forwarded reads, writes and refusals, the fence, an agent's link cards with each answer, the
+wake messages, unlink. All equal. `parity.mjs` compares the 4 tools with links on and off.
+`cargo test -p conn-mcp peers` covers forwarding, links off and the fence.
+
+Known differences: no `cause` on `PeerLinkRequestError`; probe failures name fewer Node error
+codes and no certificate code; `T3-Sender-Thread` is read but not stored (the engine has no
+`linkedSender`); a bearer session that is not an MCP client still works on `/mcp` (as before).
+Not built: remote delegation (`delegate_task` with `target.environmentId`,
+`RemoteDelegation.ts`) and the follow-up record of a forwarded `t3_thread_send`; the browser
+OAuth approval page and the `.well-known` OAuth metadata (no browser sessions here); Orbit's
+Gateway link (`OrbitEnvironmentLink.ts`); MCP approval codes (`AUTO-…`).
+
+Review fixes (Codex, 6 findings, each with a test that fails without it): MCP client tokens
+are refused on native bearer, ticket and WebSocket paths, as T3's `rejectMcpClientAudience`;
+a native bearer session on `/mcp` keeps its scopes (`settings:write` for preferences,
+`access:read`/`access:write` for the link tools); the fence fails closed when the calling
+thread cannot be read; `/mcp` authentication and pairing-code writes run off the runtime
+thread; a link card answer runs in its own task, so it finishes and frees the card after the
+client leaves; at most 16 probes run at once (every supplied address is probed, as in T3). A native session's
+scopes are checked before a call goes local or to a linked environment, so a forwarded
+preference update needs `settings:write` too.
+
 ## A handoff releases the caller's credential with its process (2026-11-19)
 
 A worktree handoff detaches the calling thread's provider session. T3 revokes that session's

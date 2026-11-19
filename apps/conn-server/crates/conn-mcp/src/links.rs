@@ -1,5 +1,6 @@
 //! Thread links in tool results (`packages/shared/src/threadLinks.ts`). T3 Code renders
-//! `t3-thread://` links as thread chips; outside callers get the hosted link Copy thread makes.
+//! `t3-thread://` links as thread chips; outside callers get the hosted link Copy thread makes,
+//! except another environment's peer link, which renders chips as T3 Code does.
 
 use crate::{Caller, McpConfig};
 
@@ -10,7 +11,8 @@ pub(crate) fn thread_link(
     title: &str,
 ) -> String {
     match caller {
-        Caller::Thread(_) => {
+        // A peer link is another T3 Code environment: it renders thread chips too.
+        Caller::Thread(_) | Caller::Client(crate::ClientCaller { linked: true, .. }) => {
             let href = format!("t3-thread://v2/{}/{thread_id}", config.environment_id);
             let destination = if href.contains(['(', ')']) {
                 format!("<{href}>")

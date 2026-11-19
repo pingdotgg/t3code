@@ -547,6 +547,9 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "attachments": [],
         });
     }
+    if let Some(origin) = cx.link_origin().await? {
+        input["linkOrigin"] = origin;
+    }
     let projection = launch_thread(cx, input).await?;
     let thread = &projection["thread"];
     let id = thread["id"].as_str().unwrap_or_default();
@@ -869,7 +872,19 @@ pub(super) async fn wait(cx: &Cx<'_>, args: &Args) -> ToolResult {
 pub(super) async fn interrupt(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let id = thread_id(args);
     cx.writes_threads(&[str_arg(args, "threadId")]).await?;
-    let projection = cx.projection(id).await?;
+    // `interruptThread`'s own words for a thread that does not exist.
+    let projection = match cx.projection(id).await {
+        Err(ToolError::Failure {
+            code: "thread_not_found",
+            ..
+        }) => {
+            return Err(fail(
+                "thread_not_found",
+                format!("Thread {id} was not found."),
+            ));
+        }
+        other => other?,
+    };
     let key = Cx::request_key(args);
     let reason = str_arg(args, "reason")
         .map(str::to_owned)

@@ -20,7 +20,7 @@ use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::{Value, json};
 
 use crate::{
-    auth::{AuthStore, SESSION_TTL_MS, SessionRequest},
+    auth::{AuthStore, ClientInfo},
     home,
 };
 
@@ -39,15 +39,8 @@ const TERMINAL_RUN_STATUSES: [&str; 5] = [
     "rolled_back",
 ];
 
-/// `issueMcpClientSession` with `access: "full-access"`: the scopes, subject and label the
-/// T3 CLI's own session carries. Revoked when the command ends.
-const SESSION_SCOPES: [&str; 4] = [
-    "orchestration:read",
-    "orchestration:operate",
-    "settings:write",
-    "source-control:write",
-];
-const SESSION_SUBJECT: &str = "mcp-client";
+/// `issueMcpClientSession` with `access: "full-access"`: the scopes, subject, runtime ceiling
+/// and label the T3 CLI's own session carries. Revoked when the command ends.
 const SESSION_LABEL: &str = "t3 thread cli";
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const CLIENT_NAME: &str = "t3-thread-cli";
@@ -354,12 +347,7 @@ fn with_tools<T>(state_dir: &Path, work: impl FnOnce(&mut Tools) -> Outcome<T>) 
     let auth = AuthStore::open(auth_path.clone())
         .map_err(|e| Exit::fail(format!("could not read {}: {e}", auth_path.display())))?;
     let issued = auth
-        .issue_session(SessionRequest {
-            scopes: SESSION_SCOPES.iter().map(|s| (*s).to_owned()).collect(),
-            label: Some(SESSION_LABEL.into()),
-            subject: Some(SESSION_SUBJECT.into()),
-            ttl_ms: SESSION_TTL_MS,
-        })
+        .issue_mcp_client_session(SESSION_LABEL, "full-access", false, ClientInfo::default())
         .map_err(|e| Exit::fail(format!("could not issue a session: {e}")))?;
     let mut tools = Tools {
         client: McpClient::new(&runtime.origin, &issued.token),

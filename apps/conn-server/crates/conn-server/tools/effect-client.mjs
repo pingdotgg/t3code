@@ -190,6 +190,10 @@ const program = Effect.gen(function* () {
   } else {
     yield* decodeCall(client, "secrets.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
     yield* decodeCall(client, "panels.respond", { requestId: "unknown", ok: true });
+    yield* decodeCall(client, "peerLinks.list", {});
+    yield* decodeCall(client, "peerLinks.unlink", { environmentId: "environment:none" });
+    yield* decodeCall(client, "peerLinks.link", { url: "http://127.0.0.1:1", pairingCode: "ABCDEFGHJKLM", access: "auto" });
+    yield* decodeCall(client, "peerLinks.answerRequest", { threadId: "missing", turnItemId: "missing", answer: { type: "decline" } });
     const login = yield* client["testLogins.save"]({ url: " http://localhost/login ", username: "tester", password: "fixture-only", otpSecret: " TEST " });
     decodedTags.add("testLogins.save");
     check("test login summary excludes secrets", login.createdBy === "user" && login.hasOtp && !("password" in login) && !("otpSecret" in login));

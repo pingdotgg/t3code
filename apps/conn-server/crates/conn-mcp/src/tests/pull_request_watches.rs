@@ -37,6 +37,8 @@ fn with_host(base: Fixture, state: &'static str) -> Fixture {
         refresh_provider: None,
         worktrees: None,
         panels: None,
+        peers: None,
+        settings: None,
         pull_requests: Some(host(state)),
         secrets: None,
         test_logins: None,

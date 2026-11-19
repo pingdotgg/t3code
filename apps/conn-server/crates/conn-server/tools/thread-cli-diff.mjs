@@ -79,11 +79,7 @@ const KNOWN = [
  * compare. Anything else in the text still has to match byte for byte.
  */
 const KNOWN_TEXT = [
-  {
-    text: " Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.",
-    reason:
-      "T3's thread_not_found hint (threadAccess.ts threadNotFound, #31946) points at linked environments, which this server does not serve (no t3_environment_links); a capability is named only when served",
-  },
+  // None: the linked-environment hint on thread_not_found is served since 2026-11-19.
 ];
 
 // ---------------------------------------------------------------------------------------

@@ -40,13 +40,23 @@ fn fixture_with(
     host: Option<Arc<dyn conn_engine::EngineHost>>,
     provider: FakeProvider,
 ) -> Fixture {
-    fixture_with_provider(name, host, Arc::new(provider))
+    fixture_full(name, host, provider, None)
+}
+
+fn fixture_full(
+    name: &str,
+    host: Option<Arc<dyn conn_engine::EngineHost>>,
+    provider: FakeProvider,
+    peers: Option<Arc<dyn crate::Peers>>,
+) -> Fixture {
+    fixture_with_provider(name, host, Arc::new(provider), peers)
 }
 
 fn fixture_with_provider(
     name: &str,
     host: Option<Arc<dyn conn_engine::EngineHost>>,
     provider: Arc<dyn conn_provider::Provider>,
+    peers: Option<Arc<dyn crate::Peers>>,
 ) -> Fixture {
     let dir = std::env::temp_dir().join(format!("conn-mcp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -76,6 +86,8 @@ fn fixture_with_provider(
             hub: conn_vcs::VcsHub::default(),
         }),
         panels: Some(conn_features::panels::PanelBroker::default()),
+        peers,
+        settings: None,
         pull_requests: None,
         test_logins: Some(conn_features::test_logins::TestLogins::new(&dir)),
         secrets: Some(conn_features::secrets::SecretRequests::new(
@@ -107,6 +119,7 @@ fn client(write: bool) -> Caller {
     Caller::Client(ClientCaller {
         session_id: if write { "swamp" } else { "reader" }.into(),
         max_runtime_mode: write.then_some("full-access"),
+        ..ClientCaller::default()
     })
 }
 
@@ -205,7 +218,7 @@ impl<'a> Client<'a> {
         );
         let (definition, _) = catalog::tool(tool).unwrap();
         if let Some(schema) = definition.get("outputSchema") {
-            conforms(schema, &value, tool).unwrap();
+            catalog::conforms(schema, &value, tool).unwrap();
         }
         value
     }
@@ -229,53 +242,19 @@ impl<'a> Client<'a> {
     }
 }
 
-/// The JSON Schema subset the advertised output schemas use.
-fn conforms(schema: &Value, value: &Value, at: &str) -> Result<(), String> {
-    if let Some(options) = schema["anyOf"].as_array() {
-        return if options.iter().any(|o| conforms(o, value, at).is_ok()) {
-            Ok(())
-        } else {
-            Err(format!("{at}: {value} matches no anyOf branch"))
-        };
-    }
-    if let Some(allowed) = schema["enum"].as_array()
-        && !allowed.contains(value)
-    {
-        return Err(format!("{at}: {value} not in {allowed:?}"));
-    }
-    let ok = match schema["type"].as_str() {
-        Some("string") => value.is_string(),
-        Some("integer") => value.is_i64() || value.is_u64(),
-        Some("number") => value.is_number(),
-        Some("boolean") => value.is_boolean(),
-        Some("null") => value.is_null(),
-        Some("array") => {
-            for (i, item) in value.as_array().into_iter().flatten().enumerate() {
-                conforms(&schema["items"], item, &format!("{at}[{i}]"))?;
-            }
-            value.is_array()
-        }
-        Some("object") => {
-            let Some(object) = value.as_object() else {
-                return Err(format!("{at}: {value} is not an object"));
-            };
-            for key in schema["required"].as_array().into_iter().flatten() {
-                let key = key.as_str().unwrap();
-                if !object.contains_key(key) {
-                    return Err(format!("{at}: missing {key}"));
-                }
-            }
-            for (key, property) in schema["properties"].as_object().into_iter().flatten() {
-                if let Some(field) = object.get(key) {
-                    conforms(property, field, &format!("{at}.{key}"))?;
-                }
-            }
-            true
-        }
-        _ => true,
-    };
-    ok.then_some(())
-        .ok_or_else(|| format!("{at}: {value} is not {}", schema["type"]))
+/// A forwarded result is checked against its tool's success shape (`PeerMcpClient`).
+#[test]
+fn forwarded_results_must_match_their_tool() {
+    assert!(!crate::tool_result_matches("t3_thread_launch", &json!({})));
+    assert!(!crate::tool_result_matches(
+        "t3_thread_search",
+        &json!({"matches": "none"})
+    ));
+    assert!(crate::tool_result_matches(
+        "t3_thread_search",
+        &json!({"matches": [], "extra": true})
+    ));
+    assert!(!crate::tool_result_matches("no_such_tool", &json!({})));
 }
 
 #[test]
@@ -368,8 +347,9 @@ async fn transport_answers_as_the_typescript_server() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     // An outside client is not offered the tools that act as a calling thread.
+    // Without peer links here, the link tools are hidden too.
     let offered: Vec<_> = catalog::names()
-        .filter(|name| catalog::offered(name, true))
+        .filter(|name| catalog::offered_with_links(name, true, false))
         .collect();
     assert_eq!(names, offered);
     assert!(!names.contains(&"delegate_task"));
@@ -1726,8 +1706,6 @@ const NAMED_NOT_SERVED: &[&str] = &[
     "fill_credential",
     "link_issue",
     "pull_request_create",
-    "t3_environment_link",
-    "t3_environment_links",
 ];
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
@@ -1796,6 +1774,8 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         refresh_provider: None,
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
+        peers: None,
+        settings: None,
         pull_requests: None,
         secrets: config.secrets.clone(),
         test_logins: base.service.config.test_logins.clone(),
@@ -2285,6 +2265,7 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
     idle_agent.ok("annotations_list", json!({})).await;
 }
 
+mod peers;
 mod shared_runtime;
 mod threads_handoff;
 

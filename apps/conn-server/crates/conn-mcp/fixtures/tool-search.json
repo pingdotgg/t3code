@@ -80,10 +80,13 @@
         "schedule_task",
         "list_scheduled_tasks",
         "delete_scheduled_task",
+        "t3_environment_links",
+        "t3_environment_link",
+        "t3_environment_unlink",
         "run_scheduled_task_now",
         "t3_environment_read",
-        "preview_navigate",
-        "t3_project_list"
+        "t3_environment_preferences_update",
+        "preview_navigate"
       ]
     }
   ]

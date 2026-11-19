@@ -27,6 +27,7 @@ mod http_limits {
 }
 pub use http_limits::MAX_MCP_BODY_BYTES;
 mod links;
+mod peers;
 mod sessions;
 pub mod snapshot;
 mod time;
@@ -36,6 +37,9 @@ mod view;
 mod worktrees;
 
 pub use credentials::ThreadCredentialRequest;
+pub use peers::{
+    LINKS_OFF_HERE, LinkAsk, LinkInfo, PeerCall, PeerFailure, PeerLimits, PeerSender, Peers,
+};
 pub use transport::Reply;
 pub use worktrees::WorktreeConfig;
 
@@ -67,11 +71,34 @@ pub struct McpConfig {
     pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// The broker also used by panels.requests and panels.respond.
     pub panels: Option<conn_features::panels::PanelBroker>,
+    /// Linked environments; without it every tool stays in this environment.
+    pub peers: Option<Arc<dyn Peers>>,
+    /// The server settings, for the environment preference tools.
+    pub settings: Option<SettingsPort>,
     /// Device hosts; without them the device tools answer that device access is off.
     pub devices: Option<conn_devices::Devices>,
     /// The server's GitHub pull request panel; without it the watch and guide tools answer
     /// as T3 does when no host can be read.
     pub pull_requests: Option<PullRequestHost>,
+}
+
+/// Reads and patches the server settings (`ServerSettingsService`).
+#[derive(Clone)]
+pub struct SettingsPort {
+    pub read: Arc<dyn Fn() -> SettingsMap + Send + Sync>,
+    /// Applies a `ServerSettingsPatch`; returns the settings after it.
+    pub update: SettingsUpdate,
+}
+
+pub type SettingsMap = serde_json::Map<String, Value>;
+pub type SettingsUpdate = Arc<
+    dyn Fn(Value) -> conn_engine::BoxFuture<'static, Result<SettingsMap, String>> + Send + Sync,
+>;
+
+impl std::fmt::Debug for SettingsPort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SettingsPort").finish_non_exhaustive()
+    }
 }
 
 /// One call into the server's pull request panel: `(operation, input)` to the result, or the
@@ -121,11 +148,29 @@ pub struct ThreadCaller {
     pub subagent: bool,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct ClientCaller {
     pub session_id: String,
     /// `None`: read-only. Otherwise the broadest runtime mode it may start threads in.
     pub max_runtime_mode: Option<&'static str>,
+    /// The client's name, as it registered or paired.
+    pub label: String,
+    /// Another environment's peer link: what it starts here carries its session as
+    /// `linkOrigin`, and below full access it changes only that work.
+    pub linked: bool,
+    /// Narrower modes the client asked for on this request (`T3-Mode-Limit`): runtime,
+    /// interaction.
+    pub narrowed: Option<(&'static str, &'static str)>,
+    /// A native bearer session's scopes (`None` for an MCP OAuth client, whose access level
+    /// decides). Tools that change settings or links check them, as the RPC methods do.
+    pub scopes: Option<Vec<String>>,
+}
+
+impl ClientCaller {
+    /// `AuthMcpClientAccess`.
+    pub fn access(&self) -> &'static str {
+        self.max_runtime_mode.unwrap_or("read-only")
+    }
 }
 
 impl Caller {
@@ -176,6 +221,21 @@ pub const CLAUDE_INSTRUCTIONS: &str = include_str!("claude-instructions.txt");
 /// The `t3 thread` CLI prints results in that order, as the T3 CLI does after decoding them.
 pub fn tool_definition(name: &str) -> Option<&'static str> {
     catalog::line(name)
+}
+
+/// Whether `value` has the shape `tool`'s advertised output schema requires: the types,
+/// required fields and literals it names (excess fields are allowed, as an Effect struct
+/// decode allows them). A tool that advertises no output schema accepts any value. A result
+/// forwarded from a linked environment is checked with this, as `PeerMcpClient` decodes it
+/// with the tool's success schema.
+pub fn tool_result_matches(tool: &str, value: &serde_json::Value) -> bool {
+    let Some((definition, _)) = catalog::tool(tool) else {
+        return false;
+    };
+    match definition.get("outputSchema") {
+        Some(schema) => catalog::conforms(schema, value, tool).is_ok(),
+        None => true,
+    }
 }
 
 impl McpServerEntry {
@@ -315,6 +375,11 @@ impl McpService {
         body: &[u8],
     ) -> Reply {
         transport::handle(self, caller, method, headers, body).await
+    }
+
+    /// Whether Linked environments is on here, read per request.
+    pub(crate) fn links_enabled(&self) -> bool {
+        self.config.peers.as_ref().is_some_and(|p| p.enabled())
     }
 
     fn lock_credentials(&self) -> std::sync::MutexGuard<'_, credentials::Credentials> {

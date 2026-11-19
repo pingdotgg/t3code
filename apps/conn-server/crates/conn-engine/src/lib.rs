@@ -43,6 +43,7 @@ mod families;
 mod fork;
 mod fresh;
 mod html_cleanup;
+mod link_requests;
 mod output;
 mod projects;
 mod pull_requests;
@@ -431,6 +432,14 @@ pub trait Engine: Send + Sync {
                 "this engine does not support {method}"
             )))
         })
+    }
+
+    /// Records a link card (`link_request.record`) without exposing an internal command
+    /// through client dispatch.
+    fn record_link_request(&self, _input: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Err(
+            "Link requests are not supported.".into()
+        )))
     }
 
     /// `thread.pull-request-watch.sync`: what the server's watch loop read, and its wake. Not a

@@ -14,6 +14,8 @@ pub mod limits;
 pub mod managed;
 pub mod methods;
 pub mod model_manifest;
+pub mod oauth;
+pub mod peers;
 mod project;
 pub mod restart;
 pub mod routes;

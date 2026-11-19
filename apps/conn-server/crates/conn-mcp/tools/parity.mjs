@@ -46,7 +46,11 @@ const root = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(
 const children = [];
 process.once("exit", () => {
   for (const child of children) if (child.exitCode === null) child.kill("SIGTERM");
-  NodeFS.rmSync(root, { recursive: true, force: true });
+  try {
+    NodeFS.rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+  } catch {
+    // A server still writing as it stops; the temp folder goes with the next cleanup.
+  }
 });
 
 function scratchProject(name) {
@@ -173,6 +177,8 @@ async function startRust() {
   const state = NodePath.join(root, "rust", "state");
   NodeFS.mkdirSync(state,{recursive:true});
   const capture = NodePath.join(state,"mcp-capture.json");
+  // The same settings file as the T3 server's, so the preferences both report agree.
+  NodeFS.writeFileSync(NodePath.join(state, "settings.json"), JSON.stringify({ enableProviderUpdateChecks: false }));
   const { origin, code } = await start(
     rustBinary,
     ["--listen", `127.0.0.1:${port}`, "--state-dir", state, "--project", project],
@@ -277,8 +283,19 @@ const outsideHidden = new Set(
     .split("\n")
     .filter((line) => line !== ""),
 );
+// Tools that only serve links are hidden while Linked environments is off (the default);
+// they are compared below with links on.
+const linksHidden = new Set(
+  NodeFS.readFileSync(new URL("../src/links-hidden.txt", import.meta.url), "utf8")
+    .split("\n")
+    .filter((line) => line !== ""),
+);
 for (const name of implemented) {
   const [ts, rust] = lists.map((list) => list.result.tools.find((tool) => tool.name === name));
+  if (linksHidden.has(name)) {
+    report(`tools/list ${name}: hidden while links are off`, ts === undefined && rust === undefined);
+    continue;
+  }
   if (outsideHidden.has(name)) {
     report(`tools/list ${name}: hidden from outside clients`, ts === undefined && rust === undefined);
     continue;
@@ -883,6 +900,44 @@ if (noModel) {
   report(`calling thread handoff ends old run: ${canonical(endedStates[0])}`,canonical(endedStates[0]) === canonical(endedStates[1]));
 
 
+}
+// Linked environments on: the link tools are listed and answer as T3's do. Linking itself and
+// forwarded calls between two servers are proven by crates/conn-server/tools/peer-links-diff.mjs.
+{
+  await Promise.all(servers.map((server) => updateSettings(server, { linkedEnvironmentsEnabled: true })));
+  const linkLists = await Promise.all(sessions.map((s) => s.request("tools/list", {})));
+  for (const name of linksHidden) {
+    const [ts, rust] = linkLists.map((list) => list.result.tools.find((tool) => tool.name === name));
+    report(`tools/list ${name} with links on`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
+  }
+  const environmentIds = await Promise.all(
+    sessions.map(async (session) => outcome(await session.callTool("t3_environment_read", {})).value?.environmentId),
+  );
+  const linkSteps = [
+    ["t3_environment_links", {}],
+    ["t3_environment_unlink", { environmentId: "environment:none" }],
+    ["t3_environment_link", {}],
+    ["t3_environment_link", { hint: "the other box" }],
+    ["t3_thread_list", { environmentId: "environment:none" }],
+    ["t3_environment_read", { environmentId: "environment:none" }],
+    ["t3_environment_preferences_update", { newWorktreesStartFromOrigin: false, defaultThreadEnvMode: "worktree", backgroundActivity: { profile: "battery-saver" } }],
+    ["t3_environment_read", {}],
+    ["t3_environment_preferences_update", { defaultThreadEnvMode: null, newWorktreesStartFromOrigin: true, backgroundActivity: { profile: "balanced" } }],
+    ["t3_environment_preferences_update", { environmentId: "environment:none" }],
+  ];
+  for (const [tool, args] of linkSteps) {
+    const results = await Promise.all(sessions.map(async (session) => outcome(await session.callTool(tool, args))));
+    const values = results.map((result, i) => {
+      const text = canonical(result).split(environmentIds[i]).join("<this>");
+      // Descriptor fields this server does not detect (ACCEPTED above).
+      return text.replace(/"machine":"[^"]*",?/, "").replace(/,}/g, "}");
+    });
+    report(
+      `links on: ${tool} ${JSON.stringify(args)}${values[0] === values[1] ? "" : `\n       T3:   ${values[0]}\n       Conn: ${values[1]}`}`,
+      values[0] === values[1],
+    );
+  }
+  await Promise.all(servers.map((server) => updateSettings(server, { linkedEnvironmentsEnabled: false })));
 }
 console.log(failed === 0 ? "\nparity: no differences" : `\nparity: ${failed} differences`);
 process.exit(failed === 0 ? 0 : 1);

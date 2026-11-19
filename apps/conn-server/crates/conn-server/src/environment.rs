@@ -283,6 +283,12 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     // projects.listIgnoredFiles, with `query` (conn-files entries::list_ignored).
     capabilities.ignored_file_listing = Some(true);
     capabilities.ignored_file_search = Some(true);
+    // Links to other environments (`crate::peers`), `/mcp` narrowing an OAuth client by
+    // `T3-Mode-Limit`, the link fence (`linkOrigin`), and peer-link pairing codes.
+    capabilities.peer_links = Some(true);
+    capabilities.mcp_mode_limit_header = Some(true);
+    capabilities.link_fence = Some(true);
+    capabilities.peer_link_pairing_codes = Some(true);
     capabilities
 }
 
@@ -359,7 +365,11 @@ mod tests {
                 "fileAttachments",
                 "ignoredFileListing",
                 "ignoredFileSearch",
+                "linkFence",
                 "linkedThreadRefreshes",
+                "mcpModeLimitHeader",
+                "peerLinkPairingCodes",
+                "peerLinks",
                 "pullRequestChecks",
                 "pullRequests",
                 "serverBrowser",

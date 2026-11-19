@@ -130,7 +130,7 @@ async fn a_handoff_on_a_shared_codex_process_keeps_and_reuses_the_credential() {
         },
     );
     let host = Arc::new(CredentialHost::default());
-    let f = fixture_with_provider("shared-codex", Some(host.clone()), Arc::new(codex));
+    let f = fixture_with_provider("shared-codex", Some(host.clone()), Arc::new(codex), None);
     host.0.set(f.service.clone()).ok().unwrap();
     super::threads_handoff::git_project(&f).await;
 

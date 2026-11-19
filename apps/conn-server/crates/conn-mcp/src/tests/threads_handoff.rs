@@ -116,6 +116,7 @@ async fn attachment_upload_is_owned_by_preparing_caller() {
         Caller::Client(ClientCaller {
             session_id: "other".into(),
             max_runtime_mode: Some("full-access"),
+            ..ClientCaller::default()
         }),
     )
     .await;

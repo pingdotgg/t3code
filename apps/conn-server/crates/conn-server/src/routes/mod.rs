@@ -10,12 +10,14 @@ mod assets;
 mod device_hub;
 mod hooks;
 pub mod mcp;
+mod oauth_mcp;
 pub(crate) mod preview;
 mod pull_requests;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(mcp::router())
+        .merge(oauth_mcp::router())
         .merge(assets::router())
         .merge(device_hub::router())
         .merge(hooks::router())
