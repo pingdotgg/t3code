@@ -185,11 +185,32 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 
 /**
  * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * it asks before acting and T3 answers from the live runtime policy. Full access instead starts
+ * the process with `--dangerously-skip-permissions`, so a runtime mode change restarts it.
  */
 export function antigravityCliSessionMode(modeId: string): string {
   return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+}
+
+export interface AntigravityCliPermissionPolicy {
+  readonly runtimeMode: RuntimeMode;
+  readonly approvalPolicy?: unknown;
+  readonly sandboxPolicy?: unknown;
+  readonly maxRuntimeMode?: RuntimeMode | undefined;
+}
+
+/**
+ * `agy acp` never forwards permission prompts from detached `invoke_subagent` children, which
+ * then wait out their timeout, so only unrestricted full access skips prompts for the process.
+ */
+export function antigravityCliSkipsPermissions(policy?: AntigravityCliPermissionPolicy): boolean {
+  return (
+    policy !== undefined &&
+    policy.runtimeMode === "full-access" &&
+    policy.approvalPolicy === undefined &&
+    policy.sandboxPolicy === undefined &&
+    (policy.maxRuntimeMode === undefined || policy.maxRuntimeMode === "full-access")
+  );
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */

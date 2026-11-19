@@ -422,23 +422,26 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
         expect(
           session.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
         ).toBe(false);
-        // Detached `invoke_subagent` children never forward permission prompts, so full access
-        // drops them for the whole process; a runtime mode change respawns it.
-        for (const runtimeMode of [
-          "full-access",
-          "auto-accept-edits",
-          "approval-required",
-        ] as const) {
+        const cliCases = [
+          { name: "full-access", skips: true, policy: { runtimeMode: "full-access" } },
+          { name: "auto-accept-edits", skips: false, policy: { runtimeMode: "auto-accept-edits" } },
+          {
+            name: "full-access-on-request",
+            skips: false,
+            policy: { runtimeMode: "full-access", approvalPolicy: "on-request" },
+          },
+        ] as const;
+        for (const { name, skips, policy } of cliCases) {
           const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
+          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${name}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
+            ...policy,
             interactionMode: "default",
             cwd: workspace,
           });
           const cliSession = yield* h.instance.orchestrationAdapter.openSession({
             threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
+            providerSessionId: ProviderSessionId.make(`provider-session-cli-${name}`),
             modelSelection,
             runtimePolicy: cliPolicy,
           });
@@ -453,7 +456,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             h.profileDirectory,
             "--app-data-dir",
             "antigravity-acp",
-            ...(runtimeMode === "full-access" ? ["--dangerously-skip-permissions"] : []),
+            ...(skips ? ["--dangerously-skip-permissions"] : []),
           ]);
           expect(
             (yield* h.readRequests)
@@ -465,6 +468,21 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
               )
               .map((request) => request.params?.value),
           ).toEqual(["default"]);
+        }
+
+        const launchesBefore = h.launches.length;
+        yield* h.refresh();
+        yield* h.instance.textGeneration
+          .generateThreadTitle({
+            cwd: h.profileDirectory,
+            message: "Name this thread",
+            modelSelection,
+          })
+          .pipe(Effect.ignore);
+        const helperLaunches = h.launches.slice(launchesBefore);
+        expect(helperLaunches.length).toBeGreaterThan(1);
+        for (const launch of helperLaunches) {
+          expect(launch.args).not.toContain("--dangerously-skip-permissions");
         }
       }),
   );

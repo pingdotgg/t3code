@@ -45,6 +45,7 @@ import {
 } from "../antigravityAuthSupport.ts";
 import {
   antigravityCliSessionMode,
+  antigravityCliSkipsPermissions,
   antigravityModelOptions,
   antigravityThinkingConfig,
   makeAntigravityAcpRuntime,
@@ -275,7 +276,7 @@ export const AntigravityDriver: ProviderDriver<
       );
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, runtimePolicy, ...runtimeInput } = input;
       const spawnEnvironment =
         threadEnvironment === undefined
           ? processEnvironment
@@ -292,6 +293,7 @@ export const AntigravityDriver: ProviderDriver<
           baseEnv: spawnEnvironment,
           auth,
           runtimeTempDirectory,
+          skipPermissions: antigravityCliSkipsPermissions(runtimePolicy),
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {

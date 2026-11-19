@@ -17,6 +17,7 @@ import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import {
   applyAntigravityAcpModelSelection,
   antigravityClientInfo,
+  antigravityCliSkipsPermissions,
   antigravitySessionMeta,
   buildAntigravityPrompt,
   isQualifiedAntigravityRelease,
@@ -98,6 +99,22 @@ describe("Antigravity release gates", () => {
       expect(antigravityClientInfo(version).name).toBe(ownName ? "t3-code" : "zed");
     },
   );
+});
+
+describe("antigravityCliSkipsPermissions", () => {
+  it.each([
+    { policy: { runtimeMode: "full-access" }, skips: true },
+    { policy: { runtimeMode: "full-access", maxRuntimeMode: "full-access" }, skips: true },
+    { policy: undefined, skips: false },
+    { policy: { runtimeMode: "approval-required" }, skips: false },
+    { policy: { runtimeMode: "auto-accept-edits" }, skips: false },
+    { policy: { runtimeMode: "auto" }, skips: false },
+    { policy: { runtimeMode: "full-access", approvalPolicy: "on-request" }, skips: false },
+    { policy: { runtimeMode: "full-access", sandboxPolicy: { type: "readOnly" } }, skips: false },
+    { policy: { runtimeMode: "full-access", maxRuntimeMode: "auto-accept-edits" }, skips: false },
+  ] as const)("$policy skips permissions: $skips", ({ policy, skips }) => {
+    expect(antigravityCliSkipsPermissions(policy)).toBe(skips);
+  });
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

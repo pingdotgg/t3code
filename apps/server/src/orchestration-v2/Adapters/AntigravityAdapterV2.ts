@@ -26,6 +26,7 @@ import {
   applyAntigravityAcpModelSelection,
   buildAntigravityPrompt,
   type AntigravityAcpRuntimeInput,
+  type AntigravityCliPermissionPolicy,
 } from "../../provider/acp/AntigravityAcpSupport.ts";
 import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
@@ -60,7 +61,6 @@ const AntigravityProviderCapabilitiesV2 = {
   sessions: {
     ...AcpProviderCapabilitiesV2.sessions,
     supportsModelSwitchInSession: true,
-    supportsRuntimeModeSwitchInSession: true,
   },
   tools: {
     ...AcpProviderCapabilitiesV2.tools,
@@ -76,7 +76,10 @@ const AntigravityProviderCapabilitiesV2 = {
 export type AntigravityAdapterV2RuntimeInput = Omit<
   AntigravityAcpRuntimeInput,
   "spawn" | "childProcessSpawner"
-> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+> & {
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly runtimePolicy?: AntigravityCliPermissionPolicy;
+};
 
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;

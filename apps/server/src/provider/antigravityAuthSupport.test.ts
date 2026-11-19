@@ -129,6 +129,22 @@ describe("Antigravity process environment", () => {
     expect(spawn.env).toMatchObject({ GEMINI_HOME: profile.geminiHome, PATH: "/usr/bin" });
   });
 
+  it("skips permissions only for the agy CLI", () => {
+    const argsFor = (harnessPath: string | null, skipPermissions?: boolean) =>
+      buildAntigravityAcpSpawnInput({
+        installation: { executablePath: "/usr/bin/agy", harnessPath },
+        profile,
+        cwd: "/project",
+        baseEnv: { PATH: "/usr/bin" },
+        ...(skipPermissions === undefined ? {} : { skipPermissions }),
+      }).args;
+
+    expect(argsFor(null, true)?.at(-1)).toBe("--dangerously-skip-permissions");
+    expect(argsFor(null, false)).not.toContain("--dangerously-skip-permissions");
+    expect(argsFor(null)).not.toContain("--dangerously-skip-permissions");
+    expect(argsFor("/release/harness", true)).toEqual(["--uid=", "--alsologtostderr"]);
+  });
+
   it("passes only the configured method's credential and keeps the GCP pair out of the environment", () => {
     const baseEnv = { PATH: "/usr/bin", GOOGLE_API_KEY: "ambient-key" };
     const spawnFor = (auth: AntigravityAuthConfig) =>
