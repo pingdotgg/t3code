@@ -192,13 +192,8 @@ describe("AddEnvironmentDialog", () => {
     using _bridge = setup();
     await using _screen = await render(<Owner />);
 
-    let finishPairing!: (result: AtomCommandResult<void, Error>) => void;
-    mocks.connectPairing.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          finishPairing = resolve;
-        }),
-    );
+    const pairing = Promise.withResolvers<AtomCommandResult<void, Error>>();
+    mocks.connectPairing.mockReturnValueOnce(pairing.promise);
     await userEvent.click(page.getByRole("button", { name: "Add environment" }));
     await userEvent.fill(page.getByPlaceholder("backend.example.com"), "devbox.example.com");
     await userEvent.fill(page.getByPlaceholder("PAIRCODE"), "PAIRCODE");
@@ -209,7 +204,7 @@ describe("AddEnvironmentDialog", () => {
     await userEvent.keyboard("{Escape}");
     await expectDefaultModeAfterReopen();
 
-    finishPairing(AsyncResult.success(undefined));
+    pairing.resolve(AsyncResult.success(undefined));
     await expect
       .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
       .toBeEnabled();
