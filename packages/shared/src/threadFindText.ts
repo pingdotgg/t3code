@@ -8,19 +8,18 @@ import {
   renderCodexInlineDirectivesAsMarkdown,
 } from "./codexMarkdownDirectives.ts";
 import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
+import { buildFileLinkParentSuffixByPath, fileLinkLabel } from "./fileLinks.ts";
 import {
-  buildFileLinkParentSuffixByPath,
-  splitFilePathPosition,
-  fileLinkLabel,
-} from "./fileLinks.ts";
-import {
+  classifyMarkdownImageSource,
   isMarkdownFileLinkLabel,
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
-  parseMarkdownFileLink,
-  resolveMarkdownFileLinkTarget,
+  normalizeMarkdownLinkDestination,
+  resolveMarkdownFileLink,
+  shouldRenderMarkdownImageAsFileLink,
 } from "./markdownLinks.ts";
+import { mediaKindFromPath } from "./mediaPreview.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -107,6 +106,7 @@ interface TextTree {
   readonly properties?: {
     readonly href?: unknown;
     readonly src?: unknown;
+    readonly dataLocalSrc?: unknown;
     readonly dataInlineCode?: unknown;
   };
   readonly children?: ReadonlyArray<TextTree>;
@@ -137,8 +137,8 @@ function markdownThreadFindText(
     ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
-    const target = resolveMarkdownFileLinkTarget(href, cwd);
-    return target ? [splitFilePathPosition(target).path] : [];
+    const resolved = resolveMarkdownFileLink(href, cwd);
+    return resolved ? [resolved.position.path] : [];
   });
   const parentSuffixes = buildFileLinkParentSuffixByPath(paths);
   const segments: string[] = [];
@@ -165,6 +165,22 @@ function markdownThreadFindText(
       let candidate: string | null = null;
       if (node.tagName === "a" && typeof href === "string") {
         candidate = href;
+      } else if (node.tagName === "img") {
+        const localSrc = node.properties?.dataLocalSrc;
+        const src = localSrc ?? node.properties?.src;
+        if (typeof src === "string") {
+          const authoredSrc = normalizeMarkdownLinkDestination(src);
+          const classifiedSrc =
+            typeof localSrc === "string" ? authoredSrc.replaceAll("\\", "/") : authoredSrc;
+          if (
+            shouldRenderMarkdownImageAsFileLink(
+              classifyMarkdownImageSource(classifiedSrc, cwd),
+              mediaKindFromPath(classifiedSrc),
+            )
+          ) {
+            candidate = authoredSrc;
+          }
+        }
       } else if (
         node.tagName === "code" &&
         !inPre &&
@@ -174,18 +190,13 @@ function markdownThreadFindText(
           (node.children ?? []).map((child) => child.value ?? "").join(""),
         );
       }
-      const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
-      if (candidate && target) {
+      const resolved = candidate ? resolveMarkdownFileLink(candidate, cwd) : null;
+      if (candidate && resolved) {
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
         const label = labelText(node);
         if (node.tagName === "a" && !isMarkdownFileLinkLabel(label, candidate)) text += `${label} `;
-        // The resolved editor target keeps only the first line of a range.
-        const endLine = parseMarkdownFileLink(candidate)?.endLine;
-        text += fileLinkLabel(
-          { ...splitFilePathPosition(target), ...(endLine !== undefined ? { endLine } : {}) },
-          parentSuffixes,
-        );
+        text += fileLinkLabel(resolved.position, parentSuffixes);
         return;
       }
     }

@@ -232,3 +232,12 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   expect(searchablePlanSegments(text).join("\n")).toContain("★ Insight");
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
 });
+
+it("indexes image destinations rendered as file chips", () => {
+  expect(
+    assistantSegments(
+      "![note](src/notes.ts#L42-L64) ![screenshot](src/screenshot.png#L42-L64)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["notes.ts · L42–64 "]);
+});
