@@ -162,6 +162,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
     const startedAt = turn.startedAt;
     let problem = turn.failed === undefined ? "" : `the agent could not be started: ${turn.failed}`;
     let stopped = false;
+    let died = false;
     for (let correction = 0; turn.failed === undefined; correction++) {
       const result = yield* journaled(
         run,
@@ -175,6 +176,7 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       );
       if (result.ending !== "completed") {
         stopped = result.ending === "stopped";
+        died = result.ending === "failed";
         problem = `the agent's turn was ${stopped ? "stopped" : "cut short"}: ${result.detail}`;
         break;
       }
@@ -206,6 +208,17 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
           "Your turn ended without a submitted result. Do not redo the work: call `t3_submit_output` now with the result of what you did.",
           threadOf(turn),
         ),
+      );
+    }
+    // The turn may only be out of sight, not dead: it is stopped before another does its work again.
+    if (died && turn.failed === undefined) {
+      const lost = turn;
+      yield* journaled(
+        run,
+        name,
+        `agent/${name}/${round}/stop`,
+        Schema.Void,
+        agents.interrupt({ ...threadOf(lost), turnId: lost.turnId }).pipe(Effect.ignore),
       );
     }
     // A turn that died is not the job's fault the first time: once more, on a thread of its own.

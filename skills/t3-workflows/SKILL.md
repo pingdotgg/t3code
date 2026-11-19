@@ -243,8 +243,9 @@ The invoked run is a run of its own in `t3 workflow list`, and is resumed by its
 pauses. Cancelling the run that invoked it cancels it too; a run started with `start` is on its
 own. To fan out, `start` one run per item from a step, each with a key made from the item.
 
-Start each run with a key that names its subject, `issue/412` for example. A later step then finds
-it with `runs({ workflow: fix, keyPrefix: "issue/412" })`, and cancels it when the subject is gone.
+Start each run with a key that names its subject and ends in a separator, `issue/412/` for
+example. A later step then finds it with `runs({ workflow: fix, keyPrefix: "issue/412/" })`, and
+cancels it when the subject is gone. Without the separator, `issue/412` would also find `issue/4120`.
 A run cannot cancel itself; it ends itself with `stop`.
 
 ## The store
@@ -281,8 +282,10 @@ const fresh =
 
 `signal` wakes one wait and is kept for a wait that opens later. `signalAll` wakes all who wait
 now and keeps nothing. To hold runs while something is true, each run reads the switch in a
-`step` and, while it is on, calls `wait("released", { key: "main-green", timeout: "10 minutes",
-returns: Schema.Null })` and reads the switch again. Whoever turns the switch off calls
+`step` and, while it is on, calls `wait(...)` with `{ key: "main-green", timeout: "10 minutes",
+returns: Schema.Null }` and reads the switch again. Number the names in that loop, `switch/1` and
+`released/1`, then `switch/2` and `released/2`: a name is used once in a run, and a step named
+twice would give back what it read the first time. Whoever turns the switch off calls
 `signalAll({ key: "main-green" }, null)`, and the timeout covers a run that began to wait just
 after.
 
