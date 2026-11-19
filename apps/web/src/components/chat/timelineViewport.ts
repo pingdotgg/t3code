@@ -1,5 +1,6 @@
 import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
 
+import { observeTimelineSelectionDrag } from "../../fork/timelineSelectionDrag";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { registerCommands } from "../../shortcuts/dispatcher";
 import {
@@ -131,8 +132,10 @@ export function attachTimelineViewport(
     top: scrollNode.scrollTop,
     height: scrollNode.scrollHeight,
   });
-  // Only a frame's input reaches the timeline unseen. Any other unexplained upward move is not
-  // the reader's: the browser clamps scrollTop when content briefly shrinks.
+  // A frame's input and a dragged text selection reach the timeline unseen. Any other
+  // unexplained upward move is not the reader's: the browser clamps scrollTop when content
+  // briefly shrinks.
+  const selectionDrag = observeTimelineSelectionDrag(scrollNode);
   const frameHasInput = () =>
     scrollNode.querySelector("iframe:hover") !== null ||
     (document.activeElement instanceof HTMLIFrameElement &&
@@ -144,7 +147,7 @@ export function attachTimelineViewport(
         height: scrollNode.scrollHeight,
         programmatic: programmaticHolds > 0,
       }) &&
-      frameHasInput() &&
+      (frameHasInput() || selectionDrag.isActive()) &&
       // LegendList updates its scroll state on the next animation frame.
       resolveTimelineIsAtEnd({
         contentLength: scrollNode.scrollHeight,
@@ -202,6 +205,7 @@ export function attachTimelineViewport(
     },
     dispose: () => {
       window.removeEventListener("message", handleFrameResize, true);
+      selectionDrag.dispose();
       listeners.clear();
       followReleasedListeners.clear();
       scrollNode.removeEventListener("scroll", handleScroll);
