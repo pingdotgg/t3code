@@ -179,3 +179,11 @@
 - Review: one read-only review on the second Claude account found no bugs. Taken: the OpenCode comment. Left: upstream's Resume test table now expects Resume in every row; keeping upstream's rows keeps later syncs simple.
 - Switching the hubs: migration `100_TurnStartReadIndexes` adds three partial indexes. The Node pins did not change.
 - Next: Tomáš merges the PR, then switches hub2 and hub to the new build. Not checked in a browser: the Resume button on a stopped Grok run.
+
+## 2026-11-19: Fork Usage strings translated
+
+- What: the 17 web strings the fork added to Usage → Limits (the pooled view: "Pool empty", "First empty", "Next reset", the burn labels, "Reset advice:", "Subscriptions", the chart's "Now", "projected" and aria label, and their values) are translated in de, es, fr, ja, ko, pt-BR, ru, sv and zh, following each catalog's existing words for pool and reset. Mobile has none of these keys.
+- Why: they were added before the 2026-11-18 sync and stayed English in every non-English catalog.
+- How found: keys in the fork's web `en.json` that upstream's lacks: 17, all still English in `ja.json`.
+- Numbers: `vp run i18n:check` pass; `vp run check:changed`: format and typecheck (2 packages) pass.
+- Next: Tomáš merges the PR.
