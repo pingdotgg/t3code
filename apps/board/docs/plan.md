@@ -8,7 +8,7 @@ The PRs, in stack order, are B0, B1, S1, K1, B2, B3, B4, B5, B6, B7, B8, B9, B10
 
 One box is one unit of work. Every box names the evidence that checks it. A nested box is a sub-step of the box above it. Check a box only when its evidence exists, a file, a log line, a screenshot, a test run, or a SHA. The body is a how-to. The appendices explain and record.
 
-The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator lands every PR. Every PR in the stack is an operator item that stops at STACK-READY, because the operator wants review before landing and each PR builds on the one below it.
+The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator granted standing merge approval. Wherever this plan says the operator lands a PR, the root merges it bottom-up with a merge commit once its verdict is clean, retargets the next PR to `main`, and keeps every remote branch.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -36,7 +36,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
   - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. B3 after B2. B4 after B3. B5 after B4. B6 after B5.
   - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They wait for the operator's review in chat with screenshots and a video before merge.
+- [ ] Hold the review gate. B1, B2, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
