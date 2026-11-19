@@ -1216,30 +1216,38 @@ describe("environment query lifecycle", () => {
           );
           const read = readEnvironmentQuery(registry, harness.atom);
           const first = registry.mount(harness.atom);
-          const second = registry.mount(harness.atom);
+          const sidebar = harness.family(
+            { environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined },
+            "sidebar",
+          );
+          const second = registry.mount(sidebar);
           expect(yield* Queue.take(answers)).toBe(1);
           expect(yield* read).toBe(1);
-          first();
           yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
           expect(yield* Queue.take(answers)).toBe(2);
           expect(yield* read).toBe(2);
+          expect(executions).toBe(2);
+          first();
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(yield* Queue.take(answers)).toBe(3);
+          expect(yield* read).toBe(3);
 
           second();
           yield* Effect.promise(() => vi.advanceTimersByTimeAsync(0));
           yield* Effect.promise(() => vi.advanceTimersByTimeAsync(30_000));
-          expect(executions).toBe(2);
+          expect(executions).toBe(3);
 
           const remount = registry.mount(harness.atom);
-          expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(2);
-          expect(yield* Queue.take(answers)).toBe(3);
-          expect(yield* read).toBe(3);
-          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(selectEnvironmentQueryData(registry.get(harness.atom))).toBe(3);
           expect(yield* Queue.take(answers)).toBe(4);
           expect(yield* read).toBe(4);
+          yield* Effect.promise(() => vi.advanceTimersByTimeAsync(10_000));
+          expect(yield* Queue.take(answers)).toBe(5);
+          expect(yield* read).toBe(5);
           if (mode === "interval and signal") {
             registry.set(trigger, 1);
-            expect(yield* Queue.take(answers)).toBe(5);
-            expect(yield* read).toBe(5);
+            expect(yield* Queue.take(answers)).toBe(6);
+            expect(yield* read).toBe(6);
           }
           const beforeIdle = executions;
           remount();
@@ -1669,7 +1677,7 @@ describe("environment query lifecycle", () => {
     }),
   );
 
-  it.effect("refetches when mounted again after its stale time, while still cached", () =>
+  it.effect("refetches a stale query on remount while another view keeps the cache live", () =>
     Effect.gen(function* () {
       let now = 0;
       using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -1683,6 +1691,11 @@ describe("environment query lifecycle", () => {
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const sidebar = harness.family(
+        { environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined },
+        "sidebar",
+      );
+      registry.mount(sidebar);
       const read = readEnvironmentQuery(registry, harness.atom);
       const remount = Effect.gen(function* () {
         const unmount = registry.mount(harness.atom);
@@ -1704,6 +1717,7 @@ describe("environment query lifecycle", () => {
       // Past the stale time, well inside the default 5 minute idle TTL.
       now = 61_000;
       expect(yield* remount).toBe("after edit");
+      expect(yield* readEnvironmentQuery(registry, sidebar)).toBe("after edit");
       expect(fetches).toBe(2);
     }),
   );

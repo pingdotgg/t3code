@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -749,15 +751,20 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     | AtomRegistry.AtomRegistry
     | R
   >,
-): (target: {
-  readonly environmentId: EnvironmentIdType;
-  readonly input: Input;
-}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+): (
+  target: { readonly environmentId: EnvironmentIdType; readonly input: Input },
+  mountScope?: string,
+) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const connectionAtom = environmentConnectionAtoms(runtime);
   // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
   // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
-  const membersByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
-  const family = Atom.family((key: string) => {
+  const buildsByCache = new WeakMap<
+    Atom.Atom<unknown>,
+    WeakMap<AtomRegistry.AtomRegistry, number>
+  >();
+  const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
+    options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
+  const cacheFamily = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const builds = new WeakMap<AtomRegistry.AtomRegistry, number>();
@@ -843,9 +850,19 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               return Effect.fail(
                 new EnvironmentRpcUnavailableError({
                   environmentId: target.environmentId,
-                  message: `Environment ${target.environmentId} is ${
-                    connectionState.phase === "available" ? "not connected" : connectionState.phase
-                  }.`,
+                  ...translatableMessage(
+                    connectionState.phase === "offline"
+                      ? msg("Environment {environmentId} is offline.", {
+                          environmentId: target.environmentId,
+                        })
+                      : connectionState.phase === "blocked"
+                        ? msg("Environment {environmentId} is blocked.", {
+                            environmentId: target.environmentId,
+                          })
+                        : msg("Environment {environmentId} is not connected.", {
+                            environmentId: target.environmentId,
+                          }),
+                  ),
                 }),
               );
           }
@@ -886,26 +903,40 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         });
       })
       .pipe(Atom.setIdleTTL(idleTtlMs));
-    const isFinal = (result: AsyncResult.AsyncResult<A, unknown>) =>
-      options.isFinal !== undefined && Option.exists(AsyncResult.value(result), options.isFinal);
     const refreshTrigger = options.refreshTrigger?.(target);
     const cache = (
       refreshTrigger === undefined
         ? queryAtom
         : queryAtom.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
     ).pipe(Atom.setIdleTTL(idleTtlMs));
+    buildsByCache.set(cache, builds);
+    return cache;
+  });
+  type QueryAtom = ReturnType<typeof cacheFamily>;
+  const membersByCache = new WeakMap<QueryAtom, Map<string | undefined, QueryAtom>>();
+  return (target, mountScope) => {
+    const key = environmentRpcKey(target);
+    const cache = cacheFamily(key);
+    let members = membersByCache.get(cache);
+    if (members === undefined) {
+      members = new Map();
+      membersByCache.set(cache, members);
+    }
+    const existing = members.get(mountScope);
+    if (existing !== undefined) return existing;
     const revalidated = cache.pipe(
-      revalidateOnMount(options.staleTimeMs ?? 30_000, isFinal, builds),
+      revalidateOnMount(options.staleTimeMs ?? 30_000, isFinal, buildsByCache.get(cache)),
     );
     const member = (
       options.refreshIntervalMs === undefined
         ? revalidated
         : revalidated.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal))
-    ).pipe(Atom.withLabel(`${options.label}:${key}`));
-    membersByCache.set(cache, member);
+    ).pipe(
+      Atom.withLabel(`${options.label}:${key}${mountScope === undefined ? "" : `:${mountScope}`}`),
+    );
+    members.set(mountScope, member);
     return member;
-  });
-  return (target) => family(environmentRpcKey(target));
+  };
 }
 
 export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
