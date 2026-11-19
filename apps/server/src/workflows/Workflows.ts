@@ -20,10 +20,12 @@ export const HOOK_PREFIX = "wf-";
 
 export class WorkflowNotRegisteredError extends Schema.TaggedError<WorkflowNotRegisteredError>()(
   "WorkflowNotRegisteredError",
-  { workflow: Schema.String },
+  { workflow: Schema.String, version: Schema.optional(Schema.Number) },
 ) {
   override get message(): string {
-    return `No workflow named ${this.workflow} is registered.`;
+    return this.version === undefined
+      ? `No workflow named ${this.workflow} is registered.`
+      : `Version ${this.version} of workflow ${this.workflow} is not registered.`;
   }
 }
 

@@ -162,12 +162,17 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     function* (name, input, options) {
       // A parent written against one version of a child must not get another one's payload.
       const found =
-        (options.version === undefined
-          ? undefined
+        options.version === undefined
+          ? latest(name)
           : registered.find(
               ([candidate]) => candidate.name === name && candidate.version === options.version,
-            )) ?? latest(name);
-      if (found === undefined) return yield* new WorkflowNotRegisteredError({ workflow: name });
+            );
+      if (found === undefined) {
+        return yield* new WorkflowNotRegisteredError({
+          workflow: name,
+          ...(options.version === undefined ? {} : { version: options.version }),
+        });
+      }
       const [definition, engine] = found;
       const payloadCodec = Schema.toCodecJson(definition.payload);
       const encode = Schema.encodeUnknownEffect(payloadCodec);
