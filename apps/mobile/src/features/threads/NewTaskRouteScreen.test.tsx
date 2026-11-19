@@ -1,9 +1,12 @@
 import type { ReactNode } from "react";
-import { act, useEffect } from "react";
+import { act } from "react";
+import * as React from "react";
 import { createRoot } from "react-dom/client";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
+import * as navigationRow from "../../components/ui/NavigationRow";
+import { retargetSavedNewTaskDraft } from "../../state/use-composer-drafts";
 
 const environmentId = EnvironmentId.make("env-1");
 
@@ -28,7 +31,6 @@ const scratch = project("scratch", "/scratch");
 const harness = vi.hoisted(() => ({
   setProject: vi.fn(),
   openScratch: vi.fn(),
-  retargetDraft: vi.fn(),
   selectDetail: vi.fn(),
   navigation: {
     goBack: vi.fn(),
@@ -69,17 +71,11 @@ vi.mock("gt-react-native", () => ({
 }));
 vi.mock("@react-navigation/native", () => ({
   StackActions: { push: (name: string) => ({ type: "PUSH", name }) },
-  useFocusEffect: (effect: () => () => void) => useEffect(effect, [effect]),
+  useFocusEffect: (effect: () => () => void) => React.useEffect(effect, [effect]),
   useIsFocused: () => true,
   useNavigation: () => harness.navigation,
 }));
-vi.mock("../../components/ui/NavigationRow", () => ({
-  NavigationRow: (props: { title: string; disabled?: boolean; onPress: () => void }) => (
-    <button aria-label={props.title} disabled={props.disabled} onClick={props.onPress}>
-      {props.title}
-    </button>
-  ),
-}));
+vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: () => null }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
@@ -102,9 +98,7 @@ vi.mock("../../state/entities", () => ({
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { openScratch: {} } }));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => harness.openScratch }));
-vi.mock("../../state/use-composer-drafts", () => ({
-  retargetSavedNewTaskDraft: harness.retargetDraft,
-}));
+vi.mock("../../state/use-composer-drafts", () => ({ retargetSavedNewTaskDraft: vi.fn() }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useRemoteConnectionStatus: () => ({
     connectedEnvironments: [{ environmentId, connectionState: "connected" }],
@@ -139,6 +133,12 @@ vi.mock("./new-task-flow-provider", () => ({
 
 import { NewTaskRouteScreen } from "./NewTaskRouteScreen";
 
+vi.spyOn(navigationRow, "NavigationRow").mockImplementation(({ title, disabled, onPress }) => (
+  <button aria-label={title} disabled={disabled === true} onClick={() => onPress?.({} as never)}>
+    {title}
+  </button>
+));
+
 it("keeps the project picked while No project was still opening", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const opening = Promise.withResolvers<unknown>();
@@ -165,9 +165,9 @@ it.each(["backing out and reopening", "waiting for the saved draft to load"])(
     const opening = Promise.withResolvers<unknown>();
     const retargeting = Promise.withResolvers<boolean>();
     harness.openScratch.mockReturnValue(opening.promise);
-    harness.retargetDraft
+    vi.mocked(retargetSavedNewTaskDraft)
       .mockReset()
-      .mockImplementation((_draftId, target: { projectId: ProjectId }) =>
+      .mockImplementation((_draftId, target) =>
         target.projectId === scratch.id ? retargeting.promise : Promise.resolve(true),
       );
     harness.selectDetail.mockClear();
