@@ -19,15 +19,19 @@ const ERROR_STEP_TYPE = 17;
 const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
-const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// 1.5 writes "STATUS (code NNN): message" and the JSON body; groups keep API_ERROR's order.
+const STATUS_ERROR = /\b(?=[A-Z_]+ \(code (\d{3})\): (\P{Cc}+))([A-Z_]+)/u;
+// The Go map renders `key:value`; the JSON body renders `"key": "value"`.
+const QUOTA_EXHAUSTED = /\breason"?:\s*"?QUOTA_EXHAUSTED\b/;
 // Claude rejects a saved thinking block without a valid signature. It sits in the native
 // history, so every later prompt to that session fails the same way.
 const INVALID_THINKING_SIGNATURE =
   /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
-const RESET_TIMESTAMP = /\bquotaResetTimeStamp:([^\s\]]+)/;
-const RESET_DELAY = /\bquotaResetDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const RESET_TIMESTAMP = /\bquotaResetTimeStamp"?:\s*"?([^\s\]",]+)/;
+const RESET_DELAY =
+  /\bquotaResetDelay"?:\s*"?((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]"])/;
 // google.rpc.RetryInfo, which plain rate limits carry instead of a quota reset.
-const RETRY_DELAY = /\bretryDelay:((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]])/;
+const RETRY_DELAY = /\bretryDelay"?:\s*"?((?:\d+(?:\.\d+)?(?:ns|us|µs|μs|ms|h|m|s))+)(?=[\s\]"])/;
 const GO_DURATION_PART = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|h|m|s)/g;
 const GO_DURATION_UNIT_MS: Record<string, number> = {
   ns: 1e-6,
@@ -123,7 +127,7 @@ function turnFailure(
   // The agent maps only the SDK's QUOTA_EXHAUSTED stop reason to `refusal`.
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
-  const apiError = API_ERROR.exec(text);
+  const apiError = API_ERROR.exec(text) ?? STATUS_ERROR.exec(text);
   const reusable = (failure: OrchestrationV2ProviderFailure) =>
     ({ failure, threadDisposition: "reusable" }) as const;
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {

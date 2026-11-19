@@ -30,6 +30,34 @@ const QUOTA_ERROR = errorPayload(
 const RATE_LIMIT_ERROR = errorPayload(
   "Error 429, Message: Resource has been exhausted (e.g. check quota)., Status: RESOURCE_EXHAUSTED, Details: [map[@type:type.googleapis.com/google.rpc.ErrorInfo domain:cloudcode-pa.googleapis.com reason:RATE_LIMIT_EXCEEDED] map[@type:type.googleapis.com/google.rpc.RetryInfo retryDelay:42s]]",
 );
+// Antigravity 1.5 writes "STATUS (code NNN): message", protobuf bytes, then Google's JSON body.
+const JSON_QUOTA_ERROR = Buffer.concat([
+  Buffer.from([0x12, 0x86, 0x01]),
+  Buffer.from(
+    "RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 2h24m51s.\u001a«\tHTTP 429 Too Many Requests\n\n" +
+      JSON.stringify(
+        {
+          error: {
+            code: 429,
+            details: [
+              {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                metadata: {
+                  quotaResetDelay: "2h24m51.361888584s",
+                  quotaResetTimeStamp: "2026-11-19T18:33:55Z",
+                },
+                reason: "QUOTA_EXHAUSTED",
+              },
+              { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "8691.36s" },
+            ],
+            status: "RESOURCE_EXHAUSTED",
+          },
+        },
+        null,
+        2,
+      ),
+  ),
+]);
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
@@ -125,6 +153,19 @@ describe("watchAntigravityPromptOutcome", () => {
           code: "RESOURCE_EXHAUSTED",
           retryable: true,
           resetAt: "1970-01-01T00:00:42.000Z",
+        }),
+      );
+      assert.deepEqual(
+        yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, JSON_QUOTA_ERROR],
+        ]),
+        reusable({
+          class: "usage_limit",
+          message: "You have reached your Antigravity quota for this period.",
+          code: "RESOURCE_EXHAUSTED",
+          retryable: true,
+          resetAt: "2026-11-19T18:33:55.000Z",
         }),
       );
       assert.deepEqual(
