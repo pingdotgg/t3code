@@ -162,7 +162,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { cn } from "../lib/utils";
 import { resolveRemoteOpenState, useRemoteOpenResolution } from "../remoteOpen";
-import { useRightPanelStore } from "../rightPanelStore";
+import { rightPanelHostRef, useRightPanelStore } from "../rightPanelStore";
 import { useOpenIssueLink } from "../lib/openIssueLink";
 import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { useEnvironmentQuery } from "../state/query";
@@ -905,9 +905,16 @@ function useChatMarkdownState({
       openAt(panelPath);
       return;
     }
+    // Anything the user opens in this panel meanwhile, such as a file from the picker, wins.
+    const panelRef = rightPanelHostRef(threadRef);
+    const userActionRevision = useRightPanelStore.getState().markUserAction(panelRef);
     void (async () => {
       const match = await findWorkspaceFileMatch(fileLinkMeta);
-      if (!isLatestLookup()) return;
+      if (
+        !isLatestLookup() ||
+        useRightPanelStore.getState().getUserActionRevision(panelRef) !== userActionRevision
+      )
+        return;
       openAt(match ?? panelPath);
     })();
   };
