@@ -40,7 +40,11 @@ import {
   storeAttachmentUpload,
   validateAttachmentUploadToken,
 } from "./assets/AttachmentUpload.ts";
-import { FILE_PAGE_NETWORK_POLICY } from "./fork/filePagePolicy.ts";
+import {
+  FILE_PAGE_NETWORK_POLICY,
+  isUtf16ByteOrderMark,
+  readPinnedFilePage,
+} from "./fork/filePagePolicy.ts";
 import { spaFrameHeaders } from "./fork/sameOriginFrame.ts";
 import * as BrowserTraceCollector from "./observability/BrowserTraceCollector.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
@@ -209,9 +213,11 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     !asset.download &&
     headers["Content-Type"] === "text/html; charset=utf-8"
   ) {
-    const bytes = yield* readMcpAppHtml(asset.path);
+    const bytes = asset.file
+      ? yield* readPinnedFilePage(asset.path, asset.file)
+      : yield* readMcpAppHtml(asset.path);
     // A page too large to buffer is served as is, without scroll restoration.
-    if (bytes !== null) {
+    if (bytes !== null && !isUtf16ByteOrderMark(bytes)) {
       const script = new TextEncoder().encode(FILE_PREVIEW_SCROLL_SCRIPT);
       const body = new Uint8Array(bytes.byteLength + script.byteLength);
       body.set(bytes);

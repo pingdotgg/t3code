@@ -283,6 +283,7 @@ describe("AssetAccess", () => {
           path: canonicalFile,
           mimeType,
           htmlPolicy: "file-page",
+          ...(mimeType === "text/html" ? { renderIntent: "file-preview" } : {}),
         });
         yield* fs.writeFileString(path.join(outside, "sibling.png"), "private sibling");
         expect(yield* resolveAsset(token, "sibling.png")).toBeNull();

@@ -1071,6 +1071,7 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
           mimeType,
           file,
           htmlPolicy: "file-page",
+          ...(mimeType === "text/html" ? { renderIntent: "file-preview" as const } : {}),
           ...(claims.download ? { download: true, fileName: path.basename(canonicalFile) } : {}),
         } satisfies ResolvedAsset)
       : null;
