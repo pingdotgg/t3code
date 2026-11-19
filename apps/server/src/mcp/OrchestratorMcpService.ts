@@ -1561,12 +1561,29 @@ const make = Effect.gen(function* () {
     );
   };
 
+  const defaultModelSelection = Effect.fn("OrchestratorMcpService.defaultModelSelection")(
+    function* (projectId: ProjectId) {
+      const settings = yield* serverSettings.getSettings.pipe(
+        Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
+      );
+      const project = yield* projects
+        .getById(projectId)
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to read project ${projectId}: ${error.message}`),
+          ),
+        );
+      return resolveProjectSettings(settings, projectId, Option.getOrNull(project)).settings
+        .defaultModelSelection;
+    },
+  );
+
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
-    readonly skipProjectEnablementFilter?: boolean;
+    readonly isAcceptedRetry?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
     const requestedInstanceId = input.target?.providerInstanceId;
     const requestedDriver = input.target?.driverKind;
@@ -1597,7 +1614,7 @@ const make = Effect.gen(function* () {
       ];
       for (const candidate of orderedCandidates) {
         const enabledForProject =
-          input.skipProjectEnablementFilter === true ||
+          input.isAcceptedRetry === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
             projectId: input.parent.thread.projectId,
             instanceId: candidate.instanceId,
@@ -1669,16 +1686,19 @@ const make = Effect.gen(function* () {
       }
     }
 
-    const inheritsOptions =
-      instanceId === inheritedSelection.instanceId &&
+    const isTargetModel = (selection: ModelSelection | null) =>
+      selection?.instanceId === instanceId &&
       (advertised?.slug ?? model) ===
-        (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
-    let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
-          descriptors,
-        )
-      : undefined;
+        (advertisedModel(provider, selection.model)?.slug ?? selection.model);
+    const baseSelection = isTargetModel(inheritedSelection)
+      ? inheritedSelection
+      : input.isAcceptedRetry === true || requestedOptions?.length === 0
+        ? null
+        : yield* defaultModelSelection(input.parent.thread.projectId);
+    let options =
+      baseSelection !== null && isTargetModel(baseSelection)
+        ? knownOptions(withLegacyUltracodeEffort(descriptors, baseSelection.options), descriptors)
+        : undefined;
     if (requestedOptions !== undefined) {
       const selections = new Map(
         (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
@@ -2728,7 +2748,7 @@ const make = Effect.gen(function* () {
         parent,
         target: input.target,
         providers,
-        skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        isAcceptedRetry: isRetryOfAcceptedDelegation,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,
@@ -3101,7 +3121,7 @@ const make = Effect.gen(function* () {
                         providerInstanceId: committedThread.modelSelection.instanceId,
                       },
                 providers,
-                skipProjectEnablementFilter: isRetryOfAcceptedCreation,
+                isAcceptedRetry: isRetryOfAcceptedCreation,
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,

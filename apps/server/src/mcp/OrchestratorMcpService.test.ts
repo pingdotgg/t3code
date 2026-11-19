@@ -2391,7 +2391,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               }),
           }),
           adapterRegistryLayer([museInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -2749,7 +2749,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
         ]),
         adapterRegistryLayer([codexInstanceId, altInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -2954,7 +2954,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
                 providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
               ]),
-              Layer.mock(ProjectService.ProjectService)({}),
+              Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
               Layer.mock(SecretRequests.SecretRequests)({}),
               Layer.mock(RemoteDelegation.RemoteDelegation)({}),
               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -3397,7 +3397,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 ? [codexAltInstanceId]
                 : [codexInstanceId, codexAltInstanceId],
             ),
-            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -4331,7 +4331,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
             ]),
             adapterRegistryLayer([codexInstanceId, peerId]),
-            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
@@ -4542,6 +4542,136 @@ describe("OrchestratorMcpService provider resolution", () => {
           error.message,
           `Unable to interrupt thread ${parentThreadId}: refused by the orchestrator`,
         );
+      }),
+  );
+
+  it.effect.each([
+    { source: "global", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
+    { source: "project", defaultModel: "gpt-6.1-sol", expectedEffort: "high" },
+    { source: "global", defaultModel: "gpt-6-luna", expectedEffort: undefined },
+    {
+      source: "global",
+      defaultModel: "gpt-6.1-sol",
+      expectedEffort: undefined,
+      acceptedRetry: true,
+    },
+  ] as const)(
+    "a delegate gets the $source default's options only on its model ($defaultModel)",
+    ({ source, defaultModel, expectedEffort, ...row }) =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const model = "gpt-6.1-sol";
+        const parent = { instanceId: claudeInstanceId, model: "claude-opus-5-5" };
+        const defaultSelection = (effort: string) => ({
+          instanceId: codexInstanceId,
+          model: defaultModel,
+          options: [
+            { id: "reasoningEffort", value: effort },
+            { id: "notAnOptionOfThisModel", value: true },
+          ],
+        });
+        const commands: Array<{ readonly modelSelection?: unknown }> = [];
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          origin: "app_owned",
+          childThreadId,
+          providerInstanceId: codexInstanceId,
+          model,
+          status: "running",
+          result: null,
+        };
+        const dependencies = Layer.mergeAll(
+          NodeServices.layer,
+          NodeCrypto.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed("acceptedRetry" in row),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(commands.length > 0 ? [task] : [], parent)
+                  : childProjection,
+              ),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                commands.push(command as { readonly modelSelection?: unknown });
+                return {
+                  sequence: 1,
+                  storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+                } as never;
+              }),
+          }),
+          ServerSettings.layerTest(
+            source === "global"
+              ? { defaultModelSelection: defaultSelection("high") }
+              : {
+                  defaultModelSelection: defaultSelection("low"),
+                  projectSettingsOverrides: {
+                    [projectId]: { defaultModelSelection: defaultSelection("high") },
+                  },
+                },
+          ),
+          providerRegistryLayer([
+            providerSnapshot({
+              instanceId: claudeInstanceId,
+              driver: ProviderDriverKind.make("claudeAgent"),
+              model: parent.model,
+            }),
+            {
+              ...providerSnapshot({
+                instanceId: codexInstanceId,
+                driver: ProviderDriverKind.make("codex"),
+              }),
+              models: [
+                {
+                  slug: model,
+                  name: model,
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id: "reasoningEffort",
+                        label: "Reasoning",
+                        type: "select",
+                        options: [
+                          { id: "low", label: "Low", isDefault: true },
+                          { id: "high", label: "High" },
+                        ],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ]),
+          adapterRegistryLayer([claudeInstanceId, codexInstanceId]),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: () =>
+              "acceptedRetry" in row
+                ? Effect.die("an accepted retry must replay without reading the project")
+                : Effect.succeedSome({ id: projectId, defaultModelSelection: null } as never),
+          }),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        );
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          yield* service.delegateTask(scope, {
+            task: "Review the change.",
+            target: yield* decodeTarget({ providerInstanceId: codexInstanceId, model }),
+            mode: "async",
+          });
+          assert.deepEqual(commands[0]?.modelSelection, {
+            instanceId: codexInstanceId,
+            model,
+            ...(expectedEffort === undefined
+              ? {}
+              : { options: [{ id: "reasoningEffort", value: expectedEffort }] }),
+          });
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
       }),
   );
 
