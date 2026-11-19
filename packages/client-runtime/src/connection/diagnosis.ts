@@ -44,6 +44,8 @@ export interface ConnectionDiagnosisInput {
   > | null;
   readonly clientVersion?: string | undefined;
   readonly serverVersion?: string | null | undefined;
+  /** owner/repo whose docs "More info" links to; unset means T3's. */
+  readonly repository?: string | undefined;
 }
 
 interface Located {
@@ -443,7 +445,7 @@ export function presentConnectionDiagnosis(
     facts,
     moreInfoUrl:
       relayPath || located.cause === "session_pending"
-        ? t3ConnectTroubleshootingUrl(helpSection(located, failure))
+        ? t3ConnectTroubleshootingUrl(helpSection(located, failure), input.repository)
         : null,
   };
 }

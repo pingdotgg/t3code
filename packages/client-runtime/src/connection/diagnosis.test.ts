@@ -145,6 +145,14 @@ describe("presentConnectionDiagnosis", () => {
     expect(diagnose(backoff(failure), "direct")?.moreInfoUrl).toContain(
       "sign-in-account-or-link-problems",
     );
+    expect(
+      presentConnectionDiagnosis({
+        hostLabel: "Mac mini",
+        state: backoff(failure),
+        via: "relay",
+        repository: "fork/t3code",
+      })?.moreInfoUrl,
+    ).toMatch(/^https:\/\/github\.com\/fork\/t3code\/blob\/main\/docs\/user\//);
   });
 
   it("asks for approval on the host instead of reporting it unreachable", () => {

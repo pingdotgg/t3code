@@ -111,6 +111,26 @@ describe("environment release checks", () => {
     );
   });
 
+  it("checks a fork build's own repository", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url === "https://github.com/fork/t3code/releases/latest") {
+          return Response.json({ tag_name: "v1.1.0" });
+        }
+        if (url === "https://github.com/fork/t3code/releases.atom") return feed();
+        if (url === "https://api.github.com/repos/fork/t3code/releases?per_page=100&page=1") {
+          return Response.json([{ tag_name: "v1.0.0-preview.20260924.3" }]);
+        }
+        throw new Error(`Unexpected release request: ${url}`);
+      }),
+    );
+    expect(await findEnvironmentUpdate("1.0.0", signal, "fork/t3code")).toBe("1.1.0");
+    expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal, "fork/t3code")).toBe(
+      "1.0.0-preview.20260924.3",
+    );
+  });
+
   it("reports failed checks instead of claiming the server is current", async () => {
     for (const status of [403, 429]) {
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status })));

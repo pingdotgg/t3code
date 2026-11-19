@@ -4,6 +4,7 @@ import type { NavigationState } from "@react-navigation/native";
 import {
   findLinkedRoute,
   findStackRoute,
+  hostedAppLinkPrefixes,
   restoreDraftLinkState,
   shouldHandleAppLink,
   updateLinkedRoute,
@@ -32,6 +33,16 @@ describe("shouldHandleAppLink", () => {
       expect(shouldHandleAppLink(url, true)).toBe(false);
     },
   );
+});
+
+describe("hostedAppLinkPrefixes", () => {
+  it.each([
+    [undefined, ["https://app.t3.codes"]],
+    ["https://app.fork.example/", ["https://app.fork.example"]],
+    [null, []],
+  ])("opens %j links in the app as %j", (hostedAppUrl, expected) => {
+    expect(hostedAppLinkPrefixes(hostedAppUrl)).toEqual(expected);
+  });
 });
 
 describe("cloud-only deep links", () => {

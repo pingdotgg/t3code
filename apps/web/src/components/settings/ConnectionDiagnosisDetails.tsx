@@ -13,6 +13,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 
 import { APP_VERSION } from "~/branding";
+import { releaseRepository } from "~/projectLinks";
 import { environmentCatalog } from "~/connection/catalog";
 import { type EnvironmentPresentation, useRelayEnvironmentDiscovery } from "~/state/environments";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -49,6 +50,7 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
             relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
             clientVersion: APP_VERSION,
             serverVersion: environment.serverConfig?.environment.serverVersion,
+            repository: releaseRepository(),
           },
           m,
         )

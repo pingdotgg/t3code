@@ -80,6 +80,14 @@ export function resolveHostedAppUrl(
   return extra?.hostedAppUrl === "" ? null : (normalizeSecureUrl(extra?.hostedAppUrl) ?? undefined);
 }
 
+/** The build's release repository as owner/repo, for release checks and help links; unset means T3's. */
+export function resolveReleaseRepository(
+  extra: { readonly releaseRepository?: unknown } | undefined = Constants.expoConfig?.extra,
+): string | undefined {
+  const value = trimNonEmpty(extra?.releaseRepository);
+  return value && /^[\w.-]+\/[\w.-]+$/.test(value) ? value : undefined;
+}
+
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
   return Boolean(config.clerk.publishableKey && config.clerk.jwtTemplate && config.relay.url);
