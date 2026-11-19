@@ -985,6 +985,7 @@ export function toPullRequestSummary(pr: SummarizedPullRequest): GitHubPullReque
 export interface GitHubPullRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  readonly viewerSubscription?: string;
 }
 
 type EditedConnection = WatchedPullRequest["comments"] | WatchedPullRequest["reviews"];
@@ -1024,6 +1025,7 @@ export function toPullRequestWatchFingerprint(
       newestEdit(pr.reviews),
       pr.reviewThreads.totalCount,
     ].join(" "),
+    ...(pr.viewerSubscription == null ? {} : { viewerSubscription: pr.viewerSubscription }),
   };
 }
 

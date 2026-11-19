@@ -77,6 +77,14 @@ export interface ProviderChangeRequestWatchFingerprint {
   readonly remarks: string;
   /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
   readonly coversDetail?: boolean;
+  readonly viewerSubscription?: string;
+}
+
+/** The viewer's notification threads on change requests in one repository, newest first. */
+export interface ProviderChangeRequestNotifications {
+  readonly threads: ReadonlyArray<{ readonly number: number; readonly updatedAt: number }>;
+  /** More threads were updated since then than one page holds. */
+  readonly truncated: boolean;
 }
 
 export interface PullRequestProviderFailure {
@@ -419,6 +427,10 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestWatchFingerprint | null, PullRequestProviderError>;
 
+  /** Threads updated after `since`. Null means this credential cannot read notifications. */
+  readonly listChangeRequestNotifications?: (
+    input: ProviderRepositoryRef & { readonly since: number },
+  ) => Effect.Effect<ProviderChangeRequestNotifications | null, PullRequestProviderError>;
   /**
    * Emits whenever the host says the change request may have changed, and once on connecting.
    * Ends where the host or account offers no such feed; readers then rely on polling alone.
