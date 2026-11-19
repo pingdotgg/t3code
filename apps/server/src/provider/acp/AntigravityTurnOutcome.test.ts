@@ -33,6 +33,15 @@ const RATE_LIMIT_ERROR = errorPayload(
 const INVALID_ARGUMENT_ERROR = errorPayload(
   "Error 400, Message: Request contains an invalid argument., Status: INVALID_ARGUMENT, Details: []",
 );
+// A dropped upstream connection, as Google sign-in reports it and as a Gemini API key reports it.
+const BAD_GATEWAY_ERRORS = [
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: 502 Bad Gateway, Details: []",
+  ),
+  errorPayload(
+    "Error 502, Message: Bad Gateway: Failed to connect to backend API, Status: , Details: []",
+  ),
+];
 // Vertex Claude rejects a resumed history whose saved thinking block lost its signature.
 const MISSING_SIGNATURE_ERROR = errorPayload(
   'Error 400, Message: {"type":"error","error":{"type":"invalid_request_error","message":"messages.1.content.0.thinking.signature: Field required"},"request_id":"req_vrtx_test"}, Status: INVALID_ARGUMENT, Details: []',
@@ -139,6 +148,15 @@ describe("watchAntigravityPromptOutcome", () => {
           retryable: false,
         }),
       );
+      for (const error of BAD_GATEWAY_ERRORS) {
+        const outcome = yield* turn([
+          [USER_INPUT, input],
+          [ERROR_MESSAGE, error],
+        ]);
+        assert.equal(outcome?.failure.class, "provider_error");
+        assert.equal(outcome?.failure.message, "Bad Gateway: Failed to connect to backend API");
+        assert.equal(outcome?.failure.retryable, true);
+      }
       // A saved thinking block without a valid signature fails every later prompt.
       for (const error of [MISSING_SIGNATURE_ERROR, INVALID_SIGNATURE_ERROR]) {
         const outcome = yield* turn([
