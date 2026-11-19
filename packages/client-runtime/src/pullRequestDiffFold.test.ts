@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  applyPullRequestDiffFold,
-  createPullRequestDiffFoldState,
+  EMPTY_PULL_REQUEST_DIFF_FOLDS,
+  foldAllPullRequestDiffs,
   isFileDiffCollapsed,
   withFileDiffFold,
+  withPullRequestDiffFold,
+  type DiffFoldGroup,
 } from "./pullRequestDiffFold.ts";
 
 describe("isFileDiffCollapsed", () => {
@@ -45,51 +47,33 @@ describe("withFileDiffFold", () => {
   });
 });
 
-describe("applyPullRequestDiffFold", () => {
+describe("foldAllPullRequestDiffs", () => {
   it.each([
-    { before: null, after: "expanded", hiddenFold: true },
-    { before: "folded", after: "expanded", hiddenFold: true },
-    { before: "expanded", after: "folded", hiddenFold: false },
-  ] as const)(
-    "keeps hidden folds when switching from $before to $after",
-    ({ before, after, hiddenFold }) => {
-      const initial = createPullRequestDiffFoldState();
-      const previous =
-        before === null ? initial : applyPullRequestDiffFold(initial, before, null, null);
-      const next = applyPullRequestDiffFold(
-        {
-          ...previous,
-          choices: new Map([
-            ["hidden-explicit", !hiddenFold],
-            ["shown-source", after === "expanded"],
-          ]),
-        },
-        after,
-        null,
-        [
-          { key: "hidden-viewed", viewed: true, hidden: true },
-          { key: "hidden-explicit", viewed: true, hidden: true },
-          { key: "shown-test", viewed: true, hidden: false },
-        ],
-      );
-      expect(isFileDiffCollapsed("hidden-viewed", next.testOverride, next.choices, false)).toBe(
-        hiddenFold,
-      );
-      expect(isFileDiffCollapsed("hidden-explicit", next.testOverride, next.choices)).toBe(
-        !hiddenFold,
-      );
-      expect(isFileDiffCollapsed("shown-test", next.testOverride, next.choices)).toBe(
-        after === "folded",
-      );
-      expect(isFileDiffCollapsed("shown-source", next.sourceOverride, next.choices)).toBe(
-        after === "folded",
-      );
-      expect(isFileDiffCollapsed("later-source", next.sourceOverride, next.choices)).toBe(
-        after === "folded",
-      );
-      expect(isFileDiffCollapsed("later-test", next.testOverride, next.choices, true)).toBe(
-        hiddenFold,
-      );
-    },
-  );
+    { override: "expanded", testsHidden: false },
+    { override: "expanded", testsHidden: true },
+    { override: "folded", testsHidden: false },
+    { override: "folded", testsHidden: true },
+  ] as const)("$override with tests hidden: $testsHidden", ({ override, testsHidden }) => {
+    const bulk = override === "folded";
+    let folds = withPullRequestDiffFold(EMPTY_PULL_REQUEST_DIFF_FOLDS, false, (choices) =>
+      withFileDiffFold(choices, "source", !bulk),
+    );
+    folds = withPullRequestDiffFold(folds, true, (choices) =>
+      withFileDiffFold(withFileDiffFold(choices, "hidden-test", !bulk), "revealed-test", !bulk),
+    );
+    const next = foldAllPullRequestDiffs(
+      folds,
+      override,
+      testsHidden ? { shownKeys: ["revealed-test"] } : null,
+    );
+    const collapsed = (group: DiffFoldGroup, key: string, viewed = false) =>
+      isFileDiffCollapsed(key, group.override, group.choices, viewed);
+
+    expect(collapsed(next.source, "source")).toBe(bulk);
+    expect(collapsed(next.source, "later-source", !bulk)).toBe(bulk);
+    expect(collapsed(next.test, "revealed-test")).toBe(bulk);
+    // A hidden test keeps its own choice, or its live Viewed mark when it has none.
+    expect(collapsed(next.test, "hidden-test")).toBe(testsHidden ? !bulk : bulk);
+    expect(collapsed(next.test, "later-test", !bulk)).toBe(testsHidden ? !bulk : bulk);
+  });
 });
