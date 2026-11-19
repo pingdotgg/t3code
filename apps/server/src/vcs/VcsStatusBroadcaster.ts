@@ -487,8 +487,10 @@ export const make = Effect.gen(function* () {
         yield* workflow.invalidateLocalStatus(cwd);
         return yield* loadLocalStatus(cwd, { publish: true });
       }
-      // Only a read made here follows the snapshot; a cached result may predate it.
-      if (initialRefs !== undefined) initialRefs.refs = yield* workflow.readRefSnapshot(cwd);
+      if (initialRefs === undefined) return yield* loadLocalStatus(cwd);
+      // Only a fresh git read follows the snapshot; the workflow's short cache may predate it.
+      yield* workflow.invalidateLocalStatus(cwd);
+      initialRefs.refs = yield* workflow.readRefSnapshot(cwd);
       return yield* loadLocalStatus(cwd);
     },
   );
