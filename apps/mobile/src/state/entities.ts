@@ -20,11 +20,11 @@ import {
   guessThreadLinkRef,
   hasThreadLinks,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
+import { relabelThreadLinks } from "@t3tools/shared/threadLinksCopy";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { msg, useMessages } from "gt-react-native";
@@ -246,12 +246,17 @@ export function useLiveThreadLinkLabels(markdown: string, environmentId: Environ
       ? threadLinkTitlesAtom(JSON.stringify(threadLinkRefs(markdown, environmentId).map(threadKey)))
       : EMPTY_THREAD_LINK_TITLES_ATOM,
   );
-  return relabelThreadLinks(markdown, environmentId, (ref) => {
-    const title = titles.get(threadKey(ref));
-    return title === FALLBACK_THREAD_TITLE
-      ? resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
-      : title;
-  });
+  return relabelThreadLinks(
+    markdown,
+    environmentId,
+    (ref) => {
+      const title = titles.get(threadKey(ref));
+      return title === FALLBACK_THREAD_TITLE
+        ? resolve(msg("Thread", { $context: "fallback title of a linked thread" }))
+        : title;
+    },
+    resolve,
+  );
 }
 
 /** Keyed reads; every thread is read only to place a v1 link its message's environment lacks. */

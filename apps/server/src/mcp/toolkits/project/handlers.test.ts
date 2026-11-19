@@ -75,6 +75,7 @@ const clientLaunchHarness = (input: {
   const layerDependencies = Layer.mergeAll(
     Layer.mock(ProviderRegistry.ProviderRegistry)({
       getProviders: Effect.succeed(input.providers ?? []),
+      refreshWorkspaceSnapshot: () => Effect.succeed(input.providers ?? []),
     }),
     ServerSettings.layerTest({
       fallbackModelSelection: input.fallbackModel ?? null,
@@ -172,6 +173,7 @@ const clientLaunchHarness = (input: {
               } as unknown as ProjectRecord)
             : Option.none(),
         ),
+      workspaceScanDirectory: Effect.succeed,
     }),
     Layer.mock(PeerForwarding.PeerForwarding)({}),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -375,6 +377,22 @@ it.effect("a launch with a model its provider does not advertise creates no thre
       ],
       slashCommands: [],
       skills: [],
+      // The project folder's own provider config adds a model the machine catalog lacks.
+      workspaceSnapshots:
+        driver === "codex"
+          ? [
+              {
+                cwd: "/projects/client-target",
+                checkedAt: "2026-01-01T00:00:00Z",
+                slashCommands: [],
+                skills: [],
+                models: [
+                  { slug: "gpt-5.4", name: "GPT", isCustom: false, capabilities: null },
+                  { slug: "folder-local", name: "Local", isCustom: false, capabilities: null },
+                ],
+              },
+            ]
+          : [],
     }));
     const { projectId, dependencies } = clientLaunchHarness({
       runtimeModeCeiling: "auto",
@@ -416,7 +434,10 @@ it.effect("a launch with a model its provider does not advertise creates no thre
     expect(yield* launchWith("claudeAgent", "Opus")).toMatchObject({
       modelSelection: { instanceId: "claudeAgent", model: "Opus" },
     });
-    expect(launched).toHaveLength(1);
+    expect(yield* launchWith("codex", "folder-local")).toMatchObject({
+      modelSelection: { instanceId: "codex", model: "folder-local" },
+    });
+    expect(launched).toHaveLength(2);
   }),
 );
 
@@ -1049,6 +1070,47 @@ it.effect("an agent cannot delete the built-in scratch project, even with force"
       code: "invalid_request",
       message: expect.stringMatching(/scratch|no project/i),
     });
+  }),
+);
+
+it.effect("reading a project shows the default model saved in Settings", () =>
+  Effect.gen(function* () {
+    const overrideModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet",
+    };
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      overrideModel,
+      launched: [],
+    });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        getById: (projectId) =>
+          Effect.succeedSome({
+            id: projectId,
+            title: "Client target",
+            workspaceRoot: "/projects/client-target",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            deletedAt: null,
+          }),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const read = yield* toolkit
+      .handle("t3_project_read", { projectId: harness.projectId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(read.at(-1)?.result).toMatchObject({ defaultModelSelection: overrideModel });
   }),
 );
 
