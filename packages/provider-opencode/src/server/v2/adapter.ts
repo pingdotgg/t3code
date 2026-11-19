@@ -1499,6 +1499,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      // The pre-compaction step would otherwise settle the turn as its newest usage.
+      if (status === "completed") turn.lastStep = undefined;
       if (status === "completed" && state.providerThread.contextUsage !== null) {
         state.providerThread = {
           ...state.providerThread,

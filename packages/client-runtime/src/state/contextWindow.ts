@@ -139,7 +139,7 @@ export function deriveLatestContextWindowSnapshot(
   )?.item;
   const usageUpdatedAt =
     liveUsage?.updatedAt ??
-    (providerThread?.updatedAt ? DateTime.formatIso(providerThread.updatedAt) : null);
+    (providerThread?.contextUsage != null ? DateTime.formatIso(providerThread.updatedAt) : null);
   if (latestCompletedCompaction !== undefined) {
     const compactedAt = DateTime.formatIso(
       latestCompletedCompaction.completedAt ?? latestCompletedCompaction.updatedAt,

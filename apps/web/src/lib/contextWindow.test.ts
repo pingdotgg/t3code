@@ -88,6 +88,20 @@ describe("V2 context window presentation", () => {
     expect(
       deriveLatestContextWindowSnapshot([{ item: withoutCount }], usageBeforeCompaction),
     ).toBeNull();
+    // A metadata-only provider thread update reports no usage, so an older count stays hidden.
+    const olderCompaction = {
+      item: {
+        ...compactionEntry(null).item,
+        updatedAt: DateTime.makeUnsafe("2026-06-19T00:00:00.000Z"),
+      },
+    };
+    expect(
+      deriveLatestContextWindowSnapshot([olderCompaction, { item: withoutCount }], null, {
+        id: ProviderThreadId.make("thread"),
+        contextUsage: null,
+        updatedAt: DateTime.makeUnsafe("2026-06-21T00:00:00.000Z"),
+      }),
+    ).toBeNull();
   });
 });
 

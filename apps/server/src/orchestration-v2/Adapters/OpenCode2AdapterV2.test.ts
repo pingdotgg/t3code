@@ -517,6 +517,13 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           out("session.prompt", { sessionID: SESSION, text: "<any>" }),
           promptAccepted,
+          event("session.step.ended", {
+            sessionID: SESSION,
+            assistantMessageID: "msg_0eb735d5b001oAFVeY5jz3WD4Z",
+            finish: "stop",
+            cost: 0,
+            tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+          }),
           event("session.compaction.started", { sessionID: SESSION, reason: "manual", recent: "" }),
           event("session.compaction.ended", {
             sessionID: SESSION,
@@ -535,10 +542,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         Effect.forkScoped,
       );
       yield* runtime.startTurn(turnInput(thread));
-      const usage = (yield* Fiber.join(collected)).flatMap((event) =>
+      const seen = yield* Fiber.join(collected);
+      const usage = seen.flatMap((event) =>
         event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
       );
       assert.isNull(usage.at(-1));
+      const settled = seen.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
+      );
     }),
   );
 
