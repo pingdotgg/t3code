@@ -11,6 +11,7 @@ import {
   RunId,
   type ServerProvider,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -131,6 +132,16 @@ const harness = Effect.gen(function* () {
   const cards = yield* Queue.unbounded<CardRecord>();
   // The cards as the thread stores them, each its latest record.
   const shown = yield* Ref.make(new Map<string, CardRecord>());
+  // Faults and gates for card records, and a signal when an answer reads its card.
+  const failRecords = yield* Ref.make(false);
+  // Each gate holds the first record of its status until released.
+  const recordGates = yield* Ref.make<
+    ReadonlyArray<{
+      readonly status: CardRecord["feedbackStatus"];
+      readonly entered: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    }>
+  >([]);
   // The projection rows the store reads share the database, as in the server.
   const threads = Layer.unwrap(
     Effect.gen(function* () {
@@ -166,19 +177,30 @@ const harness = Effect.gen(function* () {
         WHERE orchestration_v2_projection_turn_items.status = 'waiting'`;
       return Layer.mock(Threads.ThreadManagementService)({
         dispatch: (command) =>
-          Ref.update(shown, (cards) => {
+          Effect.gen(function* () {
             const card = command as CardRecord;
-            const existing = cards.get(card.turnItemId);
-            // A decided card stays decided, as the orchestrator keeps it.
-            return existing === undefined || existing.feedbackStatus === "pending"
-              ? new Map(cards).set(card.turnItemId, card)
-              : cards;
-          }).pipe(
-            Effect.andThen(project(command as CardRecord)),
-            Effect.orDie,
-            Effect.andThen(Queue.offer(cards, command as CardRecord)),
-            Effect.as({} as never),
-          ),
+            if (card.feedbackStatus !== "pending" && (yield* Ref.get(failRecords))) {
+              return yield* Effect.fail(new Error("The card record failed."));
+            }
+            const gate = (yield* Ref.get(recordGates)).find(
+              (candidate) => candidate.status === card.feedbackStatus,
+            );
+            if (gate !== undefined) {
+              yield* Ref.update(recordGates, (gates) => gates.filter((other) => other !== gate));
+              yield* Deferred.succeed(gate.entered, undefined);
+              yield* Deferred.await(gate.release);
+            }
+            yield* Ref.update(shown, (cards) => {
+              const existing = cards.get(card.turnItemId);
+              // A decided card stays decided, as the orchestrator keeps it.
+              return existing === undefined || existing.feedbackStatus === "pending"
+                ? new Map(cards).set(card.turnItemId, card)
+                : cards;
+            });
+            yield* project(card).pipe(Effect.orDie);
+            yield* Queue.offer(cards, card);
+            return {};
+          }) as never,
         getThreadRecords: (_threadId, fields, filter) =>
           Effect.gen(function* () {
             const stored = yield* Ref.get(items);
@@ -273,7 +295,20 @@ const harness = Effect.gen(function* () {
     ),
     Layer.provideMerge(SqlitePersistence.layerMemory),
   );
-  return { mode, settingsLock, reading, items, telemetry, runId, events, cards, shown, layer };
+  return {
+    mode,
+    settingsLock,
+    reading,
+    items,
+    telemetry,
+    runId,
+    events,
+    cards,
+    shown,
+    failRecords,
+    recordGates,
+    layer,
+  };
 });
 
 type CardRecord = Extract<
@@ -350,15 +385,23 @@ it.effect("scrubs the caller's private values and sends only the event contract"
     yield* Effect.gen(function* () {
       const feedback = yield* Feedback.FeedbackService;
       yield* Ref.set(telemetry, false);
-      const { stored: local, closed } = yield* approved(cards, {
-        kind: "other",
-        subject: "mcp__t3-code__t3_thread_read",
-        expected: `Reading /srv/checkouts/acme-app-7 on acme/secret-launch as ${NodeOS.userInfo().username}`,
-        actual:
-          "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
-        workaround: "x".repeat(400),
-        userRequested: true,
-      });
+      const {
+        stored: local,
+        card,
+        closed,
+      } = yield* approved(
+        cards,
+        {
+          kind: "other",
+          subject: "mcp__t3-code__t3_thread_read",
+          expected: `Reading /srv/checkouts/acme-app-7 on acme/secret-launch as ${NodeOS.userInfo().username}`,
+          actual:
+            "git@github.com:acme/payments.git in Acme Payments with sk-proj-abcdefghij1234567890",
+          workaround: "x".repeat(400),
+          userRequested: true,
+        },
+        true,
+      );
       expect(local).toMatchObject({
         kind: "other",
         subject: "t3_thread_read",
@@ -371,8 +414,10 @@ it.effect("scrubs the caller's private values and sends only the event contract"
         sent: false,
       });
       expect(yield* Ref.get(events)).toEqual([]);
-      // Stored with telemetry off, but not sent, so the card says so.
-      expect(closed.feedbackStatus).toBe("cancelled");
+      // Stored with telemetry off, but not sent: the card says so, and keeps only the outline.
+      expect(local.trace).toEqual(card.conversationTrace);
+      expect(closed).toMatchObject({ feedbackStatus: "cancelled", preview: card.preview });
+      expect(closed.conversationTrace).toBeUndefined();
 
       yield* Ref.set(telemetry, true);
       const sent = yield* feedback.submit({ ...input, subject: "t3 thread show" }, fromThread);
@@ -618,6 +663,18 @@ it.effect("returns as the card is shown, and stores and sends it only on Send, o
       expect((yield* Effect.flip(answer(declined, "send", true))).reason).toBe("already_answered");
       yield* nothingKept;
 
+      // Only the thread that asked answers, and only its feedback cards.
+      const store = yield* Store.FeedbackStore;
+      for (const [thread, turnItemId] of [
+        [ThreadId.make("thread:fork"), declined.turnItemId],
+        [threadId, TurnItemId.make("turn-item:assistant-message:1")],
+      ] as const) {
+        expect(
+          (yield* Effect.flip(store.answer({ threadId: thread, turnItemId, answer: "send" })))
+            .reason,
+        ).toBe("not_found");
+      }
+
       // Send: exactly the shown preview is stored and sent, marked as requested.
       const { card, closed: sentCard, stored } = yield* approved(cards, requested);
       expect(sentCard.feedbackStatus).toBe("sent");
@@ -709,6 +766,103 @@ it.effect("Send refuses while Off and closes the card; When I ask and Automatic 
       yield* answer(onRequest, "send");
       expect((yield* Queue.take(cards)).feedbackStatus).toBe("sent");
       expect(yield* Ref.get(events)).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a report stored before its card was settled settles the card on the next answer", () =>
+  Effect.gen(function* () {
+    const { telemetry, events, cards, shown, failRecords, runId, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const status = (card: CardRecord) =>
+        Ref.get(shown).pipe(Effect.map((all) => all.get(card.turnItemId)?.feedbackStatus));
+      // The report is stored and sent, then recording the card fails, as a crash would leave it.
+      const sentCard = yield* show(cards, requested);
+      yield* Ref.set(failRecords, true);
+      expect(yield* Effect.result(answer(sentCard, "send", true))).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "record_failed" },
+      });
+      expect(yield* listFeedbackReports).toMatchObject([
+        { trace: sentCard.conversationTrace, sent: true },
+      ]);
+      expect(yield* status(sentCard)).toBe("pending");
+      yield* Ref.set(failRecords, false);
+      // Either answer, from a store started after the fault, settles it from the stored report.
+      yield* answer(sentCard, "decline").pipe(Effect.provide(Store.layer));
+      const settled = yield* Queue.take(cards);
+      expect(settled).toMatchObject({
+        feedbackStatus: "sent",
+        preview: { ...sentCard.preview, trace: sentCard.conversationTrace },
+      });
+      expect(settled.conversationTrace).toBeUndefined();
+      expect((yield* Effect.flip(answer(sentCard, "send"))).reason).toBe("already_answered");
+      expect(yield* Ref.get(events)).toHaveLength(1);
+      expect(yield* listFeedbackReports).toHaveLength(1);
+
+      // Stored but not sent: the card closes unsent, with the outline only.
+      yield* Ref.set(runId, RunId.make("run:2"));
+      yield* Ref.set(telemetry, false);
+      const keptCard = yield* show(cards, requested);
+      yield* Ref.set(failRecords, true);
+      expect(yield* Effect.result(answer(keptCard, "send", true))).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "record_failed" },
+      });
+      yield* Ref.set(failRecords, false);
+      yield* answer(keptCard, "send");
+      const closed = yield* Queue.take(cards);
+      expect(closed).toMatchObject({ feedbackStatus: "cancelled", preview: keptCard.preview });
+      expect(closed.conversationTrace).toBeUndefined();
+      expect(yield* listFeedbackReports).toHaveLength(2);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a Send refused while Off settles the card before a later Send can store it", () =>
+  Effect.gen(function* () {
+    const { mode, events, cards, shown, recordGates, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const gate = (status: CardRecord["feedbackStatus"]) =>
+        Effect.gen(function* () {
+          const held = {
+            status,
+            entered: yield* Deferred.make<void>(),
+            release: yield* Deferred.make<void>(),
+          };
+          yield* Ref.update(recordGates, (gates) => [...gates, held]);
+          return held;
+        });
+      const card = yield* show(cards, requested);
+      // The first Send is refused while Off and is held as it closes the card.
+      yield* Ref.set(mode, "off");
+      const closing = yield* gate("cancelled");
+      const refused = yield* Effect.forkChild(Effect.result(answer(card, "send", true)));
+      yield* Deferred.await(closing.entered);
+      // Agent feedback is turned back on, and a second Send would be held as it marks the card
+      // sent, after storing and sending its report.
+      yield* Ref.set(mode, "auto");
+      const marking = yield* gate("sent");
+      const second = yield* Effect.forkChild(Effect.result(answer(card, "send", true)));
+      const reachedSent = yield* Effect.forkChild(
+        Deferred.await(marking.entered).pipe(Effect.timeoutOption("1 second")),
+      );
+      yield* TestClock.adjust("1 second");
+      // The second Send waits for the first to finish, so it never stores a report.
+      expect((yield* Fiber.join(reachedSent))._tag).toBe("None");
+      yield* Deferred.succeed(closing.release, undefined);
+      yield* Deferred.succeed(marking.release, undefined);
+      expect(yield* Fiber.join(refused)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "feedback_off" },
+      });
+      expect(yield* Fiber.join(second)).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "already_answered" },
+      });
+      expect((yield* Ref.get(shown)).get(card.turnItemId)?.feedbackStatus).toBe("cancelled");
+      expect(yield* listFeedbackReports).toEqual([]);
+      expect(yield* Ref.get(events)).toEqual([]);
     }).pipe(Effect.provide(layer));
   }),
 );

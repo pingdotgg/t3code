@@ -59,12 +59,6 @@ export interface UnpromptedReport {
   readonly dimensions: Partial<ProviderDimensions>;
 }
 
-/** The card was answered, or its report stored, before this answer. */
-class FeedbackAnsweredError extends Schema.TaggedError<FeedbackAnsweredError>()(
-  "FeedbackAnsweredError",
-  {},
-) {}
-
 export class FeedbackStore extends Context.Service<
   FeedbackStore,
   {
@@ -87,7 +81,9 @@ export class FeedbackStore extends Context.Service<
 >()("t3/feedback/FeedbackStore") {}
 
 const storageError = (cause: unknown) => new FeedbackStorageError({ cause });
-const encodeTrace = Schema.encodeEffect(Schema.NullOr(Schema.fromJsonString(FeedbackTrace)));
+const TraceJson = Schema.NullOr(Schema.fromJsonString(FeedbackTrace));
+const encodeTrace = Schema.encodeEffect(TraceJson);
+const decodeTrace = Schema.decodeUnknownEffect(TraceJson);
 
 /** The mode rule: nothing while Off, and only approved reports while When I ask. */
 export const allowedBy = (
@@ -107,8 +103,8 @@ const make = Effect.gen(function* () {
   const settings = yield* Settings.ServerSettingsService;
   const analytics = yield* Analytics.AnalyticsService;
   const providers = yield* Providers.ProviderRegistry;
-  // Serializes each limit or answer check with its write. Taken after the settings lock, and
-  // held across a card's dispatch, which never takes the settings lock.
+  // Serializes each limit or answer check with its writes, a card's answer through settling the
+  // card. Order: feedback, settings, SQL; nothing that holds the settings lock takes this one.
   const lock = yield* Semaphore.make(1);
 
   const record = (
@@ -145,93 +141,98 @@ const make = Effect.gen(function* () {
     return (row?.count ?? 0) >= MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR ? ("hour" as const) : undefined;
   });
 
-  /** The card still waits and its report was never stored. Read under the lock. */
-  const stillWaiting = (reportId: string) =>
-    sql<{ readonly waiting: number }>`
-      SELECT 1 AS waiting FROM orchestration_v2_projection_turn_items
-      WHERE turn_item_id = ${`${CARD_PREFIX}${reportId}`} AND status = 'waiting'
-        AND NOT EXISTS (SELECT 1 FROM agent_feedback WHERE id = ${reportId})`.pipe(
-      Effect.map((rows) => rows.length > 0),
-    );
-
-  const save = Effect.fn("FeedbackStore.save")(function* (
-    preview: AgentFeedbackPreview,
-    context: Omit<UnpromptedReport, "preview"> & { readonly userRequested: boolean },
+  /**
+   * Inserts a report under the settings lock, so a switch to Off is wholly before or after it: a
+   * read cannot return the mode an update is replacing. Call it under the feedback lock.
+   */
+  const insert = Effect.fn("FeedbackStore.insert")(function* (
+    report: Omit<FeedbackReport, "sent">,
+    runId: RunId | null,
   ) {
-    const { userRequested } = context;
-    const report = {
-      ...preview,
-      userRequested,
-      source: context.source,
-      id: context.id,
-      threadId: context.threadId,
-      createdAt: DateTime.formatIso(yield* DateTime.now),
-    };
-    const traceJson = yield* encodeTrace(preview.trace).pipe(Effect.mapError(storageError));
-    // Under the settings lock, so a switch to Off is either fully before this report or after
-    // it: a read cannot return the mode an update is replacing. Order: settings, feedback, SQL.
+    const traceJson = yield* encodeTrace(report.trace).pipe(Effect.mapError(storageError));
     yield* settings
       .withSettingsSnapshot((current) =>
-        lock.withPermit(
-          sql.withTransaction(
-            Effect.gen(function* () {
-              if (userRequested) {
-                if (!(yield* stillWaiting(context.id))) return yield* new FeedbackAnsweredError();
-              } else {
-                const limited = yield* overLimit(context.runId);
-                if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
-              }
-              // Last before the insert: the mode can change while a card waits.
-              yield* allowedBy(current.agentFeedback.mode, userRequested, context.source);
-              yield* sql`INSERT INTO agent_feedback ${sql.insert({
-                id: report.id,
-                thread_id: report.threadId,
-                run_id: context.runId,
-                created_at: report.createdAt,
-                kind: report.kind,
-                subject: report.subject,
-                expected: report.expected,
-                actual: report.actual,
-                workaround: report.workaround,
-                user_requested: userRequested ? 1 : 0,
-                trace: traceJson,
-                source: report.source,
-                sent: 0,
-              })}`;
-            }),
-          ),
+        sql.withTransaction(
+          Effect.gen(function* () {
+            if (!report.userRequested) {
+              const limited = yield* overLimit(runId);
+              if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
+            }
+            // Last before the insert: the mode can change while a card waits.
+            yield* allowedBy(current.agentFeedback.mode, report.userRequested, report.source);
+            yield* sql`INSERT INTO agent_feedback ${sql.insert({
+              id: report.id,
+              thread_id: report.threadId,
+              run_id: runId,
+              created_at: report.createdAt,
+              kind: report.kind,
+              subject: report.subject,
+              expected: report.expected,
+              actual: report.actual,
+              workaround: report.workaround,
+              user_requested: report.userRequested ? 1 : 0,
+              trace: traceJson,
+              source: report.source,
+              sent: 0,
+            })}`;
+          }),
         ),
       )
       .pipe(
         Effect.mapError((error) =>
           error._tag === "FeedbackLimitError" ||
           error._tag === "FeedbackOffError" ||
-          error._tag === "FeedbackNotRequestedError" ||
-          error._tag === "FeedbackAnsweredError"
+          error._tag === "FeedbackNotRequestedError"
             ? error
             : storageError(error),
         ),
       );
+  });
+
+  /** Sends a stored report as the `agent.feedback` event; false while telemetry is off. */
+  const deliver = Effect.fn("FeedbackStore.deliver")(function* (
+    report: Omit<FeedbackReport, "sent">,
+    dimensions: Partial<ProviderDimensions>,
+  ) {
+    const { kind, subject, expected, actual, workaround, trace, userRequested, source } = report;
     const sent = yield* analytics.record("agent.feedback", {
-      ...preview,
+      kind,
+      subject,
+      expected,
+      actual,
+      workaround,
+      trace,
       userRequested,
-      source: context.source,
-      ...context.dimensions,
+      source,
+      ...dimensions,
     });
     if (sent) {
       yield* sql`UPDATE agent_feedback SET sent = 1 WHERE id = ${report.id}`.pipe(
         Effect.mapError(storageError),
       );
     }
-    return { ...report, sent };
+    return sent;
   });
 
-  const store: FeedbackStore["Service"]["store"] = ({ preview, ...context }) =>
-    save(preview, { ...context, userRequested: false }).pipe(
-      // Only a card's report can find itself already answered.
-      Effect.catchTags({ FeedbackAnsweredError: Effect.die }),
-      Effect.withSpan("FeedbackStore.store"),
-    );
+  const store = Effect.fn("FeedbackStore.store")(function* ({
+    preview,
+    id,
+    source,
+    threadId,
+    runId,
+    dimensions,
+  }: UnpromptedReport) {
+    const report = {
+      ...preview,
+      userRequested: false,
+      source,
+      id,
+      threadId,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    yield* lock.withPermit(insert(report, runId));
+    return { ...report, sent: yield* deliver(report, dimensions) };
+  });
 
   const showCard = Effect.fn("FeedbackStore.showCard")(function* (card: FeedbackCard) {
     yield* lock.withPermit(
@@ -255,6 +256,8 @@ const make = Effect.gen(function* () {
     });
     const fail = (reason: AgentFeedbackRequestError["reason"]) =>
       Effect.fail(new AgentFeedbackRequestError({ reason }));
+    const recordFailed = (cause: unknown) =>
+      new AgentFeedbackRequestError({ reason: "record_failed", cause });
     const { turnItems } = yield* threads
       .getThreadRecords(input.threadId, ["turnItems"], {
         turnItemTypes: ["feedback_request"],
@@ -281,32 +284,9 @@ const make = Effect.gen(function* () {
       runId: item.runId,
       nodeId: item.nodeId,
     };
-    const recordFailed = (cause: unknown) =>
-      new AgentFeedbackRequestError({ reason: "record_failed", cause });
-
-    if (input.answer === "decline") {
-      // The card keeps only what would have been sent without the conversation.
-      return yield* lock
-        .withPermit(
-          Effect.gen(function* () {
-            if (!(yield* stillWaiting(card.reportId).pipe(Effect.mapError(storageError)))) {
-              return yield* fail("already_answered");
-            }
-            yield* record({ ...card, preview: item.preview }, "declined");
-          }),
-        )
-        .pipe(
-          Effect.catchTags({ FeedbackStorageError: (error) => Effect.fail(recordFailed(error)) }),
-        );
-    }
-
-    const preview: AgentFeedbackPreview = {
-      ...item.preview,
-      trace:
-        input.includeConversation === true && item.conversationTrace !== undefined
-          ? item.conversationTrace
-          : item.preview.trace,
-    };
+    // Settles the card with the trace it sent. Without one, it keeps only the outline.
+    const settle = (status: AgentFeedbackRequestStatus, trace = item.preview.trace) =>
+      record({ ...card, preview: { ...item.preview, trace } }, status);
     const { runs } = yield* threads
       .getThreadRecords(input.threadId, ["runs"], { runIds: [card.runId] })
       .pipe(
@@ -314,32 +294,65 @@ const make = Effect.gen(function* () {
       );
     const run = runs.find((candidate) => candidate.id === card.runId);
     const providerList = yield* providers.getProviders;
-    yield* save(preview, {
-      id: card.reportId,
-      source: "mcp",
-      threadId: input.threadId,
-      runId: card.runId,
-      dimensions: run === undefined ? {} : providerDimensions(providerList, run.modelSelection),
-      userRequested: true,
-    }).pipe(
-      // Telemetry off stores the report without sending it, so the card says not sent.
-      Effect.flatMap((report) =>
-        record({ ...card, preview }, report.sent ? "sent" : "cancelled").pipe(Effect.ignore),
-      ),
-      Effect.catchTags({
-        FeedbackAnsweredError: () => fail("already_answered"),
-        FeedbackOffError: () =>
-          record({ ...card, preview: item.preview }, "cancelled").pipe(
-            Effect.ignore,
-            Effect.andThen(fail("feedback_off")),
-          ),
-        // A requested report is never over a limit or refused by When I ask.
-        FeedbackLimitError: Effect.die,
-        FeedbackNotRequestedError: Effect.die,
-        // The card stays open, so Send can be tried again.
-        FeedbackStorageError: (error) => Effect.fail(recordFailed(error)),
-      }),
-    );
+
+    // One answer at a time, from the claim through settling the card, so no other answer can
+    // settle it differently in between.
+    yield* lock
+      .withPermit(
+        Effect.gen(function* () {
+          const [waiting] = yield* sql<{ readonly waiting: number }>`
+            SELECT 1 AS waiting FROM orchestration_v2_projection_turn_items
+            WHERE turn_item_id = ${item.id} AND status = 'waiting'`;
+          if (waiting === undefined) return yield* fail("already_answered");
+          // Stored before its card was settled, by a crash or a failed record: settle it now.
+          const [stored] = yield* sql<{ readonly sent: number; readonly trace: string | null }>`
+            SELECT sent, trace FROM agent_feedback WHERE id = ${card.reportId}`;
+          if (stored !== undefined) {
+            if (stored.sent !== 1) return yield* settle("cancelled");
+            return yield* settle("sent", yield* decodeTrace(stored.trace));
+          }
+          if (input.answer === "decline") return yield* settle("declined");
+
+          const trace =
+            input.includeConversation === true && item.conversationTrace !== undefined
+              ? item.conversationTrace
+              : item.preview.trace;
+          const report = {
+            ...item.preview,
+            trace,
+            userRequested: true,
+            source: "mcp" as const,
+            id: card.reportId,
+            threadId: input.threadId,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          };
+          const off = yield* insert(report, card.runId).pipe(
+            Effect.as(false),
+            Effect.catchTags({ FeedbackOffError: () => Effect.succeed(true) }),
+          );
+          if (off) {
+            yield* settle("cancelled");
+            return yield* fail("feedback_off");
+          }
+          const sent = yield* deliver(
+            report,
+            run === undefined ? {} : providerDimensions(providerList, run.modelSelection),
+          );
+          // Telemetry off keeps the report on this machine, so the card says not sent.
+          yield* sent ? settle("sent", trace) : settle("cancelled");
+        }),
+      )
+      .pipe(
+        Effect.catchTags({
+          // A failed record leaves the card open; the next answer settles it from the report.
+          FeedbackStorageError: (error) => Effect.fail(recordFailed(error)),
+          SqlError: (error) => Effect.fail(recordFailed(error)),
+          SchemaError: (error) => Effect.fail(recordFailed(error)),
+          // A requested report is never over a limit or refused by When I ask.
+          FeedbackLimitError: Effect.die,
+          FeedbackNotRequestedError: Effect.die,
+        }),
+      );
   });
 
   return FeedbackStore.of({ store, showCard, answer });
