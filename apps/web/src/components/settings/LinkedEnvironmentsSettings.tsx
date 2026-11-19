@@ -155,7 +155,7 @@ function LinkedEnvironmentRow({
           ? health.detail
           : health.expiresInDays !== null
             ? gt(
-                "{days, plural, one {Expires in {days} day. Link it again to renew.} other {Expires in {days} days. Link it again to renew.}}",
+                "{days, plural, one {Expires in {days} day if it stays unused.} other {Expires in {days} days if it stays unused.}}",
                 { days: health.expiresInDays },
               )
             : gt("Reachable");

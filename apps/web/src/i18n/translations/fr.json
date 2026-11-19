@@ -4021,6 +4021,16 @@
     }
   ],
   "e58a1d884fa1d8f2": "Détails du fil",
+  "43c5fbd02c6f330a": "Afficher moins",
+  "de45b075b016cb14": [
+    "Afficher ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " de plus"
+  ],
   "02d9667ff2c8e0b8": "Ticket {key} : {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} commentaire} other {{count} commentaires}}",
   "42f634397f3960aa": "Afficher dans les détails du fil",
@@ -4060,16 +4070,6 @@
   ],
   "159ddd0d146a0f22": "Surveillance : l’agent se réveille quand les checks se terminent, que quelqu’un commente ou que la branche entre en conflit. Cliquez pour arrêter.",
   "1cbc8b5db51b4c77": "Fusionner",
-  "43c5fbd02c6f330a": "Afficher moins",
-  "de45b075b016cb14": [
-    "Afficher ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " de plus"
-  ],
   "a3d040c4ef4fc6e9": "En avance sur le rythme",
   "b16fdf56b16d99c9": "Dans le rythme",
   "90f977e97ae8b6c6": "En dessous du rythme",
@@ -4084,6 +4084,7 @@
   "66be4fb43249bbd2": "{used} tokens sur {max}",
   "ee3ae58c8b38a425": "{left} % restant",
   "ebb26f93fb83a71b": "{label} : {left} % restant",
+  "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "728c6cc1431e76c8": "Réinitialisation dans {duration} · {time}",
   "e16b0b9b490c8bc7": "{label} : {value}",
   "ba67d0a9ff5dabf0": "L’API Presse-papiers n’est pas disponible pour copier la demande à l’administrateur.",
@@ -8638,7 +8639,7 @@
   "81c9796bf61b306a": "Impossible d’oublier l’association",
   "33386c89f3b07fea": "Expirée. Associez-la à nouveau avec un nouveau code d’appairage.",
   "13d91e967cd9065c": "Ne répond pas pour le moment.",
-  "42e613ac8acac777": "{days, plural, one {Expire dans {days} jour. Associez-la à nouveau pour la renouveler.} other {Expire dans {days} jours. Associez-la à nouveau pour la renouveler.}}",
+  "922c1c3393a00ced": "{days, plural, one {Expire dans {days} jour s’il reste inutilisé.} other {Expire dans {days} jours s’il reste inutilisé.}}",
   "8971602c42718d72": "Joignable",
   "57f38a04b1e5c033": "Oubli en cours…",
   "20ffe8337f8f30ba": "Oublier",
@@ -11858,7 +11859,6 @@
   "0bd938825ffcf992": "+{percent} % du quota",
   "09c0e00d7fb55402": "Utilisation du crédit de réinitialisation…",
   "4df3ff1be768a7ab": "{name} : {remaining} % restant",
-  "1b16346722b65812": "{timeLeft} % de la fenêtre restant",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "Plafond de 0 $",
   "a16b48709357a5a7": "Gérer l’utilisation",

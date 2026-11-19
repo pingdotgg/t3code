@@ -4021,6 +4021,16 @@
     }
   ],
   "e58a1d884fa1d8f2": "Tråddetaljer",
+  "43c5fbd02c6f330a": "Visa mindre",
+  "de45b075b016cb14": [
+    "Visa ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till"
+  ],
   "02d9667ff2c8e0b8": "Ärende {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} kommentar} other {{count} kommentarer}}",
   "42f634397f3960aa": "Visa i tråddetaljer",
@@ -4060,16 +4070,6 @@
   ],
   "159ddd0d146a0f22": "Bevakar: agenten vaknar när kontrollerna är klara, någon kommenterar eller grenen får konflikter. Klicka för att sluta.",
   "1cbc8b5db51b4c77": "Merga",
-  "43c5fbd02c6f330a": "Visa mindre",
-  "de45b075b016cb14": [
-    "Visa ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " till"
-  ],
   "a3d040c4ef4fc6e9": "Före takten",
   "b16fdf56b16d99c9": "I takt",
   "90f977e97ae8b6c6": "Under takten",
@@ -4084,6 +4084,7 @@
   "66be4fb43249bbd2": "{used} av {max} token",
   "ee3ae58c8b38a425": "{left} % kvar",
   "ebb26f93fb83a71b": "{label}: {left} % kvar",
+  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "728c6cc1431e76c8": "Återställs om {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Urklipps-API:t är inte tillgängligt vid kopiering av administratörsbegäran.",
@@ -8644,7 +8645,7 @@
   "81c9796bf61b306a": "Kunde inte glömma länken",
   "33386c89f3b07fea": "Har gått ut. Länka den igen med en ny parkopplingskod.",
   "13d91e967cd9065c": "Svarar inte just nu.",
-  "42e613ac8acac777": "{days, plural, one {Går ut om {days} dag. Länka den igen för att förnya.} other {Går ut om {days} dagar. Länka den igen för att förnya.}}",
+  "922c1c3393a00ced": "{days, plural, one {Går ut om {days} dag om den inte används.} other {Går ut om {days} dagar om den inte används.}}",
   "8971602c42718d72": "Nåbar",
   "57f38a04b1e5c033": "Glömmer…",
   "20ffe8337f8f30ba": "Glöm",
@@ -11866,7 +11867,6 @@
   "0bd938825ffcf992": "+{percent} % av poolen",
   "09c0e00d7fb55402": "Använder återställningskredit…",
   "4df3ff1be768a7ab": "{name}: {remaining} % kvar",
-  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "Tak på 0 $",
   "a16b48709357a5a7": "Hantera användning",
