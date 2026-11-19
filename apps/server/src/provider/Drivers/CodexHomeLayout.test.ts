@@ -595,7 +595,9 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             (yield* codexHomeEnvironment(layout, { CODEX_SQLITE_HOME: shadowHome }).pipe(
               Effect.flip,
             )).message,
-          ).toContain(`'${shadowHome}', where 'goals_1.sqlite' is a link`);
+          ).toContain(
+            `'${shadowHome}' (set by sqlite_home or CODEX_SQLITE_HOME) holds 'goals_1.sqlite' as a link`,
+          );
 
           // Naming the shared home is the way through: every writer then opens one path, so one WAL.
           const routed = yield* materializeCodexShadowHome(layout, {
@@ -678,7 +680,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     // regression: #24486 Codex ranks sqlite_home above CODEX_SQLITE_HOME, so a shadow whose config or
     // launch args named it still opened the linked database while T3 reported the shared home.
     it.effect.skipIf(!symlinksSupported)(
-      "pins the Windows SQLite home and refuses a sqlite_home setting that would outrank it",
+      "checks the directory a Windows sqlite_home setting names and honours it",
       () =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
@@ -686,6 +688,8 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           const { sharedHome, shadowHome, layout } = yield* makeShadowLayout();
           const sharedConfig = path.join(sharedHome, "config.toml");
           const shadowConfig = path.join(shadowHome, "config.toml");
+          const databaseHome = yield* fileSystem.realPath(yield* makeTempDir("t3code-codex-db-"));
+          yield* writeTextFile(path.join(databaseHome, "goals_1.sqlite"), "own db");
           yield* writeTextFile(path.join(sharedHome, "goals_1.sqlite"), "db");
           yield* fileSystem.symlink(
             path.join(sharedHome, "goals_1.sqlite"),
@@ -696,6 +700,14 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
               materializeCodexShadowHome(layout, {}, launchArgs).pipe(Effect.result),
               codexHomeEnvironment(layout, {}, launchArgs).pipe(Effect.result),
             ]);
+          const expectHonoured = Effect.fn(function* (launchArgs?: string) {
+            for (const launched of yield* launch(launchArgs)) {
+              expect(launched).toMatchObject({ success: { CODEX_SQLITE_HOME: databaseHome } });
+              expect(launched._tag === "Success" && launched.success.T3CODE_CODEX_SQLITE_HOME).toBe(
+                undefined,
+              );
+            }
+          });
 
           for (const launched of yield* launch("--strict-config")) {
             expect(launched).toMatchObject({
@@ -703,27 +715,31 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
             });
           }
           for (const launchArgs of [
-            `-c sqlite_home="${shadowHome}"`,
-            `--config=sqlite_home='${shadowHome}'`,
-            `-csqlite_home=${shadowHome}`,
+            `-c sqlite_home="${databaseHome}"`,
+            `--config=sqlite_home='${databaseHome}'`,
+            `-csqlite_home=${databaseHome}`,
           ]) {
-            for (const refused of yield* launch(launchArgs)) {
-              expect(refused).toMatchObject({
-                _tag: "Failure",
-                failure: { _tag: "CodexShadowHomeSqliteSettingError", setting: "launchArgs" },
-              });
-            }
+            yield* expectHonoured(launchArgs);
+          }
+          // The shadow reaches the shared database through a link.
+          for (const refused of yield* launch(`-c sqlite_home='${shadowHome}'`)) {
+            expect(refused).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "CodexShadowHomeSqliteConflictError", entryName: "goals_1.sqlite" },
+            });
+          }
+          for (const refused of yield* launch("-c sqlite_home=relative")) {
+            expect(refused).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "CodexShadowHomeSqliteSettingError", setting: "launchArgs" },
+            });
           }
 
           yield* writeTextFile(shadowConfig, `model = "gpt"\nsqlite_home = "${shadowHome}"\n`);
           for (const refused of yield* launch()) {
             expect(refused).toMatchObject({
               _tag: "Failure",
-              failure: {
-                _tag: "CodexShadowHomeSqliteSettingError",
-                setting: "configFile",
-                value: shadowConfig,
-              },
+              failure: { _tag: "CodexShadowHomeSqliteConflictError", entryName: "goals_1.sqlite" },
             });
           }
           // POSIX SQLite opens a link by its target, so Codex's own precedence is safe there.
@@ -737,15 +753,18 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           yield* fileSystem.remove(shadowConfig);
           yield* writeTextFile(
             sharedConfig,
-            `x = true\n  "sqlite_home"='${shadowHome}'\n[features]\ny = true\n`,
+            `x = true\n  "sqlite_home"='${databaseHome}'\n[features]\ny = true\n`,
           );
+          yield* expectHonoured();
+
+          // The shadow now reads the shared config through its link.
+          yield* writeTextFile(sharedConfig, 'sqlite_home = ["not", "a", "path"]\n');
           for (const refused of yield* launch()) {
             expect(refused).toMatchObject({
               _tag: "Failure",
-              failure: { setting: "configFile", value: sharedConfig },
+              failure: { setting: "configFile", value: shadowConfig },
             });
           }
-          expect(yield* fileSystem.exists(shadowConfig)).toBe(false);
 
           yield* writeTextFile(sharedConfig, `# sqlite_home = "${shadowHome}"\nmodel = "gpt"\n`);
           for (const launched of yield* launch()) {

@@ -5,6 +5,23 @@ const ASSIGNMENT = /[ \t]*=/uy;
 // the key counts.
 const SQLITE_HOME_LINE = /^[ \t]*["']?sqlite_home["']?[ \t]*=/mu;
 
+const BASIC_STRING = /^"((?:[^"\\\n]|\\.)*)"[ \t]*(?:#.*)?$/u;
+const LITERAL_STRING = /^'([^'\n]*)'[ \t]*(?:#.*)?$/u;
+
+/** The single-line TOML string that makes up all of `value`, or undefined for anything else. */
+export const tomlStringValue = (value: string): string | undefined => {
+  const literal = LITERAL_STRING.exec(value);
+  if (literal) return literal[1];
+  const basic = BASIC_STRING.exec(value);
+  if (!basic) return undefined;
+  try {
+    // TOML's basic-string escapes are JSON's, plus `\U` and `\e`, which this leaves unread.
+    return JSON.parse(`"${basic[1]}"`) as string;
+  } catch {
+    return undefined;
+  }
+};
+
 const unescapeKey = (key: string) =>
   key.replace(KEY_ESCAPE, (escape, ...hex: Array<string | undefined>) => {
     const code = Number.parseInt(hex[0] ?? hex[1] ?? hex[2] ?? "", 16);
@@ -13,11 +30,14 @@ const unescapeKey = (key: string) =>
   });
 
 /**
- * Whether a Codex config.toml sets `sqlite_home`. Codex reads it from the root table only, so a
+ * The `sqlite_home` a Codex config.toml sets, with `value` undefined when it is not a single-line
+ * string, or undefined when it sets none. Codex reads it from the root table only, so a
  * table's key of that name, such as an MCP server's environment variable, and the text of a
  * string or a comment are not the setting.
  */
-export const codexConfigSetsSqliteHome = (config: string): boolean => {
+export const codexConfigSqliteHome = (
+  config: string,
+): { readonly value: string | undefined } | undefined => {
   let unclosed = false;
 
   /** The index after the string that opens at `start`. */
@@ -65,7 +85,11 @@ export const codexConfigSetsSqliteHome = (config: string): boolean => {
       }
       ASSIGNMENT.lastIndex = index;
       // `sqlite_home.x` is a table, which Codex does not read as a path.
-      if (key === "sqlite_home" && ASSIGNMENT.test(config)) return true;
+      if (key === "sqlite_home" && ASSIGNMENT.test(config)) {
+        const lineEnd = config.indexOf("\n", ASSIGNMENT.lastIndex);
+        const value = config.slice(ASSIGNMENT.lastIndex, lineEnd < 0 ? undefined : lineEnd);
+        return { value: tomlStringValue(value.trim()) };
+      }
     }
     // A value ends at the first newline outside its strings, arrays and inline tables.
     let depth = 0;
@@ -81,5 +105,5 @@ export const codexConfigSetsSqliteHome = (config: string): boolean => {
     }
     if (depth > 0) unclosed = true;
   }
-  return unclosed && SQLITE_HOME_LINE.test(config);
+  return unclosed && SQLITE_HOME_LINE.test(config) ? { value: undefined } : undefined;
 };

@@ -1,4 +1,5 @@
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
+import { tomlStringValue } from "./codexSqliteHomeSetting.ts";
 
 const T3CODE_CODEX_LAUNCH_ARGS_ENV = "T3CODE_CODEX_LAUNCH_ARGS";
 
@@ -38,6 +39,13 @@ export const codexLaunchArgSettingSqliteHome = (launchArgs?: string) =>
     const key = override.slice(0, equals).trim();
     return key.replace(QUOTED_OVERRIDE_KEY, "$2").trim() === "sqlite_home";
   });
+
+/** The directory a `sqlite_home` override names: Codex reads it as TOML, or as written when that fails. */
+export const codexLaunchArgSqliteHome = (arg: string) => {
+  const override = arg.replace(CONFIG_OVERRIDE_FLAG, "");
+  const value = override.slice(override.indexOf("=") + 1).trim();
+  return tomlStringValue(value) ?? (/^["']/u.test(value) ? undefined : value);
+};
 
 // T3 unsubscribes only when it unloads a thread; Codex's own unload delay would stack on that.
 export const codexAppServerArgs = (

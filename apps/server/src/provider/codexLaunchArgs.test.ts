@@ -6,6 +6,7 @@ import {
   codexAppServerArgs,
   codexExecLaunchArgs,
   codexLaunchArgSettingSqliteHome,
+  codexLaunchArgSqliteHome,
   codexMcpListLaunchArgs,
 } from "./codexLaunchArgs.ts";
 
@@ -101,6 +102,16 @@ describe("codexLaunchArgSettingSqliteHome", () => {
     [`-c '"sqlite_home"="/shadow"'`, '"sqlite_home"="/shadow"'],
   ])("finds the override in %s", (launchArgs, expected) => {
     NodeAssert.equal(codexLaunchArgSettingSqliteHome(launchArgs), expected);
+  });
+
+  // Codex parses the value as TOML and takes it as written when that fails.
+  it.each([
+    ["sqlite_home=C:\\codex-db", "C:\\codex-db"],
+    ["-c=sqlite_home='C:\\codex-db'", "C:\\codex-db"],
+    ['--config=sqlite_home="C:\\\\codex-db"', "C:\\codex-db"],
+    ['sqlite_home="unclosed', undefined],
+  ])("reads the directory %s names", (arg, directory) => {
+    NodeAssert.equal(codexLaunchArgSqliteHome(arg), directory);
   });
 
   // regression: #24486 any argument holding `sqlite_home=` counted, so Windows refused an MCP

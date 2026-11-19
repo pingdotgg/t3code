@@ -2,11 +2,11 @@ import * as NodeAssert from "node:assert/strict";
 
 import { describe, it } from "vite-plus/test";
 
-import { codexConfigSetsSqliteHome } from "./codexSqliteHomeSetting.ts";
+import { codexConfigSqliteHome } from "./codexSqliteHomeSetting.ts";
 
 // Each row was run through Codex 0.170.0, which opened its databases in the named directory for
 // the first table and in CODEX_HOME for the second.
-describe("codexConfigSetsSqliteHome", () => {
+describe("codexConfigSqliteHome", () => {
   it.each([
     ["a root key", 'model = "gpt"\nsqlite_home = "C:\\\\shadow"\n'],
     ["a root key without a final newline", "sqlite_home='/shadow'"],
@@ -31,7 +31,17 @@ describe("codexConfigSetsSqliteHome", () => {
     ],
     ["a key before the first table", 'sqlite_home = "/shadow"\n[features]\nx = true\n'],
   ])("finds %s", (_name, config) => {
-    NodeAssert.equal(codexConfigSetsSqliteHome(config), true);
+    NodeAssert.notEqual(codexConfigSqliteHome(config), undefined);
+  });
+
+  it.each([
+    ['sqlite_home = "C:\\\\codex-db" # comment\r\n', "C:\\codex-db"],
+    ["sqlite_home = 'C:\\codex-db'\n[x]\n", "C:\\codex-db"],
+    ['sqlite_home = "/a\\u0062"\n', "/ab"],
+    ['sqlite_home = ["/a"]\n', undefined],
+    ['sqlite_home = """\n/a"""\n', undefined],
+  ])("reads the directory %s sets", (config, directory) => {
+    NodeAssert.deepEqual(codexConfigSqliteHome(config), { value: directory });
   });
 
   // regression: #24486 every line that looked like the key counted, whatever table or string
@@ -61,7 +71,7 @@ describe("codexConfigSetsSqliteHome", () => {
     ["a quoted key that spells out the escape", '"sqlite\\\\u005fhome" = "/shadow"\n'],
     ["a longer key", 'codex_sqlite_home = "/shadow"\nsqlite_home_dir = "/shadow"\n'],
   ])("ignores %s", (_name, config) => {
-    NodeAssert.equal(codexConfigSetsSqliteHome(config), false);
+    NodeAssert.equal(codexConfigSqliteHome(config), undefined);
   });
 
   // Codex 0.170.0 drops a config it cannot parse, but where the string or array was meant to
@@ -71,6 +81,6 @@ describe("codexConfigSetsSqliteHome", () => {
     ["an unclosed array", 'notify = [\n"a",\nsqlite_home = "/shadow"\n'],
     ["an unclosed string", 'note = "a\nsqlite_home = "/shadow"\n'],
   ])("finds the key after %s", (_name, config) => {
-    NodeAssert.equal(codexConfigSetsSqliteHome(config), true);
+    NodeAssert.notEqual(codexConfigSqliteHome(config), undefined);
   });
 });
