@@ -95,9 +95,9 @@ export function startPermissionUpdateNotices(router: AnyRouter): () => void {
     { immediate: true },
   );
   const stopWithdrawing = appAtomRegistry.subscribe(
-    environmentSummaries.identitiesAtom,
-    (identities) => {
-      const present = new Set(identities.map(({ environmentId }) => environmentId));
+    environmentSummaries.environmentIdsAtom,
+    (environmentIds) => {
+      const present = new Set(environmentIds);
       for (const [environmentId, withdraw] of shown) {
         if (present.has(environmentId)) continue;
         shown.delete(environmentId);
