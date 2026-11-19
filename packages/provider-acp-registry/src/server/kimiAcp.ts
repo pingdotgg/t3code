@@ -5,12 +5,16 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 const NATIVE_SESSION_ID = /^[\w-]+$/;
 const READ_CHUNK_BYTES = 65_536;
+const OUTCOME_POLLS = 41;
+const OUTCOME_POLL_INTERVAL = "50 millis";
+const HIDDEN_WORK_POLL_INTERVAL = "250 millis";
+// Kimi writes the next queued turn's `turn.prompt` right after the last one ends.
+const HIDDEN_WORK_IDLE_POLLS = 2;
 
 const KimiTurnEnded = Schema.fromJsonString(
   Schema.Struct({
@@ -42,21 +46,28 @@ const decodePromptSteered = Schema.decodeUnknownOption(
   ),
 );
 
-class KimiTurnNotEnded extends Schema.TaggedError<KimiTurnNotEnded>()("KimiTurnNotEnded", {}) {}
+const decodeTextPart = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literal("context.append_loop_event"),
+      agentId: Schema.Literal("main"),
+      event: Schema.Struct({
+        type: Schema.Literal("content.part"),
+        part: Schema.Struct({ type: Schema.Literal("text"), text: Schema.String }),
+      }),
+    }),
+  ),
+);
 
-const noOutcome = (_result: EffectAcpSchema.PromptResponse) =>
-  Effect.succeed<OrchestrationV2ProviderFailure | undefined>(undefined);
+/** A failure Kimi's stop reason hid, or the reply of turns Kimi ran without ACP updates. */
+export type KimiPromptOutcome =
+  | { readonly failure: OrchestrationV2ProviderFailure }
+  | { readonly hiddenReply: string };
 
-// Kimi runs that work in turns it never reports over ACP, so T3 cannot show it.
-const hiddenWorkFailure = (message: string) =>
-  makeProviderFailure({ message, code: null, class: "provider_error", retryable: false });
+const noOutcome = (_result: EffectAcpSchema.PromptResponse, _stopped: Effect.Effect<boolean>) =>
+  Effect.succeed<KimiPromptOutcome | undefined>(undefined);
 
-function turnFailure(ended: KimiTurnEnded, steered: boolean) {
-  if (steered && ended.reason === "completed") {
-    return hiddenWorkFailure(
-      "Kimi ended this turn early to handle a background task and kept working out of view. Its further output can't be shown here.",
-    );
-  }
+function turnFailure(ended: KimiTurnEnded): OrchestrationV2ProviderFailure | undefined {
   if (ended.reason !== "failed") return undefined;
   const code = ended.error?.code;
   return makeProviderFailure({
@@ -73,9 +84,10 @@ function turnFailure(ended: KimiTurnEnded, steered: boolean) {
 }
 
 /**
- * Kimi Code answers failed, steered-away and queued prompts with `end_turn`, and runs that
- * work without ACP updates. Its main agent's `wire.jsonl` shows what happened. Slash commands
- * answer without a turn, so only a prompt sent while a turn is open counts as queued.
+ * Kimi Code answers failed, steered-away and queued prompts with `end_turn`, and runs the
+ * work after a steer or queue without ACP updates. Its main agent's `wire.jsonl` shows what
+ * happened, so the check follows it until Kimi is idle and returns that work's reply. Slash
+ * commands answer without a turn, so only a prompt sent while a turn is open counts as queued.
  */
 export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(function* (
   configuredHome: string | undefined,
@@ -131,17 +143,16 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           }),
         ).pipe(Effect.orElseSucceed(() => false));
 
-    return Effect.fn("KimiTurnOutcome.check")(function* (result: EffectAcpSchema.PromptResponse) {
+    return Effect.fn("KimiTurnOutcome.check")(function* (
+      result: EffectAcpSchema.PromptResponse,
+      stopped: Effect.Effect<boolean>,
+    ) {
       if (result.stopReason !== "end_turn") return undefined;
       // A new session's log can first appear with its first prompt.
       const wire = Option.isSome(before) ? before : yield* findWire;
       if (Option.isNone(wire)) return undefined;
       let offset = startOffset;
-      let ended: KimiTurnEnded | undefined;
-      let steered = false;
-      // Kimi's own unfinished turn ends first; this prompt's outcome follows its `turn.prompt`.
-      let started = !turnOpen;
-      // Each poll decodes only the complete lines appended since the last one.
+      // Each read returns only the complete lines appended since the last one.
       const readAppended = Effect.scoped(
         Effect.gen(function* () {
           const file = yield* fileSystem.open(wire.value, { flag: "r" });
@@ -156,44 +167,68 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           const bytes = Buffer.concat(chunks);
           const complete = bytes.lastIndexOf(0x0a) + 1;
           offset += BigInt(complete);
-          for (const line of bytes.subarray(0, complete).toString("utf8").split("\n")) {
-            if (!started) {
-              started =
-                line.includes('"turn.prompt"') &&
-                Option.exists(decodeTurnBoundary(line), (record) => record.type === "turn.prompt");
-              continue;
-            }
-            if (ended === undefined && line.includes('"prompt.steered"')) {
-              steered ||= Option.isSome(decodePromptSteered(line));
-            }
-            if (!line.includes('"turn.ended"')) continue;
-            const record = decodeTurnEnded(line);
-            if (Option.isSome(record)) ended ??= record.value;
-          }
-          if (ended === undefined) return yield* new KimiTurnNotEnded();
-          return ended;
+          return bytes.subarray(0, complete).toString("utf8").split("\n").filter(Boolean);
         }),
       );
-      // Kimi writes `turn.ended` on a microtask after it answers the prompt.
-      return yield* readAppended.pipe(
-        Effect.retry({
-          times: 40,
-          schedule: Schedule.spaced("50 millis"),
-          while: (error) => error._tag === "KimiTurnNotEnded",
-        }),
-        Effect.map((ended) => turnFailure(ended, steered)),
-        Effect.catchTags({
-          KimiTurnNotEnded: (error) =>
-            turnOpen
-              ? Effect.succeed(
-                  hiddenWorkFailure(
-                    "Kimi queued this message behind work it was still doing and answered before running it. Its reply can't be shown here.",
-                  ),
-                )
-              : Effect.fail(error),
-        }),
+
+      let ended: KimiTurnEnded | undefined;
+      let steered = false;
+      let open = turnOpen;
+      let lastEnded: KimiTurnEnded | undefined;
+      const replies: Array<string> = [];
+      const follow = (lines: ReadonlyArray<string>) => {
+        for (const line of lines) {
+          if (ended === undefined && !turnOpen && line.includes('"prompt.steered"')) {
+            steered ||= Option.isSome(decodePromptSteered(line));
+          }
+          if (line.includes('"turn.prompt"') || line.includes('"turn.ended"')) {
+            const boundary = decodeTurnBoundary(line);
+            if (Option.isNone(boundary)) continue;
+            open = boundary.value.type === "turn.prompt";
+            if (open) continue;
+            const record = decodeTurnEnded(line);
+            if (Option.isNone(record)) continue;
+            lastEnded = record.value;
+            ended ??= record.value;
+          } else if (line.includes('"content.part"') && (turnOpen || ended !== undefined)) {
+            const part = decodeTextPart(line);
+            if (Option.isSome(part)) replies.push(part.value.event.part.text);
+          }
+        }
+      };
+
+      return yield* Effect.gen(function* () {
+        // Kimi writes `turn.ended` on a microtask after it answers the prompt.
+        if (!turnOpen) {
+          for (let poll = 1; poll <= OUTCOME_POLLS; poll++) {
+            if (poll > 1) yield* Effect.sleep(OUTCOME_POLL_INTERVAL);
+            follow(yield* readAppended);
+            if (ended !== undefined) break;
+          }
+        }
+        if (!turnOpen && (!steered || (ended !== undefined && ended.reason !== "completed"))) {
+          if (ended === undefined) {
+            yield* Effect.logWarning("Kimi's session log has no outcome for this turn.");
+            return undefined;
+          }
+          const failure = turnFailure(ended);
+          return failure === undefined ? undefined : { failure };
+        }
+        // A steered notice or a queued prompt runs in turns Kimi reports only to its log.
+        for (let quiet = 0; quiet < HIDDEN_WORK_IDLE_POLLS;) {
+          if (yield* stopped) break;
+          yield* Effect.sleep(HIDDEN_WORK_POLL_INTERVAL);
+          const lines = yield* readAppended;
+          follow(lines);
+          quiet = open || lines.length > 0 ? 0 : quiet + 1;
+        }
+        const failure = lastEnded === undefined ? undefined : turnFailure(lastEnded);
+        if (failure !== undefined) return { failure };
+        const hiddenReply = replies.join("\n\n").trim();
+        return hiddenReply.length === 0 ? undefined : { hiddenReply };
+      }).pipe(
         Effect.catch(() =>
-          Effect.logWarning("Kimi's session log has no outcome for this turn.").pipe(
+          Effect.logWarning("Kimi's session log could not be read for this turn.").pipe(
             Effect.as(undefined),
           ),
         ),

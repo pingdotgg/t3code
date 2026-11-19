@@ -1334,7 +1334,7 @@ describe("AcpAdapterV2", () => {
       assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
     }).pipe(Effect.provide(layerTest)),
   );
-  it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
+  it.live("applies what the outcome check finds after an end_turn", () =>
     Effect.gen(function* () {
       const checking = yield* Deferred.make<void>();
       const releaseCheck = yield* Deferred.make<void>();
@@ -1373,7 +1373,7 @@ describe("AcpAdapterV2", () => {
                   ? { failure: quota, threadDisposition: "reusable" as const }
                   : watchedSessions.length >= 3
                     ? { failure: poisoned, threadDisposition: "broken" as const }
-                    : undefined;
+                    : { hiddenReply: "FINAL: done out of view" };
               const interrupted = watchedSessions.length === 4;
               return () =>
                 interrupted
@@ -1445,8 +1445,16 @@ describe("AcpAdapterV2", () => {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, quota);
-      const completed = (yield* runTurn(2)).at(-1);
+      // Work the agent did without ACP updates reaches the turn as its reply.
+      const completedEvents = yield* runTurn(2);
+      const completed = completedEvents.at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+      const replies = completedEvents.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.equal(replies.at(-1), "FINAL: done out of view");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
       // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
       assert.include(promptTexts[1] ?? "", "<runtime_info>");

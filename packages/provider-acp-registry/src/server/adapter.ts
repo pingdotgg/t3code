@@ -272,12 +272,13 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           watchPromptOutcome: (sessionId: string) =>
             Effect.map(
               watchKimiPromptOutcome(sessionId),
-              (check) => (result: EffectAcpSchema.PromptResponse) =>
-                Effect.map(check(result), (failure) =>
-                  failure === undefined
-                    ? undefined
-                    : { failure, threadDisposition: "reusable" as const },
-                ),
+              (check) =>
+                (result: EffectAcpSchema.PromptResponse, stopped: Effect.Effect<boolean>) =>
+                  Effect.map(check(result, stopped), (outcome) =>
+                    outcome === undefined || !("failure" in outcome)
+                      ? outcome
+                      : { failure: outcome.failure, threadDisposition: "reusable" as const },
+                  ),
             ),
         }),
     ...(registryAgentId === "mistral-vibe"
