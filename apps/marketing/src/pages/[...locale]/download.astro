@@ -609,8 +609,10 @@ const imageProps = {
   .download-page[data-channel="nightly"] .sky {
     bottom: 2rem;
     background-position: 90% 100%;
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0%, #000 72%, transparent 100%);
+    /* Fade only the art's bottom 3.5%, the planet's night side under the sun: cover sizes the art to
+       max(box height, 56.25vw), so the fade starts at min(96.5%, 100% - 1.97vw) and never reaches the sun. */
+    -webkit-mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 min(96.5%, calc(100% - 1.97vw)), transparent 100%);
   }
 
   .download-page[data-channel="nightly"] .head-inner {
@@ -674,7 +676,8 @@ const imageProps = {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.6fr);
     gap: 1rem;
-    margin-top: -4rem;
+    /* The tiles start where the art ends (the sky stops 2rem above the header's bottom), so none covers the sun. */
+    margin-top: -2rem;
   }
 
   .download-page[data-channel="nightly"] .platform-section {
