@@ -2211,14 +2211,13 @@ it("finds abandoned turns in a long history reading each record a bounded number
     { ordinal: 2_001 },
     providerThreadId,
   );
-  const searchReads = reads;
 
   expect(abandoned.map(({ turn, run }) => [turn.id, run.id])).toEqual([
     ["t-a10-steered", "r10"],
     ["t-a20", "r20"],
   ]);
   const records = runs.length + attempts.length + providerTurns.length;
-  expect(searchReads).toBeLessThanOrEqual(4 * records);
+  expect(reads).toBeLessThanOrEqual(4 * records);
 });
 
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
