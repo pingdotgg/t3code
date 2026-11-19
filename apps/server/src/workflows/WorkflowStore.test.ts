@@ -99,6 +99,8 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
       // A second ending, such as a cancel that lost the race, is not recorded and says so.
       assert.isFalse(yield* store.runEnded("r3", "cancelled", "late", null));
       assert.equal((yield* store.run("r3"))?.status, "completed");
+      // Every run still going, with no list limit: the guard on dropping a version reads this.
+      assert.equal((yield* store.unfinished).length, 2);
       yield* store.waitOpened({
         runId: "r2",
         name: "merge",

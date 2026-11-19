@@ -98,6 +98,10 @@ export class Workflows extends Context.Service<
     ) => Effect.Effect<WorkflowStore.WorkflowRun>;
     /** The questions runs are waiting on a person to answer, oldest first. */
     readonly questions: Effect.Effect<ReadonlyArray<WorkflowQuestion>>;
+    /** What each run that has not ended is a run of, however many: no list limit applies. */
+    readonly unfinished: Effect.Effect<
+      ReadonlyArray<{ readonly workflow: string; readonly version: number }>
+    >;
     /** The hook URLs of the registered workflows. */
     readonly hooks: Effect.Effect<ReadonlyArray<WorkflowHook>>;
     /**
@@ -152,6 +156,7 @@ export const disabled = Workflows.of({
     return yield* Effect.never;
   }),
   questions: Effect.succeed([]),
+  unfinished: Effect.succeed([]),
   hooks: Effect.succeed([]),
   deliver: Effect.fn("Workflows.deliver")(function* () {
     return yield* Effect.succeed(Option.none<{ readonly runId: string }>());

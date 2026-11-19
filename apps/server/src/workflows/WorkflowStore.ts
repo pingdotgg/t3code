@@ -173,6 +173,10 @@ export class WorkflowStore extends Context.Service<
     readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
     /** Every run in this state, however many: the sweep must not miss old ones past a page. */
     readonly everyRun: (status: "running" | "paused") => Effect.Effect<ReadonlyArray<RunRow>>;
+    /** What each run that has not ended is a run of, with no limit. */
+    readonly unfinished: Effect.Effect<
+      ReadonlyArray<{ readonly workflow: string; readonly version: number }>
+    >;
     /** Whether a signal with this id already woke a wait. */
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
@@ -487,6 +491,14 @@ export const make = Effect.gen(function* () {
       JOIN workflow_runs p ON p.run_id = c.parent_run_id
       WHERE c.ended_at IS NULL AND p.status = 'cancelled'
     `.pipe(Effect.orDie),
+    unfinished: sql<{ workflow: string; version: number | bigint }>`
+      SELECT workflow, version FROM workflow_runs WHERE ended_at IS NULL
+    `.pipe(
+      Effect.map((rows) =>
+        rows.map((row) => ({ workflow: row.workflow, version: Number(row.version) })),
+      ),
+      Effect.orDie,
+    ),
     everyRun: Effect.fn("WorkflowStore.everyRun")(function* (status) {
       return yield* sql<RunRow>`SELECT * FROM workflow_runs WHERE status = ${status}`.pipe(
         Effect.orDie,

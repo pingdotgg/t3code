@@ -396,10 +396,13 @@ const fakeAgents = () => {
         [...unreadable].some((key) => started.turnId.endsWith(`/${key}`) && unreadable.delete(key))
           ? Effect.fail(new WorkflowAgentError({ reason: "the result could not be read" }))
           : Deferred.await(turn(started.turnId).ended),
+      // Counted per try, so a retry of the same stop uses up a refusal too.
       interrupt: (thread) =>
-        refusals-- > 0
-          ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
-          : Effect.sync(() => void interrupted.push(thread)),
+        Effect.suspend(() =>
+          refusals-- > 0
+            ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
+            : Effect.sync(() => void interrupted.push(thread)),
+        ),
     }),
     interrupted,
     /** The next read of a turn with this key fails. */
