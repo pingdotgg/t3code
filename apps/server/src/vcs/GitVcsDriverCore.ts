@@ -1516,9 +1516,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                         Effect.flatMap((names) =>
                           Effect.forEach(
                             names.filter((name) => !before.includes(name)),
-                            stampTempPack,
+                            // Another fetch can rename its pack away between the listing and here.
+                            (name) => stampTempPack(name).pipe(Effect.option),
                           ),
                         ),
+                        Effect.map((stamps) => stamps.flatMap(Option.toArray)),
                         Effect.orElseSucceed(() => []),
                       );
                 yield* recordStatusRemoteRefreshFailure(key, tempPacks);
