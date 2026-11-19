@@ -420,7 +420,7 @@ describe("resolveSnoozePresets", () => {
         snoozedUntil: INDEFINITE_SNOOZE_UNTIL,
       },
     ]);
-    expect(snoozeWakeLabel(INDEFINITE_SNOOZE_UNTIL, { now: NOW })).toBe("");
+    expect(snoozeWakeLabel(INDEFINITE_SNOOZE_UNTIL, { now: NOW })).toBe("∞");
   });
 
   it("lists custom presets soonest first and names the day when the label does not", () => {

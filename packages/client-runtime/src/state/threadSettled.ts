@@ -212,7 +212,7 @@ const WEEKDAY_INDEX = {
 /** A wake so far out it never comes; the thread stays snoozed until woken by hand. */
 export const INDEFINITE_SNOOZE_UNTIL = "9999-12-31T23:59:59.000Z";
 
-function isIndefiniteSnooze(snoozedUntil: string): boolean {
+export function isIndefiniteSnooze(snoozedUntil: string): boolean {
   return Date.parse(snoozedUntil) >= Date.parse(INDEFINITE_SNOOZE_UNTIL);
 }
 
@@ -407,8 +407,7 @@ export function snoozeWakeLabel(
   options: { readonly now: string },
   resolve: MFunctionType = mFallback,
 ): string {
-  // An indefinite snooze has no countdown to show.
-  if (isIndefiniteSnooze(snoozedUntil)) return "";
+  if (isIndefiniteSnooze(snoozedUntil)) return "∞";
   const wakeMs = Date.parse(snoozedUntil);
   const nowMs = Date.parse(options.now);
   const now = () => resolve(msg("now", { $context: "a snoozed thread wakes now" }));
