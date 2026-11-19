@@ -1,17 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-  type AtomCommandResult,
-} from "@t3tools/client-runtime/state/runtime";
-import {
   allWorkflowRunNodes,
-  buildWorkflowFeed,
-  buildWorkflowTimeline,
   groupWorkflowRuns,
   readWorkflowQuestion,
   workflowAgentSummary,
   workflowAnswer,
+  workflowRunNow,
   workflowResultLines,
   workflowRunState,
   type WorkflowBeat,
@@ -20,8 +14,9 @@ import {
 import { EnvironmentId, ThreadId, type WorkflowQuestion } from "@t3tools/contracts";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { T, Var, useGT, useMessages } from "gt-react-native";
-import { useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { useState } from "react";
+import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
@@ -35,147 +30,13 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { Card, Facts, plain, reportFailure, workflowRunFeedOf } from "./WorkflowStepCard";
 import { WORKFLOW_TONE_CLASS, WorkflowChip } from "./WorkflowsScreen";
 
 export type WorkflowRunParams = {
   readonly environmentId: string;
   readonly runId: string;
 };
-
-const SAID_LINES = 8;
-
-function reportFailure(title: string, result: AtomCommandResult<unknown, unknown>) {
-  if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
-  Dialog.alert(title, String(squashAtomCommandFailure(result)));
-}
-
-/** Markdown's emphasis marks, which plain text would show as asterisks and backticks. */
-const plain = (text: string) => text.replace(/\*\*|__|`/g, "");
-
-function Card(props: { readonly tone?: "input" | "failed"; readonly children: ReactNode }) {
-  return (
-    <View
-      className={cn(
-        "gap-2 rounded-2xl border p-4",
-        props.tone === "input"
-          ? "border-primary bg-primary/5"
-          : props.tone === "failed"
-            ? "border-danger-border bg-danger/5"
-            : "border-border bg-card",
-      )}
-    >
-      {props.children}
-    </View>
-  );
-}
-
-function Facts(props: {
-  readonly facts: ReadonlyArray<{ readonly label: string; readonly value: string }>;
-}) {
-  if (props.facts.length === 0) return null;
-  return (
-    <View className="flex-row flex-wrap gap-1.5">
-      {props.facts.map((fact) => (
-        <View key={fact.label} className="max-w-full flex-row gap-1 rounded-md bg-subtle px-2 py-1">
-          <Text className="text-xs text-foreground-muted">{fact.label}</Text>
-          <Text className="shrink font-t3-medium text-xs text-foreground">{fact.value}</Text>
-        </View>
-      ))}
-    </View>
-  );
-}
-
-/** A step that took time or involved someone: an agent, a wait, a sleep, a run it invoked. */
-function BeatCard(props: {
-  readonly beat: WorkflowBeat;
-  readonly onOpenThread: (thread: NonNullable<WorkflowBeat["thread"]>) => void;
-  readonly onOpenRun: (runId: string) => void;
-}) {
-  const { beat } = props;
-  const thread = beat.thread;
-  const child = beat.childRun;
-  const summary = workflowAgentSummary(beat);
-  const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
-  const running = beat.status === "running";
-  const gt = useGT();
-  if (beat.kind !== "agent" && child === null && answer === null) {
-    return (
-      <Text className="px-1 text-xs text-foreground-muted">
-        {running
-          ? beat.kind === "sleep" && beat.detail !== null
-            ? gt("{step} · under way · sleeping", { step: beat.name })
-            : gt("{step} · under way", { step: beat.name })
-          : beat.status === "failed"
-            ? gt("{step} · failed", { step: beat.name })
-            : beat.name}
-      </Text>
-    );
-  }
-  return (
-    <Card>
-      <View className="flex-row items-center gap-2">
-        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground" numberOfLines={1}>
-          {beat.name}
-        </Text>
-        <Text
-          className={cn(
-            "text-xs",
-            beat.status === "failed" ? "text-danger-foreground" : "text-foreground-muted",
-          )}
-        >
-          {running
-            ? gt("Working", { $context: "workflow step status" })
-            : beat.status === "failed"
-              ? gt("Failed", { $context: "workflow step status" })
-              : gt("Done", { $context: "workflow step status" })}
-        </Text>
-      </View>
-      {answer === null ? null : (
-        <Text className="text-sm text-foreground">
-          {answer.reason === null
-            ? gt("Answered {choice}", { choice: answer.choice })
-            : gt("Answered {choice}: {reason}", { choice: answer.choice, reason: answer.reason })}
-        </Text>
-      )}
-      {child === null ? null : (
-        <Text className="text-sm text-foreground-secondary" numberOfLines={2}>
-          {child.title}
-        </Text>
-      )}
-      {summary.said === null ? null : (
-        <Text className="text-sm text-foreground" numberOfLines={SAID_LINES}>
-          {plain(summary.said)}
-        </Text>
-      )}
-      {beat.status === "failed" && beat.detail !== null ? (
-        <Text className="text-sm text-danger-foreground">{beat.detail}</Text>
-      ) : null}
-      {answer === null ? <Facts facts={summary.facts} /> : null}
-      {thread === null && child === null ? null : (
-        <View className="flex-row gap-2 pt-1">
-          {thread === null ? null : (
-            <Button
-              size="compact"
-              label={
-                running
-                  ? gt("Watch live")
-                  : gt("Transcript", { $context: "button, opens the agent's conversation" })
-              }
-              onPress={() => props.onOpenThread(thread)}
-            />
-          )}
-          {child === null ? null : (
-            <Button
-              size="compact"
-              label={gt("Open run")}
-              onPress={() => props.onOpenRun(child.runId)}
-            />
-          )}
-        </View>
-      )}
-    </Card>
-  );
-}
 
 function QuestionCard(props: {
   readonly environmentId: EnvironmentId;
@@ -250,6 +111,119 @@ function QuestionCard(props: {
   );
 }
 
+/** The straight piece of wire between two parts of the flow. */
+function Wire(props: { readonly live?: boolean }) {
+  return (
+    <View
+      className={cn("h-4 w-0.5 self-center", props.live === true ? "bg-primary/50" : "bg-border")}
+    />
+  );
+}
+
+/** One wire becoming several, or several becoming one: the piece above or below one column. */
+function Rail(props: { readonly index: number; readonly count: number; readonly join?: boolean }) {
+  const bar = (shown: boolean) => (
+    <View className={cn("h-0.5 flex-1", shown ? "bg-border" : null)} />
+  );
+  const across = (
+    <View className="flex-row">
+      {bar(props.index > 0)}
+      {bar(props.index < props.count - 1)}
+    </View>
+  );
+  const down = <View className="h-3 w-0.5 self-center bg-border" />;
+  return props.join === true ? (
+    <View>
+      {down}
+      {across}
+    </View>
+  ) : (
+    <View>
+      {across}
+      {down}
+    </View>
+  );
+}
+
+/** A step in the flow: what it was, how it went in a line, and how long it took. */
+function FlowNode(props: {
+  readonly beat: WorkflowBeat;
+  readonly child: WorkflowRunNode | null;
+  /** How long it took, as a share of the longest step. */
+  readonly share: number;
+  readonly onPress: () => void;
+}) {
+  const { beat } = props;
+  const gt = useGT();
+  const m = useMessages();
+  const running = beat.status === "running";
+  const failed = beat.status === "failed";
+  const length = formatDuration(beat.endMs - beat.startMs);
+  const said = workflowAgentSummary(beat).said;
+  const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
+  const line = failed
+    ? gt("failed after {duration}", { duration: length })
+    : running
+      ? beat.kind === "sleep"
+        ? gt("sleeping")
+        : beat.kind === "agent"
+          ? gt("working")
+          : gt("under way")
+      : beat.kind === "agent" && said !== null
+        ? plain(said).trim().split("\n", 1)[0]
+        : beat.kind === "ask"
+          ? answer === null
+            ? gt("nobody answered")
+            : gt("Answered {choice}", { choice: answer.choice })
+          : beat.kind === "run" && props.child !== null
+            ? workflowRunNow(props.child, m)
+            : length;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${beat.childRun?.title ?? beat.name}, ${line}`}
+      onPress={props.onPress}
+      className={cn(
+        "gap-0.5 rounded-xl border px-3 py-2 active:opacity-70",
+        failed ? "border-danger-border bg-danger/5" : "border-border bg-card",
+      )}
+    >
+      <View className="flex-row items-center gap-2">
+        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground" numberOfLines={1}>
+          {beat.childRun?.title ?? beat.name}
+        </Text>
+        <Text
+          className={cn(
+            "text-xs",
+            failed
+              ? "text-danger-foreground"
+              : running
+                ? "text-info-foreground"
+                : "text-foreground-muted",
+          )}
+        >
+          {running
+            ? gt("Working", { $context: "workflow step status" })
+            : failed
+              ? gt("Failed", { $context: "workflow step status" })
+              : length}
+        </Text>
+      </View>
+      <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+        {line}
+      </Text>
+      {running ? null : (
+        <View className="mt-1 h-0.5 rounded-full bg-border">
+          <View
+            className="h-0.5 rounded-full bg-icon-subtle"
+            style={{ width: `${Math.max(4, Math.round(props.share * 100))}%` }}
+          />
+        </View>
+      )}
+    </Pressable>
+  );
+}
+
 function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: WorkflowRunNode }) {
   const { environmentId, node } = props;
   const { run } = node;
@@ -302,24 +276,14 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         threadId: ThreadId.make(thread.threadId),
       }),
     );
-  const openRun = (runId: string) =>
-    navigation.dispatch(StackActions.push("WorkflowRun", { environmentId, runId }));
+  const openStep = (step: string) =>
+    navigation.dispatch(
+      StackActions.push("WorkflowStep", { environmentId, runId: run.runId, step }),
+    );
 
   const state = workflowRunState(node, m);
   const steps = detail.data?.steps;
-  // The run's own clock: a finished step's times are fixed, and one under way ends at its start
-  // until the next answer from the server, which is exact enough for an order of cards.
-  const feed =
-    steps === undefined
-      ? null
-      : buildWorkflowFeed(
-          buildWorkflowTimeline({
-            run,
-            steps,
-            children: node.children.map((child) => child.run),
-            nowMs: Date.parse(run.updatedAt),
-          }),
-        );
+  const feed = steps === undefined ? null : workflowRunFeedOf(node, steps);
   const beats = (feed ?? []).flatMap((row) =>
     row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row],
   );
@@ -339,10 +303,41 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       onOpenThread={openThread}
     />
   );
-  const card = (beat: WorkflowBeat) => {
+  const failedAtStep = beats.some((beat) => beat.status === "failed");
+  const longestMs = Math.max(1, ...beats.map((beat) => beat.endMs - beat.startMs));
+  const pause = (
+    <Card tone="failed">
+      <Text className="font-t3-medium text-sm text-danger-foreground">
+        {gt("Paused", { $context: "workflow run status" })}
+      </Text>
+      <Text className="text-sm text-foreground">{run.detail ?? gt("A step failed.")}</Text>
+      <Text className="text-xs text-foreground-muted">
+        {run.resumesAt === null
+          ? gt("It waits for you to resume it.")
+          : gt("It tries again by itself, or resume it now.")}
+      </Text>
+      <Button
+        label={gt("Resume now")}
+        tone="primary"
+        disabled={busy || !canOperate}
+        loading={busy}
+        onPress={() => void resumeRun()}
+      />
+    </Card>
+  );
+  // What needs a person is open in the flow. Everything else is a node that opens on a tap.
+  const stop = (beat: WorkflowBeat) => {
     const asked = questionOf(beat);
     if (asked !== null) return question(asked);
-    return <BeatCard key={beat.name} beat={beat} onOpenThread={openThread} onOpenRun={openRun} />;
+    if (beat.status === "failed" && run.status === "paused") return pause;
+    return (
+      <FlowNode
+        beat={beat}
+        child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
+        share={(beat.endMs - beat.startMs) / longestMs}
+        onPress={() => openStep(beat.name)}
+      />
+    );
   };
   const ended = run.endedAt !== null;
   const resultLines = workflowResultLines(run.result);
@@ -372,81 +367,88 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
           </Text>
         </View>
       </View>
-      {run.status === "paused" ? (
-        <Card tone="failed">
-          <Text className="font-t3-medium text-sm text-danger-foreground">
-            {gt("Paused", { $context: "workflow run status" })}
-          </Text>
-          <Text className="text-sm text-foreground">{run.detail ?? gt("A step failed.")}</Text>
-          <Text className="text-xs text-foreground-muted">
-            {run.resumesAt === null
-              ? gt("It waits for you to resume it.")
-              : gt("It tries again by itself, or resume it now.")}
-          </Text>
-          <Button
-            label={gt("Resume now")}
-            tone="primary"
-            disabled={busy || !canOperate}
-            loading={busy}
-            onPress={() => void resumeRun()}
-          />
-        </Card>
-      ) : null}
       {feed === null ? (
         <Text className="px-1 text-sm text-foreground-muted">
           {detail.error ?? gt("Loading the run's steps…")}
         </Text>
       ) : (
-        feed.map((row) =>
-          row.kind === "quick" ? (
-            <Text
-              key={`quick:${row.steps[0]?.name}`}
-              className="px-1 text-xs text-foreground-muted"
-              numberOfLines={1}
-            >
-              {row.steps.map((step) => step.name).join(" · ")}
-            </Text>
-          ) : row.kind === "together" ? (
-            <View key={`together:${row.beats[0]?.name}`} className="gap-2">
-              <Text className="px-1 text-xs text-foreground-muted">
-                <T>At the same time</T>
-              </Text>
-              {row.beats.map(card)}
+        <View>
+          <View className="size-2 self-center rounded-full bg-icon-subtle" />
+          {feed.map((row) =>
+            row.kind === "quick" ? (
+              <View key={`quick:${row.steps[0]?.name}`} className="items-center">
+                <Wire />
+                <Text className="px-6 text-xs text-foreground-muted" numberOfLines={1}>
+                  {row.steps.map((step) => step.name).join(" · ")}
+                </Text>
+              </View>
+            ) : row.kind === "together" ? (
+              <View key={`together:${row.beats[0]?.name}`}>
+                <Wire />
+                <Text className="self-center pb-1 text-xs text-foreground-muted">
+                  <T>at the same time</T>
+                </Text>
+                <View className="flex-row">
+                  {row.beats.map((beat, index) => (
+                    <View key={beat.name} className="min-w-0 flex-1">
+                      <Rail index={index} count={row.beats.length} />
+                      <View className="px-1">{stop(beat)}</View>
+                      <Rail index={index} count={row.beats.length} join />
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : (
+              <View key={row.name}>
+                <Wire />
+                {stop(row)}
+              </View>
+            ),
+          )}
+          {loose.map((asked) => (
+            <View key={`question:${asked.name}`}>
+              <Wire />
+              {question(asked)}
             </View>
-          ) : (
-            card(row)
-          ),
-        )
-      )}
-      {loose.map(question)}
-      {ended ? (
-        <Card>
-          <Text className="font-t3-medium text-sm text-foreground">
-            {run.status === "completed"
-              ? gt("Finished", { $context: "how a workflow run ended" })
-              : run.status === "stopped"
-                ? gt("Stopped", { $context: "how a workflow run ended" })
-                : run.status === "skipped"
-                  ? gt("Skipped", { $context: "how a workflow run ended" })
-                  : gt("Cancelled", { $context: "how a workflow run ended" })}
-          </Text>
-          {run.status !== "completed" && run.detail !== null ? (
-            <Text className="text-sm text-foreground-secondary">{run.detail}</Text>
+          ))}
+          {run.status === "paused" && !failedAtStep ? (
+            <View>
+              <Wire />
+              {pause}
+            </View>
           ) : null}
-          <Facts
-            facts={resultLines.flatMap((line) =>
-              line.label === null ? [] : [{ label: line.label, value: line.value }],
-            )}
-          />
-          {resultLines
-            .filter((line) => line.label === null)
-            .map((line) => (
-              <Text key={line.value} className="text-sm text-foreground">
-                {line.value}
+          <Wire live={!ended} />
+          {ended ? (
+            <Card>
+              <Text className="font-t3-medium text-sm text-foreground">
+                {run.status === "completed"
+                  ? gt("Finished", { $context: "how a workflow run ended" })
+                  : run.status === "stopped"
+                    ? gt("Stopped", { $context: "how a workflow run ended" })
+                    : run.status === "skipped"
+                      ? gt("Skipped", { $context: "how a workflow run ended" })
+                      : gt("Cancelled", { $context: "how a workflow run ended" })}
               </Text>
-            ))}
-        </Card>
-      ) : canOperate ? (
+              {run.status !== "completed" && run.detail !== null ? (
+                <Text className="text-sm text-foreground-secondary">{run.detail}</Text>
+              ) : null}
+              <Facts
+                facts={resultLines.flatMap((line) =>
+                  line.label === null ? [] : [{ label: line.label, value: line.value }],
+                )}
+              />
+              {resultLines
+                .filter((line) => line.label === null)
+                .map((line) => (
+                  <Text key={line.value} className="text-sm text-foreground">
+                    {line.value}
+                  </Text>
+                ))}
+            </Card>
+          ) : null}
+        </View>
+      )}
+      {!ended && canOperate ? (
         <Button tone="text" label={gt("Cancel run")} disabled={busy} onPress={cancelRun} />
       ) : null}
     </ScreenScrollView>
