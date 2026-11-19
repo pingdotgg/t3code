@@ -214,7 +214,7 @@ function sanitizeToolValue(
     return undefined;
   }
   if (typeof value === "string") {
-    if (/^data:image\//i.test(value) || budget.text <= 0) {
+    if (/^data:image\/[a-z0-9.+-]+(?:;[^;,\s]+)*,/i.test(value) || budget.text <= 0) {
       return undefined;
     }
     const bound =

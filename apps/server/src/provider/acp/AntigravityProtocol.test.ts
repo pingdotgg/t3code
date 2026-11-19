@@ -557,9 +557,12 @@ describe("Antigravity tool results", () => {
   });
 
   it("bounds nested tool data and drops image blobs and data URLs", () => {
+    const commaLessParams = `data:image/png${";a".repeat(200)}`;
     const payload = sanitizeAntigravityToolPayload({
       rawOutput: {
         text: "a".repeat(100_000),
+        prose: "data:image/png is the prefix to look for",
+        commaLessParams,
         result: { mimeType: "image/png", blob: "image-blob".repeat(100_000) },
         image: { type: "image", data: "inline-image".repeat(100_000) },
         uri: "data:image/png;base64,inline-data-url",
@@ -568,6 +571,8 @@ describe("Antigravity tool results", () => {
     const serialized = JSON.stringify(payload);
     expect(serialized.length).toBeLessThan(9_000);
     expect(serialized).not.toContain("image-blob");
+    expect(serialized).toContain("data:image/png is the prefix to look for");
+    expect(serialized).toContain(commaLessParams);
     expect(serialized).not.toContain("inline-image");
     expect(serialized).not.toContain("inline-data-url");
   });

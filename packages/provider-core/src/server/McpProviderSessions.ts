@@ -11,6 +11,7 @@ import type { McpProviderSessionConfig } from "./mcpSession.ts";
 
 // Other providers may never consume these references.
 const MAX_KEPT_HTML_RENDERS = 64;
+const MAX_KEPT_SENT_MESSAGES = 64;
 
 // Antigravity truncates long HTML arguments to a marked tail of at most 8,000 characters.
 const BOUNDED_TEXT_MARKER = "[Earlier output truncated]\n\n";
@@ -51,6 +52,13 @@ export class McpProviderSessions extends Context.Service<
       input: PageInput,
       reported?: HtmlRenderReference,
     ) => Effect.Effect<HtmlRenderReference | undefined>;
+    readonly recordSentMessage: (threadId: ThreadId, message: string) => Effect.Effect<void>;
+    readonly takeSentMessage: (
+      threadId: ThreadId,
+      message: string,
+      options?: { readonly minRemaining?: number },
+    ) => Effect.Effect<string | undefined>;
+    readonly clearSentMessages: (threadId: ThreadId) => Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/McpProviderSessions") {}
 
@@ -106,15 +114,28 @@ const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput
 const make = Effect.gen(function* () {
   const sessions = yield* Ref.make(new Map<ThreadId, McpProviderSessionConfig>());
   const htmlRenders = yield* Ref.make(new Map<ThreadId, ReadonlyArray<KeptHtmlRender>>());
+  const sentMessages = yield* Ref.make(new Map<ThreadId, ReadonlyArray<string>>());
+  const clearThreadOutputs = (threadId: ThreadId) =>
+    Effect.all(
+      [
+        Ref.update(htmlRenders, (current) => {
+          const next = new Map(current);
+          next.delete(threadId);
+          return next;
+        }),
+        Ref.update(sentMessages, (current) => {
+          const next = new Map(current);
+          next.delete(threadId);
+          return next;
+        }),
+      ],
+      { discard: true },
+    );
   return McpProviderSessions.of({
     set: Effect.fn("McpProviderSessions.set")(function* (config) {
       const current = yield* Ref.get(sessions);
       if (current.get(config.threadId)?.providerSessionId !== config.providerSessionId) {
-        yield* Ref.update(htmlRenders, (kept) => {
-          const next = new Map(kept);
-          next.delete(config.threadId);
-          return next;
-        });
+        yield* clearThreadOutputs(config.threadId);
       }
       yield* Ref.update(sessions, (current) => new Map(current).set(config.threadId, config));
     }),
@@ -126,15 +147,7 @@ const make = Effect.gen(function* () {
         const next = new Map(current);
         next.delete(threadId);
         return next;
-      }).pipe(
-        Effect.andThen(
-          Ref.update(htmlRenders, (current) => {
-            const next = new Map(current);
-            next.delete(threadId);
-            return next;
-          }),
-        ),
-      );
+      }).pipe(Effect.andThen(clearThreadOutputs(threadId)));
     }),
     recordHtmlRender: Effect.fn("McpProviderSessions.recordHtmlRender")(
       function (threadId, input, reference) {
@@ -182,6 +195,53 @@ const make = Effect.gen(function* () {
         });
       },
     ),
+    recordSentMessage: Effect.fn("McpProviderSessions.recordSentMessage")(
+      function (threadId, message) {
+        return Ref.update(sentMessages, (current) =>
+          new Map(current).set(
+            threadId,
+            [...(current.get(threadId) ?? []), message].slice(-MAX_KEPT_SENT_MESSAGES),
+          ),
+        );
+      },
+    ),
+    takeSentMessage: Effect.fn("McpProviderSessions.takeSentMessage")(
+      function (threadId, message, options) {
+        return Ref.modify(sentMessages, (current) => {
+          const kept = current.get(threadId) ?? [];
+          const minRemaining = options?.minRemaining ?? 0;
+          if (minRemaining > 0) {
+            let matches = 0;
+            for (const entry of kept) {
+              if (entry === message) matches += 1;
+            }
+            if (matches <= minRemaining) {
+              return [undefined, current];
+            }
+          }
+          const index = kept.indexOf(message);
+          if (index === -1) {
+            return [undefined, current];
+          }
+          const rest = kept.filter((_, keptIndex) => keptIndex !== index);
+          const next = new Map(current);
+          if (rest.length === 0) {
+            next.delete(threadId);
+          } else {
+            next.set(threadId, rest);
+          }
+          return [message, next];
+        });
+      },
+    ),
+    clearSentMessages: Effect.fn("McpProviderSessions.clearSentMessages")(function (threadId) {
+      return Ref.update(sentMessages, (current) => {
+        if (!current.has(threadId)) return current;
+        const next = new Map(current);
+        next.delete(threadId);
+        return next;
+      });
+    }),
   });
 });
 
