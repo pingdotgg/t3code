@@ -477,8 +477,12 @@ export function createNewThreadHandler(router: AnyRouter) {
     // A split or a launcher's pick asked for this spot, so only a plain open may land elsewhere.
     const placedByCaller =
       store.newTabRequest !== null && store.newTabRequest.request !== "active-pane";
-    const reused = args[1] === undefined && !placedByCaller ? focusEmptyDraftTab(args[0]) : null;
-    if (reused) return reused;
+    const reused = args[1] === undefined && !placedByCaller ? findEmptyDraftTab(args[0]) : null;
+    if (reused) {
+      // Route sync focuses the tab already showing this draft, and also leaves a modal page.
+      await router.navigate({ to: "/draft/$draftId", params: { draftId: reused.draftId } });
+      return reused;
+    }
     const open = () => openNewThread(...args);
     // A new thread replaces the focused tab (cmd+N), kept or not; callers may place it elsewhere.
     const anchor = store.newTabRequest === null ? selectLayoutOpenAnchor(store.layout) : null;
@@ -491,7 +495,7 @@ export function createNewThreadHandler(router: AnyRouter) {
 }
 
 /** A plain new thread in a project that already has an untouched draft tab goes to that tab. */
-function focusEmptyDraftTab(
+function findEmptyDraftTab(
   projectRef: ScopedProjectRef,
 ): { draftId: DraftId; threadId: ThreadId } | null {
   const { getComposerDraft, getDraftSession } = useComposerDraftStore.getState();
@@ -511,15 +515,12 @@ function focusEmptyDraftTab(
     }
     return { draftId, threadId: draft.threadId };
   };
-  const { layout, focusTab } = useLayoutStore.getState();
+  const { layout } = useLayoutStore.getState();
   const focused = selectFocusedTab(layout);
-  const tab =
-    focused && emptyDraftOf(focused)
-      ? focused
-      : findLayoutTab(layout, (candidate) => emptyDraftOf(candidate) !== null)?.tab;
-  if (!tab) return null;
-  focusTab(tab.id);
-  return emptyDraftOf(tab);
+  const focusedDraft = focused ? emptyDraftOf(focused) : null;
+  if (focusedDraft) return focusedDraft;
+  const tab = findLayoutTab(layout, (candidate) => emptyDraftOf(candidate) !== null)?.tab;
+  return tab ? emptyDraftOf(tab) : null;
 }
 
 /**

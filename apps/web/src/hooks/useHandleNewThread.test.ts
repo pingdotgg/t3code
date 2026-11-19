@@ -266,7 +266,7 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import { createLayoutState, selectFocusedTab, type LayoutTabContent } from "../layout/layoutModel";
+import { createLayoutState, type LayoutTabContent } from "../layout/layoutModel";
 import { useLayoutStore } from "../layout/layoutStore";
 import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
 
@@ -277,7 +277,9 @@ function openLayoutTabs(contents: ReadonlyArray<LayoutTabContent>) {
   for (const content of contents) {
     useLayoutStore.getState().openTab(content, { placement: "active-pane", position: "end" });
   }
-  return { [Symbol.dispose]: () => useLayoutStore.setState({ layout: original }) };
+  return {
+    [Symbol.dispose]: () => useLayoutStore.setState({ layout: original, newTabRequest: null }),
+  };
 }
 
 describe.each([
@@ -425,15 +427,16 @@ describe("useNewThreadHandler", () => {
       draftId: "draft-in-tab",
       threadId: "thread-in-tab",
     });
-    expect(selectFocusedTab(useLayoutStore.getState().layout)?.content).toBe(draftTab);
-    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.router.navigate).toHaveBeenCalledOnce();
+    expect(testState.router.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ params: { draftId: "draft-in-tab" } }),
+    );
 
     const launcherPick = useLayoutStore.getState().requestNewTab({ replaceTabId: "launcher" });
     expect((await useNewThreadHandler()(project))?.draftId).toBe("draft-delayed");
     useLayoutStore.getState().clearNewTabRequest(launcherPick);
 
     testState.giveUserText("draft-in-tab");
-    useLayoutStore.getState().openTab(otherTab);
     expect((await useNewThreadHandler()(project))?.draftId).toBe("draft-delayed");
   });
 
