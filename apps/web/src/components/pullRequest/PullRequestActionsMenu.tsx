@@ -24,6 +24,7 @@ import {
   MoreHorizontalIcon,
   RotateCcwIcon,
   ScrollTextIcon,
+  TerminalIcon,
   Trash2Icon,
 } from "lucide-react";
 import { Branch, msg, T, useGT, useMessages } from "gt-react";
@@ -107,6 +108,7 @@ export function PullRequestActionsMenu({
   perform,
   openOnHostText,
   copyReference,
+  checkoutCommand,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -159,6 +161,7 @@ export function PullRequestActionsMenu({
   perform: PerformPullRequestAction;
   openOnHostText: string;
   copyReference: (value: string, failureTitle: string) => void;
+  checkoutCommand: string | null;
 }) {
   const gt = useGT();
   const resolve = useMessages();
@@ -481,6 +484,16 @@ export function PullRequestActionsMenu({
             {shortcutLabelForCommand(keybindings, "pullRequest.copyNumber")}
           </MenuShortcut>
         </MenuItem>
+        {checkoutCommand ? (
+          <MenuItem
+            onClick={() =>
+              copyReference(checkoutCommand, resolve(msg("Could not copy checkout command")))
+            }
+          >
+            <TerminalIcon className="size-3.5" />
+            <T>Copy checkout command</T>
+          </MenuItem>
+        ) : null}
         {detail.state === "open" && can("close") ? (
           <>
             <MenuSeparator />

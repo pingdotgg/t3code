@@ -30,23 +30,14 @@ import {
 } from "@t3tools/contracts";
 import {
   ArrowDownUpIcon,
-  ArrowLeftIcon,
   CircleDotIcon,
-  FileDiffIcon,
   GitCommitHorizontalIcon,
+  ListFilterIcon,
   MessageSquareIcon,
   PanelRightIcon,
 } from "lucide-react";
-import {
-  lazy,
-  Suspense,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useRef,
-  useState,
-} from "react";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { lazy, Suspense, useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
 
 import { m } from "~/i18n/messages";
 
@@ -80,18 +71,20 @@ import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { PullRequestThreadLinks } from "./PullRequestThreadLinks";
 import { vcsEnvironment } from "~/state/vcs";
-import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
-import { MiddleTruncate } from "../ui/middle-truncate";
+import { TooltipProvider } from "../ui/tooltip";
 import {
   PULL_REQUEST_DETAIL_HEADER_CLASS,
   PullRequestChecksStatusLine,
   PullRequestDetailHeaderBody,
   PullRequestDetailTabBar,
+  PullRequestDetailTitleRow,
+  PullRequestTaskRow,
+  PullRequestTimestamp,
+  type PullRequestTaskLink,
 } from "./PullRequestDetailLayout";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
@@ -104,7 +97,11 @@ import {
   PullRequestResolveConflictsButton,
 } from "./PullRequestDetailActions";
 import { PullRequestBaseBranch } from "./PullRequestBaseBranch";
-import { PullRequestDetailCrumbs } from "./PullRequestDetailCrumbs";
+import {
+  PullRequestBackButton,
+  PullRequestNumberLink,
+  PullRequestRepositoryLink,
+} from "./PullRequestDetailCrumbs";
 import { PullRequestTitleEditor } from "./PullRequestTitleEditor";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import { SourceControlAppAccessNotice } from "../SourceControlAppAccessNotice";
@@ -115,8 +112,26 @@ import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
 import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
-import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
-import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
+import {
+  PullRequestChecksTab,
+  PullRequestDescriptionTab,
+  PullRequestPeopleRows,
+} from "./PullRequestSummaryTab";
+import {
+  DEFAULT_PULL_REQUEST_COMMENT_FILTER,
+  PULL_REQUEST_COMMENT_FILTER_STORAGE_KEY,
+  PullRequestCommentFilterSchema,
+  PullRequestTimelineTab,
+} from "./PullRequestTimelineTab";
+import { useLocalStorage } from "~/hooks/useLocalStorage";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuPopup,
+  MenuTrigger,
+} from "../ui/menu";
 import {
   buildAddSelectionToAgentHandoff,
   buildAskAboutGuideStopHandoff,
@@ -262,7 +277,8 @@ const UPDATE_BRANCH_REBASE_FAILURE_HINT = msg(
 );
 
 const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
-  { value: "summary", label: msg("Summary", { $context: "pull request tab" }) },
+  { value: "summary", label: msg("Description", { $context: "pull request tab" }) },
+  { value: "checks", label: msg("Checks", { $context: "pull request tab" }) },
   { value: "guide", label: msg("Guide", { $context: "pull request tab" }) },
   { value: "timeline", label: msg("Timeline", { $context: "pull request tab" }) },
   { value: "code", label: msg("Code", { $context: "pull request tab" }) },
@@ -271,14 +287,6 @@ const TABS: ReadonlyArray<{ value: PullRequestDetailTab; label: string }> = [
 // Defer the diff viewer's worker pool until Code is approached.
 const loadCodeTab = () => import("./PullRequestCodeTab");
 const PullRequestCodeTab = lazy(loadCodeTab);
-
-function reportCheckoutCommandError(error: Error) {
-  toastManager.add({
-    type: "error",
-    title: m(msg("Could not copy checkout command")),
-    description: error.message,
-  });
-}
 
 function resolvePullRequestReference(
   requestedReference: PullRequestRef,
@@ -328,6 +336,7 @@ function linkedTab(anchor: PullRequestAnchor | null): PullRequestDetailTab | nul
     case "timeline":
       return "timeline";
     case "checks":
+      return "checks";
     case "summary":
       return "summary";
     default:
@@ -355,6 +364,7 @@ export function PullRequestDetailPanel({
   onRevealSettled,
   initialTab = "summary",
   onTabChange,
+  task = null,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -385,6 +395,8 @@ export function PullRequestDetailPanel({
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
+  /** The Orbit task this pull request came from; shown as the header's Task row when known. */
+  task?: PullRequestTaskLink | null;
 }) {
   const gt = useGT();
   const resolve = useMessages();
@@ -467,6 +479,13 @@ export function PullRequestDetailPanel({
     onTabChange?.(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  const [commentFilter, setCommentFilter] = useLocalStorage(
+    PULL_REQUEST_COMMENT_FILTER_STORAGE_KEY,
+    DEFAULT_PULL_REQUEST_COMMENT_FILTER,
+    PullRequestCommentFilterSchema,
+  );
+  // Arrow keys move between tabs, and each tab has its own row, so focus follows into that row.
+  const [tabFocusRequest, setTabFocusRequest] = useState(0);
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
@@ -537,16 +556,14 @@ export function PullRequestDetailPanel({
       ? pullRequestEnvironment.diff({ environmentId, input: { ...reference } })
       : null,
   );
-  // Each tab restores the condensed state its own scrolling left behind.
-  const [condensedByTab, setCondensedByTab] = useState<
-    Partial<Record<PullRequestDetailTab, boolean>>
-  >({});
-  const condensed = condensedByTab[tab] ?? false;
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   // Fresh ref callbacks would detach and reattach every scroller on each render.
   const [scrollerRefs] = useState(() => ({
     summary: (node: HTMLElement | null) => {
       scrollerByTab.current.summary = node;
+    },
+    checks: (node: HTMLElement | null) => {
+      scrollerByTab.current.checks = node;
     },
     timeline: (node: HTMLElement | null) => {
       scrollerByTab.current.timeline = node;
@@ -555,28 +572,43 @@ export function PullRequestDetailPanel({
       scrollerByTab.current.code = node;
     },
   }));
-  const foldRef = useRef<HTMLDivElement | null>(null);
-  const condensedRowRef = useRef<HTMLDivElement | null>(null);
-  // Save the target before collapse: the browser may clamp scrollTop as the viewport grows,
-  // so applying a delta afterward would compensate twice.
-  const compensationRef = useRef<{
-    tab: PullRequestDetailTab;
-    scroller: HTMLElement;
-    target: number;
-  } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- restores the scroller's scrollTop before paint after the header condenses
-  useLayoutEffect(() => {
-    const compensation = compensationRef.current;
-    if (compensation === null) return;
-    compensationRef.current = null;
-    if (
-      !condensed ||
-      compensation.tab !== tab ||
-      scrollerByTab.current[tab] !== compensation.scroller
-    )
-      return;
-    compensation.scroller.scrollTop = Math.max(0, compensation.target);
-  }, [condensed, tab]);
+  // The key-value list, the sticky tab row and the open tab share one scroll area. Each tab keeps
+  // its own scroller below the row, which scrolls only once the list above has scrolled away.
+  const outerScrollRef = useRef<HTMLDivElement | null>(null);
+  const handOffWheel = useEffectEvent((event: WheelEvent) => {
+    const outer = outerScrollRef.current;
+    if (!outer || event.ctrlKey || Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+    const inner = scrollerByTab.current[tab];
+    // Any other scroll area under the pointer scrolls itself first, like a nested scroller does.
+    for (
+      let node = event.target instanceof HTMLElement ? event.target : null;
+      node && node !== outer && node !== inner;
+      node = node.parentElement
+    ) {
+      const overflow = getComputedStyle(node).overflowY;
+      if (overflow !== "auto" && overflow !== "scroll") continue;
+      const room =
+        event.deltaY > 0 ? node.scrollHeight - node.clientHeight - node.scrollTop : node.scrollTop;
+      if (room > 0.5) return;
+    }
+    if (event.deltaY <= 0) return;
+    const max = outer.scrollHeight - outer.clientHeight;
+    if (outer.scrollTop < max - 0.5) {
+      outer.scrollTop = Math.min(max, outer.scrollTop + event.deltaY);
+      event.preventDefault();
+    } else if (inner && event.target instanceof Node && !inner.contains(event.target)) {
+      inner.scrollTop += event.deltaY;
+      event.preventDefault();
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a non-passive wheel listener hands scrolling between the outer area and the tab's own scroller
+  useEffect(() => {
+    const outer = outerScrollRef.current;
+    if (!outer) return;
+    const onWheel = (event: WheelEvent) => handOffWheel(event);
+    outer.addEventListener("wheel", onWheel, { passive: false });
+    return () => outer.removeEventListener("wheel", onWheel);
+  });
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
   const resolveProjectDefaultMergeMethod = usePullRequestDefaultMergeMethodResolver(
@@ -1525,8 +1557,6 @@ export function PullRequestDetailPanel({
       <PullRequestDetailGhost
         seed={matchingListEntry}
         summary={sharedSummary}
-        checkoutCommand={checkoutCommand}
-        onCheckoutError={reportCheckoutCommandError}
         number={reference.number}
         tabs={visibleTabs}
         activeTab={tab}
@@ -1546,6 +1576,33 @@ export function PullRequestDetailPanel({
     );
   }
 
+  // A tab's row with its own actions at the right end, then the tab's own scroller. Hidden tabs stay
+  // mounted (and keep their scroll position) behind the open one.
+  const tabFrame = (value: PullRequestDetailTab, actions: ReactNode, body: ReactNode) => (
+    <div
+      key={value}
+      className={cn("flex h-full flex-col", tab !== value && "invisible absolute inset-0")}
+    >
+      <PullRequestDetailTabBar
+        tabs={visibleTabs}
+        value={tab}
+        onValueChange={(next, source) => {
+          selectTab(next);
+          if (source === "keyboard") setTabFocusRequest((count) => count + 1);
+        }}
+        focusRequest={tab === value ? tabFocusRequest : 0}
+        onTabIntent={(item) => {
+          if (item !== "code") return;
+          void loadCodeTab();
+          setCodeIntentKey(pullRequestKey);
+        }}
+      >
+        {actions}
+      </PullRequestDetailTabBar>
+      <div className="relative min-h-0 flex-1">{body}</div>
+    </div>
+  );
+
   return (
     <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
@@ -1562,19 +1619,23 @@ export function PullRequestDetailPanel({
       <div
         className={cn(
           PULL_REQUEST_DETAIL_HEADER_CLASS,
-          detail && "border-b border-border/60",
+          detail && "border-b border-(--shell-divider)",
           !detail && !onClose && "hidden",
         )}
       >
-        <PullRequestDetailCrumbs
-          detail={detail}
-          toneClassName={statePresentation?.toneClassName ?? null}
-          condensed={condensed}
-          repositoryUrl={repositoryUrl}
-          openOnHostText={openOnHostText}
-          onBack={onBack}
-        />
-        <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
+        <PullRequestDetailTitleRow className="gap-1 pl-4.5">
+          {onBack ? <PullRequestBackButton onBack={onBack} /> : null}
+          {detail ? (
+            <PullRequestTitleEditor
+              environmentId={environmentId}
+              reference={reference}
+              pullRequestKey={pullRequestKey}
+              detail={detail}
+              canWriteSourceControl={canWriteSourceControl}
+            />
+          ) : null}
+        </PullRequestDetailTitleRow>
+        <div className="mr-4.5 flex h-7 shrink-0 select-none items-center justify-end gap-1 [--control-radius:9999px]">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
               {context === "page" ? (
@@ -1671,6 +1732,7 @@ export function PullRequestDetailPanel({
                 perform={perform}
                 openOnHostText={openOnHostText}
                 copyReference={copyReference}
+                checkoutCommand={checkoutCommand}
               />
             </TooltipProvider>
           ) : null}
@@ -1688,336 +1750,6 @@ export function PullRequestDetailPanel({
             </Button>
           ) : null}
         </div>
-
-        <div
-          className={cn(
-            "col-span-2 grid",
-            condensed
-              ? "grid-rows-[1fr]"
-              : "grid-rows-[0fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          <div
-            ref={condensedRowRef}
-            className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-              condensed
-                ? "translate-y-0 opacity-100 delay-50"
-                : "translate-y-1 opacity-0 duration-100",
-            )}
-            inert={!condensed}
-          >
-            {detail ? (
-              <div className="col-span-2 min-w-0 px-4 pb-2 pt-1">
-                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span className="flex min-w-0 shrink items-center gap-1.5 overflow-hidden text-xs text-muted-foreground">
-                    <PullRequestActorLabel
-                      actor={detail.author}
-                      profileUrl={authorProfileUrl}
-                      variant="avatar"
-                      className="shrink-0"
-                    />
-                    <span className="shrink-0">
-                      <RelativeTime timestamp={detail.updatedAt} />
-                    </span>
-                  </span>
-                  <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
-                  <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
-                    <PullRequestBaseBranch
-                      baseBranch={detail.baseBranch}
-                      freshness={freshness}
-                      stacked={isStackedPullRequest}
-                      pending={actionPending}
-                      onUpdate={(method) => void perform("update-branch", undefined, method)}
-                      iconClassName="size-3"
-                    />
-                    <ArrowLeftIcon
-                      aria-label={gt("receives changes from", {
-                        $context:
-                          "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
-                      })}
-                      className="size-3 shrink-0 opacity-60"
-                    />
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <code className="flex min-w-0 flex-1">
-                            <MiddleTruncate value={detail.headBranch} showTitle={false} />
-                          </code>
-                        }
-                      />
-                      <TooltipPopup side="top">{detail.headBranch}</TooltipPopup>
-                    </Tooltip>
-                  </span>
-                  <span className="ml-auto inline-flex shrink-0 items-baseline justify-end gap-2 text-2xs">
-                    <span
-                      className="inline-flex items-baseline gap-1 tabular-nums"
-                      aria-label={gt(
-                        "{count, plural, one {{formatted} changed file} other {{formatted} changed files}}",
-                        {
-                          count: detail.changedFiles,
-                          formatted: detail.changedFiles.toLocaleString(),
-                        },
-                      )}
-                    >
-                      <FileDiffIcon aria-hidden className="size-3 self-center" />
-                      {detail.changedFiles.toLocaleString()}
-                    </span>
-                    <PullRequestChangeBreakdownStat
-                      environmentId={environmentId}
-                      reference={reference}
-                      additions={detail.additions}
-                      deletions={detail.deletions}
-                      className="shrink-0 font-mono text-2xs"
-                      eager
-                    />
-                  </span>
-                </div>
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        <div
-          className={cn(
-            "col-span-2 grid",
-            condensed
-              ? "grid-rows-[0fr]"
-              : "grid-rows-[1fr] transition-[grid-template-rows] duration-200 ease-out motion-reduce:transition-none",
-          )}
-        >
-          <div
-            ref={foldRef}
-            className={cn(
-              "min-h-0 overflow-hidden transition-[opacity,transform] duration-150 ease-out motion-reduce:transform-none motion-reduce:transition-none",
-              condensed
-                ? "-translate-y-1 opacity-0 duration-100"
-                : "translate-y-0 opacity-100 delay-50",
-            )}
-            inert={condensed}
-          >
-            {detail ? (
-              <PullRequestDetailHeaderBody
-                title={
-                  <PullRequestTitleEditor
-                    environmentId={environmentId}
-                    reference={reference}
-                    pullRequestKey={pullRequestKey}
-                    detail={detail}
-                    canWriteSourceControl={canWriteSourceControl}
-                  />
-                }
-                author={
-                  <PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />
-                }
-                updated={
-                  <span>
-                    <T context="followed by a relative time such as 5m ago or just now">
-                      updated{" "}
-                      <Var>
-                        <RelativeTime timestamp={detail.updatedAt} />
-                      </Var>
-                    </T>
-                  </span>
-                }
-                checkout={
-                  checkoutCommand ? (
-                    <PullRequestCopyableCode
-                      key={checkoutCommand}
-                      value={checkoutCommand}
-                      target={{
-                        target: `${terminology.singular} checkout command`,
-                        unavailableMessage: msg(
-                          "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} checkout command.",
-                          { term: changeRequestTermKind(terminology) },
-                        ),
-                        failureMessage: msg(
-                          "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} checkout command to the clipboard.",
-                          { term: changeRequestTermKind(terminology) },
-                        ),
-                      }}
-                      copyLabel={gt("Copy checkout command")}
-                      copiedLabel={gt("Checkout command copied")}
-                      className="ml-auto font-mono"
-                      tooltipSide="bottom"
-                      onError={reportCheckoutCommandError}
-                    />
-                  ) : null
-                }
-                base={
-                  <PullRequestBaseBranch
-                    baseBranch={detail.baseBranch}
-                    freshness={freshness}
-                    stacked={isStackedPullRequest}
-                    pending={actionPending}
-                    onUpdate={(method) => void perform("update-branch", undefined, method)}
-                  />
-                }
-                head={
-                  <PullRequestCopyableCode
-                    key={detail.headBranch}
-                    value={detail.headBranch}
-                    target={{
-                      target: "branch name",
-                      unavailableMessage: msg(
-                        "Clipboard API is unavailable while copying branch name.",
-                      ),
-                      failureMessage: msg("Failed to copy branch name to the clipboard."),
-                    }}
-                    copyLabel={gt(
-                      "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
-                      { term: changeRequestTermKind(terminology) },
-                    )}
-                    copiedLabel={gt("Branch name copied")}
-                  />
-                }
-                files={gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
-                  count: detail.changedFiles,
-                  formatted: detail.changedFiles.toLocaleString(),
-                })}
-                diffStat={
-                  <PullRequestChangeBreakdownStat
-                    environmentId={environmentId}
-                    reference={reference}
-                    additions={detail.additions}
-                    deletions={detail.deletions}
-                    className="shrink-0 font-mono text-xs"
-                    eager
-                  />
-                }
-              />
-            ) : null}
-          </div>
-        </div>
-
-        {detail ? (
-          <PullRequestDetailTabBar
-            tabs={visibleTabs}
-            value={tab}
-            onValueChange={selectTab}
-            onTabIntent={(item) => {
-              if (item !== "code") return;
-              void loadCodeTab();
-              setCodeIntentKey(pullRequestKey);
-            }}
-          >
-            {tab === "summary" ? (
-              showsApproveWorkflows ? (
-                <PullRequestApproveWorkflowsButton
-                  pullRequestKey={pullRequestKey}
-                  pendingAction={pendingAction}
-                  perform={perform}
-                />
-              ) : (
-                <PullRequestChecksStatusLine
-                  className="text-muted-foreground"
-                  aria-label={
-                    checksSummary
-                      ? gt("Checks: {summary}", { summary: checksSummary })
-                      : gt("Checks", { $context: "CI checks section" })
-                  }
-                  icon={
-                    checksState !== null ? (
-                      <PullRequestChecksPopover
-                        checks={detail.checks}
-                        stale={checksStale}
-                        checksState={checksState}
-                        threadRef={threadRef}
-                      />
-                    ) : (
-                      <CircleDotIcon aria-hidden className="size-3.5" />
-                    )
-                  }
-                  label={checksSummary}
-                />
-              )
-            ) : tab === "timeline" ? (
-              <div className="ml-auto flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                <PullRequestMetaLine
-                  className={cn(
-                    "whitespace-nowrap text-2xs transition-opacity",
-                    (activityPending || activityError) && "opacity-35",
-                  )}
-                >
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? gt("Comments unavailable")
-                        : gt(
-                            "{count, plural, one {{formatted} comment} other {{formatted} comments}}",
-                            {
-                              count: detail.commentCount,
-                              formatted: detail.commentCount.toLocaleString(),
-                            },
-                          )
-                    }
-                  >
-                    <MessageSquareIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "-"
-                      : activityPending
-                        ? "…"
-                        : detail.commentCount.toLocaleString()}
-                  </span>
-                  <span
-                    className="inline-flex items-center gap-1"
-                    aria-label={
-                      activityError
-                        ? gt("Commits unavailable")
-                        : gt(
-                            "{count, plural, one {{formatted} commit} other {{formatted} commits}}",
-                            {
-                              count: detail.commits.length,
-                              formatted: detail.commits.length.toLocaleString(),
-                            },
-                          )
-                    }
-                  >
-                    <GitCommitHorizontalIcon aria-hidden className="size-3" />
-                    {activityError
-                      ? "-"
-                      : activityPending
-                        ? "…"
-                        : detail.commits.length.toLocaleString()}
-                  </span>
-                  {approvalCount > 0 ? (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1",
-                        pullRequestReviewOutcomeToneClassName("approved"),
-                      )}
-                    >
-                      <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
-                      <span aria-hidden>{approvalCount.toLocaleString()}</span>
-                      <span className="sr-only">
-                        {gt(
-                          "{count, plural, one {{formatted} approval} other {{formatted} approvals}}",
-                          { count: approvalCount, formatted: approvalCount.toLocaleString() },
-                        )}
-                      </span>
-                    </span>
-                  ) : null}
-                </PullRequestMetaLine>
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  aria-label={
-                    timelineOrder === "newest"
-                      ? gt("Show oldest activity first")
-                      : gt("Show newest activity first")
-                  }
-                  onClick={() =>
-                    setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
-                  }
-                >
-                  <ArrowDownUpIcon aria-hidden className="size-3" />
-                  {timelineOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
-                </Button>
-              </div>
-            ) : null}
-          </PullRequestDetailTabBar>
-        ) : null}
       </div>
 
       <SourceControlAppAccessNotice
@@ -2025,27 +1757,9 @@ export function PullRequestDetailPanel({
         provider={detail?.provider ?? repositoryIdentity?.provider}
         host={reference.host}
         repository={reference.repository}
-        className="border-b border-border/60"
+        className="border-b border-(--shell-divider)"
       />
-      <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
-        onScrollCapture={(event) => {
-          const scroller = scrollerByTab.current[tab];
-          if (event.target !== scroller || scroller === null || scroller === undefined) return;
-          const top = scroller.scrollTop;
-          const previous = condensedByTab[tab] ?? false;
-          const foldHeight = foldRef.current?.scrollHeight ?? 0;
-          let next = previous;
-          if (previous) {
-            if (top < 4 && foldHeight > 0) next = false;
-          } else if (foldHeight > 0 && top > foldHeight + 32) {
-            const chromeDelta = foldHeight - (condensedRowRef.current?.scrollHeight ?? 0);
-            compensationRef.current = { tab, scroller, target: top - chromeDelta };
-            next = true;
-          }
-          if (next !== previous) setCondensedByTab({ ...condensedByTab, [tab]: next });
-        }}
-      >
+      <div ref={outerScrollRef} className="relative min-h-0 flex-1 overflow-y-auto">
         {detailQuery.error && !detail ? (
           <PullRequestsUnavailableState
             {...(isPullRequestNotFound(detailQuery.failure)
@@ -2078,125 +1792,383 @@ export function PullRequestDetailPanel({
               : {})}
           />
         ) : detail ? (
-          <PullRequestMarkdownContext value={markdownContext}>
-            {mountedTabs.has("summary") ? (
-              <div className={cn("absolute inset-0", tab !== "summary" && "invisible")}>
-                <PullRequestSummaryTab
-                  scrollerRef={scrollerRefs.summary}
-                  revealUrl={tab === "summary" ? revealUrl : undefined}
-                  onRevealSettled={settleReveal}
-                  environmentId={environmentId}
-                  threadRef={threadRef}
-                  reference={reference}
+          <>
+            <PullRequestDetailHeaderBody
+              repository={
+                <PullRequestRepositoryLink
+                  repository={detail.repository}
+                  repositoryUrl={repositoryUrl}
+                />
+              }
+              link={
+                <PullRequestNumberLink
                   detail={detail}
-                  activityPending={activityPending}
-                  checksStale={checksStale}
-                  activityError={activityError}
-                  pendingFinding={handoff}
-                  fixFindingLabel={handoffLabels.fixFinding}
-                  fixCheckLabel={handoffLabels.fixCheck}
-                  {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                  {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                  onRefresh={refreshDetail}
-                  onRefreshChecks={refreshFromHost}
+                  toneClassName={statePresentation?.toneClassName ?? null}
+                  openOnHostText={openOnHostText}
                 />
-              </div>
-            ) : null}
-            {mountedTabs.has("guide") ? (
-              <div
-                className={cn("absolute inset-0", tab !== "guide" && "invisible")}
-                // Read by the guide run notifier, which stays quiet for a guide on screen.
-                data-guide-shown={tab === "guide" ? guideKey : undefined}
-              >
-                <PullRequestGuideTab
+              }
+              task={task ? <PullRequestTaskRow task={task} /> : null}
+              author={<PullRequestActorLabel actor={detail.author} profileUrl={authorProfileUrl} />}
+              updated={<PullRequestTimestamp timestamp={detail.updatedAt} />}
+              base={
+                <PullRequestBaseBranch
+                  baseBranch={detail.baseBranch}
+                  freshness={freshness}
+                  stacked={isStackedPullRequest}
+                  pending={actionPending}
+                  onUpdate={(method) => void perform("update-branch", undefined, method)}
+                />
+              }
+              head={
+                <PullRequestCopyableCode
+                  key={detail.headBranch}
+                  value={detail.headBranch}
+                  target={{
+                    target: "branch name",
+                    unavailableMessage: msg(
+                      "Clipboard API is unavailable while copying branch name.",
+                    ),
+                    failureMessage: msg("Failed to copy branch name to the clipboard."),
+                  }}
+                  copyLabel={gt(
+                    "Copy {term, select, mr {merge request} cr {change request} other {pull request}} branch",
+                    { term: changeRequestTermKind(terminology) },
+                  )}
+                  copiedLabel={gt("Branch name copied")}
+                />
+              }
+              files={gt("{count, plural, one {{formatted} file} other {{formatted} files}}", {
+                count: detail.changedFiles,
+                formatted: detail.changedFiles.toLocaleString(),
+              })}
+              diffStat={
+                <PullRequestChangeBreakdownStat
                   environmentId={environmentId}
                   reference={reference}
-                  active={tab === "guide"}
-                  title={detail.title}
-                  workspaceRoot={detail.workspaceRoot}
-                  canComment={
-                    detail.capabilities.review.inlineComment && detail.viewerPermissions.comment
-                  }
-                  rangeComments={detail.capabilities.review.rangeComment === true}
-                  completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
-                  onAskAboutLines={(comment, request) =>
-                    addSelectionToAgent({ comment, request }, { keepGuide: true })
-                  }
-                  onAskAboutStop={askAboutGuideStop}
-                  onFinishReview={
-                    detail.capabilities.review.verdicts.some((verdict) =>
-                      detail.viewerPermissions.verdicts.includes(verdict),
-                    )
-                      ? () => setOpenReviewRequest((count) => count + 1)
-                      : null
-                  }
-                  onOpenFile={openFileInCode}
-                  onTourShown={onGuideShown}
+                  additions={detail.additions}
+                  deletions={detail.deletions}
+                  className="shrink-0 font-mono text-sm"
+                  eager
                 />
-              </div>
-            ) : null}
-            {mountedTabs.has("timeline") ? (
-              <div className={cn("absolute inset-0", tab !== "timeline" && "invisible")}>
-                {activityPending ? (
-                  <PullRequestTimelineGhost />
-                ) : activityError ? (
-                  <PullRequestActivityUnavailableState
-                    error={activityError}
-                    term={changeRequestTermKind(terminology)}
-                    onRetry={activityQuery.refresh}
-                  />
-                ) : (
-                  <PullRequestTimelineTab
-                    scrollerRef={scrollerRefs.timeline}
-                    revealUrl={tab === "timeline" ? revealUrl : undefined}
-                    onRevealSettled={settleReveal}
-                    detail={detail}
-                    environmentId={environmentId}
-                    threadRef={threadRef}
-                    reference={reference}
-                    order={timelineOrder}
-                    onOpenCommit={openCommit}
-                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                    onRefresh={refreshDetail}
-                  />
-                )}
-              </div>
-            ) : null}
-            {mountedTabs.has("code") ? (
-              <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
-                <Suspense
-                  fallback={
-                    <DiffPanelLoadingState
-                      label={gt(
-                        "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
-                        { term: changeRequestTermKind(terminology) },
-                      )}
+              }
+            >
+              <PullRequestPeopleRows
+                environmentId={environmentId}
+                reference={reference}
+                detail={detail}
+              />
+            </PullRequestDetailHeaderBody>
+            {/* One space-filling frame per mounted tab: its tab row, then its own scroller. The
+                frame is 1px taller than the scroll area, so the stuck row's top line slides under
+                the title's line. */}
+            <div className="relative h-[calc(100%+1px)]">
+              <PullRequestMarkdownContext value={markdownContext}>
+                {mountedTabs.has("summary")
+                  ? tabFrame(
+                      "summary",
+                      null,
+                      <PullRequestDescriptionTab
+                        scrollerRef={scrollerRefs.summary}
+                        revealUrl={tab === "summary" ? revealUrl : undefined}
+                        onRevealSettled={settleReveal}
+                        environmentId={environmentId}
+                        threadRef={threadRef}
+                        reference={reference}
+                        detail={detail}
+                        onRefresh={refreshDetail}
+                      />,
+                    )
+                  : null}
+                {mountedTabs.has("checks")
+                  ? tabFrame(
+                      "checks",
+                      showsApproveWorkflows ? (
+                        <PullRequestApproveWorkflowsButton
+                          pullRequestKey={pullRequestKey}
+                          pendingAction={pendingAction}
+                          perform={perform}
+                        />
+                      ) : (
+                        <PullRequestChecksStatusLine
+                          aria-label={
+                            checksSummary
+                              ? gt("Checks: {summary}", { summary: checksSummary })
+                              : gt("Checks", { $context: "CI checks section" })
+                          }
+                          icon={
+                            checksState !== null ? (
+                              <PullRequestChecksPopover
+                                checks={detail.checks}
+                                stale={checksStale}
+                                checksState={checksState}
+                                threadRef={threadRef}
+                              />
+                            ) : (
+                              <CircleDotIcon aria-hidden className="size-3.5" />
+                            )
+                          }
+                          label={checksSummary}
+                        />
+                      ),
+                      <PullRequestChecksTab
+                        scrollerRef={scrollerRefs.checks}
+                        revealUrl={tab === "checks" ? revealUrl : undefined}
+                        onRevealSettled={settleReveal}
+                        threadRef={threadRef}
+                        detail={detail}
+                        checksStale={checksStale}
+                        pendingFinding={handoff}
+                        fixCheckLabel={handoffLabels.fixCheck}
+                        {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                        onRefreshChecks={refreshFromHost}
+                      />,
+                    )
+                  : null}
+                {mountedTabs.has("guide")
+                  ? tabFrame(
+                      "guide",
+                      null,
+                      // Read by the guide run notifier, which stays quiet for a guide on screen.
+                      <div
+                        className="absolute inset-0"
+                        data-guide-shown={tab === "guide" ? guideKey : undefined}
+                      >
+                        <PullRequestGuideTab
+                          environmentId={environmentId}
+                          reference={reference}
+                          active={tab === "guide"}
+                          title={detail.title}
+                          workspaceRoot={detail.workspaceRoot}
+                          canComment={
+                            detail.capabilities.review.inlineComment &&
+                            detail.viewerPermissions.comment
+                          }
+                          rangeComments={detail.capabilities.review.rangeComment === true}
+                          completionScope={pullRequestCompletionScope(
+                            detail,
+                            environmentId,
+                            reference,
+                          )}
+                          onAskAboutLines={(comment, request) =>
+                            addSelectionToAgent({ comment, request }, { keepGuide: true })
+                          }
+                          onAskAboutStop={askAboutGuideStop}
+                          onFinishReview={
+                            detail.capabilities.review.verdicts.some((verdict) =>
+                              detail.viewerPermissions.verdicts.includes(verdict),
+                            )
+                              ? () => setOpenReviewRequest((count) => count + 1)
+                              : null
+                          }
+                          onOpenFile={openFileInCode}
+                          onTourShown={onGuideShown}
+                        />
+                      </div>,
+                    )
+                  : null}
+                {mountedTabs.has("timeline")
+                  ? tabFrame(
+                      "timeline",
+                      <div className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                        <PullRequestMetaLine
+                          className={cn(
+                            "whitespace-nowrap text-2xs transition-opacity",
+                            (activityPending || activityError) && "opacity-35",
+                          )}
+                        >
+                          <span
+                            className="inline-flex items-center gap-1"
+                            aria-label={
+                              activityError
+                                ? gt("Comments unavailable")
+                                : gt(
+                                    "{count, plural, one {{formatted} comment} other {{formatted} comments}}",
+                                    {
+                                      count: detail.commentCount,
+                                      formatted: detail.commentCount.toLocaleString(),
+                                    },
+                                  )
+                            }
+                          >
+                            <MessageSquareIcon aria-hidden className="size-3" />
+                            {activityError
+                              ? "-"
+                              : activityPending
+                                ? "…"
+                                : detail.commentCount.toLocaleString()}
+                          </span>
+                          <span
+                            className="inline-flex items-center gap-1"
+                            aria-label={
+                              activityError
+                                ? gt("Commits unavailable")
+                                : gt(
+                                    "{count, plural, one {{formatted} commit} other {{formatted} commits}}",
+                                    {
+                                      count: detail.commits.length,
+                                      formatted: detail.commits.length.toLocaleString(),
+                                    },
+                                  )
+                            }
+                          >
+                            <GitCommitHorizontalIcon aria-hidden className="size-3" />
+                            {activityError
+                              ? "-"
+                              : activityPending
+                                ? "…"
+                                : detail.commits.length.toLocaleString()}
+                          </span>
+                          {approvalCount > 0 ? (
+                            <span
+                              className={cn(
+                                "inline-flex items-center gap-1",
+                                pullRequestReviewOutcomeToneClassName("approved"),
+                              )}
+                            >
+                              <PullRequestReviewOutcomeIcon outcome="approved" className="size-3" />
+                              <span aria-hidden>{approvalCount.toLocaleString()}</span>
+                              <span className="sr-only">
+                                {gt(
+                                  "{count, plural, one {{formatted} approval} other {{formatted} approvals}}",
+                                  {
+                                    count: approvalCount,
+                                    formatted: approvalCount.toLocaleString(),
+                                  },
+                                )}
+                              </span>
+                            </span>
+                          ) : null}
+                        </PullRequestMetaLine>
+                        <span aria-hidden className="text-2xs text-muted-foreground/50">
+                          ·
+                        </span>
+                        <Menu>
+                          <MenuTrigger
+                            render={
+                              <button
+                                type="button"
+                                className={cn(
+                                  "flex size-7 cursor-pointer items-center justify-center rounded-full border border-(--toolbar-group-border) bg-(--toolbar-group-fill) transition-colors outline-none hover:bg-(--shell-control) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                                  commentFilter.bots && commentFilter.resolved
+                                    ? "text-muted-foreground"
+                                    : "text-foreground",
+                                )}
+                              />
+                            }
+                            aria-label={gt("Filter comments")}
+                          >
+                            <ListFilterIcon aria-hidden className="size-3.5" />
+                          </MenuTrigger>
+                          <MenuPopup align="end">
+                            <MenuGroup>
+                              <MenuGroupLabel>
+                                <T context="which comments to show">Show</T>
+                              </MenuGroupLabel>
+                              <MenuCheckboxItem
+                                checked={commentFilter.bots}
+                                closeOnClick={false}
+                                onCheckedChange={(bots) =>
+                                  setCommentFilter((value) => ({ ...value, bots }))
+                                }
+                              >
+                                <T>Bot comments</T>
+                              </MenuCheckboxItem>
+                              <MenuCheckboxItem
+                                checked={commentFilter.resolved}
+                                closeOnClick={false}
+                                onCheckedChange={(resolved) =>
+                                  setCommentFilter((value) => ({ ...value, resolved }))
+                                }
+                              >
+                                <T>Resolved or dismissed</T>
+                              </MenuCheckboxItem>
+                            </MenuGroup>
+                          </MenuPopup>
+                        </Menu>
+                        {/* A one-button pill, like the toolbar groups in the Code tab. */}
+                        <button
+                          type="button"
+                          className="flex h-7 cursor-pointer items-center gap-1.5 rounded-full border border-(--toolbar-group-border) bg-(--toolbar-group-fill) px-3 text-ui text-foreground transition-colors outline-none hover:bg-(--shell-control) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                          aria-label={
+                            timelineOrder === "newest"
+                              ? gt("Show oldest activity first")
+                              : gt("Show newest activity first")
+                          }
+                          onClick={() =>
+                            setTimelineOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                          }
+                        >
+                          <ArrowDownUpIcon aria-hidden className="size-3.5 text-muted-foreground" />
+                          {timelineOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
+                        </button>
+                      </div>,
+                      activityPending ? (
+                        <PullRequestTimelineGhost />
+                      ) : activityError ? (
+                        <PullRequestActivityUnavailableState
+                          error={activityError}
+                          term={changeRequestTermKind(terminology)}
+                          onRetry={activityQuery.refresh}
+                        />
+                      ) : (
+                        <PullRequestTimelineTab
+                          scrollerRef={scrollerRefs.timeline}
+                          revealUrl={tab === "timeline" ? revealUrl : undefined}
+                          onRevealSettled={settleReveal}
+                          detail={detail}
+                          environmentId={environmentId}
+                          threadRef={threadRef}
+                          reference={reference}
+                          order={timelineOrder}
+                          filter={commentFilter}
+                          onOpenCommit={openCommit}
+                          pendingFinding={handoff}
+                          fixFindingLabel={handoffLabels.fixFinding}
+                          {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                          {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
+                          onRefresh={refreshDetail}
+                        />
+                      ),
+                    )
+                  : null}
+                {mountedTabs.has("code") ? (
+                  <Suspense
+                    fallback={tabFrame(
+                      "code",
+                      null,
+                      <DiffPanelLoadingState
+                        label={gt(
+                          "Loading {term, select, mr {merge request} cr {change request} other {pull request}} diff...",
+                          { term: changeRequestTermKind(terminology) },
+                        )}
+                      />,
+                    )}
+                  >
+                    <PullRequestCodeTab
+                      layout={(toolbar, body) => tabFrame("code", toolbar, body)}
+                      scrollerRef={scrollerRefs.code}
+                      onAddToAgentSelection={addSelectionToAgent}
+                      environmentId={environmentId}
+                      reference={reference}
+                      detail={detail}
+                      selectedCommitOid={selectedCodeCommitOid}
+                      onSelectedCommitChange={selectCodeCommit}
+                      pendingFinding={handoff}
+                      fixFindingLabel={handoffLabels.fixFinding}
+                      {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
+                      {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
+                      onRefresh={refreshDetail}
+                      refreshToken={refreshToken}
+                      backgroundRefreshToken={turnRefresh ?? 0}
+                      revealRequest={codeRevealRequest}
+                      revealUrl={tab === "code" ? revealUrl : undefined}
+                      onRevealSettled={settleReveal}
                     />
-                  }
-                >
-                  <PullRequestCodeTab
-                    scrollerRef={scrollerRefs.code}
-                    onAddToAgentSelection={addSelectionToAgent}
-                    environmentId={environmentId}
-                    reference={reference}
-                    detail={detail}
-                    selectedCommitOid={selectedCodeCommitOid}
-                    onSelectedCommitChange={selectCodeCommit}
-                    pendingFinding={handoff}
-                    fixFindingLabel={handoffLabels.fixFinding}
-                    {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
-                    {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
-                    onRefresh={refreshDetail}
-                    refreshToken={refreshToken}
-                    backgroundRefreshToken={turnRefresh ?? 0}
-                    revealRequest={codeRevealRequest}
-                    revealUrl={tab === "code" ? revealUrl : undefined}
-                    onRevealSettled={settleReveal}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
-          </PullRequestMarkdownContext>
+                  </Suspense>
+                ) : null}
+              </PullRequestMarkdownContext>
+            </div>
+          </>
         ) : null}
       </div>
 

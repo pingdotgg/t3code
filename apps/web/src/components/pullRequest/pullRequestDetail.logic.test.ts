@@ -34,6 +34,7 @@ import {
   buildFixFindingsHandoff,
   groupPullRequestTimelineConversations,
   filterPullRequestConversationItems,
+  filterPullRequestTimelineEvents,
   pagePullRequestConversationItems,
   pullRequestConversationItemComments,
   pullRequestConversationItems,
@@ -60,6 +61,7 @@ import {
   pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
+  type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
 
@@ -608,6 +610,30 @@ describe("review thread conversations", () => {
     expect(pullRequestConversationItems(comments, []).map((item) => item.id)).toEqual(
       comments.map((entry) => entry.id),
     );
+  });
+
+  it("hides bot chatter and finished conversations from the timeline under the saved filter", () => {
+    const botOnly = { ...comment("bot-only", 7), author: bot };
+    const source = {
+      ...TIMELINE_SOURCE,
+      comments: [...comments, botOnly],
+      reviewThreads: [thread],
+    };
+    const events = buildPullRequestTimeline(source);
+    const ids = (
+      list: ReadonlyArray<PullRequestTimelineEvent>,
+      filter: { bots: boolean; resolved: boolean },
+    ) => filterPullRequestTimelineEvents(list, filter).map((event) => event.id);
+    expect(events.map((event) => event.id)).toContain("bot-only");
+    expect(ids(events, { bots: false, resolved: false })).not.toContain("bot-only");
+    expect(ids(events, { bots: true, resolved: true })).toEqual(events.map((event) => event.id));
+    const resolved = buildPullRequestTimeline({
+      ...source,
+      reviewThreads: [{ ...thread, isResolved: true }],
+    });
+    expect(ids(resolved, { bots: true, resolved: false })).not.toContain("finding");
+    expect(ids(resolved, { bots: true, resolved: false })).toContain("1baf7bdcafe");
+    expect(ids(resolved, { bots: true, resolved: true })).toContain("finding");
   });
 
   it("filters whole conversations when any member matches, including resolved and dismissed reviews", () => {

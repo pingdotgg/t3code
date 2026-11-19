@@ -115,9 +115,9 @@ export function PullRequestBaseBranch({
           className="size-3 shrink-0"
         />
       ) : null}
-      <code className="flex min-w-0">
+      <span className="flex min-w-0">
         <MiddleTruncate value={baseBranch} showTitle={false} />
-      </code>
+      </span>
     </>
   );
   if (freshness) {

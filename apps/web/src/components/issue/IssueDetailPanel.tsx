@@ -50,11 +50,14 @@ import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
-import { PullRequestMetaRow, PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
+import { PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
 import { PullRequestCommentBody } from "../pullRequest/PullRequestCommentBody";
-import { PullRequestDetailTitleRow } from "../pullRequest/PullRequestDetailLayout";
+import {
+  PullRequestDetailTitleRow,
+  PullRequestMetaRow,
+} from "../pullRequest/PullRequestDetailLayout";
 import { PullRequestEditButton } from "../pullRequest/PullRequestEditButton";
 import { PullRequestMarkdown } from "../pullRequest/PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "../pullRequest/PullRequestMarkdownEditor";

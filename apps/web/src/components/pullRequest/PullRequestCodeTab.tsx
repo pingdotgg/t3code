@@ -64,6 +64,7 @@ import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 import { observeIntersection } from "~/lib/observeIntersection";
+import { observeResize } from "~/lib/observeResize";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -115,6 +116,7 @@ import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
 import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
+import { ToolbarGroup } from "../ToolbarGroup";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
@@ -129,7 +131,7 @@ import {
   DropdownMenuTrigger,
 } from "../ui/menu";
 import { toastManager } from "../ui/toast";
-import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Toggle } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   getReviewPositionAnchor,
@@ -400,7 +402,20 @@ function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
   });
 }
 
+const defaultLayout = (toolbar: ReactNode, body: ReactNode) => (
+  <div className="flex h-full min-h-0 w-full flex-col">
+    <div className="flex shrink-0 border-b border-(--shell-divider) px-4.5 py-toolbar">
+      {toolbar}
+    </div>
+    <div className="relative min-h-0 flex-1">{body}</div>
+  </div>
+);
+
+/** Below this toolbar width the whole-view actions fold into the Diff options menu. */
+const COMPACT_TOOLBAR_WIDTH = 300;
+
 function PullRequestCodeTab({
+  layout = defaultLayout,
   scrollerRef,
   environmentId,
   reference,
@@ -438,6 +453,8 @@ function PullRequestCodeTab({
   revealUrl?: string | undefined;
   onRevealSettled?: ((revealUrl: string) => void) | undefined;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  /** Places the toolbar (in the panel's tab row) and the code view. */
+  layout?: (toolbar: ReactNode, body: ReactNode) => ReactNode;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -460,6 +477,16 @@ function PullRequestCodeTab({
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
+  const [toolbarNode, setToolbarNode] = useState<HTMLDivElement | null>(null);
+  const [toolbarWidth, setToolbarWidth] = useState<number | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the toolbar folds its actions into a menu when its own width runs short
+  useEffect(() => {
+    if (toolbarNode === null) return;
+    return observeResize(toolbarNode, (entries) => {
+      const width = entries.at(-1)?.contentRect.width;
+      if (width !== undefined) setToolbarWidth(width);
+    });
+  }, [toolbarNode]);
   const [fileTreeOpen, setFileTreeOpen] = useLocalStorage(
     PULL_REQUEST_FILE_TREE_STORAGE_KEY,
     false,
@@ -934,7 +961,7 @@ function PullRequestCodeTab({
     ) : null;
   const unstructured =
     rawSlices.length === 0 ? null : (
-      <div className="space-y-4 border-t border-border/60 px-4 py-5">
+      <div className="space-y-4 border-t border-(--shell-divider) px-4 py-5">
         {rawSlices.map((slice) => (
           <div key={`${slice.reason}:${slice.text.slice(0, 64)}`} className="space-y-2">
             <p className="text-xs text-muted-foreground">{messages(slice.reason)}</p>
@@ -1382,18 +1409,48 @@ function PullRequestCodeTab({
     setDraft(null);
     setSelectedLines(null);
   };
+  // Narrow panels fold the view pill into the Diff options menu; a very narrow toolbar folds the
+  // whole-view actions in too and drops the notices.
+  const compactToolbar = toolbarWidth !== null && toolbarWidth < COMPACT_TOOLBAR_WIDTH;
+  const layoutToggle = (value: "stacked" | "split", label: string, icon: ReactNode) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Toggle
+            aria-label={label}
+            variant="ghost"
+            size="xs"
+            pressed={diffLayout === value}
+            onPressedChange={(pressed) => {
+              if (pressed) updateClientSettings({ diffLayout: value });
+            }}
+          />
+        }
+      >
+        {icon}
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
   const toolbar = (
-    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
-        {orderedCommits.length > 0 ? (
+    <div
+      ref={setToolbarNode}
+      className="@container flex min-w-0 flex-1 items-center justify-end gap-2 text-xs text-muted-foreground"
+    >
+      {orderedCommits.length > 0 ? (
+        <ToolbarGroup className="min-w-0 shrink">
           <DropdownMenu>
             <DropdownMenuTrigger
-              render={<Button size="xs" variant="secondary" />}
-              className="min-w-0 max-w-64"
+              render={
+                <button
+                  type="button"
+                  className="flex h-6.5 min-w-0 max-w-64 cursor-pointer items-center gap-1.5 rounded-full px-2 text-ui text-foreground transition-colors outline-none hover:bg-(--shell-control) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                />
+              }
               aria-label={gt("Diff scope: {scope}", { scope: scopeLabel })}
             >
               <span className="truncate">{scopeLabel}</span>
-              <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+              <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="max-w-[min(28rem,calc(100vw-2rem))]">
               <DropdownMenuRadioGroup
@@ -1436,124 +1493,15 @@ function PullRequestCodeTab({
               ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
-        ) : null}
-        <PullRequestMetaLine>
-          <span className="shrink-0 tabular-nums">
-            {gt("{count, plural, one {{count} file} other {{count} files}}", {
-              count: files.length,
-            })}
-            {nextCursor === null ? "" : "+"}
-          </span>
-          {hiddenTestFileCount > 0 ? (
-            <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {gt(
-                "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
-                { count: hiddenTestFileCount },
-              )}
-            </Button>
-          ) : null}
-          {filesViewed.enabled && files.length > 0 ? (
-            <span className="flex min-w-0 items-center gap-1 tabular-nums">
-              <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
-              </span>
-              <span className="truncate">
-                {viewedFilesStore === "environment"
-                  ? gt("viewed in {app}", { app: APP_BASE_NAME })
-                  : gt("viewed", { $context: "files marked as viewed" })}
-              </span>
-              {viewedFilesStore === "environment" ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                    <InfoIcon
-                      aria-label={gt("These ticks are kept here, not on the host")}
-                      className="text-muted-foreground size-3.5"
-                    />
-                  </TooltipTrigger>
-                  <TooltipPopup side="bottom">
-                    <T>
-                      This host keeps no shared record of which files you have read, so these ticks
-                      are kept by this environment. They follow you between the apps connected to
-                      it, but the host's own web UI will not show them.
-                    </T>
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
-              {filesViewed.error !== null ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                    <TriangleAlertIcon
-                      aria-label={gt("Your ticks could not be read")}
-                      className="size-3.5 text-warning-foreground"
-                    />
-                  </TooltipTrigger>
-                  <TooltipPopup side="bottom">
-                    <T>
-                      The boxes below are whatever was last read, and empty if nothing has been read
-                      yet. <Var>{filesViewed.error}</Var>
-                    </T>
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
-              {filesViewed.truncated ? (
-                <Tooltip>
-                  <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                    <TriangleAlertIcon
-                      aria-label={gt("This count covers only part of the change")}
-                      className="size-3.5 text-warning-foreground"
-                    />
-                  </TooltipTrigger>
-                  <TooltipPopup side="bottom">
-                    <T>
-                      This change has more files than the host will report ticks for in one read, so
-                      the count is short and some boxes below start empty.
-                    </T>
-                  </TooltipPopup>
-                </Tooltip>
-              ) : null}
-            </span>
-          ) : null}
-          {withheldContent ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                <TriangleAlertIcon
-                  aria-label={gt("Some of this diff was not shown")}
-                  className="size-3.5 text-warning-foreground"
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                <T>
-                  The host withheld part of this diff: a binary file, or a change too large to
-                  inline.
-                </T>
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-          {commit !== null && review.inlineComment ? (
-            <Tooltip>
-              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                <MessageSquareOffIcon
-                  aria-label={gt("Line comments are written from the whole change")}
-                  className="size-3.5"
-                />
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">
-                <T>
-                  A comment is anchored to the whole change, so switch to All commits to write one.
-                </T>
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-        </PullRequestMetaLine>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
+        </ToolbarGroup>
+      ) : null}
+      <ToolbarGroup className={cn("shrink-0", !compactToolbar && "@lg:hidden")}>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
               render={
                 <DropdownMenuTrigger
-                  render={<Button size="icon-sm" variant="ghost" />}
-                  className="@lg:hidden"
+                  render={<Button size="icon-xs" variant="ghost" />}
                   aria-label={gt("Diff options")}
                 />
               }
@@ -1593,78 +1541,87 @@ function PullRequestCodeTab({
                 <T context="diff layout">Split</T>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
+            {compactToolbar && fileKeys.length > 0 ? (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={toggleAllFiles}>
+                  {allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
+                </DropdownMenuItem>
+                {testFileCount > 0 ? (
+                  <DropdownMenuCheckboxItem
+                    checked={hideTestFiles}
+                    onCheckedChange={(checked) => setHideTestFiles(Boolean(checked))}
+                  >
+                    <T>Hide test files</T>
+                  </DropdownMenuCheckboxItem>
+                ) : null}
+                <DropdownMenuCheckboxItem
+                  checked={fileTreeOpen}
+                  onCheckedChange={(checked) => setFileTreeOpen(Boolean(checked))}
+                >
+                  <T>Show file tree</T>
+                </DropdownMenuCheckboxItem>
+              </>
+            ) : null}
           </DropdownMenuContent>
         </DropdownMenu>
-        <div className="hidden items-center gap-1 @lg:flex">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={
-                    ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
-                  }
-                  variant="ghost"
-                  size="sm"
-                  pressed={ignoreWhitespace}
-                  onPressedChange={(pressed) => changeIgnoreWhitespace(Boolean(pressed))}
-                />
-              }
-            >
-              <PilcrowIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
-            </TooltipPopup>
-          </Tooltip>
-          <ToggleGroup
-            aria-label={gt("Diff layout")}
-            className="shrink-0"
-            variant="segmented"
-            value={[diffLayout]}
-            onValueChange={(value) => {
-              const next = value[0];
-              if (next === "stacked" || next === "split") {
-                updateClientSettings({ diffLayout: next });
-              }
-            }}
+      </ToolbarGroup>
+      {/* How each file's diff is shown. */}
+      <ToolbarGroup className="hidden shrink-0 @lg:flex">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")
+                }
+                variant="ghost"
+                size="xs"
+                pressed={ignoreWhitespace}
+                onPressedChange={(pressed) => changeIgnoreWhitespace(Boolean(pressed))}
+              />
+            }
           >
-            <Toggle aria-label={gt("Stacked diff view")} value="stacked">
-              <Rows3Icon className="size-3.5" />
-            </Toggle>
-            <Toggle aria-label={gt("Split diff view")} value="split">
-              <Columns2Icon className="size-3.5" />
-            </Toggle>
-          </ToggleGroup>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label={
-                    wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
-                  }
-                  variant="ghost"
-                  size="sm"
-                  pressed={wordWrap}
-                  onPressedChange={(pressed) => {
-                    setWordWrapOverride(Boolean(pressed));
-                  }}
-                />
-              }
-            >
-              <TextWrapIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
-            </TooltipPopup>
-          </Tooltip>
-        </div>
+            <PilcrowIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {ignoreWhitespace ? gt("Show whitespace changes") : gt("Hide whitespace changes")}
+          </TooltipPopup>
+        </Tooltip>
+        {layoutToggle("stacked", gt("Stacked diff view"), <Rows3Icon className="size-3.5" />)}
+        {layoutToggle("split", gt("Split diff view"), <Columns2Icon className="size-3.5" />)}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                aria-label={
+                  wordWrap ? gt("Disable diff line wrapping") : gt("Enable diff line wrapping")
+                }
+                variant="ghost"
+                size="xs"
+                pressed={wordWrap}
+                onPressedChange={(pressed) => {
+                  setWordWrapOverride(Boolean(pressed));
+                }}
+              />
+            }
+          >
+            <TextWrapIcon className="size-3.5" />
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            {wordWrap ? gt("Disable line wrapping") : gt("Enable line wrapping")}
+          </TooltipPopup>
+        </Tooltip>
+      </ToolbarGroup>
+      {/* Actions on the whole code view. */}
+      <ToolbarGroup className={cn("shrink-0", compactToolbar && "hidden")}>
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <Button
                   type="button"
-                  size="icon-sm"
+                  size="icon-xs"
                   variant="ghost"
                   aria-label={allFilesCollapsed ? gt("Expand all files") : gt("Collapse all files")}
                   onClick={toggleAllFiles}
@@ -1689,7 +1646,7 @@ function PullRequestCodeTab({
                 <Toggle
                   aria-label={gt("Hide test files")}
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   pressed={hideTestFiles}
                   onPressedChange={(pressed) => setHideTestFiles(Boolean(pressed))}
                 />
@@ -1709,7 +1666,7 @@ function PullRequestCodeTab({
                 <Toggle
                   aria-label={fileTreeOpen ? gt("Hide file tree") : gt("Show file tree")}
                   variant="ghost"
-                  size="sm"
+                  size="xs"
                   pressed={fileTreeOpen}
                   onPressedChange={(pressed) => setFileTreeOpen(Boolean(pressed))}
                 />
@@ -1722,7 +1679,113 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-      </div>
+      </ToolbarGroup>
+      <PullRequestMetaLine
+        className={cn(
+          "order-last min-w-0 overflow-hidden empty:hidden",
+          compactToolbar && "hidden",
+        )}
+      >
+        {hiddenTestFileCount > 0 ? (
+          <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
+            {gt(
+              "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
+              { count: hiddenTestFileCount },
+            )}
+          </Button>
+        ) : null}
+        {filesViewed.enabled && files.length > 0 ? (
+          <span className="flex min-w-0 items-center gap-1 tabular-nums">
+            <span className="shrink-0">
+              {filePaths.filter(isFileViewed).length} / {files.length}
+            </span>
+            <span className="truncate">
+              {viewedFilesStore === "environment"
+                ? gt("viewed in {app}", { app: APP_BASE_NAME })
+                : gt("viewed", { $context: "files marked as viewed" })}
+            </span>
+            {viewedFilesStore === "environment" ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                  <InfoIcon
+                    aria-label={gt("These ticks are kept here, not on the host")}
+                    className="text-muted-foreground size-3.5"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  <T>
+                    This host keeps no shared record of which files you have read, so these ticks
+                    are kept by this environment. They follow you between the apps connected to it,
+                    but the host's own web UI will not show them.
+                  </T>
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {filesViewed.error !== null ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                  <TriangleAlertIcon
+                    aria-label={gt("Your ticks could not be read")}
+                    className="size-3.5 text-warning-foreground"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  <T>
+                    The boxes below are whatever was last read, and empty if nothing has been read
+                    yet. <Var>{filesViewed.error}</Var>
+                  </T>
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+            {filesViewed.truncated ? (
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                  <TriangleAlertIcon
+                    aria-label={gt("This count covers only part of the change")}
+                    className="size-3.5 text-warning-foreground"
+                  />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  <T>
+                    This change has more files than the host will report ticks for in one read, so
+                    the count is short and some boxes below start empty.
+                  </T>
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
+          </span>
+        ) : null}
+        {withheldContent ? (
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+              <TriangleAlertIcon
+                aria-label={gt("Some of this diff was not shown")}
+                className="size-3.5 text-warning-foreground"
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              <T>
+                The host withheld part of this diff: a binary file, or a change too large to inline.
+              </T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {commit !== null && review.inlineComment ? (
+          <Tooltip>
+            <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+              <MessageSquareOffIcon
+                aria-label={gt("Line comments are written from the whole change")}
+                className="size-3.5"
+              />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              <T>
+                A comment is anchored to the whole change, so switch to All commits to write one.
+              </T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </PullRequestMetaLine>
     </div>
   );
   // A file not loaded yet pages forward each time a slice arrives; once loaded, the viewer
@@ -1794,14 +1857,13 @@ function PullRequestCodeTab({
     revealLink();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries the reveal as diff pages and viewer items arrive
   }, [revealUrl, pendingLinkPath, canLoadNextSlice, items]);
-  const withToolbar = (body: ReactNode) => (
-    <div className="flex h-full min-h-0 flex-col">
-      {toolbar}
-      <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
+  const withToolbar = (body: ReactNode) =>
+    layout(
+      toolbar,
+      <div ref={scrollerRef} className="h-full overflow-auto">
         {body}
-      </div>
-    </div>
-  );
+      </div>,
+    );
 
   const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   if (diffQuery.isPending && loadedSlices.length === 0) {
@@ -1851,14 +1913,14 @@ function PullRequestCodeTab({
     else orphanFiles.set(thread.path, [thread]);
   }
 
-  return (
+  return layout(
+    toolbar,
     <div className="flex h-full min-h-0 flex-col">
-      {toolbar}
       {orphanFiles.size > 0 ? (
-        <div className="shrink-0 border-b border-border/60">
+        <div className="shrink-0 border-b border-(--shell-divider)">
           <Collapsible open={orphansOpen} onOpenChange={setOrphansOpen}>
             <h2>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
+              <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4.5 py-2 text-left text-xs text-muted-foreground">
                 <span>
                   {nextCursor === null
                     ? gt("Conversations not on the current diff")
@@ -1978,7 +2040,7 @@ function PullRequestCodeTab({
               onSelectFile={revealFile}
               footer={
                 nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
+                  <div className="shrink-0 border-t border-(--shell-divider) p-2">
                     <Button
                       type="button"
                       size="xs"
@@ -2001,7 +2063,7 @@ function PullRequestCodeTab({
         ) : null}
       </div>
       {unstructured}
-    </div>
+    </div>,
   );
 }
 

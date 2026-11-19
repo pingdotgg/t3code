@@ -47,7 +47,7 @@ export function PullRequestLabelChip({
   children,
 }: {
   label: Pick<PullRequestLabel, "name" | "color" | "description">;
-  size?: "sm" | "default";
+  size?: "sm" | "default" | "pill";
   className?: string;
   focusable?: boolean;
   children?: ReactNode;
@@ -617,7 +617,7 @@ export function summarizePullRequestChecks(
   const pending = checks.filter((check) => check.status === "pending").length;
   const passed = checks.filter((check) => check.status === "success").length;
   if (failed > 0)
-    return resolve(msg("{failed} of {total} failing", { failed, total: checks.length }));
+    return resolve(msg("{failed} of {total} checks failing", { failed, total: checks.length }));
   if (workflowApprovalRequired > 0 && otherActionRequired > 0) {
     return resolve(
       msg(
@@ -643,8 +643,8 @@ export function summarizePullRequestChecks(
     );
   }
   if (pending > 0)
-    return resolve(msg("{pending} of {total} running", { pending, total: checks.length }));
+    return resolve(msg("{pending} of {total} checks running", { pending, total: checks.length }));
   return passed === checks.length
     ? resolve(msg("All checks passed"))
-    : resolve(msg("{passed} of {total} passing", { passed, total: checks.length }));
+    : resolve(msg("{passed} of {total} checks passing", { passed, total: checks.length }));
 }

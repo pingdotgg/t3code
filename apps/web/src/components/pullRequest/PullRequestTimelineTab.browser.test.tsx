@@ -88,10 +88,10 @@ it("mounts only the timeline rows near the viewport of a huge pull request", asy
   expect(mounted).toBeLessThan(COMMITS / 10);
 });
 
-it.each(["review", "issue-comment", "resolved-reply"] as const)(
+it.each(["review", "issue-comment", "resolved-reply", "bot-comment"] as const)(
   "reveals a linked %s below the virtual viewport",
   async (kind) => {
-    const url = `${detail.url}#${kind === "review" ? "pullrequestreview-123" : kind === "issue-comment" ? "issuecomment-123" : "discussion_r123"}`;
+    const url = `${detail.url}#${kind === "review" ? "pullrequestreview-123" : kind === "resolved-reply" ? "discussion_r123" : "issuecomment-123"}`;
     const linkedDetail: PullRequestDetailView = {
       ...detail,
       comments:
@@ -100,8 +100,13 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
           : [
               {
                 id: "linked",
-                kind,
-                author: detail.author,
+                kind: kind === "bot-comment" ? "issue-comment" : kind,
+                author: {
+                  login: "author",
+                  name: null,
+                  avatarUrl: null,
+                  isBot: kind === "bot-comment",
+                },
                 body: "Linked reply",
                 createdAt: "2026-10-01T00:00:00Z",
                 url,
@@ -148,6 +153,8 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
           environmentId={EnvironmentId.make("environment")}
           reference={detail}
           order="oldest"
+          // The saved defaults hide resolved threads; a link must land anyway.
+          filter={{ bots: false, resolved: false }}
           onOpenCommit={() => {}}
           onRefresh={() => {}}
           revealUrl={url}
@@ -165,6 +172,7 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
           environmentId={EnvironmentId.make("environment")}
           reference={detail}
           order="oldest"
+          filter={{ bots: false, resolved: false }}
           onOpenCommit={() => {}}
           onRefresh={() => {}}
           onRevealSettled={settled}
@@ -174,3 +182,89 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
     await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
   },
 );
+
+it("fixes an overview thread as its opening remark, since it has no line to attach", async () => {
+  const author = { login: "reviewer", name: null, avatarUrl: null };
+  const note = { author, createdAt: "2026-09-01T00:00:00Z", url: null };
+  const remark = {
+    ...note,
+    id: "10",
+    kind: "review-comment" as const,
+    body: "Mention the flag in the README",
+    path: null,
+    reviewState: null,
+  };
+  const value: PullRequestDetailView = {
+    ...detail,
+    commits: [],
+    comments: [remark],
+    overviewThreads: [
+      {
+        id: "overview",
+        path: null,
+        line: null,
+        side: "right",
+        isResolved: false,
+        isOutdated: false,
+        comments: [{ ...note, id: "10", body: remark.body }],
+      },
+    ],
+  };
+  const onFixFinding = vi.fn();
+  await using screen = await render(
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={value}
+        environmentId={EnvironmentId.make("environment")}
+        reference={value}
+        order="oldest"
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+        onFixFinding={onFixFinding}
+      />
+    </div>,
+  );
+
+  await screen.getByRole("button", { name: "Fix in a thread" }).click();
+  expect(onFixFinding).toHaveBeenCalledWith({ kind: "comment", comment: remark });
+});
+
+it("hides bot comments under the saved filter and shows them when the filter allows", async () => {
+  const value: PullRequestDetailView = {
+    ...detail,
+    commits: [],
+    comments: [
+      {
+        id: "bot",
+        kind: "issue-comment",
+        author: { login: "ci-bot", name: null, avatarUrl: null, isBot: true },
+        body: "Deployed a preview",
+        createdAt: "2026-09-01T00:00:00Z",
+        url: null,
+        path: null,
+        reviewState: null,
+      },
+    ],
+  };
+  const timeline = (filter: { bots: boolean; resolved: boolean }) => (
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        scrollerRef={() => {}}
+        detail={value}
+        environmentId={EnvironmentId.make("environment")}
+        reference={value}
+        order="oldest"
+        filter={filter}
+        onOpenCommit={() => {}}
+        onRefresh={() => {}}
+      />
+    </div>
+  );
+  await using screen = await render(timeline({ bots: false, resolved: false }));
+  await expect.element(screen.getByText("Pull request opened")).toBeVisible();
+  expect(screen.container.textContent).not.toContain("1 comment");
+
+  await screen.rerender(timeline({ bots: true, resolved: false }));
+  await expect.element(screen.getByText("1 comment")).toBeVisible();
+});

@@ -11,15 +11,14 @@ import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLi
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
-interface CrumbsPullRequest {
+interface LinkedPullRequest {
   readonly url: string;
   readonly provider: string;
   readonly number: number;
   readonly repository: string;
-  readonly title: string;
 }
 
-const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest): void => {
+const openNumberContextMenu = (event: ReactMouseEvent, detail: LinkedPullRequest): void => {
   event.preventDefault();
   event.stopPropagation();
   void showPullRequestLinkContextMenu({
@@ -29,21 +28,17 @@ const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest
   });
 };
 
-const ROW_CLASS_NAME =
-  "col-start-1 row-start-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground transition-[opacity,transform] ease-out motion-reduce:transform-none motion-reduce:transition-none sm:text-xs";
-
-function BackButton({ onBack, focusable }: { onBack: () => void; focusable: boolean }) {
+export function PullRequestBackButton({ onBack }: { onBack: () => void }) {
   const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <Button
-            size="icon-micro"
+            size="icon-xs"
             variant="ghost-muted"
-            {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
-            className="-ml-1.5"
+            className="-ml-1.5 shrink-0"
             aria-label={gt("Back to this thread's pull requests")}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
@@ -57,16 +52,15 @@ function BackButton({ onBack, focusable }: { onBack: () => void; focusable: bool
   );
 }
 
-function NumberLink({
+/** The number and an arrow in the pull request's state colour; opens it on the host. */
+export function PullRequestNumberLink({
   detail,
   toneClassName,
   openOnHostText,
-  focusable,
 }: {
-  detail: CrumbsPullRequest;
-  toneClassName: string;
+  detail: LinkedPullRequest;
+  toneClassName: string | null;
   openOnHostText: string;
-  focusable: boolean;
 }) {
   const gt = useGT();
   return (
@@ -75,14 +69,13 @@ function NumberLink({
         render={
           <button
             type="button"
-            {...(focusable ? {} : { tabIndex: -1 })}
             onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
             onAuxClick={(event) => {
               if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
             }}
             onContextMenu={(event) => openNumberContextMenu(event, detail)}
             className={cn(
-              "inline-flex shrink-0 cursor-pointer items-center gap-0.5 font-medium underline-offset-2 hover:underline",
+              "inline-flex shrink-0 cursor-pointer items-center gap-1 tabular-nums underline-offset-2 hover:underline",
               toneClassName,
             )}
             aria-label={gt(
@@ -96,7 +89,7 @@ function NumberLink({
             )}
           >
             #{detail.number}
-            <ExternalLinkIcon aria-hidden className="size-2.5" />
+            <ExternalLinkIcon aria-hidden className="size-3" />
           </button>
         }
       />
@@ -105,107 +98,29 @@ function NumberLink({
   );
 }
 
-/**
- * The repository and number above the title, swapped for the number and title once the reader has
- * scrolled the title away.
- */
-export function PullRequestDetailCrumbs({
-  detail,
-  toneClassName,
-  condensed,
+export function PullRequestRepositoryLink({
+  repository,
   repositoryUrl,
-  openOnHostText,
-  onBack,
 }: {
-  detail: CrumbsPullRequest | null;
-  toneClassName: string | null;
-  condensed: boolean;
+  repository: string;
   repositoryUrl: string | null;
-  openOnHostText: string;
-  onBack: (() => void) | undefined;
 }) {
   const gt = useGT();
-  const ready = detail !== null && toneClassName !== null;
+  if (repositoryUrl === null) return <span className="min-w-0 truncate">{repository}</span>;
   return (
-    <div className="pl-4 grid h-7 min-w-0 items-center overflow-hidden">
-      <div
-        aria-hidden={condensed}
-        inert={condensed}
-        className={cn(
-          ROW_CLASS_NAME,
-          condensed
-            ? "pointer-events-none -translate-y-1 opacity-0 duration-100"
-            : "translate-y-0 opacity-100 delay-50 duration-150",
-        )}
-      >
-        {ready ? (
-          <>
-            {onBack ? <BackButton onBack={onBack} focusable /> : null}
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  repositoryUrl ? (
-                    <button
-                      type="button"
-                      onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                      className="min-w-0 cursor-pointer truncate text-left font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      {detail.repository}
-                    </button>
-                  ) : (
-                    <span className="min-w-0 truncate font-medium text-muted-foreground">
-                      {detail.repository}
-                    </span>
-                  )
-                }
-              />
-              <TooltipPopup side="top">
-                {repositoryUrl
-                  ? gt("Open {repository} repository", { repository: detail.repository })
-                  : detail.repository}
-              </TooltipPopup>
-            </Tooltip>
-            <NumberLink
-              detail={detail}
-              toneClassName={toneClassName}
-              openOnHostText={openOnHostText}
-              focusable
-            />
-          </>
-        ) : null}
-      </div>
-      <div
-        aria-hidden={!condensed}
-        inert={!condensed}
-        className={cn(
-          ROW_CLASS_NAME,
-          condensed
-            ? "translate-y-0 opacity-100 delay-50 duration-150"
-            : "pointer-events-none translate-y-1 opacity-0 duration-100",
-        )}
-      >
-        {ready ? (
-          <>
-            {onBack ? <BackButton onBack={onBack} focusable={condensed} /> : null}
-            <NumberLink
-              detail={detail}
-              toneClassName={toneClassName}
-              openOnHostText={openOnHostText}
-              focusable={condensed}
-            />
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="min-w-0 truncate font-medium text-foreground">
-                    {detail.title}
-                  </span>
-                }
-              />
-              <TooltipPopup side="top">{detail.title}</TooltipPopup>
-            </Tooltip>
-          </>
-        ) : null}
-      </div>
-    </div>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <button
+            type="button"
+            onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
+            className="min-w-0 cursor-pointer truncate text-left underline-offset-2 hover:underline"
+          >
+            {repository}
+          </button>
+        }
+      />
+      <TooltipPopup side="top">{gt("Open {repository} repository", { repository })}</TooltipPopup>
+    </Tooltip>
   );
 }

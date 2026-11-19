@@ -111,6 +111,7 @@ function setup() {
       perform={async () => true}
       openOnHostText="Open on GitHub"
       copyReference={() => {}}
+      checkoutCommand={null}
     />
   );
 }

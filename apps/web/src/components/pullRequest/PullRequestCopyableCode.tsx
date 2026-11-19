@@ -43,14 +43,14 @@ export function PullRequestCopyableCode({
           />
         }
       >
-        <code
+        <span
           className={cn(
             "col-start-1 row-start-1 min-w-0 truncate transition-opacity duration-150 motion-reduce:transition-none",
             isCopied ? "opacity-0" : "opacity-100",
           )}
         >
           {value}
-        </code>
+        </span>
         <span
           aria-hidden="true"
           className={cn(

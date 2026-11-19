@@ -645,7 +645,7 @@ export function pullRequestConversationItemComments(
   return item.kind === "comment" ? [item.comment] : [item.root, ...item.replies];
 }
 
-export function isPullRequestCommentFinished(
+function isPullRequestCommentFinished(
   comment: PullRequestComment,
   thread?: PullRequestConversationThread,
 ): boolean {
@@ -675,6 +675,31 @@ export function filterPullRequestConversationItems(
           !isPullRequestCommentFinished(comment, item.kind === "thread" ? item.thread : undefined)),
     ),
   );
+}
+
+/**
+ * The Timeline under the saved comment filter: bot chatter and resolved or dismissed conversations
+ * hide unless the filter shows them. Commits and lifecycle events always stay.
+ */
+export function filterPullRequestTimelineEvents(
+  events: ReadonlyArray<PullRequestTimelineEvent>,
+  filter: { readonly bots: boolean; readonly resolved: boolean },
+): ReadonlyArray<PullRequestTimelineEvent> {
+  if (filter.bots && filter.resolved) return events;
+  return events.filter((event) => {
+    if (event.comment === undefined) return true;
+    const finished =
+      event.thread?.isResolved === true ||
+      pullRequestReviewOutcome(event.reviewState) === "dismissed";
+    if (!filter.resolved && finished) return false;
+    // A bot's verdict is not chatter, and a human reply keeps the conversation it answers.
+    return (
+      filter.bots ||
+      [event, ...(event.thread?.replies ?? [])].some(
+        (member) => member.actor?.isBot !== true || isPullRequestVerdict(member.reviewState),
+      )
+    );
+  });
 }
 
 export function pagePullRequestConversationItems(

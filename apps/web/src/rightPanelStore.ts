@@ -32,7 +32,8 @@ const RIGHT_PANEL_KINDS = [
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
-export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
+/** "summary" is the Description tab; saved panels still name it so. */
+export type PullRequestDetailTab = "summary" | "checks" | "guide" | "timeline" | "code";
 
 export interface DeviceTabTarget {
   hostId: string;
