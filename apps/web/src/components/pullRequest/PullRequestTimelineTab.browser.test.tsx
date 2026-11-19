@@ -262,7 +262,7 @@ it("hides bot comments under the saved filter and shows them when the filter all
     </div>
   );
   await using screen = await render(timeline({ bots: false, resolved: false }));
-  await expect.element(screen.getByText("Pull request opened")).toBeVisible();
+  await expect.element(screen.getByText("opened this pull request")).toBeVisible();
   expect(screen.container.textContent).not.toContain("1 comment");
 
   await screen.rerender(timeline({ bots: true, resolved: false }));

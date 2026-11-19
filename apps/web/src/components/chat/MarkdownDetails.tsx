@@ -37,7 +37,11 @@ export function MarkdownDetails({
   const content = childNodes.filter((_, index) => index !== summaryIndex);
 
   return (
-    <div className="my-2 border-y border-(--shell-divider)!" dir={dir}>
+    <div
+      className="my-2 border-y border-(--shell-divider)!"
+      dir={dir}
+      data-markdown-details-block=""
+    >
       <Collapsible
         open={expanded}
         onOpenChange={setIsOpen}

@@ -232,6 +232,8 @@ type StyledDiffCodeViewProps<LAnnotation> = (
    * the viewer's own layout inset so virtualization measurements stay correct.
    */
   readonly edgePadding?: number;
+  /** Height of a file's header row in px; the painted header must match it. */
+  readonly headerHeight?: number;
 };
 
 export function StyledDiffCodeView<LAnnotation = undefined>({
@@ -240,6 +242,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
   className,
   unsafeCSSExtra,
   edgePadding = 0,
+  headerHeight = 32,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
   return (
@@ -258,7 +261,7 @@ export function StyledDiffCodeView<LAnnotation = undefined>({
             ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
             : DIFF_VIEW_UNSAFE_CSS,
           itemMetrics: {
-            diffHeaderHeight: 32,
+            diffHeaderHeight: headerHeight,
             hunkSeparatorHeight: 24,
             // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
             // gap.

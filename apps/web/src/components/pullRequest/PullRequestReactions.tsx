@@ -13,6 +13,7 @@ import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
+import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -111,14 +112,7 @@ export function ReactionBar({
         <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
           <PopoverTrigger
             render={
-              <button
-                type="button"
-                aria-label={gt("Add a reaction")}
-                className={cn(
-                  PILL_CLASS,
-                  "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
-                )}
-              />
+              <Button size="icon-xs" variant="ghost-muted" aria-label={gt("Add a reaction")} />
             }
           >
             <SmilePlusIcon aria-hidden className="size-3.5" />

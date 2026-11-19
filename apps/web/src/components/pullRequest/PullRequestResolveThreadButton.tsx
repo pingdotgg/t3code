@@ -13,8 +13,11 @@ import { m } from "~/i18n/messages";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import { CircleCheckIcon, CircleDashedIcon } from "lucide-react";
+
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
  * Resolves or unresolves a thread from the conversation, so threads without a diff line (such as
@@ -56,15 +59,28 @@ export function PullRequestResolveThreadButton({
     onRefresh();
   };
 
+  const label = thread.isResolved ? gt("Unresolve conversation") : gt("Resolve conversation");
   return (
-    <Button
-      size="xs"
-      variant="ghost"
-      className="shrink-0"
-      disabled={pending}
-      onClick={() => void toggle()}
-    >
-      {thread.isResolved ? gt("Unresolve") : gt("Resolve")}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            className="shrink-0"
+            aria-label={label}
+            disabled={pending}
+            onClick={() => void toggle()}
+          />
+        }
+      >
+        {thread.isResolved ? (
+          <CircleDashedIcon className="size-3.5" />
+        ) : (
+          <CircleCheckIcon className="size-3.5" />
+        )}
+      </TooltipTrigger>
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
   );
 }

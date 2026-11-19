@@ -210,6 +210,9 @@ export function PullRequestMarkdown({
     <div
       className={cn(
         "space-y-3 [&_[data-markdown-details]]:border-0 [&_[data-markdown-details-summary]]:text-foreground/80 [&_[data-markdown-details-summary]>svg]:text-muted-foreground/60",
+        // A collapsible block that ends the text keeps its line above; the card's padding is its
+        // bottom edge.
+        "[&_.chat-markdown>[data-markdown-details-block]:last-child]:mb-0 [&_.chat-markdown>[data-markdown-details-block]:last-child]:border-b-0 [&_.chat-markdown>[data-markdown-details-block]:last-child>[data-markdown-details][data-closed]>[data-markdown-details-summary]]:pb-0",
         className,
       )}
       data-image-gallery
