@@ -2563,6 +2563,7 @@
   "d62631cab06d2b80": "Uppdateringen {version} har laddats ned. Klicka för att starta om och installera.",
   "52e1d4a487c0cf4b": "Installationen av {version} misslyckades. Klicka för att försöka igen.",
   "78a04e0e625c0990": "Uppdateringen misslyckades",
+  "c24de5eb69373a55": "Den här {build}-versionen ignorerar {track}-versioner. Granska uppdateringsspåret i Inställningar för att slutföra bytet.",
   "b02ae45a6109c93b": "Uppdaterad",
   "edcda9e8ee4ccad8": "Installera uppdateringen {version} och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",
   "02eba0f7cc90f759": "Installera uppdateringen och starta om T3 Code?\n\nPågående uppgifter avbryts. Se till att du är redo innan du fortsätter.",

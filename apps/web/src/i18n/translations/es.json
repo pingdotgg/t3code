@@ -2563,6 +2563,7 @@
   "d62631cab06d2b80": "Actualización {version} descargada. Haz clic para reiniciar e instalar.",
   "52e1d4a487c0cf4b": "Falló la instalación de {version}. Haz clic para reintentarlo.",
   "78a04e0e625c0990": "Falló la actualización",
+  "c24de5eb69373a55": "Esta compilación {build} ignora las versiones {track}. Revisa el canal de actualizaciones en Ajustes para terminar el cambio.",
   "b02ae45a6109c93b": "Actualizado",
   "edcda9e8ee4ccad8": "¿Instalar la actualización {version} y reiniciar T3 Code?\n\nSe interrumpirán las tareas en curso. Asegúrate de estar listo antes de continuar.",
   "02eba0f7cc90f759": "¿Instalar la actualización y reiniciar T3 Code?\n\nSe interrumpirán las tareas en curso. Asegúrate de estar listo antes de continuar.",
