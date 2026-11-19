@@ -762,6 +762,30 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
     assert.isFalse(overrides.allowedTools?.includes(ClaudeAdapterV2.CLAUDE_T3_MCP_TOOL_WILDCARD));
   });
 
+  it("gives the agent's commands the t3-code endpoint and bearer token", () => {
+    const { mcpServers } = ClaudeAdapterV2.claudeMcpQueryOverrides({
+      mcpSession: mcpSessionFor(ThreadId.make("thread-claude-mcp-env")),
+      readOnlySandbox: false,
+    });
+    assert.deepEqual(ClaudeAdapterV2.claudeMcpEnvironment(mcpServers), {
+      T3_MCP_URL: "http://127.0.0.1:43123/mcp",
+      T3_MCP_BEARER_TOKEN: "secret-claude-token",
+    });
+    assert.deepEqual(ClaudeAdapterV2.claudeMcpEnvironment(undefined), {});
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpEnvironment({
+        "t3-code": { type: "stdio", command: "t3" },
+      }),
+      {},
+    );
+    assert.deepEqual(
+      ClaudeAdapterV2.claudeMcpEnvironment({
+        "t3-code": { type: "http", url: "http://127.0.0.1:1/mcp" },
+      }),
+      {},
+    );
+  });
+
   it("invalidates live-query reuse when MCP credentials rotate or tracked folders change", () => {
     const threadId = ThreadId.make("thread-claude-mcp-credential-rotation");
     const mcpSession = mcpSessionFor(threadId);
@@ -3379,7 +3403,7 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
     }),
   );
 
-  it.effect("sends MCP servers over stdin, not argv or the environment", () =>
+  it.effect("sends MCP servers over stdin and gives commands the endpoint, not argv", () =>
     Effect.gen(function* () {
       const cli = makeFakeClaudeCli();
       const session = yield* openWith(cli);
@@ -3393,10 +3417,14 @@ describe("ClaudeAdapterV2 MCP credential channel", () => {
         cli.controlRequests.find((request) => Reflect.get(request, "subtype") === "initialize"),
         { title: "Existing T3 title" },
       );
-      const spawned = JSON.stringify(cli.spawns);
-      assert.notInclude(spawned, "--title");
-      assert.notInclude(spawned, "--mcp-config");
-      assert.notInclude(spawned, "dummy-mcp-credential");
+      const argv = JSON.stringify(cli.spawns.map((spawned) => [spawned.command, spawned.args]));
+      assert.notInclude(argv, "--title");
+      assert.notInclude(argv, "--mcp-config");
+      assert.notInclude(argv, "dummy-mcp-credential");
+      assert.deepInclude(cli.spawns[0]?.env, {
+        T3_MCP_URL: t3McpServer.url,
+        T3_MCP_BEARER_TOKEN: "dummy-mcp-credential",
+      });
     }),
   );
 });

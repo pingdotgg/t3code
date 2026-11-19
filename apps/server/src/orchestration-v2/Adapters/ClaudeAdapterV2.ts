@@ -1684,7 +1684,8 @@ export const layerQueryRunner: Layer.Layer<
         ),
         Stream.toAsyncIterable,
       );
-      // Send MCP credentials over stdin to keep them out of SDK argv and inherited command environments.
+      // Send MCP credentials over stdin to keep them out of SDK argv. Commands the agent runs get
+      // them as T3_MCP_URL and T3_MCP_BEARER_TOKEN, as Pi's do, so CLIs can call T3's tools.
       const { mcpServers, ...sdkOptions } = input.options;
       // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
       let resumeSessionAt = sdkOptions.resumeSessionAt;
@@ -1722,6 +1723,7 @@ export const layerQueryRunner: Layer.Layer<
               }
             : {}),
           [PortScanner.AGENT_THREAD_ENV]: input.threadId,
+          ...claudeMcpEnvironment(mcpServers),
         },
       };
       // The SDK can prepend a scope wrapper to native binaries; script entries run through node.
@@ -2847,6 +2849,20 @@ export function claudeMcpQueryOverrides(input: {
         timeout: CLAUDE_T3_MCP_TOOL_TIMEOUT_MS,
       },
     },
+  };
+}
+
+/** The t3-code server's endpoint and bearer token, for commands the agent runs. */
+export function claudeMcpEnvironment(
+  mcpServers: ClaudeQueryOptions["mcpServers"],
+): Record<string, string> {
+  const server = mcpServers?.["t3-code"];
+  if (server?.type !== "http") return {};
+  const authorization = server.headers?.Authorization;
+  if (authorization === undefined) return {};
+  return {
+    T3_MCP_URL: server.url,
+    T3_MCP_BEARER_TOKEN: authorization.replace(/^Bearer /i, ""),
   };
 }
 
