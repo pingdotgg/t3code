@@ -82,7 +82,7 @@ it.layer(NodeServices.layer)("t3 install", (it) => {
       // Another ada earlier on PATH still runs first, so `ada` would not run this one.
       const otherBin = path.join(root, "other-bin");
       yield* fs.makeDirectory(otherBin);
-      yield* fs.writeFileString(path.join(otherBin, "ada"), "");
+      yield* fs.writeFileString(path.join(otherBin, "ada"), "#!/bin/sh\n", { mode: 0o755 });
       const shadowed = yield* provide(installCli(), {
         PATH: `${otherBin}:${path.join(root, "bin")}`,
       });

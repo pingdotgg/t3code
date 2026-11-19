@@ -3,6 +3,7 @@ import {
   PullRequestComment,
   ThreadPullRequestWatch,
 } from "@t3tools/contracts";
+import { APP_NAME } from "@t3tools/shared/branding";
 import { assert, describe, it } from "@effect/vitest";
 
 import {
@@ -1217,7 +1218,7 @@ describe("pullRequestWatchEndMessage", () => {
     });
     assert.equal(
       merged.text,
-      `Pull request #7 (${url}) was merged into main by juliusmarminge as 3b2f958, so T3 Code stopped watching it.`,
+      `Pull request #7 (${url}) was merged into main by juliusmarminge as 3b2f958, so ${APP_NAME} stopped watching it.`,
     );
     assert.deepEqual(merged.notification, {
       source: { kind: "monitor" },
@@ -1227,13 +1228,13 @@ describe("pullRequestWatchEndMessage", () => {
     // GitCafe reports a merge made on GitHub without who made it.
     assert.equal(
       end({ mergeCommitSha }).text,
-      `Pull request #7 (${url}) was merged into main as 3b2f958, so T3 Code stopped watching it.`,
+      `Pull request #7 (${url}) was merged into main as 3b2f958, so ${APP_NAME} stopped watching it.`,
     );
 
     const closed = end({ state: "closed" });
     assert.equal(
       closed.text,
-      `Pull request #7 (${url}) was closed without merging, so T3 Code stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
+      `Pull request #7 (${url}) was closed without merging, so ${APP_NAME} stopped watching it. If it is reopened, call watch_pull_request to watch it again.`,
     );
     assert.equal(closed.notification.summary, "#7: closed, stopped watching");
   });

@@ -4,6 +4,7 @@ import {
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { APP_NAME } from "@t3tools/shared/branding";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -162,7 +163,7 @@ describe("ConnectionResolver", () => {
       const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
 
       expect(error).toMatchObject({ reason: "unsupported" });
-      expect(error.message).toContain("Update the app on Compatible environment");
+      expect(error.message).toContain(`Update ${APP_NAME} on Compatible environment`);
     }),
   );
 

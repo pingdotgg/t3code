@@ -15,7 +15,7 @@ import { CommandPalette } from "./CommandPalette";
 const entities = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<Project>,
   threads: [] as ReadonlyArray<Thread>,
-  activeThread: undefined as Thread | undefined,
+  activeThread: null as Thread | null,
   delegatedUnderParent: new Set<string>() as ReadonlySet<string>,
   handleNewThread: vi.fn(async () => undefined),
 }));
@@ -58,7 +58,7 @@ function setup(state: Partial<typeof entities> = {}) {
   useCommandPaletteStore.setState(useCommandPaletteStore.getInitialState(), true);
   entities.projects = state.projects ?? [];
   entities.threads = state.threads ?? [];
-  entities.activeThread = state.activeThread;
+  entities.activeThread = state.activeThread ?? null;
   entities.delegatedUnderParent = state.delegatedUnderParent ?? new Set();
   entities.handleNewThread.mockClear();
 }

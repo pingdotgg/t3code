@@ -95,6 +95,8 @@ vi.mock("../../components/ui/ScreenScrollView", () => ({
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
+vi.mock("../../components/AgentAvatar", () => ({ AgentAvatar: () => null }));
+vi.mock("../../state/agents", () => ({ useAgentProfiles: () => [] }));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 vi.mock("../connection/environmentStatusText", () => ({ runtimeConnectionErrorText: () => null }));
 vi.mock("../../state/entities", () => ({

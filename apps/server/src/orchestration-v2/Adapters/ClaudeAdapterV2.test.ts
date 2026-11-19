@@ -3504,7 +3504,7 @@ describe("ClaudeAdapterV2 native session identity", () => {
     }),
   );
 
-  it.effect("fails resume when the native session has no transcript", () =>
+  it.effect("fails resume when an imported native session has no transcript", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -3542,7 +3542,9 @@ describe("ClaudeAdapterV2 native session identity", () => {
           modelSelection: CLAUDE_TEST_MODEL_SELECTION,
           runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
         });
-        const resumed = yield* Effect.result(runtime.resumeThread({ providerThread }));
+        const resumed = yield* Effect.result(
+          runtime.resumeThread({ providerThread, importedNativeSession: true }),
+        );
         assert.equal(resumed._tag, "Failure");
       }).pipe(
         Effect.provide(

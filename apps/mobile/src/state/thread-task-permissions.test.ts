@@ -47,7 +47,7 @@ const state = vi.hoisted(() => ({
   setFreshPending: vi.fn(),
   clearDraft: vi.fn(),
   appendAttachments: vi.fn(),
-  mergeDraft: vi.fn(),
+  mergeDraft: vi.fn(async (_key: string, _content: { text: string }) => {}),
   fileHolds: [] as string[],
   questionDrafts: {} as Record<
     string,
@@ -88,8 +88,31 @@ vi.mock("react", () => ({
     vi.fn(),
   ],
 }));
+vi.mock("gt-react-native", async (importOriginal) => {
+  const gt = await importOriginal<typeof import("gt-react-native")>();
+  return { ...gt, useLocale: () => "en", useMessages: () => gt.mFallback };
+});
 vi.mock("expo-crypto", () => ({ randomUUID: () => "uuid" }));
-vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: vi.fn() }));
+vi.mock("../lib/attachmentUpload", async () => {
+  const Effect = await import("effect/Effect");
+  return {
+    prepareTurnAttachments: ({
+      attachments,
+    }: {
+      attachments: ReadonlyArray<DraftComposerImageAttachment>;
+    }) =>
+      Effect.succeed({
+        status: "ready",
+        attachments: attachments.map(({ id, name, mimeType, sizeBytes }) => ({
+          type: "image",
+          id: `uploaded-${id}`,
+          name,
+          mimeType,
+          sizeBytes,
+        })),
+      }),
+  };
+});
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid" }));
 vi.mock("../lib/composerAttachmentPreviewRetention", () => ({
   retainComposerAttachmentFileForPreview: (attachment: { readonly fileUri: string }) => {

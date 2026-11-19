@@ -379,7 +379,10 @@ export function ServerUpdateAction({
 
   const manualCommand =
     selfUpdate === null ? manualServerUpdateCommand(targetVersion, installation) : null;
-  const actionLabel = manualCommand !== null ? "Copy update command" : label;
+  const actionLabel =
+    manualCommand !== null
+      ? gt("Copy update command")
+      : (label ?? gt("Update", { $context: "verb, updates the server" }));
   const onClick =
     manualCommand !== null
       ? () => copyToClipboard(manualCommand, { command: manualCommand })

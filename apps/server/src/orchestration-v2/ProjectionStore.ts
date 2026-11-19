@@ -5168,6 +5168,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           -- seconds never visits every thread row; on a large, fragmented database that
           -- scan blocked the event loop for seconds.
           FROM orchestration_v2_projection_turn_items item
+            INDEXED BY orchestration_v2_projection_turn_items_usage_limit_idx
           CROSS JOIN orchestration_v2_projection_runs r ON r.run_id = item.run_id
           CROSS JOIN orchestration_v2_projection_threads t ON t.thread_id = r.thread_id
           WHERE item.type = 'error' AND item.status = 'failed'
@@ -5196,8 +5197,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             AND t.deleted_at IS NULL
             AND t.archived_at IS NULL
             AND json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
-            AND json_valid(item.payload_json)
-            AND json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+            AND CASE WHEN json_valid(item.payload_json) THEN
+              json_extract(item.payload_json, '$.failure.class') = 'usage_limit'
+              ELSE 0 END
             AND json_extract(item.payload_json, '$.failure.resetAt') IS NOT NULL
             AND julianday(json_extract(item.payload_json, '$.failure.resetAt')) > julianday(COALESCE(r.completed_at, json_extract(t.payload_json, '$.updatedAt')))
             AND (
@@ -9846,6 +9848,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 THEN json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
                 ELSE 0 END
             )
+            OR CASE WHEN ${indexedField("$.pullRequests[0]", "json_type")} IS NOT NULL
+              THEN EXISTS (
+                SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
+                WHERE json_type(link.value, '$.watch') IS NOT NULL
+              )
+              ELSE 0 END
             -- A reused native subagent's working status comes from its run-less root turn.
             OR EXISTS (
               SELECT 1 FROM orchestration_v2_projection_nodes node
