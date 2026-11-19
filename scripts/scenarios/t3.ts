@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 // `test` for web scenarios: e2e's web test plus `t3`, which seeds state and opens the signed-in
 // app. `t3-mobile.ts` is the same for the iOS app.
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -58,6 +59,8 @@ export interface T3 extends T3State {
    * by its link is the reliable way to reach it: a sidebar row covers its own title text.
    */
   readonly open: (target?: string | T3Thread) => Promise<void>;
+  /** Reads the file editor's shadow content in the given scope, or anywhere on the page. */
+  readonly editorText: (scopeSelector?: string) => Promise<string | null>;
 }
 
 /** e2e's fixtures are promise functions; this is the one place an Effect becomes a promise. */
@@ -277,6 +280,15 @@ export const test = base.extend<{ t3: T3 }>({
     const { state, cleanup } = makeState(T3_HOME);
     await use({
       ...state,
+      editorText: (scopeSelector) =>
+        browser.evaluate((selector) => {
+          const scope = selector === undefined ? document : document.querySelector(selector);
+          for (const host of scope?.querySelectorAll("*") ?? []) {
+            const content = host.shadowRoot?.querySelector("[data-content]");
+            if (content) return content.textContent ?? "";
+          }
+          return null;
+        }, scopeSelector),
       open: async (target = "/") => {
         await app.open(await runPromise(readPairingPath));
         // The pairing page signs in and then leaves itself. Going anywhere before it has done
