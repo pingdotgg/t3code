@@ -223,39 +223,33 @@ jobs:
             git tag "$release_tag"
             git push origin "refs/tags/$release_tag"
           fi
-          upstream_notes="$(gh api "repos/pingdotgg/t3code/releases/tags/$source_tag" --jq '.body // empty')"
+          upstream_notes="$(gh api "repos/pingdotgg/t3code/releases/tags/$source_tag" --jq '.body // empty' \
+            | awk '/^<details>/ {exit} {print}' \
+            | grep -v -E '^\*\*v|^#+ Plus [0-9]+ more' || true)"
           cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          Patched T3 Code nightly.
-
-          Source nightly: $source_tag
-          Source commit: $source_sha
-          Patch set: $patch_set
-
-          ## What's changed
-
           ## Upstream improvements
-
-          Official T3 Code release notes for [$source_tag](https://github.com/pingdotgg/t3code/releases/tag/$source_tag):
 
           $upstream_notes
 
           ## Fork changes
 
-          Includes these fork fixes:
-          - Order active threads by the latest message or run activity.
-          - Hide threads from disconnected environments and restore them on reconnect.
-          - Render Codex memory citations as readable references.
-          - Hide settled or confirmed deleted child threads in Lineage; mark offline linked-environment children unavailable.
-          - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
-          - Allow named T3 delegate_task targets according to each lead agent's allowlist.
-          - Keep mobile thread rows on three lines: project, title, then branch and machine.
+          ### Mobile
           - Show Mark unread in the mobile thread hold menu instead of under More.
-          - Point the mobile app at the fork's bundle ID and Expo project so over-the-air updates reach fork builds.
+          - Keep mobile thread rows on three lines: project, title, then branch and machine.
           - Send iOS push alerts straight from the T3 server to APNs for the fork's bundle ID, without the relay.
 
-          Agent selection remains explicit. Automatic complexity-based routing is a separate follow-up. The named-target allowlist covers T3 delegate_task, not provider-native subagent tools.
+          ### Desktop
+          - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
+          - Hide settled or confirmed deleted child threads in Lineage; mark offline linked-environment children unavailable.
+          - Render Codex memory citations as readable references.
+          - Hide threads from disconnected environments and restore them on reconnect.
+          - Order active threads by the latest message or run activity.
 
-          The macOS installer is signed and notarized. The Windows installer is unsigned.
+          ### Server
+          - Allow named T3 delegate_task targets according to each lead agent's allowlist.
+
+          ---
+          Patched nightly · source $source_tag (${source_sha:0:7}) · patch set $patch_set
           EOF
           if gh release view "$release_tag" --repo "$FORK_REPOSITORY" >/dev/null 2>&1; then
             gh release edit "$release_tag" --repo "$FORK_REPOSITORY" \
