@@ -143,7 +143,7 @@ type ReplayStep =
   | {
       readonly type: "rollback";
       readonly label: string;
-      readonly numTurns: number;
+      readonly afterTurnLabel: string;
     }
   | {
       readonly type: "fork";
@@ -799,7 +799,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             {
               type: "rollback",
               label: "rollback-latest-turn",
-              numTurns: 1,
+              afterTurnLabel: "first-before-rollback",
             },
             {
               type: "turn",
@@ -834,7 +834,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             {
               type: "rollback",
               label: "rollback-latest-turn",
-              numTurns: 1,
+              afterTurnLabel: "first-before-rollback",
             },
             {
               type: "turn",
@@ -879,7 +879,7 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
             {
               type: "rollback",
               label: "rollback-to-stopped-turn",
-              numTurns: 1,
+              afterTurnLabel: "stopped-mid-tool",
             },
             {
               type: "turn",
@@ -1222,8 +1222,24 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
       approvalGate ? Deferred.await(approvalGate) : Effect.void;
     const model = scenarioModel(scenario);
     const threadRuntimeParams = { cwd: process.cwd(), model, config: CODEX_THREAD_CONFIG };
+    const turnIdsByLabel = new Map<string, string>();
     const lastTurnIdByThread = new Map<string, string>();
     const runningCommandProcessIds = new Map<string, Map<string, string>>();
+
+    const rollbackToRecordedTurn = Effect.fn(
+      "record-codex-app-server-replay-fixture.rollbackToRecordedTurn",
+    )(function* (
+      client: CodexClient.CodexAppServerClient["Service"],
+      threadId: string,
+      afterTurnLabel: string,
+    ) {
+      const afterTurnId = turnIdsByLabel.get(afterTurnLabel);
+      if (afterTurnId === undefined) {
+        throw new Error(`Unknown replay checkpoint turn '${afterTurnLabel}'.`);
+      }
+      yield* revertCodexThread(client, threadId, { afterTurnId });
+      lastTurnIdByThread.set(threadId, afterTurnId);
+    });
 
     const initializeClient = Effect.gen(function* () {
       const client = yield* CodexClient.CodexAppServerClient;
@@ -1311,6 +1327,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
 
       const completed = yield* getCompletion(turnId);
       yield* Deferred.await(completed);
+      turnIdsByLabel.set(step.label, turnId);
       lastTurnIdByThread.set(threadId, turnId);
     });
 
@@ -1402,7 +1419,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
         // Fresh app-servers report notLoaded; resume before thread/revert and again on the next turn.
         yield* client.request("thread/read", { threadId, includeTurns: false });
         yield* client.request("thread/resume", resumeParams);
-        yield* revertCodexThread(client, threadId, rollback.numTurns);
+        yield* rollbackToRecordedTurn(client, threadId, rollback.afterTurnLabel);
         yield* client.request("thread/resume", resumeParams);
         yield* runTurnStep(client, threadId, after);
       }).pipe(Effect.provide(layerCodex({ recorder })));
@@ -1421,7 +1438,7 @@ const runReplaySession = Effect.fn("record-codex-app-server-replay-fixture.runRe
       for (const [stepIndex, step] of run.steps.entries()) {
         if (step.type === "rollback") {
           yield* client.request("thread/read", { threadId: activeThreadId, includeTurns: false });
-          yield* revertCodexThread(client, activeThreadId, step.numTurns);
+          yield* rollbackToRecordedTurn(client, activeThreadId, step.afterTurnLabel);
           continue;
         }
         if (step.type === "fork") {
