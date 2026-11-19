@@ -40,6 +40,7 @@ h.update({k: os.environ[v] for k,v in p.get('env_http_headers', {}).items()})
 key = os.environ.get(p['env_key']) if p.get('env_key') else p.get('experimental_bearer_token')
 if p.get('env_key') and not key: fail(f'[model_providers.{name}] in {path} reads its key from {p["env_key"]}, which is not set.')
 if not key and p.get('requires_openai_auth') and (home / 'auth.json').is_file(): key = json.loads((home / 'auth.json').read_text()).get('OPENAI_API_KEY')
+if not key and p.get('requires_openai_auth'): fail(f'[model_providers.{name}] in {path} sets requires_openai_auth, but {home / "auth.json"} has no OPENAI_API_KEY.')
 if key: h['Authorization'] = 'Bearer ' + key
 print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
 `,
