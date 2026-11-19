@@ -42,8 +42,8 @@ import { AppSignInRow } from "./SourceControlSignInSection";
 const PROMPT: SourceControlSignInPrompt = {
   userCode: "ABCD-1234",
   verificationUri: "https://github.com/login/device",
-  expiresAt: new Date(15 * 60 * 1000).toISOString(),
-} as SourceControlSignInPrompt;
+  expiresAt: 15 * 60 * 1000,
+};
 
 function settle() {
   let resolve: (outcome: Outcome) => void = () => undefined;
@@ -69,8 +69,9 @@ function renderRow() {
           {
             appName: "T3 Code for GitHub",
             hosts: ["github.com"],
-            installUrl: "https://github.com/apps/t3-code/installations/new",
-          } as SourceControlAppSignIn
+            installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
+            revokeUrl: "https://github.com/settings/apps/authorizations",
+          } satisfies SourceControlAppSignIn
         }
         disabled={false}
       />,
