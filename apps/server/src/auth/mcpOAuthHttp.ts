@@ -4,6 +4,7 @@ import {
   AuthMcpClientAccess,
   AuthMcpClientRegistration,
   AuthMcpRegistrationError,
+  clampMcpClientAccess,
   EnvironmentHttpApi,
   mcpClientScopes,
 } from "@t3tools/contracts";
@@ -176,12 +177,15 @@ export const layer = HttpApiBuilder.group(
             ...(oauth.runtimeModeCeiling === undefined
               ? {}
               : { runtimeModeCeiling: oauth.runtimeModeCeiling }),
+            ...(resolved.maxAccess === "full-access" ? {} : { maxAccess: resolved.maxAccess }),
             ...(session === undefined
               ? {}
               : {
                   csrfToken: session.csrfToken,
-                  oneClickAccess: AuthMcpClientAccess.literals.filter((access) =>
-                    mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
+                  oneClickAccess: AuthMcpClientAccess.literals.filter(
+                    (access) =>
+                      clampMcpClientAccess(access, resolved.maxAccess) === access &&
+                      mcpClientScopes(access).every((scope) => session.scopes.includes(scope)),
                   ),
                 }),
           };

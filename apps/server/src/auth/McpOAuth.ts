@@ -11,9 +11,10 @@ import {
   type AuthMcpTokenResult,
   type AuthMcpClientAccess,
   type AuthEnvironmentScope,
-  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  clampMcpClientAccess,
   MCP_PEER_LINK_SOFTWARE_ID,
+  mcpClientAccessForScopes,
   mcpClientScopes,
   parseMcpApprovalCode,
   type RuntimeMode,
@@ -65,7 +66,8 @@ const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const CODE_CHALLENGE_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const CODE_VERIFIER_PATTERN = /^[A-Za-z0-9\-._~]{43,128}$/;
 
-const MCP_OAUTH_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+// Clients that request every supported scope must still be able to reach full access.
+const MCP_OAUTH_SCOPES = mcpClientScopes("full-access");
 
 export interface McpOAuthUrls {
   readonly issuer: string;
@@ -172,7 +174,12 @@ export class McpOAuthPageError extends Schema.TaggedError<McpOAuthPageError>()(
 export class McpOAuthRedirectError extends Schema.TaggedError<McpOAuthRedirectError>()(
   "McpOAuthRedirectError",
   {
-    error: Schema.Literals(["invalid_request", "unsupported_response_type", "invalid_target"]),
+    error: Schema.Literals([
+      "invalid_request",
+      "unsupported_response_type",
+      "invalid_target",
+      "invalid_scope",
+    ]),
     description: Schema.String,
     redirectUri: Schema.String,
     state: Schema.optional(Schema.RedactedFromValue(Schema.String)),
@@ -186,6 +193,8 @@ export interface AuthorizationRequest {
   readonly state: Redacted.Redacted<string> | undefined;
   readonly resource: string;
   readonly issuer: string;
+  /** The broadest access the client's `scope` asked for; full access when it sent none. */
+  readonly maxAccess: AuthMcpClientAccess;
 }
 
 interface PendingCode {
@@ -321,6 +330,7 @@ const make = Effect.gen(function* () {
         authorization.client.clientId,
         authorization.redirectUri,
         authorization.codeChallenge,
+        authorization.maxAccess,
       ]),
     );
 
@@ -413,6 +423,19 @@ const make = Effect.gen(function* () {
     if (!sameResource(urls, request.resource)) {
       return yield* fail("invalid_target", `This server only issues tokens for ${urls.resource}.`);
     }
+    const scopes = request.scope?.split(" ").filter((scope) => scope !== "") ?? [];
+    const unknown = scopes.filter((scope) => !MCP_OAUTH_SCOPES.some((known) => known === scope));
+    if (unknown.length > 0) {
+      return yield* fail("invalid_scope", `Unsupported scope: ${unknown.join(" ")}.`);
+    }
+    // An absent or empty scope keeps the approver's choice, as before clients sent one.
+    const maxAccess = scopes.length === 0 ? "full-access" : mcpClientAccessForScopes(scopes);
+    if (maxAccess === undefined) {
+      return yield* fail(
+        "invalid_scope",
+        `Every access level needs ${AuthOrchestrationReadScope}.`,
+      );
+    }
     return {
       client,
       redirectUri,
@@ -420,6 +443,7 @@ const make = Effect.gen(function* () {
       state,
       resource: urls.resource,
       issuer: urls.issuer,
+      maxAccess,
     } satisfies AuthorizationRequest;
   });
 
@@ -501,6 +525,8 @@ const make = Effect.gen(function* () {
         });
       }
     }
+    // RFC 6749 §3.3: the token response's `scope` reports the narrower grant.
+    access = clampMcpClientAccess(access, input.authorization.maxAccess);
     const code = yield* mintCode(input.authorization, access);
     yield* Effect.logInfo("Approved an MCP client sign-in.", {
       client: input.authorization.client.name,
