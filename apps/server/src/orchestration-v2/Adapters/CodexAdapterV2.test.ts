@@ -4961,7 +4961,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               text: "/compact",
             }),
           );
-          yield* harness.firstTerminal;
+          const compactProviderTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
+            nativeTurnId: "compact-turn",
+          });
+          // The resumed turn ends interrupted too, so the first terminal cannot
+          // tell the turns apart; wait for the compaction turn's own terminal.
+          yield* harness.until(() =>
+            harness
+              .terminalEvents()
+              .some((event) => event.providerTurnId === compactProviderTurnId),
+          );
           const items = harness.events.flatMap((event) =>
             event.type === "turn_item.updated" && event.turnItem.type === "compaction"
               ? [event.turnItem]
@@ -4972,10 +4982,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             items.map((entry) => entry.status),
             hookStopped ? [] : ["running", "completed"],
           );
-          // The resumed turn was never adopted: the only terminal is the compaction's.
+          // The resumed turn was never adopted: the only terminal is the
+          // compaction's own, with the hook stop reason attached when stopped.
           assert.deepEqual(
-            harness.terminalEvents().map((event) => event.status),
-            [hookStopped ? "interrupted" : "completed"],
+            harness.terminalEvents().map((event) => ({
+              providerTurnId: event.providerTurnId,
+              status: event.status,
+              reason: event.status === "failed" ? undefined : event.reason,
+            })),
+            [
+              {
+                providerTurnId: compactProviderTurnId,
+                status: hookStopped ? "interrupted" : "completed",
+                reason: hookStopped ? "preCompact hook (project): Not now." : undefined,
+              },
+            ],
           );
         }).pipe(
           Effect.provide(
