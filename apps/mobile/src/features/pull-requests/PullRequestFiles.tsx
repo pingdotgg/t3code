@@ -32,7 +32,7 @@ import {
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
-import { pullRequestFileJumpScope, requestPullRequestFileJump } from "./pullRequestFileJump";
+import { requestPullRequestFileJump } from "./pullRequestFileJump";
 import type { MessageResolver } from "../../i18n/messages";
 
 const BREAKDOWN_LABELS = {
@@ -485,7 +485,6 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
   const navigation = useNavigation();
   const gt = useGT();
   const m = useMessages();
-  const jumpScope = pullRequestFileJumpScope(params);
   const files = useChangedFiles(params);
   const { diff, filter, viewed, parsed, loading } = files;
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
@@ -554,7 +553,7 @@ export function PullRequestFilesSheet({ route }: StaticScreenProps<PullRequestDi
                   file={item.file}
                   viewed={viewed.isViewed(item.file.path)}
                   onPress={() => {
-                    requestPullRequestFileJump(jumpScope, item.file.path);
+                    requestPullRequestFileJump(navigation.getState()?.routes ?? [], item.file.path);
                     navigation.dispatch(
                       StackActions.popTo("PullRequestFile", {
                         ...params,
