@@ -281,12 +281,22 @@ export function McpAppFrame(props: {
       post: (message) => target()?.postMessage(message, "*"),
       hostContext,
       callTool: async ({ name, arguments: args }) => {
+        // receive dispatches synchronously; read activation before awaiting tool info.
+        const clicked =
+          document.activeElement === frameRef.current &&
+          navigator.userActivation?.isActive === true;
         const { environmentId, input } = scope();
         const info = await readLive().toolInfo({ environmentId, input: { ...input, name } });
         if (info._tag !== "Success") throw commandFailure(info);
         if (!info.value.callable)
           throw new McpAppHostRefusal({ message: "This app cannot call that tool." });
         if (!info.value.readOnly) {
+          // Without a click, apps calling on load queue a blocking approval each time the thread mounts.
+          if (!clicked) {
+            throw new McpAppHostRefusal({
+              message: "This tool runs only from a click in the app.",
+            });
+          }
           const approved = await ask(
             `${m(msg("Allow {server} to run {tool}?", { server: app.server, tool: info.value.title ?? name }))}\n${JSON.stringify(args, null, 2)}`,
           );
