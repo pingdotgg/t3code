@@ -2186,6 +2186,166 @@ it.effect("starts, finishes and follows up a task without reading the parent's h
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("records a secret and a link card without reading the thread's history", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const threadId = ThreadId.make("thread:long-cards");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-long-cards"),
+      threadId,
+      projectId: ProjectId.make("project:long-cards"),
+      title: "Cards",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-long-cards"),
+      threadId,
+      messageId: MessageId.make("message:long-cards"),
+      text: "Ask for a token and a link",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadRecords(threadId, ["runs"])).runs[0]!;
+    const providerTurnId = ProviderTurnId.make("provider-turn:long-cards");
+    yield* projections.apply({
+      id: EventId.make("event:long-cards:provider-turn"),
+      type: "provider-turn.updated",
+      threadId,
+      runId: run.id,
+      occurredAt: now,
+      payload: {
+        id: providerTurnId,
+        providerThreadId: run.providerThreadId!,
+        nodeId: run.rootNodeId!,
+        runAttemptId: run.activeAttemptId,
+        nativeTurnRef: null,
+        ordinal: 1,
+        status: "running",
+        startedAt: now,
+        completedAt: null,
+      },
+    });
+
+    const cardSpans = [
+      "orchestrationV2.dispatch.secretRequestRecord",
+      "orchestrationV2.dispatch.linkRequestRecord",
+    ];
+    const statements: Array<readonly [string, ReadonlyArray<unknown>]> = [];
+    const recordStatements = Effect.provideService(
+      Statement.CurrentTransformer,
+      (statement, _make, _fiber, span) => {
+        for (
+          let parent = Option.some<Tracer.AnySpan>(span);
+          Option.isSome(parent) && parent.value._tag === "Span";
+          parent = parent.value.parent
+        ) {
+          if (cardSpans.includes(parent.value.name)) {
+            statements.push(statement.compile());
+            break;
+          }
+        }
+        return Effect.succeed(statement);
+      },
+    );
+    const card = {
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId!,
+      reason: "Needed for the work",
+    };
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "secret_request.record",
+        commandId: CommandId.make("record-long-cards:secret"),
+        turnItemId: TurnItemId.make("item:long-cards:secret"),
+        label: "Token",
+        secretStatus: "pending",
+      })
+      .pipe(recordStatements);
+    yield* orchestrator
+      .dispatch({
+        ...card,
+        type: "link_request.record",
+        commandId: CommandId.make("record-long-cards:link"),
+        turnItemId: TurnItemId.make("item:long-cards:link"),
+        url: "https://example.test",
+        linkStatus: "pending",
+      })
+      .pipe(recordStatements);
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["secret_request", "link_request"],
+    });
+    assert.deepEqual(
+      turnItems.map((item) => [item.type, item.providerTurnId]),
+      [
+        ["secret_request", providerTurnId],
+        ["link_request", providerTurnId],
+      ],
+    );
+
+    // A card reads its own run, so the rows and VM steps of its reads, which are deterministic,
+    // must stay flat on a copy where the thread has thousands of older runs.
+    const copyPath = "file:/card-reads?vfs=memdb";
+    using copy = new NodeSqlite.DatabaseSync(copyPath);
+    yield* sql`VACUUM INTO ${copyPath}`;
+    const replay = () =>
+      statements
+        .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
+        .reduce(
+          (total, [query, params]) => {
+            const statement = copy.prepare(query);
+            const rows = statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
+            return {
+              rows: total.rows + rows.length,
+              steps: total.steps + statement.stat("vmStep"),
+            };
+          },
+          { rows: 0, steps: 0 },
+        );
+    const short = replay();
+    const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
+      ["runs", "run_id", []],
+      ["run_attempts", "attempt_id", ["run_id"]],
+      ["nodes", "node_id", ["run_id"]],
+      ["provider_turns", "provider_turn_id", ["run_attempt_id"]],
+    ];
+    for (const [table, key, renamed] of history) {
+      const name = `orchestration_v2_projection_${table}`;
+      const columns = copy
+        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
+        .all()
+        .map((column) => String(column.name));
+      const values = columns.map((column) =>
+        column === key || renamed.includes(column)
+          ? `${column} || ':history:' || history.n`
+          : column === "ordinal"
+            ? "ordinal + history.n"
+            : column,
+      );
+      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 2000)
+        INSERT INTO ${name} (${columns.join(", ")})
+        SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
+    }
+    const long = replay();
+    assert.equal(long.rows, short.rows);
+    assert.isAtMost(long.steps, short.steps * 1.1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("replays a thread.create receipt without changing the thread", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;

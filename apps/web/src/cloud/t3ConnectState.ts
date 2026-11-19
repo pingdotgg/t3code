@@ -18,6 +18,23 @@ export function isManagedTunnelActive(
   );
 }
 
+/**
+ * Whether reaching `desired` links or relinks the environment, which needs `relay:configure`.
+ * Unlinking and preference changes on the current link only need `relay:write`.
+ */
+export function cloudChangeReplacesLink(
+  linkState: EnvironmentCloudLinkStateResult,
+  relayProviderKind: RelayManagedEndpointProviderKind | undefined,
+  desired: { readonly managedTunnel: boolean; readonly publish: boolean },
+) {
+  return (
+    (desired.managedTunnel || desired.publish) &&
+    (!linkState.linked ||
+      linkState.linkRevoked === true ||
+      isManagedTunnelActive(linkState, relayProviderKind) !== desired.managedTunnel)
+  );
+}
+
 // The URL ends up in commands people paste into a shell, so only plain DNS names pass.
 const TUNNEL_HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
