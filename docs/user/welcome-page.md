@@ -109,8 +109,10 @@ in an editor but never used. It skips unreadable or unparseable conversations.
 Each import attempt reads up to 100 conversations and 4 GiB per project.
 Conversations with no messages count toward the 4 GiB but not the 100. To
 continue a large batch, open the Welcome page again and pick the project in
-**Review all**. Completed conversations are not imported again. You can continue
-without the remaining history.
+**Review all**. Unchanged conversations are skipped. Re-importing a Codex
+conversation adds new messages to the existing thread when the original history
+is intact and the thread has no turns run in T3 Code. You can continue without
+the remaining history.
 
 You can start without importing. While an import runs, T3 Code stays on the
 Welcome page. If you quit, open the Welcome page again from **Settings → About**; the

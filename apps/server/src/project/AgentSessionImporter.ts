@@ -303,6 +303,9 @@ const make = Effect.gen(function* () {
           // Pi resumes by session file path; its session UUID only names the thread.
           const nativeThreadId =
             thread.source === "pi" ? source.filePath : thread.providerSessionId;
+          const truncatedHistoryId = TurnItemId.make(
+            `${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`,
+          );
           const persistRuntime = runtimes.upsert(
             {
               threadId,
@@ -320,25 +323,26 @@ const make = Effect.gen(function* () {
             },
             { onConflict: "ignore" },
           );
-          const existing = yield* Effect.option(
-            orchestrator.getThreadRecords(threadId, ["messages"]),
+          const existing = yield* orchestrator.getThreadRecords(threadId, ["messages"]).pipe(
+            Effect.asSome,
+            Effect.catchIf(
+              (cause) => isProjectionStoreThreadNotFoundError(cause.cause),
+              () => Effect.succeedNone,
+            ),
           );
           if (Option.isSome(existing)) {
-            if (existing.value.thread.projectId !== input.projectId) {
+            const { thread: current, messages: stored } = existing.value;
+            if (current.projectId !== input.projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
                 expectedProjectId: input.projectId,
-                actualProjectId: existing.value.thread.projectId,
+                actualProjectId: current.projectId,
               });
             }
-            if (existing.value.thread.historyOrigin !== "v1_import") {
+            if (current.historyOrigin !== "v1_import") {
               return yield* new AgentSessionThreadModifiedError({ threadId });
             }
-            // A transcript can change after the import, so record it only when the
-            // thread already holds exactly its messages.
-            const stored = existing.value.messages;
             if (
-              stored.length !== thread.messages.length ||
               stored.some(
                 (message, index) =>
                   message.role !== thread.messages[index]?.role ||
@@ -347,10 +351,50 @@ const make = Effect.gen(function* () {
             ) {
               return false;
             }
+            const appended = thread.messages.slice(stored.length);
+            if (appended.length > 0) {
+              if (
+                thread.source !== "codex" ||
+                thread.omittedMessageCount > 0 ||
+                stored.length === 0 ||
+                current.deletedAt !== null ||
+                stored.some((message) => message.runId !== null)
+              ) {
+                return false;
+              }
+              // Imported items are ordered before local runs, so only extend an intact import.
+              const { runs, turnItems, providerThreads } = yield* orchestrator.getThreadRecords(
+                threadId,
+                ["runs", "turnItems", "providerThreads"],
+                { turnItemTypes: ["system_notice"] },
+              );
+              const owner = providerThreads.find(
+                (providerThread) =>
+                  providerThread.id === current.activeProviderThreadId &&
+                  providerThread.appThreadId === threadId &&
+                  providerThread.driver === driver &&
+                  providerThread.providerInstanceId === thread.providerInstanceId &&
+                  providerThread.nativeThreadRef?.nativeId === nativeThreadId,
+              );
+              if (
+                owner === undefined ||
+                runs.length > 0 ||
+                turnItems.some((item) => item.id === truncatedHistoryId)
+              ) {
+                return false;
+              }
+              const committed = yield* eventSink.write({
+                unlessNativeThreadOwned: owner,
+                events: appended.flatMap((message, index) =>
+                  messageEvents({ threadId, index: stored.length + index, message }),
+                ),
+              });
+              if (committed.length === 0) return false;
+            }
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);
-            return null;
+            return appended.length > 0 ? true : null;
           }
 
           const model = thread.model ?? DEFAULT_MODEL_BY_PROVIDER[driver] ?? DEFAULT_MODEL;
@@ -434,12 +478,12 @@ const make = Effect.gen(function* () {
               ...(thread.omittedMessageCount > 0
                 ? [
                     {
-                      id: EventId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                      id: EventId.make(truncatedHistoryId),
                       type: "turn-item.updated" as const,
                       threadId,
                       occurredAt: createdAt,
                       payload: {
-                        id: TurnItemId.make(`${IMPORT_EVENT_PREFIX}:history-truncated:${threadId}`),
+                        id: truncatedHistoryId,
                         threadId,
                         runId: null,
                         nodeId: null,
@@ -478,6 +522,7 @@ const make = Effect.gen(function* () {
           yield* runtimes.recordImportedTranscript({ threadId, source });
           return true;
         }).pipe(
+          (effect) => threadCommands.withLock(threadId, effect),
           Effect.catch((cause) =>
             Effect.logWarning("Could not import an agent session", {
               provider: outcome.thread.source,

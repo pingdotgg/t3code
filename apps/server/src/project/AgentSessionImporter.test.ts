@@ -543,7 +543,7 @@ it.effect("counts only new threads when re-importing cached and recovered transc
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("does not certify new native history after a partial import retry", () =>
+it.effect("retries a partial Codex import only when the transcript matches the stored prefix", () =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -562,58 +562,77 @@ it.effect("does not certify new native history after a partial import retry", ()
       { role: "user", text: "Continue outside T3", createdAt: timestamp },
       { role: "assistant", text: "Native continuation", createdAt: timestamp },
     );
-    // The thread holds only the original messages, so the continued transcript stays unrecorded.
-    expect(yield* (yield* makeImporter([continued])).run).toEqual({
-      importedCount: 0,
-      skippedCount: 1,
-    });
+    continued.thread.messages[0] = {
+      role: "user",
+      text: "Different request",
+      createdAt: timestamp,
+    };
+    const retry = yield* makeImporter([continued]);
+    expect(yield* retry.run).toEqual({ importedCount: 0, skippedCount: 1 });
     expect(yield* runtimes.list()).toEqual([]);
     expect(
       (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
         (message) => message.text,
       ),
     ).toEqual(["Fix it", "Fixed"]);
+
+    continued.thread.messages[0] = { role: "user", text: "Fix it", createdAt: timestamp };
+    continued.thread.omittedMessageCount = 1;
+    expect(yield* retry.run).toEqual({ importedCount: 0, skippedCount: 1 });
+    expect(yield* runtimes.list()).toEqual([]);
+
+    continued.thread.omittedMessageCount = 0;
+    expect(yield* retry.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    expect(Option.getOrThrow(yield* runtimes.getByThreadId({ threadId }))).toMatchObject({
+      runtimePayload: { importedTranscripts: [continued.source] },
+    });
+    expect(
+      (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
+        (message) => message.text,
+      ),
+    ).toEqual(["Fix it", "Fixed", "Continue outside T3", "Native continuation"]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
-it.effect("does not record a changed transcript as imported without its new messages", () =>
+it.effect("appends new Codex messages to the existing import exactly once", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-    const first = candidate(
-      CLAUDE_MODEL_SELECTION,
-      "6f1c2a7e-3b4d-4e5f-9a8b-1c2d3e4f5a6b",
-      "claudeAgent",
-    );
+    const first = candidate(CODEX_MODEL_SELECTION, "continued-in-codex");
     const threadId = importId(first);
     expect(yield* (yield* makeImporter([first])).run).toEqual({
       importedCount: 1,
       skippedCount: 0,
     });
+    const before = yield* projections.getThreadRecords(threadId, ["messages"]);
 
-    const continued = candidate(
-      CLAUDE_MODEL_SELECTION,
-      first.source.providerSessionId,
-      "claudeAgent",
-    );
+    const continued = candidate(CODEX_MODEL_SELECTION, first.source.providerSessionId);
     continued.source.size = 200;
     continued.source.mtimeMs = 3;
     continued.thread.messages.push(
       { role: "user", text: "Continue", createdAt: timestamp },
       { role: "assistant", text: "Continued", createdAt: timestamp },
     );
-    yield* (yield* makeImporter([continued])).run;
+    const importer = yield* makeImporter([continued]);
+    const results = yield* Effect.all([importer.run, importer.run], { concurrency: 2 });
+    expect(results.map(({ importedCount }) => importedCount).sort()).toEqual([0, 1]);
+    expect(results.map(({ skippedCount }) => skippedCount)).toEqual([0, 0]);
+    expect(yield* importer.run).toEqual({ importedCount: 0, skippedCount: 0 });
 
     const recorded = AgentSessionScanner.decodeImportedTranscriptPayload(
       Option.getOrThrow(yield* runtimes.getByThreadId({ threadId })).runtimePayload,
     ).pipe(Option.getOrThrow).importedTranscripts;
-    const texts = (yield* projections.getThreadRecords(threadId, ["messages"])).messages.map(
-      (message) => message.text,
-    );
-    expect({
-      recordsChangedTranscript: recorded?.some((source) => source.size === 200) ?? false,
-      showsNewMessages: texts.includes("Continued"),
-    }).not.toEqual({ recordsChangedTranscript: true, showsNewMessages: false });
+    const after = yield* projections.getThreadRecords(threadId, ["messages", "turnItems"]);
+    expect(recorded).toEqual([continued.source]);
+    expect(after.thread).toEqual(before.thread);
+    expect(after.messages.slice(0, 2)).toEqual(before.messages);
+    expect(after.messages.map((message) => message.text)).toEqual([
+      "Fix it",
+      "Fixed",
+      "Continue",
+      "Continued",
+    ]);
+    expect(after.turnItems.map((item) => item.ordinal)).toEqual([1, 2, 3, 4]);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
