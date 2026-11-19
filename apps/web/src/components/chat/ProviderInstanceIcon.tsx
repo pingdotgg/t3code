@@ -87,6 +87,16 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
+/**
+ * An "overlap" tab sits on the logo, so it is smaller than the shared tab and reaches past the
+ * slot's right edge. `overhang` stays inside the gap that follows the icon.
+ */
+const OVERLAP_TAB = {
+  compact: { height: 11, fontSize: 8, paddingHorizontal: 2.5, overhang: 5 },
+  default: { height: 13, fontSize: 10, paddingHorizontal: 3, overhang: 2 },
+} as const;
+const OVERLAP_TAB_DROP = 4;
+
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
@@ -95,8 +105,11 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   acpRegistryIconUrl?: string | undefined;
   showBadge?: boolean;
   badgeContent?: "initials" | "none";
-  /** "corner" keeps the logo centered in a fixed slot; the tab then hangs outside it. */
-  badgePlacement?: "inline" | "corner";
+  /**
+   * The logo always keeps its slot, so rows with and without a tab line up. "overlap" (default)
+   * sets the tab on the logo's corner; "corner" hangs it outside, for round avatar slots.
+   */
+  badgePlacement?: "overlap" | "corner";
   size?: "default" | "compact";
   className?: string;
   iconClassName?: string;
@@ -127,30 +140,30 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   const tab = providerInstanceTabMetrics(props.size === "compact" ? 14 : 20);
   const rem = (px: number) => `${px / 16}rem`;
   const corner = props.badgePlacement === "corner";
+  const overlapTab = OVERLAP_TAB[props.size === "compact" ? "compact" : "default"];
   const initialsTab =
     !isCustomEndpoint && props.showBadge && badgeContent === "initials" ? (
       <span
         className={cn(
-          "pointer-events-none z-30 flex shrink-0 items-center justify-center font-bold leading-none tracking-wide",
+          "pointer-events-none absolute z-30 flex shrink-0 items-center justify-center font-bold leading-none tracking-wide",
           accentColor
             ? "bg-(--provider-accent) text-(--provider-accent-foreground)"
             : "text-foreground",
-          corner ? "absolute" : "relative",
         )}
         style={{
-          height: rem(tab.height),
+          height: rem(corner ? tab.height : overlapTab.height),
           ...(corner
             ? { width: rem(tab.cornerWidth) }
-            : { padding: `0 ${rem(tab.paddingHorizontal)}` }),
+            : { padding: `0 ${rem(overlapTab.paddingHorizontal)}` }),
           borderRadius: rem(tab.borderRadius),
-          fontSize: rem(tab.fontSize),
+          fontSize: rem(corner ? tab.fontSize : overlapTab.fontSize),
           boxShadow: `0 0 0 ${rem(tab.ring)} ${indicatorBackground}`,
           ...(accentColor
             ? {}
             : { background: "color-mix(in srgb, var(--foreground) 24%, var(--background))" }),
           ...(corner
             ? { left: `calc(100% - ${rem(tab.overlap)})`, bottom: rem(-tab.drop) }
-            : { marginLeft: rem(-tab.overlap), marginBottom: rem(-tab.drop) }),
+            : { right: rem(-overlapTab.overhang), bottom: rem(-OVERLAP_TAB_DROP) }),
         }}
         aria-hidden
       >
@@ -158,7 +171,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       </span>
     ) : null;
 
-  const icon = (
+  return (
     <span
       className={cn(
         "relative isolate z-30 inline-flex shrink-0 items-center justify-center overflow-visible",
@@ -209,7 +222,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           {providerInstanceInitials(props.displayName)}
         </span>
       )}
-      {corner ? initialsTab : null}
+      {initialsTab}
       {!isCustomEndpoint && props.showBadge && badgeContent === "none" ? (
         <span
           className={cn(
@@ -222,13 +235,6 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
           aria-hidden
         />
       ) : null}
-    </span>
-  );
-  if (!initialsTab || corner) return icon;
-  return (
-    <span className="inline-flex shrink-0 items-end" style={accentStyle}>
-      {icon}
-      {initialsTab}
     </span>
   );
 });

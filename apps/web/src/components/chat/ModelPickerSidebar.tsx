@@ -188,7 +188,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   acpRegistryAgentId={entry.acpRegistryAgentId}
                   acpRegistryIconUrl={entry.acpRegistryIconUrl}
                   showBadge={showInstanceBadge}
-                  className={cn("z-30", showInstanceBadge ? "size-5" : "size-6")}
+                  className="size-6 z-30"
                   iconClassName="size-5"
                   indicatorBackground={
                     isHovered && !isDisabled
