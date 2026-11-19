@@ -84,9 +84,12 @@ export function WorkItemListColumn({
       {/* A closed right panel leaves this column full-width, so the header reserves native
           window controls. */}
       <SettingsPaneHeader transparent trailingEdge={!rightPanelOpen}>
-        <SettingsTabNotch title={title} icon={icon}>
-          <h1 className="truncate">{title}</h1>
-        </SettingsTabNotch>
+        {/* Maximized away, the open review's notch holds the pane's tabs instead. */}
+        {maximizedAway ? null : (
+          <SettingsTabNotch title={title} icon={icon}>
+            <h1 className="truncate">{title}</h1>
+          </SettingsTabNotch>
+        )}
       </SettingsPaneHeader>
 
       <div

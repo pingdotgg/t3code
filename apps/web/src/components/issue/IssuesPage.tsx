@@ -838,6 +838,7 @@ export function IssuesPage() {
             pane
             open={rightPanelState.isOpen}
             maximized={rightPanelMaximized}
+            holdsPaneTabs={rightPanelMaximized}
             keybindings={keybindings}
             widthStorageKey="t3code:issue-panel-width"
             defaultWidth={
