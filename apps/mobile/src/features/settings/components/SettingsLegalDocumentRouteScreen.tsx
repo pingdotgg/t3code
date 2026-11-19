@@ -10,7 +10,7 @@ import { AppActivityIndicator } from "../../../components/ui/AppActivityIndicato
 import { AppText as Text } from "../../../components/ui/AppText";
 import { LoadingStrip } from "../../../components/ui/LoadingStrip";
 import { SymbolView } from "../../../components/ui/AppSymbol";
-import { isLegalDocumentUrl, LEGAL_URL } from "../lib/legal-document-url";
+import { isLegalDocumentUrl } from "../lib/legal-document-url";
 import { webViewDecelerationRate } from "../../../lib/webViewDecelerationRate";
 
 interface SettingsLegalDocumentRouteScreenProps {
@@ -28,7 +28,7 @@ export function SettingsLegalDocumentRouteScreen({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [externalUrl, setExternalUrl] = useState(documentUrl);
   const navigation = useNavigation();
-  const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : LEGAL_URL;
+  const safeExternalUrl = isLegalDocumentUrl(externalUrl) ? externalUrl : documentUrl;
   const headerOptions = (
     <SheetHeader
       title={documentName}

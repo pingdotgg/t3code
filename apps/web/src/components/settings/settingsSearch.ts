@@ -14,6 +14,7 @@ import { decodeMsg, msg, useMessages } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
 import type { MessageResolver } from "../../i18n/messages";
+import { PRIVACY_POLICY_URL } from "../../projectLinks";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -1633,6 +1634,7 @@ export function settingsForThisPlatform(
       (isElectron || item.desktopOnly !== true) &&
       (!item.releaseChannelOnly || isElectron || HOSTED_APP_CHANNEL !== null) &&
       (!item.secretsFeatureOnly || isSecretsFeatureEnabled) &&
+      (item.id !== "privacy-policy" || PRIVACY_POLICY_URL !== null) &&
       (!item.macOnly || isMacPlatform(platform)) &&
       (!item.windowsOnly || isWindowsPlatform(platform)),
   );

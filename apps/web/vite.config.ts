@@ -371,6 +371,7 @@ export default defineConfig(({ command }) => {
         configuredDesktopUpdateRepository,
       ),
       "import.meta.env.T3CODE_FEATURE_SECRETS": JSON.stringify(configuredFeatureSecrets),
+      "import.meta.env.VITE_T3CODE_STANDALONE": JSON.stringify(repoEnv.T3CODE_STANDALONE ?? ""),
       "import.meta.env.VITE_RELEASE_CHANNEL": JSON.stringify(configuredReleaseChannel),
       "import.meta.env.APP_VERSION": JSON.stringify(configuredAppVersion),
     },

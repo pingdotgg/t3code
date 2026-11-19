@@ -52,6 +52,11 @@ export function hostedThreadLink(ref: ScopedThreadRef, origin = DEFAULT_HOSTED_A
   return new URL(path, origin).toString();
 }
 
+/** `null` is a build with no hosted app: the `t3-thread://` link, which only T3 Code opens. */
+export function shareableThreadLink(ref: ScopedThreadRef, hostedAppUrl?: string | null): string {
+  return hostedAppUrl === null ? threadLinkHref(ref) : hostedThreadLink(ref, hostedAppUrl);
+}
+
 const HOSTED_PATH = new RegExp(`^(${HOSTED_SEGMENT})/(${HOSTED_SEGMENT})$`);
 
 function parseHostedThreadLink(href: string): ThreadLink | null {
@@ -148,8 +153,9 @@ export function formatThreadLink(ref: ThreadLink, label?: string): string {
 export function formatHostedThreadLink(
   ref: ScopedThreadRef,
   label: string,
-  origin?: string,
+  origin?: string | null,
 ): string {
+  if (origin === null) return formatThreadLink(ref, label);
   const href = hostedThreadLink(ref, origin);
   const cleaned = linkLabel(label);
   return cleaned ? `[${cleaned}](${href})` : href;

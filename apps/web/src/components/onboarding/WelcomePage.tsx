@@ -41,13 +41,12 @@ import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
-import { MOBILE_APP_URL } from "../../branding";
 import { isElectron } from "../../env";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { usePersistEnvironmentProviderInstanceMutation } from "../../hooks/useSettings";
 import { useCloudLinkState } from "../../cloud/cloudLinkState";
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
-import { PRIVACY_POLICY_URL } from "../../legalLinks";
+import { MOBILE_APP_URL, PRIVACY_POLICY_URL } from "../../projectLinks";
 import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { retryClerkLoad, useClerkLoadFailed } from "../clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
@@ -346,6 +345,7 @@ export function WelcomePage({
 function TelemetryNotice({ environmentId }: { readonly environmentId: EnvironmentId }) {
   const messages = useMessages();
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
+  if (!PRIVACY_POLICY_URL) return null;
   return (
     <p className="mt-auto pt-12 text-2xs leading-relaxed text-muted-foreground/70">
       {telemetryOff === undefined ? (
@@ -999,25 +999,29 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
         <CollapsiblePanel>
           <div className="flex items-center gap-8 pt-2 pb-3 pl-8">
             <ol className="min-w-0 flex-1 space-y-5">
-              <PhoneStep step={1}>
-                <p className="text-sm text-foreground">
-                  <T>Scan with your phone to get the app.</T>
-                </p>
-              </PhoneStep>
-              <PhoneStep step={2}>
+              {MOBILE_APP_URL ? (
+                <PhoneStep step={1}>
+                  <p className="text-sm text-foreground">
+                    <T>Scan with your phone to get the app.</T>
+                  </p>
+                </PhoneStep>
+              ) : null}
+              <PhoneStep step={MOBILE_APP_URL ? 2 : 1}>
                 <PhoneConnectLink environmentId={environmentId} />
               </PhoneStep>
             </ol>
             {/* One code for both stores: the link opens the store that matches the phone. */}
-            <div className="shrink-0 rounded-lg bg-white p-1.5">
-              <QRCodeSvg
-                value={MOBILE_APP_URL}
-                size={124}
-                level="M"
-                marginSize={2}
-                title={gt("T3 Code app for iPhone and Android")}
-              />
-            </div>
+            {MOBILE_APP_URL ? (
+              <div className="shrink-0 rounded-lg bg-white p-1.5">
+                <QRCodeSvg
+                  value={MOBILE_APP_URL}
+                  size={124}
+                  level="M"
+                  marginSize={2}
+                  title={gt("T3 Code app for iPhone and Android")}
+                />
+              </div>
+            ) : null}
           </div>
         </CollapsiblePanel>
       </Collapsible>

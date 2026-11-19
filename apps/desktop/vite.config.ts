@@ -24,6 +24,10 @@ const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
+  // The repository whose releases feed updates; recovery links there too.
+  __T3CODE_BUILD_RELEASE_REPOSITORY__: JSON.stringify(
+    repoEnv.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || repoEnv.GITHUB_REPOSITORY?.trim() || "",
+  ),
 };
 
 export default defineConfig({

@@ -106,10 +106,11 @@ describe("resolveThreadReferenceCopyTarget", () => {
     });
   });
 
-  it("links through the build's hosted app", () => {
-    expect(
-      resolveThreadReferenceCopyTarget({ ...thread, hostedAppUrl: "https://preview.t3.codes" })
-        ?.value,
-    ).toBe("https://preview.t3.codes/threads/env-1/thread-1");
+  it.each([
+    ["https://preview.t3.codes", "https://preview.t3.codes/threads/env-1/thread-1"],
+    // A standalone build without a hosted app must not fall back to app.t3.codes.
+    [null, "t3-thread://v2/env-1/thread-1"],
+  ])("links through the build's hosted app %j", (hostedAppUrl, expected) => {
+    expect(resolveThreadReferenceCopyTarget({ ...thread, hostedAppUrl })?.value).toBe(expected);
   });
 });

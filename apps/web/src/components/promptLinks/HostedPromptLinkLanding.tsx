@@ -11,7 +11,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import type { MessageResolver } from "../../i18n/messages";
 
-import { DESKTOP_DOWNLOAD_URL } from "~/branding";
+import { DESKTOP_DOWNLOAD_URL } from "~/projectLinks";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { isHostedStaticApp } from "~/hostedPairing";
 import { useEnvironments } from "~/state/environments";
