@@ -17950,6 +17950,325 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  type WakeHarness = Effect.Success<ReturnType<typeof makeWakeHarnessWithOptions>>;
+  const messageTextWakes = (harness: WakeHarness) =>
+    harness.continuationRequests.filter((request) => request.delivery === "message_text");
+  // Starts a turn that leaves the background task running, awaited unless told otherwise.
+  const settleWithBackgroundTask = Effect.fnUntraced(function* (
+    harness: WakeHarness,
+    options?: { readonly awaited?: boolean },
+  ) {
+    yield* harness.runtime.startTurn(
+      makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-owed-wake-1"),
+        text: "Run the build in the background and wait for it.",
+        attachments: [],
+      }),
+    );
+    yield* harness.offerAndWait(wakeTaskStarted);
+    if (options?.awaited !== false) {
+      yield* harness.runtime.awaitBackgroundTasks!({
+        providerThread: harness.providerThread,
+        taskIds: [WAKE_TASK_ID],
+        awaited: true,
+      });
+    }
+    yield* harness.offerAndWait(turnOneResult);
+    yield* harness.awaitTerminal(1);
+  });
+
+  it.effect.each<{
+    readonly scenario: string;
+    readonly awaited?: boolean;
+    readonly beforeClose: (
+      harness: WakeHarness,
+    ) => Effect.Effect<void, ProviderAdapter.ProviderAdapterV2Error>;
+    readonly deliveredBy?: "session close" | "process exit";
+  }>([
+    {
+      scenario: "the session closes before Claude opens its wake turn",
+      beforeClose: (harness) => harness.offerAndWait(wakeNotification),
+      deliveredBy: "session close",
+    },
+    {
+      // Real CLIs send the empty roster first, which drops the live awaited mark.
+      scenario: "the empty roster level arrives before the notification",
+      beforeClose: (harness) =>
+        harness
+          .offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "background_tasks_changed",
+              tasks: [],
+              uuid: "00000000-0000-4000-8000-000000000150",
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          )
+          .pipe(Effect.andThen(harness.offerAndWait(wakeNotification))),
+      deliveredBy: "session close",
+    },
+    {
+      scenario: "the Claude process exits before its wake turn",
+      beforeClose: (harness) =>
+        Effect.gen(function* () {
+          yield* harness.offerAndWait(wakeNotification);
+          yield* Queue.shutdown(harness.sdkMessages);
+          yield* harness.awaitContinuation(1);
+        }),
+      deliveredBy: "process exit",
+    },
+    {
+      scenario: "nothing is owed for a task the agent did not wait on",
+      awaited: false,
+      beforeClose: (harness) => harness.offerAndWait(wakeNotification),
+    },
+    {
+      scenario: "nothing is owed once Claude's own wake turn ends",
+      beforeClose: (harness) =>
+        Effect.forEach([wakeNotification, wakeTurnInit, wakeAssistant, wakeResult], (frame) =>
+          harness.offerAndWait(frame),
+        ),
+    },
+    {
+      scenario: "nothing is owed once a user turn absorbs the wake",
+      beforeClose: (harness) =>
+        Effect.gen(function* () {
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.offerAndWait(wakeTurnInit);
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-owed-wake-user"),
+              text: "Is the build done?",
+              attachments: [],
+              providerTurnOrdinal: 2,
+            }),
+          );
+          yield* harness.offerAndWait(
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000151", result: "Done." }),
+          );
+          yield* harness.awaitTerminal(2);
+        }),
+    },
+    {
+      scenario: "nothing is owed after a Stop restarts the runtime",
+      beforeClose: (harness) =>
+        Effect.gen(function* () {
+          yield* harness.offerAndWait(wakeNotification);
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+        }),
+    },
+  ])("an awaited task that finishes while idle reaches the agent once: $scenario", (row) =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+      }).pipe(Scope.provide(sessionScope));
+      yield* settleWithBackgroundTask(
+        harness,
+        row.awaited === undefined ? undefined : { awaited: row.awaited },
+      );
+
+      yield* row.beforeClose(harness);
+      assert.lengthOf(messageTextWakes(harness), row.deliveredBy === "process exit" ? 1 : 0);
+      yield* Scope.close(sessionScope, Exit.void);
+
+      const delivered = messageTextWakes(harness);
+      assert.lengthOf(delivered, row.deliveredBy === undefined ? 0 : 1);
+      if (row.deliveredBy === undefined) return;
+      assert.equal(delivered[0]?.threadId, harness.threadId);
+      assert.equal(delivered[0]?.providerThreadId, harness.providerThread.id);
+      assert.include(delivered[0]?.detail, WAKE_TASK_ID);
+      assert.include(delivered[0]?.detail, WAKE_SUMMARY);
+      assert.include(delivered[0]?.detail, `/tmp/claude-replay/tasks/${WAKE_TASK_ID}.output`);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect(
+    "a wake continuation that starts after its session closed prompts with the result",
+    () =>
+      Effect.gen(function* () {
+        const sessionScope = yield* Scope.make();
+        const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true }).pipe(
+          Scope.provide(sessionScope),
+        );
+        yield* settleWithBackgroundTask(harness);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        assert.lengthOf(harness.continuationRequests, 1);
+        // The close kills the wake turn Claude opened; its pending continuation now carries the result.
+        yield* Scope.close(sessionScope, Exit.void);
+        assert.lengthOf(harness.continuationRequests, 1);
+
+        const reopenedScope = yield* Scope.make();
+        const reopened = yield* harness.adapter
+          .openSession({
+            threadId: harness.threadId,
+            providerSessionId: ProviderSessionId.make("provider-session-claude-owed-wake-reopened"),
+            modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+          })
+          .pipe(Scope.provide(reopenedScope));
+        yield* reopened.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-owed-wake-continuation"),
+            text: WAKE_SUMMARY,
+            attachments: [],
+            providerTurnOrdinal: 2,
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+          }),
+        );
+        assert.lengthOf(harness.offeredMessages, 2);
+        const prompt = JSON.stringify(harness.offeredMessages[1]?.message.content);
+        assert.include(prompt, WAKE_TASK_ID);
+        assert.include(prompt, `/tmp/claude-replay/tasks/${WAKE_TASK_ID}.output`);
+
+        yield* Scope.close(reopenedScope, Exit.void);
+        assert.lengthOf(harness.continuationRequests, 1);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
+  it.effect("prompts with the result once when Claude exits partway through its wake turn", () =>
+    Effect.gen(function* () {
+      const sessionScope = yield* Scope.make();
+      const harness = yield* makeWakeHarnessWithOptions({ freshQueueOnReopen: true }).pipe(
+        Scope.provide(sessionScope),
+      );
+      yield* settleWithBackgroundTask(harness);
+      yield* harness.offerAndWait(wakeNotification);
+      yield* harness.offerAndWait(wakeTurnInit);
+      assert.lengthOf(harness.continuationRequests, 1);
+      yield* Queue.shutdown(harness.sdkMessages);
+      yield* yieldTicks(50);
+
+      // The same session replays the opened wake turn, but its process is gone and no result follows.
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-owed-wake-exited"),
+          text: WAKE_SUMMARY,
+          attachments: [],
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+      yield* harness.awaitTerminal(2);
+      const delivered = messageTextWakes(harness);
+      assert.lengthOf(delivered, 1);
+
+      const deliveredTurn = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("attempt-claude-owed-wake-delivered"),
+        text: delivered[0]?.detail ?? "",
+        attachments: [],
+        providerTurnOrdinal: 3,
+        messageCreatedBy: "agent",
+        messageCreationSource: "server",
+      });
+      yield* harness.runtime.startTurn({
+        ...deliveredTurn,
+        message: { ...deliveredTurn.message, messageId: delivered[0]!.messageId! },
+      });
+      yield* Scope.close(sessionScope, Exit.void);
+
+      const prompts = harness.offeredMessages.filter((message) =>
+        JSON.stringify(message.message.content).includes(WAKE_TASK_ID),
+      );
+      assert.lengthOf(prompts, 1);
+      assert.lengthOf(messageTextWakes(harness), 1);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each(["before", "after"] as const)(
+    "delivers the result once when the wake continuation is cancelled %s its session closes",
+    (cancelled) =>
+      Effect.gen(function* () {
+        const sessionScope = yield* Scope.make();
+        const harness = yield* makeWakeHarness.pipe(Scope.provide(sessionScope));
+        yield* settleWithBackgroundTask(harness);
+        yield* harness.offerAndWait(wakeNotification);
+        yield* harness.offerAndWait(wakeTurnInit);
+        const buffered = harness.continuationRequests[0];
+        if (buffered?.onRunEndedWithoutStarting === undefined) {
+          return yield* Effect.die("Missing the buffered wake continuation.");
+        }
+
+        // Settling cancels the queued continuation and closes the session, in either order.
+        if (cancelled === "before") yield* buffered.onRunEndedWithoutStarting();
+        assert.lengthOf(messageTextWakes(harness), 0);
+        yield* Scope.close(sessionScope, Exit.void);
+        if (cancelled === "after") {
+          assert.lengthOf(messageTextWakes(harness), 0);
+          yield* buffered.onRunEndedWithoutStarting();
+        }
+        assert.lengthOf(messageTextWakes(harness), 1);
+
+        // Each cancelled delivery is offered again under a new message id, up to the cap.
+        for (const attempt of [1, 2, 3]) {
+          const delivery = messageTextWakes(harness)[attempt - 1];
+          assert.include(delivery?.detail, WAKE_TASK_ID);
+          yield* delivery!.onRunEndedWithoutStarting!();
+        }
+        const deliveries = messageTextWakes(harness);
+        assert.lengthOf(deliveries, 3);
+        assert.lengthOf(new Set(deliveries.map((delivery) => delivery.messageId)), 3);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   const makeSubagentAssistantFrames = (input: {
     readonly parentToolUseId: string;
     readonly uuid: string;
