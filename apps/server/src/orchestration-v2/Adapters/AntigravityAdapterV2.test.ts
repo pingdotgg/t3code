@@ -1744,10 +1744,10 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
     runtimeMode: "approval-required",
     interactionMode: "default",
     cwd: process.cwd(),
-    maxRuntimeMode: "auto-accept-edits",
+    maxRuntimeMode: "auto",
   });
-  const modesSetFor = (
-    pickedMode: string,
+  const openWithOptions = (
+    options: ReadonlyArray<{ readonly id: string; readonly value: string }>,
     availableModes?: string,
     runtimePolicy = ceilingPolicy,
   ) =>
@@ -1760,6 +1760,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       );
       type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
       const modesSet: Array<string> = [];
+      let liveRuntime: RuntimeService | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -1779,13 +1780,17 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
             },
           }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, crypto),
-            Effect.map((runtime): RuntimeService => ({
-              ...runtime,
-              setMode: (modeId) =>
-                Effect.sync(() => {
-                  modesSet.push(modeId);
-                }).pipe(Effect.andThen(runtime.setMode(modeId))),
-            })),
+            Effect.map((runtime): RuntimeService => {
+              const wrapped: RuntimeService = {
+                ...runtime,
+                setMode: (modeId) =>
+                  Effect.sync(() => {
+                    modesSet.push(modeId);
+                  }).pipe(Effect.andThen(runtime.setMode(modeId))),
+              };
+              liveRuntime = wrapped;
+              return wrapped;
+            }),
           ),
         withProcess: (_stop, task) => task,
         defaultModel: Effect.undefined,
@@ -1797,12 +1802,29 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         modelSelection: {
           instanceId,
           model: "gemini-test-low",
-          options: [{ id: "_t3/session-mode", value: pickedMode }],
+          options,
         },
         runtimePolicy,
       });
-      return modesSet;
+      const modeOption = (yield* liveRuntime!.getConfigOptions).find(
+        (option) => option.id === "mode",
+      );
+      return {
+        modesSet,
+        currentConfigMode: modeOption?.type === "select" ? modeOption.currentValue : undefined,
+      };
     }).pipe(Effect.provide(layerSession), Effect.scoped);
+
+  const modesSetFor = (
+    pickedMode: string,
+    availableModes?: string,
+    runtimePolicy = ceilingPolicy,
+  ) =>
+    openWithOptions(
+      [{ id: "_t3/session-mode", value: pickedMode }],
+      availableModes,
+      runtimePolicy,
+    ).pipe(Effect.map((result) => result.modesSet));
 
   it.effect("does not apply a picked session mode above the policy ceiling", () =>
     Effect.gen(function* () {
@@ -1815,19 +1837,21 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         "accept-edits",
       ]);
       // An explicit approval policy keeps the session in `default` even without a ceiling.
-      assert.deepEqual(
-        yield* modesSetFor(
-          "auto",
-          "default,accept-edits,auto,plan",
-          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            cwd: process.cwd(),
-            approvalPolicy: "on-request",
-          }),
-        ),
-        ["default"],
+      const locked = yield* openWithOptions(
+        [
+          { id: "_t3/session-mode", value: "auto" },
+          { id: "mode", value: "auto" },
+        ],
+        "default,accept-edits,auto,plan",
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "on-request",
+        }),
       );
+      assert.deepEqual(locked.modesSet, ["default"]);
+      assert.strictEqual(locked.currentConfigMode, "default");
     }),
   );
 
@@ -1942,7 +1966,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       // Leaving plan mode after downgrading to Supervised must stay in `default`, not restore `auto`.
       assert.strictEqual(yield* runTurn(3, policy("approval-required", "default")), "default");
 
-      // When the permission policy is unchanged, leaving plan mode still restores a picked build mode.
+      // A picked build mode stays applied while kept, and clearing it returns to `default`.
       const pickedAcceptEdits = {
         ...baseSelection,
         options: [{ id: "_t3/session-mode", value: "accept-edits" }],
@@ -1951,7 +1975,15 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         yield* runTurn(4, policy("approval-required", "plan"), pickedAcceptEdits),
         "plan",
       );
-      assert.strictEqual(yield* runTurn(5, policy("approval-required", "default")), "accept-edits");
+      assert.strictEqual(
+        yield* runTurn(5, policy("approval-required", "default"), pickedAcceptEdits),
+        "accept-edits",
+      );
+      assert.strictEqual(
+        yield* runTurn(6, policy("approval-required", "plan"), pickedAcceptEdits),
+        "plan",
+      );
+      assert.strictEqual(yield* runTurn(7, policy("approval-required", "default")), "default");
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

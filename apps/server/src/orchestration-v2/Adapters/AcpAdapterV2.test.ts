@@ -2462,9 +2462,10 @@ describe("AcpAdapterV2", () => {
         });
         const policy = (interactionMode: "default" | "plan") =>
           ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode: "full-access",
+            runtimeMode: "auto-accept-edits",
             interactionMode,
             cwd: process.cwd(),
+            maxRuntimeMode: "auto-accept-edits",
           });
         const defaultPolicy = policy("default");
         const modelSelection = { instanceId, model: "default" } as const;

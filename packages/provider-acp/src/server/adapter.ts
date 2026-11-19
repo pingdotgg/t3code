@@ -1554,7 +1554,6 @@ interface ActiveTextStream {
 }
 
 interface AcpNativeBuildConfiguration {
-  readonly policyMode?: string;
   readonly modeId?: string;
   readonly configOptions: ReadonlyArray<{ readonly id: string; readonly value: string }>;
 }
@@ -8036,10 +8035,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             );
           }
+          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          const lock = flavor.lockSessionModeToPolicy;
+          const modeLocked =
+            policyMode !== undefined &&
+            (lock === true || (lock !== undefined && lock(runtimePolicy)));
           for (const selection of configSelections) {
             if (!availableConfigIds.has(selection.id)) continue;
             // Advertised values union models; skip per-model rejections instead of failing session open.
             const option = configOptions.find((candidate) => candidate.id === selection.id);
+            if (modeLocked && option?.category === "mode") continue;
             if (
               option !== undefined &&
               option.type === "select" &&
@@ -8074,11 +8079,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!advertisedValues.includes(selection.value)) continue;
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
-          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          const lock = flavor.lockSessionModeToPolicy;
-          const modeLocked =
-            policyMode !== undefined &&
-            (lock === true || (lock !== undefined && lock(runtimePolicy)));
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
@@ -8107,7 +8107,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (runtimePolicy.interactionMode === "plan") {
             if (!nativeBuildConfigurationBySessionId.has(startResult.sessionId)) {
               nativeBuildConfigurationBySessionId.set(startResult.sessionId, {
-                ...(policyMode === undefined ? {} : { policyMode }),
                 ...(effectiveModeState === undefined
                   ? {}
                   : { modeId: effectiveModeState.currentModeId }),
@@ -8135,15 +8134,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           } else {
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
             if (nativeBuild !== undefined) {
-              const restoreSavedMode = !modeLocked && nativeBuild.policyMode === policyMode;
               if (
-                restoreSavedMode &&
+                !modeLocked &&
                 nativeBuild.modeId !== undefined &&
-                withinCeiling({ id: ACP_SESSION_MODE_OPTION_ID, value: nativeBuild.modeId }) &&
-                effectiveModeState?.currentModeId !== nativeBuild.modeId &&
-                effectiveModeState?.availableModes.some(
-                  (mode) => mode.id === nativeBuild.modeId,
-                ) === true
+                effectiveModeState !== undefined &&
+                isAcpPlanModeId(effectiveModeState.currentModeId) &&
+                effectiveModeState.currentModeId !== nativeBuild.modeId &&
+                effectiveModeState.availableModes.some((mode) => mode.id === nativeBuild.modeId) ===
+                  true
               ) {
                 yield* runtime.setMode(nativeBuild.modeId);
               }
@@ -8154,8 +8152,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (
                   option === undefined ||
                   option.type !== "select" ||
-                  (!restoreSavedMode && option.category === "mode") ||
-                  !withinCeiling({ id: option.id, value: saved.value })
+                  (modeLocked && option.category === "mode") ||
+                  !isAcpPlanModeId(option.currentValue)
                 )
                   continue;
                 const choices = option.options.flatMap((entry) =>

@@ -208,9 +208,8 @@ export function antigravityCliSessionMode(
 export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMode | undefined {
   switch (modeId) {
     case "yolo":
-      return "full-access";
     case "auto":
-      return "auto";
+      return "full-access";
     case "auto_edit":
     case "accept-edits":
       return "auto-accept-edits";
