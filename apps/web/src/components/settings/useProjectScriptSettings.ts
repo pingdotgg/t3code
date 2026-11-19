@@ -110,12 +110,34 @@ export function useProjectScriptSettings(
     });
   }
 
-  function persist(
-    transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
-    scriptId?: string,
-    keybinding?: string | null,
+  type Target = (typeof targets)[number];
+
+  // The config stream can still be behind the previous save's acknowledged write.
+  async function readCurrentTargets(): Promise<AtomCommandResult<readonly Target[], unknown>> {
+    const settingsByEnvironment = new Map<EnvironmentId, ServerSettings>();
+    const currentTargets: Target[] = [];
+    for (const target of targets) {
+      let settings = settingsByEnvironment.get(target.environmentId);
+      if (settings === undefined) {
+        const result = await readSettings({ environmentId: target.environmentId, input: {} });
+        if (result._tag === "Failure") return mapAtomCommandResult(result, () => []);
+        settings = result.value;
+        settingsByEnvironment.set(target.environmentId, settings);
+      }
+      currentTargets.push({ ...target, settings });
+    }
+    return AsyncResult.success(currentTargets);
+  }
+
+  function withCurrentTargets(
+    write: (currentTargets: readonly Target[]) => Promise<AtomCommandResult<void, unknown>>,
   ) {
-    return withSave(() => writeTargets(transform, scriptId, keybinding));
+    return withSave(async () => {
+      const currentTargets = await readCurrentTargets();
+      return currentTargets._tag === "Failure"
+        ? reportScriptFailure(currentTargets)
+        : write(currentTargets.value);
+    });
   }
 
   function writeScripts(
@@ -134,11 +156,12 @@ export function useProjectScriptSettings(
   }
 
   async function writeTargets(
+    currentTargets: readonly Target[],
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
     scriptId: string | undefined,
     keybinding: string | null | undefined,
   ): Promise<AtomCommandResult<void, unknown>> {
-    for (const { environmentId, settings, keybindings, project } of targets) {
+    for (const { environmentId, settings, keybindings, project } of currentTargets) {
       const current = project
         ? resolveProjectScripts(settings, project)
         : settings.defaultProjectScripts;
@@ -191,7 +214,17 @@ export function useProjectScriptSettings(
     return AsyncResult.success(undefined);
   }
 
-  function nextAvailableId(input: NewProjectScriptInput, currentTargets: typeof targets) {
+  function persist(
+    transform: (current: readonly ProjectScript[]) => readonly ProjectScript[] | null,
+    scriptId?: string,
+    keybinding?: string | null,
+  ) {
+    return withCurrentTargets((currentTargets) =>
+      writeTargets(currentTargets, transform, scriptId, keybinding),
+    );
+  }
+
+  function nextAvailableId(input: NewProjectScriptInput, currentTargets: readonly Target[]) {
     const existingIds = [
       ...projects.flatMap((project) => project.scripts.map((script) => script.id)),
       ...currentTargets.flatMap(({ settings, project }) =>
@@ -207,19 +240,7 @@ export function useProjectScriptSettings(
     return nextProjectScriptId(input.name, existingIds);
   }
 
-  async function writeImport(input: NewProjectScriptInput) {
-    const settingsByEnvironment = new Map<EnvironmentId, ServerSettings>();
-    const currentTargets: (typeof targets)[number][] = [];
-    for (const target of targets) {
-      let settings = settingsByEnvironment.get(target.environmentId);
-      if (settings === undefined) {
-        const result = await readSettings({ environmentId: target.environmentId, input: {} });
-        if (result._tag === "Failure") return reportScriptFailure(result);
-        settings = result.value;
-        settingsByEnvironment.set(target.environmentId, settings);
-      }
-      currentTargets.push({ ...target, settings });
-    }
+  async function writeImport(currentTargets: readonly Target[], input: NewProjectScriptInput) {
     const id = nextAvailableId(input, currentTargets);
     for (const { environmentId, project, settings } of currentTargets) {
       const current = project
@@ -235,18 +256,23 @@ export function useProjectScriptSettings(
   }
 
   function submit(scriptId: string | null, input: NewProjectScriptInput) {
-    const id = scriptId ?? nextAvailableId(input, targets);
-    return persist(
-      (current) => saveProjectScriptToList(current, id, input, scriptId === null ? "add" : "edit"),
-      id,
-      input.keybinding,
-    );
+    return withCurrentTargets((currentTargets) => {
+      const id = scriptId ?? nextAvailableId(input, currentTargets);
+      return writeTargets(
+        currentTargets,
+        (current) =>
+          saveProjectScriptToList(current, id, input, scriptId === null ? "add" : "edit"),
+        id,
+        input.keybinding,
+      );
+    });
   }
 
   return {
     saving,
     persist,
     submit,
-    importScript: (input: NewProjectScriptInput) => withSave(() => writeImport(input)),
+    importScript: (input: NewProjectScriptInput) =>
+      withCurrentTargets((currentTargets) => writeImport(currentTargets, input)),
   };
 }
