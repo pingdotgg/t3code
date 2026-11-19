@@ -488,9 +488,10 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     withFakeCodexEnv(
       {
         output: JSON.stringify({ title: "Remove default shapes" }),
-        launchArgs: "--config features.plugins=true --config features.apps=true",
+        launchArgs:
+          "--config features.plugins=true --config features.apps=true --config features.connectors=true",
         requireArg:
-          "--config features.plugins=true --config features.apps=true --config features.plugins=false --config features.apps=false --ephemeral",
+          "--config features.plugins=true --config features.apps=true --config features.connectors=true --config features.connectors=false --config features.plugins=false --config features.apps=false --ephemeral",
       },
       (textGeneration) =>
         Effect.gen(function* () {
