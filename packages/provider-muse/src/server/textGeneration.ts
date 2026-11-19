@@ -104,10 +104,10 @@ function museFailureDetail(cause: unknown): string {
   if (error?.quota !== undefined || isMuseUsageLimitFailure(error?.message))
     return "Muse Code usage limit reached. Try again after it resets.";
   if (error?.kind === "authRequired")
-    return "Muse Code is not signed in. Run `muse login` on this Ada server host.";
+    return `Muse Code is not signed in. Run \`muse login\` on this ${APP_NAME} server host.`;
   if (error?.kind === "modelError")
     return "Muse Code's model request failed. Try again or choose another Muse model.";
-  return "Muse Code text generation failed. Check Muse login and availability on this Ada server host.";
+  return `Muse Code text generation failed. Check Muse login and availability on this ${APP_NAME} server host.`;
 }
 
 async function generateMuseText(
