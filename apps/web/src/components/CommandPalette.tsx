@@ -898,16 +898,11 @@ function OpenCommandPaletteDialog(props: {
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualProjectIsEligible =
             contextualProjectRef !== null &&
-            group?.memberProjectRefs.some(
-              (projectRef) =>
-                projectRef.environmentId === contextualProjectRef.environmentId &&
-                projectRef.projectId === contextualProjectRef.projectId,
-            ) &&
-            projects.some(
-              (candidate) =>
-                candidate.environmentId === contextualProjectRef.environmentId &&
-                candidate.id === contextualProjectRef.projectId &&
-                isPickableProjectMember(candidate),
+            group?.memberProjects.some(
+              (member) =>
+                member.environmentId === contextualProjectRef.environmentId &&
+                member.id === contextualProjectRef.projectId &&
+                isPickableProjectMember(member),
             );
           await handleNewThread(
             contextualProjectIsEligible
