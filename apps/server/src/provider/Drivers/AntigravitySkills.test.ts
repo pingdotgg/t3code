@@ -113,9 +113,15 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       );
       yield* fileSystem.writeFileString(path.join(plugins, ".DS_Store"), "x");
       // `agy plugin install` writes to ~/.gemini/config/plugins, outside the instance profile.
+      const globalPlugins = path.join(workspace.userHome, ".gemini", "config", "plugins");
       yield* writeSkill(
-        path.join(workspace.userHome, ".gemini", "config", "plugins", "global", "skills", "g"),
+        path.join(globalPlugins, "global", "skills", "g"),
         "---\nname: global-skill\ndescription: From an agy-installed plugin.\n---\n",
+      );
+      // The profile disables `off`, so its global copy stays hidden too.
+      yield* writeSkill(
+        path.join(globalPlugins, "off", "skills", "o"),
+        "---\nname: off-global-skill\ndescription: Disabled in the profile.\n---\n",
       );
       const input = { ...workspace, profileDirectory };
 

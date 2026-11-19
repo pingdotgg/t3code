@@ -248,6 +248,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
   });
 
+  // The profile's plugins and their enabled state win; ~/.gemini only adds plugins it lacks.
+  const seenPlugins = new Set<string>();
   const scanPlugins = Effect.fn("scanAntigravityPlugins")(function* (geminiHome: string) {
     const pluginsDirectory = path.join(geminiHome, "config", "plugins");
     const plugins = yield* readIfPresent(
@@ -274,6 +276,8 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       ).flatMap(([name, plugin]) => (plugin.enabled === false ? [name] : [])),
     );
     for (const plugin of plugins.toSorted()) {
+      if (seenPlugins.has(plugin)) continue;
+      seenPlugins.add(plugin);
       if (disabled.has(plugin)) continue;
       const pluginDirectory = path.join(pluginsDirectory, plugin);
       const info = yield* readIfPresent(fileSystem.stat(pluginDirectory), pluginDirectory);
