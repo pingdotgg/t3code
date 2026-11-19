@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, withFileDiffFold } from "./pullRequestDiffFold.ts";
+import {
+  isFileDiffCollapsed,
+  preserveFileDiffFolds,
+  withFileDiffFold,
+} from "./pullRequestDiffFold.ts";
 
 describe("isFileDiffCollapsed", () => {
   it("collapses saved viewed files on reopening and when a later read marks them viewed", () => {
@@ -38,4 +42,30 @@ describe("withFileDiffFold", () => {
     expect(withFileDiffFold(folded, "a.ts", false).get("a.ts")).toBe(false);
     expect(withFileDiffFold(folded, "a.ts", undefined).has("a.ts")).toBe(false);
   });
+});
+
+describe("preserveFileDiffFolds", () => {
+  it.each([
+    { before: null, after: "expanded", hiddenFold: true },
+    { before: "expanded", after: "folded", hiddenFold: false },
+  ] as const)(
+    "keeps hidden folds when switching from $before to $after",
+    ({ before, after, hiddenFold }) => {
+      const kept = preserveFileDiffFolds(
+        new Map([
+          ["hidden-explicit", !hiddenFold],
+          ["shown", after === "expanded"],
+        ]),
+        before,
+        [
+          { key: "hidden-viewed", viewed: true },
+          { key: "hidden-explicit", viewed: true },
+        ],
+      );
+      expect(isFileDiffCollapsed("hidden-viewed", after, kept, false)).toBe(hiddenFold);
+      expect(isFileDiffCollapsed("hidden-explicit", after, kept, false)).toBe(!hiddenFold);
+      expect(isFileDiffCollapsed("shown", after, kept)).toBe(after === "folded");
+      expect(isFileDiffCollapsed("later-page", after, kept)).toBe(after === "folded");
+    },
+  );
 });

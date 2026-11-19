@@ -55,7 +55,7 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
-          filePatch("early-0.ts") +
+          filePatch(mocks.renameSourceOnRefresh ? "early-0-renamed.ts" : "early-0.ts") +
           filePatch("early-1.test.ts") +
           filePatch("early-2.generated.ts"),
         truncated: false,
@@ -71,6 +71,7 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
 const mocks = vi.hoisted(() => ({
   paged: false,
   withTestFile: false,
+  renameSourceOnRefresh: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -186,6 +187,7 @@ function setup({ paged }: { paged: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.withTestFile = false;
+  mocks.renameSourceOnRefresh = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -409,6 +411,32 @@ it("keeps a hidden test file open when all shown files collapse", async () => {
   await expect
     .element(screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1))
     .toHaveAttribute("aria-expanded", "true");
+});
+
+it("keeps a hidden test file folded when a refresh renames another file after expand all", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  using _hidden = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[1000px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  const filter = screen.getByRole("button", { name: "Hide test files" });
+  await filter.click();
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+
+  mocks.renameSourceOnRefresh = true;
+  await screen.rerender(tab(1));
+  await expect.element(screen.getByText("early-0-renamed.ts", { exact: true })).toBeVisible();
+  await filter.click();
+
+  await expect.element(screen.getByText("early-1.test.ts", { exact: true })).toBeVisible();
+  const toggles = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ });
+  await expect.element(toggles.nth(0)).toHaveAttribute("aria-expanded", "true");
+  await expect.element(toggles.nth(1)).toHaveAttribute("aria-expanded", "false");
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {

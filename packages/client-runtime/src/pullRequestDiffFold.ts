@@ -23,3 +23,14 @@ export function withFileDiffFold(
   else next.set(fileKey, collapsed);
   return next;
 }
+
+/** Keep the effective fold of files excluded from a bulk fold change. */
+export function preserveFileDiffFolds(
+  choices: FileDiffFoldChoices,
+  foldOverride: DiffFoldOverride,
+  files: ReadonlyArray<{ readonly key: string; readonly viewed: boolean }>,
+): FileDiffFoldChoices {
+  return new Map(
+    files.map(({ key, viewed }) => [key, isFileDiffCollapsed(key, foldOverride, choices, viewed)]),
+  );
+}
