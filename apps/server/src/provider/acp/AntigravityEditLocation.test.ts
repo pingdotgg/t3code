@@ -37,6 +37,9 @@ describe("antigravityEditPatch", () => {
       },
       // Like the runtime, a present PascalCase value wins, and a 0 line means unspecified.
       { ...replace, target_content: "const other = 15;", StartLine: 5, EndLine: 0 },
+      // 1.5 edit_file names the snippets Target and Replacement.
+      { Path: path, Target: replace.TargetContent, Replacement: replace.ReplacementContent },
+      { path, target: replace.TargetContent, replacement: replace.ReplacementContent },
     ]) {
       expect(antigravityEditPatch({ path, rawInput, readPreEditFile })).toBe(expected);
     }

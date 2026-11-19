@@ -19,7 +19,7 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
+import { acpToolCallDiffPatch, acpToolCallSnippetEdit } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -374,7 +374,7 @@ describe("Antigravity tool results", () => {
       }).toolCall,
     );
     pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
-    expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
+    expect(pathOnly.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
     expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
     // A captured patch that a later update's shared text budget cut or dropped is omitted.
     for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
@@ -419,6 +419,66 @@ describe("Antigravity tool results", () => {
       expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
     }
+  });
+
+  it("locates a 1.5 edit_file edit announced without a diff, through its whole-file completion", () => {
+    const path = "/workspace/app.ts";
+    const rawInput = {
+      Path: path,
+      Target: "const target = 10;",
+      Replacement: "const target = 100;",
+    };
+    const fileOf = (lines: number, target: string) =>
+      Array.from({ length: lines }, (_, i) =>
+        i === lines - 3 ? target : `const line${i + 1} = ${i + 1}; // padding`,
+      ).join("\n") + "\n";
+    // agy 1.5.11 announces in progress with no content, then completes with the whole file.
+    const frame = (lines: number, status: "in_progress" | "completed") =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: status === "in_progress" ? "tool_call" : "tool_call_update",
+          toolCallId: `edit-${lines}`,
+          kind: "edit",
+          status,
+          title: "File app.ts",
+          locations: [{ path }],
+          rawInput,
+          ...(status === "completed"
+            ? {
+                content: [
+                  {
+                    type: "diff",
+                    path,
+                    oldText: fileOf(lines, rawInput.Target),
+                    newText: fileOf(lines, rawInput.Replacement),
+                  },
+                ],
+              }
+            : {}),
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    const located = (line: number) =>
+      `--- ${path}\n+++ ${path}\n@@ -${line},1 +${line},1 @@\n-const target = 10;\n+const target = 100;\n`;
+    // Over 8 KB, the completion's whole-file texts arrive cut, so only the announcement can place it.
+    for (const lines of [12, 400]) {
+      let toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame(lines, "in_progress")).toolCall,
+        () => fileOf(lines, rawInput.Target),
+      );
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(located(lines - 2));
+      toolCall = normalizeAntigravityToolCall(
+        mergeToolCallState(toolCall, parseToolUpdate(frame(lines, "completed")).toolCall),
+      );
+      expect(toolCall.status).toBe("completed");
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(located(lines - 2));
+    }
+    // Without a located announcement, uncut whole-file texts still render and cut ones stay hidden.
+    const small = normalizeAntigravityToolCall(parseToolUpdate(frame(12, "completed")).toolCall);
+    expect(acpToolCallDiffPatch(small.data.content)).toContain("@@ -7,6 +7,6 @@\n");
+    const large = normalizeAntigravityToolCall(parseToolUpdate(frame(400, "completed")).toolCall);
+    expect(acpToolCallDiffPatch(large.data.content)).toBeUndefined();
+    expect(acpToolCallSnippetEdit(large.data.content)).toBeUndefined();
   });
 
   it.each([

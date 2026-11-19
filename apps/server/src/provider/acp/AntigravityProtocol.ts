@@ -421,6 +421,10 @@ function withAntigravityEditPatches(
     // old or new text would render the cut as file content.
     if ([data.rawInput, entry.oldText, entry.newText].some(hasTruncatedText))
       return { ...entry, patch: { format: "omitted" } };
+    // An entry without new text stands in for a diff the runtime did not send. After the edit,
+    // 1.5 runtimes report the whole file before and after it, which needs no placing.
+    const reported = typeof entry.newText === "string";
+    if (readPreEditFile === undefined && reported) return entry;
     const text = antigravityEditPatch({
       path: entry.path,
       rawInput: data.rawInput,
@@ -433,7 +437,7 @@ function withAntigravityEditPatches(
       (text !== undefined && text.length > TOOL_TEXT_LIMIT)
     )
       return { ...entry, patch: { format: "omitted" } };
-    if (text === undefined) return entry;
+    if (text === undefined) return reported ? entry : { ...entry, patch: { format: "omitted" } };
     return {
       ...entry,
       patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
@@ -479,14 +483,21 @@ export function normalizeAntigravityToolCall(
   if (imagePath !== undefined) data.imagePath = imagePath;
   if (kind === "edit") {
     const content = Array.isArray(data.content) ? data.content : [];
-    // Full-access edits report only a path; without a hunk the checkpoint diff is the review.
-    data.content = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff")
-      ? withAntigravityEditPatches(
-          content,
-          data,
-          toolCall.status === "pending" ? readPreEditFile : undefined,
-        )
-      : [...content, { type: "diff", patch: { format: "omitted" } }];
+    const location = Array.isArray(data.locations) ? data.locations[0] : undefined;
+    const path = Predicate.isObject(location) ? location.path : undefined;
+    const hasDiff = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff");
+    // 1.5 runtimes announce an edit with only its path and arguments. Without a hunk, the
+    // checkpoint diff is the review.
+    data.content =
+      hasDiff || typeof path === "string"
+        ? withAntigravityEditPatches(
+            hasDiff ? content : [...content, { type: "diff", path }],
+            data,
+            toolCall.status === "completed" || toolCall.status === "failed"
+              ? undefined
+              : readPreEditFile,
+          )
+        : [...content, { type: "diff", patch: { format: "omitted" } }];
   }
   if (kind === "execute") {
     data.item = {

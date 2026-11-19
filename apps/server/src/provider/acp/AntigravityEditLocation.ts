@@ -39,11 +39,16 @@ const decodeEditInput = Schema.decodeUnknownOption(
   ]),
 );
 const decodeLocations = Schema.decodeUnknownOption(Schema.Array(Schema.Struct({ line: Line })));
-// The runtime accepts edit arguments in either casing.
+// The runtime accepts edit arguments in either casing, and 1.5 edit_file names them Target and
+// Replacement.
 const PASCAL_KEYS: Readonly<Record<string, string>> = {
   replacement_chunks: "ReplacementChunks",
   target_content: "TargetContent",
   replacement_content: "ReplacementContent",
+  Target: "TargetContent",
+  target: "TargetContent",
+  Replacement: "ReplacementContent",
+  replacement: "ReplacementContent",
   start_line: "StartLine",
   end_line: "EndLine",
 };
@@ -133,7 +138,7 @@ export function antigravityEditPatch(input: {
   readonly path: string;
   readonly rawInput: unknown;
   readonly locations?: unknown;
-  /** Pass only while the edit is pending, when the file still holds the old text. */
+  /** Pass only before the edit runs, when the file still holds the old text. */
   readonly readPreEditFile?: ((path: string) => string | undefined) | undefined;
 }): string | typeof ANTIGRAVITY_EDIT_DIFF_OMITTED | undefined {
   const edit = Option.getOrUndefined(decodeEditInput(pascalKeys(input.rawInput)));

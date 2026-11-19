@@ -220,6 +220,31 @@ function extractPrimaryPath(data: Record<string, unknown> | undefined): string |
   return collectToolFilePaths(data)[0];
 }
 
+/** A diff resent without a patch keeps the located patch an earlier update computed for its path. */
+function withLocatedDiffPatches(previous: unknown, next: ReadonlyArray<unknown>) {
+  const patches = new Map<string, Record<string, unknown>>();
+  for (const entry of Array.isArray(previous) ? previous : []) {
+    const diff = asRecord(entry);
+    const patch = asRecord(diff?.patch);
+    if (
+      diff?.type === "diff" &&
+      typeof diff.path === "string" &&
+      patch?.format === undefined &&
+      typeof patch?.text === "string"
+    )
+      patches.set(diff.path, patch);
+  }
+  if (patches.size === 0) return next;
+  return next.map((entry) => {
+    const diff = asRecord(entry);
+    const patch =
+      diff?.type === "diff" && diff.patch === undefined && typeof diff.path === "string"
+        ? patches.get(diff.path)
+        : undefined;
+    return patch === undefined ? entry : { ...diff, patch };
+  });
+}
+
 /**
  * A null field clears it (ACP v2) and a nonempty rawInput replaces the previous one.
  * An empty rawInput keeps the previous one; later ACP updates often resend an empty object.
@@ -238,6 +263,9 @@ export function mergeToolActivityData(
     if (value === null) {
       delete merged[key];
     }
+  }
+  if (Array.isArray(nextRecord.content)) {
+    merged.content = withLocatedDiffPatches(previousRecord?.content, nextRecord.content);
   }
   if (!previousRecord || nextRecord.rawInput === null) {
     return merged;

@@ -34,6 +34,23 @@ describe("toolActivity", () => {
     ).toEqual({ rawInput: { startLine: 4 } });
   });
 
+  it("keeps a located diff patch when a later update resends that diff without one", () => {
+    const resent = { type: "diff", path: "src/a.ts", oldText: "a\n", newText: "b\n" };
+    const merge = (patch: unknown) =>
+      mergeToolActivityData(
+        { content: [{ type: "diff", path: "src/a.ts", patch }] },
+        { content: [resent, { ...resent, path: "src/b.ts" }] },
+      )?.content;
+    const located = { text: "@@ -9,1 +9,1 @@\n-a\n+b\n" };
+    expect(merge(located)).toEqual([
+      { ...resent, patch: located },
+      { ...resent, path: "src/b.ts" },
+    ]);
+    for (const patch of [{ format: "snippet", text: located.text }, { format: "omitted" }]) {
+      expect(merge(patch)).toEqual([resent, { ...resent, path: "src/b.ts" }]);
+    }
+  });
+
   it("recognizes computer-use REPL calls before result metadata exists", () => {
     expect(dynamicToolSurface("cua_repl.js", {})).toBe("computer");
     for (const name of ["node_repl.js", "js"]) {
