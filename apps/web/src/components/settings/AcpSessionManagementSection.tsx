@@ -209,10 +209,9 @@ function InstanceSessionManagement(
     setLoading(false);
     if (result._tag === "Success") {
       // A pending list can return a snapshot taken before a deletion completed.
-      const listedSessions =
-        deletedSessionIds.size === 0
-          ? result.value.sessions
-          : result.value.sessions.filter((session) => !deletedSessionIds.has(session.sessionId));
+      const listedSessions = result.value.sessions.filter(
+        (session) => !deletedSessionIds.has(session.sessionId),
+      );
       setSessions((current) =>
         cursor === undefined ? listedSessions : [...current, ...listedSessions],
       );
