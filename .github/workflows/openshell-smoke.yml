@@ -1,0 +1,103 @@
+name: OpenShell gateway smoke
+
+# Opt-in live check of the OpenShell fleet integration against a REAL gateway.
+# The job runs only when a repository administrator configures gateway access;
+# otherwise every step skips and pull requests stay green.
+#
+# How to enable (repository secrets, set once by an administrator):
+#   OPENSHELL_SMOKE_GATEWAY_URL        the gateway control-plane base URL (https)
+#   OPENSHELL_SMOKE_GATEWAY_CREDENTIAL the bearer credential the gateway's OIDC
+#                                      token provider returns to the OpenShell SDK
+#   OPENSHELL_SMOKE_NPM_TOKEN          a token with read access to the @nvidia
+#                                      scope on npm.pkg.github.com (the SDK ships
+#                                      only via GitHub Packages). Never echoed,
+#                                      never committed; the install is masked and
+#                                      lives in a scratch directory outside the
+#                                      repository, so it cannot enter
+#                                      package.json or the pnpm lockfile.
+# Optional repository variable:
+#   OPENSHELL_SMOKE_TEMPLATE           sandbox template to spawn; unset falls
+#                                      back to a worker-labeled template listed
+#                                      by the gateway.
+# What the gateway must expose: health, sandbox template listing, sandbox
+# create/wait/get/delete, and label filtering on `t3-managed-by`.
+# Budget: the script defaults to 900 seconds (OPENSHELL_SMOKE_TIMEOUT_SECS).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Avoid minute zero, when GitHub scheduled jobs are busiest.
+    - cron: "17 4 * * 1"
+  pull_request:
+    paths:
+      - "packages/openshell/**"
+      - "apps/server/src/environment/**"
+      - "scripts/openshell-smoke.ts"
+      - ".github/workflows/openshell-smoke.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openshell-smoke-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  smoke:
+    name: Gateway smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      # Same presence pattern as the EXPO_TOKEN check in mobile-eas-production.yml.
+      - id: smoke-secrets
+        name: Check for gateway secrets
+        env:
+          SMOKE_URL: ${{ secrets.OPENSHELL_SMOKE_GATEWAY_URL }}
+          SMOKE_CREDENTIAL: ${{ secrets.OPENSHELL_SMOKE_GATEWAY_CREDENTIAL }}
+        run: |
+          if [ -n "$SMOKE_URL" ] && [ -n "$SMOKE_CREDENTIAL" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "OPENSHELL_SMOKE_GATEWAY_URL and OPENSHELL_SMOKE_GATEWAY_CREDENTIAL are not configured; skipping the live gateway smoke."
+          fi
+
+      - name: Checkout
+        if: steps.smoke-secrets.outputs.present == 'true'
+        uses: actions/checkout@v6
+
+      - name: Setup Vite+
+        if: steps.smoke-secrets.outputs.present == 'true'
+        uses: ./.github/actions/setup-ci-deps
+        with:
+          task-cache-read-token: ${{ secrets.T3_TASK_CACHE_READ_TOKEN }}
+
+      # The SDK (@nvidia/openshell-sdk) ships via GitHub Packages only, so it is
+      # installed into a throwaway directory with a per-run .npmrc and symlinked
+      # into the gitignored node_modules. Nothing enters package.json, the
+      # pnpm lockfile, or any committed file; the token is masked and never printed.
+      - name: Install the OpenShell SDK into a scratch directory
+        if: steps.smoke-secrets.outputs.present == 'true'
+        env:
+          OPENSHELL_SMOKE_NPM_TOKEN: ${{ secrets.OPENSHELL_SMOKE_NPM_TOKEN }}
+        run: |
+          echo "::add-mask::$OPENSHELL_SMOKE_NPM_TOKEN"
+          scratch="$(mktemp -d)"
+          printf '{\n  "name": "openshell-smoke-sdk",\n  "private": true\n}\n' > "$scratch/package.json"
+          cat > "$scratch/.npmrc" <<'NPMRC'
+          @nvidia:registry=https://npm.pkg.github.com
+          //npm.pkg.github.com/:_authToken=${OPENSHELL_SMOKE_NPM_TOKEN}
+          always-auth=true
+          NPMRC
+          # 0.1.7 is the version packages/openshell pins in its SDK-mirror comment.
+          (cd "$scratch" && npm install --no-save --ignore-scripts "@nvidia/openshell-sdk@0.1.7")
+          mkdir -p node_modules/@nvidia
+          ln -sfn "$scratch/node_modules/@nvidia/openshell-sdk" node_modules/@nvidia/openshell-sdk
+
+      - name: Run the gateway smoke
+        if: steps.smoke-secrets.outputs.present == 'true'
+        env:
+          OPENSHELL_SMOKE_GATEWAY_URL: ${{ secrets.OPENSHELL_SMOKE_GATEWAY_URL }}
+          OPENSHELL_SMOKE_GATEWAY_CREDENTIAL: ${{ secrets.OPENSHELL_SMOKE_GATEWAY_CREDENTIAL }}
+          OPENSHELL_SMOKE_TEMPLATE: ${{ vars.OPENSHELL_SMOKE_TEMPLATE }}
+        run: node scripts/openshell-smoke.ts

@@ -109,6 +109,7 @@ const CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Req
 const CLIENT_SHELL_OPT_INS = {
   omitIdleSubagents: "1",
   omitOlderSettled: "1",
+  includeArchived: "1",
 } satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
 const CLIENT_THREAD_SUBSCRIPTION = {
   requestCompletionMarker: true,

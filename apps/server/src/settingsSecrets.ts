@@ -63,6 +63,17 @@ export interface SettingsSecret {
   readonly environmentVariable?: string;
 }
 
+/** Secret fields the gateway auth union holds, per mode; the other fields are not secrets. */
+const OPEN_SHELL_AUTH_SECRET_FIELDS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "client-credentials": ["clientSecret"],
+  "oidc-pkce": ["refreshToken"],
+  mtls: ["clientKey"],
+};
+
+/** The slot a gateway auth secret lives in (spec section 4.2: never settings JSON). */
+export const openshellGatewayAuthSecretName = (field: string): string =>
+  `openshell-gateway-auth-${encode(field)}`;
+
 type SecretValue = Pick<SettingsSecret, "value" | "redacted">;
 type SecretSlotName = (field: string, serverHost: string | null) => string;
 type SecretFieldsMapper = (
@@ -247,8 +258,30 @@ function mapSecretFieldGroups(
       ) as SimlockDeviceHostConfig,
   );
 
+  // Gateway auth secrets live one level down (openshell.auth.<field>), and which
+  // fields are secret depends on the mode. A literal is stored to its slot and
+  // redacted; a stored placeholder or a secret-provider reference passes through.
+  const openshell = settings.openshell;
+  const openshellAuth = openshell?.auth;
+  const openshellMapped =
+    openshell === undefined
+      ? settings.openshell
+      : {
+          ...openshell,
+          ...(openshellAuth === undefined
+            ? {}
+            : ({
+                auth: mapFields(
+                  openshellAuth as Record<string, unknown>,
+                  OPEN_SHELL_AUTH_SECRET_FIELDS[openshellAuth.mode] ?? [],
+                  (field) => openshellGatewayAuthSecretName(field),
+                ),
+              } as ServerSettings["openshell"])),
+        };
+
   return {
     ...settings,
+    openshell: openshellMapped,
     cloudSpeechCredentials: mapFields(
       settings.cloudSpeechCredentials,
       voiceSecretFields,
