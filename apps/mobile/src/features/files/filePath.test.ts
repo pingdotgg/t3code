@@ -1,6 +1,9 @@
+import * as NodeModule from "node:module";
+
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  FILE_ROUTE_PATH_PARAM,
   fileRoutePathSegments,
   isAudioPreviewFile,
   isMarkdownPreviewFile,
@@ -8,6 +11,37 @@ import {
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
+
+const requireFromNative = NodeModule.createRequire(
+  NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
+);
+const { getStateFromPath } = requireFromNative("@react-navigation/core") as {
+  readonly getStateFromPath: typeof import("@react-navigation/native").getStateFromPath;
+};
+
+describe("FILE_ROUTE_PATH_PARAM", () => {
+  const config = {
+    screens: {
+      ThreadFiles: "threads/:environmentId/:threadId/files",
+      ThreadFile: `threads/:environmentId/:threadId/files/${FILE_ROUTE_PATH_PARAM}`,
+      NotFound: "*",
+    },
+  };
+
+  it.each([
+    [
+      "threads/env-1/thread-1/files/packages/expo-development-client.ts",
+      "packages/expo-development-client.ts",
+    ],
+    ["threads/env-1/thread-1/files/README.md?line=3", "README.md"],
+    ["threads/env-1/thread-1/files/a%20b/c.ts", "a b/c.ts"],
+  ])("opens the file a link names: %s", (link, path) => {
+    expect(getStateFromPath(link, config)?.routes.at(-1)).toMatchObject({
+      name: "ThreadFile",
+      params: { environmentId: "env-1", threadId: "thread-1", path },
+    });
+  });
+});
 
 describe("resolveFileLinkPath", () => {
   it.each([
