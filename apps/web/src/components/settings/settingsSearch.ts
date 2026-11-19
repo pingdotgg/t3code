@@ -806,6 +806,22 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("queue steer running turn send default behavior composer")],
   },
   {
+    id: "agent-message-display",
+    title: msg("Messages from other agents"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg("sent by another agent subagent minimize collapse fold hide filter timeline"),
+    ],
+  },
+  {
+    id: "automation-message-display",
+    title: msg("Messages from automations"),
+    to: "/settings/chat",
+    searchTerms: [
+      msg("sent by automation scheduled task minimize collapse fold hide filter timeline"),
+    ],
+  },
+  {
     id: "provider-update-checks",
     title: msg("Provider update checks"),
     to: "/settings/maintenance",

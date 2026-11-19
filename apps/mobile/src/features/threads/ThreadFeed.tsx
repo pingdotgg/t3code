@@ -59,7 +59,9 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import {
   IDLE_COMPACTING_LABELS,
+  isSentMessageHidden,
   resolveUserMessageFileCards,
+  type SentMessageDisplaySettings,
   resolveUserMessagePresentation,
 } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
@@ -339,6 +341,10 @@ const WIDE_MARKDOWN_BLOCK_OPTIONS = {
   includeOrderedLists: Platform.OS === "android",
 } as const;
 
+const MINIMIZE_SENT_MESSAGES: SentMessageDisplaySettings = {
+  agentMessageDisplay: "minimize",
+  automationMessageDisplay: "minimize",
+};
 const TURN_FOLD_HEIGHT = 42;
 const FEED_PADDING_TOP = 12;
 const VIEWED_IMAGE_GAP = 8;
@@ -387,6 +393,7 @@ export interface ThreadFeedProps {
   /** A message to scroll to once it is in the feed; see `onJumpedToMessage`. */
   readonly jumpToMessageId?: MessageId | null;
   readonly onJumpedToMessage?: () => void;
+  readonly sentMessageDisplay?: SentMessageDisplaySettings;
   readonly contentInsetEndAdjustment: SharedValue<number>;
   readonly keyboardOffset: number;
   readonly sendingWithKeyboard?: boolean;
@@ -3865,8 +3872,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   if (jumpReady && revealedMessageId !== jumpToMessageId) {
     setInteractionState((current) => ({ ...current, revealedMessageId: jumpToMessageId }));
   }
+  const sentMessageDisplay = props.sentMessageDisplay ?? MINIMIZE_SENT_MESSAGES;
   const [appendPendingTurn] = useState(createPendingTurnAppender);
-  const presentedFeed = appendGuestPendingMessages(
+  const unfilteredFeed = appendGuestPendingMessages(
     appendPendingTurn(
       useThreadFeedPresentation(props, expandedTurnIds, expandedWorkGroups, revealedMessageId),
       { zen: props.toolCallVisibility === "zen" },
@@ -3875,6 +3883,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     guestShare,
     m,
   );
+  const presentedFeed =
+    sentMessageDisplay.agentMessageDisplay === "hide" ||
+    sentMessageDisplay.automationMessageDisplay === "hide"
+      ? unfilteredFeed.filter(
+          (entry) =>
+            entry.type !== "message" ||
+            entry.message.id === workflowOpening?.messageId ||
+            entry.message.id === jumpToMessageId ||
+            entry.message.id === revealedMessageId ||
+            !isSentMessageHidden(entry.message, sentMessageDisplay),
+        )
+      : unfilteredFeed;
   const pendingFoldMessageId =
     presentedFeed.findLast((entry) => entry.type === "pending-fold")?.messageId ?? null;
   const jumpRunId =
@@ -4434,7 +4454,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             }}
           />
         </View>
-        {presentedFeed.length === 0 &&
+        {unfilteredFeed.length === 0 &&
         !props.worktreeSetup &&
         props.activeWorkStartedAt === null &&
         props.contentPresentation.kind === "ready" ? (

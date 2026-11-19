@@ -1,6 +1,7 @@
 import { msg, T, useGT, useMessages, Var } from "gt-react-native";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import type { SentMessageDisplay } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { Platform } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,6 +29,19 @@ const FOLLOW_UP_OPTIONS: ReadonlyArray<{
     description: msg("Your message reaches the agent right away, changing what it is working on."),
   },
 ];
+
+const SENT_MESSAGE_DISPLAY_OPTIONS: ReadonlyArray<{
+  readonly display: SentMessageDisplay;
+  readonly label: string;
+}> = [
+  { display: "minimize", label: msg("Minimize") },
+  { display: "hide", label: msg("Hide") },
+];
+
+const SENT_MESSAGE_SECTIONS = [
+  { key: "agentMessageDisplay", title: msg("Messages from other agents") },
+  { key: "automationMessageDisplay", title: msg("Messages from automations") },
+] as const;
 
 export function SettingsFollowUpRouteScreen() {
   const gt = useGT();
@@ -67,6 +81,25 @@ export function SettingsFollowUpRouteScreen() {
           keyboard, hold <Var>{Platform.OS === "android" ? "Ctrl" : "Command"}</Var> while sending.
         </T>
       </Text>
+      {SENT_MESSAGE_SECTIONS.map((section) => {
+        const selected = AsyncResult.isSuccess(preferencesResult)
+          ? (preferencesResult.value[section.key] ?? "minimize")
+          : null;
+        return (
+          <SettingsSection key={section.key} title={m(section.title)}>
+            {SENT_MESSAGE_DISPLAY_OPTIONS.map((option, index) => (
+              <SettingsChoiceRow
+                key={option.display}
+                label={m(option.label)}
+                selected={selected === option.display}
+                separated={index > 0}
+                disabled={!preferencesReady}
+                onPress={() => savePreferences({ [section.key]: option.display })}
+              />
+            ))}
+          </SettingsSection>
+        );
+      })}
     </ScrollView>
   );
 

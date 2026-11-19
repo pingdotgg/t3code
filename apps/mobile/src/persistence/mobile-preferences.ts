@@ -16,6 +16,7 @@ import {
   PullRequestListState,
   type ProviderInstanceId,
   PullRequestMergeMethod,
+  type SentMessageDisplay,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { ToolCallVisibility } from "@t3tools/contracts/settings";
@@ -164,6 +165,8 @@ export interface Preferences {
   readonly followUpBehavior?: FollowUpBehavior;
   /** The client `language` setting: a locale code or "system". Unset means English. */
   readonly language?: string;
+  readonly agentMessageDisplay?: SentMessageDisplay;
+  readonly automationMessageDisplay?: SentMessageDisplay;
   readonly microphones?: ReadonlyArray<MicrophoneEntry>;
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -254,6 +257,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     composerEnterBehavior?: ComposerEnterBehavior;
     followUpBehavior?: FollowUpBehavior;
     language?: string;
+    agentMessageDisplay?: SentMessageDisplay;
+    automationMessageDisplay?: SentMessageDisplay;
     microphones?: ReadonlyArray<MicrophoneEntry>;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
@@ -369,6 +374,15 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.followUpBehavior = parsed.followUpBehavior;
   }
   if (typeof parsed.language === "string") preferences.language = parsed.language;
+  if (parsed.agentMessageDisplay === "minimize" || parsed.agentMessageDisplay === "hide") {
+    preferences.agentMessageDisplay = parsed.agentMessageDisplay;
+  }
+  if (
+    parsed.automationMessageDisplay === "minimize" ||
+    parsed.automationMessageDisplay === "hide"
+  ) {
+    preferences.automationMessageDisplay = parsed.automationMessageDisplay;
+  }
   if (Array.isArray(parsed.microphones)) {
     preferences.microphones = parsed.microphones.flatMap((entry): MicrophoneEntry[] => {
       if (typeof entry !== "object" || entry === null || !isMicrophoneKind(entry.kind)) return [];
