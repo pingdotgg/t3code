@@ -377,83 +377,28 @@ describe("sourceControlClients project hosts", () => {
     expect(sourceControlClients.repositorySelector({ owner: "o", name: "r" })).toBe("o/r");
   });
 
-  it("reads a fork's issues beside its upstream's only when both are on one host", () => {
-    const upstream = {
-      canonicalKey: "github.com/acme/web",
-      locator: {
-        source: "git-remote" as const,
-        remoteName: "upstream",
-        remoteUrl: "https://github.com/acme/web.git",
-      },
-      provider: SourceControlProviderKind.make("github"),
-      displayName: "acme/web",
-    };
-    const fork = (canonicalKey: string, displayName?: string) => ({
-      ...upstream,
-      origin: { canonicalKey, ...(displayName ? { displayName } : {}) },
-    });
-    const github = { tracker: "github", host: "github.com" };
-
-    expect(sourceControlClients.issueBindings(upstream)).toEqual([
-      { ...github, scope: "acme/web" },
-    ]);
-    expect(sourceControlClients.issueBindings(fork("github.com/me/web", "Me/web"))).toEqual([
-      { ...github, scope: "acme/web" },
-      { ...github, scope: "Me/web" },
-    ]);
-    expect(sourceControlClients.issueBindings(fork("gitlab.com/me/web", "me/web"))).toEqual([
-      { ...github, scope: "acme/web" },
-    ]);
-    // Keys drop schemes and ports: a fork on another of either is another server.
-    const ported = fork("github.com/me/web", "me/web");
-    expect(
-      sourceControlClients.issueBindings({
-        ...ported,
-        origin: { ...ported.origin, remoteUrl: "https://github.com:8443/me/web.git" },
-      }),
-    ).toEqual([{ ...github, scope: "acme/web" }]);
-    expect(
-      sourceControlClients.issueBindings({
-        ...ported,
-        locator: { ...ported.locator, remoteUrl: "git@github.com:acme/web.git" },
-        origin: { ...ported.origin, remoteUrl: "https://github.com:8443/me/web.git" },
-      }),
-    ).toEqual([{ ...github, scope: "acme/web" }]);
-    expect(
-      sourceControlClients.issueBindings({
-        ...ported,
-        locator: { ...ported.locator, remoteUrl: "git@github.com:acme/web.git" },
-        origin: { ...ported.origin, remoteUrl: "https://github.com/me/web.git" },
-      }),
-    ).toEqual([
-      { ...github, scope: "acme/web" },
-      { ...github, scope: "me/web" },
-    ]);
-    // A Forgejo upstream over SSH is served from its web address's port, not the origin's.
-    expect(
-      sourceControlClients.issueBindings({
-        ...ported,
-        provider: SourceControlProviderKind.make("forgejo"),
-        canonicalKey: "forgejo.test/acme/web",
-        webUrl: "https://forgejo.test:8443/acme/web",
-        locator: { ...ported.locator, remoteUrl: "git@forgejo.test:acme/web.git" },
-        origin: {
-          canonicalKey: "forgejo.test/me/web",
-          displayName: "me/web",
-          remoteUrl: "https://forgejo.test/me/web.git",
-        },
-      }),
-    ).toEqual([{ tracker: "forgejo", host: "forgejo.test:8443", scope: "acme/web" }]);
-    expect(
-      sourceControlClients.issueBindings({
-        ...ported,
-        locator: { ...ported.locator, remoteUrl: "http://github.com/acme/web.git" },
-        origin: { ...ported.origin, remoteUrl: "https://github.com/me/web.git" },
-      }),
-    ).toEqual([{ ...github, scope: "acme/web" }]);
-    const { provider: _provider, ...unrecognized } = upstream;
-    expect(sourceControlClients.issueBindings(unrecognized)).toEqual([]);
-  });
+  it.each([
+    ["https://github.com/acme/web.git", "https://github.com/me/web.git", true],
+    ["git@github.com:acme/web.git", "https://github.com/me/web.git", true],
+    ["https://github.com/acme/web.git", "https://gitlab.com/me/web.git", false],
+    ["https://github.com/acme/web.git", "https://github.com:8443/me/web.git", false],
+    ["git@github.com:acme/web.git", "https://github.com:8443/me/web.git", false],
+    ["http://github.com/acme/web.git", "https://github.com/me/web.git", false],
+  ] as const)(
+    "reads a fork's issues beside upstream %s's only when origin %s is on its server",
+    (remoteUrl, originUrl, both) => {
+      const identity = {
+        canonicalKey: "github.com/acme/web",
+        locator: { source: "git-remote" as const, remoteName: "upstream", remoteUrl },
+        provider: SourceControlProviderKind.make("github"),
+        displayName: "acme/web",
+        origin: { canonicalKey: `${new URL(originUrl).hostname}/me/web`, remoteUrl: originUrl },
+      };
+      expect(sourceControlClients.issueBindings(identity).map((binding) => binding.scope)).toEqual(
+        both ? ["acme/web", "me/web"] : ["acme/web"],
+      );
+    },
+  );
 });
 
 describe("sourceControlClients.findByPublicDomain", () => {

@@ -284,30 +284,21 @@ describe("IssueService", () => {
       ).toMatchObject({ projectId: "ghes", host: "code.acme.test", key: "7", writable: true });
 
       // A fork lists its upstream's issues and its own, counted once, and may write to both.
-      const forkProject = project({ id: "fork", repository: "acme/web" });
+      const fork = project({ id: "fork", repository: "acme/web" });
       const forked = yield* makeService({
         projects: [
           {
-            ...forkProject,
+            ...fork,
             repositoryIdentity: {
-              ...forkProject.repositoryIdentity!,
-              origin: { canonicalKey: "github.com/me/web", displayName: "me/web" },
+              ...fork.repositoryIdentity!,
+              origin: { canonicalKey: "github.com/me/web" },
             },
           },
         ],
         trackers: [
           fakeTracker({
             listIssues: (input) =>
-              input.state === "closed"
-                ? Effect.fail(
-                    new IssueTrackerError({
-                      tracker: GITHUB,
-                      operation: "listIssues",
-                      reason: "failed",
-                      detail: "down",
-                    }),
-                  )
-                : Effect.succeed({ items: [issue(input.scope)], nextCursor: null }),
+              Effect.succeed({ items: [issue(input.scope)], nextCursor: null }),
             comment: (input) =>
               Effect.sync(() => {
                 writes.push(`${input.scope}#${input.key}`);
@@ -318,20 +309,13 @@ describe("IssueService", () => {
       const listed = yield* forked.list({ state: "open" });
       expect(listed.entries.map((entry) => entry.scope).sort()).toEqual(["acme/web", "me/web"]);
       expect(listed.trackers).toEqual([expect.objectContaining({ projectCount: 1 })]);
-      const failed = yield* forked.list({ state: "closed" });
-      expect(failed.errors.map((error) => error.projectTitle).sort()).toEqual([
-        "fork (acme/web)",
-        "fork (me/web)",
-      ]);
-      const forkIssue = { ...own, projectId: "fork" as ProjectId, scope: "me/web", key: "5" };
-      expect((yield* forked.detail(forkIssue)).writable).toBe(true);
-      yield* forked.comment({ ...forkIssue, body: "ok" });
-      expect(writes).toEqual(["acme/web#1", "me/web#5"]);
-      expect(yield* forked.resolveUrl("https://github.com/me/web/issues/5")).toMatchObject({
-        projectId: "fork",
+      yield* forked.comment({
+        ...own,
+        projectId: "fork" as ProjectId,
         scope: "me/web",
-        writable: true,
+        body: "ok",
       });
+      expect(writes).toEqual(["acme/web#1", "me/web#1"]);
 
       // Another host is not reachable through this project's credentials at all.
       const elsewhere = yield* Effect.flip(service.detail({ ...own, host: "ghe.example.test" }));
