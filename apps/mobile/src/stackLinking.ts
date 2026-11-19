@@ -1,5 +1,4 @@
 import { getStateFromPath } from "@react-navigation/native";
-import { stringifyFileRoutePath } from "./features/files/filePath";
 
 export const THREAD_LINKING_PREFIX = "threads/:environmentId/:threadId";
 
@@ -11,7 +10,7 @@ function fileScreenPath(prefix: string) {
     path: `${prefix}/:path([\\s\\S]+)`,
     // Older URLs used "undefined" in the pathname and put file segments in the query.
     alias: [`${prefix}/undefined`],
-    stringify: { path: stringifyFileRoutePath },
+    stringify: { path: (path: unknown) => (Array.isArray(path) ? path.join("/") : String(path)) },
   };
 }
 

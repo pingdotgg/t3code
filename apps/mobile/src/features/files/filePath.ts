@@ -14,10 +14,6 @@ export function isAbsolutePath(value: string): boolean {
   return value.startsWith("/") || isWindowsAbsolutePath(value);
 }
 
-export function stringifyFileRoutePath(path: unknown): string {
-  return Array.isArray(path) ? path.join("/") : String(path);
-}
-
 export function fileRoutePathSegments(path: string): string[] {
   const segments = path.split("/").filter((segment) => segment.length > 0);
   return path.startsWith("/") ? ["", ...segments] : segments;

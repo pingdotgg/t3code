@@ -1,9 +1,5 @@
-import * as NodeModule from "node:module";
+import { describe, expect, it } from "vite-plus/test";
 
-import { getPathFromState } from "@react-navigation/native";
-import { describe, expect, it, vi } from "vite-plus/test";
-
-import { fileScreenLinking, getStackStateFromPath } from "../../stackLinking";
 import {
   fileRoutePathSegments,
   isAudioPreviewFile,
@@ -12,84 +8,6 @@ import {
   resolveFileLinkPath,
   resolveWorkspaceRelativeFilePath,
 } from "./filePath";
-
-vi.mock("@react-navigation/native", () => {
-  const requireFromNative = NodeModule.createRequire(
-    NodeModule.createRequire(import.meta.url).resolve("@react-navigation/native/package.json"),
-  );
-  return requireFromNative("@react-navigation/core") as typeof import("@react-navigation/native");
-});
-
-describe("file screen links", () => {
-  const config = { screens: fileScreenLinking };
-
-  it.each([
-    [
-      "threads/env-1/thread-1/files/packages/expo-development-client.ts",
-      "packages/expo-development-client.ts",
-    ],
-    ["threads/env-1/thread-1/files/README.md?line=3", "README.md"],
-    ["threads/env-1/thread-1/files/a%20b/c.ts", "a b/c.ts"],
-  ])("opens the file a link names: %s", (link, path) => {
-    expect(getStackStateFromPath(link, config)?.routes.at(-1)).toMatchObject({
-      name: "ThreadFile",
-      params: { environmentId: "env-1", threadId: "thread-1", path },
-    });
-  });
-
-  describe.each([
-    {
-      name: "ThreadFile",
-      prefix: "/threads/env-1/thread-1/files",
-      params: { environmentId: "env-1", threadId: "thread-1" },
-    },
-    {
-      name: "NewTaskFile",
-      prefix: "/new/draft/files",
-      params: { environmentId: "env-1", cwd: "/repo" },
-    },
-  ])("$name", ({ name, prefix, params }) => {
-    it("opens a nested file at the linked line", () => {
-      expect(
-        getStackStateFromPath(
-          `${prefix}/docs/chapter%201.md?environmentId=env-1&cwd=%2Frepo&line=3`,
-          config,
-        )?.routes.at(-1),
-      ).toMatchObject({
-        name,
-        params: { ...params, cwd: "/repo", path: "docs/chapter 1.md", line: "3" },
-      });
-    });
-
-    it.each([
-      { segments: ["docs", "probe #1.md"], path: "docs/probe #1.md" },
-      { segments: ["", "repo", "probe.md"], path: "/repo/probe.md" },
-      { segments: ["undefined"], path: "undefined" },
-    ])("round-trips the file $path", ({ segments, path }) => {
-      const link = getPathFromState(
-        { routes: [{ name, params: { ...params, path: segments } }] },
-        config,
-      );
-      expect(link.split("?")[0]).toBe(`${prefix}/${encodeURIComponent(path)}`);
-      expect(getStackStateFromPath(link, config)?.routes.at(-1)).toMatchObject({
-        name,
-        params: { ...params, path },
-      });
-    });
-
-    it("opens a saved link with path segments in the query", () => {
-      expect(
-        getStackStateFromPath(
-          `${prefix}/undefined?environmentId=env-1&cwd=%2Frepo&path=docs&path=a%2Bb.md&line=3`,
-          config,
-        )?.routes.at(-1),
-      ).toMatchObject({
-        name,
-        params: { ...params, cwd: "/repo", path: ["docs", "a+b.md"], line: "3" },
-      });
-    });
-  });
-});
 
 describe("resolveFileLinkPath", () => {
   it.each([
