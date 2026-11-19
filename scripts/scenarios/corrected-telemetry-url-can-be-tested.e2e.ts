@@ -13,9 +13,13 @@ test(
   WEB,
   async ({ t3, app, browser }) => {
     const firstProbe = Promise.withResolvers<void>();
+    let slowProbeClosed = false;
     const collector = NodeHttp.createServer((request, response) => {
       request.resume();
       if (request.url === "/slow/v1/traces") {
+        response.once("close", () => {
+          slowProbeClosed = true;
+        });
         firstProbe.resolve();
         return;
       }
@@ -54,6 +58,8 @@ test(
 
       // Sample the screen before the old request reaches its server timeout.
       const canTestCorrectedUrl = await testTraces.isEnabled();
+      if (slowProbeClosed)
+        throw new Error("The slow telemetry probe closed before the button check");
       await app.screenshot("corrected-traces-url");
       expect(canTestCorrectedUrl, "The corrected traces URL can be tested immediately").toBe(true);
     } finally {
