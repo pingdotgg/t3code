@@ -20,7 +20,7 @@ import {
   makeCopilotSubagentRouting,
 } from "./copilotAcp.ts";
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
-import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
+import { defaultInstanceIdForDriver, NonNegativeInt, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -97,6 +97,14 @@ const MistralVibeSessionRetrying = Schema.Struct({
   category: Schema.Literals(["rate_limited", "server_error", "timed_out", "connection", "unknown"]),
   detail: Schema.String,
 });
+
+const decodeMistralVibeSessionUsage = Schema.decodeUnknownOption(
+  Schema.Struct({
+    promptTokens: NonNegativeInt,
+    completionTokens: NonNegativeInt,
+    cachedTokens: NonNegativeInt,
+  }),
+);
 
 /** Mistral Vibe (v2.25.5) reports SDK backoff through this ACP extension. */
 export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionContext) {
@@ -281,7 +289,23 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
             ),
         }),
     ...(registryAgentId === "mistral-vibe"
-      ? { registerExtensions: registerMistralVibeAcpExtensions }
+      ? {
+          registerExtensions: registerMistralVibeAcpExtensions,
+          readSessionPromptUsage: (notification) => {
+            const update = notification.update;
+            const usage = decodeMistralVibeSessionUsage(
+              "_meta" in update ? update._meta : undefined,
+            );
+            return Option.isNone(usage)
+              ? undefined
+              : {
+                  inputTokens: usage.value.promptTokens,
+                  outputTokens: usage.value.completionTokens,
+                  totalTokens: usage.value.promptTokens + usage.value.completionTokens,
+                  cachedReadTokens: usage.value.cachedTokens,
+                };
+          },
+        }
       : {}),
     ...(isClaude
       ? {
