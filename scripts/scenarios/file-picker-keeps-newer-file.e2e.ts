@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import type { EnvironmentId, ProjectSearchEntriesInput } from "@t3tools/contracts";
 import { expect } from "e2e";
+import type { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import { test, WEB } from "./t3.ts";
 
@@ -81,8 +82,17 @@ test(
         .find(({ name }) => /\/\.vite\/deps\/react\.js(?:\?|$)/.test(name))?.name;
       if (!reactModule) throw new Error("The app's React module has not loaded");
       const [{ appAtomRegistry }, { projectEnvironment }, { default: react }] = await Promise.all([
-        import(registryModule) as Promise<typeof import("../../apps/web/src/rpc/atomRegistry.ts")>,
-        import(projectsModule) as Promise<typeof import("../../apps/web/src/state/projects.ts")>,
+        import(registryModule) as Promise<{
+          appAtomRegistry: Pick<AtomRegistry.AtomRegistry, "subscribe">;
+        }>,
+        import(projectsModule) as Promise<{
+          projectEnvironment: {
+            searchEntries: (target: {
+              environmentId: EnvironmentId;
+              input: ProjectSearchEntriesInput;
+            }) => Atom.Atom<AsyncResult.AsyncResult<unknown, unknown>>;
+          };
+        }>,
         import(reactModule) as Promise<{
           default: { act: (run: () => Promise<void>) => PromiseLike<void> };
         }>,
