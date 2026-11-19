@@ -79,9 +79,7 @@ export type AntigravityAdapterV2RuntimeInput = Omit<
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
-  readonly makeRuntime: (
-    input: AntigravityAdapterV2RuntimeInput,
-  ) => Effect.Effect<
+  readonly makeRuntime: (input: AntigravityAdapterV2RuntimeInput) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"] & {
       /** Session-local roots outside the workspace, such as prepared plugin skills. */
       readonly clientFileRoots?: ReadonlyArray<string>;
