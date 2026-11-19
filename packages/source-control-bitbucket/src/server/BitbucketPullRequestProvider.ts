@@ -210,65 +210,69 @@ export const make = Effect.gen(function* () {
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
-    listChangeRequests: (input) => {
-      const filters = input.filters;
-      const filterAuthor =
-        filters?.author === undefined
-          ? undefined
-          : resolvePullRequestAuthorFilter(filters.author, input.viewer).toLowerCase();
-      return api
-        .listPullRequests({
-          repository: input.repository,
-          state: input.state,
-          limit: input.limit,
-          query: input.query,
-          cursor: input.cursor,
-          author:
-            filters?.author === undefined
-              ? undefined
-              : resolvePullRequestAuthorFilter(filters.author, input.viewer),
-          draft: filters?.draft === undefined ? undefined : filters.draft === "only",
-        })
-        .pipe(
-          Effect.flatMap((batch) => {
-            const readItems =
-              filters?.checks === undefined
-                ? Effect.succeed(batch.items.map(toChangeRequest))
-                : Effect.forEach(
-                    batch.items,
-                    (pullRequest) => {
-                      const item = toChangeRequest(pullRequest);
-                      if (
-                        (filters.review !== undefined &&
-                          (filters.review === "none"
-                            ? pullRequest.reviewDecision !== null
-                            : pullRequest.reviewDecision !== filters.review)) ||
-                        (filters.draft !== undefined &&
-                          pullRequest.isDraft !== (filters.draft === "only")) ||
-                        (filterAuthor !== undefined &&
-                          pullRequest.author?.login.toLowerCase() !== filterAuthor)
-                      ) {
-                        return Effect.succeed(item);
-                      }
-                      return Cache.get(
-                        checksStates,
-                        JSON.stringify([
-                          input.repository,
-                          pullRequest.number,
-                          pullRequest.headSha ?? "",
-                        ]),
-                      ).pipe(Effect.map((checksState) => ({ ...item, checksState })));
-                    },
-                    { concurrency: 5 },
-                  );
-            return readItems.pipe(
-              // Keep excluded rows so the service advances its cursor past every scanned row.
-              Effect.map((items) => ({ items, truncated: batch.truncated, continues: true })),
-            );
-          }),
-          Effect.mapError(fail("listChangeRequests")),
-        );
-    },
+    // One span around the listing, so the eligibility check, the cache and the concurrent reads
+    // read as a single operation next to the API's own request spans.
+    listChangeRequests: Effect.fn("BitbucketPullRequestProvider.listChangeRequests")(
+      function (input) {
+        const filters = input.filters;
+        const filterAuthor =
+          filters?.author === undefined
+            ? undefined
+            : resolvePullRequestAuthorFilter(filters.author, input.viewer).toLowerCase();
+        return api
+          .listPullRequests({
+            repository: input.repository,
+            state: input.state,
+            limit: input.limit,
+            query: input.query,
+            cursor: input.cursor,
+            author:
+              filters?.author === undefined
+                ? undefined
+                : resolvePullRequestAuthorFilter(filters.author, input.viewer),
+            draft: filters?.draft === undefined ? undefined : filters.draft === "only",
+          })
+          .pipe(
+            Effect.flatMap((batch) => {
+              const readItems =
+                filters?.checks === undefined
+                  ? Effect.succeed(batch.items.map(toChangeRequest))
+                  : Effect.forEach(
+                      batch.items,
+                      (pullRequest) => {
+                        const item = toChangeRequest(pullRequest);
+                        if (
+                          (filters.review !== undefined &&
+                            (filters.review === "none"
+                              ? pullRequest.reviewDecision !== null
+                              : pullRequest.reviewDecision !== filters.review)) ||
+                          (filters.draft !== undefined &&
+                            pullRequest.isDraft !== (filters.draft === "only")) ||
+                          (filterAuthor !== undefined &&
+                            pullRequest.author?.login.toLowerCase() !== filterAuthor)
+                        ) {
+                          return Effect.succeed(item);
+                        }
+                        return Cache.get(
+                          checksStates,
+                          JSON.stringify([
+                            input.repository,
+                            pullRequest.number,
+                            pullRequest.headSha ?? "",
+                          ]),
+                        ).pipe(Effect.map((checksState) => ({ ...item, checksState })));
+                      },
+                      { concurrency: 5 },
+                    );
+              return readItems.pipe(
+                // Keep excluded rows so the service advances its cursor past every scanned row.
+                Effect.map((items) => ({ items, truncated: batch.truncated, continues: true })),
+              );
+            }),
+            Effect.mapError(fail("listChangeRequests")),
+          );
+      },
+    ),
 
     getChangeRequestChecks: (input) =>
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(
