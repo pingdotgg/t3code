@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as PlatformError from "effect/PlatformError";
@@ -20,26 +21,44 @@ import {
 } from "./stdio.ts";
 
 describe("Codex App Server child process termination", () => {
-  it.effect("retains exit diagnostics when stderr stays open after stdout ends", () =>
+  it.effect.each([
+    { name: "stdout closes", stdoutEnds: true, signal: false },
+    { name: "stdout remains open", stdoutEnds: false, signal: false },
+    { name: "stdout remains open after a signal", stdoutEnds: false, signal: true },
+  ])("drains final output when $name", ({ stdoutEnds, signal }) =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
       const captured = yield* Deferred.make<void>();
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const finalReply = yield* Deferred.make<unknown>();
+      const notifications = yield* Ref.make<ReadonlyArray<string>>([]);
       const stderr = Stream.make(new TextEncoder().encode("Error: invalid config\n")).pipe(
         Stream.concat(Stream.fromEffect(Deferred.succeed(captured, undefined)).pipe(Stream.drain)),
         Stream.concat(Stream.never),
       );
       const tail = yield* makeStderrTail(stderr);
-      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const exited = yield* Deferred.make<
+        ChildProcessSpawner.ExitCode,
+        PlatformError.PlatformError
+      >();
+      const exitFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        cause: new Error("Process interrupted due to receipt of signal: 'SIGKILL'"),
+      });
+      const handle = {
+        stdout: stdio.stdin,
+        stdin: stdio.stdout(),
+        pid: ChildProcessSpawner.ProcessId(55),
+        isRunning: Effect.succeed(false),
+        exitCode: Deferred.await(exited),
+      };
       const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
-        stdio: makeChildStdio({ stdout: stdio.stdin, stdin: stdio.stdout() }, tail.awaitDrained),
-        terminationError: makeTerminationError(
-          {
-            pid: ChildProcessSpawner.ProcessId(55),
-            isRunning: Effect.succeed(false),
-            exitCode: Deferred.await(exited),
-          },
-          tail.read,
-        ),
+        stdio: makeChildStdio(handle, tail.awaitDrained),
+        terminationError: makeTerminationError(handle, tail.read),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+        onNotification: ({ method }) => Ref.update(notifications, (all) => [...all, method]),
       });
       const pending = yield* transport.request("thread/read", {}).pipe(
         Effect.match({
@@ -49,17 +68,37 @@ describe("Codex App Server child process termination", () => {
         Effect.forkScoped,
       );
       yield* Queue.take(output);
+      yield* transport.request("thread/list", {}).pipe(
+        Effect.flatMap((reply) => Deferred.succeed(finalReply, reply)),
+        Effect.forkScoped,
+      );
+      const lastRequest = JSON.parse(yield* Queue.take(output));
+      const finalOutput = new TextEncoder().encode(
+        `${JSON.stringify({ id: lastRequest.id, result: "final response" })}\n{"method":"turn/completed"}`,
+      );
       yield* Deferred.await(captured);
-      yield* Queue.end(input);
-      yield* TestClock.adjust("100 millis");
-      yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1));
-      yield* TestClock.adjust("250 millis");
+      if (stdoutEnds) {
+        yield* Queue.offer(input, finalOutput);
+        yield* Queue.end(input);
+        yield* TestClock.adjust("100 millis");
+      }
+      if (signal) yield* Deferred.fail(exited, exitFailure);
+      else yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(1));
+      if (!stdoutEnds) yield* Queue.offer(input, finalOutput);
+      yield* TestClock.adjust("500 millis");
+      assert.isTrue(yield* Deferred.isDone(terminated));
+      assert.isTrue(yield* Deferred.isDone(finalReply));
+      assert.equal(yield* Deferred.await(finalReply), "final response");
+      assert.deepEqual(yield* Ref.get(notifications), ["turn/completed"]);
       const error = yield* Fiber.join(pending);
       assert.instanceOf(error, CodexError.CodexAppServerProcessExitedError);
       assert.equal(
         error.message,
-        "Codex App Server process exited with code 1: Error: invalid config",
+        signal
+          ? "Codex App Server process exited: Error: invalid config"
+          : "Codex App Server process exited with code 1: Error: invalid config",
       );
+      if (signal) assert.strictEqual(error.cause, exitFailure);
     }),
   );
 

@@ -14,15 +14,22 @@ import { ChildProcessSpawner } from "effect/process";
 import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
+const PROCESS_EXIT_DRAIN_GRACE = "250 millis";
 
 export const makeChildStdio = (
-  handle: Pick<ChildProcessSpawner.ChildProcessHandle, "stdin" | "stdout">,
+  handle: Pick<ChildProcessSpawner.ChildProcessHandle, "stdin" | "stdout" | "exitCode">,
   stderrDrained: Effect.Effect<void>,
 ) =>
   Stdio.make({
     args: Effect.succeed([]),
-    // Finish stderr separately from the protocol's exit-status deadline.
-    stdin: handle.stdout.pipe(Stream.onEnd(stderrDrained)),
+    stdin: handle.stdout.pipe(
+      // Descendants can retain stdout after the owner exits; drain its final frames for a bounded time.
+      Stream.interruptWhen(
+        handle.exitCode.pipe(Effect.ignore, Effect.andThen(Effect.sleep(PROCESS_EXIT_DRAIN_GRACE))),
+      ),
+      // Finish stderr separately from the protocol's exit-status deadline.
+      Stream.onEnd(stderrDrained),
+    ),
     stdout: () =>
       Sink.mapInput(handle.stdin, (chunk: string | Uint8Array) =>
         typeof chunk === "string" ? encoder.encode(chunk) : chunk,
