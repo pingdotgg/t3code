@@ -1,11 +1,14 @@
-import { DownloadIcon } from "lucide-react";
+import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { CircleCheckIcon, CircleIcon, DownloadIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useSyncExternalStore } from "react";
 import type { RelayClientInstallProgressStage } from "@t3tools/contracts";
 
 import {
+  cancelRelayClientInstall,
   completeRelayClientInstallDialogClose,
   readRelayClientInstallDialogState,
+  type RelayClientInstallingState,
   respondToRelayClientInstallConfirmation,
   subscribeRelayClientInstallDialog,
 } from "../../cloud/relayClientInstallDialog";
@@ -20,18 +23,107 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
+import { Spinner } from "../ui/spinner";
+import type { MessageResolver } from "../../i18n/messages";
+
+// The checklist shows five steps. The lock wait and the extract stage are
+// short and ride on the neighbouring step, whose label switches while they run.
 const installSteps: ReadonlyArray<{
-  readonly stage: RelayClientInstallProgressStage;
   readonly label: string;
+  readonly stages: ReadonlyArray<RelayClientInstallProgressStage>;
+  readonly activeLabels?: Partial<Record<RelayClientInstallProgressStage, string>>;
 }> = [
-  { stage: "checking", label: msg("Checking current installation") },
-  { stage: "waiting_for_lock", label: msg("Waiting for installer") },
-  { stage: "downloading", label: msg("Downloading relay client") },
-  { stage: "verifying", label: msg("Verifying download") },
-  { stage: "installing", label: msg("Installing relay client") },
-  { stage: "validating", label: msg("Validating executable") },
-  { stage: "activating", label: msg("Activating installation") },
+  {
+    label: msg("Checking current installation"),
+    stages: ["checking", "waiting_for_lock"],
+    activeLabels: { waiting_for_lock: msg("Waiting for installer") },
+  },
+  { label: msg("Downloading relay client"), stages: ["downloading"] },
+  { label: msg("Verifying download"), stages: ["verifying"] },
+  {
+    label: msg("Validating executable"),
+    stages: ["installing", "validating"],
+    activeLabels: { installing: msg("Installing relay client") },
+  },
+  { label: msg("Activating installation"), stages: ["activating"] },
 ];
+
+function stepMeta(
+  index: number,
+  view: RelayClientInstallingState,
+  resolve: MessageResolver,
+): string | null {
+  if (index === 1 && view.downloadedBytes !== undefined) {
+    return formatAttachmentSize(view.downloadedBytes);
+  }
+  if (index === 2 && view.checksumVerified) {
+    return resolve(msg("sha256 ok"));
+  }
+  return null;
+}
+
+function RelayClientInstallChecklist({ view }: { readonly view: RelayClientInstallingState }) {
+  const gt = useGT();
+  const m = useMessages();
+  const activeIndex = installSteps.findIndex(({ stages }) => stages.includes(view.stage));
+  // Half a step for the running one, so the bar moves as each step starts.
+  const progress = Math.max(0, activeIndex + 0.5) / installSteps.length;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <ol
+        aria-label={gt("Relay client installation steps")}
+        className="flex flex-col gap-2 rounded-lg surface-well px-3 py-2.5 text-body"
+      >
+        {installSteps.map((step, index) => {
+          const state = index < activeIndex ? "done" : index === activeIndex ? "active" : "pending";
+          const meta = stepMeta(index, view, m);
+          return (
+            <li
+              key={step.label}
+              aria-current={state === "active" ? "step" : undefined}
+              className="flex min-w-0 items-center gap-2"
+            >
+              {state === "done" ? (
+                <CircleCheckIcon aria-hidden className="size-3.5 shrink-0 text-success" />
+              ) : state === "active" ? (
+                <span aria-hidden className="flex shrink-0 text-update-foreground">
+                  <Spinner size="sm" />
+                </span>
+              ) : (
+                <CircleIcon aria-hidden className="size-3.5 shrink-0 text-dim-foreground" />
+              )}
+              <span
+                aria-live={state === "active" ? "polite" : undefined}
+                className={`min-w-0 flex-1 truncate ${state === "pending" ? "text-dim-foreground" : "text-foreground"}`}
+              >
+                {m(
+                  (state === "active" ? step.activeLabels?.[view.stage] : undefined) ?? step.label,
+                )}
+              </span>
+              {meta ? (
+                <span className="shrink-0 font-mono text-meta text-dim-foreground">{meta}</span>
+              ) : null}
+            </li>
+          );
+        })}
+      </ol>
+      <div
+        aria-label={gt("Relay client installation progress")}
+        aria-valuemax={installSteps.length}
+        aria-valuemin={0}
+        aria-valuenow={activeIndex + 1}
+        className="h-1 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+      >
+        <div
+          className="h-full rounded-full bg-update transition-[width] duration-300"
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export function RelayClientInstallDialog() {
   const state = useSyncExternalStore(
@@ -40,14 +132,12 @@ export function RelayClientInstallDialog() {
     readRelayClientInstallDialogState,
   );
   const gt = useGT();
-  const m = useMessages();
   const view = state.status === "closing" ? state.view : state;
   const isConfirming = view.status === "confirming";
-  const isInstalling = view.status === "installing";
-  const activeStepIndex = isInstalling
-    ? installSteps.findIndex(({ stage }) => stage === view.stage)
-    : -1;
-  const activeStep = installSteps[activeStepIndex];
+  const installingView = view.status === "installing" ? view : null;
+  // Activation is an atomic rename; there is nothing left to cancel.
+  const canCancelInstall =
+    installingView !== null && !installingView.cancelling && installingView.stage !== "activating";
 
   return (
     <Dialog
@@ -63,52 +153,31 @@ export function RelayClientInstallDialog() {
         }
       }}
     >
-      <DialogPopup className="max-w-md" showCloseButton={isConfirming}>
+      <DialogPopup className="sm:max-w-110" showCloseButton={isConfirming}>
         <DialogHeader>
-          <div className="flex size-9 items-center justify-center rounded-control surface-well">
-            <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
-          </div>
+          {isConfirming ? (
+            <div className="flex size-9 items-center justify-center rounded-control surface-well">
+              <DownloadIcon aria-hidden className="size-4.5 text-muted-foreground" />
+            </div>
+          ) : null}
           <DialogTitle>
-            {isInstalling ? gt("Installing relay client") : gt("Install relay client?")}
+            <T>Install relay client?</T>
           </DialogTitle>
           <DialogDescription>
-            {isInstalling
-              ? gt("T3 Code is preparing this environment for secure access through T3 Connect.")
-              : gt(
-                  "T3 Code needs the relay client to make this environment available through T3 Connect.",
-                )}
+            <T>
+              T3 Connect uses a managed relay client to reach this machine from your other devices.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
-          {isInstalling ? (
-            <div className="space-y-2.5">
-              <div className="flex items-center justify-between gap-3 text-sm">
-                <p aria-live="polite" className="font-medium text-strong-foreground">
-                  {activeStep ? m(activeStep.label) : null}
-                </p>
-                <p className="shrink-0 tabular-nums text-muted-foreground">
-                  {gt("{step} of {total}", {
-                    step: activeStepIndex + 1,
-                    total: installSteps.length,
-                  })}
-                </p>
-              </div>
-              <progress
-                aria-label={gt("Relay client installation progress")}
-                className="h-2 w-full appearance-none overflow-hidden rounded-full bg-muted [&::-moz-progress-bar]:rounded-full [&::-moz-progress-bar]:bg-primary [&::-webkit-progress-bar]:rounded-full [&::-webkit-progress-bar]:bg-muted [&::-webkit-progress-value]:rounded-full [&::-webkit-progress-value]:bg-primary"
-                max={installSteps.length}
-                value={activeStepIndex + 1}
-              />
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                <T>Keep T3 Code open while the relay client is installed.</T>
-              </p>
-            </div>
+          {installingView ? (
+            <RelayClientInstallChecklist view={installingView} />
           ) : (
             <div className="rounded-card surface-panel p-3">
-              <p className="text-sm font-medium text-strong-foreground">
+              <p className="text-label text-strong-foreground">
                 <T>Managed relay client</T>
               </p>
-              <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+              <p className="mt-1 text-body leading-relaxed text-muted-foreground">
                 <T>
                   T3 Code will download and install version{" "}
                   <Var>{view.status === "confirming" ? view.version : ""}</Var> locally.
@@ -120,14 +189,37 @@ export function RelayClientInstallDialog() {
         {isConfirming ? (
           <DialogFooter>
             <Button
+              size="standard"
               variant="secondary"
               onClick={() => respondToRelayClientInstallConfirmation(false)}
             >
               <T>Cancel</T>
             </Button>
-            <DialogAction onClick={() => respondToRelayClientInstallConfirmation(true)}>
+            <DialogAction
+              size="standard"
+              onClick={() => respondToRelayClientInstallConfirmation(true)}
+            >
               <T>Download and install</T>
             </DialogAction>
+          </DialogFooter>
+        ) : installingView ? (
+          <DialogFooter className="sm:items-center sm:justify-between">
+            <p className="text-meta text-dim-foreground">
+              <T>Managed relay client</T>
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                size="standard"
+                disabled={!canCancelInstall}
+                onClick={cancelRelayClientInstall}
+                variant="secondary"
+              >
+                {installingView.cancelling ? gt("Cancelling…") : gt("Cancel")}
+              </Button>
+              <Button size="standard" disabled>
+                <T>Installing…</T>
+              </Button>
+            </div>
           </DialogFooter>
         ) : null}
       </DialogPopup>

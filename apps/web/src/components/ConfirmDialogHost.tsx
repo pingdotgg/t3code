@@ -1,4 +1,5 @@
 import { msg, T, useMessages } from "gt-react";
+import { Trash2Icon } from "lucide-react";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -64,9 +65,16 @@ export function ConfirmDialogHost() {
     readConfirmDialogState,
   );
 
-  const copy = resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message, m);
+  const copy =
+    state.status !== "idle" && state.title
+      ? { title: state.title, description: state.message.trim() || null }
+      : resolveConfirmDialogCopy(state.status === "idle" ? "" : state.message, m);
   const confirmVariant = state.status === "idle" ? "default" : state.variant;
   const focusConfirm = state.status !== "idle" && state.initialFocus === "confirm";
+  const confirmLabel =
+    (state.status === "idle" ? undefined : state.confirmLabel) ?? m(msg("Confirm"));
+  const showDeleteIcon =
+    state.status !== "idle" && confirmVariant === "destructive" && state.deleteIcon === true;
   const onCancel = () => respondToConfirmDialog(false);
   const onConfirm = () => respondToConfirmDialog(true);
 
@@ -80,7 +88,7 @@ export function ConfirmDialogHost() {
         if (!open) completeConfirmDialogClose();
       }}
     >
-      <AlertDialogPopup>
+      <AlertDialogPopup className="sm:max-w-105">
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           {copy.description ? (
@@ -89,17 +97,18 @@ export function ConfirmDialogHost() {
             </AlertDialogDescription>
           ) : null}
         </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="secondary" />}>
+        <AlertDialogFooter variant="bare">
+          <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           {focusConfirm && confirmVariant === "default" ? (
-            <AlertDialogAction onClick={onConfirm}>
-              <T>Confirm</T>
+            <AlertDialogAction size="standard" onClick={onConfirm}>
+              {confirmLabel}
             </AlertDialogAction>
           ) : (
-            <Button variant={confirmVariant} onClick={onConfirm}>
-              <T>Confirm</T>
+            <Button size="standard" variant={confirmVariant} onClick={onConfirm}>
+              {showDeleteIcon ? <Trash2Icon aria-hidden /> : null}
+              {confirmLabel}
             </Button>
           )}
         </AlertDialogFooter>

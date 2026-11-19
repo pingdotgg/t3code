@@ -271,6 +271,7 @@ interface MetadataReadBudget {
   operationsRemaining: number;
   recordsRemaining: number;
   truncated: boolean;
+  readonly multiplier: number;
 }
 
 function splitOperationBudget(budget: number, count: number): Array<number> {
@@ -280,16 +281,19 @@ function splitOperationBudget(budget: number, count: number): Array<number> {
   );
 }
 
-function selectMetadataTranscripts(transcripts: ReadonlyArray<TranscriptCandidate>) {
+function selectMetadataTranscripts(
+  transcripts: ReadonlyArray<TranscriptCandidate>,
+  limit = MAX_TRANSCRIPTS_PER_SOURCE,
+) {
   const selected: Array<TranscriptCandidate> = [];
   let pending = Array.from(
     Map.groupBy(transcripts, (transcript) => transcript.providerInstanceId).values(),
     (entries) => entries.values(),
   );
-  while (pending.length > 0 && selected.length < MAX_TRANSCRIPTS_PER_SOURCE) {
+  while (pending.length > 0 && selected.length < limit) {
     const nextRound: typeof pending = [];
     for (const iterator of pending) {
-      if (selected.length === MAX_TRANSCRIPTS_PER_SOURCE) break;
+      if (selected.length === limit) break;
       const next = iterator.next();
       if (next.done) continue;
       selected.push(next.value);
@@ -1208,10 +1212,10 @@ export const make = Effect.gen(function* () {
             let remaining = "";
             let bytesRead = 0;
             let recordsRead = 0;
-            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES, size);
+            const maxBytes = Math.min(MAX_TRANSCRIPT_SCAN_BYTES * budget.multiplier, size);
             const reserveRecord = () => {
               if (
-                recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT ||
+                recordsRead === MAX_METADATA_RECORDS_PER_TRANSCRIPT * budget.multiplier ||
                 budget.recordsRemaining === 0
               ) {
                 budget.truncated = true;
@@ -1755,7 +1759,9 @@ export const make = Effect.gen(function* () {
     }));
   });
 
-  const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* () {
+  const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* (
+    multiplier = 1,
+  ) {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
     );
@@ -1864,7 +1870,8 @@ export const make = Effect.gen(function* () {
           : source === "codex"
             ? discoverCodexTranscripts
             : discoverPiTranscripts;
-      const shares = splitOperationBudget(MAX_DISCOVERY_OPERATIONS_PER_SOURCE, homes.length);
+      const discoveryBudget = MAX_DISCOVERY_OPERATIONS_PER_SOURCE * multiplier;
+      const shares = splitOperationBudget(discoveryBudget, homes.length);
       const discovered: Array<{
         readonly transcripts: ReadonlyArray<TranscriptCandidate>;
         readonly truncated: boolean;
@@ -1882,8 +1889,7 @@ export const make = Effect.gen(function* () {
       // Each takes an even split of what is still unused; a pass in which no home finishes spends
       // it all, so every repeat has fewer starved homes.
       let unused =
-        MAX_DISCOVERY_OPERATIONS_PER_SOURCE -
-        discovered.reduce((total, result) => total + result.operationsUsed, 0);
+        discoveryBudget - discovered.reduce((total, result) => total + result.operationsUsed, 0);
       let starved = discovered.flatMap((result, index) => (result.truncated ? [index] : []));
       while (unused > 0 && starved.length > 0) {
         for (const [position, index] of starved.entries()) {
@@ -1906,15 +1912,19 @@ export const make = Effect.gen(function* () {
         (left, right) =>
           right.mtimeMs - left.mtimeMs || left.filePath.localeCompare(right.filePath),
       );
-      if (transcriptCandidates.length > MAX_TRANSCRIPTS_PER_SOURCE) {
+      if (transcriptCandidates.length > MAX_TRANSCRIPTS_PER_SOURCE * multiplier) {
         truncated = true;
       }
-      const selectedTranscripts = selectMetadataTranscripts(transcriptCandidates);
+      const selectedTranscripts = selectMetadataTranscripts(
+        transcriptCandidates,
+        MAX_TRANSCRIPTS_PER_SOURCE * multiplier,
+      );
       const metadataBudget: MetadataReadBudget = {
-        bytesRemaining: MAX_METADATA_BYTES_PER_SOURCE,
-        operationsRemaining: MAX_METADATA_OPERATIONS_PER_SOURCE,
-        recordsRemaining: MAX_METADATA_RECORDS_PER_SOURCE,
+        bytesRemaining: MAX_METADATA_BYTES_PER_SOURCE * multiplier,
+        operationsRemaining: MAX_METADATA_OPERATIONS_PER_SOURCE * multiplier,
+        recordsRemaining: MAX_METADATA_RECORDS_PER_SOURCE * multiplier,
         truncated: false,
+        multiplier,
       };
       raw.push(
         ...(yield* groupTranscriptsByCwd(
@@ -1932,9 +1942,13 @@ export const make = Effect.gen(function* () {
 
   let cachedCandidates: Effect.Success<ReturnType<typeof collectCandidates>> | null = null;
 
+  // Refreshing a partial scan searches farther without removing the normal startup bounds.
+  // Keep retries finite even for corrupt transcripts or an exceptionally large session archive.
+  let scanMultiplier = 1;
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
-    cachedCandidates = yield* collectCandidates();
+    cachedCandidates = yield* collectCandidates(scanMultiplier);
     const { candidates: raw, truncated } = cachedCandidates;
+    if (truncated) scanMultiplier = Math.min(scanMultiplier * 2, 16);
 
     const merged = new Map<
       string,
@@ -2043,7 +2057,7 @@ export const make = Effect.gen(function* () {
 
     // Imports recorded since a budget-truncated collection can free budget for transcripts it cut off.
     if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
-      cachedCandidates = yield* collectCandidates();
+      cachedCandidates = yield* collectCandidates(scanMultiplier);
     }
     const { candidates } = cachedCandidates;
 

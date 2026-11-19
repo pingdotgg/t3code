@@ -46,7 +46,6 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { useSearchableSetting } from "./settingsSearch";
 import { ConnectDeviceApprovalSettings } from "./ConnectDeviceApprovalSettings";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
-import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -123,7 +122,6 @@ import {
 } from "../ServerUpdateAction";
 import {
   sortDesktopPairingLinks,
-  summarizeAuthorizedClients,
   sortDesktopClientSessions,
   toDesktopPairingLinkRecord,
   toDesktopClientSessionRecord,
@@ -135,7 +133,7 @@ import {
 import {
   AdvertisedEndpointListRow,
   AuthorizedClientsHeaderAction,
-  NetworkAccessDescription,
+  ReachableAddressRow,
   PairingClientsList,
 } from "./AuthorizedClientsSettings";
 import { ITEM_ROW_CLASSNAME } from "./itemRows";
@@ -164,7 +162,7 @@ function LocalVersionStatusLabel() {
   const m = useMessages();
   const updateState = useDesktopUpdateState();
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-meta text-muted-foreground">
       {resolveLocalVersionStatusLabel(updateState, m)}
     </span>
   );
@@ -1142,65 +1140,62 @@ function ConnectionsSettingsContent({
       managed={tailscaleHttpsEndpoint?.status === "available" ? undefined : remoteClientsDenial}
     />
   );
-  const newestPairingLink = visibleDesktopPairingLinks.find(
-    (pairingLink) => pairingLink.id === newestPairingLinkId,
-  );
-  const renderPairingClientsList = (
-    pairingLinks: typeof visibleDesktopPairingLinks,
-    clientSessions: typeof desktopClientSessions,
-  ) => (
-    <PairingClientsList
-      servedByEnvironment={isPrimaryAccess}
-      endpointUrl={desktopServerExposureState?.endpointUrl}
-      endpoints={visibleDesktopAdvertisedEndpoints}
-      defaultEndpointKey={defaultDesktopAdvertisedEndpointKey}
-      isLoading={isLoadingDesktopAccessManagement}
-      pairingLinks={pairingLinks}
-      createdPairingCredentials={createdPairingCredentials}
-      sharedPairingLinkId={newestPairingLinkId}
-      clientSessions={clientSessions}
-      revokingPairingLinkId={revokingDesktopPairingLinkId}
-      revokingClientSessionId={revokingDesktopClientSessionId}
-      onRevokePairingLink={handleRevokeDesktopPairingLink}
-      onRevokeClientSession={requestRevokeClientSession}
-      canRevoke={canWriteAccess}
-    />
-  );
-  const renderAuthorizedClients = () => (
+  const renderAuthorizedClients = (kind: "links" | "clients") => (
     <>
       {desktopAccessManagementError ? (
         <div className={ITEM_ROW_CLASSNAME}>
-          <p className="text-xs text-destructive">{desktopAccessManagementError}</p>
+          <p className="text-meta text-destructive">{desktopAccessManagementError}</p>
         </div>
       ) : null}
-      {renderPairingClientsList(visibleDesktopPairingLinks, desktopClientSessions)}
+      <PairingClientsList
+        kind={kind}
+        servedByEnvironment={isPrimaryAccess}
+        endpointUrl={desktopServerExposureState?.endpointUrl}
+        endpoints={visibleDesktopAdvertisedEndpoints}
+        defaultEndpointKey={defaultDesktopAdvertisedEndpointKey}
+        isLoading={isLoadingDesktopAccessManagement}
+        pairingLinks={visibleDesktopPairingLinks}
+        createdPairingCredentials={createdPairingCredentials}
+        sharedPairingLinkId={newestPairingLinkId}
+        clientSessions={desktopClientSessions}
+        revokingPairingLinkId={revokingDesktopPairingLinkId}
+        revokingClientSessionId={revokingDesktopClientSessionId}
+        onRevokePairingLink={handleRevokeDesktopPairingLink}
+        onRevokeClientSession={requestRevokeClientSession}
+        canRevoke={canWriteAccess}
+      />
     </>
   );
+  // The Reachable at row replaces the address that used to sit in the network row's description.
+  const reachableUrl = isLocalBackendNetworkAccessible
+    ? (defaultDesktopNetworkAdvertisedEndpoint?.httpBaseUrl ??
+      desktopServerExposureState?.endpointUrl ??
+      null)
+    : null;
+  const renderReachableRow = () =>
+    reachableUrl ? (
+      <ReachableAddressRow
+        url={reachableUrl}
+        hiddenEndpointCount={Math.max(visibleDesktopNetworkAdvertisedEndpoints.length - 1, 0)}
+        expanded={isAdvertisedEndpointListExpanded}
+        onToggleExpanded={() => setIsAdvertisedEndpointListExpanded((expanded) => !expanded)}
+      />
+    ) : null;
   const renderNetworkAccessRow = () => (
     <SettingsRow
       title={searchableSetting("network-access").title}
       description={
-        isLocalBackendNetworkAccessible ? (
-          <NetworkAccessDescription
-            endpoint={defaultDesktopNetworkAdvertisedEndpoint}
-            hiddenEndpointCount={Math.max(visibleDesktopNetworkAdvertisedEndpoints.length - 1, 0)}
-            expanded={isAdvertisedEndpointListExpanded}
-            onToggleExpanded={() => setIsAdvertisedEndpointListExpanded((expanded) => !expanded)}
-            fallback={
-              desktopServerExposureState?.endpointUrl
-                ? gt("Reachable at {url}", { url: desktopServerExposureState.endpointUrl })
-                : desktopServerExposureState?.advertisedHost
-                  ? gt("Exposed on all interfaces. Pairing links use {host}.", {
-                      host: desktopServerExposureState.advertisedHost,
-                    })
-                  : gt("Exposed on all interfaces.")
-            }
-          />
-        ) : desktopServerExposureState ? (
-          gt("Limited to this machine.")
-        ) : (
-          gt("Loading…")
-        )
+        isLocalBackendNetworkAccessible
+          ? reachableUrl
+            ? gt("Let devices on your network or tailnet connect.")
+            : desktopServerExposureState?.advertisedHost
+              ? gt("Exposed on all interfaces. Pairing links use {host}.", {
+                  host: desktopServerExposureState.advertisedHost,
+                })
+              : gt("Exposed on all interfaces.")
+          : desktopServerExposureState
+            ? gt("Limited to this machine.")
+            : gt("Loading…")
       }
       status={
         desktopServerExposureError ? (
@@ -1281,6 +1276,8 @@ function ConnectionsSettingsContent({
                   <MenuTrigger
                     render={
                       <Button
+                        // Hangs 8px past the header row so the ellipsis ink ends on the card edge.
+                        className="-me-2"
                         type="button"
                         variant="ghost-muted"
                         size="icon-xs"
@@ -1304,6 +1301,32 @@ function ConnectionsSettingsContent({
               <div className="px-3 py-2 sm:px-4">
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
+            ) : null}
+            {canManageLocalBackend && desktopBridge ? (
+              <>
+                {renderReachableRow()}
+                {renderNetworkAccessRow()}
+                {renderEndpointRows()}
+                {renderTailscaleRow()}
+                {renderWslRow()}
+              </>
+            ) : canManageLocalBackend ? (
+              renderDisabledNetworkAccessRow()
+            ) : null}
+            {canReadRelay || canManageRelay ? (
+              <CloudLinkRow
+                environmentId={accessEnvironmentId}
+                canReadRelay={canReadRelay}
+                canManageRelay={canManageRelay}
+                connectDeviceApproval={
+                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
+                    ? null
+                    : {
+                        required: accessServerConfig.settings.requireConnectDeviceApproval,
+                        canManage: canWriteAccess,
+                      }
+                }
+              />
             ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
@@ -1354,31 +1377,6 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
-              <>
-                {renderNetworkAccessRow()}
-                {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-              </>
-            ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
-            ) : null}
-            {canReadRelay || canManageRelay ? (
-              <CloudLinkRow
-                environmentId={accessEnvironmentId}
-                canReadRelay={canReadRelay}
-                canManageRelay={canManageRelay}
-                connectDeviceApproval={
-                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
-                    ? null
-                    : {
-                        required: accessServerConfig.settings.requireConnectDeviceApproval,
-                        canManage: canWriteAccess,
-                      }
-                }
-              />
-            ) : null}
             {accessEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden">
@@ -1399,55 +1397,67 @@ function ConnectionsSettingsContent({
           </SettingsSection>
 
           {canReadAccess || canWriteAccess ? (
-            <FoldedSettingsSection
-              id="authorized-clients"
-              title={gt("Authorized clients")}
-              collapsedContent={
-                canReadAccess && newestPairingLink
-                  ? renderPairingClientsList([newestPairingLink], [])
-                  : undefined
-              }
-              summary={
-                <span className="whitespace-pre-line">
-                  {summarizeAuthorizedClients(desktopClientSessions, visibleDesktopPairingLinks, m)}
-                </span>
-              }
-              control={
-                canWriteAccess ? (
-                  <AuthorizedClientsHeaderAction
-                    environmentId={accessEnvironmentId}
-                    delegatableScopes={currentSessionScopes ?? []}
-                    onPairingLinkCreated={handlePairingLinkCreated}
-                    clientSessions={
-                      canReadAccess &&
-                      authAccessChanges.error === null &&
-                      authAccessChanges.data?.type === "snapshot"
-                        ? desktopClientSessions
-                        : null
-                    }
-                    isRevokingOtherClients={isRevokingOtherDesktopClients}
-                    onRevokeOtherClients={requestRevokeOtherClients}
-                  />
-                ) : undefined
-              }
-            >
-              <ScrollArea
-                scrollFade
-                chainVerticalScroll
-                className="max-h-[22.5rem]"
-                data-testid="authorized-clients-scroll-area"
+            <>
+              <SettingsSection
+                id="pairing"
+                title={gt("Pairing")}
+                headerAction={
+                  canWriteAccess ? (
+                    <AuthorizedClientsHeaderAction
+                      environmentId={accessEnvironmentId}
+                      part="create"
+                      delegatableScopes={currentSessionScopes ?? []}
+                      onPairingLinkCreated={handlePairingLinkCreated}
+                      clientSessions={desktopClientSessions}
+                      isRevokingOtherClients={isRevokingOtherDesktopClients}
+                      onRevokeOtherClients={requestRevokeOtherClients}
+                    />
+                  ) : undefined
+                }
               >
-                {canReadAccess ? (
-                  renderAuthorizedClients()
-                ) : (
-                  <p className="px-4 py-3 text-xs text-muted-foreground">
-                    <T>
-                      This connection can create access links but cannot view authorized clients.
-                    </T>
-                  </p>
-                )}
-              </ScrollArea>
-            </FoldedSettingsSection>
+                {renderAuthorizedClients("links")}
+              </SettingsSection>
+              <SettingsSection
+                id="authorized-clients"
+                title={gt("Authorized clients")}
+                headerAction={
+                  canWriteAccess ? (
+                    <AuthorizedClientsHeaderAction
+                      environmentId={accessEnvironmentId}
+                      part="revoke"
+                      delegatableScopes={currentSessionScopes ?? []}
+                      onPairingLinkCreated={handlePairingLinkCreated}
+                      clientSessions={
+                        canReadAccess &&
+                        authAccessChanges.error === null &&
+                        authAccessChanges.data?.type === "snapshot"
+                          ? desktopClientSessions
+                          : null
+                      }
+                      isRevokingOtherClients={isRevokingOtherDesktopClients}
+                      onRevokeOtherClients={requestRevokeOtherClients}
+                    />
+                  ) : undefined
+                }
+              >
+                <ScrollArea
+                  scrollFade
+                  chainVerticalScroll
+                  className="max-h-[22.5rem]"
+                  data-testid="authorized-clients-scroll-area"
+                >
+                  {canReadAccess ? (
+                    renderAuthorizedClients("clients")
+                  ) : (
+                    <p className="px-4 py-3 text-meta text-muted-foreground">
+                      <T>
+                        This connection can create access links but cannot view authorized clients.
+                      </T>
+                    </p>
+                  )}
+                </ScrollArea>
+              </SettingsSection>
+            </>
           ) : null}
           {canReadAccess &&
           connectDevices !== null &&
@@ -1700,7 +1710,7 @@ function ConnectionsSettingsContent({
               </DialogHeader>
               <DialogPanel>
                 <label className="block">
-                  <span className="text-sm font-medium text-strong-foreground">
+                  <span className="text-label text-strong-foreground">
                     <T>HTTPS port</T>
                   </span>
                   <Input
@@ -1716,7 +1726,7 @@ function ConnectionsSettingsContent({
                   />
                 </label>
                 {!isTailscaleServePortValid ? (
-                  <p className="mt-2 text-xs text-destructive">
+                  <p className="mt-2 text-meta text-destructive">
                     <T>Enter a port from 1 to 65535.</T>
                   </p>
                 ) : null}
@@ -1773,10 +1783,13 @@ function ConnectionsSettingsContent({
     </>
   );
 
-  if (showsAccess) return <SettingsPageContainer>{primarySettings}</SettingsPageContainer>;
+  if (showsAccess)
+    return (
+      <SettingsPageContainer className="max-w-[688px]">{primarySettings}</SettingsPageContainer>
+    );
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
       {desktopBridge ? (
         <SettingsSection id="this-app" title={gt("This app")}>
           <LocalEnvironmentSetting />

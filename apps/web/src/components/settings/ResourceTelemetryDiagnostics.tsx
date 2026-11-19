@@ -4,8 +4,8 @@ import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ActivityIcon,
-  AlertTriangleIcon,
   BatteryIcon,
+  CircleSlashIcon,
   CpuIcon,
   DatabaseIcon,
   GaugeIcon,
@@ -65,7 +65,7 @@ import {
   shouldShowResourceMonitorRetry,
   visibleResourceTelemetryProcesses,
 } from "./ResourceTelemetryDiagnostics.logic";
-import { SettingsSection } from "./settingsLayout";
+import { SettingsNote, SettingsSection } from "./settingsLayout";
 
 const HISTORY_WINDOWS = [
   { label: "5m", windowMs: 5 * 60_000, bucketMs: 15_000 },
@@ -176,7 +176,7 @@ function SourceStatusBadge({
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-badge border px-2.5 py-1 text-3xs font-medium",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-badge border px-2.5 py-1 text-3xs font-medium",
         tone === "neutral" && "border-transparent bg-secondary text-muted-foreground",
         tone === "default" && "border-transparent bg-success/12 text-success-foreground",
         tone === "warning" && "border-transparent bg-warning/12 text-warning-foreground",
@@ -258,7 +258,7 @@ function IconStat({
       >
         {value}
       </div>
-      {detail ? <div className="mt-1.5 truncate text-3xs text-dim-foreground">{detail}</div> : null}
+      {detail ? <div className="mt-1.5 text-meta text-muted-foreground">{detail}</div> : null}
     </div>
   );
 }
@@ -308,31 +308,44 @@ function HealthSource({ label, health }: { label: string; health: ResourceTeleme
   const expectedInBrowser =
     health.status === "unavailable" &&
     Option.exists(health.lastError, (error) => error.includes("'web' mode"));
+  // The page states why the monitor is down once, near the top; here the reason is a tooltip.
+  const unavailable = health.status === "unavailable" && !expectedInBrowser;
+  const badge = (
+    <SourceStatusBadge
+      label=""
+      status={health.status}
+      presentation={
+        expectedInBrowser
+          ? { label: gt("Desktop only"), tone: "neutral" }
+          : unavailable
+            ? { label: gt("Unavailable"), tone: "neutral" }
+            : undefined
+      }
+    />
+  );
   return (
     <div className="flex items-start justify-between gap-4 border-t border-divider py-3 first:border-t-0">
       <div className="min-w-0">
         <div className="text-sm font-medium text-strong-foreground">{label}</div>
-        <div className="mt-1 text-2xs leading-relaxed text-dim-foreground">
-          {expectedInBrowser
-            ? gt("Available when this page runs inside the desktop app.")
-            : Option.match(health.lastError, {
-                onNone: () => gt("No reported errors"),
-                onSome: (error) => error,
-              })}
-        </div>
+        {unavailable ? null : (
+          <div className="mt-1 text-2xs leading-relaxed text-dim-foreground">
+            {expectedInBrowser
+              ? gt("Available when this page runs inside the desktop app.")
+              : Option.match(health.lastError, {
+                  onNone: () => gt("No reported errors"),
+                  onSome: (error) => error,
+                })}
+          </div>
+        )}
       </div>
-      <SourceStatusBadge
-        label=""
-        status={health.status}
-        presentation={
-          expectedInBrowser
-            ? {
-                label: gt("Desktop only"),
-                tone: "neutral",
-              }
-            : undefined
-        }
-      />
+      {unavailable && Option.isSome(health.lastError) ? (
+        <Tooltip>
+          <TooltipTrigger render={<span className="shrink-0" />}>{badge}</TooltipTrigger>
+          <TooltipPopup side="top">{health.lastError.value}</TooltipPopup>
+        </Tooltip>
+      ) : (
+        badge
+      )}
     </div>
   );
 }
@@ -348,10 +361,10 @@ function DetailRow({
 }) {
   return (
     <div className="flex items-center justify-between gap-4 border-t border-divider py-2.5 first:border-t-0">
-      <span className="text-2xs text-dim-foreground">{label}</span>
+      <span className="text-meta text-muted-foreground">{label}</span>
       <span
         className={cn(
-          "min-w-0 truncate text-right font-mono text-2xs tabular-nums text-foreground",
+          "min-w-0 text-right font-mono text-meta tabular-nums text-foreground",
           valueClassName,
         )}
       >
@@ -477,6 +490,7 @@ function ProcessTreeName({
   onToggle: (process: ResourceTelemetryProcess) => void;
 }) {
   const gt = useGT();
+  const messages = useMessages();
   const name = formatProcessName(process);
   const hasChildren = process.childPids.length > 0;
   return (
@@ -501,17 +515,71 @@ function ProcessTreeName({
         <span className="size-5" aria-hidden />
       )}
       <StatusDot tone={categoryDotTone(process.category)} />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span className="min-w-0 truncate font-medium text-strong-foreground">{name}</span>
-          }
-        />
-        <TooltipPopup side="top" variant="code">
-          {process.command || process.name}
-        </TooltipPopup>
-      </Tooltip>
+      <div className="min-w-0">
+        <Tooltip>
+          <TooltipTrigger
+            render={<div className="truncate text-label text-strong-foreground">{name}</div>}
+          />
+          <TooltipPopup side="top" variant="code">
+            {process.command || process.name}
+          </TooltipPopup>
+        </Tooltip>
+        <ProcessDetail>
+          <span>{categoryLabel(process.category, messages)}</span>
+          <span>
+            <T>
+              PID <Var>{process.identity.pid}</Var>
+            </T>
+          </span>
+        </ProcessDetail>
+      </div>
     </div>
+  );
+}
+
+/** One quiet line saying why a measurement is missing, in place of an error banner. */
+function UnavailableNote({ children }: { children: ReactNode }) {
+  return (
+    <SettingsNote icon={<CircleSlashIcon className="text-dim-foreground" />}>
+      {children}
+    </SettingsNote>
+  );
+}
+
+/** A section whose data needs the monitor, once the reason has been stated above. */
+function UnavailableRows() {
+  return (
+    <div className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
+      <T>Unavailable</T>
+    </div>
+  );
+}
+
+/** The muted second line under a process name. */
+function ProcessDetail({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-0.5 grid gap-1 font-mono text-meta tabular-nums text-muted-foreground">
+      {children}
+    </div>
+  );
+}
+
+/** Read and write stacked in one cell, colored like the timeline legend. */
+function IoPair({ read, write, tooltip }: { read: string; write: string; tooltip?: ReactNode }) {
+  const pair = (
+    <div className="font-mono tabular-nums">
+      <div className="truncate text-info-foreground">{read}</div>
+      <div className="truncate text-warning-foreground">{write}</div>
+    </div>
+  );
+  if (!tooltip) return pair;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={pair} />
+      <TooltipPopup side="top" className="text-left">
+        {tooltip}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -558,6 +626,7 @@ function ProcessTable({
   onSignal: (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => void;
 }) {
   const messages = useMessages();
+  const gt = useGT();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const visible = visibleResourceTelemetryProcesses(processes, collapsed);
   const toggle = (process: ResourceTelemetryProcess) => {
@@ -581,61 +650,43 @@ function ProcessTable({
         hideScrollbars
         className="max-h-[min(68vh,48rem)] w-full max-w-full"
       >
-        <table className="w-full min-w-[1320px] table-fixed text-left text-xs">
+        <table className="w-full table-fixed text-left text-xs">
           <colgroup>
-            <col className="w-[20%]" />
-            <col className="w-[10%]" />
-            <col className="w-[7%]" />
-            <col className="w-[8%]" />
-            <col className="w-[9%]" />
-            <col className="w-[9%]" />
-            <col className="w-[9%]" />
-            <col className="w-[10%]" />
-            <col className="w-[8%]" />
-            <col className="w-[6%]" />
-            <col className="w-[4%]" />
+            <col />
+            <col className="w-16" />
+            <col className="w-18" />
+            <col className="w-20" />
+            <col className="w-24" />
+            <col className="w-24" />
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-divider bg-card text-3xs text-dim-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">
                 <T>Process</T>
               </th>
-              <th className="px-3 py-2 font-semibold">
-                <T>Category</T>
-              </th>
               <th className="px-3 py-2 text-right font-semibold">
                 <T>CPU</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold">
-                <T>CPU Time</T>
+                <T>CPU time</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold">
                 <T>Memory</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold">
-                <T>Read/s</T>
+                <T>I/O per sec</T>
               </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Write/s</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Read Total</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Write Total</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>PID</T>
-              </th>
-              <th className="px-2 py-2 text-right font-semibold sm:pr-4">
-                <T>Kill</T>
+              <th className="px-2 py-2 font-semibold sm:pr-4">
+                <span className="sr-only">
+                  <T>Signal</T>
+                </span>
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-divider">
             {visible.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
+                <td colSpan={6} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
                   <T>Waiting for the native process monitor.</T>
                 </td>
               </tr>
@@ -649,9 +700,6 @@ function ProcessTable({
                     onToggle={toggle}
                   />
                 </td>
-                <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
-                  {categoryLabel(process.category, messages)}
-                </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {process.cpuPercent.toFixed(1)}%
                 </td>
@@ -661,25 +709,30 @@ function ProcessTable({
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatBytes(process.residentBytes)}
                 </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-info-foreground">
-                  {formatRate(process.ioReadBytesPerSecond)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
-                  {formatRate(process.ioWriteBytesPerSecond)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  {formatBytes(process.ioReadBytes)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  <Tooltip>
-                    <TooltipTrigger render={<span>{formatBytes(process.ioWriteBytes)}</span>} />
-                    <TooltipPopup side="top">
-                      {ioSemanticsLabel(process.ioSemantics, messages)}
-                    </TooltipPopup>
-                  </Tooltip>
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  {process.identity.pid}
+                <td className="px-3 py-2 text-right">
+                  <IoPair
+                    read={formatRate(process.ioReadBytesPerSecond)}
+                    write={formatRate(process.ioWriteBytesPerSecond)}
+                    tooltip={
+                      <div className="space-y-0.5">
+                        <div>
+                          {gt("Read {bytes}", { bytes: formatRate(process.ioReadBytesPerSecond) })}
+                        </div>
+                        <div>
+                          {gt("Write {bytes}", {
+                            bytes: formatRate(process.ioWriteBytesPerSecond),
+                          })}
+                        </div>
+                        <div>
+                          {gt("Read total {bytes}", { bytes: formatBytes(process.ioReadBytes) })}
+                        </div>
+                        <div>
+                          {gt("Write total {bytes}", { bytes: formatBytes(process.ioWriteBytes) })}
+                        </div>
+                        <div>{ioSemanticsLabel(process.ioSemantics, messages)}</div>
+                      </div>
+                    }
+                  />
                 </td>
                 <td className="px-2 py-2 text-right sm:pr-4">
                   <ProcessActions
@@ -704,6 +757,7 @@ function HistoryProcessTable({
   processes: ReadonlyArray<ResourceTelemetryProcessSummary>;
 }) {
   const messages = useMessages();
+  const gt = useGT();
   return (
     <div className="border-t border-divider">
       <ScrollArea
@@ -712,53 +766,37 @@ function HistoryProcessTable({
         hideScrollbars
         className="max-h-[28rem] w-full max-w-full"
       >
-        <table className="w-full min-w-[1020px] table-fixed text-left text-xs">
+        <table className="w-full table-fixed text-left text-xs">
           <colgroup>
-            <col className="w-[24%]" />
-            <col className="w-[11%]" />
-            <col className="w-[10%]" />
-            <col className="w-[10%]" />
-            <col className="w-[11%]" />
-            <col className="w-[11%]" />
-            <col className="w-[11%]" />
-            <col className="w-[7%]" />
-            <col className="w-[5%]" />
+            <col />
+            <col className="w-20" />
+            <col className="w-20" />
+            <col className="w-22" />
+            <col className="w-24" />
           </colgroup>
           <thead className="sticky top-0 z-10 border-b border-divider bg-card text-3xs text-dim-foreground">
             <tr>
               <th className="px-4 py-2 font-semibold sm:pl-5">
                 <T>Process</T>
               </th>
-              <th className="px-3 py-2 font-semibold">
-                <T>Category</T>
-              </th>
               <th className="px-3 py-2 text-right font-semibold">
-                <T>CPU Time</T>
+                <T>CPU time</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold">
                 <T>Peak CPU</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold">
-                <T>Peak Mem</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Read</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Write</T>
-              </th>
-              <th className="px-3 py-2 text-right font-semibold">
-                <T>Samples</T>
+                <T>Peak mem</T>
               </th>
               <th className="px-3 py-2 text-right font-semibold sm:pr-5">
-                <T>PID</T>
+                <T>I/O</T>
               </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-divider">
             {processes.length === 0 ? (
               <tr>
-                <td colSpan={9} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
+                <td colSpan={5} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
                   <T>No retained process samples in this window.</T>
                 </td>
               </tr>
@@ -769,7 +807,7 @@ function HistoryProcessTable({
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <span className="block truncate font-medium text-strong-foreground">
+                        <span className="block truncate text-label text-strong-foreground">
                           {process.name || process.command}
                         </span>
                       }
@@ -778,9 +816,19 @@ function HistoryProcessTable({
                       {process.command || process.name}
                     </TooltipPopup>
                   </Tooltip>
-                </td>
-                <td className="truncate px-3 py-2 text-2xs text-muted-foreground">
-                  {categoryLabel(process.category, messages)}
+                  <ProcessDetail>
+                    <span>{categoryLabel(process.category, messages)}</span>
+                    <span>
+                      <T>
+                        PID <Var>{process.identity.pid}</Var>
+                      </T>
+                    </span>
+                    <span>
+                      {gt("{count, plural, one {{count} sample} other {{count} samples}}", {
+                        count: process.sampleCount,
+                      })}
+                    </span>
+                  </ProcessDetail>
                 </td>
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatCpuTime(process.cpuTimeMs / 1_000, messages)}
@@ -791,17 +839,19 @@ function HistoryProcessTable({
                 <td className="px-3 py-2 text-right font-mono tabular-nums">
                   {formatBytes(process.peakRssBytes)}
                 </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-info-foreground">
-                  {formatBytes(process.ioReadBytes)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-warning-foreground">
-                  {formatBytes(process.ioWriteBytes)}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground">
-                  {process.sampleCount}
-                </td>
-                <td className="px-3 py-2 text-right font-mono tabular-nums text-muted-foreground sm:pr-5">
-                  {process.identity.pid}
+                <td className="px-3 py-2 text-right sm:pr-5">
+                  <IoPair
+                    read={formatBytes(process.ioReadBytes)}
+                    write={formatBytes(process.ioWriteBytes)}
+                    tooltip={
+                      <div className="space-y-0.5">
+                        <div>{gt("Read {bytes}", { bytes: formatBytes(process.ioReadBytes) })}</div>
+                        <div>
+                          {gt("Write {bytes}", { bytes: formatBytes(process.ioWriteBytes) })}
+                        </div>
+                      </div>
+                    }
+                  />
                 </td>
               </tr>
             ))}
@@ -814,29 +864,25 @@ function HistoryProcessTable({
 
 function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttributionEntry> }) {
   return (
-    <div className="overflow-x-auto border-t border-divider">
-      <table className="w-full min-w-[720px] table-fixed text-left text-xs">
+    <div className="border-t border-divider">
+      <table className="w-full table-fixed text-left text-xs">
         <colgroup>
-          <col className="w-[22%]" />
-          <col className="w-[28%]" />
-          <col className="w-[14%]" />
-          <col className="w-[14%]" />
-          <col className="w-[10%]" />
-          <col className="w-[12%]" />
+          <col />
+          <col className="w-22" />
+          <col className="w-22" />
+          <col className="w-18" />
+          <col className="w-20" />
         </colgroup>
         <thead className="border-b border-divider text-3xs text-dim-foreground">
           <tr>
             <th className="px-4 py-2 font-semibold sm:pl-5">
-              <T>Component</T>
-            </th>
-            <th className="px-3 py-2 font-semibold">
               <T>Operation</T>
             </th>
             <th className="px-3 py-2 text-right font-semibold">
-              <T>Logical Read</T>
+              <T>Read</T>
             </th>
             <th className="px-3 py-2 text-right font-semibold">
-              <T>Logical Write</T>
+              <T>Write</T>
             </th>
             <th className="px-3 py-2 text-right font-semibold">
               <T>Count</T>
@@ -849,17 +895,17 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
         <tbody className="divide-y divide-divider">
           {entries.length === 0 ? (
             <tr>
-              <td colSpan={6} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
+              <td colSpan={5} className="px-4 py-5 text-xs text-muted-foreground sm:px-5">
                 <T>No instrumented application I/O has been recorded yet.</T>
               </td>
             </tr>
           ) : null}
           {entries.map((entry) => (
             <tr key={`${entry.component}:${entry.operation}`} className="hover:surface-ghost-hover">
-              <td className="truncate px-4 py-2 font-medium text-strong-foreground sm:pl-5">
-                {entry.component}
+              <td className="px-4 py-2 sm:pl-5">
+                <div className="truncate text-label text-strong-foreground">{entry.operation}</div>
+                <ProcessDetail>{entry.component}</ProcessDetail>
               </td>
-              <td className="truncate px-3 py-2 text-muted-foreground">{entry.operation}</td>
               <td className="px-3 py-2 text-right font-mono tabular-nums text-info-foreground">
                 {formatBytes(entry.logicalReadBytes)}
               </td>
@@ -917,7 +963,19 @@ function ResourceTelemetryDiagnosticsBody({
   const signalingKeysRef = useRef<ReadonlySet<string>>(new Set());
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
-  const allT3 = snapshot?.groups.allT3;
+  // With the native monitor down and nothing sampled, the zeroed totals are unknown, not zero.
+  const nativeUnavailableReason =
+    snapshot &&
+    (snapshot.health.native.status === "unavailable" ||
+      snapshot.health.native.status === "stopped") &&
+    snapshot.processes.length === 0
+      ? Option.getOrElse(snapshot.health.native.lastError, () =>
+          gt("The native process monitor is unavailable."),
+        )
+      : null;
+  const measured = nativeUnavailableReason === null ? snapshot?.groups.allT3 : undefined;
+  const pendingValue = nativeUnavailableReason === null ? "..." : "-";
+  const historyProcesses = history.data?.topProcesses ?? [];
 
   const signalProcess = async (process: ResourceTelemetryProcess, signal: ServerProcessSignal) => {
     const targetEnvironmentId = environmentId;
@@ -1060,10 +1118,9 @@ function ResourceTelemetryDiagnosticsBody({
     <>
       <SettingsSection
         title={gt("Resource monitor")}
-        icon={<ActivityIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
-            {snapshot ? (
+            {snapshot && nativeUnavailableReason === null ? (
               <SourceStatusBadge label={gt("Native")} status={snapshot.health.native.status} />
             ) : null}
             <LastSampleLabel sampledAt={snapshot?.readAt ?? null} />
@@ -1101,22 +1158,32 @@ function ResourceTelemetryDiagnosticsBody({
                 </T>
               </p>
             </div>
-            <div className="flex items-center gap-2 text-3xs text-dim-foreground">
-              <StatusDot tone={snapshot && snapshot.sampleIntervalMs > 0 ? "success" : "neutral"} />
-              {snapshot
-                ? formatSamplingStatus(snapshot.sampleIntervalMs, messages)
-                : gt("Sampling every ...")}
-            </div>
+            {nativeUnavailableReason ? (
+              <div className="flex items-center gap-2 text-3xs text-dim-foreground">
+                <StatusDot tone="neutral" label={nativeUnavailableReason} />
+                <T>Unavailable</T>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-3xs text-dim-foreground">
+                <StatusDot
+                  tone={snapshot && snapshot.sampleIntervalMs > 0 ? "success" : "neutral"}
+                />
+                {snapshot
+                  ? formatSamplingStatus(snapshot.sampleIntervalMs, messages)
+                  : gt("Sampling every ...")}
+              </div>
+            )}
           </div>
-          <div className="grid grid-cols-2 divide-x divide-y divide-divider md:grid-cols-3">
+          {/* Tiles draw their right and bottom edges; the 1px overhang is clipped by the card so only inner dividers show. */}
+          <div className="-mr-px -mb-px grid grid-cols-2 md:grid-cols-3 [&>*]:border-r [&>*]:border-b [&>*]:border-divider">
             <IconStat
               icon={<CpuIcon className="size-3.5" />}
               label={gt("Current CPU")}
-              value={allT3 ? `${allT3.currentCpuPercent.toFixed(1)}%` : "..."}
+              value={measured ? `${measured.currentCpuPercent.toFixed(1)}%` : pendingValue}
               detail={
-                allT3
+                measured
                   ? gt("{time} observed CPU time", {
-                      time: formatCpuTime(allT3.cpuTimeMs / 1_000, messages),
+                      time: formatCpuTime(measured.cpuTimeMs / 1_000, messages),
                     })
                   : undefined
               }
@@ -1124,28 +1191,30 @@ function ResourceTelemetryDiagnosticsBody({
             <IconStat
               icon={<MemoryStickIcon className="size-3.5" />}
               label={gt("Resident memory")}
-              value={allT3 ? formatBytes(allT3.currentRssBytes) : "..."}
+              value={measured ? formatBytes(measured.currentRssBytes) : pendingValue}
               detail={
-                allT3
-                  ? gt("{bytes} combined process peaks", { bytes: formatBytes(allT3.peakRssBytes) })
+                measured
+                  ? gt("{bytes} combined process peaks", {
+                      bytes: formatBytes(measured.peakRssBytes),
+                    })
                   : undefined
               }
             />
             <IconStat
               icon={<ActivityIcon className="size-3.5" />}
               label={gt("Process count")}
-              value={allT3 ? String(allT3.processCount) : "..."}
+              value={measured ? String(measured.processCount) : pendingValue}
               detail={
-                allT3 ? (
+                measured ? (
                   <span className="grid gap-1">
                     <span>
                       {gt("{count, plural, one {{count} start} other {{count} starts}}", {
-                        count: allT3.processStarts,
+                        count: measured.processStarts,
                       })}
                     </span>
                     <span>
                       {gt("{count, plural, one {{count} exit} other {{count} exits}}", {
-                        count: allT3.processExits,
+                        count: measured.processExits,
                       })}
                     </span>
                   </span>
@@ -1155,18 +1224,18 @@ function ResourceTelemetryDiagnosticsBody({
             <IconStat
               icon={<HardDriveIcon className="size-3.5" />}
               label={gt("Read throughput")}
-              value={allT3 ? formatRate(allT3.ioReadBytesPerSecond) : "..."}
-              detail={allT3 ? `${formatBytes(allT3.ioReadBytes)} observed` : undefined}
+              value={measured ? formatRate(measured.ioReadBytesPerSecond) : pendingValue}
+              detail={measured ? `${formatBytes(measured.ioReadBytes)} observed` : undefined}
             />
             <IconStat
               icon={<DatabaseIcon className="size-3.5" />}
               label={gt("Write throughput")}
-              value={allT3 ? formatRate(allT3.ioWriteBytesPerSecond) : "..."}
-              detail={allT3 ? `${formatBytes(allT3.ioWriteBytes)} observed` : undefined}
+              value={measured ? formatRate(measured.ioWriteBytesPerSecond) : pendingValue}
+              detail={measured ? `${formatBytes(measured.ioWriteBytes)} observed` : undefined}
               tone={
-                allT3 && allT3.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
+                measured && measured.ioWriteBytesPerSecond >= 10 * 1_024 * 1_024
                   ? "danger"
-                  : allT3 && allT3.ioWriteBytesPerSecond >= 1_024 * 1_024
+                  : measured && measured.ioWriteBytesPerSecond >= 1_024 * 1_024
                     ? "warning"
                     : "default"
               }
@@ -1174,15 +1243,9 @@ function ResourceTelemetryDiagnosticsBody({
             <IconStat
               icon={<GaugeIcon className="size-3.5" />}
               label={gt("CPU speed limit")}
-              value={
-                snapshot
-                  ? speedLimit === null
-                    ? gt("Unknown")
-                    : `${speedLimit.toFixed(0)}%`
-                  : "..."
-              }
+              value={snapshot ? (speedLimit === null ? "-" : `${speedLimit.toFixed(0)}%`) : "..."}
               detail={
-                snapshot
+                snapshot && snapshot.power.thermalState !== "unknown"
                   ? gt("{thermalState} thermal state", {
                       thermalState: snapshot.power.thermalState,
                     })
@@ -1192,12 +1255,11 @@ function ResourceTelemetryDiagnosticsBody({
             />
           </div>
           {telemetry.error ? (
-            <div className="flex items-start gap-2 border-t border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
-              <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
-              <span>{telemetry.error}</span>
+            <div className="border-t border-divider">
+              <UnavailableNote>{telemetry.error}</UnavailableNote>
             </div>
           ) : null}
-          {snapshot ? (
+          {snapshot && nativeUnavailableReason === null ? (
             <div className="grid border-t border-divider bg-muted/10 md:grid-cols-3">
               <AggregateCard
                 label={gt("Backend + agents")}
@@ -1221,7 +1283,6 @@ function ResourceTelemetryDiagnosticsBody({
 
       <SettingsSection
         title={gt("Host & collection")}
-        icon={<GaugeIcon className="size-4 text-muted-foreground" />}
         headerAction={
           collectorNeedsRetry ? (
             <Button size="xs" variant="secondary" disabled={isRetrying} onClick={retryCollector}>
@@ -1231,7 +1292,13 @@ function ResourceTelemetryDiagnosticsBody({
           ) : null
         }
       >
-        <div className="grid overflow-hidden rounded-card border border-transparent surface-card-settings md:grid-cols-2 md:divide-x md:divide-divider">
+        {/* Without host signals the host side is one note, so the two sides stack instead of leaving a tall empty column. */}
+        <div
+          className={cn(
+            "grid overflow-hidden rounded-card border border-transparent surface-card-settings",
+            hasHostPowerSignal && "md:grid-cols-2 md:divide-x md:divide-divider",
+          )}
+        >
           <div className="px-4 py-4 sm:px-5">
             <div className="mb-3 flex items-center gap-2 text-3xs font-normal text-dim-foreground">
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
@@ -1301,20 +1368,30 @@ function ResourceTelemetryDiagnosticsBody({
                 />
               </>
             ) : (
-              <div className="rounded-card border border-dashed border-border/70 surface-card-settings px-4 py-5">
+              <div>
                 <div className="text-sm font-medium text-strong-foreground">
                   <T>Desktop host signals not connected</T>
                 </div>
-                <p className="mt-1.5 max-w-sm text-2xs leading-relaxed text-dim-foreground">
-                  <T>
-                    Power, idle, lock, and thermal state are supplied by the desktop host. Process
-                    telemetry remains fully active in this browser session.
-                  </T>
+                <p className="mt-1 text-2xs leading-relaxed text-dim-foreground">
+                  {snapshot?.health.native.status === "healthy" ||
+                  snapshot?.health.native.status === "degraded" ? (
+                    <T>
+                      Power, idle, lock, and thermal state are supplied by the desktop host. Process
+                      telemetry remains fully active in this browser session.
+                    </T>
+                  ) : (
+                    <T>Power, idle, lock, and thermal state are supplied by the desktop host.</T>
+                  )}
                 </p>
               </div>
             )}
           </div>
-          <div className="border-t border-divider px-4 py-4 md:border-t-0 sm:px-5">
+          <div
+            className={cn(
+              "border-t border-divider px-4 py-4 sm:px-5",
+              hasHostPowerSignal && "md:border-t-0",
+            )}
+          >
             <div className="mb-3 flex items-center gap-2 text-3xs font-normal text-dim-foreground">
               <span className="flex size-6 items-center justify-center rounded-md bg-muted/60">
                 <GaugeIcon className="size-3.5" />
@@ -1333,17 +1410,27 @@ function ResourceTelemetryDiagnosticsBody({
                 />
                 <DetailRow
                   label={gt("Collection time")}
-                  value={formatDurationMicros(snapshot.health.collectionDurationMicros)}
+                  value={
+                    nativeUnavailableReason
+                      ? "-"
+                      : formatDurationMicros(snapshot.health.collectionDurationMicros)
+                  }
                 />
                 <DetailRow
                   label={gt("Process scan")}
-                  value={`${snapshot.health.retainedProcessCount}/${snapshot.health.scannedProcessCount} retained`}
+                  value={
+                    nativeUnavailableReason
+                      ? "-"
+                      : `${snapshot.health.retainedProcessCount}/${snapshot.health.scannedProcessCount} retained`
+                  }
                 />
                 <DetailRow
                   label={gt("Inaccessible")}
-                  value={String(snapshot.health.inaccessibleProcessCount)}
+                  value={
+                    nativeUnavailableReason ? "-" : String(snapshot.health.inaccessibleProcessCount)
+                  }
                   valueClassName={
-                    snapshot.health.inaccessibleProcessCount > 0
+                    nativeUnavailableReason === null && snapshot.health.inaccessibleProcessCount > 0
                       ? "text-warning-foreground"
                       : undefined
                   }
@@ -1352,9 +1439,7 @@ function ResourceTelemetryDiagnosticsBody({
                   label={gt("Sidecar")}
                   value={
                     <span className="grid justify-items-end gap-1">
-                      <span>
-                        {Option.getOrElse(snapshot.health.sidecarVersion, () => gt("Unavailable"))}
-                      </span>
+                      <span>{Option.getOrElse(snapshot.health.sidecarVersion, () => "-")}</span>
                       {Option.isSome(snapshot.health.sidecarPid) ? (
                         <span>
                           <T>
@@ -1378,7 +1463,6 @@ function ResourceTelemetryDiagnosticsBody({
 
       <SettingsSection
         title={gt("Resource timeline")}
-        icon={<HardDriveIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <div className="flex items-center gap-2">
             <HistoryWindowSelector selectedWindowMs={windowMs} onSelect={setWindowMs} />
@@ -1395,20 +1479,22 @@ function ResourceTelemetryDiagnosticsBody({
         }
       >
         <div className="overflow-hidden rounded-card border border-transparent surface-card-settings">
-          {history.error ? (
-            <div className="flex items-start gap-2 border-b border-destructive/20 bg-destructive/5 px-4 py-3 text-xs text-destructive sm:px-5">
-              <AlertTriangleIcon className="size-3.5 h-lh shrink-0" />
-              <span>{history.error}</span>
-            </div>
-          ) : null}
-          <ResourceHistoryChart buckets={history.data?.buckets ?? []} />
-          <HistoryProcessTable processes={history.data?.topProcesses ?? []} />
+          {historyProcesses.length === 0 && nativeUnavailableReason ? (
+            <UnavailableRows />
+          ) : (
+            <>
+              {history.error ? <UnavailableNote>{history.error}</UnavailableNote> : null}
+              {historyProcesses.length > 0 ? (
+                <ResourceHistoryChart buckets={history.data?.buckets ?? []} />
+              ) : null}
+              <HistoryProcessTable processes={historyProcesses} />
+            </>
+          )}
         </div>
       </SettingsSection>
 
       <SettingsSection
         title={gt("Live process tree")}
-        icon={<CpuIcon className="size-4 text-muted-foreground" />}
         headerAction={
           snapshot ? (
             <span className="text-3xs text-dim-foreground">
@@ -1420,18 +1506,21 @@ function ResourceTelemetryDiagnosticsBody({
         }
       >
         <div className="overflow-hidden rounded-card border border-transparent surface-card-settings">
-          <ProcessTable
-            processes={snapshot?.processes ?? []}
-            canMaintainEnvironment={canMaintainEnvironment}
-            signalingKeys={signalingKeys}
-            onSignal={signalProcess}
-          />
+          {nativeUnavailableReason ? (
+            <UnavailableRows />
+          ) : (
+            <ProcessTable
+              processes={snapshot?.processes ?? []}
+              canMaintainEnvironment={canMaintainEnvironment}
+              signalingKeys={signalingKeys}
+              onSignal={signalProcess}
+            />
+          )}
         </div>
       </SettingsSection>
 
       <SettingsSection
         title={gt("Instrumented application I/O")}
-        icon={<DatabaseIcon className="size-4 text-muted-foreground" />}
         headerAction={
           <span className="text-3xs text-dim-foreground">
             <T>Logical bytes by operation</T>

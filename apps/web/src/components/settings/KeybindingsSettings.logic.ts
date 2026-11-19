@@ -221,58 +221,6 @@ export function keybindingConflictLabels(
   return [...new Set(conflicts)].toSorted();
 }
 
-export interface KeybindingGroup {
-  readonly id: string;
-  readonly title: string;
-  readonly rows: ReadonlyArray<KeybindingRow>;
-}
-
-const KEYBINDING_GROUPS = [
-  {
-    id: "navigation",
-    title: msg("Navigation"),
-    prefixes: ["sidebar", "rightPanel", "commandPalette", "filePicker", "projectSearch", "editor"],
-  },
-  { id: "threads", title: msg("Threads"), prefixes: ["thread", "chat", "pullRequest"] },
-  { id: "composer", title: msg("Composer"), prefixes: ["composer", "modelPicker"] },
-  { id: "terminal", title: msg("Terminal"), prefixes: ["terminal"] },
-  { id: "preview", title: msg("Preview & diff"), prefixes: ["preview", "diff"] },
-  {
-    id: "appearance",
-    title: msg("Appearance"),
-    prefixes: ["theme", "appearance", "themeEditor"],
-  },
-  { id: "scripts", title: msg("Project scripts"), prefixes: ["script"] },
-] as const;
-const OTHER_KEYBINDING_GROUP = {
-  id: "other",
-  title: msg("Other", { $context: "keybinding group" }),
-} as const;
-
-function keybindingGroupFor(command: KeybindingCommand): { id: string; title: string } {
-  const prefix = String(command).split(".")[0] ?? "";
-  return (
-    KEYBINDING_GROUPS.find((group) => (group.prefixes as ReadonlyArray<string>).includes(prefix)) ??
-    OTHER_KEYBINDING_GROUP
-  );
-}
-
-export function groupKeybindingRows(
-  rows: ReadonlyArray<KeybindingRow>,
-): ReadonlyArray<KeybindingGroup> {
-  const rowsByGroup = new Map<string, Array<KeybindingRow>>();
-  for (const row of rows) {
-    const group = keybindingGroupFor(row.command);
-    const bucket = rowsByGroup.get(group.id);
-    if (bucket) bucket.push(row);
-    else rowsByGroup.set(group.id, [row]);
-  }
-  return [...KEYBINDING_GROUPS, OTHER_KEYBINDING_GROUP].flatMap((group) => {
-    const groupRows = rowsByGroup.get(group.id);
-    return groupRows ? [{ id: group.id, title: group.title, rows: groupRows }] : [];
-  });
-}
-
 export function buildKeybindingRows(
   keybindings: ResolvedKeybindingsConfig,
   platform = navigator.platform,
@@ -404,108 +352,94 @@ export function buildKeybindingCommandOptions(
   );
 }
 
-const COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
-  "workspace.focusNext": msg("Focus Next Workspace Area"),
-  "workspace.focusPrevious": msg("Focus Previous Workspace Area"),
-  "composer.sendAlternate": msg("Composer: Opposite Queue or Steer Action"),
-  "composer.sendBackground": msg("Composer: Start in Background"),
-  "composer.sendAndNewThread": msg("Composer: Send and Start New Thread"),
-  "composer.dictation": msg("Composer: Start or Finish Dictation"),
-  "thread.steerQueuedMessage": msg("Queue: Send First Queued Message"),
-  "thread.editQueuedMessage": msg("Queue: Edit Last Queued Message"),
-  "thread.copyReference": msg("Pull Request: Copy Link or Thread"),
-  "chat.citeSelection": msg("Chat: Cite Selection in Composer"),
-  "sidebar.toggle": msg("Sidebar: Toggle"),
-  "navigation.back": msg("Navigation: Back"),
-  "navigation.forward": msg("Navigation: Forward"),
-  "terminal.toggle": msg("Terminal: Toggle"),
-  "terminal.split": msg("Terminal: Split"),
-  "terminal.splitVertical": msg("Terminal: Split Vertical"),
-  "terminal.new": msg("Terminal: New"),
-  "terminal.close": msg("Terminal: Close"),
-  "rightPanel.toggle": msg("Right Panel: Toggle"),
-  "rightPanel.new": msg("Right Panel: New"),
-  "threadPanel.toggle": msg("Thread Panel: Toggle"),
-  "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
-  "rightPanel.close": msg("Right Panel: Close"),
-  "pullRequest.copyNumber": msg("Pull Request: Copy Number"),
-  "diff.toggle": msg("Diff: Toggle"),
-  "preview.toggle": msg("Preview: Toggle"),
-  "preview.refresh": msg("Preview: Refresh"),
-  "preview.zoomIn": msg("Preview: Zoom In"),
-  "preview.zoomOut": msg("Preview: Zoom Out"),
-  "preview.resetZoom": msg("Preview: Reset Zoom"),
-  "commandPalette.toggle": msg("Command Palette: Toggle"),
-  "filePicker.toggle": msg("File Picker: Toggle"),
-  "projectSearch.toggle": msg("Project Search: Toggle"),
-  "usage.open": msg("Usage: Open"),
-  "theme.select": msg("Theme: Select"),
-  "appearance.cycle": msg("Appearance: Cycle"),
-  "themeEditor.toggle": msg("Theme Editor: Toggle"),
-  "composer.stash": msg("Composer: Stash"),
-  "composer.host": msg("Composer: Host"),
+/** Friendly names for built-in commands, shown in the Shortcuts table and settings search. */
+const COMMAND_LABELS: Partial<Record<string, string>> = {
+  "workspace.focusNext": msg("Focus next workspace area"),
+  "workspace.focusPrevious": msg("Focus previous workspace area"),
+  "sidebar.toggle": msg("Toggle sidebar"),
+  "navigation.back": msg("Go back"),
+  "navigation.forward": msg("Go forward"),
+  "terminal.toggle": msg("Toggle terminal"),
+  "terminal.split": msg("Split terminal"),
+  "terminal.splitVertical": msg("Split terminal vertically"),
+  "terminal.new": msg("New terminal"),
+  "terminal.close": msg("Close terminal"),
+  "rightPanel.toggle": msg("Toggle right panel"),
+  "threadPanel.toggle": msg("Toggle thread panel"),
+  "rightPanel.close": msg("Close right panel"),
+  "rightPanel.new": msg("New right panel tab"),
+  "view.reopenClosed": msg("Reopen closed tab"),
+  "pullRequest.copyNumber": msg("Copy pull request number"),
+  "diff.toggle": msg("Toggle diff panel"),
+  "preview.toggle": msg("Toggle browser"),
+  "preview.refresh": msg("Reload browser"),
+  "preview.focusUrl": msg("Focus browser address"),
+  "preview.find": msg("Find on page in Preview"),
+  "preview.zoomIn": msg("Zoom in browser"),
+  "preview.zoomOut": msg("Zoom out browser"),
+  "preview.resetZoom": msg("Reset browser zoom"),
+  "commandPalette.toggle": msg("Command palette"),
+  "filePicker.toggle": msg("Open file"),
+  "projectSearch.toggle": msg("Search in project"),
+  "theme.select": msg("Select theme"),
+  "appearance.cycle": msg("Cycle appearance"),
+  "themeEditor.toggle": msg("Toggle theme editor"),
+  "composer.stash": msg("Stash prompt"),
+  "composer.sendAlternate": msg("Send with the opposite queue or steer action"),
+  "composer.sendBackground": msg("Start in background"),
+  "composer.sendAndNewThread": msg("Send and start a new thread"),
+  "composer.dictation": msg("Start or finish dictation"),
+  "composer.host": msg("Choose machine"),
+  "composer.effort": msg("Choose effort"),
+  "composer.mode": msg("Choose access mode"),
+  "composer.workspace": msg("Choose workspace"),
+  "composer.previousWorktree": msg("Use previous worktree"),
+  "composer.branch": msg("Choose branch"),
+  "chat.new": msg("New thread"),
+  "chat.newLocal": msg("New local thread"),
+  "chat.newWithoutProject": msg("New thread without a project"),
+  "chat.citeSelection": msg("Cite selection in composer"),
+  "chat.find": msg("Find in thread"),
+  "editor.openFavorite": msg("Open in editor"),
+  "modelPicker.toggle": msg("Choose model"),
+  "modelPicker.previousProvider": msg("Previous model provider"),
+  "modelPicker.nextProvider": msg("Next model provider"),
+  "thread.stop": msg("Stop run"),
+  "thread.steerQueuedMessage": msg("Send first queued message"),
+  "thread.editQueuedMessage": msg("Edit last queued message"),
+  "thread.previous": msg("Previous thread"),
+  "thread.next": msg("Next thread"),
+  "thread.copyReference": msg("Copy link to pull request or thread"),
+  "thread.settle": msg("Settle thread"),
+  "thread.pin": msg("Pin thread"),
+  "thread.undo": msg("Undo last thread action"),
+  "git.commitPush": msg("Commit and push"),
+  "usage.open": msg("Open usage"),
+  "usage.cost": msg("Show usage by cost"),
+  "usage.tokens": msg("Show usage by tokens"),
+  "usage.limits": msg("Show usage limits"),
+  "usage.period.day": msg("Show usage for the past 24 hours"),
+  "usage.period.week": msg("Show usage for the past 7 days"),
+  "usage.period.month": msg("Show usage for the past 30 days"),
+  "usage.period.quarter": msg("Show usage for the past 90 days"),
   "composer.cycleHost": msg("Composer: Cycle Host"),
-  "composer.effort": msg("Composer: Effort"),
   "composer.increaseEffort": msg("Composer: Increase Effort"),
   "composer.decreaseEffort": msg("Composer: Decrease Effort"),
-  "composer.mode": msg("Composer: Mode"),
-  "composer.workspace": msg("Composer: Workspace"),
-  "composer.previousWorktree": msg("Composer: Previous Worktree"),
-  "composer.branch": msg("Composer: Branch"),
-  "chat.new": msg("Chat: New"),
-  "chat.newLocal": msg("Chat: New Local"),
-  "chat.newWithoutProject": msg("Chat: New Without Project"),
-  "chat.find": msg("Chat: Find"),
-  "editor.openFavorite": msg("Editor: Open Favorite"),
-  "modelPicker.toggle": msg("Model Picker: Toggle"),
-  "modelPicker.previousProvider": msg("Model Picker: Previous Provider"),
-  "modelPicker.nextProvider": msg("Model Picker: Next Provider"),
-  "thread.stop": msg("Thread: Stop"),
-  "thread.previous": msg("Thread: Previous"),
-  "thread.next": msg("Thread: Next"),
-  "thread.settle": msg("Thread: Settle"),
-  "thread.pin": msg("Thread: Pin"),
   "thread.regenerateTitle": msg("Thread: Regenerate Title"),
-  "thread.undo": msg("Thread: Undo"),
-};
-
-// Whole labels: search titles keep the encoded message, which cannot nest another one.
-const USAGE_COMMAND_LABELS: Record<
-  (typeof METRIC_OPTIONS)[number]["command"] | (typeof WINDOW_OPTIONS)[number]["command"],
-  string
-> = {
-  "usage.cost": msg("Usage: Cost"),
-  "usage.tokens": msg("Usage: Tokens"),
-  "usage.limits": msg("Usage: Limits"),
-  "usage.period.day": msg("Usage: Period: Past 24h"),
-  "usage.period.week": msg("Usage: Period: 7 days"),
-  "usage.period.month": msg("Usage: Period: 30 days"),
-  "usage.period.quarter": msg("Usage: Period: 90 days"),
-};
-
-const LATE_COMMAND_LABELS: Partial<Record<KeybindingCommand, string>> = {
-  "view.reopenClosed": msg("Reopen Closed Tab"),
-  "preview.focusUrl": msg("Preview: Focus URL"),
-  "preview.find": msg("Preview: Find on Page"),
+  "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
 };
 
 export function commandLabel(command: KeybindingCommand, resolve: MessageResolver = m): string {
   const label = COMMAND_LABELS[command];
   if (label) return resolve(label);
-  const usageLabel = USAGE_COMMAND_LABELS[command as keyof typeof USAGE_COMMAND_LABELS];
-  if (usageLabel) return resolve(usageLabel);
-  const lateLabel = LATE_COMMAND_LABELS[command];
-  if (lateLabel) return resolve(lateLabel);
   const raw = String(command);
-  if (raw.startsWith("thread.jump.")) {
-    return resolve(msg("Thread: Jump: {n}", { n: raw.slice("thread.jump.".length) }));
-  }
-  if (raw.startsWith("modelPicker.jump.")) {
-    return resolve(msg("Model Picker: Jump: {n}", { n: raw.slice("modelPicker.jump.".length) }));
-  }
+  const threadJump = /^thread\.jump\.(\d)$/.exec(raw);
+  if (threadJump) return resolve(msg("Jump to thread {n}", { n: threadJump[1] }));
+  const modelJump = /^modelPicker\.jump\.(\d)$/.exec(raw);
+  if (modelJump) return resolve(msg("Pick model {n}", { n: modelJump[1] }));
   if (raw.startsWith("script.") && raw.endsWith(".run")) {
     return resolve(
-      msg("Run Script: {name}", {
+      msg("Run script: {name}", {
         name: titleCaseCommandSegment(raw.slice("script.".length, -".run".length)),
       }),
     );

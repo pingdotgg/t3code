@@ -156,7 +156,7 @@ function HostedPromptLinkLanding({
 
   if (!summary.ok) {
     return (
-      <StandalonePage>
+      <StandalonePage tone="error">
         <StandalonePageHeader title={gt("Could not open the link")} description={summary.error} />
       </StandalonePage>
     );
@@ -164,7 +164,7 @@ function HostedPromptLinkLanding({
 
   const { title, description, prompt, details } = summary.value;
   return (
-    <StandalonePage>
+    <StandalonePage tone="plain">
       <StandalonePageHeader title={title} description={description} />
       {prompt !== null && prompt.hiddenCharacters > 0 ? (
         <Alert className="mt-5" variant="error">

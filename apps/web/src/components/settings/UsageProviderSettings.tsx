@@ -46,13 +46,13 @@ export function UsageProviderSettings({
           !readOnly ? (
             <Button size="xs" variant="secondary" onClick={() => setAdding(true)}>
               <PlusIcon className="size-3" aria-hidden />
-              <T>Add hub</T>
+              <T>Add usage provider</T>
             </Button>
           ) : null
         }
       >
         {entries.length === 0 ? (
-          <SettingsRow title={gt("No hubs configured.")} />
+          <SettingsRow title={gt("No usage providers configured.")} />
         ) : (
           entries.map(([id, source]) => {
             const label = source.label?.trim() || source.url;

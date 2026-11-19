@@ -7,13 +7,23 @@ import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
 import { requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
 import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
+import { useThemeEditorStore } from "./settings/themeEditorStore";
 import { Button } from "./ui/button";
 import { Dialog, DialogClose, DialogPopup } from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /** Settings and Usage own their shortcuts inside `[data-app-modal]` and return to the opener. */
-export function AppRouteModal({ label, children }: { label: string; children: ReactNode }) {
+export function AppRouteModal({
+  label,
+  children,
+  variant = "app",
+}: {
+  label: string;
+  children: ReactNode;
+  variant?: "app" | "app-panel";
+}) {
   const closeAppModal = useCloseAppModal();
+  const themeEditorOpen = useThemeEditorStore((store) => store.session !== null);
   const [open, setOpen] = useState(true);
   // Text selection that ends on the backdrop is not a dismissal.
   const backdropPressRef = useRef(false);
@@ -34,6 +44,8 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   return (
     <Dialog
       open={open}
+      // The floating editor lives outside this route and needs focus while editing.
+      modal={!themeEditorOpen}
       // Portaled layers outside this tree (toasts, Clerk, confirm dialogs) are not backdrop presses.
       disablePointerDismissal
       onOpenChange={(nextOpen, eventDetails) => {
@@ -59,7 +71,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       }}
     >
       <DialogPopup
-        variant="app"
+        variant={variant}
         showCloseButton={false}
         bottomStickOnMobile={false}
         ref={popupRef}

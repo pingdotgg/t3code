@@ -1,7 +1,8 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomValue } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
-import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { DownloadIcon, FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 
 import { openCommandPalette } from "../commandPaletteBus";
 import { isElectron } from "../env";
@@ -19,6 +20,7 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
  */
 export function NoProjectsHero() {
   const gt = useGT();
+  const navigate = useNavigate();
   const contentArea = workspaceAreaProps("home", 1, gt("Home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
@@ -47,6 +49,16 @@ export function NoProjectsHero() {
                 label={gt("Add project…")}
                 detail={gt("Open a folder or clone a repository")}
                 onSelect={openAddProject}
+              />
+              <DraftProjectRow
+                icon={<DownloadIcon className="size-4 shrink-0 text-foreground" />}
+                label={gt("Import conversations…")}
+                detail={gt("Continue from {claude}, {codex} or {pi}", {
+                  claude: "Claude Code",
+                  codex: "Codex",
+                  pi: "Pi",
+                })}
+                onSelect={() => void navigate({ to: "/welcome" })}
               />
               {scratchTargetEnvironmentId === null ? null : (
                 <>

@@ -228,7 +228,7 @@ export function McpConsent({
 
   if (loaded.status === "loading") {
     return (
-      <StandalonePage>
+      <StandalonePage tone="plain">
         <ConnectAgentHeading
           title={gt("Checking the sign-in request")}
           description={gt("One moment while this environment verifies the agent's request.")}
@@ -240,7 +240,7 @@ export function McpConsent({
 
   if (loaded.status === "invalid") {
     return (
-      <StandalonePage>
+      <StandalonePage tone="plain">
         <ConnectAgentHeading
           title={gt("This sign-in cannot continue")}
           description={loaded.message}
@@ -264,7 +264,7 @@ export function McpConsent({
   const approveLevel = codeAccess ?? access;
 
   return (
-    <StandalonePage>
+    <StandalonePage tone="plain">
       <ConnectAgentHeading
         title={gt("Connect {app}", { app: details.clientName })}
         description={

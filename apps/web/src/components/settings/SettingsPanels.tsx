@@ -48,8 +48,6 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
-import { ProviderModelPicker } from "../chat/ProviderModelPicker";
-import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
 import { buildHostedChannelSelectionUrl, type HostedAppChannel } from "../../hostedPairing";
 import {
@@ -87,7 +85,6 @@ import {
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { Button } from "../ui/button";
 import { DraftInput } from "../ui/draft-input";
-import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ScopedSwitch } from "./ScopedSwitch";
@@ -109,7 +106,6 @@ import {
   syncAutoSettleDaysField,
 } from "./SettingsPanels.logic";
 import {
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
   SettingResetButton,
   SettingsPageContainer,
   SettingsRow,
@@ -121,7 +117,9 @@ import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
 import { PullRequestLinksOpenInAppSetting } from "./IntegrationsSettings";
-import { StorageCleanupSections } from "./StorageSettings";
+import { StorageCleanupSections, WorktreeCleanupSection } from "./StorageSettings";
+import { InputGroup, InputGroupInput, InputGroupUnit } from "../ui/input-group";
+import { SettingsModelPicker } from "./SettingsModelPicker";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
@@ -806,27 +804,29 @@ function AutoSettleDaysInput({
   };
 
   return (
-    <Input
-      size="sm"
-      type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      className="w-full sm:w-24"
-      value={field.draft}
-      onChange={(event) => setField(editAutoSettleDaysField(field, event.target.value))}
-      onBlur={commit}
-      onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing) return;
-        if (event.key === "Enter") commit();
-        if (event.key === "Escape" && field.dirty) {
-          // An unhandled Escape closes the settings page, and the blur that follows would save.
-          event.preventDefault();
-          event.stopPropagation();
-          setField(cancelAutoSettleDaysField(field));
-        }
-      }}
-      aria-label={gt("Days of inactivity before auto-settle")}
-    />
+    <InputGroup className="w-full sm:w-24">
+      <InputGroupInput
+        size="sm"
+        type="number"
+        min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+        max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+        value={field.draft}
+        onChange={(event) => setField(editAutoSettleDaysField(field, event.target.value))}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing) return;
+          if (event.key === "Enter") commit();
+          if (event.key === "Escape" && field.dirty) {
+            // An unhandled Escape closes the settings page, and the blur that follows would save.
+            event.preventDefault();
+            event.stopPropagation();
+            setField(cancelAutoSettleDaysField(field));
+          }
+        }}
+        aria-label={gt("Days of inactivity before auto-settle")}
+      />
+      <InputGroupUnit>{gt("days", { $context: "unit after a number of days" })}</InputGroupUnit>
+    </InputGroup>
   );
 }
 
@@ -838,22 +838,25 @@ export function RestoreDeviceDefaultsButton({
   onRestored?: () => void;
   compact?: boolean;
 }) {
+  const gt = useGT();
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
     <Button
-      size="xs"
+      size={compact ? "icon-sm" : "xs"}
       variant="ghost"
+      aria-label={compact ? gt("Restore device defaults") : undefined}
       disabled={changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
-      <RotateCcwIcon className="mx-1 size-3.5" />
-      <span className={compact ? "max-sm:sr-only" : undefined}>
-        <T>Restore device defaults</T>
-      </span>
+      <RotateCcwIcon className="size-3.5" />
+      {compact ? null : (
+        <span>
+          <T>Restore device defaults</T>
+        </span>
+      )}
     </Button>
   );
 }
-
 export function GeneralSettingsPanel() {
   const gt = useGT();
   const m = useMessages();
@@ -873,12 +876,7 @@ export function GeneralSettingsPanel() {
         <NotificationSettings />
         <SettingsRow
           {...setting("in-app-notifications")}
-          description={
-            <T>
-              Show a toast when another thread finishes, fails, or needs input or approval while
-              this app has focus.
-            </T>
-          }
+          description={<T>Show a toast when another thread finishes, fails, or needs you.</T>}
           control={
             <Switch
               checked={settings.inAppNotificationsEnabled}
@@ -1026,9 +1024,7 @@ export function GeneralSettingsPanel() {
         />
         <SettingsRow
           {...setting("archive-confirmation")}
-          description={
-            <T>Require a second click on the inline archive action before a thread is archived.</T>
-          }
+          description={<T>Click archive twice before a thread is archived.</T>}
           resetAction={
             settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
               <SettingResetButton
@@ -1334,9 +1330,7 @@ export function ChatSettingsPanel() {
         <AdvancedSettings targetIds={[setting("skills-in-slash-menu").id]}>
           <SettingsRow
             {...setting("skills-in-slash-menu")}
-            description={gt(
-              "Also include skills in the / command menu. Skills always appear when you type $.",
-            )}
+            description={gt("Include skills in the / command menu.")}
             resetAction={
               settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu ? (
                 <SettingResetButton
@@ -1663,9 +1657,7 @@ export function DiffsSettingsPanel() {
       <SettingsSection id="diffs" title={gt("Diffs")}>
         <SettingsRow
           {...setting("diff-layout")}
-          description={gt(
-            "Show diffs stacked or side by side. The toggle in the diff toolbar changes this too.",
-          )}
+          description={gt("Show diffs stacked or side by side.")}
           resetAction={
             settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? (
               <SettingResetButton
@@ -1724,9 +1716,7 @@ export function DiffsSettingsPanel() {
         />
         <SettingsRow
           {...setting("default-diff-file-state")}
-          description={gt(
-            "Start with files expanded or collapsed when opening diffs or a pull request's Code tab.",
-          )}
+          description={gt("Start diff files expanded or collapsed.")}
           resetAction={
             settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed ? (
               <SettingResetButton
@@ -1774,9 +1764,7 @@ export function DiffsSettingsPanel() {
       <SettingsSection id="pull-requests" title={gt("Pull requests")}>
         <SettingsRow
           {...setting("proactive-panels")}
-          description={gt(
-            "Open linked pull requests first. Otherwise, open Changes for edits to at least 3 files or 50 lines.",
-          )}
+          description={gt("Open the linked pull request, or Changes for larger edits.")}
           resetAction={
             settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled ? (
               <SettingResetButton
@@ -2188,85 +2176,80 @@ export function ThreadsSettingsPanel() {
                 <T>Connect an environment to choose its text generation model.</T>
               </span>
             ) : !hasTextGenerationProvider ? (
-              <span className="text-sm text-muted-foreground">
+              <span className="text-body text-muted-foreground">
                 <T>No text generation providers available.</T>
               </span>
             ) : (
-              <div className="flex flex-wrap items-center justify-end gap-1.5">
-                <ProviderModelPicker
-                  environmentId={environmentId}
-                  activeInstanceId={textGenInstanceId}
-                  model={textGenModel}
-                  lockedProvider={null}
-                  instanceEntries={textGenerationModelInstanceEntries}
-                  modelOptionsByInstance={textGenerationModelOptionsByInstance}
-                  triggerVariant="settings"
-                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                  {...(mixedTextGenerationModel ? { triggerLabel: gt("Mixed") } : {})}
-                  getModelDisabledReason={textGenerationModelDisabledReason}
-                  {...(environmentId
+              <SettingsModelPicker
+                environmentId={environmentId}
+                activeInstanceId={textGenInstanceId}
+                model={textGenModel}
+                instanceEntries={textGenerationModelInstanceEntries}
+                modelOptionsByInstance={textGenerationModelOptionsByInstance}
+                {...(mixedTextGenerationModel ? { triggerLabel: gt("Mixed") } : {})}
+                getModelDisabledReason={textGenerationModelDisabledReason}
+                {...(environmentId
+                  ? {
+                      onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                        void navigate({
+                          to: "/settings/providers",
+                          search: { environmentId, instanceId },
+                        });
+                      },
+                    }
+                  : {})}
+                onInstanceModelChange={(instanceId, model) => {
+                  const reason = textGenerationModelDisabledReason(instanceId, model);
+                  if (reason) {
+                    toastManager.add({
+                      type: "error",
+                      title: gt("Text generation model not saved"),
+                      description: reason,
+                    });
+                    return;
+                  }
+                  updateSettings({
+                    textGenerationModelSelection: resolveAppModelSelectionState(
+                      {
+                        ...settings,
+                        textGenerationModelSelection: pickModelSelection(
+                          textGenerationModelSelection,
+                          instanceId,
+                          model,
+                        ),
+                      },
+                      textGenerationProviders,
+                    ),
+                  });
+                }}
+                traits={
+                  textGenInstanceEntry && !mixedTextGenerationModel
                     ? {
-                        onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
-                          void navigate({
-                            to: "/settings/providers",
-                            search: { environmentId, instanceId },
+                        provider: textGenProvider,
+                        // The exact instance's models, so a custom text-gen
+                        // instance like `codex_personal` gets its own list.
+                        models: textGenInstanceEntry.models,
+                        modelOptions: textGenModelOptions,
+                        includePlanAgent: selectsPlanAgent(textGenModelOptions),
+                        onModelOptionsChange: (nextOptions) => {
+                          updateSettings({
+                            textGenerationModelSelection: resolveAppModelSelectionState(
+                              {
+                                ...settings,
+                                textGenerationModelSelection: createModelSelection(
+                                  textGenInstanceId,
+                                  textGenModel,
+                                  nextOptions,
+                                ),
+                              },
+                              textGenerationProviders,
+                            ),
                           });
                         },
                       }
-                    : {})}
-                  onInstanceModelChange={(instanceId, model) => {
-                    const reason = textGenerationModelDisabledReason(instanceId, model);
-                    if (reason) {
-                      toastManager.add({
-                        type: "error",
-                        title: gt("Text generation model not saved"),
-                        description: reason,
-                      });
-                      return;
-                    }
-                    updateSettings({
-                      textGenerationModelSelection: resolveAppModelSelectionState(
-                        {
-                          ...settings,
-                          textGenerationModelSelection: pickModelSelection(
-                            textGenerationModelSelection,
-                            instanceId,
-                            model,
-                          ),
-                        },
-                        textGenerationProviders,
-                      ),
-                    });
-                  }}
-                />
-                {textGenInstanceEntry ? (
-                  <TraitsPicker
-                    provider={textGenProvider}
-                    models={textGenInstanceEntry?.models ?? []}
-                    model={textGenModel}
-                    modelOptions={textGenModelOptions}
-                    allowPromptInjectedEffort={false}
-                    includePlanAgent={selectsPlanAgent(textGenModelOptions)}
-                    triggerVariant="settings"
-                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                    onModelOptionsChange={(nextOptions) => {
-                      updateSettings({
-                        textGenerationModelSelection: resolveAppModelSelectionState(
-                          {
-                            ...settings,
-                            textGenerationModelSelection: createModelSelection(
-                              textGenInstanceId,
-                              textGenModel,
-                              nextOptions,
-                            ),
-                          },
-                          textGenerationProviders,
-                        ),
-                      });
-                    }}
-                  />
-                ) : null}
-              </div>
+                    : null
+                }
+              />
             )
           }
         />
@@ -2343,7 +2326,9 @@ export function MaintenanceSettingsPanel() {
   const hasServerTargets = connectedEnvironments.length > 0;
 
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
+      <WorktreeCleanupSection title={gt("Worktrees")} />
+      <StorageCleanupSections />
       <SettingsSection id="updates" title={gt("Updates")}>
         <SettingsRow
           serverScoped
@@ -2380,9 +2365,7 @@ export function MaintenanceSettingsPanel() {
           {...setting("continue-threads-after-server-update")}
           serverScoped
           settingKeys={["continueThreadsAfterServerUpdate"]}
-          description={gt(
-            "Automatically resume interrupted threads after an update, crash, or machine restart on the selected environments.",
-          )}
+          description={gt("Resume interrupted threads after an update, crash, or restart.")}
           status={
             !hasServerTargets
               ? gt("All selected connected environments must support restart continuation.")
@@ -2451,8 +2434,6 @@ export function MaintenanceSettingsPanel() {
           }
         />
       </SettingsSection>
-
-      <StorageCleanupSections />
 
       <SettingsSection id="diagnostics-section" title={gt("Diagnostics")}>
         <SettingsRow

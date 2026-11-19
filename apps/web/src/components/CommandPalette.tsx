@@ -328,6 +328,7 @@ function openIntentView(
 const NEW_THREAD_NO_PROJECT_VALUE = "new-thread-in:no-project";
 
 export function CommandPalette({ children }: { children: ReactNode }) {
+  const gt = useGT();
   useCommandPaletteMount();
   const state = useCommandPaletteStore();
   const setOpen = (open: boolean) => dispatchCommandPalette({ _tag: "SetOpen", open });
@@ -359,6 +360,11 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           setOpen={setOpen}
           openChildSearch={openChildSearch}
           initialContext={state.restoredSearch}
+          overlayEscapeLabel={
+            state.parentSearch
+              ? gt("Back", { $context: "button, leaves the file picker" })
+              : gt("Close")
+          }
         />
       </CommandDialog>
     </ComposerHandleContext>
@@ -375,6 +381,7 @@ function CommandPaletteDialog(props: {
     context: CommandPaletteReturnContext,
   ) => void;
   readonly initialContext: CommandPaletteReturnContext | undefined;
+  readonly overlayEscapeLabel: string;
 }) {
   const gt = useGT();
   const composerHandleRef = useComposerHandleContext();
@@ -410,9 +417,12 @@ function CommandPaletteDialog(props: {
       }}
     >
       {props.mode === "files" ? (
-        <ProjectFilePicker setOpen={props.setOpen} />
+        <ProjectFilePicker setOpen={props.setOpen} escapeLabel={props.overlayEscapeLabel} />
       ) : props.mode === "content" ? (
-        <ProjectContentSearchDialog onOpenChange={props.setOpen} />
+        <ProjectContentSearchDialog
+          onOpenChange={props.setOpen}
+          escapeLabel={props.overlayEscapeLabel}
+        />
       ) : (
         <OpenCommandPaletteDialog
           key={props.session}

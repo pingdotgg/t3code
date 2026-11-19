@@ -155,7 +155,7 @@ export function ThemePreviewCircles({
 }) {
   const gt = useGT();
   return (
-    <div className="flex min-h-16 items-center justify-center gap-2.5 px-3 pt-3">
+    <div className="flex h-24 items-center justify-center gap-1.5 px-3">
       {previews.map((preview) => {
         const mode = preview.mode;
         const isPicked = activeModes.includes(mode);
@@ -171,7 +171,7 @@ export function ThemePreviewCircles({
                   }
                   aria-pressed={isPicked}
                   className={cn(
-                    "relative flex size-[68px] shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1.5 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
+                    "relative flex size-16 shrink-0 transform-gpu cursor-pointer items-center justify-center rounded-full p-1 outline-none transition-transform hover:scale-105 focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-5 focus-visible:outline-foreground/60",
                     isPicked && "hover:scale-100",
                   )}
                   onClick={(event) => {

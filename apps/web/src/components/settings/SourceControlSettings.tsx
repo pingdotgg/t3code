@@ -1,7 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ChevronDownIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
+import { ChevronDownIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import type {
   SourceControlDiscoveryResult,
@@ -20,7 +20,6 @@ import { sourceControlEnvironment } from "../../state/sourceControl";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
-import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import {
   Empty,
   EmptyContent,
@@ -29,6 +28,7 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Skeleton } from "../ui/skeleton";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -45,6 +45,7 @@ import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import { SourceControlWritingSettingsSection } from "./SourceControlWritingSettings";
 import {
   SettingsPageContainer,
+  SettingsRow,
   SettingsSearchTarget,
   SettingsSection,
   useSettingsSearchTargetId,
@@ -81,20 +82,30 @@ function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryIt
   return !isProviderDiscoveryItem(item) && !item.implemented;
 }
 
-function authPresentation(
-  auth: SourceControlProviderAuth,
+/** The status chip at the end of a provider row. */
+function itemChip(
+  item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem,
   resolve: MessageResolver = m,
 ): {
   readonly label: string;
-  readonly badge: "secondary" | null;
+  readonly variant: "success" | "warning" | "secondary" | "unavailable";
 } {
-  if (auth.status === "authenticated") {
-    return { label: resolve(msg("Authenticated")), badge: null };
-  }
-  if (auth.status === "unauthenticated") {
-    return { label: resolve(msg("Not authenticated")), badge: "secondary" };
-  }
-  return { label: resolve(msg("Status unknown")), badge: null };
+  if (isVcsNotReady(item)) return { label: resolve(msg("Coming soon")), variant: "warning" };
+  if (item.status !== "available")
+    return { label: resolve(msg("Not installed")), variant: "unavailable" };
+  if (!isProviderDiscoveryItem(item))
+    return {
+      label: resolve(msg("Ready", { $context: "source control tool status" })),
+      variant: "success",
+    };
+  if (item.auth.status === "authenticated")
+    return { label: resolve(msg("Authenticated")), variant: "success" };
+  if (item.auth.status === "unauthenticated")
+    return { label: resolve(msg("Not authenticated")), variant: "secondary" };
+  return {
+    label: resolve(msg("Available", { $context: "source control tool status" })),
+    variant: "secondary",
+  };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
@@ -109,17 +120,6 @@ function RedactedAccount(props: { readonly account: string | null }) {
   );
 }
 
-function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
-  if (isVcsNotReady(item)) return "bg-muted-foreground/35";
-  if (isProviderDiscoveryItem(item)) {
-    return item.status === "available" && item.auth.status === "authenticated"
-      ? "bg-success"
-      : "bg-muted-foreground/35";
-  }
-  if (item.status !== "available") return "bg-warning";
-  return "bg-success";
-}
-
 function sourceControlItemIcon(
   item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem,
 ): ReactNode {
@@ -127,46 +127,27 @@ function sourceControlItemIcon(
   const Icon = isProviderDiscoveryItem(item)
     ? host && sourceControlIcon(host)
     : VCS_ICONS[item.kind];
-  return Icon ? <Icon className="size-4 text-foreground" aria-hidden /> : null;
-}
-
-function SourceControlItemMark({
-  item,
-}: {
-  readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
-}) {
-  const dotClassName = itemStatusDot(item);
-  const icon = sourceControlItemIcon(item);
-
-  if (!icon) {
-    return <span className={cn("size-2 shrink-0 rounded-full", dotClassName)} aria-hidden />;
-  }
-
-  return (
-    <span className="relative inline-flex size-5 shrink-0 items-center justify-center rounded-control surface-raised">
-      {icon}
-      <span
-        className={cn(
-          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-          dotClassName,
-        )}
-        aria-hidden
-      />
-    </span>
-  );
+  return Icon ? <Icon /> : null;
 }
 
 function itemSummary({
   item,
   auth,
   authAccount,
+  version,
   resolve,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
+  readonly version: string | null;
   readonly resolve: MessageResolver;
 }) {
+  const toolVersion = version
+    ? auth && item.executable
+      ? `${item.executable} ${version}`
+      : version
+    : null;
   const installHint = sourceControlInstallHintText(item.installHint, resolve);
   if (isVcsNotReady(item)) {
     return (
@@ -194,20 +175,19 @@ function itemSummary({
       return (
         <>
           {authAccount ? (
-            <span>
-              <T>
-                Authenticated as{" "}
-                <Var>
-                  <RedactedAccount account={authAccount} />
-                </Var>
-              </T>
-            </span>
+            <>
+              <span>
+                <T>Signed in as</T>
+              </span>
+              <RedactedAccount account={authAccount} />
+            </>
           ) : (
             <span>
-              <T>Authenticated</T>
+              <T>Signed in</T>
             </span>
           )}
           {authDetail ? <span className="basis-full">{authDetail}</span> : null}
+          {toolVersion ? <span className="basis-full">{toolVersion}</span> : null}
         </>
       );
     }
@@ -238,31 +218,35 @@ function itemSummary({
       return (
         <span>
           <T>
-            <Var>{item.label}</Var> is not authenticated on this server. Sign in or configure
-            credentials using the{" "}
+            Sign in with{" "}
             <code className="rounded bg-muted px-1 py-px text-2xs">
               <Var>{item.executable}</Var>
             </code>{" "}
-            tool on the server host to enable change request features.
+            on the server host to enable change request features.
           </T>
         </span>
       );
     }
     const authDetail = optionLabel(auth.detail);
+    if (authDetail) {
+      return (
+        <span>
+          <T>
+            Could not verify <Var>{item.label}</Var>. <Var>{authDetail}</Var>
+          </T>
+        </span>
+      );
+    }
     return (
       <span>
         <T>
-          Could not verify <Var>{item.label}</Var>. <Var>{authDetail ?? installHint}</Var>
+          <Var>{item.executable}</Var> found on this environment
         </T>
       </span>
     );
   }
 
-  return (
-    <span>
-      <T>Available</T>
-    </span>
-  );
+  return <span>{toolVersion ?? <T>Available</T>}</span>;
 }
 
 function DiscoveryItemRow({
@@ -283,8 +267,8 @@ function DiscoveryItemRow({
   const gt = useGT();
   const version = optionLabel(item.version);
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
-  const authStatus = auth ? authPresentation(auth, messages) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
+  const chip = itemChip(item, messages);
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetails = children !== undefined;
   const searchTargetId = useSettingsSearchTargetId();
@@ -296,81 +280,68 @@ function DiscoveryItemRow({
   if (seenSearchTargetId !== searchTargetId) setSeenSearchTargetId(searchTargetId);
 
   return (
-    <div
-      className={cn(
-        "first:rounded-t-xl last:rounded-b-xl transition-colors hover:surface-ghost-hover",
-        isVcsNotReady(item) && "opacity-80",
-      )}
-    >
-      <div className="px-3 py-3 sm:px-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <SourceControlItemMark item={item} />
-              <span className="truncate text-sm font-medium text-foreground">{item.label}</span>
-              {version ? <span className="text-xs text-dim-foreground">{version}</span> : null}
-              {isVcsNotReady(item) ? (
-                <Badge variant="warning" size="sm">
-                  <T>Coming Soon</T>
-                </Badge>
-              ) : null}
-              {authStatus?.badge ? (
-                <Badge variant={authStatus.badge} size="sm">
-                  {authStatus.label}
-                </Badge>
-              ) : null}
-            </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs leading-normal text-dim-foreground">
-              {itemSummary({ item, auth, authAccount, resolve: messages })}
-            </p>
-          </div>
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {hasDetails ? (
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                onClick={() => setIsExpanded((open) => !open)}
-                aria-expanded={isExpanded}
-                aria-label={gt("Toggle {label} details", { label: item.label })}
-              >
-                <ChevronDownIcon
-                  className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-                />
-              </Button>
+    <div className={cn(isVcsNotReady(item) && "opacity-80")}>
+      <SettingsRow
+        leading={sourceControlItemIcon(item)}
+        title={
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate">{item.label}</span>
+            {version ? <code className="text-meta text-dim-foreground">{version}</code> : null}
+            {chip.variant === "warning" ? (
+              <Badge variant="warning">{chip.label}</Badge>
+            ) : chip.variant === "secondary" &&
+              isProviderDiscoveryItem(item) &&
+              item.auth.status === "unauthenticated" ? (
+              <Badge variant="secondary">{chip.label}</Badge>
             ) : null}
-            {offered ? (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Switch
-                      checked={offered.checked}
-                      disabled={offered.disabled}
-                      onCheckedChange={offered.onChange}
-                      aria-label={gt("Offer {label} when adding or publishing a project", {
-                        label: item.label,
-                      })}
-                    />
-                  }
-                />
-                <TooltipPopup side="top">
-                  <T>Offer when adding or publishing a project</T>
-                </TooltipPopup>
-              </Tooltip>
-            ) : !isVcsNotReady(item) ? (
-              <Switch
-                checked={item.status === "available"}
-                disabled
-                aria-label={`${item.label} availability`}
+          </span>
+        }
+        description={
+          <span className="flex min-w-0 flex-wrap items-center gap-x-1">
+            {itemSummary({ item, auth, authAccount, version: null, resolve: messages })}
+          </span>
+        }
+        trailing={
+          hasDetails ? (
+            <Button
+              size="icon-xs"
+              variant="ghost-muted"
+              onClick={() => setIsExpanded((open) => !open)}
+              aria-expanded={isExpanded}
+              aria-label={gt("Toggle {label} details", { label: item.label })}
+            >
+              <ChevronDownIcon
+                className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
               />
-            ) : null}
-          </div>
-        </div>
-      </div>
-
+            </Button>
+          ) : null
+        }
+        control={
+          offered ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Switch
+                    checked={offered.checked}
+                    disabled={offered.disabled}
+                    onCheckedChange={offered.onChange}
+                    aria-label={gt("Offer {label} when adding or publishing a project", {
+                      label: item.label,
+                    })}
+                  />
+                }
+              />
+              <TooltipPopup side="top">
+                <T>Offer when adding or publishing a project</T>
+              </TooltipPopup>
+            </Tooltip>
+          ) : undefined
+        }
+      />
       {hasDetails ? (
         <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
           <CollapsibleContent>
-            <div className="px-3 pb-4 pt-1 sm:px-4">{children}</div>
+            <div className="px-3 pb-3 sm:px-4">{children}</div>
           </CollapsibleContent>
         </Collapsible>
       ) : null}
@@ -388,28 +359,13 @@ function SourceControlSectionSkeleton({
   return (
     <SettingsSection title={title} headerAction={headerAction}>
       {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
-        <div key={row} className="first:rounded-t-xl last:rounded-b-xl px-3 py-3 sm:px-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <Skeleton className="size-4.5" />
-                  <Skeleton
-                    shape="pill"
-                    className="pointer-events-none absolute -left-0.5 -top-0.5 size-2"
-                    aria-hidden
-                  />
-                </span>
-                <Skeleton shape="pill" className="h-4 w-28" />
-                <Skeleton shape="pill" className="h-5 w-14" />
-              </div>
-              <Skeleton shape="pill" className="h-3 w-full max-w-xs" />
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <Skeleton className="size-7" />
-              <Skeleton shape="pill" className="h-5 w-9" />
-            </div>
+        <div key={row} className="flex items-center gap-3 px-4 py-3">
+          <Skeleton className="size-8" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <Skeleton shape="pill" className="h-4 w-28" />
+            <Skeleton shape="pill" className="h-3 w-full max-w-xs" />
           </div>
+          <Skeleton shape="pill" className="h-5 w-20" />
         </div>
       ))}
     </SettingsSection>
@@ -431,7 +387,7 @@ function EmptySourceControlDiscovery({
 
   return (
     <SettingsSection id={searchableSetting("source-control").id} title={gt("Server environment")}>
-      <Empty>
+      <Empty size="compact">
         <EmptyMedia variant="icon">
           <PullRequestGlyph.pullRequest />
         </EmptyMedia>
@@ -524,7 +480,7 @@ export function SourceControlSettingsPanel() {
               />
             ) : null}
             {credentials.appSignIn && item.appSignIn === true ? (
-              <div className="flex items-center gap-3 text-2xs text-muted-foreground">
+              <div className="flex items-center gap-3 text-caption text-muted-foreground">
                 <span aria-hidden className="h-px flex-1 bg-border" />
                 <T>Or use your own credentials</T>
                 <span aria-hidden className="h-px flex-1 bg-border" />
@@ -567,11 +523,13 @@ export function SourceControlSettingsPanel() {
       <TooltipTrigger
         render={
           <Button
+            // Hangs 6px past the header row so the glyph's ink ends on the card edge.
+            className="-me-1.5"
             size="icon-xs"
             variant="ghost-muted"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label={gt("Rescan server environment")}
+            aria-label={gt("Rescan Git and hosting integrations")}
           >
             <RefreshIcon refreshing={discovery.isPending} />
           </Button>
@@ -583,13 +541,14 @@ export function SourceControlSettingsPanel() {
     </Tooltip>
   );
 
+  const providersTitle = gt("Source Control Providers");
   return (
-    <SettingsPageContainer>
+    <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
           id={searchableSetting("source-control").id}
-          title={gt("Server environment")}
+          title={gt("Source Control Providers")}
         >
           <p className="px-4 py-3 text-sm text-muted-foreground">
             <T>
@@ -598,10 +557,7 @@ export function SourceControlSettingsPanel() {
           </p>
         </SettingsSection>
       ) : isInitialScanPending ? (
-        <>
-          <SourceControlSectionSkeleton title={gt("Version Control")} headerAction={scanButton} />
-          <SourceControlSectionSkeleton title={gt("Source control providers")} />
-        </>
+        <SourceControlSectionSkeleton title={providersTitle} headerAction={scanButton} />
       ) : hasDiscoveryItems ? (
         <>
           {hasVersionControlSystems ? (

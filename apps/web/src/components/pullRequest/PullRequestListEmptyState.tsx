@@ -1,11 +1,19 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-/** Every variant wears the same small notice the design gives a list filtered to nothing:
- * one glyph, a title, a sentence and the buttons that change the answer. */
+/**
+ *
+ * A list narrowed to nothing (search, filters) wears the design's small notice: one glyph, a
+ * title, a sentence and the buttons that change the answer. A list with nothing to narrow (no
+ * projects, signed out, nothing open) wears the app's page empty state instead: the list's own
+ * ghost, a title, a sentence and hint tiles saying how rows get here.
+ *
+ */
+import { Link } from "@tanstack/react-router";
 import { T, useGT, Var } from "gt-react";
-import { FolderPlusIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { FolderGit2Icon, PlusIcon, SearchIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import type { ElementType, ReactNode } from "react";
 
 import { openCommandPalette } from "../../commandPaletteBus";
+import { PageEmptyState, PageEmptyTile, PageEmptyTiles } from "../PageEmptyState";
 import { Button } from "../ui/button";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { PullRequestGlyph } from "./pullRequestIcons";
@@ -35,6 +43,31 @@ export function PullRequestListNotice({
   );
 }
 
+/** The page empty state with the list's own rows as its ghost. */
+function PullRequestPageEmpty({
+  title,
+  description,
+  actions,
+  children,
+}: {
+  title: ReactNode;
+  description: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <PageEmptyState
+      fill
+      ghost={<PullRequestListGhost idle rows={3} />}
+      title={title}
+      description={description}
+    >
+      {actions ? <div className="-mt-3 flex flex-wrap justify-center gap-2">{actions}</div> : null}
+      <PageEmptyTiles narrow>{children}</PageEmptyTiles>
+    </PageEmptyState>
+  );
+}
+
 function CheckAgainButton({
   refreshing,
   onRefresh,
@@ -44,7 +77,7 @@ function CheckAgainButton({
 }) {
   const gt = useGT();
   return (
-    <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
+    <Button size="sm" variant="ghost" disabled={refreshing} onClick={onRefresh}>
       <RefreshIcon size="sm" refreshing={refreshing} />
       {refreshing ? gt("Checking...") : gt("Check again")}
     </Button>
@@ -63,6 +96,7 @@ export function PullRequestListEmptyState({
   refreshing,
   onClearQuery,
   onClearFilters,
+  onShowAll,
   onLoadMore,
   onRefresh,
 }: {
@@ -88,6 +122,8 @@ export function PullRequestListEmptyState({
   onClearQuery: () => void;
   /** Puts every filter back to its default: open, all involvement, nothing narrowed. */
   onClearFilters: () => void;
+  /** Widens the state filter from open to every pull request. */
+  onShowAll: () => void;
   onLoadMore: () => void;
   onRefresh: () => void;
 }) {
@@ -95,28 +131,38 @@ export function PullRequestListEmptyState({
   const shownQuery = query.length > 48 ? `${query.slice(0, 48)}…` : query;
   if (!hasProjects) {
     return (
-      <PullRequestListNotice
-        icon={FolderPlusIcon}
+      <PullRequestPageEmpty
         title={<T>No projects in this workspace</T>}
         description={<T>Add a project, and the pull requests from its repository appear here.</T>}
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => openCommandPalette({ open: "add-project" })}
+          >
+            <PlusIcon className="size-3.5" />
+            <T>Add project</T>
+          </Button>
+        }
       >
-        <Button
-          size="sm"
-          variant="secondary"
-          onClick={() => openCommandPalette({ open: "add-project" })}
-        >
-          <PlusIcon className="size-3.5" />
-          <T>Add project</T>
-        </Button>
-      </PullRequestListNotice>
+        <PageEmptyTile
+          icon={<FolderGit2Icon />}
+          title={<T>From its remote</T>}
+          description={<T>Read from each project's GitHub or GitLab repository.</T>}
+        />
+        <PageEmptyTile
+          icon={<ServerIcon />}
+          title={<T context="where the host sign-in lives">On this server</T>}
+          description={<T>Uses the host's sign-in where T3 Code runs.</T>}
+        />
+      </PullRequestPageEmpty>
     );
   }
 
   // Ahead of the filters too: nothing they narrow was read.
   if (signIn) {
     return (
-      <PullRequestListNotice
-        icon={signIn.Icon}
+      <PullRequestPageEmpty
         title={gt("Sign in to {host}", { host: signIn.hostLabel })}
         description={
           signIn.detail ??
@@ -125,9 +171,28 @@ export function PullRequestListEmptyState({
             changeRequests: signIn.changeRequestPlural,
           })
         }
+        actions={<CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />}
       >
-        <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
-      </PullRequestListNotice>
+        <PageEmptyTile
+          icon={<ServerIcon />}
+          title={<T context="where the host sign-in lives">On this server</T>}
+          description={<T>Sign in where T3 Code runs, not in this browser.</T>}
+        />
+        <PageEmptyTile
+          icon={<SettingsIcon />}
+          title={<T>Source control</T>}
+          description={<T>Each host's sign-in, in settings.</T>}
+        >
+          <Button
+            size="xs"
+            variant="ghost"
+            className="-ml-2 mt-1"
+            render={<Link to="/settings/source-control" />}
+          >
+            <T>Open settings</T>
+          </Button>
+        </PageEmptyTile>
+      </PullRequestPageEmpty>
     );
   }
 
@@ -185,17 +250,34 @@ export function PullRequestListEmptyState({
   }
 
   return (
-    <PullRequestListNotice
-      icon={PullRequestGlyph.pullRequest}
+    <PullRequestPageEmpty
       title={<T>No open pull requests</T>}
       description={<T>Open pull requests from every project in this workspace appear here.</T>}
+      actions={
+        <>
+          {canLoadMore ? (
+            <Button size="sm" variant="ghost" disabled={loadingMore} onClick={onLoadMore}>
+              {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
+            </Button>
+          ) : null}
+          <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
+        </>
+      }
     >
-      {canLoadMore ? (
-        <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
-          {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
+      <PageEmptyTile
+        icon={<PullRequestGlyph.pullRequest />}
+        title={<T>From a thread</T>}
+        description={<T>Create PR in a thread's git menu, and it lands here.</T>}
+      />
+      <PageEmptyTile
+        icon={<PullRequestGlyph.merged />}
+        title={<T>Closed and merged</T>}
+        description={<T>Every pull request, not only open ones.</T>}
+      >
+        <Button size="xs" variant="ghost" className="-ml-2 mt-1" onClick={onShowAll}>
+          <T>Show all</T>
         </Button>
-      ) : null}
-      <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
-    </PullRequestListNotice>
+      </PageEmptyTile>
+    </PullRequestPageEmpty>
   );
 }

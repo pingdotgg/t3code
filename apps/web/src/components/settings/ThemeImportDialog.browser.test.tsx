@@ -1,6 +1,7 @@
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
+import "~/index.css";
 
 import { act, render } from "../../../test/render";
 import {
@@ -54,14 +55,42 @@ describe("ThemeImportDialog", () => {
       </StrictMode>,
     );
 
-    // One input event: keystrokes more than the search debounce apart would search a prefix first.
+    await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
     await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
 
-    await expect.element(page.getByRole("heading", { name: "Nightfall" })).toBeVisible();
-    expect(searchOpenVsxThemes).toHaveBeenCalledWith(
-      "night",
-      expect.objectContaining({ sortBy: "downloadCount" }),
+    await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
+    // A slow runner can debounce on a prefix like "ni"; wait for the full query.
+    await vi.waitFor(() =>
+      expect(searchOpenVsxThemes).toHaveBeenLastCalledWith(
+        "night",
+        expect.objectContaining({ sortBy: "downloadCount" }),
+      ),
     );
+
+    let completeSearch!: (themes: OpenVsxThemeExtension[]) => void;
+    const pendingSearch = new Promise<OpenVsxThemeExtension[]>((resolve) => {
+      completeSearch = resolve;
+    });
+    let notifySearchStarted!: (signal: AbortSignal) => void;
+    const searchStarted = new Promise<AbortSignal>((resolve) => {
+      notifySearchStarted = resolve;
+    });
+    searchOpenVsxThemes.mockImplementationOnce(
+      (_query: string, options: { signal: AbortSignal }) => {
+        notifySearchStarted(options.signal);
+        return pendingSearch;
+      },
+    );
+    await userEvent.type(page.getByLabelText("Search Open VSX themes"), "fall");
+    const searchSignal = await searchStarted;
+    await userEvent.click(page.getByRole("button", { name: "Back", exact: true }));
+    expect(searchSignal.aborted).toBe(true);
+    completeSearch([extension]);
+
+    await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
+    await expect.element(page.getByLabelText("Search Open VSX themes")).toHaveValue("");
+    await userEvent.type(page.getByLabelText("Search Open VSX themes"), "night");
+    await expect.element(page.getByRole("button", { name: "Install Nightfall" })).toBeVisible();
   });
 });
 
@@ -105,6 +134,7 @@ it.each(["Update existing", "Keep both"])(
       themeFile("Dusk", "#f97316", DUSK_CSS),
       new File(["{"], "broken.json", { type: "application/json" }),
     ]);
+    await userEvent.click(page.getByRole("button", { name: "Add theme", exact: true }));
 
     await expect.element(page.getByText("Already installed")).toBeVisible();
     await expect.element(page.getByText(/^broken\.json:/)).toBeVisible();
@@ -213,6 +243,11 @@ describe("ThemeImportDialog JSONC imports", () => {
       }),
     ]);
 
+    await expect
+      .element(page.getByRole("button", { name: "Add theme", exact: true }))
+      .toBeEnabled();
+    await page.getByRole("button", { name: "Add theme", exact: true }).click();
+
     await vi.waitFor(() => {
       expect(getCustomThemes().map((theme) => theme.label)).toEqual(["JSONC Night", "JSONC Day"]);
     });
@@ -238,6 +273,7 @@ it("does not install a pending community theme after leaving Appearance", async 
       onImportedMany={() => {}}
     />,
   );
+  await userEvent.click(page.getByRole("button", { name: "Search community themes" }));
   await userEvent.fill(page.getByLabelText("Search Open VSX themes"), "night");
   await page.getByRole("button", { name: "Install Nightfall" }).click();
   await screen.unmount();

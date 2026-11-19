@@ -145,6 +145,76 @@ export function snapShotUnavailableMessage(
     : resolve(msg("Only available in the desktop app."));
 }
 
+export interface SnapShotCaptureHelperStatus {
+  readonly tone: "success" | "warning" | "error";
+  readonly label: string;
+  readonly description: string;
+  readonly needsSetup: boolean;
+}
+
+/** The Advanced > Capture helper row: what this desktop captures with, and whether it is ready. */
+export function snapShotCaptureHelperStatus(
+  state: DesktopSnapShotState | null,
+  resolve: MessageResolver = m,
+): SnapShotCaptureHelperStatus | null {
+  if (!state || state.mode === "unavailable") return null;
+  if (state.linuxBackend === "kde" || state.linuxBackend === "hyprland") {
+    const helper = state.linuxBackend === "hyprland" ? state.hyprlandHelper : state.kdeHelper;
+    const desktop = state.linuxBackend === "hyprland" ? "Hyprland" : "KDE";
+    if (helper?.status === "ready")
+      return {
+        tone: "success",
+        label: resolve(msg("Ready", { $context: "capture helper status" })),
+        description: resolve(msg("Captures windows on {desktop}.", { desktop })),
+        needsSetup: false,
+      };
+    if (helper?.status === "update-required")
+      return {
+        tone: "warning",
+        label: resolve(msg("Update available")),
+        description: helper.message,
+        needsSetup: true,
+      };
+    if (helper?.status === "error")
+      return {
+        tone: "error",
+        label: resolve(msg("Error", { $context: "capture helper status" })),
+        description: helper.message,
+        needsSetup: true,
+      };
+    return {
+      tone: "warning",
+      label: resolve(msg("Not installed")),
+      description:
+        helper?.message ??
+        resolve(msg("Install the helper to capture windows on {desktop}.", { desktop })),
+      needsSetup: true,
+    };
+  }
+  if (state.linuxBackend === "gnome-extension") {
+    const extension = state.gnomeExtension;
+    if (extension?.status === "enabled")
+      return {
+        tone: "success",
+        label: resolve(msg("Ready", { $context: "capture helper status" })),
+        description: resolve(msg("Captures windows with the GNOME extension.")),
+        needsSetup: false,
+      };
+    return {
+      tone: extension?.status === "error" ? "error" : "warning",
+      label: resolve(msg("Setup needed")),
+      description: resolve(msg("Set up the GNOME extension to capture windows.")),
+      needsSetup: true,
+    };
+  }
+  return {
+    tone: "success",
+    label: resolve(msg("Ready", { $context: "capture helper status" })),
+    description: resolve(msg("Included with T3 Code. No download needed.")),
+    needsSetup: false,
+  };
+}
+
 export function snapShotSoundPatch(sound: SnapShotSoundSelection): ClientSettingsPatch {
   return sound === "off"
     ? { snapShotPlaySound: false }

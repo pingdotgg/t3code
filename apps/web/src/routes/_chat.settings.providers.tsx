@@ -8,6 +8,7 @@ import { useSettingsScope } from "../components/settings/SettingsScopeContext";
 function SettingsProvidersRoute() {
   const target = Route.useSearch();
   const { environment, scope } = useSettingsScope();
+  const { resumeEnvironmentId } = Route.useSearch();
   const gt = useGT();
   if (!environment) {
     return (
@@ -30,6 +31,7 @@ function SettingsProvidersRoute() {
           : []
       }
       scoped
+      {...(resumeEnvironmentId ? { resumeEnvironmentId } : {})}
     />
   );
 }
@@ -41,6 +43,9 @@ export const Route = createFileRoute("/_chat/settings/providers")({
       : {}),
     ...(typeof raw.instanceId === "string" && raw.instanceId.trim()
       ? { instanceId: ProviderInstanceId.make(raw.instanceId) }
+      : {}),
+    ...(typeof raw.resumeEnvironmentId === "string" && raw.resumeEnvironmentId.trim()
+      ? { resumeEnvironmentId: EnvironmentId.make(raw.resumeEnvironmentId) }
       : {}),
   }),
   component: SettingsProvidersRoute,

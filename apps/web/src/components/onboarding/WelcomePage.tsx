@@ -106,6 +106,7 @@ import { TerminalViewport } from "../ThreadTerminalDrawer";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ACPRegistryIcon } from "../Icons";
 import { Button, InlineButton } from "../ui/button";
+import { OnboardingAgentRow } from "./OnboardingAgentRow";
 import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { QRCodeSvg } from "../ui/qr-code";
@@ -274,12 +275,12 @@ export function WelcomePage({
       role="main"
       className="h-dvh min-h-0 overflow-hidden overscroll-y-none"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background surface-grain">
         {/* The desktop window only moves where CSS opts in, so keep a titlebar strip. */}
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="min-h-0 flex-1 overflow-y-auto scrollbar-gutter-both">
           <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-6 pt-12 pb-8 sm:pt-20">
-            <h1 className="text-title [--type-title:1.5rem] tracking-tight text-foreground">
+            <h1 className="text-title [--type-title:1.5rem] text-foreground">
               <T>Welcome to T3 Code</T>
             </h1>
             <p className="mt-1.5 text-body text-muted-foreground">
@@ -291,7 +292,7 @@ export function WelcomePage({
                 .
               </T>
             </p>
-            <div className="mt-10 border-t border-border/60">
+            <div className="mt-8 space-y-4">
               <AgentsSection
                 environmentId={environmentId}
                 label={label}
@@ -347,7 +348,7 @@ function TelemetryNotice({ environmentId }: { readonly environmentId: Environmen
   const messages = useMessages();
   const telemetryOff = managedTelemetryOffMessage(useManagedPolicy(environmentId), messages);
   return (
-    <p className="mt-auto pt-12 text-caption leading-relaxed text-muted-foreground/70">
+    <p className="mt-auto pt-12 text-caption leading-relaxed text-muted-foreground">
       {telemetryOff === undefined ? (
         <T>
           T3 Code collects anonymous usage data to improve the app. To opt out, see the{" "}
@@ -387,7 +388,7 @@ function WelcomeSection({
   readonly children: ReactNode;
 }) {
   return (
-    <section className="grid gap-x-10 border-b border-border/60 py-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
+    <section className="grid gap-x-6 gap-y-2 rounded-card surface-card p-4 sm:grid-cols-[6rem_minmax(0,1fr)]">
       <h2 className="text-body leading-10 text-muted-foreground">{title}</h2>
       <div className="min-w-0">{children}</div>
     </section>
@@ -689,7 +690,7 @@ function AgentsSection({
           <ChevronDownIcon className="ml-auto size-4 text-muted-foreground group-data-panel-open:rotate-180" />
         </CollapsibleTrigger>
         <CollapsiblePanel>
-          <div className="grid grid-cols-1 gap-x-8 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-x-6 gap-y-2 sm:grid-cols-2">
             {available.map((provider) => (
               <AgentRow
                 key={provider.instanceId}
@@ -1245,6 +1246,28 @@ function AgentRow({
             provider.message ??
             getProviderSummary(provider, messages).headline)
           : (brokenMessage ?? getProviderSummary(provider, messages).headline);
+  if (!compact)
+    return (
+      <OnboardingAgentRow
+        driver={provider.driver}
+        title={name}
+        description={detail}
+        control={
+          state === "ready" ? (
+            <span className="inline-flex items-center gap-1.5 text-meta text-success-foreground">
+              <CheckIcon className="size-3.5" />
+              <T context="agent status">Ready</T>
+            </span>
+          ) : state === "checking" ? (
+            <span className="text-meta text-muted-foreground">
+              <T>Checking…</T>
+            </span>
+          ) : (
+            action
+          )
+        }
+      />
+    );
   return (
     <div className={cn("flex items-center gap-3", compact ? "min-h-9" : "min-h-10 py-1")}>
       <RowIcon>
@@ -1402,7 +1425,7 @@ function AgentInstallTerminal({
   return (
     <div
       data-thread-terminal-drawer
-      className="mt-4 overflow-hidden rounded-lg border border-border/70 bg-background text-foreground"
+      className="mt-4 overflow-hidden rounded-card surface-panel text-foreground"
     >
       <div className="flex items-center justify-between border-b border-border/60 bg-background/60 px-3 py-1.5">
         <span className="text-caption text-muted-foreground">
@@ -1913,21 +1936,16 @@ function ImportCandidateRow({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 hover:bg-muted/40 has-disabled:cursor-default",
+        "flex cursor-pointer items-center gap-3 rounded-control border border-border surface-card px-3 py-2.5 has-disabled:cursor-default",
         nested && "pl-8",
       )}
     >
       <Checkbox checked={checked} onCheckedChange={(value) => onCheckedChange(value === true)} />
       <Tooltip>
-        <TooltipTrigger
-          render={<span className="flex min-w-0 flex-1 items-baseline gap-2 truncate" />}
-        >
+        <TooltipTrigger render={<span className="flex min-w-0 flex-1 flex-col gap-0.5" />}>
           {label !== undefined ? <span className="truncate text-label">{label}</span> : null}
           {path !== undefined ? (
-            <ProjectPathText
-              path={path}
-              className={label === undefined ? "text-meta" : "text-caption text-muted-foreground"}
-            />
+            <ProjectPathText path={path} className="w-full text-meta text-muted-foreground" />
           ) : null}
         </TooltipTrigger>
         <TooltipPopup variant="code">{candidate.path}</TooltipPopup>
@@ -1972,22 +1990,22 @@ function ImportRowMeta({
         ? gt("now", { $context: "relative time" })
         : relative.value;
   return (
-    <span className="ml-auto grid shrink-0 grid-cols-[1rem_1rem_1rem_2.5rem_2.25rem] items-center gap-x-1 text-meta text-muted-foreground tabular-nums">
-      {AgentSessionSource.literals.map((source) => (
-        <span key={source} className="flex size-4 items-center justify-center">
-          {sources?.includes(source) ? (
-            <span role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
-              <ProviderInstanceIcon
-                driverKind={ProviderDriverKind.make(source)}
-                displayName={IMPORT_SOURCE_NAMES[source]}
-                iconClassName="size-3"
-              />
-            </span>
-          ) : null}
+    <span className="ml-auto flex shrink-0 flex-col items-end gap-0.5 text-meta text-muted-foreground tabular-nums">
+      <span className="flex items-center gap-1">
+        {sources?.map((source) => (
+          <span key={source} role="img" aria-label={IMPORT_SOURCE_NAMES[source]}>
+            <ProviderInstanceIcon
+              driverKind={ProviderDriverKind.make(source)}
+              displayName={IMPORT_SOURCE_NAMES[source]}
+              iconClassName="size-3"
+            />
+          </span>
+        ))}
+        <span>
+          {threadCount} {threadCount === 1 ? "conversation" : "conversations"}
         </span>
-      ))}
-      <span className="text-right">{threadCount}</span>
-      <span className="text-right whitespace-nowrap">{age}</span>
+      </span>
+      <span className="text-meta text-muted-foreground">{age}</span>
     </span>
   );
 }

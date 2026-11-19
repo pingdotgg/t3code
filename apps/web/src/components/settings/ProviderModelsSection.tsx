@@ -164,9 +164,6 @@ export function ProviderModelsSection({
     modelOrder,
   });
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
-  const hiddenCount = displayModels.filter(
-    (model) => !model.isCustom && hiddenModelSet.has(model.slug),
-  ).length;
   const flagMissingReasoning = models.some(hasReasoningControl);
   const showFilter = models.length > FILTER_THRESHOLD;
   const normalizedFilter = filter.trim().toLowerCase();
@@ -365,27 +362,6 @@ export function ProviderModelsSection({
               {allBuiltInModelsHidden ? gt("Enable all") : gt("Disable all")}
             </Button>
           ) : null}
-          <span className="text-xs text-muted-foreground">
-            <Tooltip>
-              <TooltipTrigger render={<span tabIndex={0} />}>
-                {gt("{count, plural, one {{count} model} other {{count} models}}", {
-                  count: models.length,
-                })}
-              </TooltipTrigger>
-              <TooltipPopup>
-                <span className="grid gap-1">
-                  <span>
-                    {gt("{count, plural, one {{count} favorite} other {{count} favorites}}", {
-                      count: favoriteCount,
-                    })}
-                  </span>
-                  <span>
-                    {gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}
-                  </span>
-                </span>
-              </TooltipPopup>
-            </Tooltip>
-          </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
           <Button
@@ -529,7 +505,12 @@ const ProviderModelRow = memo(function ProviderModelRow({
   const gt = useGT();
   const m = useMessages();
   const capLabels = describeModelCapabilities(model, flagMissingReasoning, m);
-  const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground");
+  const descriptor = [
+    model.name !== model.slug ? model.slug : null,
+    model.isCustom ? gt("custom", { $context: "badge, user-added model" }) : null,
+    ...capLabels,
+  ].filter((part) => part !== null);
+  const nameClassName = cn("text-label", isHidden ? "text-muted-foreground" : "text-foreground");
   const pickerTooltip = model.isCustom
     ? gt("Custom models are always shown in the picker")
     : isHidden
@@ -540,7 +521,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
     <div
       data-model-slug={model.slug}
       className={cn(
-        "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-row px-2 transition-colors hover:surface-ghost-hover",
+        "grid grid-cols-[1.5rem_minmax(0,1fr)_auto_auto] items-center gap-2 rounded-row px-2 py-1 transition-colors hover:surface-ghost-hover",
         isHidden && "opacity-50",
       )}
     >
@@ -568,47 +549,19 @@ const ProviderModelRow = memo(function ProviderModelRow({
           {isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
         </TooltipPopup>
       </Tooltip>
-      <span className="flex min-w-0 items-baseline gap-2">
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span tabIndex={0} className="flex min-w-0 items-baseline gap-2 overflow-hidden" />
-            }
-          >
-            <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
-            {model.name !== model.slug ? (
-              <code className="truncate font-mono text-2xs text-dim-foreground">{model.slug}</code>
-            ) : null}
-          </TooltipTrigger>
-          <TooltipPopup side="top" align="start">
-            <div>{model.name}</div>
-            {model.name !== model.slug ? (
-              <code className="text-micro font-mono text-dim-foreground">{model.slug}</code>
-            ) : null}
-          </TooltipPopup>
-        </Tooltip>
-        {model.isCustom ? (
-          <span className="shrink-0 text-2xs text-dim-foreground">
-            {gt("custom", { $context: "badge, user-added model" })}
-          </span>
-        ) : null}
-      </span>
-      <span className="text-2xs text-dim-foreground">
-        {capLabels.length > 0 ? (
-          <span className="hidden sm:inline">
-            <Tooltip>
-              <TooltipTrigger render={<span tabIndex={0} />}>{capLabels[0]}</TooltipTrigger>
-              <TooltipPopup>
-                <span className="grid gap-1">
-                  {capLabels.map((label) => (
-                    <span key={label}>{label}</span>
-                  ))}
-                </span>
-              </TooltipPopup>
-            </Tooltip>
-          </span>
-        ) : null}
-      </span>
+      <Tooltip>
+        <TooltipTrigger render={<span tabIndex={0} className="flex min-w-0 flex-col" />}>
+          <span className={cn(nameClassName, "truncate")}>{model.name}</span>
+        </TooltipTrigger>
+        <TooltipPopup side="top" align="start">
+          <div>{model.name}</div>
+          {descriptor.map((detail) => (
+            <span key={detail} className="block">
+              {detail}
+            </span>
+          ))}
+        </TooltipPopup>
+      </Tooltip>
       <span className="flex shrink-0 items-center justify-end gap-0.5">
         {!isHidden && !isFiltering ? (
           <>

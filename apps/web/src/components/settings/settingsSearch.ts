@@ -266,7 +266,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       msg(
-        "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom",
+        "disk storage automatic delete deleted archived threads old inactive merged settled unchanged worktrees retention days project inherit off custom local changes kept branches thread history commits default branch",
       ),
     ],
   },
@@ -284,7 +284,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     searchTerms: [
       msg(
-        "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention",
+        "disk storage delete old browser artifacts screenshots captures rotated logs cleanup retention recordings traces days capture links",
       ),
     ],
   },
@@ -306,7 +306,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Default model"),
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: [msg("new thread project provider reasoning effort")],
+    searchTerms: [msg("new thread project provider reasoning effort automatic")],
   },
   {
     id: "fallback-model",
@@ -475,13 +475,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "snooze-limited-threads",
     title: msg("Snooze until limits reset"),
     to: "/settings/threads",
-    searchTerms: [msg("usage quota rate limit reset wake recover continue")],
+    searchTerms: [
+      msg(
+        "usage quota rate limit reset wake recover continue reported reset time combine auto-resume wake",
+      ),
+    ],
   },
   {
     id: "auto-resume-limited-threads",
     title: msg("Resume after usage limits"),
     to: "/settings/threads",
-    searchTerms: [msg("usage quota rate limit reset recover continue")],
+    searchTerms: [
+      msg(
+        "usage quota rate limit reset recover continue reported reset time cancel scheduled continuation",
+      ),
+    ],
   },
   {
     id: "working-shelf",
@@ -732,7 +740,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "in-app-notifications",
     title: msg("In-app notifications"),
     to: "/settings/general",
-    searchTerms: [msg("notification toast popup completion input approval failure")],
+    searchTerms: [
+      msg("notification toast popup completion input approval failure input approval focus"),
+    ],
   },
   {
     id: "language",
@@ -767,27 +777,33 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "default-diff-file-state",
     title: msg("Default diff file state"),
     to: "/settings/diffs",
-    searchTerms: [msg("collapsed expanded collapse expand files pull request pr code tab")],
+    searchTerms: [
+      msg(
+        "collapsed expanded collapse expand files pull request pr code tab pull request code tab opening",
+      ),
+    ],
   },
   {
     id: "diff-layout",
     title: msg("Diff layout"),
     to: "/settings/diffs",
-    searchTerms: [msg("stacked split side by side unified inline view")],
+    searchTerms: [msg("stacked split side by side unified inline view diff toolbar toggle")],
   },
   {
     id: "proactive-panels",
     title: msg("Open pull requests and changes panels proactively"),
     to: "/settings/diffs",
     searchTerms: [
-      msg("proactive automatically open diff pull request pr right panel agent completion"),
+      msg(
+        "proactive automatically open diff pull request pr right panel agent completion working tree diff 3 files 50 lines",
+      ),
     ],
   },
   {
     id: "skills-in-slash-menu",
     title: msg("Show skills in slash menu"),
     to: "/settings/chat",
-    searchTerms: [msg("command menu dollar $ slash /")],
+    searchTerms: [msg("command menu dollar $ slash / dollar $ always appear")],
   },
   {
     id: "composer-rich-text",
@@ -823,7 +839,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
     searchTerms: [
       msg(
-        "resume running active interrupted work restart reboot machine crash desktop update automatically",
+        "resume running active interrupted work restart reboot machine crash desktop update automatically machine restart selected environments update older servers",
       ),
     ],
   },
@@ -890,7 +906,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "archive-confirmation",
     title: msg("Archive confirmation"),
     to: "/settings/general",
-    searchTerms: [msg("ask before thread second click inline action")],
+    searchTerms: [
+      msg("ask before thread second click inline action second click inline archive action"),
+    ],
   },
   {
     id: "delete-confirmation",
@@ -916,7 +934,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Text generation model"),
     to: "/settings/threads",
     scope: "project-defaults",
-    searchTerms: [msg("generated thread titles source control content default provider")],
+    searchTerms: [
+      msg(
+        "generated thread titles source control content default provider connected devices provider source control override",
+      ),
+    ],
   },
   {
     id: "thread-title-instructions",
@@ -1081,7 +1103,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Agent browser access"),
     to: "/settings/browser",
     scope: "project-defaults",
-    searchTerms: [msg("allow disable enable open drive preview tools sessions project override")],
+    searchTerms: [
+      msg(
+        "allow disable enable open drive preview tools sessions project override next session start",
+      ),
+    ],
   },
   {
     id: "device-sources",
@@ -1130,7 +1156,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-default-viewport",
     title: msg("Default browser viewport"),
     to: "/settings/browser",
-    searchTerms: [msg("preview size width height device desktop mobile rotate")],
+    searchTerms: [
+      msg("preview size width height device desktop mobile rotate fill fits panel device toolbar"),
+    ],
   },
   {
     id: "browser-default-zoom",
@@ -1153,7 +1181,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-recording-key-presses",
     title: msg("Show key presses in recordings"),
     to: "/settings/browser",
-    searchTerms: [msg("browser preview keyboard shortcuts keystrokes overlay capture")],
+    searchTerms: [
+      msg("browser preview keyboard shortcuts keystrokes overlay capture password fields excluded"),
+    ],
   },
   {
     id: "browser-recording-mouse-presses",
@@ -1165,7 +1195,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-link-target",
     title: msg("Open links in"),
     to: "/settings/browser",
-    searchTerms: [msg("links default browser in-app browser external open")],
+    searchTerms: [
+      msg(
+        "links default browser in-app browser external open hold cmd ctrl click default browser either way",
+      ),
+    ],
   },
   {
     id: "browser-search-engine",
@@ -1185,14 +1219,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-auto-show-floating-preview",
     title: msg("Auto-show floating preview"),
     to: "/settings/browser",
-    searchTerms: [msg("agent opens browser device simulator pop into view hide")],
+    searchTerms: [
+      msg("agent opens browser device simulator pop into view hide unless agent says otherwise"),
+    ],
   },
   {
     id: "automatic-pull",
     title: msg("Automatically pull"),
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: [msg("auto pull default branch current checkout fast forward upstream")],
+    searchTerms: [
+      msg(
+        "auto pull default branch current checkout fast forward upstream no local changes or commits",
+      ),
+    ],
   },
   {
     id: "remove-agent-credits-on-merge",
@@ -1208,7 +1248,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Default merge method"),
     to: "/settings/source-control",
     scope: "project-defaults",
-    searchTerms: [msg("pull request merge squash rebase last selected")],
+    searchTerms: [msg("pull request merge squash rebase last selected most recently this device")],
   },
   {
     id: "issue-trackers",
@@ -1271,7 +1311,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Source control writer model"),
     to: "/settings/source-control",
     searchTerms: [
-      msg("override generated commit change request pr titles descriptions branch bookmark"),
+      msg(
+        "override generated commit change request pr titles descriptions branch bookmark source control text branch bookmark names",
+      ),
     ],
     environmentOnly: true,
     scope: "project-defaults",

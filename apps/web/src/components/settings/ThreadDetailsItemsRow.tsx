@@ -40,7 +40,7 @@ export function ThreadDetailsItemsRow() {
               <Button
                 variant="secondary"
                 size="sm"
-                className="w-full sm:w-40"
+                className="w-full @min-[26rem]/settings-row:w-40"
                 aria-label={gt("Thread details: {enabled} of {total} on", {
                   enabled,
                   total: THREAD_DETAILS_ITEMS.length,

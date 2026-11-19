@@ -269,11 +269,15 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         group: "environment",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
         title: updateFailed
-          ? gt("Could not update", { $context: "server update banner title, machine names follow" })
+          ? versionMismatchServerName !== null
+            ? gt("{environment} server update failed", {
+                environment: versionMismatchServerName,
+              })
+            : gt("Server update failed")
           : gt("Updating"),
         description:
           serverUpdateState.status === "failed" ? (
-            `${versionMismatchServerLabel}: ${serverUpdateState.message}`
+            serverUpdateState.message
           ) : (
             <span className="inline-flex flex-col">
               <span>{serverUpdateStageLabel(serverUpdateState.stage, messages)}</span>

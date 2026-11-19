@@ -174,6 +174,19 @@ export function useClearProjectOverrides() {
   };
 }
 
+/**
+ * Clear `keys` on project entries across the given environments, which need
+ * not be the scope's own (the scope picker resets every listed project).
+ */
+export function useClearProjectOverridesOn() {
+  const run = useRunScopedPlan();
+  return (
+    environments: Parameters<typeof planProjectOverridesClear>[0],
+    entries: readonly ProjectOverrideEntry[],
+    keys: Parameters<typeof planProjectOverridesClear>[2],
+  ) => run(environments, (current) => planProjectOverridesClear(current, entries, keys));
+}
+
 export function useScopedSettingsWriteAllowed() {
   const { connectedEnvironments } = useSettingsScope();
   const writable = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);

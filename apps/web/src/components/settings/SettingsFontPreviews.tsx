@@ -246,7 +246,7 @@ export function TerminalFontPreview({ family, size }: { family: string; size: nu
   return (
     <div
       ref={mountSurface}
-      className="relative mt-1 mb-2 h-52 overflow-hidden rounded-control border border-border"
+      className="relative mt-1 mb-2 overflow-hidden rounded-control border border-border"
       aria-label={gt("Terminal font preview")}
     />
   );

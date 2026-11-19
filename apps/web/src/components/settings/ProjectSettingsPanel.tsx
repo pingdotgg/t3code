@@ -7,7 +7,11 @@ import { useEnvironmentsWithScope } from "../../state/session";
 import { mapAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { planProjectRemoval } from "@t3tools/client-runtime/state/projects";
-import { type EnvironmentId, type SidebarProjectGroupingMode } from "@t3tools/contracts";
+import {
+  resolveEnvironmentMachineKind,
+  type EnvironmentId,
+  type SidebarProjectGroupingMode,
+} from "@t3tools/contracts";
 import {
   checkProjectAccess,
   reportProjectFailure,
@@ -15,7 +19,7 @@ import {
   type ProjectGroupUpdate,
 } from "../../hooks/useProjectGroupUpdate";
 import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
-import { InfoIcon, Trash2Icon } from "lucide-react";
+import { SmileIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
 
@@ -35,13 +39,14 @@ import { useThreadShells, waitForProjectRemoval } from "../../state/entities";
 import { refreshProjectFaviconUrl } from "../../state/assets";
 import { projectEnvironment } from "../../state/projects";
 import { ProjectFavicon } from "../ProjectFavicon";
-import { Alert, AlertDescription } from "../ui/alert";
+import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Badge } from "../ui/badge";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -234,7 +239,7 @@ export function ProjectSettingsPanel({
 
   if (!selected) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8 text-sm text-muted-foreground">
+      <div className="flex flex-1 items-center justify-center p-8 text-body text-muted-foreground">
         {groups.length === 0
           ? gt("Add a project from the sidebar to configure it here.")
           : gt("This project is no longer available.")}
@@ -243,7 +248,7 @@ export function ProjectSettingsPanel({
   }
   if (members.length === 0)
     return (
-      <p className="p-8 text-sm text-muted-foreground">
+      <p className="p-8 text-body text-muted-foreground">
         <T>This checkout is no longer available in the selected project and environment.</T>
       </p>
     );
@@ -436,26 +441,49 @@ function ProjectDetail({
     if (members) members.push(member);
     else checkoutsByEnvironment.set(member.environmentId, [member]);
   }
-  // A lone checkout is removed from the Danger section, but it still needs its grouping
-  // rule here so "Keep separate" can be undone.
+  const checkoutRemoveButton = (member: SidebarProjectGroupMember) => (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-sm"
+            variant="ghost-destructive"
+            disabled={!editableIds.has(member.environmentId)}
+            onClick={() => void removeMembers([member])}
+            aria-label={gt("Remove checkout {path}", { path: member.workspaceRoot })}
+          >
+            <Trash2Icon />
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">
+        <T>Remove checkout</T>
+      </TooltipPopup>
+    </Tooltip>
+  );
   const checkoutControls = (member: SidebarProjectGroupMember) => (
     <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-auto">
       <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
         <CheckoutGroupingSelect member={member} />
       </div>
-      {hasMultipleCheckouts ? (
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={!editableIds.has(member.environmentId)}
-          onClick={() => void removeMembers([member])}
-          aria-label={gt("Remove checkout {path}", { path: member.workspaceRoot })}
-        >
-          {gt("Remove", { $context: "verb, removes a checkout" })}
-        </Button>
-      ) : null}
+      {hasMultipleCheckouts ? checkoutRemoveButton(member) : null}
     </div>
   );
+  const checkoutStatus = (environmentId: EnvironmentId) => {
+    const environment = environmentById.get(environmentId);
+    const isPrimary = environmentId === primaryEnvironmentId;
+    const online = environment?.connection.phase === "connected";
+    return (
+      <Badge variant={isPrimary ? "secondary" : online ? "success" : "unavailable"}>
+        {isPrimary
+          ? gt("This device")
+          : online
+            ? gt("Online", { $context: "connection status" })
+            : gt("Offline", { $context: "connection status" })}
+      </Badge>
+    );
+  };
+  // Every checkout shows, even a lone one, so where the project lives is always visible.
   const checkoutChoices = (
     <SettingsSection title={gt("Checkouts")}>
       <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
@@ -470,8 +498,20 @@ function ProjectDetail({
             <SettingsRow
               key={member.physicalProjectKey}
               title={member.environmentLabel ?? gt("Environment")}
-              description={member.workspaceRoot}
-              control={checkoutControls(member)}
+              description={<span className="font-mono">{member.workspaceRoot}</span>}
+              leading={
+                <EnvironmentMachineIcon
+                  kind={resolveEnvironmentMachineKind(
+                    environmentById.get(member.environmentId)?.serverConfig ?? null,
+                  )}
+                />
+              }
+              control={
+                <>
+                  {checkoutStatus(member.environmentId)}
+                  {checkoutControls(member)}
+                </>
+              }
             />
           ));
         }
@@ -488,6 +528,11 @@ function ProjectDetail({
           <SettingsRow
             key={environmentId}
             title={labels.primary}
+            leading={
+              <EnvironmentMachineIcon
+                kind={resolveEnvironmentMachineKind(environment?.serverConfig ?? null)}
+              />
+            }
             description={
               <>
                 {labels.secondary ? (
@@ -495,7 +540,7 @@ function ProjectDetail({
                 ) : null}
                 {!hasMultiple ? (
                   <Tooltip>
-                    <TooltipTrigger render={<span className="block truncate" />}>
+                    <TooltipTrigger render={<span className="block truncate font-mono" />}>
                       {firstMember.workspaceRoot}
                     </TooltipTrigger>
                     <TooltipPopup>{firstMember.workspaceRoot}</TooltipPopup>
@@ -503,7 +548,12 @@ function ProjectDetail({
                 ) : null}
               </>
             }
-            control={hasMultiple ? undefined : checkoutControls(firstMember)}
+            control={
+              <>
+                {checkoutStatus(environmentId)}
+                {!hasMultiple ? checkoutControls(firstMember) : null}
+              </>
+            }
           >
             {hasMultiple ? (
               <div className="space-y-3 pb-2 pt-1">
@@ -515,7 +565,7 @@ function ProjectDetail({
                     <Tooltip>
                       <TooltipTrigger
                         render={
-                          <span className="min-w-0 max-w-full truncate text-meta text-muted-foreground/80" />
+                          <span className="min-w-0 max-w-full truncate font-mono text-meta text-muted-foreground/80" />
                         }
                       >
                         {member.workspaceRoot}
@@ -532,20 +582,12 @@ function ProjectDetail({
       })}
     </SettingsSection>
   );
+  const checkoutCount = group.memberProjects.length;
 
   return (
     <>
-      <SettingsPageContainer className="gap-6">
-        <Alert variant="info">
-          <InfoIcon aria-hidden />
-          <AlertDescription>
-            <T>
-              Can't find a setting? Keep this project picked above and hop to any other settings
-              page.
-            </T>
-          </AlertDescription>
-        </Alert>
-        <SettingsSection id="project-overview" title={gt("Project")} hideTitle>
+      <SettingsPageContainer className="max-w-[688px]">
+        <SettingsSection id="project-overview" title={gt("Project")}>
           {!canEditGroup ? (
             <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
               {group.memberProjects.length > 1
@@ -555,9 +597,7 @@ function ProjectDetail({
           ) : null}
           <SettingsRow
             title={gt("Name")}
-            description={gt(
-              "The shared name for this project group in the sidebar and thread lists.",
-            )}
+            description={gt("Shared name for this project in the sidebar and thread lists.")}
             resetAction={
               canResetScratchTitle ? (
                 <SettingResetButton
@@ -576,7 +616,7 @@ function ProjectDetail({
               <Input
                 key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
-                className="w-full sm:w-64"
+                className="w-full sm:w-50"
                 aria-label={gt("Project name")}
                 disabled={!canEditGroup}
                 defaultValue={group.displayName}
@@ -625,7 +665,7 @@ function ProjectDetail({
             }
             control={
               <div className="flex items-center gap-2">
-                <ProjectFavicon project={group} className="size-6" />
+                <ProjectFavicon project={group} className="size-7" />
                 <Button
                   size="sm"
                   variant="secondary"
@@ -634,7 +674,8 @@ function ProjectDetail({
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setIconPickerOpen(true)}
                 >
-                  <T>Choose icon</T>
+                  <SmileIcon />
+                  {gt("Choose", { $context: "verb, opens the project icon picker" })}
                 </Button>
                 <Button
                   size="sm"
@@ -644,7 +685,8 @@ function ProjectDetail({
                   disabled={isSavingFavicon || !canEditGroup}
                   onClick={() => setFaviconPickerOpen(true)}
                 >
-                  <T>Choose file</T>
+                  <UploadIcon />
+                  {gt("Upload", { $context: "verb, uploads a project icon file" })}
                 </Button>
               </div>
             }
@@ -698,43 +740,35 @@ function ProjectDetail({
             </>
           ) : null}
         </SettingsSection>
-        <ProjectDefaultsSettings category="project" />
-        <ProjectActionsSettings />
         {checkoutChoices}
+        <ProjectActionsSettings />
+        <ProjectDefaultsSettings category="project" />
         <SettingsSection title={gt("Danger")}>
           <SettingsRow
             title={
               hasOtherMembers
                 ? gt("Remove checkout")
-                : group.memberProjects.length > 1
-                  ? gt("Remove this project everywhere")
-                  : gt("Remove project")
+                : gt("Remove {project}", { project: group.displayName })
             }
             description={
               hasOtherMembers
                 ? gt(
-                    "Deletes the selected machine's checkout entries and their threads. Other machines and files on disk are not touched.",
+                    "Removes the selected machine's checkout and deletes its threads. Files on disk stay.",
                   )
-                : group.memberProjects.length > 1
-                  ? gt(
-                      "{count, plural, other {Deletes all {count} checkout entries and their threads on every machine. Files on disk are not touched.}}",
-                      { count: group.memberProjects.length },
-                    )
-                  : gt("Deletes the project entry and its threads. Files on disk are not touched.")
+                : gt(
+                    "{count, plural, one {Removes the project and its {count} checkout and deletes its threads. Files on disk stay.} other {Removes the project and its {count} checkouts and deletes its threads. Files on disk stay.}}",
+                    { count: checkoutCount },
+                  )
             }
             control={
               <Button
                 size="sm"
-                variant="destructive-outline"
+                variant="destructive"
                 disabled={!canEditGroup}
                 onClick={() => void removeMembers(group.memberProjects)}
               >
                 <Trash2Icon />
-                {hasOtherMembers
-                  ? gt("Remove checkout")
-                  : group.memberProjects.length > 1
-                    ? gt("Remove all entries")
-                    : gt("Remove project")}
+                {hasOtherMembers ? gt("Remove checkout") : gt("Remove project")}
               </Button>
             }
           />

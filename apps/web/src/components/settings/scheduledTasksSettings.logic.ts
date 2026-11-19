@@ -61,6 +61,12 @@ export function scheduleLabel(
   }
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / 60_000;
+    if (minutes >= 60 && minutes % 60 === 0) {
+      const hours = minutes / 60;
+      return resolve(
+        msg("{hours, plural, one {Every hour} other {Every {hours} hours}}", { hours }),
+      );
+    }
     return Number.isInteger(minutes)
       ? resolve(msg("Every {minutes} min", { minutes }))
       : resolve(msg("Every {seconds} sec", { seconds: Math.round(schedule.everyMs / 1000) }));

@@ -322,28 +322,6 @@ export function sortDesktopPairingLinks(links: ReadonlyArray<ServerPairingLinkRe
   );
 }
 
-export function summarizeAuthorizedClients(
-  sessions: ReadonlyArray<ServerClientSessionRecord>,
-  links: ReadonlyArray<ServerPairingLinkRecord>,
-  resolve: MessageResolver = m,
-): string {
-  const parts = [
-    resolve(
-      msg("{count, plural, one {{count} client} other {{count} clients}}", {
-        count: sessions.length,
-      }),
-    ),
-    links.length > 0
-      ? resolve(
-          msg("{count, plural, one {{count} pairing link} other {{count} pairing links}}", {
-            count: links.length,
-          }),
-        )
-      : null,
-  ];
-  return parts.filter((part): part is string => part !== null).join("\n");
-}
-
 export function sortDesktopClientSessions(sessions: ReadonlyArray<ServerClientSessionRecord>) {
   return [...sessions].toSorted((left, right) => {
     if (left.current !== right.current) {

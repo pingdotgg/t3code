@@ -13,7 +13,7 @@ import {
 } from "../components/settings/SettingsScopeContext";
 import { useEnvironments } from "../state/environments";
 import { SettingsScopeNotice } from "../components/settings/SettingsScopeNotice";
-import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/SettingsScopeSentence";
+import { SETTINGS_DEVICE_ONLY_PATHS } from "../components/settings/settingsScopeAxis";
 import { SettingsPageContainer } from "../components/settings/settingsLayout";
 import {
   retainSettingsScope,
@@ -114,7 +114,7 @@ function SettingsContentLayout() {
   const [restoreSignal, setRestoreSignal] = useState(0);
 
   return (
-    <AppRouteModal label={gt("Settings")}>
+    <AppRouteModal label={gt("Settings")} variant="app-panel">
       <div className="relative flex min-h-0 flex-1">
         <SettingsSidebarNav pathname={location.pathname} />
         <div
@@ -122,7 +122,7 @@ function SettingsContentLayout() {
           data-app-modal-pane=""
           className="flex min-h-0 min-w-0 flex-1 flex-col"
         >
-          <header className="flex h-12 shrink-0 items-center gap-3 border-b ps-5 pe-2">
+          <header className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3">
             <SettingsBreadcrumb pathname={location.pathname} />
             <div className="ms-auto flex shrink-0 items-center gap-1">
               {location.pathname === "/settings/general" ? (

@@ -18,7 +18,9 @@ import {
   HammerIcon,
   ListChecksIcon,
   PlayIcon,
+  Trash2Icon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import React, { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
@@ -43,7 +45,6 @@ import {
 import { Button } from "./ui/button";
 import {
   Dialog,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogPanel,
@@ -53,7 +54,11 @@ import {
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
-import { Switch } from "./ui/switch";
+import { Checkbox } from "./ui/checkbox";
+import { Kbd } from "./ui/kbd";
+import { formatShortcutKeyLabel } from "~/keybindings";
+import { isMacPlatform } from "~/lib/utils";
+import { DialogSubmitKbd, isDialogSubmitShortcut } from "./DialogSubmitShortcut";
 import { Textarea } from "./ui/textarea";
 
 const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
@@ -78,6 +83,76 @@ export function ScriptIcon({
   if (icon === "build") return <HammerIcon className={className} />;
   if (icon === "debug") return <BugIcon className={className} />;
   return <PlayIcon className={className} />;
+}
+
+/** Key cap labels for a stored keybinding such as `mod+shift+r`. */
+function keybindingKeyCaps(value: string): ReadonlyArray<string> {
+  const mac = isMacPlatform(navigator.platform);
+  return value
+    .split("+")
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      if (part === "mod") return mac ? "\u2318" : "Ctrl";
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- key names stay English
+      if (part === "meta") return mac ? "\u2318" : "Meta";
+      if (part === "ctrl") return mac ? "\u2303" : "Ctrl";
+      if (part === "alt") return mac ? "\u2325" : "Alt";
+      if (part === "shift") return mac ? "\u21e7" : "Shift";
+      return formatShortcutKeyLabel(part);
+    });
+}
+
+/**
+ * Records a shortcut on keydown and shows it as key caps. Backspace or Delete, or the clear
+ * button, removes it.
+ */
+function KeybindingField(props: {
+  readonly id: string;
+  readonly value: string;
+  readonly onKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
+  readonly onClear: () => void;
+  readonly disabled?: boolean;
+}) {
+  const gt = useGT();
+  const caps = props.value ? keybindingKeyCaps(props.value) : [];
+  return (
+    <div className="relative flex h-8.5 min-w-0 items-center gap-1 rounded-control surface-well kbd-in-control ps-2 pe-1 text-base has-focus-visible:surface-focus sm:h-7.5 sm:text-sm">
+      <input
+        id={props.id}
+        readOnly
+        disabled={props.disabled}
+        value={props.value}
+        onKeyDown={props.onKeyDown}
+        aria-description={gt(
+          "Press a shortcut. Backspace clears it. Shortcuts are environment-wide.",
+        )}
+        className="absolute inset-0 size-full cursor-pointer rounded-[inherit] opacity-0 outline-none"
+      />
+      {caps.length > 0 ? (
+        caps.map((cap, index) => (
+          // oxlint-disable-next-line react/no-array-index-key -- caps can repeat
+          <Kbd key={`${cap}-${index}`}>{cap}</Kbd>
+        ))
+      ) : (
+        <span className="pointer-events-none truncate text-placeholder">
+          <T>Press shortcut</T>
+        </span>
+      )}
+      {caps.length > 0 ? (
+        <Button
+          type="button"
+          variant="ghost-muted"
+          size="icon-xs"
+          aria-label={gt("Clear keybinding")}
+          disabled={props.disabled}
+          onClick={props.onClear}
+          className="relative ms-auto shrink-0"
+        >
+          <XIcon aria-hidden />
+        </Button>
+      ) : null}
+    </div>
+  );
 }
 
 export interface NewProjectScriptInput {
@@ -193,7 +268,7 @@ export function ProjectScriptEditorDialog({
         }}
       >
         {/* The form owns its fields so a keystroke re-renders it, not the dialog chrome. */}
-        <DialogPopup>
+        <DialogPopup className="sm:max-w-115">
           {shown ? (
             <ProjectScriptEditorForm
               key={shown.key}
@@ -215,7 +290,7 @@ export function ProjectScriptEditorDialog({
       </Dialog>
 
       <AlertDialog open={deleteConfirmOpen && canEditActions} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogPopup>
+        <AlertDialogPopup className="sm:max-w-105">
           <AlertDialogHeader>
             <AlertDialogTitle>
               <T>
@@ -227,10 +302,11 @@ export function ProjectScriptEditorDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="secondary" />}>
+            <AlertDialogClose render={<Button size="standard" variant="secondary" />}>
               <T>Cancel</T>
             </AlertDialogClose>
             <Button
+              size="standard"
               variant="destructive"
               disabled={!canEditActions}
               onClick={() => {
@@ -282,6 +358,7 @@ function ProjectScriptEditorForm({
   const canEditActions = useEnvironmentScope(environmentId, editScope);
   const canWriteSettings = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const formId = React.useId();
+  const formRef = useRef<HTMLFormElement | null>(null);
   const [name, setName] = useState(request.initial.name);
   const [command, setCommand] = useState(request.initial.command);
   const [icon, setIcon] = useState<ProjectScriptIcon>(request.initial.icon);
@@ -415,90 +492,89 @@ function ProjectScriptEditorForm({
     }
   };
 
+  const handleSubmitShortcut = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.defaultPrevented || !isDialogSubmitShortcut(event) || isSaving) return;
+    event.preventDefault();
+    formRef.current?.requestSubmit();
+  };
+
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{isEditing ? <T>Edit Action</T> : <T>Add Action</T>}</DialogTitle>
-        <DialogDescription>
-          <T>Actions are project-scoped commands you can run from the top bar or keybindings.</T>
-        </DialogDescription>
+        <DialogTitle>{isEditing ? <T>Edit action</T> : <T>Add action</T>}</DialogTitle>
       </DialogHeader>
       <DialogPanel>
-        <form id={formId} onSubmit={submit}>
+        <form id={formId} ref={formRef} onSubmit={submit} onKeyDown={handleSubmitShortcut}>
           <fieldset className="space-y-4" disabled={isSaving || !canEditActions}>
-            <div className="space-y-1.5">
-              <Label htmlFor="script-name">
-                <T>Name</T>
-              </Label>
-              <div className="flex items-center gap-2">
-                <Popover onOpenChange={setIconPickerOpen} open={iconPickerOpen}>
-                  <PopoverTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="size-9 shrink-0"
-                        aria-label={gt("Choose icon")}
-                      />
-                    }
-                  >
-                    <ScriptIcon icon={icon} className="size-4.5" />
-                  </PopoverTrigger>
-                  <PopoverPopup align="start">
-                    <div className="grid grid-cols-3 gap-2">
-                      {SCRIPT_ICONS.map((entry) => {
-                        const isSelected = entry.id === icon;
-                        return (
-                          <button
-                            key={entry.id}
-                            type="button"
-                            className={`relative flex flex-col items-center gap-2 rounded-item border px-2 py-2 text-xs ${
-                              isSelected
-                                ? "border-border surface-selected-soft text-strong-foreground"
-                                : "border-border/70 surface-card-settings hover:surface-ghost-hover"
-                            }`}
-                            onClick={() => {
-                              setIcon(entry.id);
-                              setIconPickerOpen(false);
-                            }}
-                          >
-                            <ScriptIcon icon={entry.id} className="size-4" />
-                            <span>{m(entry.label)}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </PopoverPopup>
-                </Popover>
-                <Input
-                  id="script-name"
-                  autoFocus
-                  placeholder={gt("Test", { $context: "example action name" })}
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
+            <div className="grid grid-cols-[minmax(0,1fr)_12rem] gap-3">
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="script-name">
+                  <T>Name</T>
+                </Label>
+                <div className="flex items-center gap-2">
+                  <Popover onOpenChange={setIconPickerOpen} open={iconPickerOpen}>
+                    <PopoverTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="icon"
+                          className="shrink-0"
+                          aria-label={gt("Choose icon")}
+                        />
+                      }
+                    >
+                      <ScriptIcon icon={icon} className="size-4" />
+                    </PopoverTrigger>
+                    <PopoverPopup align="start">
+                      <div className="grid grid-cols-3 gap-2">
+                        {SCRIPT_ICONS.map((entry) => {
+                          const isSelected = entry.id === icon;
+                          return (
+                            <button
+                              key={entry.id}
+                              type="button"
+                              className={`relative flex flex-col items-center gap-2 rounded-item border px-2 py-2 text-xs ${
+                                isSelected
+                                  ? "border-border surface-selected-soft text-strong-foreground"
+                                  : "border-border/70 surface-card-settings hover:surface-ghost-hover"
+                              }`}
+                              onClick={() => {
+                                setIcon(entry.id);
+                                setIconPickerOpen(false);
+                              }}
+                            >
+                              <ScriptIcon icon={entry.id} className="size-4" />
+                              <span>{m(entry.label)}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </PopoverPopup>
+                  </Popover>
+                  <Input
+                    id="script-name"
+                    autoFocus
+                    placeholder={gt("Test", { $context: "example action name" })}
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor="script-keybinding">
+                  <T>Keybinding</T>
+                </Label>
+                <KeybindingField
+                  id="script-keybinding"
+                  value={keybinding}
+                  onKeyDown={captureKeybinding}
+                  onClear={() => setKeybinding("")}
+                  disabled={!canWriteSettings}
                 />
               </div>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="script-keybinding">
-                <T>Keybinding</T>
-              </Label>
-              <Input
-                disabled={!canWriteSettings}
-                id="script-keybinding"
-                placeholder={gt("Press shortcut")}
-                value={keybinding}
-                readOnly
-                onKeyDown={captureKeybinding}
-              />
-              <p className="text-xs text-muted-foreground">
-                <T>
-                  Press a shortcut. Use <code>Backspace</code> to clear. Shortcuts are
-                  environment-wide. Projects using the same action share its shortcut.
-                </T>
-              </p>
-            </div>
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="script-command">
                 <T>Command</T>
               </Label>
@@ -510,96 +586,89 @@ function ProjectScriptEditorForm({
                 onChange={(event) => setCommand(event.target.value)}
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="script-preview-url">
                 <T>Preview URL (optional)</T>
               </Label>
               <Input
                 id="script-preview-url"
+                font="mono"
                 placeholder="http://localhost:5173"
                 value={previewUrl}
                 onChange={(event) => setPreviewUrl(event.target.value)}
               />
-              <p className="text-xs text-muted-foreground">
-                <T>Open this URL in the in-app preview when this action runs.</T>
-              </p>
             </div>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-              <span>
+            <div className="flex flex-col gap-2.5">
+              <label className="flex items-center gap-2.5 text-body text-foreground">
+                <Checkbox
+                  checked={runOnWorktreeCreate}
+                  onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                />
                 <T>Run automatically on worktree creation</T>
-              </span>
-              <Switch
-                checked={runOnWorktreeCreate}
-                onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
-              />
-            </label>
-            <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
-                runOnWorktreeCreate ? "" : "opacity-60"
-              }`}
-            >
-              <span>
+              </label>
+              <label
+                className={`flex items-center gap-2.5 text-body text-foreground ${
+                  runOnWorktreeCreate ? "" : "opacity-60"
+                }`}
+              >
+                <Checkbox
+                  checked={waitForSetup}
+                  disabled={!runOnWorktreeCreate}
+                  onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
+                />
                 <T>Wait for it to finish before the agent starts</T>
-              </span>
-              <Switch
-                checked={waitForSetup}
-                disabled={!runOnWorktreeCreate}
-                onCheckedChange={(checked) => setWaitForSetup(Boolean(checked))}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-              <span>
-                <T>Run in the thread's worktree when the thread settles</T>
-              </span>
-              <Switch
-                checked={runOnSettle}
-                onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
-              />
-            </label>
-            <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035]">
-              <span>
-                <T>Stop this action when the thread settles</T>
-              </span>
-              <Switch
-                checked={stopOnSettle}
-                onCheckedChange={(checked) => setStopOnSettle(Boolean(checked))}
-              />
-            </label>
-            <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-body dark:border-transparent dark:bg-white/[0.035] ${
-                previewUrl.trim().length === 0 ? "opacity-60" : ""
-              }`}
-            >
-              <span>
+              </label>
+              <label
+                className={`flex items-center gap-2.5 text-body text-foreground ${
+                  previewUrl.trim().length === 0 ? "opacity-60" : ""
+                }`}
+              >
+                <Checkbox
+                  checked={autoOpenPreview}
+                  disabled={previewUrl.trim().length === 0}
+                  onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
+                />
                 <T>Open preview automatically when this action runs</T>
-              </span>
-              <Switch
-                checked={autoOpenPreview}
-                disabled={previewUrl.trim().length === 0}
-                onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
-              />
-            </label>
+              </label>
+              <label className="flex items-center gap-2.5 text-body text-foreground">
+                <Checkbox
+                  checked={runOnSettle}
+                  onCheckedChange={(checked) => setRunOnSettle(Boolean(checked))}
+                />
+                <T>Run in the thread's worktree when the thread settles</T>
+              </label>
+              <label className="flex items-center gap-2.5 text-body text-foreground">
+                <Checkbox
+                  checked={stopOnSettle}
+                  onCheckedChange={(checked) => setStopOnSettle(Boolean(checked))}
+                />
+                <T>Stop this action when the thread settles</T>
+              </label>
+            </div>
             {validationError && <p className="text-body text-destructive">{validationError}</p>}
           </fieldset>
         </form>
       </DialogPanel>
-      <DialogFooter variant="bare">
+      <DialogFooter variant="bare" onKeyDown={handleSubmitShortcut}>
         {isEditing && (
           <Button
             type="button"
-            variant="destructive-outline"
-            className="mr-auto"
+            size="standard"
+            variant="secondary"
+            className="sm:mr-auto"
             disabled={isSaving || !canEditActions}
             onClick={() => onRequestDelete(name)}
           >
+            <Trash2Icon aria-hidden />
             <T context="verb, delete the action">Delete</T>
           </Button>
         )}
-        <Button type="button" variant="secondary" onClick={close}>
+        <Button type="button" size="standard" variant="secondary" onClick={close}>
           <T>Cancel</T>
         </Button>
-        <Button form={formId} type="submit" disabled={isSaving || !canEditActions}>
+        <Button form={formId} type="submit" size="standard" disabled={isSaving || !canEditActions}>
           {isSaving ? <T>Saving…</T> : isEditing ? <T>Save changes</T> : <T>Save action</T>}
+          {isSaving ? null : <DialogSubmitKbd />}
         </Button>
       </DialogFooter>
     </>

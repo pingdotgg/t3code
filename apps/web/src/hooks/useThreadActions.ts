@@ -64,6 +64,7 @@ import { showThreadUndoNotice } from "./showThreadUndoNotice";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
+import { deleteConfirm } from "../confirmDialog";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -592,7 +593,7 @@ export function useThreadActions() {
             "",
             m(msg("Delete the worktree too?")),
           ].join("\n"),
-          { variant: "destructive" },
+          deleteConfirm({ variant: "destructive", confirmLabel: m(msg("Delete worktree")) }),
         ),
       );
       if (confirmationResult._tag === "Failure") {
@@ -1022,16 +1023,17 @@ export function useThreadActions() {
     const resolved = resolveThreadTarget(target);
 
     if (confirmThreadDelete && localApi) {
-      const title = resolved?.thread.title ?? knownTitle ?? null;
+      const knownName = resolved?.thread.title ?? knownTitle;
       const confirmationResult = await settlePromise(() =>
         localApi.dialogs.confirm(
-          [
-            title === null
-              ? m(msg('Delete thread "this thread"?'))
-              : m(msg('Delete thread "{title}"?', { title })),
-            m(msg("This permanently clears conversation history for this thread.")),
-          ].join("\n"),
-          { variant: "destructive" },
+          knownName
+            ? m(msg('This deletes "{title}" and its chat history.', { title: knownName }))
+            : m(msg("This deletes this thread and its chat history.")),
+          deleteConfirm({
+            variant: "destructive",
+            title: m(msg("Delete thread?")),
+            confirmLabel: m(msg("Delete thread")),
+          }),
         ),
       );
       if (confirmationResult._tag === "Failure") {
