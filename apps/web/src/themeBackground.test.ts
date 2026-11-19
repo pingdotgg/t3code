@@ -11,7 +11,7 @@ vi.mock(
 );
 vi.mock(import("./state/primaryEnvironment"), async () => {
   const { Atom } = await import("effect/reactivity");
-  return { themeEnvironmentIdAtom: Atom.make(EnvironmentId.make("host")) } as never;
+  return { localEnvironmentIdAtom: Atom.make(EnvironmentId.make("host")) } as never;
 });
 vi.mock(import("./state/server"), async () => {
   const { Atom } = await import("effect/reactivity");

@@ -11,7 +11,6 @@ import {
   type IssueComment,
   type IssueEvent,
   type IssueExternalTemplate,
-  type IssueInvolvement,
   type IssueLinkedPullRequest,
   type IssueReaction,
   type IssueReactionContent,
@@ -22,16 +21,18 @@ import {
 } from "@t3tools/contracts";
 import {
   IssueTrackerError,
+  type IssueInvolvementFilter,
   type StandaloneIssueTrackerApi,
   type TrackerIssueSummary,
 } from "@t3tools/source-control-core/server/IssueTracker";
 
+import { LINEAR_HOST, parseLinearIssueUrl } from "../shared/issueUrl.ts";
 import * as LinearApi from "./LinearApi.ts";
 
 const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
   tracker: LinearApi.KIND,
   displayName: "Linear",
-  host: "linear.app",
+  host: LINEAR_HOST,
   scopeNoun: "team",
   credential: {
     label: "Personal API key",
@@ -307,10 +308,7 @@ export function toTemplate(
   };
 }
 
-function involvementFilter(input: {
-  readonly involvement: IssueInvolvement;
-  readonly viewer: string;
-}): LinearApi.IssueFilter {
+function involvementFilter(input: IssueInvolvementFilter): LinearApi.IssueFilter {
   switch (input.involvement) {
     case "assigned":
       return { assignee: { displayName: { eq: input.viewer } } };
@@ -418,18 +416,13 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       kind: LinearApi.KIND,
       capabilities: CAPABILITIES,
       standalone: DESCRIPTOR,
-      parseIssueUrl: (url) => {
-        if (url.protocol !== "https:" || url.host.toLowerCase() !== DESCRIPTOR.host) return null;
-        const [, workspace, resource, key] = url.pathname.split("/");
-        if (!workspace || resource !== "issue" || key === undefined) return null;
-        const scope = /^([A-Z][A-Z0-9_]*)-[1-9][0-9]*$/.exec(key)?.[1];
-        return scope === undefined ? null : { host: DESCRIPTOR.host, workspace, scope, key };
-      },
+      parseIssueUrl: parseLinearIssueUrl,
 
       probeCredential: (token) =>
         linear.viewer(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),
+            workspace: data.workspace,
             scopes: data.teams.map((team) => ({ key: team.key, name: team.name })),
           })),
         ),

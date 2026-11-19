@@ -61,6 +61,16 @@ const RawMergeRequestDiffRefs = Schema.Struct({
   start_sha: Schema.NullOr(Schema.String),
 });
 
+/** `with_labels_details=true` returns label objects; hosts that ignore it still send names. */
+const RawLabelRefSchema = Schema.Union([
+  Schema.String,
+  Schema.Struct({
+    name: Schema.String,
+    color: Schema.optional(Schema.NullOr(Schema.String)),
+    description: Schema.optional(Schema.NullOr(Schema.String)),
+  }),
+]);
+
 const RawMergeRequestSchema = Schema.Struct({
   iid: Schema.Int,
   title: Schema.String,
@@ -81,7 +91,7 @@ const RawMergeRequestSchema = Schema.Struct({
   merged_at: Schema.optional(Schema.NullOr(Schema.String)),
   closed_at: Schema.optional(Schema.NullOr(Schema.String)),
   reviewers: Schema.optional(Schema.NullOr(Schema.Array(RawUserSchema))),
-  labels: Schema.optional(Schema.NullOr(Schema.Array(Schema.String))),
+  labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelRefSchema))),
   // GitLab reports "1000+" past its counting limit.
   changes_count: Schema.optional(Schema.NullOr(Schema.String)),
   head_pipeline: Schema.optional(Schema.NullOr(RawPipelineSchema)),
@@ -282,10 +292,18 @@ function toMergeability(
   }
 }
 
-function toLabels(raw: ReadonlyArray<string> | null | undefined): ReadonlyArray<PullRequestLabel> {
-  return (raw ?? []).flatMap((label) => {
-    const name = trimmed(label);
-    return name === null ? [] : [{ name, color: null }];
+function toLabels(
+  raw: ReadonlyArray<typeof RawLabelRefSchema.Type> | null | undefined,
+): ReadonlyArray<PullRequestLabel> {
+  return (raw ?? []).flatMap((label): ReadonlyArray<PullRequestLabel> => {
+    if (typeof label === "string") {
+      const name = trimmed(label);
+      return name === null ? [] : [{ name, color: null }];
+    }
+    const name = trimmed(label.name);
+    return name === null
+      ? []
+      : [{ name, color: trimmed(label.color), description: trimmed(label.description) }];
   });
 }
 
@@ -1304,6 +1322,27 @@ const RawAwardSchema = Schema.Struct({
 
 const decodeAward = Schema.decodeUnknownExit(RawAwardSchema);
 
+type GitLabAward = typeof RawAwardSchema.Type;
+
+/** A page of REST `award_emoji`; a row that cannot be read is skipped. */
+export function decodeAwardListJson(
+  raw: string,
+): Result.Result<ReadonlyArray<GitLabAward>, DecodeFailure> {
+  return Result.map(decodeUnknownList(raw), (rows) =>
+    rows.flatMap((entry) => {
+      const award = decodeAward(entry);
+      return Exit.isSuccess(award) ? [award.value] : [];
+    }),
+  );
+}
+
+export function awardReactions(
+  awards: ReadonlyArray<GitLabAward>,
+  viewer: string | null,
+): ReadonlyArray<PullRequestReaction> {
+  return toReactions({ nodes: awards }, viewer);
+}
+
 export function decodeOwnAwardIdJson(
   raw: string,
   input: { readonly content: PullRequestReactionContent; readonly viewer: string },
@@ -1686,7 +1725,7 @@ export function decodeListStatesJson(
 /** The fields a listed merge request needs, so one GraphQL read stands in for REST and states. */
 export const LIST_ITEM_GRAPHQL_FIELDS = `${LIST_STATE_GRAPHQL_FIELDS}
   title webUrl state draft createdAt updatedAt mergedAt sourceBranch targetBranch
-  conflicts mergeStatusEnum author { username name avatarUrl } labels(first: 100) { nodes { title } }`;
+  conflicts mergeStatusEnum author { username name avatarUrl } labels(first: 100) { nodes { title color description } }`;
 
 const RawGraphqlListNodeSchema = Schema.Struct({
   ...RawListStateFields,
@@ -1714,7 +1753,17 @@ const RawGraphqlListNodeSchema = Schema.Struct({
     Schema.NullOr(
       Schema.Struct({
         nodes: Schema.optional(
-          Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Struct({ title: Schema.String })))),
+          Schema.NullOr(
+            Schema.Array(
+              Schema.NullOr(
+                Schema.Struct({
+                  title: Schema.String,
+                  color: Schema.optional(Schema.NullOr(Schema.String)),
+                  description: Schema.optional(Schema.NullOr(Schema.String)),
+                }),
+              ),
+            ),
+          ),
         ),
       }),
     ),
@@ -1795,7 +1844,11 @@ export function decodeMergeRequestGraphqlListJson(
         const login = trimmed(reviewer?.username);
         return login === null ? [] : [login];
       }),
-      labels: toLabels((node.labels?.nodes ?? []).flatMap((label) => (label ? [label.title] : []))),
+      labels: toLabels(
+        (node.labels?.nodes ?? []).flatMap((label) =>
+          label ? [{ name: label.title, color: label.color, description: label.description }] : [],
+        ),
+      ),
     });
     states.set(number, toListState(node, enterprise));
   }
@@ -1919,11 +1972,15 @@ export function decodeMergeRequestStatsJson(
   return Result.succeed(stats);
 }
 
-/** GitLab lets whoever may change a merge request's metadata set its labels. */
+/**
+ * GitLab lets whoever may change a merge request's metadata set its labels. The labels ride along
+ * because GET /merge_requests/:iid ignores `with_labels_details` and so carries no colours.
+ */
 export const LABEL_PERMISSION_GRAPHQL_QUERY = `query($fullPath: ID!, $iid: String!) {
   project(fullPath: $fullPath) {
     mergeRequest(iid: $iid) {
       userPermissions { adminMergeRequest }
+      labels(first: 100) { nodes { title color description } }
     }
   }
 }`;
@@ -1936,6 +1993,25 @@ const decodeLabelPermission = decodeJsonResult(
           mergeRequest: Schema.NullOr(
             Schema.Struct({
               userPermissions: Schema.Struct({ adminMergeRequest: Schema.Boolean }),
+              labels: Schema.optional(
+                Schema.NullOr(
+                  Schema.Struct({
+                    nodes: Schema.optional(
+                      Schema.NullOr(
+                        Schema.Array(
+                          Schema.NullOr(
+                            Schema.Struct({
+                              title: Schema.String,
+                              color: Schema.optional(Schema.NullOr(Schema.String)),
+                              description: Schema.optional(Schema.NullOr(Schema.String)),
+                            }),
+                          ),
+                        ),
+                      ),
+                    ),
+                  }),
+                ),
+              ),
             }),
           ),
         }),
@@ -1944,13 +2020,32 @@ const decodeLabelPermission = decodeJsonResult(
   }),
 );
 
-export function decodeLabelPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
+export interface GitLabLabelPermission {
+  readonly viewerCanEditLabels: boolean;
+  readonly labels: ReadonlyArray<PullRequestLabel> | null;
+}
+
+export function decodeLabelPermissionJson(
+  raw: string,
+): Result.Result<GitLabLabelPermission, DecodeFailure> {
   const decoded = decodeLabelPermission(raw);
-  return Result.isSuccess(decoded)
-    ? Result.succeed(
-        decoded.success.data.project?.mergeRequest?.userPermissions.adminMergeRequest === true,
-      )
-    : Result.fail(decoded.failure);
+  if (!Result.isSuccess(decoded)) {
+    return Result.fail(decoded.failure);
+  }
+  const mergeRequest = decoded.success.data.project?.mergeRequest;
+  return Result.succeed({
+    viewerCanEditLabels: mergeRequest?.userPermissions.adminMergeRequest === true,
+    labels:
+      mergeRequest?.labels == null
+        ? null
+        : toLabels(
+            (mergeRequest.labels.nodes ?? []).flatMap((label) =>
+              label
+                ? [{ name: label.title, color: label.color, description: label.description }]
+                : [],
+            ),
+          ),
+  });
 }
 
 /**

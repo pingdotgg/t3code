@@ -3,7 +3,10 @@
  * scope is `organization/project` and every call names the organization. Listing is a WIQL
  * query paged by a `(changedDate, id)` keyset cursor, because WIQL has no offset.
  */
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -26,7 +29,6 @@ import {
   closedStateNames,
   workItemStates,
   decodeCommentsJson,
-  decodeProfileJson,
   decodeUpdatesJson,
   decodeWorkItemJson,
   decodeWorkItemsJson,
@@ -68,6 +70,7 @@ const VIEWER_PERMISSIONS: IssueViewerPermissions = {
 
 const REST_API_VERSION = "7.1";
 const PAGE_SIZE = 100;
+const CLOSED_STATES_TTL = Duration.minutes(10);
 /** Updates are read a page per `az` process, oldest first, so a long history is bounded. */
 const UPDATE_PAGE_LIMIT = 5;
 /** Linked pull requests are read one `az` process each, so a work item's links are bounded. */
@@ -348,12 +351,32 @@ export const make: Effect.Effect<
     read({
       cwd: input.cwd,
       operation: input.operation,
-      args: invokeArgs({ ...input, resource: "workitemtypes" }),
+      // Form layouts can exceed the CLI output cap; only workflow metadata is needed.
+      args: [
+        ...invokeArgs({ ...input, resource: "workitemtypes" }),
+        "--query",
+        "{value: value[].{name: name, isDisabled: isDisabled || `false`, states: (states || `[]`)[].{name: name, category: category}}}",
+      ],
       decode: decodeAs(decodeTypes),
     }).pipe(Effect.map((types) => types.value));
 
-  const closedStates = (input: Parameters<typeof workItemTypes>[0]) =>
-    workItemTypes(input).pipe(Effect.map(closedStateNames));
+  // Shares one in-flight workflow read per project; only a success replaces the cached states.
+  const workflowReads = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd, organization, project] = JSON.parse(key) as [string, string, string];
+      return workItemTypes({ cwd, organization, project, operation: "listIssues" }).pipe(
+        Effect.map(closedStateNames),
+        Effect.tap((closed) => Cache.set(listClosedStates, key, closed)),
+      );
+    },
+    { capacity: Infinity, timeToLive: () => Duration.zero },
+  );
+  // Each `az` call costs seconds of startup, and a project's states rarely change.
+  const listClosedStates: Cache.Cache<string, ClosedStates, IssueTrackerError> =
+    yield* Cache.makeWith((key: string) => Cache.get(workflowReads, key), {
+      capacity: 256,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? CLOSED_STATES_TTL : Duration.zero),
+    });
 
   const workItem = (input: {
     readonly cwd: string;
@@ -580,33 +603,9 @@ export const make: Effect.Effect<
     kind: KIND,
     capabilities: CAPABILITIES,
 
-    // The profile the token belongs to, which is what WIQL's `@Me` resolves to. Its email is the
-    // `uniqueName` every identity on a work item carries, so the two compare.
-    getViewer: (input) =>
-      read({
-        cwd: input.cwd,
-        operation: "getViewer",
-        args: [
-          "devops",
-          "invoke",
-          "--detect",
-          "true",
-          "--area",
-          "profile",
-          "--resource",
-          "profiles",
-          "--api-version",
-          REST_API_VERSION,
-          "--route-parameters",
-          "id=me",
-        ],
-        decode: decodeProfileJson,
-      }).pipe(
-        Effect.filterOrFail(
-          (login) => login !== null,
-          () => refused("getViewer", "Azure DevOps could not name the signed-in account."),
-        ),
-      ),
+    // Listing filters with WIQL's `@Me`, so nothing compares against a name. Looking one up
+    // needs a profile host that a PAT saved for one organization cannot reach.
+    getViewer: () => Effect.succeed("@Me"),
 
     listIssues: Effect.fn("AzureDevOpsIssueTracker.listIssues")(function* (input) {
       const cursor = input.cursor === undefined ? undefined : parseCursor(input.cursor);
@@ -618,11 +617,12 @@ export const make: Effect.Effect<
       const created = input.sort === "created";
       const dateField = created ? "[System.CreatedDate]" : "[System.ChangedDate]";
       return yield* scoped("listIssues", input).pipe(
-        Effect.flatMap((scope) =>
-          closedStates({ ...scope, cwd: input.cwd, operation: "listIssues" }).pipe(
-            Effect.map((closed) => ({ scope, closed })),
-          ),
-        ),
+        Effect.flatMap((scope) => {
+          const key = JSON.stringify([input.cwd, scope.organization, scope.project]);
+          const refresh = cursor === undefined && input.refresh === true;
+          const closed = refresh ? Cache.get(workflowReads, key) : Cache.get(listClosedStates, key);
+          return closed.pipe(Effect.map((closed) => ({ scope, closed })));
+        }),
         Effect.flatMap(({ scope, closed }) =>
           invokeWithBody({
             cwd: input.cwd,
