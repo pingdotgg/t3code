@@ -44,7 +44,7 @@ function processHandle(stdout: string, code: number, answered: Effect.Effect<voi
 
 // `fx status --json` and `fx models --json` from fx 0.0.15, trimmed to the
 // fields T3 reads plus a few it ignores.
-const status = (auth: string, fields: Record<string, string> = {}) =>
+const status = (auth: string, fields: Record<string, unknown> = {}) =>
   JSON.stringify({ kind: "status", model: "default", auth, auth_refreshable: false, ...fields });
 const models = (ids: ReadonlyArray<string>) =>
   JSON.stringify({ kind: "models", count: ids.length, private_models_hidden: false, ids });
@@ -281,6 +281,32 @@ describe("checkFxProviderStatus", () => {
         status: "authenticated",
         label: "Codex subscription",
       });
+    }),
+  );
+
+  it.effect("offers Full access only when `fx status` lists that mode", () =>
+    Effect.gen(function* () {
+      const backends = {
+        "gateway status --json": status("fx login"),
+        "gateway models --json": GATEWAY_MODELS,
+        "codex status --json": status("missing"),
+        "grok status --json": status("missing"),
+      };
+      // fx 0.0.13 lists no modes and has no full-access mode.
+      const withoutModes = yield* check({ ...backends, " status --json": status("fx login") });
+      assert.deepEqual(withoutModes.draft.supportedRuntimeModes, ["approval-required", "auto"]);
+      // fx 0.0.14+ lists the ACP session modes (src/core/output/output_contracts.zig).
+      const withModes = yield* check({
+        ...backends,
+        " status --json": status("fx login", {
+          modes: [{ id: "auto" }, { id: "ask" }, { id: "full-access" }],
+        }),
+      });
+      assert.deepEqual(withModes.draft.supportedRuntimeModes, [
+        "approval-required",
+        "auto",
+        "full-access",
+      ]);
     }),
   );
 
