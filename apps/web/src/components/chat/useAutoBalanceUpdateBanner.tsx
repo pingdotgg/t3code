@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { useState } from "react";
@@ -28,6 +29,8 @@ import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
 export function useAutoBalanceUpdateBanner(
   environments: readonly EnvironmentPresentation[],
 ): ComposerBannerStackItem | null {
+  const gt = useGT();
+  const m = useMessages();
   const updateStates = useAtomValue(
     environmentUpdateStatesAtom(
       environmentIdsKey(environments.map(({ environmentId }) => environmentId)),
@@ -41,7 +44,7 @@ export function useAutoBalanceUpdateBanner(
     () => new Set(),
   );
   const machines = states.flatMap(({ environment, state }) => {
-    const mismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
+    const mismatch = resolveServerConfigVersionMismatch(environment.serverConfig, m);
     const dismissKey = mismatch
       ? buildVersionMismatchDismissalKey(environment.environmentId, mismatch)
       : null;
@@ -80,18 +83,27 @@ export function useAutoBalanceUpdateBanner(
   );
   const status = running ? "running" : failed ? "failed" : "idle";
   const title = running
-    ? "Updating"
+    ? gt("Updating")
     : failed
-      ? "Could not update"
+      ? gt("Could not update", { $context: "server update banner title, machine names follow" })
       : manual === machines.length
-        ? "Manual update required"
-        : "Update available for";
+        ? gt("Manual update required")
+        : gt("Update available for", {
+            $context: "server update banner title, machine names follow",
+          });
   const listed = running
     ? machines.filter((machine) => machine.state.status === "running")
     : failed
       ? machines.filter((machine) => machine.state.status === "failed")
       : machines;
   const machineNames = listed.map((machine) => machine.serverLabel).join(", ");
+  const viewMachinesLabel = running
+    ? gt("Updating {machines}. View machines", { machines: machineNames })
+    : failed
+      ? gt("Could not update {machines}. View machines", { machines: machineNames })
+      : manual === machines.length
+        ? gt("Manual update required for {machines}. View machines", { machines: machineNames })
+        : gt("Update available for {machines}. View machines", { machines: machineNames });
   // Every machine updates from "Update all" unless some need a manual step or
   // are mid-update; then the per-machine list is one click away.
   const showMachineList =
@@ -106,7 +118,10 @@ export function useAutoBalanceUpdateBanner(
       manual > 0 && manual < machines.length ? (
         <span className="inline-flex flex-col">
           <span>
-            {manual} {manual === 1 ? "needs" : "need"} a manual update
+            {gt(
+              "{manual, plural, one {{manual} needs a manual update} other {{manual} need a manual update}}",
+              { manual },
+            )}
           </span>
           <span>{machineNames}</span>
         </span>
@@ -119,9 +134,9 @@ export function useAutoBalanceUpdateBanner(
           <Popover>
             <PopoverTrigger
               render={<Button size="xs" variant="secondary" />}
-              aria-label={`${title} ${machineNames}. View machines`}
+              aria-label={viewMachinesLabel}
             >
-              View machines
+              <T>View machines</T>
             </PopoverTrigger>
             <PopoverPopup side="top" align="start" width="md">
               <div className="space-y-3 text-xs">
@@ -132,14 +147,16 @@ export function useAutoBalanceUpdateBanner(
                       <ServerUpdateProgress state={machine.state} />
                     ) : !machine.remoteUpdate ? (
                       <>
-                        <div className="text-muted-foreground">Manual update required</div>
+                        <div className="text-muted-foreground">
+                          <T>Manual update required</T>
+                        </div>
                         <ServerUpdateAction {...machine} />
                       </>
                     ) : (
                       <div className="text-muted-foreground">
                         {machine.connected
-                          ? `Ready to update to ${machine.targetVersion}`
-                          : "Reconnect this machine to update"}
+                          ? gt("Ready to update to {version}", { version: machine.targetVersion })
+                          : gt("Reconnect this machine to update")}
                       </div>
                     )}
                   </div>
@@ -154,16 +171,19 @@ export function useAutoBalanceUpdateBanner(
             variant="default"
             label={
               failed > 0
-                ? "Retry"
+                ? gt("Retry", { $context: "verb, retries the server updates" })
                 : targets.length === machines.length
-                  ? "Update all"
-                  : `Update ${targets.length} ${targets.length === 1 ? "machine" : "machines"}`
+                  ? gt("Update all")
+                  : gt(
+                      "{count, plural, one {Update {count} machine} other {Update {count} machines}}",
+                      { count: targets.length },
+                    )
             }
           />
         ) : null}
       </>
     ),
-    dismissLabel: "Dismiss update notice",
+    dismissLabel: gt("Dismiss update notice"),
     ...(running
       ? {}
       : {

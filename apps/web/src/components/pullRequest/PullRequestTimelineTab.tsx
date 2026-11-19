@@ -1,8 +1,5 @@
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -21,6 +18,7 @@ import {
   UserPlusIcon,
   XIcon,
 } from "lucide-react";
+import { Branch, T, useGT, useMessages, Var } from "gt-react";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -49,6 +47,7 @@ import {
   pullRequestReviewOutcomeToneClassName,
 } from "./pullRequestPresentation";
 import { PullRequestGlyph } from "./pullRequestIcons";
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 function TimelineRelativeTime({ timestamp }: { timestamp: string }) {
   const relative = useRelativeTimeState(timestamp);
@@ -122,6 +121,7 @@ function Verb({ children, className }: { children: ReactNode; className?: string
 
 /** "✓ 4/4": how the commit's own checks came out, where the host rolls them up per commit. */
 function CommitChecksPill({ checks }: { checks: NonNullable<PullRequestCommit["checks"]> }) {
+  const gt = useGT();
   const variant =
     checks.state === "passing" ? "success" : checks.state === "failing" ? "error" : "warning";
   return (
@@ -135,11 +135,12 @@ function CommitChecksPill({ checks }: { checks: NonNullable<PullRequestCommit["c
         {checks.passed}/{checks.total}
       </span>
       <span className="sr-only">
+        {" "}
         {checks.state === "passing"
-          ? " checks passed"
+          ? gt("checks passed")
           : checks.state === "failing"
-            ? " checks, some failing"
-            : " checks, some still running"}
+            ? gt("checks, some failing")
+            : gt("checks, some still running")}
       </span>
     </Badge>
   );
@@ -157,12 +158,13 @@ function ReviewRailBody({
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <CollapsibleTrigger
         variant="muted"
-        aria-label={open ? "Hide review text" : "Show review text"}
+        aria-label={open ? gt("Hide review text") : gt("Show review text")}
         className="w-full min-w-0 gap-1 text-left"
       >
         <span className="min-w-0 flex-1 truncate">
@@ -209,14 +211,24 @@ function RailEntry({
   /** Absent where there is no composer beside the panel to add a remark to. */
   onAddToChat?: ((subject: PullRequestChatSubject) => void) | undefined;
 }) {
-  const term = sourceControlClients.get(detail.provider).changeRequest.singular;
-  const title = capitalizeTerm(term);
+  const gt = useGT();
+  const resolve = useMessages();
+  const term = changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest);
   switch (entry.kind) {
     case "opened":
       return (
         <RailRow at={entry.at} marker={<PullRequestGlyph.pullRequest className="size-3.5" />}>
-          <Actor actor={entry.actor} />
-          <Verb>opened this {term}</Verb>
+          <T>
+            <Var>
+              <Actor actor={entry.actor} />
+            </Var>{" "}
+            <Verb>
+              opened this{" "}
+              <Branch branch={term} mr="merge request" cr="change request">
+                pull request
+              </Branch>
+            </Verb>
+          </T>
         </RailRow>
       );
     case "merged":
@@ -226,7 +238,12 @@ function RailEntry({
           marker={<PullRequestGlyph.merged className="size-3.5" />}
           markerClassName="text-merged-foreground"
         >
-          <span className="font-medium text-foreground">{title} merged</span>
+          <span className="font-medium text-foreground">
+            {gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} merged",
+              { term },
+            )}
+          </span>
         </RailRow>
       );
     case "closed":
@@ -236,7 +253,12 @@ function RailEntry({
           marker={<PullRequestGlyph.closed className="size-3.5" />}
           markerClassName="text-error-foreground"
         >
-          <span className="font-medium text-foreground">{title} closed</span>
+          <span className="font-medium text-foreground">
+            {gt(
+              "{term, select, mr {Merge request} cr {Change request} other {Pull request}} closed",
+              { term },
+            )}
+          </span>
         </RailRow>
       );
     case "commit": {
@@ -249,13 +271,13 @@ function RailEntry({
           </RailMarker>
           <button
             type="button"
-            aria-label={`View commit ${commit.oid}`}
+            aria-label={gt("View commit {sha}", { sha: commit.oid })}
             onClick={() => onOpenCommit(commit.oid)}
             className="group flex min-h-6 w-full min-w-0 cursor-pointer items-center gap-2 rounded-row text-left text-body outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
             {author ? <PullRequestActorAvatar actor={author} /> : null}
             <span className="min-w-0 flex-1 truncate text-foreground group-hover:underline">
-              {commit.messageHeadline || "Untitled commit"}
+              {commit.messageHeadline || gt("Untitled commit")}
             </span>
             <code className="shrink-0 font-mono text-meta text-muted-foreground">
               {commit.oid.slice(0, 7)}
@@ -271,11 +293,31 @@ function RailEntry({
     case "review-request":
       return (
         <RailRow at={entry.at} marker={<UserPlusIcon className="size-3.5" />}>
-          <Actor actor={entry.actor} />
-          <Verb>{entry.again ? "re-requested review from" : "requested review from"}</Verb>
-          {entry.reviewers.map((reviewer) => (
-            <Actor key={reviewer.login} actor={reviewer} />
-          ))}
+          {entry.again ? (
+            <T>
+              <Var>
+                <Actor actor={entry.actor} />
+              </Var>{" "}
+              <Verb>re-requested review from</Verb>{" "}
+              <Var>
+                {entry.reviewers.map((reviewer) => (
+                  <Actor key={reviewer.login} actor={reviewer} />
+                ))}
+              </Var>
+            </T>
+          ) : (
+            <T>
+              <Var>
+                <Actor actor={entry.actor} />
+              </Var>{" "}
+              <Verb>requested review from</Verb>{" "}
+              <Var>
+                {entry.reviewers.map((reviewer) => (
+                  <Actor key={reviewer.login} actor={reviewer} />
+                ))}
+              </Var>
+            </T>
+          )}
         </RailRow>
       );
     case "review": {
@@ -284,7 +326,7 @@ function RailEntry({
       const body = visibleBody(entry.comment.body);
       const first = entry.threads[0];
       const unresolved = entry.threads.filter((thread) => !thread.isResolved).length;
-      const verb = pullRequestReviewOutcomeVerb(entry.outcome);
+      const verb = pullRequestReviewOutcomeVerb(entry.outcome, resolve);
       return (
         <li className="relative min-h-6 pb-2.5 pl-8.5 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
           <RailMarker
@@ -298,9 +340,13 @@ function RailEntry({
               <Tooltip disabled={!stale}>
                 <TooltipTrigger render={<span className="text-muted-foreground" />}>
                   {verb}
-                  {stale ? <span className="sr-only">, before the latest commits</span> : null}
+                  {stale ? (
+                    <span className="sr-only">{gt(", before the latest commits")}</span>
+                  ) : null}
                 </TooltipTrigger>
-                <TooltipPopup>{pullRequestReviewOutcomeStaleLabel(entry.outcome)}</TooltipPopup>
+                <TooltipPopup>
+                  {pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)}
+                </TooltipPopup>
               </Tooltip>
             </div>
             {body && onAddToChat ? (
@@ -310,21 +356,23 @@ function RailEntry({
                     <Button
                       size="icon-xs"
                       variant="ghost-muted"
-                      aria-label="Add to chat"
+                      aria-label={gt("Add to chat")}
                       onClick={() => onAddToChat({ kind: "comment", comment: entry.comment })}
                     />
                   }
                 >
                   <MessageSquarePlusIcon className="size-3" />
                 </TooltipTrigger>
-                <TooltipPopup>Add to chat</TooltipPopup>
+                <TooltipPopup>
+                  <T>Add to chat</T>
+                </TooltipPopup>
               </Tooltip>
             ) : null}
             {reviewUrl ? (
               <Button
                 size="icon-xs"
                 variant="ghost-muted"
-                aria-label="Open review on host"
+                aria-label={gt("Open review on host")}
                 onClick={() => void readLocalApi()?.shell.openExternal(reviewUrl)}
               >
                 <ExternalLinkIcon className="size-3" />
@@ -358,15 +406,19 @@ function RailEntry({
                   </span>
                 </span>
                 <span className="shrink-0">
-                  {entry.threads.length} {entry.threads.length === 1 ? "thread" : "threads"}
+                  {gt("{count, plural, one {{count} thread} other {{count} threads}}", {
+                    count: entry.threads.length,
+                  })}
                 </span>
                 <span className="flex-1" />
                 {unresolved > 0 ? (
-                  <Badge variant="warning">Unresolved</Badge>
+                  <Badge variant="warning">
+                    <T context="review thread state">Unresolved</T>
+                  </Badge>
                 ) : (
                   <span className="inline-flex shrink-0 items-center gap-1">
                     <CheckIcon aria-hidden className="size-3.5 text-success-foreground" />
-                    Resolved
+                    <T context="review thread state">Resolved</T>
                   </span>
                 )}
                 <ChevronRightIcon aria-hidden className="size-3.5 shrink-0" />
@@ -419,6 +471,7 @@ function useTimelineLastSeen(url: string): number | null {
 
 /** Splits entries seen last time from the ones that landed since. */
 function NewSinceDivider({ lastSeen }: { lastSeen: number }) {
+  const gt = useGT();
   const relative = useRelativeTimeState(new Date(lastSeen).toISOString());
   const relativeLabel =
     relative.status === "relative"
@@ -428,11 +481,13 @@ function NewSinceDivider({ lastSeen }: { lastSeen: number }) {
       : "";
   return (
     <li
-      aria-label={`New since you looked ${relativeLabel}`}
+      aria-label={gt("New since you looked {time}", { time: relativeLabel })}
       className="relative z-10 flex items-center gap-2 pb-3.5"
     >
       <span aria-hidden className="h-px flex-1 bg-info/40" />
-      <Badge variant="info">New since you looked</Badge>
+      <Badge variant="info">
+        <T>New since you looked</T>
+      </Badge>
       {relativeLabel ? (
         <span className="shrink-0 text-meta text-info-foreground">{relativeLabel}</span>
       ) : null}

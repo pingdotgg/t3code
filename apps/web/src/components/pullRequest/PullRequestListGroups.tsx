@@ -1,5 +1,6 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
+import { useMessages } from "gt-react";
 import { Fragment, useDeferredValue, type RefCallback } from "react";
 
 import { cn } from "~/lib/utils";
@@ -45,6 +46,7 @@ function PullRequestGroupHeader({
   group: { key: string; label: string };
   count: number;
 }) {
+  const resolve = useMessages();
   const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
   // The icon sits in the rows' 16px glyph column and the label on their title line.
   return (
@@ -52,7 +54,7 @@ function PullRequestGroupHeader({
       <span className="me-1 flex w-4 shrink-0 justify-center">
         <Icon aria-hidden className="size-3.25" />
       </span>
-      <h2 className="shrink-0">{group.label}</h2>
+      <h2 className="shrink-0">{resolve(group.label)}</h2>
       <span className="shrink-0 tabular-nums font-normal text-dim-foreground">{count}</span>
       <Separator className="min-w-2 flex-1" />
     </div>

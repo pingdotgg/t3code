@@ -1,3 +1,4 @@
+import { msg, T, Var } from "gt-react";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { TRIAGE_CLI_COMMAND } from "~/hooks/useStartTriage";
 
@@ -12,23 +13,34 @@ export function TriageDraftHero(props: {
   readonly machineLabel: string | null;
   readonly serverVersion: string | null;
 }) {
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "command" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: {
+      target: "command",
+      unavailableMessage: msg("Clipboard API is unavailable while copying command."),
+      failureMessage: msg("Failed to copy command to the clipboard."),
+    },
+  });
   return (
     <div className="mx-auto flex w-full max-w-110 flex-col items-center">
-      <h1 className="w-full text-center text-title text-foreground">What went wrong?</h1>
+      <h1 className="w-full text-center text-title text-foreground">
+        <T>What went wrong?</T>
+      </h1>
       <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-label">
         <Tooltip>
           <TooltipTrigger
             render={<span tabIndex={0} className="min-w-0 truncate text-label text-foreground" />}
           >
-            {props.machineLabel ?? "This machine"}
+            {props.machineLabel ?? <T>This machine</T>}
             {props.serverVersion === null ? null : (
               <span className="ml-1.5 text-muted-foreground">v{props.serverVersion}</span>
             )}
           </TooltipTrigger>
           <TooltipPopup side="bottom">
-            The agent reads T3 Code's logs and source here, and asks before it applies a fix or
-            posts anything.
+            <T>
+              The agent reads T3 Code's logs and source here, and asks before it applies a fix or
+              posts anything.
+            </T>
           </TooltipPopup>
         </Tooltip>
         <Tooltip>
@@ -41,12 +53,20 @@ export function TriageDraftHero(props: {
               />
             }
           >
-            {isCopied ? "Copied" : "or run"}
-            {isCopied ? null : (
-              <code className="ml-1 font-mono text-caption">{TRIAGE_CLI_COMMAND}</code>
+            {isCopied ? (
+              <T>Copied</T>
+            ) : (
+              <T>
+                or run
+                <code className="ml-1 font-mono text-caption">
+                  <Var>{TRIAGE_CLI_COMMAND}</Var>
+                </code>
+              </T>
             )}
           </TooltipTrigger>
-          <TooltipPopup side="bottom">Copy command, for a terminal</TooltipPopup>
+          <TooltipPopup side="bottom">
+            <T>Copy command, for a terminal</T>
+          </TooltipPopup>
         </Tooltip>
       </p>
     </div>

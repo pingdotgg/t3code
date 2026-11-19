@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { parseUrl } from "@t3tools/shared/url";
 import { Globe, Link } from "lucide-react";
@@ -44,22 +45,26 @@ export function PreviewEmptyState({
           <span className="flex size-10 shrink-0 items-center justify-center rounded-full surface-raised">
             <Globe aria-hidden className="size-4.5 text-muted-foreground" />
           </span>
-          <h2 className="text-label text-foreground">No preview yet</h2>
+          <h2 className="text-label text-foreground">
+            <T>No preview yet</T>
+          </h2>
           <p className="max-w-[300px] text-balance text-body text-muted-foreground">
-            Start a dev server or open a URL. Agents can open pages here too.
+            <T>Start a dev server or open a URL. Agents can open pages here too.</T>
           </p>
           {onFocusUrl ? (
             <div className="pt-1.5">
               <Button type="button" variant="secondary" size="xs" onClick={onFocusUrl}>
                 <Link />
-                Open URL
+                <T>Open URL</T>
               </Button>
             </div>
           ) : null}
         </div>
         {servers.length > 0 ? (
           <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">Local servers</h3>
+            <h3 className="text-meta font-medium text-dim-foreground">
+              <T>Local servers</T>
+            </h3>
             {servers.map((server) => (
               <PreviewLocalServerCard
                 key={`${server.host}:${server.port}`}
@@ -71,7 +76,9 @@ export function PreviewEmptyState({
         ) : null}
         {recents.length > 0 ? (
           <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">Recently used</h3>
+            <h3 className="text-meta font-medium text-dim-foreground">
+              <T>Recently used</T>
+            </h3>
             <div className="flex flex-col">
               {recents.map((entry) => (
                 <PreviewRecentUrlCard

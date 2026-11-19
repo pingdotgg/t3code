@@ -3,6 +3,7 @@ import {
   type ProviderApprovalOption,
   type RuntimeRequestId,
 } from "@t3tools/contracts";
+import { msg, useGT, useMessages } from "gt-react";
 import type { ReactElement } from "react";
 import { ShieldIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -29,10 +30,19 @@ interface ComposerPendingApprovalActionsProps {
 }
 
 export const DEFAULT_APPROVAL_OPTIONS = [
-  { decision: "cancel", label: "Cancel" },
-  { decision: "decline", label: "Deny" },
-  { decision: "acceptForSession", label: "Always allow this session" },
-  { decision: "accept", label: "Allow" },
+  {
+    decision: "cancel",
+    label: msg("Cancel", { $context: "verb, response to an approval request" }),
+  },
+  {
+    decision: "decline",
+    label: msg("Deny", { $context: "verb, response to an approval request" }),
+  },
+  { decision: "acceptForSession", label: msg("Always allow this session") },
+  {
+    decision: "accept",
+    label: msg("Allow", { $context: "verb, response to an approval request" }),
+  },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
 /**
@@ -66,6 +76,11 @@ export function ComposerPendingApprovalActions({
   onAlwaysAllowChange,
   onRespondToApproval,
 }: ComposerPendingApprovalActionsProps) {
+  const gt = useGT();
+  const m = useMessages();
+  // Provider options carry server-authored labels; only the built-in defaults are translated.
+  const defaultOptions = options === DEFAULT_APPROVAL_OPTIONS;
+  const optionLabel = (label: string) => (defaultOptions ? m(label) : label);
   const accept = options.find((option) => option.decision === "accept");
   const acceptForSession = options.find((option) => option.decision === "acceptForSession");
   // Offer the session toggle only when it changes what Allow sends.
@@ -107,7 +122,7 @@ export function ComposerPendingApprovalActions({
           onClick={() => onAlwaysAllowChange?.(!alwaysAllow)}
         >
           <ShieldIcon aria-hidden />
-          {sessionOption.label}
+          {optionLabel(sessionOption.label)}
           {sessionOption.warning ? (
             <TriangleAlertIcon aria-hidden className="size-3 shrink-0 text-warning-foreground" />
           ) : null}
@@ -118,15 +133,18 @@ export function ComposerPendingApprovalActions({
           <Menu>
             <MenuTrigger
               disabled={disabled}
-              render={<Button size="icon-sm" variant="ghost" aria-label="More approval options" />}
+              render={
+                <Button size="icon-sm" variant="ghost" aria-label={gt("More approval options")} />
+              }
             >
-              More
+              {gt("More", { $context: "button that opens more approval options" })}
             </MenuTrigger>
             <MenuPopup {...composerFloatingLayerProps} side="top" align="end" width="content">
               {moreOptions.map((option) => (
                 <MenuOption
                   key={option.decision}
                   option={option}
+                  label={optionLabel(option.label)}
                   disabled={disabled}
                   onSelect={() => void onRespondToApproval(requestId, option.decision)}
                 />
@@ -147,7 +165,9 @@ export function ComposerPendingApprovalActions({
               >
                 {decline.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
                 <span className="max-w-40 truncate">
-                  {designLabels && decline.label === "Deny" ? "Decline" : decline.label}
+                  {designLabels && (defaultOptions || decline.label === "Deny")
+                    ? gt("Decline", { $context: "verb, response to an approval request" })
+                    : optionLabel(decline.label)}
                 </span>
               </Button>,
             )
@@ -165,7 +185,9 @@ export function ComposerPendingApprovalActions({
               >
                 {allowWarning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
                 <span className="max-w-40 truncate">
-                  {designLabels && primary.label === "Allow" ? "Approve" : primary.label}
+                  {designLabels && (defaultOptions || primary.label === "Allow")
+                    ? gt("Approve", { $context: "verb, response to an approval request" })
+                    : optionLabel(primary.label)}
                 </span>
                 {designLabels && showShortcutHints ? <Kbd aria-hidden>⏎</Kbd> : null}
               </Button>,
@@ -178,17 +200,19 @@ export function ComposerPendingApprovalActions({
 
 function MenuOption({
   option,
+  label,
   disabled,
   onSelect,
 }: {
   option: ProviderApprovalOption;
+  label: string;
   disabled: boolean;
   onSelect: () => void;
 }) {
   const item = (
     <MenuItem disabled={disabled} aria-description={option.warning} onClick={onSelect}>
       {option.warning ? <TriangleAlertIcon className="size-3 text-warning" /> : null}
-      <span className="min-w-0 whitespace-normal wrap-break-word">{option.label}</span>
+      <span className="min-w-0 whitespace-normal wrap-break-word">{label}</span>
     </MenuItem>
   );
   return option.warning ? (

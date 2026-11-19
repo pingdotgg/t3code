@@ -19,6 +19,7 @@ import noMobilePullRequestGlyphLiterals from "./rules/no-mobile-pull-request-gly
 import noNativeTitleTooltip from "./rules/no-native-title-tooltip.ts";
 import noSparklesIcon from "./rules/no-sparkles-icon.ts";
 import noUnreasonedStateSync from "./rules/no-unreasoned-state-sync.ts";
+import noUntranslatedCopy from "./rules/no-untranslated-copy.ts";
 import requireRegisteredListScroll from "./rules/require-registered-list-scroll.ts";
 import noOutsetStateIndicators from "./rules/no-outset-state-indicators.ts";
 import noPollingLoopInTests from "./rules/no-polling-loop-in-tests.ts";
@@ -63,6 +64,7 @@ export default definePlugin({
     "no-native-title-tooltip": noNativeTitleTooltip,
     "no-sparkles-icon": noSparklesIcon,
     "no-unreasoned-state-sync": noUnreasonedStateSync,
+    "no-untranslated-copy": noUntranslatedCopy,
     "require-registered-list-scroll": requireRegisteredListScroll,
     "no-outset-state-indicators": noOutsetStateIndicators,
     "no-polling-loop-in-tests": noPollingLoopInTests,

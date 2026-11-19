@@ -1,8 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useRef } from "react";
 
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
+import { m } from "../i18n/messages";
 import { primaryServerProvidersAtom } from "../state/server";
 import { CommandBlock } from "./CommandBlock";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
@@ -44,15 +46,30 @@ export function ProviderUpdateLaunchNotification() {
         key,
         toastManager.add({
           type: "info",
-          title: `${name} ${advisory.latestVersion} is available`,
+          title: m(
+            msg("{provider} {version} is available", {
+              provider: name,
+              version: advisory.latestVersion,
+            }),
+          ),
           description: current
-            ? `You're on ${current}. New sessions will use the updated provider.`
-            : "New sessions will use the updated provider.",
+            ? m(
+                msg("You''re on {version}. New sessions will use the updated provider.", {
+                  version: current,
+                }),
+              )
+            : m(msg("New sessions will use the updated provider.")),
           timeout: 0,
           actionProps: {
-            children: "Copy update command",
+            children: m(msg("Copy update command")),
             onClick: () => {
-              void writeTextToClipboard(command, "update command");
+              void writeTextToClipboard(command, {
+                target: "update command",
+                unavailableMessage: msg(
+                  "Clipboard API is unavailable while copying update command.",
+                ),
+                failureMessage: msg("Failed to copy update command to the clipboard."),
+              });
             },
           },
           data: {

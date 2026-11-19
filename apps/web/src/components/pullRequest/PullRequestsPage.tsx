@@ -1,5 +1,7 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { heldPullRequestListEntriesAtom } from "@t3tools/client-runtime/state/pull-requests";
 import { AsyncResult, Atom } from "effect/reactivity";
+import { m } from "~/i18n/messages";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { applyPullRequestDraftFilterChange } from "@t3tools/client-runtime/pull-request-query";
 import { Spinner } from "~/components/ui/spinner";
@@ -23,6 +25,7 @@ import type {
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { ArrowDownUpIcon, CircleAlertIcon, LayersIcon, Plug2Icon } from "lucide-react";
+import { msg, T, useGT, useLocale, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState, type ComponentProps } from "react";
 
 import {
@@ -54,6 +57,8 @@ import {
   type PullRequestListPreferencePatch,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
+import { SavedViewsMenu } from "../SavedViewsMenu";
+import { PULL_REQUEST_SAVED_VIEWS, pullRequestSavedViewPatch } from "./pullRequestSavedViews";
 import { environmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "./PullRequestDetailPanel";
 import {
@@ -65,7 +70,7 @@ import {
   type PullRequestFilterOption,
 } from "./PullRequestListFilters";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
-import { INVOLVEMENT_TABS, SORT_OPTIONS } from "./pullRequestListOptions";
+import { INVOLVEMENT_TABS, resolveFilterOptions, SORT_OPTIONS } from "./pullRequestListOptions";
 import { PullRequestsColumn } from "./PullRequestsColumn";
 import { PullRequestListGroups } from "./PullRequestListGroups";
 import { pullRequestPanelReference } from "./usePullRequestDetail";
@@ -81,6 +86,7 @@ import { PullRequestListEmptyState, PullRequestListNotice } from "./PullRequestL
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
@@ -181,6 +187,9 @@ function usePendingListEntries(
 }
 
 export function PullRequestsPage() {
+  const gt = useGT();
+  const resolve = useMessages();
+  const locale = useLocale();
   const search = useSearch({ from: "/_chat/pull-requests" });
   const sort = search.sort ?? "ready";
   const statsPolicy: PullRequestStatsPolicy =
@@ -1194,6 +1203,8 @@ export function PullRequestsPage() {
   const searchInput = (
     <PullRequestSearchInput
       value={search.q ?? ""}
+      label={gt("Search pull requests")}
+      placeholder={gt("Search pull requests, or label:bug")}
       busy={typedQuery.length > 0 && (!querySettled || showingCarried)}
       onChange={(query) => updateListScope({ q: query || undefined })}
       onSubmit={submitQuery}
@@ -1213,7 +1224,7 @@ export function PullRequestsPage() {
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
-      rightPanelUnavailableLabel="Select a pull request first"
+      rightPanelUnavailableLabel={gt("Select a pull request first")}
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}
     />
@@ -1236,27 +1247,30 @@ export function PullRequestsPage() {
     </div>
   );
   const listError = listQuery.error
-    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
+    ? `${environmentLabels.get(listQuery.error.environmentId) || gt("Environment")}: ${listQuery.error.message}`
     : null;
   // Said in the empty list, so a list narrowed to nothing names what narrowed it.
   const hostFilterEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostFilterEntry = hostFilterEntries.find((entry) => entry.host === search.host);
-  const filterSummary = describePullRequestListFilters({
-    state: search.state,
-    involvement: search.involvement,
-    filters: menuFilters,
-    hostLabel:
-      search.host === undefined
-        ? undefined
-        : hostFilterEntry
-          ? pullRequestHostLabel(hostFilterEntries, hostFilterEntry)
-          : search.host,
-    serverLabel:
-      capableEnvironments.length > 1 && scopedEnvironmentId !== null
-        ? environmentLabels.get(scopedEnvironmentId)
-        : undefined,
-    projectLabel: scopedProject?.title,
-  });
+  const filterSummary = describePullRequestListFilters(
+    {
+      state: search.state,
+      involvement: search.involvement,
+      filters: menuFilters,
+      hostLabel:
+        search.host === undefined
+          ? undefined
+          : hostFilterEntry
+            ? pullRequestHostLabel(hostFilterEntries, hostFilterEntry)
+            : search.host,
+      serverLabel:
+        capableEnvironments.length > 1 && scopedEnvironmentId !== null
+          ? environmentLabels.get(scopedEnvironmentId)
+          : undefined,
+      projectLabel: scopedProject?.title,
+    },
+    resolve,
+  );
   const clearListFilters = () =>
     updateListScope({
       state: "open",
@@ -1280,18 +1294,21 @@ export function PullRequestsPage() {
   // Every host signed out (or missing its CLI) leaves an empty list that is no answer at all,
   // so it says which host to sign in to rather than "no pull requests".
   const signedOutHosts = hosts.filter((host) => !host.configured);
+  const listFormat = new Intl.ListFormat(locale, { type: "conjunction" });
   const firstSignedOut = signedOutHosts[0];
   const signIn =
     firstSignedOut !== undefined && signedOutHosts.length === hosts.length
       ? {
-          hostLabel: signedOutHosts.map((host) => pullRequestHostLabel(hosts, host)).join(" and "),
-          changeRequestPlural: [
+          hostLabel: listFormat.format(
+            signedOutHosts.map((host) => pullRequestHostLabel(hosts, host)),
+          ),
+          changeRequestPlural: listFormat.format([
             ...new Set(
               signedOutHosts.map(
                 (host) => sourceControlClients.get(host.kind).changeRequest.plural,
               ),
             ),
-          ].join(" and "),
+          ]),
           detail: signedOutHosts.length === 1 ? firstSignedOut.detail : null,
           Icon: getSourceControlPresentationForKind(firstSignedOut.kind).Icon,
         }
@@ -1304,7 +1321,14 @@ export function PullRequestsPage() {
       ? null
       : listErrors.length === 1
         ? `${firstListError.projectTitle}: ${firstListError.message}`
-        : `${listErrors.length} repositories could not be read. ${firstListError.projectTitle}: ${firstListError.message}`;
+        : gt(
+            "{count, plural, one {{count} repository could not be read.} other {{count} repositories could not be read.}} {project}: {message}",
+            {
+              count: listErrors.length,
+              project: firstListError.projectTitle,
+              message: firstListError.message,
+            },
+          );
   const carriedToNothing =
     shownCount === 0 &&
     typedQuery.length === 0 &&
@@ -1312,19 +1336,19 @@ export function PullRequestsPage() {
   const listBody = (
     <>
       {!capabilityKnown ? (
-        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
+        <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />
       ) : !pullRequestsSupported ? (
         <PullRequestListNotice
           icon={PullRequestGlyph.pullRequest}
-          title="Pull requests unavailable"
-          description="Update your T3 Code servers to browse pull requests."
+          title={gt("Pull requests unavailable")}
+          description={gt("Update your T3 Code servers to browse pull requests.")}
         />
       ) : firstLoad ? (
-        <PullRequestListGhost rows={7} caption="Loading pull requests…" />
+        <PullRequestListGhost rows={7} caption={gt("Loading pull requests…")} />
       ) : listError && shownCount === 0 ? (
         <PullRequestListNotice
           icon={CircleAlertIcon}
-          title="Could not load pull requests"
+          title={gt("Could not load pull requests")}
           description={listError}
         >
           <Button
@@ -1334,7 +1358,7 @@ export function PullRequestsPage() {
             onClick={() => listQuery.refresh()}
           >
             <RefreshIcon size="sm" refreshing={listQuery.isPending} />
-            Retry
+            <T>Retry</T>
           </Button>
         </PullRequestListNotice>
       ) : carriedToNothing ? (
@@ -1346,7 +1370,7 @@ export function PullRequestsPage() {
         !listFiltered ? (
         <PullRequestListNotice
           icon={CircleAlertIcon}
-          title="Could not load pull requests"
+          title={gt("Could not load pull requests")}
           description={readErrorMessage}
         >
           <Button
@@ -1356,7 +1380,7 @@ export function PullRequestsPage() {
             onClick={() => void refreshFromHost()}
           >
             <RefreshIcon size="sm" refreshing={refreshing} />
-            Retry
+            <T>Retry</T>
           </Button>
         </PullRequestListNotice>
       ) : shownCount === 0 ? (
@@ -1396,9 +1420,9 @@ export function PullRequestsPage() {
 
       {listError && shownCount > 0 ? (
         <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
-          <span>{listError} Showing the last pull requests loaded.</span>
+          <span>{gt("{error} Showing the last pull requests loaded.", { error: listError })}</span>
           <Button size="xs" variant="secondary" onClick={() => listQuery.refresh()}>
-            Retry
+            <T>Retry</T>
           </Button>
         </div>
       ) : null}
@@ -1407,7 +1431,7 @@ export function PullRequestsPage() {
           {loadingMore ? (
             <span className="flex items-center gap-2">
               <Spinner aria-hidden size="sm" />
-              {sentCursors === null ? "Updating pull requests" : "Loading more"}
+              {sentCursors === null ? gt("Updating pull requests") : gt("Loading more")}
             </span>
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
@@ -1416,10 +1440,12 @@ export function PullRequestsPage() {
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
-              Load more pull requests
+              <T>Load more pull requests</T>
             </Button>
           ) : (
-            <span>Narrow your search to find more pull requests.</span>
+            <span>
+              <T>Narrow your search to find more pull requests.</T>
+            </span>
           )}
         </div>
       ) : null}
@@ -1427,7 +1453,7 @@ export function PullRequestsPage() {
   );
   const hostEntries = hosts.length > 0 ? hosts : expectedHosts;
   const hostMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All repositories", Icon: Plug2Icon },
+    { value: "", label: gt("All repositories"), Icon: Plug2Icon },
     ...hostEntries.map((entry) => {
       const summary = hosts.find((host) => host.host === entry.host);
       return {
@@ -1436,12 +1462,12 @@ export function PullRequestsPage() {
         Icon: getSourceControlPresentationForKind(entry.kind).Icon,
         ...(summary === undefined || summary.configured
           ? {}
-          : { unavailable: summary.detail ?? "This host could not be read." }),
+          : { unavailable: summary.detail ?? gt("This host could not be read.") }),
       };
     }),
   ];
   const serverMenuOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
-    { value: "", label: "All servers", Icon: LayersIcon },
+    { value: "", label: gt("All servers"), Icon: LayersIcon },
     ...capableEnvironments.map((environment) => ({
       value: environment.environmentId,
       label: environment.label,
@@ -1450,11 +1476,11 @@ export function PullRequestsPage() {
   ];
   const sortMenu = (
     <PullRequestCompactFilterMenu
-      label="Sort pull requests"
+      label={gt("Sort pull requests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-3.5 shrink-0" />}
       labelClassName="hidden @3xl/pr-list:inline"
       value={sort}
-      options={SORT_OPTIONS}
+      options={resolveFilterOptions(SORT_OPTIONS, resolve)}
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
@@ -1462,7 +1488,7 @@ export function PullRequestsPage() {
     <PullRequestFiltersMenuInSidebarOrder
       onOpenChange={setFiltersOpen}
       involvement={search.involvement}
-      involvementOptions={INVOLVEMENT_TABS}
+      involvementOptions={resolveFilterOptions(INVOLVEMENT_TABS, resolve)}
       onInvolvement={(involvement) => updateListScope({ involvement })}
       filters={
         typedParsed.filters.draft
@@ -1511,6 +1537,13 @@ export function PullRequestsPage() {
     searchInput,
     sortMenu,
     filtersMenu,
+    savedViewsMenu: (
+      <SavedViewsMenu
+        kind={PULL_REQUEST_SAVED_VIEWS}
+        preferences={search}
+        onApply={(preferences) => updateListScope(pullRequestSavedViewPatch(preferences))}
+      />
+    ),
     rightPanelControl: !pullRequestsSupported ? null : (
       <span
         aria-hidden
@@ -1586,14 +1619,28 @@ export function PullRequestsPage() {
     event.stopPropagation();
     if (event.repeat) return;
     const url = openPanelPullRequestUrl;
-    const { shortLabel, singular } = (
+    const terminology = (
       sourceControlClients.findByChangeRequestUrl(url) ?? sourceControlClients.get(undefined)
     ).changeRequest;
-    void writeTextToClipboard(url, `${singular} link`).then(undefined, (error) => {
+    void writeTextToClipboard(url, {
+      target: `${terminology.singular} link`,
+      unavailableMessage: msg(
+        "Clipboard API is unavailable while copying {term, select, mr {merge request} cr {change request} other {pull request}} link.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+      failureMessage: msg(
+        "Failed to copy {term, select, mr {merge request} cr {change request} other {pull request}} link to the clipboard.",
+        { term: changeRequestTermKind(terminology) },
+      ),
+    }).then(undefined, (error) => {
       toastManager.add({
         type: "error",
-        title: `Failed to copy ${shortLabel} link`,
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: m(
+          msg("Failed to copy {term, select, mr {MR} cr {change request} other {PR}} link", {
+            term: changeRequestTermKind(terminology),
+          }),
+        ),
+        description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
       });
     });
   });

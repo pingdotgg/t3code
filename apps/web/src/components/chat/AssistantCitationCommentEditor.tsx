@@ -1,4 +1,5 @@
 import { ASSISTANT_CITATION_MAX_COMMENT_LENGTH, type AssistantCitation } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
 import { use, useEffect, useRef, useState, type RefObject } from "react";
 
 import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
@@ -28,6 +29,7 @@ export function AssistantCitationCommentEditor({
   onDraftChange?: (comment: string) => void;
   onVoiceSetupOpenChange?: (open: boolean) => void;
 }) {
+  const gt = useGT();
   const [comment, setComment] = useState(citation.comment ?? "");
   const localInputRef = useRef<HTMLTextAreaElement | null>(null);
   const textareaRef = inputRef ?? localInputRef;
@@ -93,10 +95,12 @@ export function AssistantCitationCommentEditor({
         <textarea
           ref={textareaRef}
           readOnly={speech.freezesEditor}
-          aria-label="Comment on selected text"
-          aria-description="Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line."
+          aria-label={gt("Comment on selected text")}
+          aria-description={gt(
+            "Enter to save the citation comment; Command/Ctrl+Enter to save and send; Shift+Enter for a new line.",
+          )}
           aria-invalid={commentTooLong || undefined}
-          placeholder="Add an optional comment..."
+          placeholder={gt("Add an optional comment...")}
           rows={2}
           dir={textDirection(comment)}
           className="field-sizing-content block max-h-40 min-h-10 w-full resize-none bg-transparent text-base/normal outline-none text-foreground placeholder:text-placeholder sm:text-sm/normal"
@@ -121,8 +125,10 @@ export function AssistantCitationCommentEditor({
       </div>
       {commentTooLong ? (
         <p role="status" className="-mt-1 text-meta text-error-foreground">
-          Comments can contain up to {ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}{" "}
-          characters.
+          <T>
+            Comments can contain up to{" "}
+            <Var>{ASSISTANT_CITATION_MAX_COMMENT_LENGTH.toLocaleString()}</Var> characters.
+          </T>
         </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -136,7 +142,7 @@ export function AssistantCitationCommentEditor({
             onPointerDown={(event) => event.preventDefault()}
             onClick={onViewSource}
           >
-            View source
+            <T>View source</T>
           </Button>
         ) : null}
         <Button
@@ -146,7 +152,9 @@ export function AssistantCitationCommentEditor({
           onPointerDown={(event) => event.preventDefault()}
           onClick={submit}
         >
-          {commentTooLong ? "Shorten comment" : "Save"}
+          {commentTooLong
+            ? gt("Shorten comment")
+            : gt("Save", { $context: "verb, saves the comment" })}
           {commentTooLong ? null : <Kbd aria-hidden="true">⏎</Kbd>}
         </Button>
       </div>

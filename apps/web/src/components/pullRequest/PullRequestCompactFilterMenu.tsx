@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { ChevronDownIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -34,13 +35,16 @@ export function PullRequestCompactFilterMenu<Value extends string>({
   onChange: (value: Value) => void;
   className?: string;
 }) {
+  const gt = useGT();
   const current = options.find((option) => option.value === value) ?? options[0];
   if (!current) return null;
   return (
     <Menu>
       <MenuTrigger
-        aria-label={triggerLabel || iconOnly ? `${label}: ${current.label}` : label}
-        title={iconOnly ? `${label}: ${current.label}` : undefined}
+        aria-label={
+          triggerLabel || iconOnly ? gt("{label}: {value}", { label, value: current.label }) : label
+        }
+        title={iconOnly ? gt("{label}: {value}", { label, value: current.label }) : undefined}
         render={
           outlined ? (
             <Button variant="secondary" size={iconOnly ? "icon" : "default"} />

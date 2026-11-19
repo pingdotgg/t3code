@@ -4,7 +4,7 @@ import { isElectron } from "../../env";
 
 const backdropClassNames = {
   error:
-    "absolute inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]",
+    "inset-x-0 top-0 h-44 bg-[radial-gradient(44rem_16rem_at_top,color-mix(in_srgb,var(--color-red-500)_16%,transparent),transparent)]",
   // The auth card (pairing, CLI connect) sits on the flat pane.
   plain: "",
 };
@@ -31,7 +31,7 @@ export function StandalonePage({
       >
         {tone === "plain" ? null : (
           <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
-            <div className={backdropClassNames[tone]} />
+            <div className={`absolute ${backdropClassNames[tone]}`} />
             <div className="absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]" />
           </div>
         )}
