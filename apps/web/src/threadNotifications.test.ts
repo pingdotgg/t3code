@@ -1,29 +1,46 @@
+import {
+  DEFAULT_NOTIFICATION_SOUND_SETTINGS,
+  type NotificationSoundSettings,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const SOUND_SECONDS = 0.6;
+const audio = { currentTime: 0, oscillators: 0 };
 
-const audio = { currentTime: 0, started: 0 };
+class FakeParam {
+  value = 0;
+  setValueAtTime() {}
+  exponentialRampToValueAtTime() {}
+}
+
+class FakeNode {
+  gain = new FakeParam();
+  frequency = new FakeParam();
+  type = "";
+  connect(node: FakeNode) {
+    return node;
+  }
+  start() {}
+  stop() {}
+}
 
 class FakeAudioContext {
   state = "running";
-  destination = {};
+  destination = new FakeNode();
   get currentTime() {
     return audio.currentTime;
   }
   resume() {
     return Promise.resolve();
   }
-  decodeAudioData() {
-    return Promise.resolve({ duration: SOUND_SECONDS });
+  createGain() {
+    return new FakeNode();
   }
-  createBufferSource() {
-    return {
-      buffer: null,
-      connect() {},
-      start() {
-        audio.started += 1;
-      },
-    };
+  createBiquadFilter() {
+    return new FakeNode();
+  }
+  createOscillator() {
+    audio.oscillators += 1;
+    return new FakeNode();
   }
 }
 
@@ -33,15 +50,16 @@ async function loadUnlocked() {
   return notifications;
 }
 
+const sound = (patch: Partial<NotificationSoundSettings> = {}): NotificationSoundSettings => ({
+  ...DEFAULT_NOTIFICATION_SOUND_SETTINGS,
+  ...patch,
+});
+
 beforeEach(() => {
   vi.resetModules();
   audio.currentTime = 0;
-  audio.started = 0;
+  audio.oscillators = 0;
   vi.stubGlobal("AudioContext", FakeAudioContext);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({ arrayBuffer: async () => new ArrayBuffer(0) })),
-  );
 });
 
 afterEach(() => {
@@ -49,56 +67,65 @@ afterEach(() => {
 });
 
 describe("playNotificationSound", () => {
-  it("preloads both sounds on unlock and reuses them for playback", async () => {
-    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
-    expect(fetch).toHaveBeenCalledTimes(2);
-    unlockNotificationAudio();
-    await playNotificationSound("completion", () => true);
-    await playNotificationSound("input", () => true);
-    expect(fetch).toHaveBeenCalledTimes(2);
-    expect(audio.started).toBe(2);
-  });
-
-  it("retries failed preloads on an alert rather than every gesture", async () => {
-    vi.mocked(fetch).mockRejectedValue(new Error("offline"));
-    const { unlockNotificationAudio, playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
-    expect(fetch).toHaveBeenCalledTimes(2);
-
-    unlockNotificationAudio();
-    expect(fetch).toHaveBeenCalledTimes(2);
-
-    vi.mocked(fetch).mockResolvedValue(new Response(new ArrayBuffer(0)));
-    await playNotificationSound("completion", () => true);
-    expect(fetch).toHaveBeenCalledTimes(3);
-    expect(audio.started).toBe(1);
-  });
-
-  it("plays one sound for threads that complete together", async () => {
+  it("plays one jingle for threads that complete together", async () => {
     const { playNotificationSound } = await loadUnlocked();
-
     await Promise.all(
-      Array.from({ length: 4 }, () => playNotificationSound("completion", () => true)),
+      Array.from({ length: 4 }, () => playNotificationSound("completion", sound(), () => true)),
     );
+    const once = audio.oscillators;
+    expect(once).toBeGreaterThan(0);
 
-    expect(audio.started).toBe(1);
+    audio.currentTime = 10;
+    await playNotificationSound("completion", sound(), () => true);
+    expect(audio.oscillators).toBe(once * 2);
   });
 
-  it("still plays an input alert over a completion sound", async () => {
+  it("still plays an input alert over a completion jingle", async () => {
     const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => true);
+    await playNotificationSound("completion", sound(), () => true);
+    const afterCompletion = audio.oscillators;
 
-    await playNotificationSound("input", () => true);
+    await playNotificationSound("input", sound(), () => true);
 
-    expect(audio.started).toBe(2);
+    expect(audio.oscillators).toBeGreaterThan(afterCompletion);
   });
 
   it("leaves the slot free when a sound is turned off before it plays", async () => {
     const { playNotificationSound } = await loadUnlocked();
-    await playNotificationSound("completion", () => false);
+    await playNotificationSound("completion", sound(), () => false);
+    expect(audio.oscillators).toBe(0);
 
-    await playNotificationSound("completion", () => true);
+    await playNotificationSound("completion", sound(), () => true);
 
-    expect(audio.started).toBe(1);
+    expect(audio.oscillators).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ["muted", sound({ muted: true })],
+    ["do not disturb", sound({ doNotDisturb: true })],
+    [
+      "a disabled event",
+      sound({
+        events: {
+          ...DEFAULT_NOTIFICATION_SOUND_SETTINGS.events,
+          completion: { enabled: false, jingle: "soft-chime" },
+        },
+      }),
+    ],
+  ])("stays silent when %s", async (_name, settings) => {
+    const { playNotificationSound } = await loadUnlocked();
+    await playNotificationSound("completion", settings, () => true);
+    expect(audio.oscillators).toBe(0);
+  });
+});
+
+describe("isDoNotDisturbActive", () => {
+  it("ends at its scheduled time", async () => {
+    const { isDoNotDisturbActive } = await import("./threadNotifications");
+    const until = sound({ doNotDisturb: true, doNotDisturbUntil: "2026-01-01T10:00:00.000Z" });
+    expect(isDoNotDisturbActive(until, Date.parse("2026-01-01T09:59:00.000Z"))).toBe(true);
+    expect(isDoNotDisturbActive(until, Date.parse("2026-01-01T10:00:01.000Z"))).toBe(false);
+    expect(isDoNotDisturbActive(sound({ doNotDisturb: true }))).toBe(true);
+    expect(isDoNotDisturbActive(sound())).toBe(false);
   });
 });

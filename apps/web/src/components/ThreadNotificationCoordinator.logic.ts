@@ -1,3 +1,4 @@
+import type { NotificationSoundEvent, NotificationSoundSettings } from "@t3tools/contracts";
 import {
   effectiveSnoozed,
   type ThreadSnoozeShell,
@@ -130,4 +131,25 @@ export function createThreadNotificationGate<Key>(
       attended.clear();
     },
   };
+}
+
+/** Which configured sound an alert plays. A long finished run gets its own sound. */
+export function notificationSoundEvent(
+  kind: ThreadNotificationKind,
+  status: string,
+  latestRun: { readonly startedAt: string | null; readonly completedAt: string | null } | null,
+  sound: Pick<NotificationSoundSettings, "longOperationMinutes">,
+): NotificationSoundEvent {
+  if (kind === "completion") {
+    const started = Date.parse(latestRun?.startedAt ?? "");
+    const completed = Date.parse(latestRun?.completedAt ?? "");
+    const long =
+      Number.isFinite(started) &&
+      Number.isFinite(completed) &&
+      completed - started >= sound.longOperationMinutes * 60_000;
+    return long ? "long-operation" : "completion";
+  }
+  if (status === "approval") return "approval";
+  if (status === "failed" || status === "limited") return "error";
+  return "input";
 }

@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { NotificationSettings } from "./NotificationSettings";
+import { NotificationSoundSettings } from "./NotificationSoundSettings";
 import { PRIVACY_POLICY_URL } from "../../legalLinks";
 import { CheckIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -39,7 +40,7 @@ import {
 } from "../../branding";
 import { AboutVersionTitle } from "./AboutVersionTitle";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
-import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
+import { MobileAccessStatusRow, MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -814,6 +815,7 @@ export function GeneralSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="notifications" title={gt("Notifications")}>
         <NotificationSettings />
+        <NotificationSoundSettings />
         <SettingsRow
           {...setting("in-app-notifications")}
           description={
@@ -2335,6 +2337,9 @@ export function AboutSettingsPanel() {
           </>
         )}
         <MobileAppSettingsRow />
+        {primaryEnvironmentId === null ? null : (
+          <MobileAccessStatusRow environmentId={primaryEnvironmentId} />
+        )}
         {primaryEnvironmentId === null ? null : (
           <SettingsRow
             {...searchableSetting("welcome-page")}

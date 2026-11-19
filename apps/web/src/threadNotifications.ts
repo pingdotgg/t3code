@@ -1,8 +1,13 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  NotificationJingleId,
+  NotificationSoundEvent,
+  NotificationSoundSettings,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 
-import completionUrl from "./assets/notification-completion.mp3";
-import inputUrl from "./assets/notification-input.mp3";
+import { playJingle } from "./notificationJingles";
 
 type NotificationMode = ClientSettings["notificationMode"];
 export const NOTIFICATION_MODE_LABELS = {
@@ -81,55 +86,52 @@ export function setNotificationBadge(count: number) {
 }
 
 let audioContext: AudioContext | undefined;
-const buffers = new Map<string, Promise<AudioBuffer>>();
-/** When each sound's current playback ends, on the audio context's clock. */
-const playingUntil = new Map<string, number>();
-
-function loadNotificationBuffer(context: AudioContext, url: string): Promise<AudioBuffer> {
-  let buffer = buffers.get(url);
-  if (!buffer) {
-    buffer = fetch(url)
-      .then((response) => response.arrayBuffer())
-      .then((data) => context.decodeAudioData(data))
-      .catch((error: unknown) => {
-        buffers.delete(url);
-        throw error;
-      });
-    buffers.set(url, buffer);
-  }
-  return buffer;
-}
+/** When each event's current jingle ends, on the audio context's clock. */
+const playingUntil = new Map<NotificationSoundEvent, number>();
 
 /** Called from a gesture so browsers allow later background playback. */
 export function unlockNotificationAudio() {
-  const firstUnlock = audioContext === undefined;
   audioContext ??= new AudioContext();
   void audioContext.resume().catch(() => undefined);
-  if (!firstUnlock) return;
-  // Fetch and decode during interaction so the first alert is ready when the thread finishes.
-  for (const url of [completionUrl, inputUrl]) {
-    void loadNotificationBuffer(audioContext, url).catch(() => undefined);
-  }
 }
 
+/** Do Not Disturb is on, and its end time (if any) has not passed. */
+export function isDoNotDisturbActive(sound: NotificationSoundSettings, now = Date.now()): boolean {
+  if (!sound.doNotDisturb) return false;
+  if (sound.doNotDisturbUntil === null) return true;
+  const until = Date.parse(sound.doNotDisturbUntil);
+  return !Number.isFinite(until) || until > now;
+}
+
+export function notificationEventAudible(
+  sound: NotificationSoundSettings,
+  event: NotificationSoundEvent,
+  now = Date.now(),
+): boolean {
+  return !sound.muted && sound.events[event].enabled && !isDoNotDisturbActive(sound, now);
+}
+
+/**
+ * Plays the jingle chosen for `event`. Bursts of the same event (threads finishing together)
+ * play once; different events keep separate slots so an input request is never swallowed.
+ */
 export async function playNotificationSound(
-  kind: "completion" | "input",
+  event: NotificationSoundEvent,
+  sound: NotificationSoundSettings,
   shouldPlay: () => boolean,
 ) {
   if (!audioContext || audioContext.state !== "running") return;
+  if (!notificationEventAudible(sound, event)) return;
   const context = audioContext;
-  const url = kind === "completion" ? completionUrl : inputUrl;
-  try {
-    const decoded = await loadNotificationBuffer(context, url);
-    if (!shouldPlay() || context.state !== "running") return;
-    // Coalesce same-sound bursts after decode to avoid clipping; input and completion alerts keep separate slots.
-    if (context.currentTime < (playingUntil.get(url) ?? 0)) return;
-    const source = context.createBufferSource();
-    source.buffer = decoded;
-    source.connect(context.destination);
-    source.start();
-    playingUntil.set(url, context.currentTime + decoded.duration);
-  } catch {
-    // A failed load is retried on the next alert.
-  }
+  // Yield once so alerts raised in the same tick coalesce before anything is scheduled.
+  await Promise.resolve();
+  if (!shouldPlay() || context.state !== "running") return;
+  if (context.currentTime < (playingUntil.get(event) ?? 0)) return;
+  playingUntil.set(event, playJingle(context, sound.events[event].jingle, sound.volume));
+}
+
+/** Settings preview: plays a jingle now, unlocking audio since this runs from a click. */
+export function previewNotificationJingle(jingle: NotificationJingleId, volume: number) {
+  unlockNotificationAudio();
+  if (audioContext) playJingle(audioContext, jingle, volume);
 }

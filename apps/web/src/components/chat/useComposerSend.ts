@@ -1,4 +1,5 @@
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
+import { useContinuumCommandSend } from "./useContinuumCommandSend";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -375,6 +376,7 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
+  const runContinuumCommand = useContinuumCommandSend();
   const onSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
@@ -588,6 +590,33 @@ export function useComposerSend(input: ComposerSendInput) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
+    if (!directAnnotation && !queuedRunEdit.isEditing) {
+      const outcome = await runContinuumCommand({
+        prompt: promptAtSend,
+        threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id),
+        serverThread: !isLocalDraftThread,
+        modelSelection: ctxSelectedModelSelection,
+        hasAttachments:
+          sendContextImages.length > 0 ||
+          composerFiles.length > 0 ||
+          sendContextPreviewAnnotations.length > 0 ||
+          composerReviewComments.length > 0 ||
+          composerThreadContexts.length > 0 ||
+          composerEnvironmentContexts.length > 0,
+      });
+      if (outcome === "handled" || outcome === "handled-keep-draft") {
+        if (
+          outcome === "handled" &&
+          currentRouteThreadKeyRef.current === routeThreadKey &&
+          promptRef.current === promptAtSend
+        ) {
+          promptRef.current = "";
+          setComposerDraftPrompt(composerDraftTarget, "");
+          composerRef.current?.resetCursorState();
+        }
+        return;
+      }
+    }
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
         images: sendContextImages,

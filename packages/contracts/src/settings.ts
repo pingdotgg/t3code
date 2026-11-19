@@ -1,3 +1,9 @@
+import {
+  NotificationSoundSettings,
+  notificationSoundsField,
+  SpeechSettings,
+  speechField,
+} from "./continuumSettings.ts";
 import { EasDeviceHostConfigs, SimlockDeviceHostConfigs, SshDeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
@@ -527,6 +533,8 @@ export const ClientSettingsSchema = Schema.Struct({
   agentEyesDetail: AgentEyesDetail.pipe(
     Schema.withDecodingDefault(Effect.succeed("standard" as const)),
   ),
+  notificationSounds: notificationSoundsField,
+  speech: speechField,
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
   ),
@@ -2119,6 +2127,8 @@ export const ClientSettingsPatch = Schema.Struct({
   videoBackgroundFile: Schema.optionalKey(Schema.String),
   videoSurfaceOpacity: Schema.optionalKey(VideoSurfaceOpacity),
   agentEyesDetail: Schema.optionalKey(AgentEyesDetail),
+  notificationSounds: Schema.optionalKey(NotificationSoundSettings),
+  speech: Schema.optionalKey(SpeechSettings),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

@@ -65,6 +65,7 @@ const isClosedViewEntry = (entry: unknown): entry is ClosedViewEntry => {
     case "pull-requests":
     case "agent-eyes":
     case "iwe":
+    case "forge":
       return surface.id === surface.kind;
     case "preview":
       return surface.resourceId === null || typeof surface.resourceId === "string";

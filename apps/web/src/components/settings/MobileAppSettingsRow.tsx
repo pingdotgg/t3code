@@ -1,3 +1,7 @@
+import type { EnvironmentId } from "@t3tools/contracts";
+
+import { mobileAccessEnvironment } from "../../state/mobileAccess";
+import { useEnvironmentQuery } from "../../state/query";
 import { AndroidIcon, AppleIcon } from "../Icons";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../ui/popover";
@@ -60,5 +64,51 @@ export function MobileAppSettingsRow() {
         </div>
       }
     />
+  );
+}
+
+/** Phone connections this host refused recently, and why, so a failed pairing is explainable. */
+export function MobileAccessStatusRow({
+  environmentId,
+}: {
+  readonly environmentId: EnvironmentId;
+}) {
+  const query = useEnvironmentQuery(mobileAccessEnvironment.status({ environmentId, input: {} }));
+  const status = query.data;
+  if (!status) return null;
+  return (
+    <SettingsRow
+      {...searchableSetting("mobile-access")}
+      description={`This server speaks mobile protocol ${status.serverProtocol}. Verified with ${
+        status.verifiedClients.length > 0
+          ? status.verifiedClients.join(", ")
+          : "no app releases yet"
+      }.`}
+    >
+      {status.attempts.length === 0 ? (
+        <p className="text-muted-foreground text-xs">No refused phone connections.</p>
+      ) : (
+        <ul className="flex flex-col gap-2 text-xs">
+          {status.attempts.map((attempt) => (
+            <li
+              key={`${attempt.at}:${attempt.outcome}`}
+              className="rounded-md border border-border p-2"
+            >
+              <div className="font-medium">
+                {attempt.outcome === "protocol-mismatch"
+                  ? "Version mismatch"
+                  : "Credential refused"}{" "}
+                <span className="font-normal text-muted-foreground">
+                  {new Date(attempt.at).toLocaleString()} · {attempt.surface}
+                  {attempt.appVersion ? ` · app ${attempt.appVersion}` : ""}
+                  {attempt.os ? ` · ${attempt.os}` : ""}
+                </span>
+              </div>
+              <p className="text-muted-foreground">{attempt.explanation}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SettingsRow>
   );
 }

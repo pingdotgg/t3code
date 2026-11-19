@@ -1,5 +1,6 @@
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
-import { NotebookPen } from "lucide-react";
+import { CONTINUUM_SURFACES } from "../continuumSurfaces";
+import { ContinuumComposerStatus } from "./chat/ContinuumComposerStatus";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -3622,6 +3623,9 @@ export default function ChatView(props: ChatViewProps) {
                     }
                   >
                     <ChildThreadApprovals threadRef={activeThreadRef} />
+                    {isServerThread && activeThreadRef ? (
+                      <ContinuumComposerStatus threadRef={activeThreadRef} />
+                    ) : null}
                     <div className="relative">
                       <ComposerSurface.Shell contextRow={showComposerContextStrip}>
                         <ComposerSurface.Host
@@ -4075,15 +4079,13 @@ export default function ChatView(props: ChatViewProps) {
           onAddDevice={addDeviceSurfaceStable}
           extraSurfaces={
             isServerThread
-              ? [
-                  {
-                    label: "Notes (IWE)",
-                    description: "Search, read, and edit this project's IWE notes.",
-                    icon: NotebookPen,
-                    shortcut: "N",
-                    onClick: () => useRightPanelStore.getState().open(activeThreadRef, "iwe"),
-                  },
-                ]
+              ? CONTINUUM_SURFACES.map((surface) => ({
+                  label: surface.label,
+                  description: surface.description,
+                  icon: surface.icon,
+                  shortcut: surface.shortcut,
+                  onClick: () => useRightPanelStore.getState().open(activeThreadRef, surface.kind),
+                }))
               : undefined
           }
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}

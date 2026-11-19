@@ -13,6 +13,7 @@ import { lazy, Suspense } from "react";
 import SideChatPane from "./SideChatPane";
 import { AgentEyesPanel } from "../agentEyes/AgentEyesPanel";
 import { IweNotesPanel } from "../iwe/IweNotesPanel";
+import { ForgePanel } from "../forge/ForgePanel";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -180,6 +181,15 @@ export function RightPanelSurfaceContent(props: {
       return <AgentEyesPanel threadRef={threadRef} visible={visible} />;
     case "iwe":
       return <IweNotesPanel threadRef={threadRef} />;
+    case "forge":
+      return (
+        <ForgePanel
+          threadRef={threadRef}
+          workspaceRoot={props.files.workspaceRoot}
+          composerDraftTarget={props.composerDraftTarget}
+          visible={visible}
+        />
+      );
     case "side-chat":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

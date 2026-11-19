@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  notificationSoundEvent,
   RELEASED_COMPLETION_GRACE_MS,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -242,5 +243,25 @@ describe("isSnoozedForNotification", () => {
     ],
   ])("a completion %s is suppressed: %s", (_name, shell, completedAt, now, expected) => {
     expect(isSnoozedForNotification(shell, completedAt, now)).toBe(expected);
+  });
+});
+
+describe("notificationSoundEvent", () => {
+  const run = (minutes: number) => ({
+    startedAt: "2026-01-01T10:00:00.000Z",
+    completedAt: new Date(Date.parse("2026-01-01T10:00:00.000Z") + minutes * 60_000).toISOString(),
+  });
+  it.each([
+    ["completion", "ready", run(2), "completion"],
+    ["completion", "ready", run(5), "long-operation"],
+    ["completion", "ready", null, "completion"],
+    ["input", "approval", null, "approval"],
+    ["input", "failed", null, "error"],
+    ["input", "limited", null, "error"],
+    ["input", "input", null, "input"],
+  ] as const)("%s/%s plays %s", (kind, status, latestRun, expected) => {
+    expect(notificationSoundEvent(kind, status, latestRun, { longOperationMinutes: 5 })).toBe(
+      expected,
+    );
   });
 });

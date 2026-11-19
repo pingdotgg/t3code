@@ -282,6 +282,7 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 import { APP_BASE_NAME } from "../branding";
 import { iweEnvironment } from "../state/iwe";
+import { CONTINUUM_SURFACES } from "../continuumSurfaces";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
@@ -1517,6 +1518,23 @@ function OpenCommandPaletteDialog(props: {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
       },
     });
+  }
+
+  if (activeThread !== null) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    for (const surface of CONTINUUM_SURFACES) {
+      const Icon = surface.icon;
+      actionItems.push({
+        kind: "action",
+        value: `action:open-continuum-surface:${surface.kind}`,
+        searchTerms: [surface.label, surface.title, surface.description, "continuum", "panel"],
+        title: `Open ${surface.label}`,
+        icon: <Icon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          useRightPanelStore.getState().open(threadRef, surface.kind);
+        },
+      });
+    }
   }
 
   if (activeThread !== null && canShareActiveThreadWithGuest) {

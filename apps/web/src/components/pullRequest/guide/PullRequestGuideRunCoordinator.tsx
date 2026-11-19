@@ -108,10 +108,12 @@ function watchGuideRun(
         },
       });
     };
-    const mode = getClientSettings().notificationMode;
+    const { notificationMode: mode, notificationSounds } = getClientSettings();
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(failure === null ? "completion" : "input", () =>
-        hasNotificationSound(getClientSettings().notificationMode),
+      void playNotificationSound(
+        failure === null ? "completion" : "error",
+        notificationSounds,
+        () => hasNotificationSound(getClientSettings().notificationMode),
       );
     }
     if (looking) {

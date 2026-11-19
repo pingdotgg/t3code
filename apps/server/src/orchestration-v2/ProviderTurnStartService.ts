@@ -38,6 +38,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
 import * as SuperchargeService from "../supercharge/SuperchargeService.ts";
 import * as IweService from "../iwe/IweService.ts";
+import { continuumSkillContext } from "@t3tools/shared/continuumCommands";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -928,6 +929,8 @@ export const layer: Layer.Layer<
                 core.contextForTurn(projection.thread.id, iweProjectRoot),
               )
               .pipe(Effect.orElseSucceed(() => ""));
+      // `/review`, `/debug`, and the other Continuum skills carry their procedure with the turn.
+      const skillContext = goalCommand ? "" : (continuumSkillContext(userText) ?? "");
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1801,6 +1804,7 @@ export const layer: Layer.Layer<
             compact || turnInput.resume ? "" : agentEyesNarrationContext(narration),
             compact || turnInput.resume ? "" : superchargeContext,
             compact || turnInput.resume ? "" : iweContext,
+            compact || turnInput.resume ? "" : skillContext,
           ]
             .filter((part) => part !== "")
             .join("\n\n");

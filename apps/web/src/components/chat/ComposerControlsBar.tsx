@@ -1,6 +1,7 @@
 import type { ChatComposerProps } from "./ChatComposer";
 import { ComposerUsageBar } from "./ComposerUsageBar";
 import { AgentEyesPickerControl } from "../agentEyes/AgentEyesPickerControl";
+import { SuperchargeControl } from "./SuperchargeControl";
 import type { PromptUltrathink } from "./TraitsPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
@@ -231,10 +232,13 @@ export function ComposerControlsBar(props: {
           runtimeModeOptions={compatibleRuntimeModeOptions}
           onRuntimeModeChange={handleRuntimeModeChange}
           extra={
-            <AgentEyesPickerControl
-              environmentId={environmentId}
-              threadRef={routeKind === "server" ? routeThreadRef : null}
-            />
+            <>
+              <AgentEyesPickerControl
+                environmentId={environmentId}
+                threadRef={routeKind === "server" ? routeThreadRef : null}
+              />
+              <SuperchargeControl threadRef={routeKind === "server" ? routeThreadRef : null} />
+            </>
           }
         />
       }

@@ -26,6 +26,8 @@ import {
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 
 import type { ComposerTrigger } from "../../composer-logic";
+import { availableContinuumCommands } from "../../continuumCommands";
+import { CONTINUUM_COMMANDS } from "@t3tools/shared/continuumCommands";
 import type { DraftId } from "../../composerDraftStore";
 import { basenameOfPath } from "../../pierre-icons";
 import {
@@ -234,6 +236,9 @@ export function useComposerMenuItems({
       ];
     }
     if (composerTrigger.kind === "slash-command") {
+      const continuumCommandsAvailable = availableContinuumCommands({
+        serverThread: activeThreadId !== null,
+      });
       const builtInSlashCommandItems = [
         {
           id: "slash:model",
@@ -271,6 +276,16 @@ export function useComposerMenuItems({
               },
             ] as const)
           : []),
+        ...CONTINUUM_COMMANDS.filter((spec) => continuumCommandsAvailable.has(spec.name)).map(
+          (spec) =>
+            ({
+              id: `slash:${spec.name}`,
+              type: "slash-command",
+              command: spec.name,
+              label: `/${spec.name}`,
+              description: `${spec.description} · ${spec.argumentHint}`,
+            }) as const,
+        ),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const slashMenuSkills = getProviderSkillsForSlashMenu(
         selectedProviderSkills,

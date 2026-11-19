@@ -35,13 +35,13 @@ import {
 import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { continuumSurface } from "../continuumSurfaces";
 import {
   Smartphone,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
-  NotebookPen,
   FileDiff,
   Files,
   Globe2,
@@ -622,7 +622,8 @@ function surfaceTitle(
     case "agent-eyes":
       return "Agent Eyes";
     case "iwe":
-      return "Notes";
+    case "forge":
+      return continuumSurface(surface.kind).title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -691,7 +692,10 @@ function SurfaceIcon({
     case "agent-eyes":
       return <Eye className="size-3 shrink-0" />;
     case "iwe":
-      return <NotebookPen className="size-3 shrink-0" />;
+    case "forge": {
+      const Icon = continuumSurface(surface.kind).icon;
+      return <Icon className="size-3 shrink-0" />;
+    }
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":

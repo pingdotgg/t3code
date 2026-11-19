@@ -1935,17 +1935,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         return;
       }
-      if (item.command === "side" || item.command === "btw") {
-        if (props.sideChatDisabledReason) return;
-        const applied = applyPromptReplacement(
-          trigger.rangeStart,
-          trigger.rangeEnd,
-          `/${item.command} `,
-          { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
-        );
-        if (applied) setComposerHighlightedItemId(null);
+      // `/side`, `/btw`, and Continuum's commands take text after them.
+      if ((item.command === "side" || item.command === "btw") && props.sideChatDisabledReason) {
         return;
       }
+      const applied = applyPromptReplacement(
+        trigger.rangeStart,
+        trigger.rangeEnd,
+        `/${item.command} `,
+        { expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd) },
+      );
+      if (applied) setComposerHighlightedItemId(null);
       return;
     }
     if (item.type === "provider-slash-command") {

@@ -816,6 +816,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["notification sound alert completion input approval desktop"],
   },
   {
+    id: "notification-sound-volume",
+    title: "Notification volume",
+    to: "/settings/general",
+    searchTerms: ["notification sound volume mute jingle chime"],
+  },
+  {
+    id: "notification-do-not-disturb",
+    title: "Do Not Disturb",
+    to: "/settings/general",
+    searchTerms: ["notification do not disturb dnd quiet silence focus"],
+  },
+  {
+    id: "notification-long-operation",
+    title: "Long operation threshold",
+    to: "/settings/general",
+    searchTerms: ["notification long running operation sound minutes"],
+  },
+  {
     id: "in-app-notifications",
     title: msg("In-app notifications"),
     to: "/settings/general",
@@ -1023,6 +1041,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Mobile app",
     to: "/settings/about",
     searchTerms: ["phone tablet iPhone iPad iOS Android App Store Google Play QR"],
+  },
+  {
+    id: "mobile-access",
+    title: "Phone connections",
+    to: "/settings/about",
+    searchTerms: ["mobile phone connection refused protocol version app"],
+    environmentOnly: true,
   },
   {
     id: "welcome-page",

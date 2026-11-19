@@ -26,6 +26,7 @@ import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
+  isDoNotDisturbActive,
   playNotificationSound,
   setNotificationBadge,
   threadNotificationTag,
@@ -36,6 +37,7 @@ import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,
+  notificationSoundEvent,
   type ThreadNotificationKind,
   type ThreadNotificationObservation,
 } from "./ThreadNotificationCoordinator.logic";
@@ -140,7 +142,11 @@ export function startThreadNotifications(
         .has(threadKey({ environmentId, threadId: thread.id }))
     )
       return;
-    const { notificationMode: mode, inAppNotificationsEnabled } = getClientSettings();
+    const {
+      notificationMode: mode,
+      inAppNotificationsEnabled,
+      notificationSounds,
+    } = getClientSettings();
     const active = activeThread();
     const title =
       kind === "completion"
@@ -155,8 +161,10 @@ export function startThreadNotifications(
                 ? "Guest request"
                 : "Input needed";
     if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
+      void playNotificationSound(
+        notificationSoundEvent(kind, status, state.thread.latestRun, notificationSounds),
+        notificationSounds,
+        () => hasNotificationSound(getClientSettings().notificationMode),
       );
     }
     if (
@@ -202,6 +210,7 @@ export function startThreadNotifications(
     }
     if (
       !hasDesktopNotifications(mode) ||
+      isDoNotDisturbActive(notificationSounds) ||
       (document.visibilityState === "visible" && document.hasFocus()) ||
       typeof Notification === "undefined" ||
       Notification.permission !== "granted"
