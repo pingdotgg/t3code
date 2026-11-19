@@ -18,6 +18,7 @@ import { beginAcpMockPrompt } from "./acpMockCancellationState.ts";
 
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
 // GitHub Copilot CLI advertises URL-shaped session mode ids.
 const copilotModesProfile = process.env.T3_ACP_COPILOT_MODES === "1";
 const copilotModeId = (name: string) =>
@@ -1015,7 +1016,6 @@ const program = Effect.gen(function* () {
         );
         return {};
       }
-      const harnessFailure = process.env.T3_ACP_ANTIGRAVITY_HARNESS_FAILURE;
       if (
         harnessFailure === "1" ||
         harnessFailure === "pending" ||
