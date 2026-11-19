@@ -5,6 +5,7 @@ import {
   CommandId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   latestProviderTurnForAttempt,
+  withMessageSenderNote,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ExecutionNode,
@@ -985,10 +986,13 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      const userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
+      const userText = withMessageSenderNote(
+        providerMessage,
+        projectComposerContextForProvider({
+          text: providerMessage.text,
+          records: providerMessage.context?.records ?? [],
+        }),
+      );
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
@@ -1005,15 +1009,16 @@ export const layer: Layer.Layer<
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds: () =>
+          new Set(
+            projection.messages
+              .filter(
+                (candidate) =>
+                  isCompactionCommandMessage(candidate) ||
+                  (goalDriver && parseGoalCommand(candidate) !== null),
+              )
+              .map((candidate) => candidate.id),
+          ),
         run,
         attempts: projection.attempts,
       });
@@ -1213,27 +1218,26 @@ export const layer: Layer.Layer<
           // History delivery (inline or injected) is text only, so missed images ride on prompts
           // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
           // own accepted attempt predates its unsent steering input, so it does not count.
-          const lastPromptOrdinal = Math.max(
-            0,
-            ...acceptedAttempts.flatMap((attempt) => {
-              if (missedRunIds.has(attempt.runId)) return [];
-              const source = projection.runs.find((candidate) => candidate.id === attempt.runId);
-              const message = projection.messages.find(
-                (candidate) => candidate.id === source?.userMessageId,
-              );
-              return source === undefined ||
-                (message !== undefined &&
-                  (isCompactionCommandMessage(message) ||
-                    (goalDriver && parseGoalCommand(message) !== null)))
-                ? []
-                : [source.ordinal];
-            }),
-          );
+          const runsById = new Map(projection.runs.map((source) => [source.id, source]));
+          const messagesById = new Map(projection.messages.map((message) => [message.id, message]));
+          let lastPromptOrdinal = 0;
+          for (const attempt of acceptedAttempts) {
+            if (missedRunIds.has(attempt.runId)) continue;
+            const source = runsById.get(attempt.runId);
+            if (source === undefined) continue;
+            const message = messagesById.get(source.userMessageId);
+            if (
+              message !== undefined &&
+              (isCompactionCommandMessage(message) ||
+                (goalDriver && parseGoalCommand(message) !== null))
+            )
+              continue;
+            lastPromptOrdinal = Math.max(lastPromptOrdinal, source.ordinal);
+          }
           const attachments = missedHistory.flatMap((item) =>
             item.type === "user_message" &&
-            missedRuns.some(
-              (source) => source.id === item.runId && source.ordinal > lastPromptOrdinal,
-            )
+            item.runId !== null &&
+            (runsById.get(item.runId)?.ordinal ?? 0) > lastPromptOrdinal
               ? item.attachments
               : [],
           );

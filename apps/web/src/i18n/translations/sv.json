@@ -1844,6 +1844,18 @@
   "480646ceb98c7163": "Stäng",
   "32fc9124998ebc18": "Lokal",
   "1c4158d741eec5da": "{label} (lokal)",
+  "a12a4958ca6b924b": "Port {port} vidarebefordrad",
+  "0f14a51b016f825d": "Appar på den här datorn når den på localhost:{port}.",
+  "4bdb9a086e77ee6d": "Port {port} på {environment}",
+  "7a462e32dba47f4c": "Öppna i webbläsaren",
+  "4b8087450e97c995": "Kopiera adress",
+  "c170720e67d01733": "Sluta vidarebefordra",
+  "1e5c6d1c33667b17": "Vidarebefordra localhost:{port}",
+  "e76f45b6a412a0b6": "Vidarebefordra port {port} från {environment}",
+  "ecf3b95b3d9e6e74": "Vidarebefordrade",
+  "b3123e5b8602a134": "Skriv ett portnummer för att vidarebefordra det",
+  "1bdeef9819b4a055": "Vidarebefordra en port",
+  "de8a46b66f8ec455": "Vidarebefordrade portar",
   "f844c41fac2d339c": "Aktuellt",
   "69154433587763c0": "Inga matchande åtgärder.",
   "90c3a382ecefa0ce": "Inga matchande kommandon, projekt eller trådar.",
@@ -2997,6 +3009,10 @@
   "314cdccee9c14774": "Den här servern stöder inte registeruppslag. Uppdatera den innan du byter spår.",
   "22da1d00403ab2fd": "Kunde inte kontrollera den här miljöns npm-register. Kontrollera anslutningen och registerinställningarna.",
   "2fc0f7a698c95c90": "Anslut till en server för att söka efter versioner.",
+  "922269f8691aa3ba": "Det gick inte att avgöra om den här miljön körs på den här datorn.",
+  "35cade9cc8a01363": "Portvidarebefordring kräver skrivbordsappen.",
+  "9e303e0a794898d4": "Den här miljön körs på den här datorn, så localhost:{port} når den redan.",
+  "2d49965e0e27e23b": "Den här miljön går inte att nå just nu. Försök igen när den har anslutit igen.",
   "7280baf7517dad1c": "Det gick inte att läsa in refs.",
   "567c0fed6ab8efc1": "Den här anslutningen kan inte söka i värdens filer.",
   "5189720b9436f98c": "Sökningen är begränsad till {count} tecken.",
@@ -4044,6 +4060,16 @@
     }
   ],
   "e58a1d884fa1d8f2": "Tråddetaljer",
+  "43c5fbd02c6f330a": "Visa mindre",
+  "de45b075b016cb14": [
+    "Visa ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " till"
+  ],
   "02d9667ff2c8e0b8": "Ärende {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} kommentar} other {{count} kommentarer}}",
   "42f634397f3960aa": "Visa i tråddetaljer",
@@ -4083,16 +4109,6 @@
   ],
   "159ddd0d146a0f22": "Bevakar: agenten vaknar när kontrollerna är klara, någon kommenterar eller grenen får konflikter. Klicka för att sluta.",
   "1cbc8b5db51b4c77": "Merga",
-  "43c5fbd02c6f330a": "Visa mindre",
-  "de45b075b016cb14": [
-    "Visa ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " till"
-  ],
   "a3d040c4ef4fc6e9": "Före takten",
   "b16fdf56b16d99c9": "I takt",
   "90f977e97ae8b6c6": "Under takten",
@@ -4107,6 +4123,7 @@
   "66be4fb43249bbd2": "{used} av {max} token",
   "ee3ae58c8b38a425": "{left} % kvar",
   "ebb26f93fb83a71b": "{label}: {left} % kvar",
+  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "728c6cc1431e76c8": "Återställs om {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Urklipps-API:t är inte tillgängligt vid kopiering av administratörsbegäran.",
@@ -4200,12 +4217,16 @@
   ],
   "3237699bd13dd4bb": "Stoppa subagent",
   "075398ac562d74b0": "Koppla från agentsession",
+  "1d2025060ba3d1c3": "Kunde inte vidarebefordra port {port}",
   "086ecbb6f4c2e959": "Det gick inte att öppna i webbläsaren",
   "51052c00ab1ac8cc": "Det gick inte att öppna förhandsvisningen",
   "0ccd37739f9cf2b6": "Kunde inte stoppa servern",
   "a610a81c4061bb4c": "Servrar",
+  "253bc8b5e99002dc": "Vidarebefordrad till :{port}",
   "bd1ca8ccb6d0b87c": "Agent",
   "e25e045607262b40": "Terminal",
+  "194a9791a83d3f79": "Sluta vidarebefordra localhost:{port}",
+  "95bbbac2f2e17273": "Vidarebefordra localhost:{port} till den här datorn",
   "95b263aa683271cc": "Stoppa localhost:{port}",
   "f94866e17faddc05": [
     "Öppna i webbläsarpanelen. ",
@@ -4216,6 +4237,16 @@
     },
     " för din webbläsare."
   ],
+  "781fba367a220012": [
+    "Vidarebefordrad till localhost:",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " på den här datorn. Klicka för att stoppa."
+  ],
+  "92347683e33e9f02": "Vidarebefordra till den här datorn, för alla appar här",
   "3c7763243445b28d": "Stoppa server",
   "991cc9fb37606c91": "(tomt svar)",
   "36e4b8d2db087296": "Forka från det här svaret",
@@ -5955,7 +5986,6 @@
   "a74538a7917c1c96": "Spela upp video",
   "11a5a4d340e6397d": "Öppna original",
   "1b74242b0d303272": "Ladda ned video",
-  "7a462e32dba47f4c": "Öppna i webbläsaren",
   "f9ca1e61d515445e": "Data-URL:ens innehåll saknas.",
   "1b547c297573369c": "Det här inbäddade mediet kunde inte avkodas.",
   "84f7c359e5f050b1": "Filen kunde inte hämtas (HTTP {status}).",
@@ -11958,7 +11988,6 @@
   "0bd938825ffcf992": "+{percent} % av poolen",
   "09c0e00d7fb55402": "Använder återställningskredit…",
   "4df3ff1be768a7ab": "{name}: {remaining} % kvar",
-  "1b16346722b65812": "{timeLeft} % av fönstret kvar",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "Tak på 0 $",
   "a16b48709357a5a7": "Hantera användning",
