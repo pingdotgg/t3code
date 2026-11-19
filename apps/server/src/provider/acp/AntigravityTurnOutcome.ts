@@ -173,11 +173,14 @@ function turnFailure(
 
 /**
  * agy_acp_server reports a failed harness rebuild as agent text and `end_turn`, then
- * forgets the session, so the turn fails and the next one needs a fresh process.
+ * forgets the session, so the turn fails and the next one resumes it on a fresh process.
  */
-export function antigravityConnectionLostFailure(
-  update: EffectAcpSchema.SessionUpdate,
-): OrchestrationV2ProviderFailure | undefined {
+export function antigravityConnectionLostFailure(update: EffectAcpSchema.SessionUpdate):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable";
+    }
+  | undefined {
   if (
     update.sessionUpdate !== "agent_message_chunk" ||
     update.content.type !== "text" ||
@@ -185,11 +188,15 @@ export function antigravityConnectionLostFailure(
   ) {
     return undefined;
   }
-  return makeProviderFailure({
-    class: "provider_error",
-    message: update.content.text,
-    retryable: true,
-  });
+  return {
+    failure: makeProviderFailure({
+      class: "provider_error",
+      message: update.content.text,
+      retryable: true,
+    }),
+    // The native session survives on disk; only this agent process forgot it.
+    threadDisposition: "reusable",
+  };
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];

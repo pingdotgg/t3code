@@ -3,7 +3,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
-  type OrchestrationV2ProviderFailure,
   type ProviderSetupError,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -148,7 +147,10 @@ export function makeAntigravityAcpAdapterFlavor(
 ): AcpAdapterV2Flavor {
   const { profileDirectory } = options;
   // Keyed by native session: the next turn resumes it on a fresh runtime.
-  const lostConnections = new Map<string, OrchestrationV2ProviderFailure>();
+  const lostConnections = new Map<
+    string,
+    NonNullable<ReturnType<typeof antigravityConnectionLostFailure>>
+  >();
   const antigravityClientFileRoots = (cwd: string | null) =>
     cwd === null ? [options.host.paths.attachmentsDir] : [cwd, options.host.paths.attachmentsDir];
   const makeRuntime = Effect.fn("AntigravityAdapterV2.makeRuntime")(
