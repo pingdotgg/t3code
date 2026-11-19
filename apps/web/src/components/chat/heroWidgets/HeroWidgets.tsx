@@ -5,6 +5,7 @@ import { useUsage } from "../../../state/usage";
 import { useChatCanvas } from "../ChatCanvasContext";
 import {
   dailyWindow,
+  dayKey,
   fitHeroLayout,
   HERO_AREA,
   HERO_LAYOUT,
@@ -60,7 +61,12 @@ function headlineHeight(lane: HTMLElement): number {
 export function HeroWidgets() {
   const now = useNow(30_000);
   // One day-resolution call serves the streak, the heatmap and the pool's burn rate.
-  const [historyWindow] = useState(() => dailyWindow(new Date(), STREAK_SPAN_DAYS));
+  const [historyWindow, setHistoryWindow] = useState(() =>
+    dailyWindow(new Date(now), STREAK_SPAN_DAYS),
+  );
+  if (historyWindow.untilDay !== dayKey(new Date(now))) {
+    setHistoryWindow(dailyWindow(new Date(now), STREAK_SPAN_DAYS));
+  }
   const history = useUsage(historyWindow);
   const daily = (history.shown?.merged ?? history.merged).daily;
   const containerRef = useRef<HTMLDivElement | null>(null);

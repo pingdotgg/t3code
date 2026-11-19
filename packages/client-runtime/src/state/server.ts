@@ -1586,6 +1586,7 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
+      refreshIntervalMs: 5 * 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
       execute: (input, emit, previous) => {
         const settled = (summary: UsageSummary) =>
