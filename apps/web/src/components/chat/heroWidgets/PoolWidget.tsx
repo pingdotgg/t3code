@@ -108,7 +108,7 @@ const FORECAST_MS = 7 * DAY_MS;
 const MAX_PAST_MS = DAY_MS;
 /** Recorded history counts as unbroken while samples are at most this far apart. */
 const SAMPLE_GAP_MS = 3 * HOUR_MS;
-/** Below this card width the rail folds into one legend line under the chart. */
+/** Below this card width, or when the rail is taller than the chart, it folds into a wrapping legend. */
 const NARROW_CARD = 760;
 const CARD_PADDING = 32;
 /** Refills smaller than this many points still step the chart but get no tag or headline. */
@@ -135,6 +135,9 @@ const PIP_GAP = 4;
 const PIP_EMPTY_BAR = 2;
 /** The rail's gap plus one text-meta line, for the "No limits" line. */
 const NO_LIMITS_PX = 28;
+/** A rail entry with one row of pips, plus the gap above the next entry, in rem like the rail. */
+const RAIL_ENTRY_REM = 3.25;
+const RAIL_GAP_REM = 0.75;
 /** Room a weekday label needs under the chart. */
 const DAY_LABEL_PX = 24;
 
@@ -437,11 +440,17 @@ function PoolBody({
 }) {
   const gt = useGT();
   const ref = useRef<HTMLDivElement | null>(null);
+  const rowRef = useRef<HTMLDivElement | null>(null);
   const { width } = useElementSize(ref);
+  const row = useElementSize(rowRef);
   const narrow = width > 0 && width + CARD_PADDING < NARROW_CARD;
   const accounts = model.providers.reduce((sum, provider) => sum + provider.accounts.length, 0);
   // Top of the stack first, as the bands read from the top down.
   const listed = model.providers.toReversed();
+  const rem = Number.parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+  const legend =
+    narrow ||
+    (row.height > 0 && row.height < (listed.length * RAIL_ENTRY_REM - RAIL_GAP_REM) * rem);
 
   return (
     <div ref={ref} className="mt-2.5 flex min-h-0 flex-1 flex-col">
@@ -469,32 +478,42 @@ function PoolBody({
           </span>
         ) : null}
       </div>
-      <div className="mt-3 flex min-h-0 flex-1 gap-6">
+      <div ref={rowRef} className="mt-3 flex min-h-0 flex-1 gap-6">
         <div className="flex min-w-0 flex-1 flex-col">
           <PoolChart model={model} />
-          {narrow ? (
-            <div className="mt-2 flex items-center gap-x-4 overflow-hidden text-meta whitespace-nowrap tabular-nums">
+          {legend ? (
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 overflow-hidden text-meta whitespace-nowrap tabular-nums">
               {listed.map((provider) => {
                 const status = providerStatus(model, provider.driver);
                 return (
                   <span key={provider.driver} className="inline-flex items-center gap-1.5">
                     <Hint
-                      content={<ProviderHint model={model} provider={provider} />}
+                      content={<ProviderHint model={model} provider={provider} status={status} />}
                       className="inline-flex items-baseline gap-1.5"
                     >
                       <Chip driver={provider.driver} className="self-center" />
-                      <span>{poolLabel(provider.driver)}</span>
+                      {/* The dotted underline marks the hover details; rose when this provider runs dry. */}
+                      <span
+                        className="underline decoration-dotted underline-offset-3"
+                        style={{
+                          textDecorationColor:
+                            status.kind === "lasts"
+                              ? "color-mix(in oklab, var(--foreground) 35%, transparent)"
+                              : ROSE,
+                        }}
+                      >
+                        {poolLabel(provider.driver)}
+                      </span>
                       <Capacity provider={provider} />
                     </Hint>
                     <Pips provider={provider} wrap={false} />
-                    {status.kind === "lasts" ? null : <StatusText status={status} />}
                   </span>
                 );
               })}
             </div>
           ) : null}
         </div>
-        {narrow ? null : <Rail model={model} listed={listed} noLimits={noLimits} />}
+        {legend ? null : <Rail model={model} listed={listed} noLimits={noLimits} />}
       </div>
     </div>
   );
@@ -589,9 +608,12 @@ function Hint({
 function ProviderHint({
   model,
   provider,
+  status,
 }: {
   readonly model: PoolModel;
   readonly provider: PoolProvider;
+  /** Shown where the entry itself has no room for it. */
+  readonly status?: ProviderStatus;
 }) {
   const gt = useGT();
   const burn = model.burns.get(provider.driver);
@@ -615,6 +637,7 @@ function ProviderHint({
               })
           : gt("No burn measured")}
       </div>
+      {status && status.kind !== "lasts" ? <StatusText status={status} /> : null}
     </div>
   );
 }
