@@ -617,7 +617,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
         Effect.all(
           [
             readPage(input, "listCandidates", `${repoPath(input.scope)}/labels`, 1, ForgejoLabel),
-            readPage(input, "listCandidates", `${repoPath(input.scope)}/assignees`, 1, ForgejoUser),
+            readArray(input, "listCandidates", `${repoPath(input.scope)}/assignees`, ForgejoUser),
           ],
           { concurrency: 2 },
         ).pipe(
@@ -627,11 +627,11 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
               color: label.color ?? null,
               description: label.description ?? null,
             })),
-            assignees: assignees.rows.flatMap((user) => {
+            assignees: assignees.flatMap((user) => {
               const actor = forgejoActor(user);
               return actor === null ? [] : [{ ...actor, id: actor.login }];
             }),
-            truncated: labels.nextCursor !== null || assignees.nextCursor !== null,
+            truncated: labels.nextCursor !== null,
           })),
         ),
     };
