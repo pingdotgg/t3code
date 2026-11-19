@@ -3707,7 +3707,7 @@
   "67937aa49179285e": "På en Mac klonas nya worktrees från en utcheckning som cachas i T3-hemmappen i stället för att varje fil skrivs. Använder Gits vanliga utcheckning när det inte går. Om du stänger av det tas cachen bort.",
   "d6ada5ec242e37ff": "Användningsgränser",
   "62127e7b5c0f57a3": "Återuppta efter användningsgränser",
-  "4df30d44eb0b0728": "Återuppta trådar automatiskt när deras användningsgränser återställs. Du kan avbryta automatisk återupptagning i varje tråd.",
+  "4e8a6e262304c240": "Fortsätt trådar efter en användningsgräns: trådar på Auto flyttas till nästa prenumeration med utrymme, andra trådar återupptas när gränsen återställs. Du kan avbryta automatisk återupptagning i varje tråd.",
   "20e3a8aab5f9426a": "Snooza tills gränserna återställs",
   "0769f91ca46e3003": "Snooza trådar tills deras användningsgränser återställs. Aktivera automatisk återupptagning för att fortsätta agenten efter återställningen.",
   "7c27e91e75cce7a3": "Markera som klar automatiskt",

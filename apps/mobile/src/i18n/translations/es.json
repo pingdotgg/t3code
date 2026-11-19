@@ -3701,7 +3701,7 @@
   "67937aa49179285e": "En un Mac, clona los nuevos worktrees desde un checkout en caché en la carpeta de inicio de T3 en lugar de escribir cada archivo. Usa el checkout normal de Git cuando no puede. Al desactivarlo se elimina la caché.",
   "d6ada5ec242e37ff": "Límites de uso",
   "62127e7b5c0f57a3": "Reanudar tras los límites de uso",
-  "4df30d44eb0b0728": "Reanuda automáticamente los hilos cuando se restablecen sus límites de uso. Puedes cancelar la reanudación automática en cada hilo.",
+  "4e8a6e262304c240": "Continúa los hilos tras un límite de uso: los hilos en Auto pasan a la siguiente suscripción con margen y los demás se reanudan cuando se restablece su límite. Puedes cancelar la reanudación automática en cada hilo.",
   "20e3a8aab5f9426a": "Posponer hasta que se restablezcan los límites",
   "0769f91ca46e3003": "Pospone los hilos hasta que se restablezcan sus límites de uso. Activa la reanudación automática para que el agente continúe tras el restablecimiento.",
   "7c27e91e75cce7a3": "Resolver automáticamente",

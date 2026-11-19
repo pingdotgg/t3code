@@ -3701,7 +3701,7 @@
   "67937aa49179285e": "No Mac, clona novos worktrees a partir de um checkout em cache na pasta T3 home em vez de gravar cada arquivo. Usa o checkout normal do Git quando não consegue. Desativar exclui o cache.",
   "d6ada5ec242e37ff": "Limites de uso",
   "62127e7b5c0f57a3": "Retomar após limites de uso",
-  "4df30d44eb0b0728": "Retoma as threads automaticamente quando os limites de uso delas forem redefinidos. Você pode cancelar a retomada automática em cada thread.",
+  "4e8a6e262304c240": "Continue as threads após um limite de uso: threads no Auto passam para a próxima assinatura com margem, e as outras são retomadas quando o limite delas é redefinido. Você pode cancelar a retomada automática em cada thread.",
   "20e3a8aab5f9426a": "Adiar até os limites serem redefinidos",
   "0769f91ca46e3003": "Adia as threads até os limites de uso delas serem redefinidos. Ative a retomada automática para continuar o agente após a redefinição.",
   "7c27e91e75cce7a3": "Concluir automaticamente",
