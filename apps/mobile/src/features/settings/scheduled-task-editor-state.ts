@@ -103,7 +103,7 @@ export function readScheduledTaskEditor(
 /**
  * A new-task link starts a fresh editor, or a warm app reopens the last task's draft under
  * "New" and saves over it. Links parse before the open editor's removal guard runs, so
- * unsaved changes stay until the user discards them there, and a pending save stays whole.
+ * unsaved changes stay until the user discards them there.
  */
 export function takeScheduledTaskNewLink(
   state: PartialState<NavigationState> | undefined,
