@@ -10,7 +10,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import type {
-  OrchestrationV2ThreadShell,
   ProjectId,
   ServerSettings,
   ServerSettingsError,
@@ -153,7 +152,7 @@ type LimitRecoverySettings = Pick<
 >;
 
 export function storageCleanupThreadIdle(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -161,7 +160,7 @@ export function storageCleanupThreadIdle(
 }
 
 function threadIdle(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -183,7 +182,7 @@ function threadIdle(
 // A run held for its usage-limit reset has its work still ahead of it, and a
 // fresh worktree would otherwise look unchanged and be removed before it runs.
 function heldForLimitRecovery(
-  thread: OrchestrationV2ThreadShell,
+  thread: ProjectionStore.StorageCleanupThread,
   now: number,
   settings: LimitRecoverySettings,
 ): boolean {
@@ -213,7 +212,7 @@ function heldForLimitRecovery(
 }
 
 /** PR metadata refreshes must not reset the inactivity clock. */
-export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): number {
+export function storageCleanupActivityAt(thread: ProjectionStore.StorageCleanupThread): number {
   return Math.max(
     ...[
       thread.createdAt,
@@ -226,7 +225,7 @@ export function storageCleanupActivityAt(thread: OrchestrationV2ThreadShell): nu
 }
 
 /** Only a complete subagent or side chat chain within this worktree shares ownership. */
-function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineage">>(
+function worktreeOwner<T extends Pick<ProjectionStore.StorageCleanupThread, "id" | "lineage">>(
   threads: ReadonlyArray<T>,
 ) {
   if (threads.length === 1) return threads[0];
@@ -255,8 +254,8 @@ function worktreeOwner<T extends Pick<OrchestrationV2ThreadShell, "id" | "lineag
 }
 
 function worktreeSettlementChain(
-  thread: OrchestrationV2ThreadShell,
-  byId: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>,
+  thread: ProjectionStore.StorageCleanupThread,
+  byId: ReadonlyMap<ThreadId, ProjectionStore.StorageCleanupThread>,
   now: number,
   settings: LimitRecoverySettings,
 ) {
@@ -487,56 +486,10 @@ const make = Effect.gen(function* () {
     Effect.orElseSucceed(() => ({ bytes: null, reason: "worktree could not be fully inspected" })),
   );
 
-  // Removed worktrees keep their path and are skipped, so shells are built only for threads whose
-  // folder still exists and the subagent parents their settlement walks. Reads use the reader worker.
   const readThreads = Effect.fn("StorageCleanup.readThreads")(function* () {
-    const bindings = yield* projections
-      .getThreadWorktreePaths({ includeArchived: true })
-      .pipe(NodeSqliteClient.readOnly);
-    // Keyed like the sweep's grouping, so a missing spelling of an existing checkout stays.
-    // Thousands of paths: FileSystem.realPath costs several times more per missing path.
-    const keys = yield* Effect.promise(() =>
-      Promise.all(
-        bindings.map(({ worktreePath }) => {
-          const resolved = path.resolve(worktreePath);
-          return NodeFSP.realpath(resolved).then(
-            (realPath) => ({ resolved, key: pathKey(realPath), exists: true }),
-            () => ({ resolved, key: pathKey(resolved), exists: false }),
-          );
-        }),
-      ),
-    );
-    const existingKeys = new Set(keys.flatMap(({ key, exists }) => (exists ? [key] : [])));
-    const threads = new Map<ThreadId, OrchestrationV2ThreadShell>();
-    const requested = new Set<ThreadId>();
-    let threadIds = bindings.flatMap((binding, index) =>
-      existingKeys.has(keys[index]!.key) ? [binding.threadId] : [],
-    );
-    do {
-      for (const threadId of threadIds) requested.add(threadId);
-      const snapshot = yield* projections
-        .getShellSnapshot({ threadIds })
-        .pipe(NodeSqliteClient.readOnly);
-      const fetched = [...snapshot.threads, ...snapshot.archivedThreads];
-      for (const thread of fetched) threads.set(thread.id, thread);
-      threadIds = [
-        ...new Set(
-          fetched.flatMap(({ lineage }) =>
-            lineage.relationshipToParent === "subagent" &&
-            lineage.parentThreadId != null &&
-            !requested.has(lineage.parentThreadId)
-              ? [lineage.parentThreadId]
-              : [],
-          ),
-        ),
-      ];
-    } while (threadIds.length > 0);
+    const threads = yield* projections.getStorageCleanupThreads();
     const projects = yield* projectStore.listShells();
-    return {
-      projects,
-      threads: [...threads.values()],
-      canonicalPaths: new Map(keys.map(({ resolved, key }) => [resolved, key])),
-    };
+    return { projects, threads };
   });
 
   const containsProjectRoot = Effect.fn("StorageCleanup.containsProjectRoot")(function* (
@@ -1152,7 +1105,7 @@ const make = Effect.gen(function* () {
     const defaultBranches = new Map<string, string | null>();
     // Threads may store one checkout through different symlinked spellings; compare real paths.
     // Keys are only compared, never opened, so they take pathKey's Windows case folding.
-    const canonicalPaths = snapshot.canonicalPaths;
+    const canonicalPaths = new Map<string, string>();
     const canonical = Effect.fnUntraced(function* (target: string) {
       const resolved = path.resolve(target);
       const cached = canonicalPaths.get(resolved);

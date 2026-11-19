@@ -588,6 +588,11 @@ export interface ProjectionStoreV2Shape {
   readonly getShellSnapshot: (
     options?: ShellSnapshotOptions,
   ) => Effect.Effect<OrchestrationV2ThreadShellSnapshot, ProjectionStoreV2Error>;
+  /** Every non-deleted thread, archived ones included, without the shell fields cleanup never reads. */
+  readonly getStorageCleanupThreads: () => Effect.Effect<
+    ReadonlyArray<StorageCleanupThread>,
+    ProjectionStoreV2Error
+  >;
   readonly listActiveSubagentThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
     ProjectionStoreV2Error
@@ -1164,6 +1169,17 @@ type ShellPendingTurnItemRow = PayloadRow & {
   readonly thread_id: string;
   readonly owning_provider_instance_id: string | null;
 };
+
+export type StorageCleanupThread = Omit<
+  OrchestrationV2ThreadShell,
+  | "itemCount"
+  | "visibleItemCount"
+  | "latestRunStopRequested"
+  | "latestRunBackgroundWake"
+  | "activityRunStatus"
+  | "activityRunStartedAt"
+  | "hasActionableProposedPlan"
+>;
 
 export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
   Pick<
@@ -8011,8 +8027,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         threadIds,
         listedOnly = false,
         includeDeleted = false,
+        withoutPresentation = false,
       }: ShellSnapshotOptions & {
         readonly listedOnly?: boolean;
+        // Leaves out activity, stop, wake and plan state, which only clients and awareness show.
+        readonly withoutPresentation?: boolean;
         // A retained fork still shows the history of a deleted source run.
         readonly includeDeleted?: boolean;
       } = {},
@@ -8032,15 +8051,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.requested_at AS latest_run_requested_at,
               json_extract(presented.payload_json, '$.startedAt') AS latest_run_started_at,
               presented.completed_at AS latest_run_completed_at,
-              EXISTS (
+              ${
+                withoutPresentation
+                  ? sql`0 AS latest_run_stop_requested, 0 AS latest_run_background_wake,`
+                  : sql`EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
                   AND stop_request.type = 'run_interrupt_request'
               ) AS latest_run_stop_requested,
-              ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
+              ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,`
+              }
               active.run_id AS active_run_id,
               active.status AS active_run_status,
-              (
+              ${
+                withoutPresentation
+                  ? sql`NULL AS activity_run_status, NULL AS activity_run_started_at,`
+                  : sql`(
                 SELECT r.status
                 -- Read active runs by status. Walking the ordinal index to skip this sort
                 -- reads every run of a thread with none active.
@@ -8066,7 +8092,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND NOT ${isSilentShellRun("r")}
                 ORDER BY r.ordinal DESC, r.run_id DESC
                 LIMIT 1
-              ) AS activity_run_started_at,
+              ) AS activity_run_started_at,`
+              }
               (
                 SELECT json_extract(session.payload_json, '$.lastError')
                 -- Keep bindings outermost: one provider instance can hold every session.
@@ -8093,12 +8120,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               blocked.requested_at AS blocking_run_requested_at,
               json_extract(blocked.payload_json, '$.startedAt') AS blocking_run_started_at,
               blocked.completed_at AS blocking_run_completed_at,
-              EXISTS (
+              ${
+                withoutPresentation
+                  ? sql`0 AS blocking_run_stop_requested, 0 AS blocking_run_background_wake,`
+                  : sql`EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = blocked.run_id
                   AND stop_request.type = 'run_interrupt_request'
               ) AS blocking_run_stop_requested,
-              ${isBackgroundWakeShellRun("blocked")} AS blocking_run_background_wake,
+              ${isBackgroundWakeShellRun("blocked")} AS blocking_run_background_wake,`
+              }
               (
                 SELECT item.payload_json
                 FROM orchestration_v2_projection_turn_items item
@@ -8160,13 +8191,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY message.updated_at DESC, message.message_id DESC
                 LIMIT 1
               ) AS latest_user_authored_message_at,
-              EXISTS (
+              ${
+                withoutPresentation
+                  ? sql`0 AS has_actionable_proposed_plan`
+                  : sql`EXISTS (
                 SELECT 1
                 FROM orchestration_v2_projection_plans plan
                 WHERE plan.thread_id = t.thread_id
                   AND plan.kind = 'proposed_plan'
                   AND plan.status = 'active'
-              ) AS has_actionable_proposed_plan
+              ) AS has_actionable_proposed_plan`
+              }
             FROM orchestration_v2_projection_threads t
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
@@ -8998,78 +9033,106 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
     }, Effect.mapError(shellSnapshotReadError));
 
+    // Shell state without timeline counts or inherited fork history, for readers that use neither.
+    const readShellThreadStates = Effect.fnUntraced(function* (
+      threadId?: ThreadId,
+      options?: Parameters<typeof selectShellThreadRows>[1],
+    ) {
+      const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const threadRows = yield* selectShellThreadRows(threadId, options);
+            const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
+            const providerThreadRows =
+              ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
+            const pendingTurnItemRows =
+              ids.length === 0
+                ? []
+                : yield* selectShellPendingTurnItemRows(
+                    ids,
+                    threadRows.flatMap((row) =>
+                      row.active_run_id !== null && row.active_run_status === "running"
+                        ? [row.active_run_id]
+                        : [],
+                    ),
+                  );
+            const sequenceRows = yield* sql<{ readonly snapshot_sequence: number | null }>`
+            SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
+            WHERE application_event_version = 2 AND aggregate_kind = 'thread'
+          `;
+            return { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows };
+          }),
+        );
+      const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
+        yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
+      const states = yield* Effect.forEach(threadRows, (row) =>
+        shellThreadStateFromRow({
+          row,
+          runsByThreadId: new Map(),
+          itemCountsByThreadId: new Map(),
+          shellItemCountsByThreadId: new Map(),
+          providerThreadsByThreadId,
+          pendingTurnItemsByThreadId,
+        }),
+      );
+      return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, states };
+    });
+
     const getAgentAwarenessSnapshot = Effect.fn("ProjectionStore.getAgentAwarenessSnapshot")(
       function* (threadId?: ThreadId) {
-        const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
-          yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const threadRows = yield* selectShellThreadRows(
-                threadId,
-                threadId === undefined ? { location: "active", listedOnly: true } : {},
-              );
-              const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
-              const providerThreadRows =
-                ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
-              const pendingTurnItemRows =
-                ids.length === 0
-                  ? []
-                  : yield* selectShellPendingTurnItemRows(
-                      ids,
-                      threadRows.flatMap((row) =>
-                        row.active_run_id !== null && row.active_run_status === "running"
-                          ? [row.active_run_id]
-                          : [],
-                      ),
-                    );
-              const sequenceRows = yield* sql<{ readonly snapshot_sequence: number | null }>`
-              SELECT MAX(sequence) AS snapshot_sequence FROM orchestration_events
-              WHERE application_event_version = 2 AND aggregate_kind = 'thread'
-            `;
-              return { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows };
-            }),
-          );
-        const { providerThreadsByThreadId, pendingTurnItemsByThreadId } =
-          yield* pendingBackgroundDataByThreadId({ providerThreadRows, pendingTurnItemRows });
-        const threads = yield* Effect.forEach(threadRows, (row) =>
-          shellThreadStateFromRow({
-            row,
-            // Awareness never consumes timeline counts or inherited fork history.
-            runsByThreadId: new Map(),
-            itemCountsByThreadId: new Map(),
-            shellItemCountsByThreadId: new Map(),
-            providerThreadsByThreadId,
-            pendingTurnItemsByThreadId,
-          }).pipe(
-            Effect.map((state): AgentAwarenessThread => ({
-              id: state.thread.id,
-              projectId: state.thread.projectId,
-              creationSource: state.thread.creationSource,
-              archivedAt: state.thread.archivedAt,
-              snoozedUntil: state.thread.snoozedUntil ?? null,
-              snoozedAt: state.thread.snoozedAt ?? null,
-              pendingGuestMessageCount: pendingGuestMessageCount(state.thread.guestShare),
-              activeRunId: state.activeRunId,
-              latestRunId: state.latestRunId,
-              hasActionableProposedPlan: state.hasActionableProposedPlan,
-              title: state.thread.title,
-              lineage: state.thread.lineage,
-              modelSelection: state.thread.modelSelection,
-              settledOverride: state.thread.settledOverride,
-              updatedAt: state.updatedAt,
-              status: state.latestRunStatus,
-              activityRunStatus: state.activityRunStatus,
-              latestRunCompletedAt: state.latestRunCompletedAt,
-              latestRunStopRequested: state.latestRunStopRequested,
-              latestRunBackgroundWake: state.latestRunBackgroundWake,
-              pendingRuntimeRequest: state.pendingRuntimeRequest,
-              pendingBackgroundTasks: state.pendingBackgroundTasks,
-            })),
-          ),
+        const { snapshotSequence, states } = yield* readShellThreadStates(
+          threadId,
+          threadId === undefined ? { location: "active", listedOnly: true } : {},
         );
-        return { snapshotSequence: sequenceRows[0]?.snapshot_sequence ?? 0, threads };
+        return {
+          snapshotSequence,
+          threads: states.map((state): AgentAwarenessThread => ({
+            id: state.thread.id,
+            projectId: state.thread.projectId,
+            creationSource: state.thread.creationSource,
+            archivedAt: state.thread.archivedAt,
+            snoozedUntil: state.thread.snoozedUntil ?? null,
+            snoozedAt: state.thread.snoozedAt ?? null,
+            pendingGuestMessageCount: pendingGuestMessageCount(state.thread.guestShare),
+            activeRunId: state.activeRunId,
+            latestRunId: state.latestRunId,
+            hasActionableProposedPlan: state.hasActionableProposedPlan,
+            title: state.thread.title,
+            lineage: state.thread.lineage,
+            modelSelection: state.thread.modelSelection,
+            settledOverride: state.thread.settledOverride,
+            updatedAt: state.updatedAt,
+            status: state.latestRunStatus,
+            activityRunStatus: state.activityRunStatus,
+            latestRunCompletedAt: state.latestRunCompletedAt,
+            latestRunStopRequested: state.latestRunStopRequested,
+            latestRunBackgroundWake: state.latestRunBackgroundWake,
+            pendingRuntimeRequest: state.pendingRuntimeRequest,
+            pendingBackgroundTasks: state.pendingBackgroundTasks,
+          })),
+        };
       },
       Effect.mapError(shellSnapshotReadError),
     );
+
+    const getStorageCleanupThreads: ProjectionStoreV2Shape["getStorageCleanupThreads"] = Effect.fn(
+      "ProjectionStore.getStorageCleanupThreads",
+    )(function* () {
+      const { states } = yield* readShellThreadStates(undefined, { withoutPresentation: true });
+      return states.map((state): StorageCleanupThread => {
+        const {
+          itemCount: _itemCount,
+          visibleItemCount: _visibleItemCount,
+          latestRunStopRequested: _latestRunStopRequested,
+          latestRunBackgroundWake: _latestRunBackgroundWake,
+          activityRunStatus: _activityRunStatus,
+          activityRunStartedAt: _activityRunStartedAt,
+          hasActionableProposedPlan: _hasActionableProposedPlan,
+          ...thread
+        } = shellFromState({ state, visibleItemCount: 0 });
+        return thread;
+      });
+    }, Effect.mapError(shellSnapshotReadError));
 
     const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = (options) =>
       sql
@@ -9453,6 +9516,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       apply,
       getAgentAwarenessSnapshot: readOnReader(getAgentAwarenessSnapshot),
       getShellSnapshot: readOnReader(getShellSnapshot),
+      getStorageCleanupThreads: readOnReader(getStorageCleanupThreads),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
