@@ -1,9 +1,4 @@
-import type { Root, RootContent } from "mdast";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
-
-import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
@@ -170,24 +165,90 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
-const definitionParser = unified().use(remarkParse).use(remarkGfm);
+// Up to three spaces, then a bracketed label (escapes allowed), then a colon.
+const DEFINITION_START = / {0,3}\[((?:[^\\\]\[]|\\.){1,999})\]:/y;
+const QUOTE_PREFIX = /^(?: {0,3}>[ \t]?)*/u;
+const FENCE = /^ {0,3}(`{3,}|~{3,})/u;
+const LIST_ITEM = /^[ \t]*(?:[-+*]|\d{1,9}[.)])[ \t]+/u;
+const TITLE = /^[ \t]*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\))[ \t]*$/u;
+
+const normalizeLabel = (label: string) => label.replace(/\s+/gu, " ").trim().toLowerCase();
 
 /**
  * The first definition of each label in the body, as authored, each joined onto one line so it
- * stands outside the quote or list it was written in.
+ * stands outside the quote or list it was written in. A definition starts a paragraph, outside
+ * code; its destination and title may continue on the next lines.
  */
 function referenceDefinitions(body: string): string[] {
   const definitions = new Map<string, string>();
-  const visit = (node: Root | RootContent, quotes: number) => {
-    if (node.type === "definition" && !definitions.has(node.identifier)) {
-      const wrap = new RegExp(`(?:\\r\\n|\\r|\\n)(?:[ \\t]*>){0,${quotes}}[ \\t]*`, "gu");
-      const source = body.slice(node.position?.start.offset, node.position?.end.offset);
-      definitions.set(node.identifier, source.replace(wrap, " "));
+  const lines = body.split(/\r\n|\r|\n/u);
+  const content = (line: string) => line.slice(QUOTE_PREFIX.exec(line)![0].length);
+  let fence: string | null = null;
+  let paragraph = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = content(lines[index]!);
+    const fenceMark = FENCE.exec(line)?.[1];
+    if (fence !== null) {
+      if (fenceMark && fenceMark[0] === fence[0] && fenceMark.length >= fence.length) fence = null;
+      continue;
     }
-    if (!("children" in node)) return;
-    for (const child of node.children) visit(child, quotes + (node.type === "blockquote" ? 1 : 0));
-  };
-  visit(definitionParser.parse(body), 0);
+    if (fenceMark) {
+      fence = fenceMark;
+      paragraph = false;
+      continue;
+    }
+    if (line.trim() === "") {
+      paragraph = false;
+      continue;
+    }
+    // A list item's first line starts its own paragraph.
+    const item = LIST_ITEM.exec(line)?.[0].length ?? 0;
+    if (item > 0) paragraph = false;
+    DEFINITION_START.lastIndex = item;
+    const start = paragraph ? null : DEFINITION_START.exec(line);
+    if (!start || !/\S/u.test(start[1]!)) {
+      paragraph = true;
+      continue;
+    }
+    // The destination may sit on the next line, and a title after it on its own line.
+    let rest = line.slice(item + start[0].length);
+    const parts = [line.slice(item).trimEnd()];
+    let end = index;
+    if (rest.trim() === "" && index + 1 < lines.length) {
+      end += 1;
+      rest = content(lines[end]!);
+      parts.push(rest.trim());
+    }
+    const destination = /^[ \t]*(<[^<>\n]*>|[^\s<>]+)/u.exec(rest);
+    if (!destination) {
+      paragraph = true;
+      continue;
+    }
+    let after = rest.slice(destination[0].length);
+    // A title that opens after the destination may close on a later line of the paragraph.
+    while (
+      /^[ \t]+["'(]/u.test(after) &&
+      !TITLE.test(after) &&
+      end + 1 < lines.length &&
+      content(lines[end + 1]!).trim() !== ""
+    ) {
+      end += 1;
+      const next = content(lines[end]!).trim();
+      after = `${after} ${next}`;
+      parts.push(next);
+    }
+    if (after.trim() !== "" && !TITLE.test(after)) {
+      paragraph = true;
+      continue;
+    }
+    if (after.trim() === "" && end + 1 < lines.length && TITLE.test(content(lines[end + 1]!))) {
+      end += 1;
+      parts.push(content(lines[end]!).trim());
+    }
+    const label = normalizeLabel(start[1]!);
+    if (!definitions.has(label)) definitions.set(label, parts.join(" ").trim());
+    index = end;
+  }
   return [...definitions.values()];
 }
 
@@ -339,33 +400,4 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
 
   flushMarkdown();
   return segments;
-}
-
-/**
- * Finds the references the change request's host links in plain text, resolved against the change
- * request's repository. Null when the host links none.
- */
-export function changeRequestReferenceAutolinker(
-  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
-): ((text: string) => ReadonlyArray<ReferenceAutolink>) | null {
-  if (!changeRequest) return null;
-  const find = sourceControlClients.get(changeRequest.provider).referenceAutolinks;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
-  return find === undefined || repositoryUrl === undefined
-    ? null
-    : (text) => find(text, repositoryUrl);
-}
-
-/**
- * Forges link uploads root-relative, as GitCafe's `/api/attachments/<id>`. In a change request
- * body that always means the forge's origin, never a path on the machine rendering it.
- */
-export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: string): string {
-  if (!/^\/(?![/\\])/u.test(url)) return url;
-  try {
-    return new URL(url, changeRequestUrl).href;
-  } catch {
-    return url;
-  }
 }

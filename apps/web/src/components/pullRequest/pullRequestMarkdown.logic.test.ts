@@ -1,41 +1,44 @@
-import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
+import type { Element, Root } from "hast";
 import { describe, expect, it } from "vite-plus/test";
 
-import { pullRequestCommentPreview, remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
-
-type Node = {
-  type: string;
-  value?: string;
-  url?: string;
-  data?: { hProperties?: Record<string, unknown> };
-  children?: Node[];
-};
+import { wordsHast } from "~/markdown/wordsHast";
+import {
+  pullRequestCommentPreview,
+  pullRequestMarkdownExtensions,
+} from "./pullRequestMarkdown.logic";
 
 function links(markdown: string) {
-  const autolinks = changeRequestReferenceAutolinker({
+  const extensions = pullRequestMarkdownExtensions({
     provider: "github",
     url: "https://github.com/team/repo/pull/8",
-  })!;
-  const tree = unified().use(remarkParse).parse(markdown) as Node;
-  remarkPullRequestAutolinks({ autolinks })(tree as never);
-  const found: Array<[string | undefined, string | undefined, unknown]> = [];
-  const visit = (node: Node) => {
-    if (node.type === "link") {
-      found.push([
-        node.children?.[0]?.value,
-        node.url,
-        node.data?.hProperties?.["dataPullRequestAutolink"],
-      ]);
+  });
+  const tree = wordsHast(markdown, {
+    math: false,
+    breaks: false,
+    escapeHtml: false,
+    insights: false,
+    extensions,
+  });
+  const found: Array<[string, unknown, unknown]> = [];
+  const visit = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      if (child.tagName === "a") {
+        const label = child.children[0];
+        found.push([
+          label?.type === "text" ? label.value : "",
+          child.properties.href,
+          child.properties.dataPullRequestAutolink,
+        ]);
+      }
+      visit(child);
     }
-    node.children?.forEach(visit);
   };
   visit(tree);
   return found;
 }
 
-describe("remarkPullRequestAutolinks", () => {
+describe("pullRequestMarkdownExtensions", () => {
   it("links the host's references in prose and leaves links and code alone", () => {
     expect(links("Fixes #12 in **abcdef1**. [#13](https://example.com) `#14`")).toEqual([
       ["#12", "https://github.com/team/repo/issues/12", "reference"],

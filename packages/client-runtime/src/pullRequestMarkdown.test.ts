@@ -4,12 +4,11 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
+import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequestMarkdown.ts";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
-  splitPullRequestBody,
-  type PullRequestBodySegment,
-} from "./pullRequestMarkdown.ts";
+} from "./pullRequestReferences.ts";
 
 describe("pull request body segmentation", () => {
   // GitHub writes a dropped image into the body as an `<img>` tag, so a bare attachment link on
@@ -228,6 +227,14 @@ describe("reference links around lifted media", () => {
       `a definition wrapped over quoted lines with ${JSON.stringify(lineEnding)}`,
       `> [guide]:${lineEnding}> https://example.com/docs${lineEnding}> "The guide"\n\n${recording}\n\nSee [the docs][guide].`,
     ]),
+    [
+      "a definition in a list item",
+      `- [guide]: https://example.com/docs\n\n${recording}\n\nSee [the docs][guide].`,
+    ],
+    [
+      "a definition whose title wraps",
+      `[guide]: https://example.com/docs "The\nguide"\n\n${recording}\n\nSee [the docs][guide].`,
+    ],
     [
       "a use inside a media table cell",
       `<table><tr><td>\n\nSee [the docs][guide].\n\n</td><td>\n\n${recording}\n\n</td></tr></table>\n\n[guide]: https://example.com/docs`,
