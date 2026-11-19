@@ -1281,6 +1281,17 @@ const make = Effect.gen(function* () {
         cause:
           "Continuation needs a top-level thread with two completed turns, no queued messages, and no PR watch.",
       });
+    const instanceId = source.thread.modelSelection.instanceId;
+    if (
+      !(yield* isProviderInstanceEnabledForProject({
+        projectId: source.thread.projectId,
+        instanceId,
+      }))
+    )
+      return yield* new ThreadManagementProviderInstanceDisabledError({
+        projectId: source.thread.projectId,
+        instanceId,
+      });
     const digest = yield* Digest.Digest.pipe(Effect.provide(Digest.layerWebCrypto));
     const key = yield* digest.digestHex(
       Digest.sha256,

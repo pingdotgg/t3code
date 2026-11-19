@@ -1109,6 +1109,58 @@ it.effect("automatic continuation is disabled by default and does not load or fo
   }).pipe(Effect.provide(layerDispatchChokepointTest(ServerSettings.layerTest())([]))),
 );
 
+it.effect("refuses continuation when its provider is disabled for the project", () => {
+  const threadId = ThreadId.make("continuation:provider-disabled");
+  const projectId = ProjectId.make("continuation:provider-disabled");
+  const instanceId = ProviderInstanceId.make("codex_work");
+  const source = {
+    thread: {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      lineage: { parentThreadId: null, rootThreadId: threadId, relationshipToParent: null },
+      modelSelection: { instanceId, model: "test" },
+    },
+    messages: [],
+    runs: [
+      { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
+      { id: RunId.make("run:2"), ordinal: 2, status: "completed" },
+      { id: RunId.make("run:3"), ordinal: 3, status: "running" },
+    ],
+  } as unknown as OrchestrationV2ThreadProjection;
+  return Effect.gen(function* () {
+    const service = yield* ThreadManagementService.ThreadManagementService;
+    const error = yield* Effect.flip(
+      service.requestContinuation({ threadId, handoff: "Continue." }),
+    );
+    expect(error).toBeInstanceOf(
+      ThreadManagementService.ThreadManagementProviderInstanceDisabledError,
+    );
+    expect(error).toMatchObject({ projectId, instanceId });
+  }).pipe(
+    Effect.provide(
+      ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.succeed(source),
+          }),
+        ),
+        Layer.provide(
+          ServerSettings.layerTest({
+            autoContinueHeavyThreads: true,
+            providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+            projectSettingsOverrides: {
+              [projectId]: { providerInstances: { [instanceId]: { enabled: false } } },
+            },
+          }),
+        ),
+        Layer.provide(layerReceiptsTest),
+      ),
+    ),
+  );
+});
+
 it.effect.each(["too-short", "queued", "child", "side-chat", "watch"] as const)(
   "refuses unsafe automatic continuation: %s",
   (reason) => {
@@ -1160,6 +1212,8 @@ it.effect.each(["too-short", "queued", "child", "side-chat", "watch"] as const)(
 
 it.effect("deduplicates continuation requests only within the same run", () => {
   const threadId = ThreadId.make("continuation:pending");
+  const projectId = ProjectId.make("continuation:project");
+  const instanceId = ProviderInstanceId.make("codex_work");
   const runs = [
     { id: RunId.make("run:1"), ordinal: 1, status: "completed" },
     { id: RunId.make("run:2"), ordinal: 2, status: "completed" },
@@ -1168,9 +1222,10 @@ it.effect("deduplicates continuation requests only within the same run", () => {
   const source = {
     thread: {
       id: threadId,
-      projectId: ProjectId.make("continuation:project"),
+      projectId,
       deletedAt: null,
       lineage: { parentThreadId: null, rootThreadId: threadId, relationshipToParent: null },
+      modelSelection: { instanceId, model: "test" },
     },
     messages: [],
     runs,
@@ -1199,7 +1254,12 @@ it.effect("deduplicates continuation requests only within the same run", () => {
             streamStoredEventsFrom: () => Stream.never,
           }),
         ),
-        Layer.provide(ServerSettings.layerTest({ autoContinueHeavyThreads: true })),
+        Layer.provide(
+          ServerSettings.layerTest({
+            autoContinueHeavyThreads: true,
+            providerInstances: { [instanceId]: { driver: "codex", enabled: true } },
+          }),
+        ),
         Layer.provide(layerReceiptsTest),
       ),
     ),
