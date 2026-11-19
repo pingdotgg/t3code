@@ -6,6 +6,46 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
+const GIT_POINTER_MAX_BYTES = 4096;
+
+const readGitPointer = Effect.fn("AntigravityClientFiles.readGitPointer")(function* (
+  fileSystem: FileSystem.FileSystem,
+  filePath: string,
+) {
+  // A symlink to another worktree's .git file would make its backlink appear valid.
+  const info = yield* fileSystem.lstat(filePath);
+  if (info.type !== "File" || Number(info.size) > GIT_POINTER_MAX_BYTES) return undefined;
+  return yield* fileSystem.readFileString(filePath);
+});
+
+export const resolveGitWorktreeDirectory = Effect.fn(
+  "AntigravityClientFiles.resolveGitWorktreeDirectory",
+)(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly cwd: string | null | undefined;
+  }) {
+    const { fileSystem, path } = input;
+    const cwd = input.cwd?.trim();
+    if (!cwd) return undefined;
+    const dotGit = path.join(cwd, ".git");
+    const pointer = yield* readGitPointer(fileSystem, dotGit);
+    const gitdir = pointer?.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1]?.trim();
+    if (!gitdir) return undefined;
+
+    const realDotGit = yield* fileSystem.realPath(dotGit);
+    const gitDirectory = yield* fileSystem.realPath(path.resolve(path.dirname(realDotGit), gitdir));
+    const info = yield* fileSystem.stat(gitDirectory);
+    if (info.type !== "Directory") return undefined;
+
+    const backlink = (yield* readGitPointer(fileSystem, path.join(gitDirectory, "gitdir")))?.trim();
+    if (!backlink) return undefined;
+    const target = yield* fileSystem.realPath(path.resolve(gitDirectory, backlink));
+    return target === realDotGit ? gitDirectory : undefined;
+  },
+  Effect.orElseSucceed(() => undefined),
+);
 
 function isInsideRoot(path: Path.Path, root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
