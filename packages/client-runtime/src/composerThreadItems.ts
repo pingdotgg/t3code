@@ -149,5 +149,8 @@ export function rankComposerMentionItems<
     return name.startsWith(query) ? 3 : 5;
   };
   // Hermes lacks toSorted.
-  return [...items].sort((left, right) => rank(left) - rank(right));
+  return items
+    .map((item) => ({ item, rank: rank(item) }))
+    .sort((left, right) => left.rank - right.rank)
+    .map(({ item }) => item);
 }
