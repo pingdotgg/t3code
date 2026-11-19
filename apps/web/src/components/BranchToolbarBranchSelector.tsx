@@ -463,40 +463,29 @@ export function BranchToolbarBranchSelector({
     nextBranch: string,
   ) => {
     if (activeProjectRef === null) return true;
-    const knownStatus =
-      checkout.cwd === branchCwd
-        ? branchStatusQuery.data
-        : checkout.cwd === activeProjectCwd
-          ? projectStatusQuery.data
-          : null;
-    let currentBranch: string | null;
-    if (knownStatus != null) {
-      currentBranch = knownStatus.refName;
-    } else {
-      const fresh = await refreshLocalStatusForPicker({
-        environmentId,
-        input: { cwd: checkout.cwd, localOnly: true },
-      });
-      if (fresh._tag !== "Success") {
-        if (!isAtomCommandInterrupted(fresh)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: gt("Failed to switch ref."),
-              description: toBranchActionErrorMessage(squashAtomCommandFailure(fresh)),
-            }),
-          );
-        }
-        return false;
+    // Cached status can lag a checkout made from a terminal, so read HEAD at action time.
+    const fresh = await refreshLocalStatusForPicker({
+      environmentId,
+      input: { cwd: checkout.cwd, localOnly: true },
+    });
+    if (fresh._tag !== "Success") {
+      if (!isAtomCommandInterrupted(fresh)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: gt("Failed to switch ref."),
+            description: toBranchActionErrorMessage(squashAtomCommandFailure(fresh)),
+          }),
+        );
       }
-      currentBranch = fresh.value.refName;
+      return false;
     }
     return confirmCheckoutSwitch({
       environmentId,
       projectId: activeProjectRef.projectId,
       threadId: activeThreadId ?? null,
       worktreePath: checkout.worktreePath,
-      currentBranch,
+      currentBranch: fresh.value.refName,
       nextBranch,
     });
   };
