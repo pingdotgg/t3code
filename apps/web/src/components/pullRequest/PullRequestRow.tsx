@@ -64,6 +64,8 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
 }
 
 export const PAGE_ROW_CLASS = "px-3 py-2.5";
+
+/** How a page row answers the pointer and the keyboard. */
 export const PAGE_ROW_HOVER_CLASS = "hover:surface-ghost-hover";
 export const PAGE_ROW_PRESS_CLASS =
   "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
