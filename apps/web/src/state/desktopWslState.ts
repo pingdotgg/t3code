@@ -5,6 +5,9 @@ import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { msg } from "gt-react";
+
+import { m } from "../i18n/messages";
 
 type DesktopWslStateBridge = Pick<DesktopBridge, "getWslState">;
 const WSL_SEARCH_STALE_TIME_MS = 30_000;
@@ -14,7 +17,7 @@ class DesktopWslStateUnavailableError extends Schema.TaggedError<DesktopWslState
   {},
 ) {
   override get message(): string {
-    return "Desktop WSL state is unavailable.";
+    return m(msg("Desktop WSL state is unavailable."));
   }
 }
 
@@ -23,7 +26,7 @@ class DesktopWslStateLoadError extends Schema.TaggedError<DesktopWslStateLoadErr
   { cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return "Failed to load WSL state.";
+    return m(msg("Failed to load WSL state."));
   }
 }
 
