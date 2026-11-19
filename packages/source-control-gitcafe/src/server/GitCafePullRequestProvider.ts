@@ -994,6 +994,7 @@ export const make = Effect.gen(function* () {
         changedFiles: changes?.changedFiles ?? 0,
         closedAt: pull.closedAt,
         mergedAt: pull.mergedAt,
+        mergeCommitSha: pull.mergeResultOid || pull.providerMerge?.mergeCommitOid || null,
         ...settledMerge(pull),
         reviewers: Json.toReviewers(listed, input.host),
         checks: checkList,
