@@ -832,17 +832,26 @@ describe("ChatMarkdown copy", () => {
   it.each([
     { boundary: "end", from: "Configure", to: "Verify", text: "2. Configure\n3. Deploy" },
     { boundary: "start", from: "Install", to: "Deploy", text: "2. Configure\n3. Deploy" },
+    {
+      boundary: "linked end",
+      from: "Configure",
+      to: "Verify",
+      text: "2. Configure\n3. Deploy",
+    },
   ])(
     "excludes the empty $boundary item when copying with the markers its list shows",
     async ({ boundary, from, to, text }) => {
       setup();
-      await using screen = await renderText("1. Install\n2. Configure\n3. Deploy\n4. Verify");
+      const lastItem =
+        boundary === "linked end" ? "[Verify](https://example.com/verify)" : "Verify";
+      await using screen = await renderText(`1. Install\n2. Configure\n3. Deploy\n4. ${lastItem}`);
       const items = [...screen.container.querySelectorAll("li")];
       const start = items.find((item) => item.textContent === from)!.firstChild!;
-      const end = items.find((item) => item.textContent === to)!.firstChild!;
+      const endItem = items.find((item) => item.textContent === to)!;
+      const end = endItem.querySelector("a > span")?.lastChild ?? endItem.firstChild!;
       const range = document.createRange();
       range.setStart(start, boundary === "start" ? from.length : 0);
-      range.setEnd(end, boundary === "end" ? 0 : to.length);
+      range.setEnd(end, boundary === "start" ? to.length : 0);
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
@@ -855,6 +864,27 @@ describe("ChatMarkdown copy", () => {
       ).toEqual(["Configure", "Deploy"]);
     },
   );
+
+  it.each([
+    { offset: 0, text: "2. Configure", listStart: 2 },
+    { offset: 3, text: "figure", listStart: undefined },
+  ])("copies $text with the markers its list shows", async ({ offset, text, listStart }) => {
+    setup();
+    await using screen = await renderText("1. Install\n2. Configure\n3. Deploy");
+    const item = screen.container.querySelectorAll("li")[1]!.firstChild!;
+    const range = document.createRange();
+    range.setStart(item, offset);
+    range.setEnd(item, item.textContent!.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    const payload = chatMarkdownClipboardPayload(selection);
+    expect(payload?.text).toBe(text);
+    const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+    expect(pasted.querySelector("ol")?.start).toBe(listStart);
+    expect(pasted.body.textContent).toBe(offset === 0 ? "Configure" : text);
+  });
 });
 
 describe("ChatMarkdown file chip tooltips", () => {

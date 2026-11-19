@@ -519,7 +519,16 @@ function emptyBoundaryItem(
   let remaining = node.childNodes[side === "start" ? offset : offset - 1] ?? null;
   while (node.parentNode) {
     for (let sibling = remaining; sibling; sibling = next(sibling)) {
-      if (!(sibling instanceof Text) || sibling.data.trim()) return null;
+      if (sibling instanceof Text && !sibling.data.trim()) continue;
+      if (
+        sibling instanceof Element &&
+        isSkippedElement(sibling) &&
+        !sibling.hasAttribute("data-markdown-copy") &&
+        !sibling.hasAttribute("data-markdown-details")
+      ) {
+        continue;
+      }
+      return null;
     }
     if (node.parentNode === list) {
       return node instanceof Element && node.tagName === "LI" ? node : null;
@@ -528,6 +537,23 @@ function emptyBoundaryItem(
     node = node.parentNode;
   }
   return null;
+}
+
+// Selecting all of an item's visible content can leave both endpoints inside its wrappers.
+function completeOrderedItemRange(range: Range): Range | null {
+  const ancestor = range.commonAncestorContainer;
+  const item = (ancestor instanceof Element ? ancestor : ancestor.parentElement)?.closest("li");
+  const list = item?.parentElement;
+  if (!item || list?.tagName !== "OL") return null;
+  if (
+    emptyBoundaryItem(list, range.startContainer, range.startOffset, "end") !== item ||
+    emptyBoundaryItem(list, range.endContainer, range.endOffset, "start") !== item
+  ) {
+    return null;
+  }
+  const expanded = range.cloneRange();
+  expanded.selectNode(item);
+  return expanded;
 }
 
 /** Clones the selection and restores the markers shown for its copied list items. */
@@ -582,8 +608,10 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
-    if (range.collapsed) continue;
+    const selectedRange = selection.getRangeAt(index);
+    if (selectedRange.collapsed) continue;
+    const itemRange = completeOrderedItemRange(selectedRange);
+    const range = itemRange ?? selectedRange;
     const container = document.createElement("div");
     cloneWithListMarkers(range, container);
     // The indentation typed at a line start only shows; pasted, it would turn lines into code.
@@ -627,7 +655,10 @@ export function chatMarkdownClipboardPayload(
       wrapper.append(...container.childNodes);
       container.replaceChildren(wrapper);
     }
-    const text = serializeRenderedMarkdownFragment(container);
+    // An item selected in full keeps its marker even when it contains only a code block.
+    const text = itemRange
+      ? tidyMarkdown(serializeChildren(container))
+      : serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
     htmls.push(sanitizedHtmlFrom(container));
