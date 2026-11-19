@@ -358,6 +358,7 @@ describe("GitHubAppSignIn", () => {
         yield* Effect.exit(signIn.token("github.com"));
         yield* Effect.exit(signIn.token("github.com"));
         expect(requests).toHaveLength(1);
+        expect(yield* savedSignIns).toEqual({});
       }).pipe(Effect.provide(layer));
     });
 
