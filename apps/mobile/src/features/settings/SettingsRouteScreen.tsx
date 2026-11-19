@@ -303,6 +303,7 @@ function useSettingsIndexSections(): SettingsListSection[] {
         ),
         serverPage("SettingsWorktrees", "square.on.square", gt("Worktrees")),
         serverPage("SettingsOptimizers", "bolt.horizontal.circle", gt("Optimizers")),
+        serverPage("SettingsCliProxy", "point.3.connected.trianglepath.dotted", gt("CLIProxyAPI")),
       ],
     },
     {

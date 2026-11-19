@@ -32,6 +32,7 @@ import { Route as ChatSettingsSourceControlRouteImport } from './routes/_chat.se
 import { Route as ChatSettingsSnapShotRouteImport } from './routes/_chat.settings.snap-shot'
 import { Route as ChatSettingsSecretsRouteImport } from './routes/_chat.settings.secrets'
 import { Route as ChatSettingsScheduledTasksRouteImport } from './routes/_chat.settings.scheduled-tasks'
+import { Route as ChatSettingsProxyRouteImport } from './routes/_chat.settings.proxy'
 import { Route as ChatSettingsProvidersRouteImport } from './routes/_chat.settings.providers'
 import { Route as ChatSettingsProjectsRouteImport } from './routes/_chat.settings.projects'
 import { Route as ChatSettingsOptimizersRouteImport } from './routes/_chat.settings.optimizers'
@@ -173,6 +174,11 @@ const ChatSettingsScheduledTasksRoute =
     path: '/scheduled-tasks',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatSettingsProxyRoute = ChatSettingsProxyRouteImport.update({
+  id: '/proxy',
+  path: '/proxy',
+  getParentRoute: () => ChatSettingsRoute,
+} as any)
 const ChatSettingsProvidersRoute = ChatSettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
@@ -329,6 +335,7 @@ export interface FileRoutesByFullPath {
   '/settings/optimizers': typeof ChatSettingsOptimizersRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
+  '/settings/proxy': typeof ChatSettingsProxyRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
@@ -376,6 +383,7 @@ export interface FileRoutesByTo {
   '/settings/optimizers': typeof ChatSettingsOptimizersRoute
   '/settings/projects': typeof ChatSettingsProjectsRoute
   '/settings/providers': typeof ChatSettingsProvidersRoute
+  '/settings/proxy': typeof ChatSettingsProxyRoute
   '/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/settings/secrets': typeof ChatSettingsSecretsRoute
   '/settings/snap-shot': typeof ChatSettingsSnapShotRoute
@@ -425,6 +433,7 @@ export interface FileRoutesById {
   '/_chat/settings/optimizers': typeof ChatSettingsOptimizersRoute
   '/_chat/settings/projects': typeof ChatSettingsProjectsRoute
   '/_chat/settings/providers': typeof ChatSettingsProvidersRoute
+  '/_chat/settings/proxy': typeof ChatSettingsProxyRoute
   '/_chat/settings/scheduled-tasks': typeof ChatSettingsScheduledTasksRoute
   '/_chat/settings/secrets': typeof ChatSettingsSecretsRoute
   '/_chat/settings/snap-shot': typeof ChatSettingsSnapShotRoute
@@ -474,6 +483,7 @@ export interface FileRouteTypes {
     | '/settings/optimizers'
     | '/settings/projects'
     | '/settings/providers'
+    | '/settings/proxy'
     | '/settings/scheduled-tasks'
     | '/settings/secrets'
     | '/settings/snap-shot'
@@ -521,6 +531,7 @@ export interface FileRouteTypes {
     | '/settings/optimizers'
     | '/settings/projects'
     | '/settings/providers'
+    | '/settings/proxy'
     | '/settings/scheduled-tasks'
     | '/settings/secrets'
     | '/settings/snap-shot'
@@ -569,6 +580,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/optimizers'
     | '/_chat/settings/projects'
     | '/_chat/settings/providers'
+    | '/_chat/settings/proxy'
     | '/_chat/settings/scheduled-tasks'
     | '/_chat/settings/secrets'
     | '/_chat/settings/snap-shot'
@@ -753,6 +765,13 @@ declare module '@tanstack/react-router' {
       path: '/scheduled-tasks'
       fullPath: '/settings/scheduled-tasks'
       preLoaderRoute: typeof ChatSettingsScheduledTasksRouteImport
+      parentRoute: typeof ChatSettingsRoute
+    }
+    '/_chat/settings/proxy': {
+      id: '/_chat/settings/proxy'
+      path: '/proxy'
+      fullPath: '/settings/proxy'
+      preLoaderRoute: typeof ChatSettingsProxyRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
     '/_chat/settings/providers': {
@@ -941,6 +960,7 @@ interface ChatSettingsRouteChildren {
   ChatSettingsOptimizersRoute: typeof ChatSettingsOptimizersRoute
   ChatSettingsProjectsRoute: typeof ChatSettingsProjectsRoute
   ChatSettingsProvidersRoute: typeof ChatSettingsProvidersRoute
+  ChatSettingsProxyRoute: typeof ChatSettingsProxyRoute
   ChatSettingsScheduledTasksRoute: typeof ChatSettingsScheduledTasksRoute
   ChatSettingsSecretsRoute: typeof ChatSettingsSecretsRoute
   ChatSettingsSnapShotRoute: typeof ChatSettingsSnapShotRoute
@@ -973,6 +993,7 @@ const ChatSettingsRouteChildren: ChatSettingsRouteChildren = {
   ChatSettingsOptimizersRoute: ChatSettingsOptimizersRoute,
   ChatSettingsProjectsRoute: ChatSettingsProjectsRoute,
   ChatSettingsProvidersRoute: ChatSettingsProvidersRoute,
+  ChatSettingsProxyRoute: ChatSettingsProxyRoute,
   ChatSettingsScheduledTasksRoute: ChatSettingsScheduledTasksRoute,
   ChatSettingsSecretsRoute: ChatSettingsSecretsRoute,
   ChatSettingsSnapShotRoute: ChatSettingsSnapShotRoute,

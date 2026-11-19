@@ -40,6 +40,7 @@ export type SettingsPath =
   | "/settings/labs"
   | "/settings/about"
   | "/settings/optimizers"
+  | "/settings/proxy"
   | "/settings/delegation"
   | "/settings/archived";
 
@@ -115,6 +116,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/secrets": msg("Secrets"),
   "/settings/maintenance": msg("Maintenance"),
   "/settings/optimizers": msg("Optimizers"),
+  "/settings/proxy": msg("CLIProxyAPI"),
   "/settings/delegation": msg("Delegation"),
   "/settings/labs": msg("Labs"),
   "/settings/about": msg("About"),
@@ -150,6 +152,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/devices",
       "/settings/scheduled-tasks",
       "/settings/optimizers",
+      "/settings/proxy",
       "/settings/delegation",
     ],
   },
@@ -1180,7 +1183,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Optimizers",
     to: "/settings/optimizers",
     searchTerms: [
-      "RTK Headroom Codebase Memory CBM token savings shell output proxy MCP environment project attachments CLIProxyAPI CPA routing",
+      "RTK Headroom Codebase Memory CBM token savings shell output proxy MCP environment project attachments",
+    ],
+  },
+  {
+    id: "cli-proxy-api",
+    title: "CLIProxyAPI",
+    to: "/settings/proxy",
+    searchTerms: [
+      "CLIProxyAPI CPA proxy routing Claude Code Codex accounts dashboard start Headroom upstream",
     ],
   },
   {
@@ -1600,6 +1611,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/browser": null,
   "/settings/devices": null,
   "/settings/optimizers": null,
+  "/settings/proxy": null,
   "/settings/delegation": null,
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",

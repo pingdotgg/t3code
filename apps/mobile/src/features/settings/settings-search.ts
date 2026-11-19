@@ -117,6 +117,7 @@ const SETTINGS_SEARCH_TERMS = {
   ],
   SettingsEnvironmentMaintenance: ["updates", "provider updates", "restart", "manage environments"],
   SettingsOptimizers: ["headroom", "proxy", "tokens", "compression"],
+  SettingsCliProxy: ["cpa", "proxy", "routing", "claude code", "codex"],
   SettingsAbout: [
     "version",
     "diagnostics",

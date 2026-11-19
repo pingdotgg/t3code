@@ -137,6 +137,7 @@ import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsAboutRouteScreen } from "./features/settings/SettingsAboutRouteScreen";
 import { SettingsNotificationsRouteScreen } from "./features/settings/SettingsNotificationsRouteScreen";
 import { SettingsOptimizersRouteScreen } from "./features/settings/SettingsOptimizersRouteScreen";
+import { SettingsCliProxyRouteScreen } from "./features/settings/SettingsCliProxyRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { SettingsLabsRouteScreen } from "./features/settings/ThreadSettingsSections";
 import { SettingsEnvironmentFilterProvider } from "./features/settings/settings-environment-filter";
@@ -240,6 +241,11 @@ const SETTINGS_SCREENS = {
     screen: SettingsOptimizersRouteScreen,
     linking: "settings/optimizers",
     options: settingsPage("Optimizers"),
+  }),
+  SettingsCliProxy: createNativeStackScreen({
+    screen: SettingsCliProxyRouteScreen,
+    linking: "settings/proxy",
+    options: settingsPage("CLIProxyAPI"),
   }),
   SettingsThreads: createNativeStackScreen({
     screen: SettingsThreadsRouteScreen,
