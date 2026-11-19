@@ -70,7 +70,7 @@ function TabVisit({ tabId }: { tabId: string }) {
 }
 
 it("visits a layout tab only on screen and retains visits across render eviction", async () => {
-  mocks.visitRun.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  mocks.visitRun.mockReset().mockReturnValue(Effect.void);
   setShell(threadA, "2026-01-02T00:00:00.000Z");
   using _timers = fakeTimers();
   vi.setSystemTime(NOW);

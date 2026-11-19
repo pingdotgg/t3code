@@ -173,8 +173,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const allocateTerminalId = () =>
     nextTerminalId(
       allocatableTerminalIds,
-      metadata === null ||
-        !readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
+      metadata === null || !readEnvironmentScope(threadRef.environmentId, AuthTerminalReadScope)
         ? randomUUID()
         : undefined,
     );
