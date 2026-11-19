@@ -2,9 +2,10 @@ import ExpoModulesCore
 import QuartzCore
 import UIKit
 
-// Folded iPhone Duo rail (iOS 27.2): after a return from the background, UIKit lays the tab bar's
-// private VerticalBarPocketView over the whole rail, above the screen's, and its CABackdropLayer
-// blurs the screen's header buttons. A UIKit rename of these private classes makes this a no-op.
+// Folded iPhone Duo rail (iOS 27.2): each of T3's navigation controllers shows its own private
+// VerticalBarPocketView. After a return from the background the tab bar's pocket lands above that
+// one and its CABackdropLayer blurs the header buttons. A plain UIKit app only has the tab bar's
+// pocket, so this is a stopgap. A UIKit rename of these private classes makes this a no-op.
 public final class T3RailPocketBlurSubscriber: ExpoAppDelegateSubscriber {
   public func applicationDidBecomeActive(_ application: UIApplication) {
     // UIKit can add the second pocket a moment after activation, so look again shortly after.
