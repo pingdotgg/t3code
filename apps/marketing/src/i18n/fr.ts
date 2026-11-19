@@ -32,7 +32,7 @@ export const fr: Messages = {
     sourceLink: "Volez notre code (légalement)",
     alsoOnPhone: "Aussi sur votre téléphone :",
     screenshotAlt:
-      "T3 Code en deux panneaux : un fil Claude dont la carte de détails montre sa branche, la pull request liée, les limites d'utilisation, le contexte, une automatisation et un fork, à côté de cette pull request ouverte dans un onglet",
+      "T3 Code avec la liste des fils à côté d'un fil Claude ouvert, dont la carte de détails ancrée montre sa branche, les modifications, la pull request liée avec ses checks réussis, les limites d'utilisation, le contexte, une automatisation et un fork",
     endorsementsTitle: "Toléré par plus de {users} devs",
     endorsementsSub: "Certains en ont même parlé sur X.",
     endorsementsLabel: "Avis de développeurs",

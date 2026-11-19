@@ -32,7 +32,7 @@ export const en = {
     sourceLink: "Steal our code (legally)",
     alsoOnPhone: "Also on your phone:",
     screenshotAlt:
-      "T3 Code in two panes: a Claude thread whose details card shows its branch, linked pull request, usage limits, context, an automation and a fork, beside that pull request open in a tab",
+      "T3 Code with the thread list beside an open Claude thread, whose docked details card shows its branch, changes, linked pull request with passing checks, usage limits, context, an automation and a fork",
     endorsementsTitle: "Tolerated by over {users} devs",
     endorsementsSub: "Some of them even tweeted about it.",
     endorsementsLabel: "Developer endorsements",

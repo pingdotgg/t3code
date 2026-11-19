@@ -32,7 +32,7 @@ export const de: Messages = {
     sourceLink: "Klau unseren Code (legal)",
     alsoOnPhone: "Auch auf deinem Handy:",
     screenshotAlt:
-      "T3 Code in zwei Bereichen: ein Claude-Thread, dessen Detailkarte Branch, verknüpften Pull Request, Nutzungslimits, Kontext, eine Automatisierung und einen Fork zeigt, daneben dieser Pull Request in einem Tab",
+      "T3 Code mit der Thread-Liste neben einem offenen Claude-Thread, dessen angedockte Detailkarte Branch, Änderungen, den verknüpften Pull Request mit bestandenen Checks, Nutzungslimits, Kontext, eine Automatisierung und einen Fork zeigt",
     endorsementsTitle: "Toleriert von über {users} Devs",
     endorsementsSub: "Manche haben sogar darüber getwittert.",
     endorsementsLabel: "Stimmen von Entwicklern",

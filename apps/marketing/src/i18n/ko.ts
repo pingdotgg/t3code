@@ -32,7 +32,7 @@ export const ko: Messages = {
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
     screenshotAlt:
-      "두 개의 창으로 나눈 T3 Code. Claude 스레드의 세부 정보 카드에 브랜치, 연결된 풀 리퀘스트, 사용 한도, 컨텍스트, 자동화, 포크가 표시되고, 옆 탭에 그 풀 리퀘스트가 열려 있습니다",
+      "스레드 목록 옆에 Claude 스레드를 연 T3 Code. 고정된 세부 정보 카드에 브랜치, 변경 사항, 검사를 통과한 연결된 풀 리퀘스트, 사용 한도, 컨텍스트, 자동화, 포크가 표시됩니다",
     endorsementsTitle: "{users}명이 넘는 개발자가 참고 쓰는 중",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",
     endorsementsLabel: "개발자 추천",

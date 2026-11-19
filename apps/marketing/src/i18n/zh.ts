@@ -32,7 +32,7 @@ export const zh: Messages = {
     sourceLink: "来偷我们的代码（合法的）",
     alsoOnPhone: "手机上也能用：",
     screenshotAlt:
-      "分成两个窗格的 T3 Code：一个 Claude 线程的详情卡片显示了分支、关联的拉取请求、用量限制、上下文、一个自动化任务和一个分叉，旁边的标签页中打开着这个拉取请求",
+      "T3 Code 的线程列表旁打开着一个 Claude 线程，停靠的详情卡片显示了分支、改动、检查已通过的关联拉取请求、用量限制、上下文、一个自动化任务和一个分叉",
     endorsementsTitle: "超过 {users} 名开发者表示还能忍",
     endorsementsSub: "有些人甚至发推夸了它。",
     endorsementsLabel: "开发者评价",
