@@ -2835,8 +2835,9 @@ export default function ChatView(props: ChatViewProps) {
   const closeActiveRightPanelSurfaceStable = useStableCallback(() => {
     if (activeRightPanelSurface) closeRightPanelSurface(activeRightPanelSurface);
   });
+
   // A focused desktop browser page forwards these chords as menu actions.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle the right panel
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to desktop bridge menu actions that toggle or close the right panel
   useEffect(() => {
     if (embedded) return;
     return window.desktopBridge?.onMenuAction((action) => {
