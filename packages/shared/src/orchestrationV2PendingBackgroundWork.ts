@@ -327,7 +327,7 @@ function pullRequestWatchTasks(
             // nothing, unless the agent said it acts on the PR itself. A merged PR's watch holds
             // until its read wakes the agent, so settling on merge waits.
             ...(link.watch.checksPending === false &&
-            link.watch.untilMerged !== true &&
+            link.watch.until !== "merged" &&
             link.snapshot?.state !== "merged"
               ? {}
               : { awaited: true as const }),

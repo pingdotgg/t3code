@@ -40,6 +40,7 @@ import {
   type OrchestrationV2ServerCommand,
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
+  type PullRequestWatchUntil,
   type OrchestrationV2AppThread,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
@@ -892,8 +893,8 @@ function syncedPullRequestWatch(
   },
 ): ThreadPullRequestWatch | undefined {
   if (command.watch === null) return undefined;
-  // Only the agent sets untilMerged, so a read in flight keeps what the watch has now.
-  const watch = withUntilMerged(command.watch, existing?.untilMerged === true);
+  // Only the agent sets `until`, so a read in flight keeps what the watch has now.
+  const watch = withUntil(command.watch, existing?.until ?? "checks");
   // A push cleared the answer while this read was in flight, so its answer is the old head's.
   if (command.checksPendingBefore === undefined || existing?.checksPending !== undefined) {
     return watch;
@@ -901,13 +902,13 @@ function syncedPullRequestWatch(
   return withoutChecksAnswer(watch);
 }
 
-function withUntilMerged(
+function withUntil(
   watch: ThreadPullRequestWatch,
-  untilMerged: boolean | undefined,
+  until: PullRequestWatchUntil | undefined,
 ): ThreadPullRequestWatch {
-  if (untilMerged === undefined || untilMerged === (watch.untilMerged === true)) return watch;
-  if (untilMerged) return { ...watch, untilMerged: true };
-  const { untilMerged: _off, ...rest } = watch;
+  if (until === undefined || until === (watch.until ?? "checks")) return watch;
+  if (until === "merged") return { ...watch, until };
+  const { until: _checks, ...rest } = watch;
   return rest;
 }
 
@@ -5089,7 +5090,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : existing.watch
               : !command.watching
                 ? undefined
-                : withUntilMerged(
+                : withUntil(
                     existing.watch ?? {
                       startedAt,
                       headSha: null,
@@ -5127,7 +5128,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                       remarkIds: [],
                       wakes: 0,
                     },
-                    command.untilMerged,
+                    command.until,
                   );
           if (watch === existing.watch && links === linked) return thread;
           const final =

@@ -256,7 +256,7 @@ export function evaluatePullRequestWatch(
         }),
       checksAwaitedSince,
       checksPending,
-      ...(watch.untilMerged === true && { untilMerged: true as const }),
+      ...(watch.until !== undefined && { until: watch.until }),
     },
     exhausted: commentsOnly && wakes >= PULL_REQUEST_WATCH_WAKE_LIMIT,
   };

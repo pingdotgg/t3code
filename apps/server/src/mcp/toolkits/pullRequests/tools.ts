@@ -7,6 +7,7 @@ import {
   PullRequestReviewGuideRun,
   PullRequestState,
   PullRequestUnavailableError,
+  PullRequestWatchUntil,
   ThreadPullRequestLinkSource,
   TrimmedNonEmptyString,
   ThreadId,
@@ -326,10 +327,10 @@ const ListThreadPullRequestsTool = Tool.make("list_thread_pull_requests", {
 
 const WatchPullRequestInput = Schema.Struct({
   ...PullRequestTargetInput.fields,
-  untilMerged: Schema.optional(
-    Schema.Boolean.annotate({
+  until: Schema.optional(
+    PullRequestWatchUntil.annotate({
       description:
-        "Keep this thread working until the PR merges or closes, not just until its checks finish. Set it when you will act on the PR yourself, such as merging it after someone else approves; leave it off when handing the PR to the user.",
+        'How long this thread stays working. "checks" (default): until checks finish, for a PR you hand to the user. "merged": until it merges or closes or you unwatch it, when you will act on it yourself, such as merging after someone else approves.',
     }),
   ),
 });

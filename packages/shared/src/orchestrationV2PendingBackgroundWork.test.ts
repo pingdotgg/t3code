@@ -500,7 +500,7 @@ describe("derivePendingBackgroundWork kinds", () => {
         pullRequests: [
           {
             ...link(1, { state: "open" }),
-            watch: { ...watch, passed: true, checksPending: false, untilMerged: true as const },
+            watch: { ...watch, passed: true, checksPending: false, until: "merged" as const },
           },
         ],
       });
