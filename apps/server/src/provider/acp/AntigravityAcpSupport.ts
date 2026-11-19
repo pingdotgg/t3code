@@ -416,7 +416,7 @@ export const buildAntigravityPrompt = Effect.fn("buildAntigravityPrompt")(functi
       "source" in attachment &&
       attachment.source?._tag === "pasted-text";
     // The text already carries the path; keep folded pastes lazy so agents can search without embedding the whole file.
-    const mimeType = attachment.mimeType.toLowerCase().split(";", 1)[0] ?? "";
+    const mimeType = attachment.mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? "";
     const image = attachment.type === "image" && IMAGE_MIME_TYPES.has(mimeType);
     const audio = attachment.type === "file" && AUDIO_MIME_TYPES.has(mimeType);
     const pdf = attachment.type === "file" && mimeType === "application/pdf";
