@@ -83,6 +83,75 @@ export function deriveLatestContextWindowSnapshot(
   liveUsage?: OrchestrationV2ProviderTurnTokenUsage | null,
   providerThread?: Pick<OrchestrationV2ProviderThread, "id" | "contextUsage" | "updatedAt"> | null,
 ): ContextWindowSnapshot | null {
+  let latestCompaction: Extract<ThreadStructureTurnItem, { type: "compaction" }> | null = null;
+  let latestCompactionUpdatedAt: string | null = null;
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!entry || entry.item.type !== "compaction" || entry.item.status !== "completed") {
+      continue;
+    }
+    const payload = entry.item;
+    if (
+      providerThread != null &&
+      payload.providerThreadId != null &&
+      payload.providerThreadId !== providerThread.id
+    ) {
+      continue;
+    }
+    const date = payload.completedAt ?? payload.updatedAt ?? payload.startedAt;
+    if (date) {
+      latestCompaction = payload;
+      latestCompactionUpdatedAt = DateTime.formatIso(date);
+      break;
+    }
+  }
+
+  const fallbackMaxTokens =
+    liveUsage?.maxTokens ?? asFiniteNumber(providerThread?.contextUsage?.maxTokens) ?? null;
+  const usageUpdatedAt =
+    liveUsage?.updatedAt ??
+    (providerThread?.updatedAt ? DateTime.formatIso(providerThread.updatedAt) : null);
+  const compactionIsNewer =
+    latestCompaction != null &&
+    latestCompactionUpdatedAt != null &&
+    (usageUpdatedAt == null || Date.parse(latestCompactionUpdatedAt) >= Date.parse(usageUpdatedAt));
+
+  if (compactionIsNewer && latestCompaction != null && latestCompactionUpdatedAt != null) {
+    const usedTokens = asFiniteNumber(latestCompaction.afterTokenCount);
+    if (usedTokens === null || usedTokens < 0) {
+      return null;
+    }
+    const maxTokens = fallbackMaxTokens;
+    const usedPercentage =
+      maxTokens !== null && maxTokens > 0 ? Math.min(100, (usedTokens / maxTokens) * 100) : null;
+    const remainingTokens =
+      maxTokens !== null ? Math.max(0, Math.round(maxTokens - usedTokens)) : null;
+    const remainingPercentage = usedPercentage !== null ? Math.max(0, 100 - usedPercentage) : null;
+    return {
+      usedTokens,
+      totalProcessedTokens: asFiniteNumber(latestCompaction.beforeTokenCount),
+      maxTokens,
+      remainingTokens,
+      usedPercentage,
+      remainingPercentage,
+      inputTokens: null,
+      cachedInputTokens: null,
+      outputTokens: null,
+      reasoningOutputTokens: null,
+      lastUsedTokens: null,
+      lastInputTokens: null,
+      lastCachedInputTokens: null,
+      lastOutputTokens: null,
+      lastReasoningOutputTokens: null,
+      toolUses: null,
+      durationMs: null,
+      compactsAutomatically: true,
+      autoCompactThreshold: null,
+      cost: null,
+      updatedAt: latestCompactionUpdatedAt,
+    };
+  }
+
   if (liveUsage != null) {
     const usedTokens = Math.max(0, liveUsage.usedTokens);
     const maxTokens = liveUsage.maxTokens ?? null;

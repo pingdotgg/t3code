@@ -70,6 +70,72 @@ describe("V2 context window presentation", () => {
         ?.usedTokens,
     ).toBe(2_000);
   });
+
+  it("prefers a newer completed compaction over older liveUsage", () => {
+    const olderLiveUsage = decodeTokenUsage({
+      usedTokens: 985_000,
+      maxTokens: 1_000_000,
+      updatedAt: "2026-11-19T02:00:00.000Z",
+    });
+    const newerCompaction = {
+      item: {
+        id: "compaction-1" as never,
+        threadId: "thread-1" as never,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed" as const,
+        title: "Context compacted",
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-11-19T02:05:00.000Z"),
+        type: "compaction" as const,
+        driver: null,
+        beforeTokenCount: 985_000,
+        afterTokenCount: 25_000,
+      },
+    } satisfies { item: ThreadStructureTurnItem };
+
+    const snapshot = deriveLatestContextWindowSnapshot([newerCompaction], olderLiveUsage);
+    expect(snapshot?.usedTokens).toBe(25_000);
+    expect(snapshot?.maxTokens).toBe(1_000_000);
+    expect(snapshot?.totalProcessedTokens).toBe(985_000);
+  });
+
+  it("clears stale liveUsage when a newer completed compaction has no afterTokenCount", () => {
+    const olderLiveUsage = decodeTokenUsage({
+      usedTokens: 985_000,
+      maxTokens: 1_000_000,
+      updatedAt: "2026-11-19T02:00:00.000Z",
+    });
+    const newerCompaction = {
+      item: {
+        id: "compaction-1" as never,
+        threadId: "thread-1" as never,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "completed" as const,
+        title: "Context compacted",
+        startedAt: null,
+        completedAt: null,
+        updatedAt: DateTime.makeUnsafe("2026-11-19T02:05:00.000Z"),
+        type: "compaction" as const,
+        driver: null,
+      },
+    } satisfies { item: ThreadStructureTurnItem };
+
+    const snapshot = deriveLatestContextWindowSnapshot([newerCompaction], olderLiveUsage);
+    expect(snapshot).toBeNull();
+  });
 });
 
 describe("live provider-turn usage (#8144)", () => {

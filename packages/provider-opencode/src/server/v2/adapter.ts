@@ -1499,6 +1499,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           ...(summary === undefined || summary.length === 0 ? {} : { summary }),
         },
       });
+      if (status === "completed" && state.providerThread.contextUsage !== null) {
+        state.providerThread = {
+          ...state.providerThread,
+          contextUsage: null,
+          updatedAt,
+        };
+        yield* emitProviderThread(state);
+      }
       if (status !== "running") turn.compaction = undefined;
     });
 
