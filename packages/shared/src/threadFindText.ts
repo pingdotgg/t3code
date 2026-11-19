@@ -18,6 +18,7 @@ import {
   extractMarkdownLinkHrefs,
   extractInlineCodeSpans,
   inlineCodeFilePathCandidate,
+  parseMarkdownFileLink,
   resolveMarkdownFileLinkTarget,
 } from "./markdownLinks.ts";
 import { upgradeLegacyContextMessage } from "./composerContextLegacy.ts";
@@ -174,13 +175,17 @@ function markdownThreadFindText(
         );
       }
       const target = candidate ? resolveMarkdownFileLinkTarget(candidate, cwd) : null;
-      if (target) {
+      if (candidate && target) {
         const labelText = (node: TextTree): string =>
           node.value ?? (node.children ?? []).map(labelText).join("");
         const label = labelText(node);
-        if (node.tagName === "a" && candidate && !isMarkdownFileLinkLabel(label, candidate))
-          text += `${label} `;
-        text += fileLinkLabel(splitFilePathPosition(target), parentSuffixes);
+        if (node.tagName === "a" && !isMarkdownFileLinkLabel(label, candidate)) text += `${label} `;
+        // The resolved editor target keeps only the first line of a range.
+        const endLine = parseMarkdownFileLink(candidate)?.endLine;
+        text += fileLinkLabel(
+          { ...splitFilePathPosition(target), ...(endLine !== undefined ? { endLine } : {}) },
+          parentSuffixes,
+        );
         return;
       }
     }
