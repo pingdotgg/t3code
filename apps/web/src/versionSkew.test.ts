@@ -13,6 +13,7 @@ import {
   isServerUpdateFailureDismissed,
   isVersionMismatchDismissed,
   manualServerUpdateCommand,
+  resolveServerUpdateTargetVersion,
   resolveVersionMismatch,
 } from "./versionSkew";
 
@@ -72,6 +73,20 @@ describe("versionSkew", () => {
       serverVersion: "0.0.33",
       hint: MISMATCH_HINT,
     });
+  });
+
+  it("uses the official server version while preserving a separate desktop version", () => {
+    const targetVersion = resolveServerUpdateTargetVersion(
+      "  0.1.2-nightly.20261022.3526  ",
+      "0.1.2-nightly.20261022.3528",
+    );
+
+    expect(targetVersion).toBe("0.1.2-nightly.20261022.3526");
+    expect(resolveVersionMismatch("0.1.2-nightly.20261020.3399", targetVersion)).toMatchObject({
+      clientVersion: targetVersion,
+      serverVersion: "0.1.2-nightly.20261020.3399",
+    });
+    expect(resolveServerUpdateTargetVersion(undefined, "0.0.34")).toBe("0.0.34");
   });
 
   it("does not warn when the server is ahead of the client", () => {

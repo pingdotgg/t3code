@@ -242,6 +242,13 @@ export function threadListV2LayoutTime(input: {
 export const THREAD_LIST_V2_SETTLED_INITIAL_COUNT = 10;
 export const THREAD_LIST_V2_SETTLED_PAGE_COUNT = 25;
 
+export function filterThreadListV2ConnectedThreads(
+  threads: ReadonlyArray<EnvironmentThreadShell>,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+): EnvironmentThreadShell[] {
+  return threads.filter((thread) => connectedEnvironmentIds.has(thread.environmentId));
+}
+
 export function threadHasUnseenCompletion(
   thread: Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
 ): boolean {
