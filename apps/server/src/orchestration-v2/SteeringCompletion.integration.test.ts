@@ -2093,6 +2093,153 @@ it.effect(
     }),
 );
 
+// A follow-up's run claims the child's provider thread before its turn starts and ingests.
+it.effect("completes a delegated task whose background work ends before a follow-up starts", () =>
+  Effect.gen(function* () {
+    const { events, started, layer, startFirstTurn } = yield* nextTurnSelectionHarness(
+      "background-work-before-follow-up",
+    );
+    yield* Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+        orchestrator.streamDomainEvents.pipe(
+          Stream.filter(predicate),
+          Stream.take(1),
+          Stream.runDrain,
+          Effect.forkScoped,
+        );
+      const endTurn = (turn: ProviderAdapter.ProviderAdapterV2TurnInput) =>
+        Effect.gen(function* () {
+          const providerTurn = (yield* orchestrator.getThreadProjection(
+            turn.threadId,
+          )).providerTurns.find((candidate) => candidate.runAttemptId === turn.attemptId)!;
+          const waiting = yield* watch(
+            (event) =>
+              event.type === "run.updated" &&
+              event.payload.id === turn.runId &&
+              event.payload.status === "waiting",
+          );
+          yield* Queue.offer(events, {
+            type: "provider_turn.updated",
+            driver,
+            providerTurn: {
+              ...providerTurn,
+              status: "completed",
+              completedAt: yield* DateTime.now,
+            },
+          });
+          yield* Queue.offer(events, {
+            type: "turn.terminal",
+            driver,
+            providerThreadId: providerTurn.providerThreadId,
+            providerTurnId: providerTurn.id,
+            runOrdinal: turn.runOrdinal,
+            status: "completed",
+            failure: null,
+            threadDisposition: "reusable",
+          });
+          yield* Fiber.join(waiting);
+          yield* worker.drain();
+        });
+      const parentThreadId = yield* startFirstTurn;
+      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      const childRunning = yield* watch(
+        (event) =>
+          event.type === "provider-turn.updated" &&
+          event.threadId !== parentThreadId &&
+          event.payload.status === "running",
+      );
+      yield* orchestrator.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegate"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Review the change with a background helper.",
+        modelSelection: runSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        completionWake: "always",
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      yield* worker.drain();
+      yield* Fiber.join(childRunning);
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      const childThreadId = task.childThreadId!;
+      const childTurn = started.at(-1)!;
+      const roster = (...taskIds: ReadonlyArray<string>) =>
+        Queue.offer(events, {
+          type: "provider_thread.updated",
+          driver,
+          providerThread: {
+            ...childTurn.providerThread,
+            pendingBackgroundTasks: taskIds.map((taskId) => ({
+              taskId,
+              kind: "subagent" as const,
+              description: taskId,
+            })),
+          },
+          pendingBackgroundWork: taskIds.length > 0,
+        });
+
+      // The child's turn starts two background helpers and ends; its run completes beside them.
+      const reported = yield* watch(
+        (event) =>
+          event.type === "provider-thread.updated" &&
+          event.threadId === childThreadId &&
+          (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
+      );
+      yield* roster("helper:a", "helper:b");
+      yield* Fiber.join(reported);
+      yield* endTurn(childTurn);
+      const child = yield* orchestrator.getThreadProjection(childThreadId);
+      assert.equal(child.runs.find((run) => run.id === childTurn.runId)?.status, "completed");
+
+      // The parent's follow-up claims the provider thread; the helpers end before its turn starts.
+      const messageId = MessageId.make("message:follow-up");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("follow-up"),
+        threadId: childThreadId,
+        messageId,
+        text: "Also check the migration.",
+        attachments: [],
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "agent",
+        creationSource: "mcp",
+        senderThreadId: parentThreadId,
+      });
+      const followUp = (yield* orchestrator.getThreadProjection(childThreadId)).runs.find(
+        (run) => run.userMessageId === messageId,
+      )!;
+      assert.equal(followUp.status, "starting");
+      yield* roster("helper:b");
+      yield* roster();
+      const followUpRunning = yield* watch(
+        (event) =>
+          event.type === "provider-turn.updated" &&
+          event.threadId === childThreadId &&
+          event.payload.runAttemptId !== childTurn.attemptId &&
+          event.payload.status === "running",
+      );
+      yield* worker.drain();
+      yield* Fiber.join(followUpRunning);
+      yield* endTurn(started.at(-1)!);
+
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+          (candidate) => candidate.id === task.id,
+        )?.status,
+        "completed",
+      );
+      const after = yield* orchestrator.getThreadProjection(childThreadId);
+      assert.deepEqual(after.providerThreads[0]?.pendingBackgroundTasks ?? [], []);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 // Codex flushes held drafts after the final answer; reserve their pre-steer position before turn end.
 it.effect("keeps a held commentary draft before the steer when turn end flushes it", () =>
   Effect.gen(function* () {

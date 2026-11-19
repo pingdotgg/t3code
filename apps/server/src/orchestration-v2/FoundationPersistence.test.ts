@@ -13,6 +13,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -180,6 +181,92 @@ function threadCreatedEvent(input: {
     payload: input.thread,
   };
 }
+
+/** Run 1 ended; run 2 claimed the provider thread and has not started its turn. */
+const seedClaimedProviderThread = Effect.fn("seedClaimedProviderThread")(function* (key: string) {
+  const eventSink = yield* EventSink.EventSinkV2;
+  const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+  const read = yield* DateTime.now;
+  const threadId = ThreadId.make(`thread:${key}`);
+  const providerThreadId = ProviderThreadId.make(`provider-thread:${key}`);
+  const helper = { taskId: "helper", description: "Helper", kind: "subagent" as const };
+  const run = (ordinal: number, status: "completed" | "starting"): OrchestrationV2Run => ({
+    id: RunId.make(`run:${key}:${ordinal}`),
+    threadId,
+    ordinal,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId,
+    userMessageId: MessageId.make(`message:${key}:${ordinal}`),
+    rootNodeId: null,
+    activeAttemptId: RunAttemptId.make(`attempt:${key}:${ordinal}`),
+    status,
+    queuePosition: null,
+    requestedAt: read,
+    startedAt: status === "completed" ? read : null,
+    completedAt: status === "completed" ? read : null,
+    checkpointId: null,
+    contextHandoffId: null,
+  });
+  const previous = run(1, "completed");
+  const claimant = run(2, "starting");
+  const claimed: OrchestrationV2ProviderThread = {
+    id: providerThreadId,
+    driver: providerDriver,
+    providerInstanceId,
+    providerSessionId: ProviderSessionId.make(`session:${key}:claimant`),
+    appThreadId: threadId,
+    ownerNodeId: null,
+    nativeThreadRef: null,
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 2,
+    handoffIds: [],
+    forkedFrom: null,
+    pendingBackgroundTasks: [helper],
+    createdAt: read,
+    updatedAt: read,
+  };
+  let eventCount = 0;
+  const nextEventId = () => EventId.make(`event:${key}:${++eventCount}`);
+  const providerThreadEvent = (payload: OrchestrationV2ProviderThread, occurredAt = read) => ({
+    id: nextEventId(),
+    type: "provider-thread.updated" as const,
+    threadId,
+    driver: providerDriver,
+    providerInstanceId,
+    occurredAt,
+    payload,
+  });
+  const runEvent = (payload: OrchestrationV2Run, occurredAt = read) => ({
+    id: nextEventId(),
+    type: "run.updated" as const,
+    threadId,
+    runId: payload.id,
+    providerInstanceId,
+    occurredAt,
+    payload,
+  });
+  yield* eventSink.write({
+    events: [
+      threadCreatedEvent({
+        id: `event:${key}:thread`,
+        thread: makeThread(threadId, read),
+        now: read,
+      }),
+      ...[previous, claimant].map((payload) => ({
+        ...runEvent(payload),
+        type: "run.created" as const,
+      })),
+      providerThreadEvent(claimed),
+    ],
+  });
+  const readStored = projectionStore
+    .getThreadProjection(threadId)
+    .pipe(Effect.map(({ providerThreads }) => providerThreads[0]!));
+  return { previous, claimant, claimed, helper, read, readStored, providerThreadEvent, runEvent };
+});
 
 const seedCompaction = Effect.fnUntraced(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -2523,6 +2610,111 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.equal(providerThread?.status, "active");
       assert.deepEqual(providerThread?.pendingBackgroundTasks ?? [], []);
     }),
+  );
+
+  it.effect(
+    "a run's running write keeps a provider-thread roster stored after its start read it",
+    () =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const { claimant, read, readStored, providerThreadEvent, runEvent } =
+          yield* seedClaimedProviderThread("foundation-roster-as-read");
+        const before = yield* readStored;
+        // The previous run reports its helper ended while this run's start is under way.
+        yield* eventSink.write({
+          events: [providerThreadEvent({ ...before, pendingBackgroundTasks: [] })],
+        });
+
+        const running = yield* eventSink.writeIfRunCurrent({
+          threadId: claimant.threadId,
+          runId: claimant.id,
+          activeAttemptId: claimant.activeAttemptId!,
+          expectedStatus: "starting",
+          rosterAsRead: {
+            providerThreadId: before.id,
+            pendingBackgroundTasks: before.pendingBackgroundTasks ?? [],
+          },
+          events: [
+            providerThreadEvent({ ...before, status: "active" }),
+            runEvent({ ...claimant, status: "running", startedAt: read }),
+          ],
+        });
+        assert.isTrue(running.committed);
+        const stored = yield* readStored;
+        assert.equal(stored.status, "active");
+        assert.deepEqual(stored.pendingBackgroundTasks ?? [], []);
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect(
+    "an older run sets only the roster of a provider thread until its claimant starts",
+    () =>
+      Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const key = "foundation-roster-unattached";
+        const {
+          previous,
+          claimant,
+          claimed,
+          helper,
+          read,
+          readStored,
+          providerThreadEvent,
+          runEvent,
+        } = yield* seedClaimedProviderThread(key);
+        const later = DateTime.add(read, { seconds: 1 });
+        const before = yield* readStored;
+        // The previous run's snapshot carries its own session, status and ordinal.
+        const report = (
+          run: OrchestrationV2Run,
+          pendingBackgroundTasks: ReadonlyArray<typeof helper>,
+        ) =>
+          eventSink.writeProviderThreadRosterIfUnattached({
+            runId: run.id,
+            activeAttemptId: run.activeAttemptId!,
+            event: providerThreadEvent(
+              {
+                ...claimed,
+                providerSessionId: ProviderSessionId.make(`session:${key}:previous`),
+                status: "active",
+                lastRunOrdinal: run.ordinal,
+                pendingBackgroundTasks,
+              },
+              later,
+            ),
+          });
+
+        const ended = yield* report(previous, []);
+        assert.isTrue(ended.unattached);
+        assert.lengthOf(ended.storedEvents, 1);
+        assert.deepEqual(yield* readStored, {
+          ...before,
+          pendingBackgroundTasks: [],
+          updatedAt: later,
+        });
+
+        const sequence = yield* eventSink.latestSequence();
+        const repeated = yield* report(previous, []);
+        assert.isTrue(repeated.unattached);
+        assert.equal(yield* eventSink.latestSequence(), sequence);
+
+        for (const refused of [
+          claimant,
+          { ...previous, activeAttemptId: RunAttemptId.make(`attempt:${key}:superseded`) },
+        ]) {
+          const result = yield* report(refused, [helper]);
+          assert.isFalse(result.unattached);
+          assert.deepEqual(result.storedEvents, []);
+        }
+
+        yield* eventSink.write({
+          events: [runEvent({ ...claimant, status: "running", startedAt: later }, later)],
+        });
+        const afterStart = yield* report(previous, [helper]);
+        assert.isFalse(afterStart.unattached);
+        assert.deepEqual(afterStart.storedEvents, []);
+        assert.deepEqual((yield* readStored).pendingBackgroundTasks ?? [], []);
+      }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 
   it.effect("interrupts a running process-bound effect when it is cancelled", () =>

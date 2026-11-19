@@ -76,7 +76,7 @@ export class ProviderEventPublishError extends Schema.TaggedError<ProviderEventP
 // write is safe. Failing it would fail the run over a brief lock.
 const isLockTimeout = (error: EventSink.EventSinkV2Error) =>
   SqlError.isSqlError(error.cause) && error.cause.reason._tag === "LockTimeoutError";
-const retryLockTimeout = <A, R>(write: Effect.Effect<A, EventSink.EventSinkV2Error, R>) =>
+export const retryLockTimeout = <A, R>(write: Effect.Effect<A, EventSink.EventSinkV2Error, R>) =>
   Effect.retry(write, { while: isLockTimeout, times: 2 });
 
 export const ProviderEventIngestorV2Error = Schema.Union([

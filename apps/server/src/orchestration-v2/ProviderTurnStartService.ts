@@ -1836,11 +1836,22 @@ export const layer: Layer.Layer<
         runId: run.id,
         activeAttemptId: attempt.id,
         expectedStatus: "starting",
+        // Until this write, the previous run may still report its background work on the row.
+        rosterAsRead: {
+          providerThreadId: providerThread.id,
+          pendingBackgroundTasks: providerThread.pendingBackgroundTasks ?? [],
+        },
         events,
       });
       if (!runningWrite.committed) {
         return;
       }
+      const attachedProviderThread =
+        runningWrite.storedEvents.flatMap(({ event }) =>
+          event.type === "provider-thread.updated" && event.payload.id === providerThread.id
+            ? [event.payload]
+            : [],
+        )[0] ?? runningProviderThread;
       // Delegated (app_owned) children run their own runs; routing them here ingests their items twice.
       const routableSubagents = projection.subagents.filter(
         (subagent) =>
@@ -1996,7 +2007,7 @@ export const layer: Layer.Layer<
         run: runningRun,
         rootNode: runningRootNode,
         checkpointScope,
-        providerThread: runningProviderThread,
+        providerThread: attachedProviderThread,
         attempt: runningAttempt,
         attemptId: attempt.id,
         baseline,

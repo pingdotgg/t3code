@@ -1800,10 +1800,38 @@ export const layer: Layer.Layer<
                   }
               : {}),
           });
-          if (isRootProviderThreadUpdate && rootTerminalAlreadySeen && storedEvents.length === 0) {
-            yield* Ref.set(providerThreadOwnerLost, true);
+          if (
+            event.type === "provider_thread.updated" &&
+            isRootProviderThreadUpdate &&
+            rootTerminalAlreadySeen &&
+            storedEvents.length === 0
+          ) {
+            // A newer run claims the thread before its turn starts, and ingests only from then.
+            // Until it starts, this run's snapshots are the only report of background work.
+            const { unattached } = yield* eventSink
+              .writeProviderThreadRosterIfUnattached({
+                runId: input.run.id,
+                activeAttemptId: input.attempt.id,
+                event: {
+                  id: yield* idAllocator.allocate.event({
+                    threadId: input.run.threadId,
+                    providerSessionId: input.providerSessionId,
+                  }),
+                  type: "provider-thread.updated",
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  nodeId: input.rootNode.id,
+                  driver: event.driver,
+                  providerInstanceId: input.run.providerInstanceId,
+                  occurredAt: yield* DateTime.now,
+                  payload: event.providerThread,
+                },
+              })
+              .pipe(ProviderEventIngestor.retryLockTimeout);
+            if (!unattached) yield* Ref.set(providerThreadOwnerLost, true);
+            return unattached;
           }
-          return storedEvents.length;
+          return storedEvents.length > 0;
         });
         // The timer only wakes ingestion. The flush runs as an ingestion step outside any provider
         // batch, so it stays ordered with routing and snapshots, and a write has committed when
@@ -1875,7 +1903,7 @@ export const layer: Layer.Layer<
           ) {
             yield* Ref.set(latestRootProviderTurn, event.providerTurn);
           }
-          let storedEventCount = 0;
+          let stored = false;
           const deliveredEvent = assistantStreaming.filter(
             event,
             DateTime.toEpochMillis(yield* DateTime.now),
@@ -1893,14 +1921,14 @@ export const layer: Layer.Layer<
             rootTurnOwnershipChecked = true;
             // Stop plans under this lock from stored turns. Storing the first turn and rechecking
             // the attempt under it means Stop either saw the turn or already settled the run.
-            const [stored, owned] = yield* threadCommands.withLock(
+            const [ingested, owned] = yield* threadCommands.withLock(
               input.run.threadId,
               Effect.all([
                 ingestDelivered(event, deliveredEvent),
                 shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => true)),
               ]),
             );
-            storedEventCount = stored;
+            stored = ingested;
             if (!owned) {
               yield* Ref.get(latestProviderThread).pipe(
                 Effect.flatMap((providerThread) =>
@@ -1921,7 +1949,7 @@ export const layer: Layer.Layer<
               );
             }
           } else if (deliveredEvent) {
-            storedEventCount = yield* ingestDelivered(event, deliveredEvent);
+            stored = yield* ingestDelivered(event, deliveredEvent);
           } else if (
             event.type === "turn_item.updated" &&
             (event.turnItem.type === "assistant_message" || event.turnItem.type === "reasoning") &&
@@ -1936,7 +1964,7 @@ export const layer: Layer.Layer<
             reservedHeldTurnItemIds.add(event.turnItem.id);
           }
           if (event.type === "provider_thread.updated") {
-            if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
+            if (event.providerThread.id === input.providerThread.id && stored) {
               yield* Ref.set(latestProviderThread, event.providerThread);
               rootSnapshotPendingWork =
                 event.pendingBackgroundWork === true ||
