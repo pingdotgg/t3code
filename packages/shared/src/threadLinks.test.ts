@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
+import { mFallback } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import {
   formatHostedThreadLink,
@@ -7,10 +9,10 @@ import {
   guessThreadLinkRef,
   hostedThreadLink,
   parseThreadLinkHref,
-  relabelThreadLinks,
   threadLinkCandidates,
   threadLinkRefs,
 } from "./threadLinks.ts";
+import { relabelThreadLinks } from "./threadLinksCopy.ts";
 
 const ref = (environmentId: string, threadId = "chat-1") => ({
   environmentId: EnvironmentId.make(environmentId),
@@ -22,6 +24,12 @@ const titlesIn =
   (titles: Record<string, Record<string, string>>) =>
   ({ environmentId, threadId }: ScopedThreadRef) =>
     titles[environmentId]?.[threadId];
+const japanese: MFunctionType = (encodedMsg, options) => {
+  const english = mFallback(encodedMsg, options);
+  return (
+    english === "Thread no longer available" ? "スレッドは利用できなくなりました" : english
+  ) as typeof english;
+};
 
 describe("thread link destinations", () => {
   it("names a v1 link's thread in the message's environment, as written and then decoded", () => {
@@ -139,6 +147,9 @@ describe("thread links", () => {
     ).toBe("Thread on another machine, Thread no longer available, Old title");
     expect(relabelThreadLinks("[Old](t3-thread://v1/t1)", local, () => undefined)).toBe(
       "[Old](t3-thread://v1/t1)",
+    );
+    expect(relabelThreadLinks("See <t3-thread://v1/gone>", local, () => undefined, japanese)).toBe(
+      "See スレッドは利用できなくなりました",
     );
   });
 

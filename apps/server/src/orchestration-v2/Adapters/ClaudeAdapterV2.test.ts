@@ -18333,6 +18333,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000952",
           bashToolUseId: STRADDLING_BASH,
         }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: TASK_ID, task_type: "local_agent", description: "Audit" }],
+          uuid: "00000000-0000-4000-8000-000000000961",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
         makeResultFrame({
           uuid: "00000000-0000-4000-8000-000000000953",
           result: "Auditing in the background.",
@@ -18375,6 +18382,41 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             event.type === "subagent.updated" &&
             event.subagent.progress === "Reading the last commits",
         ),
+      );
+      // The subagent backgrounds that shell; Claude names it by its command alone.
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "idle-shell",
+          tool_use_id: IDLE_BASH,
+          description: "git log -5",
+          is_backgrounded: true,
+          parent_task_id: TASK_ID,
+          task_type: "local_bash",
+          uuid: "00000000-0000-4000-8000-000000000960",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.until(() =>
+        harness.events.some(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.pendingBackgroundTasks?.some(
+              (task) => task.taskId === "idle-shell",
+            ) === true,
+        ),
+      );
+      const idleShell = latestToolItem(IDLE_BASH);
+      assert.deepInclude(
+        harness.events
+          .findLast((event) => event.type === "provider_thread.updated")
+          ?.providerThread.pendingBackgroundTasks?.find((task) => task.taskId === "idle-shell"),
+        {
+          command: "git log -5",
+          itemId: idleShell?.type === "turn_item.updated" ? idleShell.turnItem.id : undefined,
+        },
       );
       const routing = subagentRouting(harness.events, [STRADDLING_BASH, IDLE_BASH]);
       assert.deepEqual(routing.assistantTexts(routing.childThreadId), ["Still auditing."]);
