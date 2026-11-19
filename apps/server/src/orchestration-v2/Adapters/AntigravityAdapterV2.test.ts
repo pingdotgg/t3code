@@ -1944,7 +1944,10 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  const modesSetFor = (
+    pickedMode: string,
+    modes: Pick<ProviderAdapter.ProviderAdapterV2RuntimePolicy, "runtimeMode" | "maxRuntimeMode">,
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1991,20 +1994,31 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
           options: [{ id: "_t3/session-mode", value: pickedMode }],
         },
         runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
+          ...modes,
           interactionMode: "default",
           cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
         }),
       });
       return modesSet;
     }).pipe(Effect.provide(layerSession), Effect.scoped);
 
-  it.effect("does not apply a picked session mode above the policy ceiling", () =>
+  it.effect("does not apply a picked session mode above the thread's runtime mode", () =>
     Effect.gen(function* () {
-      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
-      // A mode under the ceiling is still the user's to pick.
-      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+      assert.deepEqual(yield* modesSetFor("yolo", { runtimeMode: "approval-required" }), [
+        "default",
+      ]);
+      assert.deepEqual(
+        yield* modesSetFor("auto_edit", {
+          runtimeMode: "approval-required",
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+        ["default"],
+      );
+      // A narrower mode is still the user's to pick.
+      assert.deepEqual(yield* modesSetFor("default", { runtimeMode: "auto-accept-edits" }), [
+        "auto_edit",
+        "default",
+      ]);
     }),
   );
 
