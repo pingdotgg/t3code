@@ -1707,11 +1707,14 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 /// told to call one finds no such tool. Serve one, and this test makes you strike it here.
 /// `preview_*` in the orchestration text also names all 13 preview tools.
 const NAMED_NOT_SERVED: &[&str] = &[
+    "ci_logs",
+    "ci_rerun",
     "device_list",
     "device_open",
     "device_screenshot",
     "fill_credential",
     "link_issue",
+    "pull_request_create",
     "t3_environment_link",
     "t3_environment_links",
 ];
