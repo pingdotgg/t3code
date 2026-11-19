@@ -75,6 +75,17 @@ export function resolveHandoffEndpoints(
   return { from: fromEndpoints, to: { instanceId: item.toProviderInstanceId, model: toModel } };
 }
 
+/**
+ * History replayed into a fresh session of the same provider and model, such as after a revert on
+ * an agent that cannot truncate its own conversation. Nothing changed hands, so it is no handoff.
+ */
+export function isContextRestore({ from, to }: HandoffEndpoints): boolean {
+  return (
+    from.length > 0 &&
+    from.every((endpoint) => endpoint.instanceId === to.instanceId && endpoint.model === to.model)
+  );
+}
+
 function latestRunModelBefore(
   runs: ReadonlyArray<HandoffTimelineRun>,
   instanceId: ProviderInstanceId,
