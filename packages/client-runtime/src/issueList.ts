@@ -8,6 +8,7 @@ import type {
   IssueScopeRef,
   IssueTrackerSummary,
   SourceControlProviderKind,
+  ProjectId,
 } from "@t3tools/contracts";
 
 import { mergeIssueListPage } from "./state/issues.ts";
@@ -115,6 +116,7 @@ export function groupIssues(
       more: EnvironmentId[];
     }
   >();
+  const listed = new Set<string>();
   const needle = query.toLowerCase();
   for (const [environmentId, page] of held) {
     for (const tracker of page.answer.trackers) {
@@ -137,6 +139,9 @@ export function groupIssues(
         !entry.displayKey.toLowerCase().includes(needle)
       )
         continue;
+      // Environments holding the same repository answer the same issue; the first one keeps it.
+      if (listed.has(entry.url)) continue;
+      listed.add(entry.url);
       group.rows.push({ ...entry, environmentId });
     }
     for (const error of page.errors) {
@@ -163,11 +168,14 @@ export function groupIssues(
 export function issueFilterScopes(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   projects: ReadonlyArray<EnvironmentProject>,
+  selectedProject?: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
   for (const [environmentId, page] of held) {
+    if (selectedProject && selectedProject.environmentId !== environmentId) continue;
     for (const project of projects) {
+      if (selectedProject && selectedProject.projectId !== project.id) continue;
       if (project.environmentId !== environmentId) continue;
       const identity = project.repositoryIdentity;
       const kind = identity?.provider as SourceControlProviderKind | undefined;
@@ -189,30 +197,33 @@ export function issueFilterScopes(
         input: { projectId: project.id, tracker: tracker.tracker, host, scope },
       });
     }
-    // A tracker bound in settings (a Linear team) is no repository's; its rows name its scope.
-    for (const entry of page.entries) {
+    // A tracker bound in settings (a Linear team) is no repository's; the answer names its scope,
+    // matched or not. Older servers do not, so their rows stand in.
+    const covered: ReadonlyArray<IssueScopeRef> =
+      page.answer.scopes ??
+      page.entries.map(({ projectId, tracker, host, scope }) => ({
+        projectId,
+        tracker,
+        host,
+        scope,
+      }));
+    for (const input of covered) {
+      if (selectedProject && selectedProject.projectId !== input.projectId) continue;
+      const host = input.host?.toLowerCase();
       const tracker = page.answer.trackers.find(
-        (t) => t.tracker === entry.tracker && t.host.toLowerCase() === entry.host.toLowerCase(),
+        (t) => t.tracker === input.tracker && t.host.toLowerCase() === host,
       );
       if (!tracker?.configured) continue;
       if (!tracker.capabilities?.labels && !tracker.capabilities?.assignees) continue;
       if (
         scopes.some(
           (s) =>
-            s.input.scope.toLowerCase() === entry.scope.toLowerCase() &&
-            s.input.host?.toLowerCase() === entry.host.toLowerCase(),
+            s.input.scope.toLowerCase() === input.scope.toLowerCase() &&
+            s.input.host?.toLowerCase() === host,
         )
       )
         continue;
-      scopes.push({
-        environmentId,
-        input: {
-          projectId: entry.projectId,
-          tracker: entry.tracker,
-          host: entry.host,
-          scope: entry.scope,
-        },
-      });
+      scopes.push({ environmentId, input });
     }
   }
   return scopes;

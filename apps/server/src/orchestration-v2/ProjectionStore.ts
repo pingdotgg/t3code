@@ -838,6 +838,34 @@ export class ProjectionStoreV2 extends Context.Service<ProjectionStoreV2, Projec
   "t3/orchestration-v2/ProjectionStore/ProjectionStoreV2",
 ) {}
 
+// The provider batch owns the writer, so no other write can change these rows before it commits.
+export interface ProviderBatchProjection {
+  readonly nodeReads: Map<NodeId, string | undefined>;
+  /** Thread `updated_at` bumps, written once by `writeThreadTouches` before the batch commits. */
+  readonly threadTouches: Map<ThreadId, string>;
+}
+export class ProviderBatchProjectionState extends Context.Reference<
+  ProviderBatchProjection | undefined
+>("t3/orchestration-v2/ProjectionStore/ProviderBatchProjectionState", {
+  defaultValue: () => undefined,
+}) {}
+
+// Runs per projected event or once per batch; the projection or batch commit span traces it.
+export const writeThreadTouches = Effect.fnUntraced(function* (
+  sql: SqlClient.SqlClient,
+  touches: ReadonlyMap<ThreadId, string>,
+) {
+  for (const [threadId, updatedAt] of touches) {
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET
+        updated_at = ${updatedAt},
+        payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
+      WHERE thread_id = ${threadId}
+    `;
+  }
+});
+
 export const ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION = 2;
 
 function upsertById<T extends { readonly id: string }>(items: ReadonlyArray<T>, next: T): Array<T> {
@@ -2347,6 +2375,23 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           for (const [key, cached] of timelineIndexes) {
             if (cached.index.threadIds.includes(event.threadId)) timelineIndexes.delete(key);
           }
+          const batch = yield* ProviderBatchProjectionState;
+          // These rewrite the thread row from what they read, so a deferred bump must land first.
+          const rewrittenThreadId = event.type.startsWith("thread.")
+            ? event.threadId
+            : event.type === "provider-thread.updated"
+              ? event.payload.appThreadId
+              : null;
+          const deferredUpdatedAt =
+            rewrittenThreadId === null ? undefined : batch?.threadTouches.get(rewrittenThreadId);
+          if (
+            batch !== undefined &&
+            rewrittenThreadId !== null &&
+            deferredUpdatedAt !== undefined
+          ) {
+            batch.threadTouches.delete(rewrittenThreadId);
+            yield* writeThreadTouches(sql, new Map([[rewrittenThreadId, deferredUpdatedAt]]));
+          }
           switch (event.type) {
             case "thread.pull-request-link-updated": {
               const thread = yield* getThread(event.threadId);
@@ -2593,6 +2638,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 completed_at = excluded.completed_at,
                 payload_json = excluded.payload_json
             `;
+              batch?.nodeReads.set(event.payload.id, payloadJson);
               break;
             }
             case "subagent.updated": {
@@ -3234,13 +3280,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.guest-share-updated"
           ) {
             const updatedAt = yield* encodeThreadUpdatedAt(event.occurredAt);
-            yield* sql`
-            UPDATE orchestration_v2_projection_threads
-            SET
-              updated_at = ${updatedAt},
-              payload_json = json_set(payload_json, '$.updatedAt', ${updatedAt})
-            WHERE thread_id = ${event.threadId}
-          `;
+            if (batch !== undefined) batch.threadTouches.set(event.threadId, updatedAt);
+            else yield* writeThreadTouches(sql, new Map([[event.threadId, updatedAt]]));
           }
         },
         (effect, event) =>
@@ -5818,9 +5859,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     )(
       function* (node) {
         const payloadJson = yield* encodeNodePayload(node);
+        const cache = (yield* ProviderBatchProjectionState)?.nodeReads;
+        if (cache?.has(node.id)) return cache.get(node.id) === payloadJson;
         const rows = yield* sql<PayloadRow>`
           SELECT payload_json FROM orchestration_v2_projection_nodes WHERE node_id = ${node.id}
         `;
+        cache?.set(node.id, rows[0]?.payload_json);
         return rows[0]?.payload_json === payloadJson;
       },
       (effect, node) => effect.pipe(Effect.mapError(controlReadError(node.threadId))),
@@ -7519,13 +7563,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ...row,
               position,
             }));
+            const rows = conversationOnly
+              ? pageItems.filter((row) => isConversationHistoryItem(row.item))
+              : pageItems;
+            // A bounded snapshot keeps only recent or active subagents.
+            const subagentIds = rows.flatMap(({ sourceThreadId, item }) =>
+              item.type === "subagent" && sourceThreadId === threadId ? [item.subagentId] : [],
+            );
+            const subagents =
+              subagentIds.length === 0
+                ? []
+                : yield* sql<PayloadRow>`
+            SELECT payload_json FROM orchestration_v2_projection_subagents
+            WHERE thread_id = ${threadId}
+              AND subagent_id IN (SELECT value FROM json_each(${encodeIdList(subagentIds)}))
+            ORDER BY COALESCE(started_at, ''), subagent_id ASC
+          `.pipe(Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)));
             return {
               snapshotSequence,
-              items: conversationOnly
-                ? pageItems.filter((row) => isConversationHistoryItem(row.item))
-                : pageItems,
+              items: rows,
               nextCursor: bounded.hasMoreHistory ? bounded.nextCursor : page.nextCursor,
               hasMoreHistory: bounded.hasMoreHistory || page.hasMoreHistory,
+              ...(subagents.length === 0 ? {} : { subagents }),
             };
           }),
         )
@@ -9038,6 +9097,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    // Migration 98 indexes these exact expressions, so the read takes them from the index instead
+    // of parsing every active thread's payload. Changing one here needs a matching index change.
+    const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
+      sql.literal(
+        `CASE WHEN json_valid(t.payload_json) THEN ${read}(t.payload_json, '${path}') END`,
+      );
+    // The planner otherwise scans the whole (thread_id, type, status) index for this list.
+    const PENDING_ITEMS_INDEX = sql.literal(
+      "INDEXED BY orchestration_v2_projection_turn_items_shell_pending_idx",
+    );
     const listActiveShellIndex = Effect.fn("ProjectionStore.listActiveShellIndex")(function* () {
       const rows = yield* sql<{
         readonly thread_id: string;
@@ -9057,48 +9126,53 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         SELECT
           t.thread_id,
           t.project_id,
-          json_extract(t.payload_json, '$.lineage.relationshipToParent') AS relationship_to_parent,
-          json_extract(t.payload_json, '$.lineage.parentThreadId') AS parent_thread_id,
-          json_extract(t.payload_json, '$.lineage.rootThreadId') AS root_thread_id,
-          json_extract(t.payload_json, '$.lineage.sideChat') AS side_chat,
-          json_extract(t.payload_json, '$.settledOverride') AS settled_override,
-          json_extract(t.payload_json, '$.settledAt') AS settled_at,
-          json_extract(t.payload_json, '$.pinnedAt') AS pinned_at,
-          json_extract(t.payload_json, '$.pinOrderKey') AS pin_order_key,
-          json_extract(t.payload_json, '$.snoozedUntil') AS snoozed_until,
+          ${indexedField("$.lineage.relationshipToParent")} AS relationship_to_parent,
+          ${indexedField("$.lineage.parentThreadId")} AS parent_thread_id,
+          ${indexedField("$.lineage.rootThreadId")} AS root_thread_id,
+          ${indexedField("$.lineage.sideChat")} AS side_chat,
+          ${indexedField("$.settledOverride")} AS settled_override,
+          ${indexedField("$.settledAt")} AS settled_at,
+          ${indexedField("$.pinnedAt")} AS pinned_at,
+          ${indexedField("$.pinOrderKey")} AS pin_order_key,
+          ${indexedField("$.snoozedUntil")} AS snoozed_until,
           -- A superset of isLiveSubagentShell: the sources of its run status, pending request,
-          -- and pending background work.
+          -- and pending background work. Each source is one list for the whole read, found
+          -- through its partial index, so finished threads cost no lookups.
           (
-            EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_runs r
-              WHERE r.thread_id = t.thread_id
-                AND r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+            t.thread_id IN (
+              SELECT r.thread_id FROM orchestration_v2_projection_runs r
+              WHERE r.status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_runtime_requests request
-              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+            OR t.thread_id IN (
+              SELECT request.thread_id FROM orchestration_v2_projection_runtime_requests request
+              WHERE request.status = 'pending'
             )
             -- Same predicates as the shell's pending item and link reads, for their partial indexes.
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_turn_items item
-              WHERE item.thread_id = t.thread_id
-                AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+            OR t.thread_id IN (
+              SELECT item.thread_id
+              FROM orchestration_v2_projection_turn_items item ${PENDING_ITEMS_INDEX}
+              WHERE item.type IN ('command_execution', 'dynamic_tool', 'subagent')
                 AND item.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_turn_items link_request
-              WHERE link_request.thread_id = t.thread_id
-                AND link_request.type = 'link_request' AND link_request.status = 'waiting'
+            OR t.thread_id IN (
+              SELECT link_request.thread_id FROM orchestration_v2_projection_turn_items link_request
+              WHERE link_request.type = 'link_request' AND link_request.status = 'waiting'
             )
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_provider_threads provider_thread
-              WHERE provider_thread.thread_id = t.thread_id
-                AND json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
+            OR t.thread_id IN (
+              SELECT provider_thread.thread_id
+              FROM orchestration_v2_projection_provider_threads provider_thread
+              WHERE CASE WHEN json_valid(provider_thread.payload_json)
+                THEN json_array_length(provider_thread.payload_json, '$.pendingBackgroundTasks') > 0
+                ELSE 0 END
             )
-            OR EXISTS (
-              SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
-              WHERE json_type(link.value, '$.watch') IS NOT NULL
-            )
+            -- Only a thread with a pull request link reads its payload. CASE, not AND: SQLite
+            -- 3.50 evaluates both AND operands here.
+            OR CASE WHEN ${indexedField("$.pullRequests[0]", "json_type")} IS NOT NULL
+              THEN EXISTS (
+                SELECT 1 FROM json_each(t.payload_json, '$.pullRequests') link
+                WHERE json_type(link.value, '$.watch') IS NOT NULL
+              )
+              ELSE 0 END
           ) AS may_be_live,
           -- One list for the whole read, found through the child_thread_id index. A lookup per
           -- thread would parse the payload of every subagent row.
