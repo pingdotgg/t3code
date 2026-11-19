@@ -239,6 +239,16 @@ function makePlainTokenFallback(
   return [{ content: row.content || " ", color: null, fontStyle: null }];
 }
 
+function settlesWithinTask(promise: Promise<unknown>): Promise<boolean> {
+  return Promise.race([
+    promise.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 0)),
+  ]);
+}
+
 export async function highlightNativeReviewDiffVisibleRows(
   input: HighlightNativeReviewDiffVisibleRowsInput,
 ): Promise<{
@@ -317,6 +327,46 @@ export async function highlightNativeReviewDiffVisibleRows(
     return cached;
   };
 
+  // Patch-only grammar: each run of consecutive lines is tokenized on its own.
+  const highlightSegmentRows = (
+    rowIds: ReadonlySet<string>,
+    out: Record<string, ReadonlyArray<NativeReviewDiffToken>>,
+  ) => {
+    const sourceSegments = getSourceSegments(input.rows);
+    const selectedSegments = new Map<
+      SourceSegment,
+      { firstSelected: number; lastSelected: number }
+    >();
+    for (const row of selectedRows) {
+      if (!rowIds.has(row.id)) continue;
+      const source = sourceSegments.get(row.id);
+      if (!source) continue;
+      const selection = selectedSegments.get(source.segment);
+      if (selection) selection.lastSelected = source.index;
+      else
+        selectedSegments.set(source.segment, {
+          firstSelected: source.index,
+          lastSelected: source.index,
+        });
+    }
+    for (const [segment, { firstSelected, lastSelected }] of selectedSegments) {
+      if (input.signal?.aborted) return;
+      const file = fileMap.get(segment.fileId);
+      if (!file) continue;
+      const tokens = tokenize(
+        segment,
+        () => segment.rows.map((row) => row.content).join("\n"),
+        file.language,
+      );
+      for (let index = firstSelected; index <= lastSelected; index += 1) {
+        const row = segment.rows[index]!;
+        if (rowIds.has(row.id) && displaySide(row) === segment.side) {
+          out[row.id] = tokens.highlightLine(index, input.scheme) ?? makePlainTokenFallback(row);
+        }
+      }
+    }
+  };
+
   const sourceFiles = new Map<string, NativeReviewDiffLineRow[]>();
   for (const row of selectedRows) {
     if (!fileMap.get(row.fileId)?.loadContents) continue;
@@ -324,37 +374,54 @@ export async function highlightNativeReviewDiffVisibleRows(
     if (fileRows) fileRows.push(row);
     else sourceFiles.set(row.fileId, [row]);
   }
-  const emitFileChunk = (fileRows: ReadonlyArray<NativeReviewDiffLineRow>) => {
-    if (!input.onChunk || input.signal?.aborted) return;
-    const rowIds = new Set(fileRows.map((row) => row.id));
+  const emitChunk = (
+    chunkTokens: Record<string, ReadonlyArray<NativeReviewDiffToken>>,
+    chunkRetryableRowIds: ReadonlyArray<string>,
+  ) => {
+    const rowCount = Object.keys(chunkTokens).length;
+    if (!input.onChunk || input.signal?.aborted || rowCount === 0) return;
     input.onChunk({
-      tokensByRowId: Object.fromEntries(fileRows.map((row) => [row.id, tokensByRowId[row.id]!])),
-      retryableRowIds: retryableRowIds.filter((id) => rowIds.has(id)),
-      rowCount: fileRows.length,
+      tokensByRowId: chunkTokens,
+      retryableRowIds: chunkRetryableRowIds,
+      rowCount,
       durationMs: Math.round(performance.now() - startedAt),
     });
   };
+  // Full sources arrive over the network. Until they do, show patch-only colors
+  // as retryable rows, which the full-source tokens then replace.
+  const emitProvisionalChunk = (rows: ReadonlyArray<NativeReviewDiffLineRow>) => {
+    if (!input.onChunk) return;
+    const provisional: Record<string, ReadonlyArray<NativeReviewDiffToken>> = {};
+    highlightSegmentRows(new Set(rows.map((row) => row.id)), provisional);
+    traceDiffHighlight("highlight-provisional", { request, rows: rows.length });
+    emitChunk(provisional, Object.keys(provisional));
+  };
   // The file filling the viewport should not wait for a sliver of its neighbor.
-  for (const [fileId, fileRows] of [...sourceFiles].sort((a, b) => b[1].length - a[1].length)) {
+  const sourceEntries = [...sourceFiles].sort((a, b) => b[1].length - a[1].length);
+  let provisionalFrom = sourceEntries.length;
+  for (const [entryIndex, [fileId, fileRows]] of sourceEntries.entries()) {
     if (input.signal?.aborted) break;
     const file = fileMap.get(fileId)!;
     const fileTraceId = diffHighlightTraceId(fileId);
     traceDiffHighlight("highlight-source", { request, file: fileTraceId, rows: fileRows.length });
+    const loading = file.loadContents!(input.signal);
+    if (entryIndex < provisionalFrom && !(await settlesWithinTask(loading))) {
+      if (input.signal?.aborted) break;
+      provisionalFrom = entryIndex;
+      emitProvisionalChunk(sourceEntries.slice(entryIndex).flatMap(([, rows]) => rows));
+    }
     let source: NativeReviewDiffSource | null;
     try {
-      source = await file.loadContents!(input.signal);
+      source = await loading;
     } catch {
       traceDiffHighlight("highlight-source-error", { request, file: fileTraceId });
-      for (const row of fileRows) {
-        selectedRowIds.delete(row.id);
-        tokensByRowId[row.id] = makePlainTokenFallback(row);
-        retryableRowIds.push(row.id);
-      }
-      emitFileChunk(fileRows);
+      // Patch-only colors below, retried with the source on a later viewport.
+      for (const row of fileRows) retryableRowIds.push(row.id);
       continue;
     }
     if (input.signal?.aborted) break;
     const contexts = source ? getFullSourceContexts(source) : null;
+    const fileTokens: Record<string, ReadonlyArray<NativeReviewDiffToken>> = {};
     for (const side of ["old", "new"] as const) {
       if (input.signal?.aborted) break;
       const candidate = contexts?.[side];
@@ -371,75 +438,35 @@ export async function highlightNativeReviewDiffVisibleRows(
         matches: !!context,
         knownLines: context?.comparisonLines.length,
       });
+      if (!context) continue;
+      // Rows the source cannot vouch for keep patch-only grammar below.
       const matchingRows: { row: NativeReviewDiffLineRow; lineIndex: number }[] = [];
       for (const row of fileRows) {
         if (displaySide(row) !== side) continue;
-        selectedRowIds.delete(row.id);
         const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
         const lineIndex = typeof lineNumber === "number" ? lineNumber - 1 : -1;
         if (
-          context &&
           lineIndex >= 0 &&
           lineIndex < context.comparisonLines.length &&
           context.comparisonLines[lineIndex] === row.content
         ) {
           matchingRows.push({ row, lineIndex });
-        } else {
-          // A changed revision or missing source cannot
-          // supply trustworthy grammar. Do not cache guessed syntax colors.
-          tokensByRowId[row.id] = makePlainTokenFallback(row);
         }
       }
-      if (!context || matchingRows.length === 0) continue;
+      if (matchingRows.length === 0) continue;
       const tokens = tokenize(context, context.contents, file.language);
       for (const { row, lineIndex } of matchingRows) {
-        tokensByRowId[row.id] =
+        selectedRowIds.delete(row.id);
+        fileTokens[row.id] = tokensByRowId[row.id] =
           tokens.highlightLine(lineIndex, input.scheme) ?? makePlainTokenFallback(row);
       }
     }
-    emitFileChunk(fileRows);
+    emitChunk(fileTokens, []);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   }
 
-  const selectedSegments = new Map<
-    SourceSegment,
-    { firstSelected: number; lastSelected: number }
-  >();
   if (selectedRowIds.size > 0 && !input.signal?.aborted) {
-    const sourceSegments = getSourceSegments(input.rows);
-    for (const row of selectedRows) {
-      if (!selectedRowIds.has(row.id)) continue;
-      const source = sourceSegments.get(row.id);
-      if (!source) continue;
-      const selection = selectedSegments.get(source.segment);
-      if (selection) {
-        selection.lastSelected = source.index;
-      } else {
-        selectedSegments.set(source.segment, {
-          firstSelected: source.index,
-          lastSelected: source.index,
-        });
-      }
-    }
-  }
-
-  for (const [segment, { firstSelected, lastSelected }] of selectedSegments) {
-    if (input.signal?.aborted) break;
-    const file = fileMap.get(segment.fileId);
-    if (!file) continue;
-
-    const tokens = tokenize(
-      segment,
-      () => segment.rows.map((row) => row.content).join("\n"),
-      file.language,
-    );
-    for (let index = firstSelected; index <= lastSelected; index += 1) {
-      const row = segment.rows[index]!;
-      if (selectedRowIds.has(row.id) && displaySide(row) === segment.side) {
-        tokensByRowId[row.id] =
-          tokens.highlightLine(index, input.scheme) ?? makePlainTokenFallback(row);
-      }
-    }
+    highlightSegmentRows(selectedRowIds, tokensByRowId);
   }
 
   if (input.signal?.aborted) {
