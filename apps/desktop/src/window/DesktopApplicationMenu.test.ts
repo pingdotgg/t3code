@@ -19,6 +19,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopApplicationMenu from "./DesktopApplicationMenu.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { applyLanguage } from "../i18n/messages.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import { createInitialDesktopUpdateState } from "../updates/updateMachine.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -367,5 +368,50 @@ describe("DesktopApplicationMenu", () => {
       });
       assert.include(`${dialog.title ?? ""} ${dialog.message} ${dialog.detail ?? ""}`, "0.1.7");
     }),
+  );
+
+  it.effect("labels every role item so the menu follows the UI language", () =>
+    Effect.gen(function* () {
+      // Electron's role defaults are English on every platform, so each role item needs a label.
+      for (const platform of ["darwin", "linux", "win32"] as const) {
+        const applicationMenuTemplate =
+          yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+        yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+          platform,
+        });
+
+        const unlabeled: string[] = [];
+        const collect = (template: readonly Electron.MenuItemConstructorOptions[]) => {
+          for (const item of template) {
+            if (item.role !== undefined && typeof item.label !== "string") {
+              unlabeled.push(item.role);
+            }
+            if (Array.isArray(item.submenu)) collect(item.submenu);
+          }
+        };
+        collect(yield* Deferred.await(applicationMenuTemplate));
+        assert.deepStrictEqual(unlabeled, [], platform);
+      }
+    }),
+  );
+
+  it.effect("shows Edit menu roles in the selected UI language", () =>
+    Effect.gen(function* () {
+      yield* applyLanguage("zh").pipe(Effect.provide(layerElectronApp));
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+      yield* configureMenu(yield* Deferred.make<string>(), applicationMenuTemplate, {
+        platform: "darwin",
+      });
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+      const editMenu = template.find((item) => item.label === "编辑");
+      if (!Array.isArray(editMenu?.submenu)) {
+        throw new Error("Expected the Chinese Edit menu submenu to be an array.");
+      }
+      const copy = editMenu.submenu.find((item) => item.role === "copy");
+      assert.isString(copy?.label);
+      assert.notEqual(copy?.label, "Copy");
+    }).pipe(Effect.ensuring(applyLanguage("en").pipe(Effect.provide(layerElectronApp)))),
   );
 });
