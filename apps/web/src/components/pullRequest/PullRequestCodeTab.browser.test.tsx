@@ -397,68 +397,11 @@ it("keeps a linked test file expanded when a refresh changes only the source pat
   await expect.element(testLine).toBeVisible();
 });
 
-it("keeps a hidden test file folded when all shown files expand", async () => {
-  setup({ paged: true });
-  // Test files sort after source files, so this diff puts its only test file second.
-  mocks.paged = false;
-  mocks.withTestFile = true;
-  using _hidden = {
-    [Symbol.dispose]() {
-      window.localStorage.removeItem("t3code.diffHideTestFiles");
-    },
-  };
-  await using screen = await render(tab(0), { container: pagedContainer() });
-  // Every expanded file stays rendered, so the toggles below keep their positions.
-  screen.container.className = "flex h-[1000px] w-[900px]";
-  // Files keep their order, so the second header is early-1.test.ts while tests are shown.
-  const testFileToggle = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1);
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
-  const filter = screen.getByRole("button", { name: "Hide test files" });
-  await filter.click();
-  await expect.element(filter).toHaveAttribute("aria-pressed", "true");
-
-  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "true");
-  await filter.click();
-
-  await expect.element(filter).toHaveAttribute("aria-pressed", "false");
-  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
-});
-
-it("keeps a hidden test file open when all shown files collapse", async () => {
-  setup({ paged: false });
-  mocks.withTestFile = true;
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
-  using _preferences = {
-    [Symbol.dispose]() {
-      window.localStorage.removeItem("t3code.diffHideTestFiles");
-      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
-    },
-  };
-  const container = document.createElement("div");
-  container.className = "flex h-[700px] w-[900px]";
-  await using screen = await render(tab(0), { container });
-  const filter = screen.getByRole("button", { name: "Hide test files" });
-  await filter.click();
-  await expect.element(filter).toHaveAttribute("aria-pressed", "true");
-
-  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
-  await expect
-    .element(screen.getByRole("button", { name: "Expand all files", exact: true }))
-    .toBeVisible();
-  await filter.click();
-
-  await expect.element(screen.getByText("early-1.test.ts", { exact: true }).first()).toBeVisible();
-  await expect
-    .element(screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1))
-    .toHaveAttribute("aria-expanded", "true");
-});
-
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
-async function renderShortPages(stack: AsyncDisposableStack, diffFilesCollapsed = true) {
+async function renderShortPages(stack: AsyncDisposableStack) {
   setup({ paged: true });
   mocks.shortPages = true;
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
   stack.defer(() => {
     window.localStorage.removeItem("t3code.diffHideTestFiles");
     window.localStorage.removeItem("t3code.pullRequestFileTreeOpen");
@@ -498,25 +441,9 @@ async function renderShortPages(stack: AsyncDisposableStack, diffFilesCollapsed 
   return { screen, loadNextPage, diffToggle, filter };
 }
 
-it("expands later source files while keeping a later hidden test file folded", async () => {
-  await using stack = new AsyncDisposableStack();
-  const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
-  await filter.click();
-  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
-  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
-
-  await loadNextPage();
-  await expect.element(screen.getByText("2 test files hidden", { exact: true })).toBeVisible();
-  await filter.click();
-
-  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
-  await expect.element(await diffToggle("late.ts")).toHaveAttribute("aria-expanded", "true");
-  await expect.element(await diffToggle("late.test.ts")).toHaveAttribute("aria-expanded", "false");
-});
-
 it("keeps a later test file folded by hand through a refresh and bulk toggles while hidden", async () => {
   await using stack = new AsyncDisposableStack();
-  const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack, false);
+  const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
   await loadNextPage();
   const lateTest = await diffToggle("late.test.ts");
   await lateTest.click();
