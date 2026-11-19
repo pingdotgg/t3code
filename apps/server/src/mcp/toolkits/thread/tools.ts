@@ -32,7 +32,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive or mark unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling takes effect at turn end; failed turns or queued messages leave it active.",
+    "Pin, snooze, settle, archive or mark unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread waits till turn end; failures or queued input leave it active.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
@@ -155,7 +155,7 @@ const threadConfiguration = Schema.Struct({
 const ThreadConfigureTool = Tool.make("t3_thread_configure", {
   ...commandTool,
   description:
-    "Read or set provider, model and modes; use `modelSelection` to set provider/model/options. Omit `threadId` for this thread. Permission modes stay; values come from `orchestrator_capabilities`.",
+    "Read provider, model, and modes or set provider, model, and options with `modelSelection`. Omit `threadId` for this thread. Permission modes stay; values come from `orchestrator_capabilities`.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     threadId: Schema.optional(ThreadId),
