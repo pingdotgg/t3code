@@ -38,13 +38,27 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
-  it("drops launch args that enable user hooks", () => {
-    NodeAssert.deepStrictEqual(
-      codexExecLaunchArgs(
-        "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
-      ),
-      ["--enable", "foo", "--disable", "hooks"],
-    );
+  it("keeps user hooks, apps, and plugins off during text generation", () => {
+    const launchArgs =
+      "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable apps --enable=apps --enable connectors --enable=connectors --enable plugins --enable=plugins --enable foo --disable hooks";
+    NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
+    NodeAssert.deepStrictEqual(codexMcpListLaunchArgs(launchArgs), [
+      "--enable",
+      "hooks",
+      "--enable=hooks",
+      "--enable",
+      "codex_hooks",
+      "--enable=codex_hooks",
+      "--enable",
+      "foo",
+      "--disable",
+      "hooks",
+    ]);
   });
 
   it("does not pair value-taking flags with adjacent flags", () => {
