@@ -1871,6 +1871,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
 
+  /**
+   * Subagent threads work for their parent, so deleting the parent takes them too. They are found
+   * by their lineage, not the parent's subagent records: a provider can report a subagent's thread
+   * before its record.
+   */
+  const liveSubagentThreadIds = (threadId: ThreadId) =>
+    projectionStore
+      .listLiveSubagentThreadIds(threadId)
+      .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+
   const getProjectionWithPendingEvents =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
     Effect.fnUntraced(function* (
@@ -15252,7 +15262,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
-    sideChatIds: ReadonlyArray<ThreadId>,
+    cascadeIds: ReadonlyArray<ThreadId>,
   ): Effect.fn.Return<
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -15371,13 +15381,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             return { events: [], effects: [] };
           }
         }
-        // The dispatch wrapper holds each side chat's lock, so none can commit after this plan.
+        // The dispatch wrapper holds each cascaded thread's lock, so none can commit after this plan.
         const plans = [
           yield* planDeletion(command),
-          ...(yield* Effect.forEach(sideChatIds, (threadId) =>
+          ...(yield* Effect.forEach(cascadeIds, (threadId) =>
             planDeletion({
               ...command,
-              commandId: CommandId.make(`${command.commandId}:side-chat:${threadId}`),
+              commandId: CommandId.make(`${command.commandId}:cascade:${threadId}`),
               threadId,
             }),
           )),
@@ -15392,7 +15402,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
         yield* dispatchThreadMutation(command, events, effects);
         // Unarchive restores the side chats this parent's archive took, not ones archived before it.
-        for (const threadId of sideChatIds) {
+        for (const threadId of cascadeIds) {
           const sideChatArchivedAt = (yield* findThread(threadId))?.archivedAt ?? null;
           const follows =
             command.type === "thread.archive"
@@ -15765,10 +15775,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  /** `sideChatIds` are the live side chats a delete, archive, or unarchive cascades to, read under their locks. */
+  /** `cascadeIds` are the live threads a delete, archive, or unarchive cascades to, read under their locks. */
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
-    sideChatIds: ReadonlyArray<ThreadId> = [],
+    cascadeIds: ReadonlyArray<ThreadId> = [],
     cancelledTask?: OrchestrationV2Subagent,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
@@ -15822,7 +15832,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
     }
 
-    const plan = yield* dispatchOnce(command, sideChatIds).pipe(
+    const plan = yield* dispatchOnce(command, cascadeIds).pipe(
       Effect.tap((planned) => refuseAboveRuntimeModeCeiling(command, planned.events)),
       Effect.filterOrFail(
         (planned) =>
@@ -16057,6 +16067,30 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ),
     );
 
+  // Breadth first, each thread locked before its side chats and subagent threads are read, so none
+  // can join after the read. Thread locks are not reentrant, so each thread is queued once.
+  const withDeletionCascade = Effect.fnUntraced(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.delete" }>,
+    pending: ReadonlyArray<ThreadId>,
+    locked: ReadonlyArray<ThreadId> = [],
+  ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
+    const [threadId, ...rest] = pending;
+    if (threadId === undefined) return yield* dispatchWithReceiptEffect(command, locked.slice(1));
+    return yield* threadDispatch.withLock(
+      threadId,
+      Effect.gen(function* () {
+        const known = new Set([...locked, ...pending]);
+        const members = new Set(
+          [
+            ...(yield* liveSideChatIds(threadId)),
+            ...(yield* liveSubagentThreadIds(threadId)),
+          ].filter((id) => !known.has(id)),
+        );
+        return yield* withDeletionCascade(command, [...rest, ...members], [...locked, threadId]);
+      }),
+    );
+  });
+
   // dispatchWithReceiptEffect owns the dispatch span; this wrapper selects the thread locks.
   const dispatchWithReceipt = Effect.fnUntraced(function* (command: OrchestrationV2ServerCommand) {
     const dispatch = threadDispatch.withLock(
@@ -16077,12 +16111,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ? dispatch
         : threadDispatch.withLock(command.sourceThreadId, dispatch);
     }
-    if (
-      command.type === "thread.delete" ||
-      command.type === "thread.archive" ||
-      command.type === "thread.unarchive"
-    ) {
-      const cascade = threadDispatch.withLock(
+    if (command.type === "thread.delete") {
+      return yield* threadDispatch.withDeletionLock(
+        withDeletionCascade(command, [command.threadId]),
+      );
+    }
+    if (command.type === "thread.archive" || command.type === "thread.unarchive") {
+      return yield* threadDispatch.withLock(
         command.threadId,
         liveSideChatIds(command.threadId).pipe(
           Effect.flatMap((sideChatIds) =>
@@ -16093,9 +16128,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ),
         ),
       );
-      return yield* command.type === "thread.delete"
-        ? threadDispatch.withDeletionLock(cascade)
-        : cascade;
     }
     // Taken before the lineage read, so a message whose read yields keeps its
     // place ahead of later messages to the same thread.

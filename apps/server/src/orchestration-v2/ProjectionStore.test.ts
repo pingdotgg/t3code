@@ -3719,6 +3719,97 @@ it.effect("lists every thread in the shell snapshot past SQLite's bound variable
 );
 
 it.layer(layerTest)("ProjectionStoreV2", (it) => {
+  it.effect("lists a thread's undeleted subagent threads by lineage through their index", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const projectId = ProjectId.make("project:subagent-lineage");
+      const parentId = ThreadId.make("thread:subagent-lineage:parent");
+      const otherId = ThreadId.make("thread:subagent-lineage:other");
+      const thread = (
+        name: string,
+        parentThreadId: ThreadId | null,
+        relationshipToParent: "fork" | "subagent" | null,
+        archived = false,
+      ) => {
+        const id = ThreadId.make(`thread:subagent-lineage:${name}`);
+        return {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id,
+          projectId,
+          title: name,
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId, relationshipToParent, rootThreadId: parentThreadId ?? id },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: archived ? now : null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+      };
+      const threads = [
+        thread("parent", null, null),
+        thread("other", null, null),
+        thread("live", parentId, "subagent"),
+        thread("archived", parentId, "subagent", true),
+        thread("deleted", parentId, "subagent"),
+        thread("fork", parentId, "fork"),
+        thread("other-child", otherId, "subagent"),
+      ];
+      for (const payload of threads) {
+        yield* store.apply({
+          id: EventId.make(`event:subagent-lineage:${payload.id}`),
+          type: "thread.created",
+          threadId: payload.id,
+          occurredAt: now,
+          payload,
+        });
+      }
+      const deleted = threads.find((payload) => payload.title === "deleted")!;
+      yield* store.apply({
+        id: EventId.make("event:subagent-lineage:deleted"),
+        type: "thread.deleted",
+        threadId: deleted.id,
+        occurredAt: now,
+        payload: { ...deleted, deletedAt: now },
+      });
+
+      const traced = traceSqlStatements();
+      assert.deepEqual(
+        [
+          ...(yield* store
+            .listLiveSubagentThreadIds(parentId)
+            .pipe(Effect.withTracer(traced.tracer))),
+        ],
+        [
+          ThreadId.make("thread:subagent-lineage:archived"),
+          ThreadId.make("thread:subagent-lineage:live"),
+        ],
+      );
+      const query = traced.statements.find((statement) =>
+        statement.includes("FROM orchestration_v2_projection_threads"),
+      );
+      assert.isDefined(query);
+      assert.match(
+        (yield* sql.unsafe<{ readonly detail: string }>(`EXPLAIN QUERY PLAN ${query}`))
+          .map((row) => row.detail)
+          .join("\n"),
+        /SEARCH orchestration_v2_projection_threads USING INDEX orchestration_v2_projection_threads_live_subagent_parent_idx/,
+      );
+    }),
+  );
+
   // regression: #21969 keep corrupt plan JSON in the typed read error
   it.effect("returns a typed read error for malformed stored plan JSON", () =>
     Effect.gen(function* () {

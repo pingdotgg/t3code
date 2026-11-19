@@ -484,6 +484,40 @@ export const layer: Layer.Layer<
               )
                 return [];
               const now = yield* DateTime.now;
+              // The parent's delete took its subagent threads; one reported after it is born deleted.
+              const parentThreadId = offered.lineage.parentThreadId;
+              const parent =
+                existing === null &&
+                offered.lineage.relationshipToParent === "subagent" &&
+                parentThreadId !== null &&
+                parentThreadId !== offered.id
+                  ? yield* projections.getThread(parentThreadId).pipe(
+                      Effect.catchTags({
+                        ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                      }),
+                    )
+                  : null;
+              if (parent !== null && parent.deletedAt !== null) {
+                return [
+                  yield* makeDomainEvent(input, {
+                    type: "thread.created",
+                    threadId: offered.id,
+                    payload: offered,
+                    occurredAt: now,
+                  }),
+                  yield* makeDomainEvent(input, {
+                    type: "thread.deleted",
+                    threadId: offered.id,
+                    payload: {
+                      ...offered,
+                      deletedAt: now,
+                      titleRegeneration: null,
+                      updatedAt: now,
+                    },
+                    occurredAt: now,
+                  }),
+                ];
+              }
               return [
                 yield* makeDomainEvent(input, {
                   type: existing === null ? "thread.created" : "thread.metadata-updated",
@@ -814,6 +848,9 @@ export const layer: Layer.Layer<
                     (stored) => stored.event.type === "thread.created",
                   );
                   if (created?.event.type !== "thread.created") return storedEvents;
+                  // An update from the created payload would undo a thread born deleted.
+                  if (storedEvents.some((stored) => stored.event.type === "thread.deleted"))
+                    return storedEvents;
                   const child = created.event.payload;
                   if (child.worktreePath === null || child.branch === null) return storedEvents;
                   // Git renames before scanning committed threads. If that scan missed this
@@ -885,10 +922,18 @@ export const layer: Layer.Layer<
                   });
                 }),
               ),
-              (effect) =>
-                input.event.type === "app_thread.created"
-                  ? threadCommands.withLock(input.event.appThread.id, effect)
-                  : effect,
+              // A subagent thread's creation also holds its parent, parent first as a thread delete
+              // locks them, so the delete either finds the child or the child sees it deleted.
+              (effect) => {
+                if (input.event.type !== "app_thread.created") return effect;
+                const { id, lineage } = input.event.appThread;
+                const locked = threadCommands.withLock(id, effect);
+                return lineage.relationshipToParent === "subagent" &&
+                  lineage.parentThreadId !== null &&
+                  lineage.parentThreadId !== id
+                  ? threadCommands.withLock(lineage.parentThreadId, locked)
+                  : locked;
+              },
             ),
         ),
     });

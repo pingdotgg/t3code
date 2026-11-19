@@ -173,6 +173,7 @@ function layerProjectionStore(
       getSubagentCount: () => Effect.die("unused subagent count"),
       getRunCount: () => Effect.die("unused run count"),
       listAppOwnedChildThreadIds: () => Effect.die("unused listAppOwnedChildThreadIds"),
+      listLiveSubagentThreadIds: () => Effect.die("unused listLiveSubagentThreadIds"),
       getNextTurnItemOrdinal: () => Effect.die("unused ordinal read"),
       getTurnItem: () => Effect.die("unused turn item read"),
       getMessagesById: () => Effect.die("unused getMessagesById"),
