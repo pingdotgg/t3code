@@ -5,6 +5,7 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { RegistryContext } from "@effect/atom-react";
 import { T, useGT } from "gt-react";
 import {
@@ -179,7 +180,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     ? getTriggerDisplayModelName(selectedModel, activeEntry?.driverKind)
     : props.model === ANTIGRAVITY_DEFAULT_MODEL
       ? gt("Choose model")
-      : props.model || gt("Choose model");
+      : props.model
+        ? formatModelSlugName(props.model)
+        : gt("Choose model");
   const withUnavailable = (model: string, isUnavailable: boolean | undefined) =>
     isUnavailable ? gt("{model} (Unavailable)", { model }) : model;
   const triggerLabel = selectedModel

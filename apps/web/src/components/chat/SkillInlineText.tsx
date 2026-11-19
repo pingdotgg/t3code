@@ -150,6 +150,7 @@ export function SkillChipPopover(props: {
   );
 }
 
+/** The skill glyph; the surrounding chip sizes and colors its svg. */
 export function SkillChipIcon() {
   return (
     <span

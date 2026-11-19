@@ -17,8 +17,10 @@ import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
 import { Route as ChatRouteImport } from './routes/_chat'
+import { Route as DesignSystemIndexRouteImport } from './routes/design-system.index'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as DesignSystemScenesRouteImport } from './routes/design-system.scenes'
 import { Route as ChatUsageRouteImport } from './routes/_chat.usage'
 import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
@@ -94,6 +96,11 @@ const ChatRoute = ChatRouteImport.update({
   id: '/_chat',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DesignSystemIndexRoute = DesignSystemIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DesignSystemRoute,
+} as any)
 const ChatIndexRoute = ChatIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -103,6 +110,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   id: '/projects/$projectKey',
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
+} as any)
+const DesignSystemScenesRoute = DesignSystemScenesRouteImport.update({
+  id: '/scenes',
+  path: '/scenes',
+  getParentRoute: () => DesignSystemRoute,
 } as any)
 const ChatUsageRoute = ChatUsageRouteImport.update({
   id: '/usage',
@@ -291,7 +303,7 @@ export interface FileRoutesByFullPath {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
-  '/design-system': typeof DesignSystemRoute
+  '/design-system': typeof DesignSystemRouteWithChildren
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -300,7 +312,9 @@ export interface FileRoutesByFullPath {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
+  '/design-system/scenes': typeof DesignSystemScenesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
+  '/design-system/': typeof DesignSystemIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
@@ -336,7 +350,6 @@ export interface FileRoutesByTo {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
-  '/design-system': typeof DesignSystemRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -345,8 +358,10 @@ export interface FileRoutesByTo {
   '/pull-requests': typeof ChatPullRequestsRoute
   '/settings': typeof ChatSettingsRouteWithChildren
   '/usage': typeof ChatUsageRoute
+  '/design-system/scenes': typeof DesignSystemScenesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/': typeof ChatIndexRoute
+  '/design-system': typeof DesignSystemIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/settings/about': typeof ChatSettingsAboutRoute
@@ -384,7 +399,7 @@ export interface FileRoutesById {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
-  '/design-system': typeof DesignSystemRoute
+  '/design-system': typeof DesignSystemRouteWithChildren
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -393,8 +408,10 @@ export interface FileRoutesById {
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/_chat/settings': typeof ChatSettingsRouteWithChildren
   '/_chat/usage': typeof ChatUsageRoute
+  '/design-system/scenes': typeof DesignSystemScenesRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/_chat/': typeof ChatIndexRoute
+  '/design-system/': typeof DesignSystemIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
   '/_chat/settings/about': typeof ChatSettingsAboutRoute
@@ -442,7 +459,9 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/settings'
     | '/usage'
+    | '/design-system/scenes'
     | '/projects/$projectKey'
+    | '/design-system/'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/about'
@@ -478,7 +497,6 @@ export interface FileRouteTypes {
     | '/approve-agent'
     | '/connect'
     | '/connect-agent'
-    | '/design-system'
     | '/guest'
     | '/pair'
     | '/welcome'
@@ -487,8 +505,10 @@ export interface FileRouteTypes {
     | '/pull-requests'
     | '/settings'
     | '/usage'
+    | '/design-system/scenes'
     | '/projects/$projectKey'
     | '/'
+    | '/design-system'
     | '/$environmentId/$threadId'
     | '/draft/$draftId'
     | '/settings/about'
@@ -534,8 +554,10 @@ export interface FileRouteTypes {
     | '/_chat/pull-requests'
     | '/_chat/settings'
     | '/_chat/usage'
+    | '/design-system/scenes'
     | '/projects/$projectKey'
     | '/_chat/'
+    | '/design-system/'
     | '/_chat/$environmentId/$threadId'
     | '/_chat/draft/$draftId'
     | '/_chat/settings/about'
@@ -573,7 +595,7 @@ export interface RootRouteChildren {
   ApproveAgentRoute: typeof ApproveAgentRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
-  DesignSystemRoute: typeof DesignSystemRoute
+  DesignSystemRoute: typeof DesignSystemRouteWithChildren
   GuestRoute: typeof GuestRoute
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -639,6 +661,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/design-system/': {
+      id: '/design-system/'
+      path: '/'
+      fullPath: '/design-system/'
+      preLoaderRoute: typeof DesignSystemIndexRouteImport
+      parentRoute: typeof DesignSystemRoute
+    }
     '/_chat/': {
       id: '/_chat/'
       path: '/'
@@ -652,6 +681,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/projects/$projectKey'
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/design-system/scenes': {
+      id: '/design-system/scenes'
+      path: '/scenes'
+      fullPath: '/design-system/scenes'
+      preLoaderRoute: typeof DesignSystemScenesRouteImport
+      parentRoute: typeof DesignSystemRoute
     }
     '/_chat/usage': {
       id: '/_chat/usage'
@@ -989,12 +1025,26 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface DesignSystemRouteChildren {
+  DesignSystemScenesRoute: typeof DesignSystemScenesRoute
+  DesignSystemIndexRoute: typeof DesignSystemIndexRoute
+}
+
+const DesignSystemRouteChildren: DesignSystemRouteChildren = {
+  DesignSystemScenesRoute: DesignSystemScenesRoute,
+  DesignSystemIndexRoute: DesignSystemIndexRoute,
+}
+
+const DesignSystemRouteWithChildren = DesignSystemRoute._addFileChildren(
+  DesignSystemRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ApproveAgentRoute: ApproveAgentRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
-  DesignSystemRoute: DesignSystemRoute,
+  DesignSystemRoute: DesignSystemRouteWithChildren,
   GuestRoute: GuestRoute,
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,

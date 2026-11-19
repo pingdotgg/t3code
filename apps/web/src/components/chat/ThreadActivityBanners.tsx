@@ -315,37 +315,33 @@ export function branchMismatchBannerItem(
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem {
   const { mismatch } = input;
-  const branchTooltip = (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <code className="min-w-0 truncate font-medium text-foreground">
-            {mismatch.threadBranch}
-          </code>
-        }
-      />
-      <TooltipPopup side="top">
-        <T>
-          This thread last ran on <Var>{mismatch.threadBranch}</Var>. Sending will continue on{" "}
-          <Var>{mismatch.currentBranch}</Var>.
-        </T>
-      </TooltipPopup>
-    </Tooltip>
-  );
   return {
     id: `branch-mismatch:${input.mismatchKey}`,
-    variant: "info",
+    variant: "warning",
     icon: <GitBranchIcon />,
-    title: (
-      <span className="flex min-w-0 items-baseline gap-1.5">
-        <T>
-          <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
-          <Var>{branchTooltip}</Var>
-        </T>
-      </span>
+    title: resolve(msg("Branch changed")),
+    description: (
+      <Tooltip>
+        <TooltipTrigger render={<span className="min-w-0 truncate" />}>
+          <T>
+            was <Var>{mismatch.threadBranch}</Var>
+          </T>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          <T>
+            This thread last ran on <Var>{mismatch.threadBranch}</Var>. Sending will continue on{" "}
+            <Var>{mismatch.currentBranch}</Var>.
+          </T>
+        </TooltipPopup>
+      </Tooltip>
     ),
     actions: (
-      <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
+      <Button
+        size="xs"
+        variant="secondary"
+        disabled={input.restoreDisabled}
+        onClick={input.onRestore}
+      >
         {input.restoring ? <T>Restoring...</T> : <T>Restore branch</T>}
       </Button>
     ),

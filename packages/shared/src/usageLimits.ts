@@ -764,6 +764,62 @@ export function resetCountdown(
   return { kind: "in", ms: resetsAt - now };
 }
 
+/** Under this share of quota left, a window reads as low: amber, and worth a notice. */
+const LOW_LIMIT_REMAINING_PERCENT = 25;
+
+/** Whether the window has less than a quarter of its quota left. */
+export function isLowLimit(window: ServerProviderUsageWindow): boolean {
+  return remainingPercent(window) < LOW_LIMIT_REMAINING_PERCENT;
+}
+
+/**
+ * Milliseconds until the window's quota runs out at the rate spent so far,
+ * or null when that rate is unknown or the window resets first.
+ */
+export function projectRunOut(window: ServerProviderUsageWindow, now: number): number | null {
+  const resetsAt = resetMillis(window);
+  const elapsed = elapsedShare(window, now);
+  if (resetsAt === null || elapsed === null || window.windowDurationMins === undefined) {
+    return null;
+  }
+  const used = Math.max(0, Math.min(100, window.usedPercent));
+  const elapsedMs = elapsed * window.windowDurationMins * MINUTE;
+  if (used <= 0 || elapsedMs <= 0) return null;
+  if (used >= 100) return 0;
+  const runOut = ((100 - used) / used) * elapsedMs;
+  return runOut < resetsAt - now ? runOut : null;
+}
+
+export interface TightestLimit {
+  readonly account: LimitAccount;
+  readonly window: ServerProviderUsageWindow;
+  readonly remainingPercent: number;
+}
+
+/**
+ * The session window with the least quota left across the accounts, optionally
+ * for one driver. Accounts with no session window fall back to their shortest
+ * window kind, so a monthly-only plan still has something to report.
+ */
+export function tightestSessionLimit(
+  accounts: readonly LimitAccount[],
+  driver?: ServerProvider["driver"],
+): TightestLimit | null {
+  let tightest: TightestLimit | null = null;
+  for (const account of accounts) {
+    if (driver !== undefined && account.driver !== driver) continue;
+    const window = [...account.limits.windows].sort(
+      (left, right) => WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    )[0];
+    if (!window) continue;
+    const remaining = remainingPercent(window);
+    if (tightest === null || remaining < tightest.remainingPercent) {
+      tightest = { account, window, remainingPercent: remaining };
+    }
+  }
+  return tightest;
+}
+
 export const USAGE_LIMITS_COMMAND = {
   name: "usage-limits",
   description: "Show this provider's usage limits",

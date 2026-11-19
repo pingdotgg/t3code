@@ -146,7 +146,7 @@ function groupLabel(
 ): string | null {
   switch (triggerKind) {
     case "pull-request":
-      return resolve(msg("Pull requests"));
+      return resolve(msg("Pull requests and threads"));
     case "slash-command":
       return resolve(msg("Commands"));
     case "skill":
@@ -170,7 +170,7 @@ function emptyText(
   }
   switch (triggerKind) {
     case "pull-request":
-      return resolve(msg("No matching pull requests."));
+      return resolve(msg("No matching pull requests or threads."));
     case "path":
       return resolve(msg("No matching mentions."));
     case "skill":

@@ -19,25 +19,15 @@ function notice(title: string, group?: ComposerBannerStackItem["group"]): Compos
 
 it("puts machine notices first, whatever order the notices arrive in", async () => {
   await using screen = await render(
-    <ComposerBannerStack items={[notice("Branch changed"), notice("Offline", "environment")]} />,
+    <ComposerBannerStack
+      items={[{ ...notice("Branch changed"), variant: "error" }, notice("Offline", "environment")]}
+    />,
   );
 
-  expect(screen.container.textContent).toBe("OfflineBranch changed");
-});
-
-it("leaves the next attachment its own top edge when there are no notices", async () => {
-  await using screen = await render(
-    <ComposerBanner.Column>
-      <ComposerBannerStack items={[]} />
-      <ComposerBanner.Attachment>
-        <ComposerBanner.Root data-testid="drawer">Approval</ComposerBanner.Root>
-      </ComposerBanner.Attachment>
-    </ComposerBanner.Column>,
-  );
-
-  const surface = getComputedStyle(screen.getByTestId("drawer").element(), "::before");
-  expect(surface.borderTopWidth).toBe("1px");
-  expect(surface.borderTopLeftRadius).not.toBe("0px");
+  await expect.element(screen.getByText("Offline", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "1 other notice" }).click();
+  await expect.element(screen.getByText("Branch changed", { exact: true })).toBeVisible();
 });
 
 function noticeRow(width: string, children: ReactNode) {

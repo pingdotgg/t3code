@@ -119,10 +119,6 @@ function StageBackdropArt({ variant }: { variant: SidebarStageBackdropVariant })
   return variant === "nightly" ? <NightlySkyArt /> : <DevBlueprintArt />;
 }
 
-export function StageBackdropButtonArt({ variant }: { variant: SidebarStageBackdropVariant }) {
-  return variant === "nightly" ? <NightlySkyArt compact /> : <DevBlueprintArt compact />;
-}
-
 const NIGHTLY_STARS: ReadonlyArray<{
   cx: number;
   cy: number;

@@ -6,8 +6,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { T, useGT, useMessages, Var } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
+import { ShieldIcon } from "lucide-react";
+import { ComposerRequestCard } from "./ComposerRequestCard";
 import { useEnvironmentScope } from "../../state/session";
 import { childThreadApprovalsAtom, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -19,36 +21,45 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
   const gt = useGT();
   const messages = useMessages();
   const [responding, setResponding] = useState(false);
+  const [alwaysAllow, setAlwaysAllow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { approval } = entry;
   return (
-    <section
+    <ComposerRequestCard.Root
+      role="region"
       aria-label={gt("Approval from {title}", { title: entry.title })}
-      className="rounded-lg border border-border bg-background p-3 text-xs"
     >
-      <p className="mb-2 font-medium">
-        <T>
-          Approval needed from <Var>{entry.title}</Var>
-        </T>
-      </p>
-      <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words font-mono">
-        {approval.detail || approval.requestKind}
-      </pre>
-      {approval.appName ? <p className="mt-2 text-muted-foreground">{approval.appName}</p> : null}
+      <ComposerRequestCard.Header
+        icon={<ShieldIcon />}
+        title={gt("Approval needed from {title}", { title: entry.title })}
+      />
+      <ComposerRequestCard.Well>
+        <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 font-mono text-meta text-foreground wrap-anywhere">
+          {approval.detail || approval.requestKind}
+        </pre>
+      </ComposerRequestCard.Well>
+      {approval.appName ? (
+        <p className="px-2.5 text-meta text-muted-foreground">{approval.appName}</p>
+      ) : null}
       {approval.responseCapability !== "live" ? (
-        <p className="mt-2 text-warning">
+        <p className="px-2.5 text-meta text-warning-foreground">
           <T>Provider process is gone. Interrupt or restart the child thread to respond.</T>
         </p>
       ) : null}
-      {approval.reason ? <p className="mt-2 text-muted-foreground">{approval.reason}</p> : null}
+      {approval.reason ? (
+        <p className="px-2.5 text-meta text-muted-foreground">{approval.reason}</p>
+      ) : null}
       {approval.fullAccessOverride ? (
-        <p className="mt-2 text-muted-foreground">
+        <p className="px-2.5 text-meta text-muted-foreground">
           {fullAccessOverrideExplanation(approval.fullAccessOverride, messages)}
         </p>
       ) : null}
-      <div className="mt-2 flex flex-wrap gap-2">
+      <ComposerRequestCard.Footer>
         <ComposerPendingApprovalActions
-          presentation="inline"
+          designLabels
+          showShortcutHints={false}
+          alwaysAllow={alwaysAllow}
+          onAlwaysAllowChange={setAlwaysAllow}
           requestId={approval.requestId}
           isResponding={responding}
           canRespond={approval.responseCapability === "live"}
@@ -74,13 +85,13 @@ function ChildApproval({ entry }: { entry: ChildThreadApproval }) {
             return result;
           }}
         />
-      </div>
+      </ComposerRequestCard.Footer>
       {error !== null ? (
-        <p role="alert" className="mt-2 text-destructive">
+        <p role="alert" className="px-2.5 text-meta text-error-foreground">
           {error}
         </p>
       ) : null}
-    </section>
+    </ComposerRequestCard.Root>
   );
 }
 
@@ -88,7 +99,7 @@ export function ChildThreadApprovals({ threadRef }: { threadRef: ScopedThreadRef
   const approvals = useAtomValue(childThreadApprovalsAtom(threadRef));
   if (approvals.length === 0) return null;
   return (
-    <div className="mb-2 flex max-h-80 flex-col gap-2 overflow-auto">
+    <div className="flex max-h-80 flex-col gap-2 overflow-auto">
       {approvals.map((entry) => (
         <ChildApproval
           key={JSON.stringify([

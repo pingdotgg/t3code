@@ -1,12 +1,13 @@
 import { useLegendListRef } from "~/hooks/useLegendListRef";
 import type { VcsRef } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
+import { CheckIcon, CloudIcon, FolderGit2Icon, GitBranchIcon } from "lucide-react";
 import { useId, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { T, useGT } from "gt-react";
 
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { cn } from "../lib/utils";
-import { RefreshIcon } from "./ui/refresh-icon";
+import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { getVirtualizedScrollFadeClassName } from "./ui/scroll-area";
 import {
@@ -19,6 +20,10 @@ import {
   ComboboxStatus,
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+
+function BranchPickerSeparator() {
+  return <div className="h-px" />;
+}
 
 export function BranchPicker({
   items,
@@ -38,6 +43,7 @@ export function BranchPicker({
   popupProps,
   renderItem,
   getItemType,
+  getItemGroup,
   children,
 }: {
   items: string[];
@@ -57,6 +63,7 @@ export function BranchPicker({
   popupProps: Omit<ComponentProps<typeof ComboboxPopup>, "children">;
   renderItem: (value: string, index: number) => ReactNode;
   getItemType?: ((value: string) => string) | undefined;
+  getItemGroup?: ((value: string) => string) | undefined;
   children: ReactNode;
 }) {
   const gt = useGT();
@@ -105,8 +112,9 @@ export function BranchPicker({
       value={value}
     >
       {children}
-      <ComboboxPopup {...popupProps}>
+      <ComboboxPopup spacing="relaxed" {...popupProps}>
         <ComboboxSearchInput
+          variant="inset"
           placeholder={gt("Search refs...")}
           value={query}
           onChange={(event) => {
@@ -139,9 +147,23 @@ export function BranchPicker({
                 initialScrollOffset={0}
                 keyExtractor={(item) => item}
                 {...(getItemType ? { getItemType } : {})}
-                renderItem={({ item, index }) => renderItem(item, index)}
+                renderItem={({ item, index }) => {
+                  const group = getItemGroup?.(item);
+                  const previous = index > 0 ? getItemGroup?.(filteredItems[index - 1]!) : null;
+                  return (
+                    <>
+                      {group && group !== previous ? (
+                        <div className="px-2.5 pt-2 pb-1 text-caption text-dim-foreground">
+                          {group}
+                        </div>
+                      ) : null}
+                      {renderItem(item, index)}
+                    </>
+                  );
+                }}
                 extraData={renderItem}
-                estimatedItemSize={28}
+                ItemSeparatorComponent={BranchPickerSeparator}
+                estimatedItemSize={33}
                 drawDistance={336}
                 onScroll={updateBranchListScrollFades}
                 onLayout={updateBranchListScrollFades}
@@ -149,7 +171,7 @@ export function BranchPicker({
                 onEndReached={fetchNextBranchPage}
                 onEndReachedThreshold={0.5}
                 className={cn(
-                  "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain ps-1 pe-0 py-2",
+                  "min-h-0 max-h-56 scrollbar-gutter-stable overflow-x-hidden overscroll-y-contain px-0.5 pb-0.5",
                   getVirtualizedScrollFadeClassName({
                     top: showTopBranchScrollFade,
                     bottom: showBottomBranchScrollFade,
@@ -164,14 +186,8 @@ export function BranchPicker({
                 render={
                   <label
                     htmlFor={startFromOriginSwitchId}
-                    className="flex cursor-pointer items-center justify-between gap-3 border-t border-border/60 px-3 py-2 text-xs"
+                    className="mx-1.5 mb-1.5 flex cursor-pointer items-center gap-2 border-t border-divider px-2.5 pt-2 pb-1 text-meta"
                   >
-                    <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
-                      <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">
-                        <T>Start from remote</T>
-                      </span>
-                    </span>
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
@@ -179,6 +195,12 @@ export function BranchPicker({
                       aria-label={gt("Start worktree from remote")}
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
+                    <span className="min-w-0 flex-1 truncate">
+                      <T>Start from remote</T>
+                    </span>
+                    <span className="text-caption text-dim-foreground">
+                      <T>fetches first</T>
+                    </span>
                   </label>
                 }
               />
@@ -220,15 +242,12 @@ export function BranchPickerRefItem({
   const itemValue = refName.name;
   const hasSecondaryWorktree =
     refName.worktreePath && activeProjectCwd && refName.worktreePath !== activeProjectCwd;
-  const badge = refName.current
-    ? gt("current", { $context: "git ref badge, the checked-out branch" })
-    : hasSecondaryWorktree
-      ? gt("worktree", { $context: "git ref badge, checked out in another worktree" })
-      : refName.isRemote
-        ? gt("remote", { $context: "git ref badge, a remote branch" })
-        : refName.isDefault
-          ? gt("default", { $context: "git ref badge, the default branch" })
-          : null;
+  const badge = hasSecondaryWorktree
+    ? gt("worktree", { $context: "git ref badge, checked out in another worktree" })
+    : refName.isDefault
+      ? gt("default", { $context: "git ref badge, the default branch" })
+      : null;
+  const Icon = refName.isRemote ? CloudIcon : hasSecondaryWorktree ? FolderGit2Icon : GitBranchIcon;
   return (
     <ComboboxItem
       disabled={disabled}
@@ -239,9 +258,17 @@ export function BranchPickerRefItem({
       onClick={onClick}
       onContextMenu={onContextMenu}
     >
-      <div className="flex w-full min-w-0 items-center justify-between gap-2">
+      <div className="flex w-full min-w-0 items-center gap-2.5">
+        <Icon aria-hidden className="size-[15px] shrink-0 text-muted-foreground" />
         <MiddleTruncate value={itemValue} className="flex-1" />
-        {badge && <span className="shrink-0 text-3xs text-dim-foreground">{badge}</span>}
+        {badge ? (
+          <Badge variant="secondary" size="sm">
+            {badge}
+          </Badge>
+        ) : null}
+        {refName.current ? (
+          <CheckIcon aria-label={gt("Current branch")} className="size-[13px] shrink-0" />
+        ) : null}
       </div>
     </ComboboxItem>
   );

@@ -18,6 +18,7 @@ const buttonVariants = cva(
         compact:
           "h-7 gap-1 rounded-md px-[calc(--spacing(2)-1px)] text-meta before:rounded-[calc(var(--radius-md)-1px)] [&_svg:not([class*='size-'])]:size-3.5",
         default: "h-9 px-[calc(--spacing(3)-1px)] sm:h-8",
+        action: "h-8 gap-1.5 px-[calc(--spacing(2.5)-1px)]",
         standard: "h-7 gap-1.5 px-[calc(--spacing(3)-1px)] text-[0.8125rem]",
         icon: "size-9 sm:size-8",
         "icon-micro":
@@ -105,6 +106,8 @@ const contentButtonVariants = cva("outline-none", {
         "cursor-pointer overflow-hidden rounded-card border border-transparent text-left transition-colors focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-pressed:bg-settings-effective-fill not-aria-pressed:surface-card-settings-rim not-aria-pressed:hover:surface-ghost-hover aria-pressed:shadow-[inset_0_0_0_1px_var(--settings-active-rim)]",
       "drag-chip":
         "flex h-6.5 cursor-grab items-center gap-1.5 rounded-item surface-raised px-2.25 text-meta text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing",
+      "selection-action":
+        "flex h-5.5 cursor-pointer items-center gap-1.5 rounded-row surface-selected px-2 text-caption text-foreground hover:text-strong-foreground focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-ring",
       panel:
         "flex flex-col overflow-hidden rounded-item bg-background text-start focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-expanded:ring-1 aria-expanded:ring-inset aria-expanded:ring-strong-foreground/70",
       "action-row":

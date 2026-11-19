@@ -1,10 +1,8 @@
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
+import { resolveProviderSkillSourceKind } from "@t3tools/client-runtime/providerSkills";
 import {
-  resolveProviderSkillSourceKind,
-  type ProviderSkillSourceKind,
-} from "@t3tools/client-runtime/providerSkills";
-import {
+  PROVIDER_DISPLAY_NAMES,
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ProjectEntry,
@@ -16,29 +14,45 @@ import {
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 import {
-  BlocksIcon,
-  FolderIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
+  BoxIcon,
+  CornerDownLeftIcon,
+  EraserIcon,
+  MessageCircleQuestionIcon,
   MessagesSquareIcon,
-  PackageIcon,
-  SettingsIcon,
-  UserRoundIcon,
+  SearchXIcon,
+  TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { memo, useLayoutEffect, useRef, useState } from "react";
+import {
+  Children,
+  memo,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
+import { m as resolveMessage, type MessageResolver } from "~/i18n/messages";
 import { Badge } from "../ui/badge";
-import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
+import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
+import { Kbd } from "../ui/kbd";
+import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
-import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
-export type ComposerCommandItem = { readonly metadata?: string | undefined } & (
+export type ComposerCommandItem = {
+  readonly metadata?: string | undefined;
+  readonly environmentLabel?: string | undefined;
+} & (
   | {
       id: string;
       type: "path";
@@ -107,6 +121,88 @@ export type ComposerCommandItem = { readonly metadata?: string | undefined } & (
     }
 );
 
+export interface ComposerCommandGroup {
+  readonly key: string;
+  readonly label: string;
+  readonly items: ComposerCommandItem[];
+}
+
+function providerLabel(provider: ProviderDriverKind, resolve: MessageResolver): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? resolve(msg("Provider"));
+}
+
+function composerCommandItemGroup(
+  item: ComposerCommandItem,
+  triggerKind: ComposerTriggerKind | null,
+  resolve: MessageResolver,
+): { key: string; label: string } {
+  switch (item.type) {
+    case "slash-command":
+      return { key: "t3code", label: "T3 Code" };
+    case "provider-slash-command":
+      return { key: `provider:${item.provider}`, label: providerLabel(item.provider, resolve) };
+    case "skill": {
+      if (triggerKind === "slash-command") return { key: "skills", label: resolve(msg("Skills")) };
+      // `$` groups skills by where they come from, which replaces the per-row source badge.
+      const source = resolveProviderSkillSourceKind(item.skill);
+      if (source === "personal") {
+        return {
+          key: "skills:personal",
+          label: resolve(msg("Personal", { $context: "skill source group" })),
+        };
+      }
+      if (source === "repo" || source === "project") {
+        return {
+          key: "skills:project",
+          label: resolve(msg("Project", { $context: "skill source group" })),
+        };
+      }
+      if (source === "app") return { key: "skills:app", label: resolve(msg("Plugins")) };
+      return { key: `skills:${item.provider}`, label: providerLabel(item.provider, resolve) };
+    }
+    case "path":
+      return { key: "paths", label: resolve(msg("Files and folders")) };
+    case "pull-request":
+      return { key: "pull-requests", label: resolve(msg("Pull requests")) };
+    case "thread":
+      return { key: "threads", label: resolve(msg("Threads")) };
+    case "environment":
+      return { key: "environments", label: resolve(msg("Machines")) };
+    case "model":
+      return { key: "models", label: resolve(msg("Models")) };
+  }
+}
+
+/**
+ * Splits a ranked menu list into labelled groups. Groups appear in the order of their best
+ * item and keep the ranking inside, so the top match stays first and highlighted. Callers
+ * flatten the groups to get the arrow-key order, which then matches what the menu shows.
+ */
+export function groupComposerCommandItems(
+  items: ReadonlyArray<ComposerCommandItem>,
+  triggerKind: ComposerTriggerKind | null,
+  resolve: MessageResolver = resolveMessage,
+): ComposerCommandGroup[] {
+  const groups = new Map<string, { key: string; label: string; items: ComposerCommandItem[] }>();
+  for (const item of items) {
+    const group = composerCommandItemGroup(item, triggerKind, resolve);
+    const existing = groups.get(group.key);
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      groups.set(group.key, { ...group, items: [item] });
+    }
+  }
+  return [...groups.values()];
+}
+
+const SLASH_COMMAND_ICONS: Record<ComposerSlashCommand, LucideIcon> = {
+  model: BoxIcon,
+  clear: EraserIcon,
+  side: MessageCircleQuestionIcon,
+  btw: MessageCircleQuestionIcon,
+};
+
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   listId: string;
   items: ComposerCommandItem[];
@@ -121,6 +217,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   const gt = useGT();
   const m = useMessages();
   const listRef = useRef<HTMLDivElement>(null);
+  const groups = groupComposerCommandItems(props.items, props.triggerKind, m);
+  // `#` lists threads right away, but pull requests come from the git host and can take
+  // seconds. Hold their group open with a loading row so they don't silently pop in later.
+  const pullRequestsPending =
+    props.isLoading &&
+    props.triggerKind === "pull-request" &&
+    !groups.some((group) => group.key === "pull-requests");
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the highlighted menu item's DOM node into view
   useLayoutEffect(() => {
@@ -141,11 +244,13 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         );
       }}
     >
-      <ComposerBanner.Surface
-        surface="popover"
+      <ComposerMenuSurface
         ref={listRef}
-        className="flex min-h-0 w-full flex-col overflow-hidden pb-(--chat-composer-attachment-overlap) **:data-[slot=command-item]:rounded-lg **:data-[slot=scroll-area-scrollbar]:data-[orientation=vertical]:my-4"
-        data-composer-command-drawer="true"
+        data-composer-command-menu="true"
+        // Keep focus in the editor so a click anywhere in the menu leaves it open.
+        onMouseDown={(event) => {
+          event.preventDefault();
+        }}
       >
         {props.items.length > 0 ? (
           <CommandList
@@ -153,46 +258,197 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
             aria-label={
               props.triggerKind ? m(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]) : undefined
             }
-            inset="compact"
-            className="max-h-72 min-h-0 scroll-pb-6"
+            className="max-h-112 min-h-0"
           >
-            <CommandGroup>
-              {props.items.map((item) => (
-                <ComposerCommandMenuItem
-                  key={item.id}
-                  optionId={composerSuggestionOptionId(props.listId, item.id)}
-                  item={item}
-                  triggerKind={props.triggerKind}
-                  resolvedTheme={props.resolvedTheme}
-                  isActive={props.activeItemId === item.id}
-                  onHighlight={props.onHighlightedItemChange}
-                  onSelect={props.onSelect}
-                />
-              ))}
-            </CommandGroup>
+            {pullRequestsPending ? (
+              <CommandGroup>
+                <CommandGroupLabel>{gt("Pull requests")}</CommandGroupLabel>
+                <div
+                  role="status"
+                  className="flex min-h-8 items-center gap-2 px-2 text-meta text-dim-foreground"
+                >
+                  <Spinner aria-hidden className="size-[15px] shrink-0" />
+                  <span className="min-w-0 truncate">{gt("Loading pull requests...")}</span>
+                </div>
+              </CommandGroup>
+            ) : null}
+            {groups.map((group) => (
+              <CommandGroup key={group.key}>
+                <CommandGroupLabel>{group.label}</CommandGroupLabel>
+                {group.items.map((item) => (
+                  <ComposerCommandMenuItem
+                    key={item.id}
+                    optionId={composerSuggestionOptionId(props.listId, item.id)}
+                    item={item}
+                    triggerKind={props.triggerKind}
+                    resolvedTheme={props.resolvedTheme}
+                    isActive={props.activeItemId === item.id}
+                    onHighlight={props.onHighlightedItemChange}
+                    onSelect={props.onSelect}
+                  />
+                ))}
+              </CommandGroup>
+            ))}
           </CommandList>
         ) : (
-          <div className="px-5 pt-3.5 pb-7">
-            <p className="text-secondary-label text-xs">
-              {props.isLoading
-                ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
-                  ? gt("Searching workspace skills...")
-                  : props.triggerKind === "pull-request"
-                    ? gt("Finding pull request...")
-                    : gt("Searching workspace files...")
-                : (props.emptyStateText ??
-                  (props.triggerKind === "skill"
-                    ? gt("No skills found. Try / to browse provider commands.")
-                    : props.triggerKind === "path"
-                      ? gt("No matching files or folders.")
-                      : gt("No matching command.")))}
-            </p>
+          // Nothing to list yet: the menu keeps its header and one row's height,
+          // so searching and no-match read as states of the same list.
+          <div className="p-2">
+            {props.triggerKind ? (
+              <div className="px-2 py-1.5 text-meta text-dim-foreground">
+                {m(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind])}
+              </div>
+            ) : null}
+            <div
+              role="status"
+              data-composer-command-menu-empty={props.isLoading ? "loading" : "no-match"}
+              className="flex min-h-8 items-center gap-2 px-2 text-meta text-dim-foreground"
+            >
+              {props.isLoading ? (
+                <Spinner aria-hidden className="size-[15px] shrink-0" />
+              ) : (
+                <SearchXIcon aria-hidden className="size-[15px] shrink-0" />
+              )}
+              <span className="min-w-0 truncate">
+                {props.isLoading
+                  ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
+                    ? gt("Searching workspace skills...")
+                    : props.triggerKind === "pull-request"
+                      ? gt("Finding pull request...")
+                      : gt("Searching workspace files...")
+                  : (props.emptyStateText ??
+                    (props.triggerKind === "skill"
+                      ? gt("No skills found. Try / to browse provider commands.")
+                      : props.triggerKind === "path"
+                        ? gt("No matching files or folders.")
+                        : gt("No matching command.")))}
+              </span>
+            </div>
           </div>
         )}
-      </ComposerBanner.Surface>
+        <ComposerMenuFooter
+          hints={
+            props.items.length > 0
+              ? [
+                  {
+                    keys: [
+                      <>
+                        <ArrowUpIcon />
+                        <ArrowDownIcon />
+                      </>,
+                    ],
+                    label: gt("Navigate"),
+                  },
+                  {
+                    keys: [<CornerDownLeftIcon key="enter" />],
+                    label:
+                      props.triggerKind === "slash-command"
+                        ? gt("Run", { $context: "verb, runs the highlighted command" })
+                        : gt("Insert", { $context: "verb, inserts the highlighted item" }),
+                  },
+                  { keys: ["esc"], label: gt("Close") },
+                ]
+              : [{ keys: ["esc"], label: gt("Close") }]
+          }
+        />
+      </ComposerMenuSurface>
     </Command>
   );
 });
+
+/** The floating popover the composer's menus share: 520px wide, above the composer. */
+function ComposerMenuSurface({ className, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      className={cn(
+        "surface-popover kbd-in-popover flex min-h-0 w-full flex-col overflow-hidden rounded-card text-popover-foreground [--kbd-background:var(--kbd-fill)]",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+/** Key hints under a hairline, one per action the open menu takes from the keyboard. */
+function ComposerMenuFooter(props: {
+  hints: ReadonlyArray<{ keys: ReadonlyArray<ReactNode>; label: string }>;
+}) {
+  return (
+    <div
+      data-slot="composer-menu-footer"
+      className="mx-1.5 mb-1.5 flex shrink-0 items-center gap-3 border-t border-divider px-2.5 pt-2 pb-1 font-normal text-caption text-dim-foreground pointer-coarse:hidden"
+    >
+      {props.hints.map((hint) => (
+        <span key={hint.label} className="inline-flex items-center gap-1.25">
+          <span className="inline-flex items-center gap-0.5">
+            {Children.map(hint.keys, (key) => (
+              <Kbd size="sm">{key}</Kbd>
+            ))}
+          </span>
+          {hint.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ComposerCommandItemIcon(props: {
+  item: ComposerCommandItem;
+  resolvedTheme: "light" | "dark";
+  isActive: boolean;
+}) {
+  const { item } = props;
+  const iconClassName = cn(
+    "size-[15px] shrink-0",
+    props.isActive ? "text-foreground" : "text-muted-foreground",
+  );
+  switch (item.type) {
+    case "path":
+      return (
+        <PierreEntryIcon
+          pathValue={item.path}
+          kind={item.pathKind}
+          theme={props.resolvedTheme}
+          className="size-[15px]"
+        />
+      );
+    case "pull-request": {
+      const presentation = resolvePullRequestState(item.pullRequest);
+      return (
+        <presentation.Icon
+          role="img"
+          aria-label={presentation.label}
+          className={cn("size-[15px] shrink-0", presentation.toneClassName)}
+        />
+      );
+    }
+    case "thread":
+      return <MessagesSquareIcon aria-hidden="true" className={iconClassName} />;
+    case "environment":
+      return (
+        <EnvironmentMachineIcon kind={item.machine} aria-hidden="true" className={iconClassName} />
+      );
+    case "slash-command": {
+      const Icon = SLASH_COMMAND_ICONS[item.command];
+      return <Icon aria-hidden="true" className={iconClassName} />;
+    }
+    case "provider-slash-command":
+      return <TerminalIcon aria-hidden="true" className={iconClassName} />;
+    case "skill":
+      return <BoxIcon aria-hidden="true" className={iconClassName} />;
+    case "model":
+      return (
+        <ProviderInstanceIcon
+          driverKind={item.driverKind}
+          displayName={item.providerDisplayName}
+          acpRegistryAgentId={item.acpRegistryAgentId}
+          acpRegistryIconUrl={item.acpRegistryIconUrl}
+          className="size-[15px] shrink-0"
+          iconClassName="size-[15px]"
+        />
+      );
+  }
+}
 
 const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   optionId: string;
@@ -204,8 +460,6 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const m = useMessages();
-  const skillSourceKind =
-    props.item.type === "skill" ? resolveProviderSkillSourceKind(props.item.skill) : null;
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
@@ -224,65 +478,28 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     <CommandItem
       render={<div id={props.optionId} />}
       aria-selected={props.isActive}
-      spacing="composer"
       value={props.item.id}
       data-composer-item-id={props.item.id}
       active={props.isActive}
       onMouseMove={() => {
         if (!props.isActive) props.onHighlight(props.item.id);
       }}
-      onMouseDown={(event) => {
-        event.preventDefault();
-      }}
       onClick={() => {
         props.onSelect(props.item);
       }}
     >
-      {props.item.type === "path" ? (
-        <PierreEntryIcon
-          pathValue={props.item.path}
-          kind={props.item.pathKind}
-          theme={props.resolvedTheme}
-          className="size-[15px]"
-        />
-      ) : null}
-      {props.item.type === "thread" ? (
-        <MessagesSquareIcon
-          aria-hidden="true"
-          className="size-[15px] shrink-0 text-secondary-label"
-        />
-      ) : null}
-      {props.item.type === "environment" ? (
-        <EnvironmentMachineIcon
-          kind={props.item.machine}
-          aria-hidden="true"
-          className="size-4 shrink-0 text-secondary-label"
-        />
-      ) : null}
-      {props.item.type === "model" ? (
-        <ProviderInstanceIcon
-          driverKind={props.item.driverKind}
-          displayName={props.item.providerDisplayName}
-          acpRegistryAgentId={props.item.acpRegistryAgentId}
-          acpRegistryIconUrl={props.item.acpRegistryIconUrl}
-          className="size-4 shrink-0"
-          iconClassName="size-4"
-        />
-      ) : null}
-      {pullRequestPresentation ? (
-        <pullRequestPresentation.Icon
-          role="img"
-          aria-label={pullRequestPresentation.label}
-          className={cn("size-[15px] shrink-0", pullRequestPresentation.toneClassName)}
-        />
-      ) : null}
-      <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      <ComposerCommandItemIcon
+        item={props.item}
+        resolvedTheme={props.resolvedTheme}
+        isActive={props.isActive}
+      />
+      <span className="flex min-w-0 flex-1 flex-col items-start gap-0.5">
         <span
           className={cn(
-            "min-w-0 max-w-[45%] shrink-0 truncate text-xs font-medium",
+            "min-w-0 max-w-full truncate text-label",
             props.item.type === "pull-request" ||
               (props.triggerKind === "slash-command" && !isSlashSkill)
-              ? "font-mono"
+              ? "font-mono text-meta [--type-meta:0.78125rem]"
               : "font-sans",
           )}
         >
@@ -301,23 +518,38 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             render={
               <span
                 ref={descriptionRef}
-                className="min-w-0 flex-1 truncate text-left text-dim-foreground text-xs"
+                className="min-w-0 flex-1 truncate text-left font-normal text-dim-foreground text-meta"
               />
             }
           >
             {props.item.description}
+            {props.item.environmentLabel ? (
+              <span className="block">{props.item.environmentLabel}</span>
+            ) : null}
           </TooltipTrigger>
           <TooltipPopup>{props.item.description}</TooltipPopup>
         </Tooltip>
-        {skillSourceKind ? (
-          <SkillSourceBadge
-            kind={skillSourceKind}
-            showSkillSuffix={props.triggerKind === "skill"}
-          />
-        ) : null}
       </span>
+
       {props.item.metadata ? (
         <span className="shrink-0 text-meta text-dim-foreground">{props.item.metadata}</span>
+      ) : null}
+      {pullRequestPresentation ? (
+        <Badge
+          variant={
+            props.item.type === "pull-request" &&
+            props.item.pullRequest.state === "open" &&
+            !props.item.pullRequest.isDraft
+              ? "success"
+              : "secondary"
+          }
+        >
+          {pullRequestPresentation.label}
+        </Badge>
+      ) : props.isActive ? (
+        <Kbd size="sm" aria-hidden="true">
+          <CornerDownLeftIcon />
+        </Kbd>
       ) : null}
     </CommandItem>
   );
@@ -330,58 +562,7 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
   path: msg("Files and folders"),
-  "pull-request": msg("Pull requests"),
+  "pull-request": msg("Pull requests and threads"),
   "slash-command": msg("Commands"),
   skill: msg("Skills"),
 };
-
-const SKILL_SOURCE_ICON_BY_KIND: Record<ProviderSkillSourceKind, LucideIcon> = {
-  app: BlocksIcon,
-  repo: FolderIcon,
-  project: FolderIcon,
-  personal: UserRoundIcon,
-  system: SettingsIcon,
-  other: PackageIcon,
-};
-
-const SKILL_SOURCE_LABEL_BY_KIND: Record<
-  ProviderSkillSourceKind,
-  { readonly label: string; readonly skillLabel: string }
-> = {
-  app: {
-    label: msg("App", { $context: "skill source badge" }),
-    skillLabel: msg("App Skill"),
-  },
-  repo: {
-    label: msg("Repo", { $context: "skill source badge" }),
-    skillLabel: msg("Repo Skill"),
-  },
-  project: {
-    label: msg("Project", { $context: "skill source badge" }),
-    skillLabel: msg("Project Skill"),
-  },
-  personal: {
-    label: msg("Personal", { $context: "skill source badge" }),
-    skillLabel: msg("Personal Skill"),
-  },
-  system: {
-    label: msg("System", { $context: "skill source badge" }),
-    skillLabel: msg("System Skill"),
-  },
-  other: {
-    label: msg("Provider", { $context: "skill source badge" }),
-    skillLabel: msg("Provider Skill"),
-  },
-};
-
-function SkillSourceBadge(props: { kind: ProviderSkillSourceKind; showSkillSuffix: boolean }) {
-  const m = useMessages();
-  const Icon = SKILL_SOURCE_ICON_BY_KIND[props.kind];
-  const labels = SKILL_SOURCE_LABEL_BY_KIND[props.kind];
-  return (
-    <Badge className="ms-auto" variant="secondary">
-      <Icon aria-hidden="true" className="text-current" />
-      {m(props.showSkillSuffix ? labels.skillLabel : labels.label)}
-    </Badge>
-  );
-}

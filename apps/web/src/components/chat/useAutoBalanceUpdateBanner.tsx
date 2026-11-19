@@ -21,7 +21,7 @@ import {
   ServerUpdateProgress,
   ServerUpdatesAction,
 } from "../ServerUpdateAction";
-import { InlineButton } from "../ui/button";
+import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 import { ComposerServerUpdateIcon } from "./ComposerServerUpdateStatus";
@@ -81,86 +81,108 @@ export function useAutoBalanceUpdateBanner(
   const targets = machines.filter(
     (machine) => machine.connected && machine.remoteUpdate && machine.state.status !== "running",
   );
-  const count = running || failed || machines.length;
   const status = running ? "running" : failed ? "failed" : "idle";
   const title = running
-    ? gt("{count, plural, one {Updating {count} machine} other {Updating {count} machines}}", {
-        count,
-      })
+    ? gt("Updating")
     : failed
-      ? gt(
-          "{count, plural, one {Could not update {count} machine} other {Could not update {count} machines}}",
-          { count },
-        )
-      : gt(
-          "{count, plural, one {Update available for {count} machine} other {Update available for {count} machines}}",
-          { count },
-        );
+      ? gt("Could not update", { $context: "server update banner title, machine names follow" })
+      : manual === machines.length
+        ? gt("Manual update required")
+        : gt("Update available for", {
+            $context: "server update banner title, machine names follow",
+          });
+  const listed = running
+    ? machines.filter((machine) => machine.state.status === "running")
+    : failed
+      ? machines.filter((machine) => machine.state.status === "failed")
+      : machines;
+  const machineNames = listed.map((machine) => machine.serverLabel).join(", ");
+  const viewMachinesLabel = running
+    ? gt("Updating {machines}. View machines", { machines: machineNames })
+    : failed
+      ? gt("Could not update {machines}. View machines", { machines: machineNames })
+      : manual === machines.length
+        ? gt("Manual update required for {machines}. View machines", { machines: machineNames })
+        : gt("Update available for {machines}. View machines", { machines: machineNames });
+  // Every machine updates from "Update all" unless some need a manual step or
+  // are mid-update; then the per-machine list is one click away.
+  const showMachineList =
+    running > 0 || failed > 0 || manual > 0 || targets.length < machines.length;
   return {
     id: `auto-balance-server-updates-${dismissedNotices.size}`,
     variant: failed ? "error" : "default",
     group: "environment",
     icon: <ComposerServerUpdateIcon status={status} />,
-    title: (
-      <Popover>
-        <PopoverTrigger
-          render={<InlineButton />}
-          className="max-w-full"
-          aria-label={gt("{title}. View machines", { title })}
-        >
-          <span className="min-w-0 truncate">{title}</span>
-        </PopoverTrigger>
-        <PopoverPopup side="top" align="start" width="md">
-          <div className="space-y-3 text-xs">
-            {machines.map((machine) => (
-              <div key={machine.environmentId} className="space-y-1">
-                <div className="font-medium">{machine.serverLabel}</div>
-                {machine.state.status !== "idle" ? (
-                  <ServerUpdateProgress state={machine.state} />
-                ) : !machine.remoteUpdate ? (
-                  <>
-                    <div className="text-muted-foreground">
-                      <T>Manual update required</T>
-                    </div>
-                    <ServerUpdateAction {...machine} />
-                  </>
-                ) : (
-                  <div className="text-muted-foreground">
-                    {machine.connected
-                      ? gt("Ready to update to {version}", { version: machine.targetVersion })
-                      : gt("Reconnect this machine to update")}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </PopoverPopup>
-      </Popover>
-    ),
+    title,
     description:
-      manual > 0
-        ? gt(
-            "{manual, plural, one {{manual} needs a manual update} other {{manual} need a manual update}}",
-            { manual },
-          )
-        : undefined,
-    actions:
-      running === 0 && targets.length > 0 ? (
-        <ServerUpdatesAction
-          targets={targets}
-          variant="ghost"
-          label={
-            failed > 0
-              ? gt("Retry", { $context: "verb, retries the server updates" })
-              : targets.length === machines.length
-                ? gt("Update all")
-                : gt(
-                    "{count, plural, one {Update {count} machine} other {Update {count} machines}}",
-                    { count: targets.length },
-                  )
-          }
-        />
-      ) : undefined,
+      manual > 0 && manual < machines.length ? (
+        <span className="inline-flex flex-col">
+          <span>
+            {gt(
+              "{manual, plural, one {{manual} needs a manual update} other {{manual} need a manual update}}",
+              { manual },
+            )}
+          </span>
+          <span>{machineNames}</span>
+        </span>
+      ) : (
+        machineNames
+      ),
+    actions: (
+      <>
+        {showMachineList ? (
+          <Popover>
+            <PopoverTrigger
+              render={<Button size="xs" variant="secondary" />}
+              aria-label={viewMachinesLabel}
+            >
+              <T>View machines</T>
+            </PopoverTrigger>
+            <PopoverPopup side="top" align="start" width="md">
+              <div className="space-y-3 text-xs">
+                {machines.map((machine) => (
+                  <div key={machine.environmentId} className="space-y-1">
+                    <div className="font-medium">{machine.serverLabel}</div>
+                    {machine.state.status !== "idle" ? (
+                      <ServerUpdateProgress state={machine.state} />
+                    ) : !machine.remoteUpdate ? (
+                      <>
+                        <div className="text-muted-foreground">
+                          <T>Manual update required</T>
+                        </div>
+                        <ServerUpdateAction {...machine} />
+                      </>
+                    ) : (
+                      <div className="text-muted-foreground">
+                        {machine.connected
+                          ? gt("Ready to update to {version}", { version: machine.targetVersion })
+                          : gt("Reconnect this machine to update")}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </PopoverPopup>
+          </Popover>
+        ) : null}
+        {running === 0 && targets.length > 0 ? (
+          <ServerUpdatesAction
+            targets={targets}
+            variant="default"
+            label={
+              failed > 0
+                ? gt("Retry", { $context: "verb, retries the server updates" })
+                : targets.length === machines.length
+                  ? gt("Update all")
+                  : gt(
+                      "{count, plural, one {Update {count} machine} other {Update {count} machines}}",
+                      { count: targets.length },
+                    )
+            }
+          />
+        ) : null}
+      </>
+    ),
     dismissLabel: gt("Dismiss update notice"),
     ...(running
       ? {}

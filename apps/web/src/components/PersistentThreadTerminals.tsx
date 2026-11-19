@@ -5,10 +5,14 @@ import {
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
+import {
+  resolveTerminalActivityStatus,
+  type TerminalActivityStatus,
+} from "@t3tools/client-runtime/state/terminal";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabelsCopy";
-import { useMessages } from "gt-react";
 import { memo, useEffect } from "react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -135,6 +139,10 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       session.target.terminalId,
       resolveTerminalSessionLabel(session.target.terminalId, session.state.summary, messages),
     );
+  }
+  const terminalStatusById = new Map<string, TerminalActivityStatus>();
+  for (const session of drawerTerminalSessions) {
+    terminalStatusById.set(session.target.terminalId, resolveTerminalActivityStatus(session.state));
   }
   const terminalLaunchLocationsById = new Map<string, TerminalLaunchLocationWithEnv>();
   for (const session of drawerTerminalSessions) {
@@ -278,6 +286,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
           onHeightChange={setTerminalHeight}
           onAddTerminalContext={handleAddTerminalContext}
           terminalLabelsById={terminalLabelsById}
+          terminalStatusById={terminalStatusById}
           terminalLaunchLocationsById={terminalLaunchLocationsById}
         />
       </div>

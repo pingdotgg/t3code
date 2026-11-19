@@ -115,6 +115,46 @@ export function useMediaActions(source: MediaActionSource) {
   return { save, copyImage, canReadMedia, assertCanReadMedia };
 }
 
+export type MediaByteAction = "save" | "copy-image";
+
+/** Saves or copies media with the same progress and failure toasts as the media menu. */
+export function useMediaByteAction(source: MediaActionSource) {
+  const { save, copyImage } = useMediaActions(source);
+  return async (action: MediaByteAction) => {
+    const isImage = source.kind === "image";
+    const progressToast = toastManager.add({
+      type: "loading",
+      title:
+        action === "save"
+          ? isImage
+            ? m(msg("Preparing image download…"))
+            : m(msg("Preparing video download…"))
+          : m(msg("Copying image…")),
+    });
+    try {
+      await (action === "save" ? save() : copyImage());
+      toastManager.update(progressToast, {
+        type: "success",
+        title: action === "save" ? m(msg("Download started")) : m(msg("Image copied")),
+      });
+    } catch (error) {
+      toastManager.update(
+        progressToast,
+        stackedThreadToast({
+          type: "error",
+          title:
+            action === "save"
+              ? isImage
+                ? m(msg("Could not save image"))
+                : m(msg("Could not save video"))
+              : m(msg("Could not copy image")),
+          description: thrownErrorMessage(error, m) ?? m(msg("The media action failed.")),
+        }),
+      );
+    }
+  };
+}
+
 export function MediaActions({
   source,
   children,

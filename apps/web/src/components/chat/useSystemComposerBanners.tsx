@@ -12,6 +12,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { WifiOffIcon } from "lucide-react";
+import { secondTick } from "@t3tools/client-runtime/clock";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { environmentCatalog } from "../../connection/catalog";
 import { ConnectionDiagnosisHeadline } from "../settings/ConnectionDiagnosisDetails";
@@ -214,15 +215,24 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
               }),
         description: awaitingApproval ? (
           (unavailableConnection.error ?? undefined)
+        ) : environmentReconnecting && typeof unavailableConnection.retryAt === "number" ? (
+          <RetryCountdown retryAt={unavailableConnection.retryAt} />
         ) : activeEnvironment ? (
           <ConnectionDiagnosisHeadline environment={activeEnvironment} />
         ) : undefined,
+        descriptionDetails:
+          !awaitingApproval &&
+          environmentReconnecting &&
+          typeof unavailableConnection.retryAt === "number" &&
+          activeEnvironment ? (
+            <ConnectionDiagnosisHeadline environment={activeEnvironment} />
+          ) : undefined,
         actions: (
           <>
             {unavailableConnection.phase !== "connecting" ? (
               <Button
                 size="xs"
-                variant="ghost"
+                variant="secondary"
                 onClick={() =>
                   void handleReconnectActiveEnvironmentStable(
                     activeEnvironmentUnavailableState.environmentId,
@@ -232,6 +242,13 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
                 {environmentReconnecting ? gt("Retry now") : gt("Reconnect")}
               </Button>
             ) : null}
+            <Button
+              size="xs"
+              variant="secondary"
+              onClick={() => void navigate({ to: "/settings/connections" })}
+            >
+              {gt("Connections")}
+            </Button>
             {disconnectAction}
           </>
         ),
@@ -251,20 +268,25 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
         variant: updateFailed ? "error" : "default",
         group: "environment",
         icon: <ComposerServerUpdateIcon status={serverUpdateState.status} />,
-        title:
-          versionMismatchServerName !== null
-            ? updateFailed
-              ? gt("Could not update {environment} server", {
-                  environment: versionMismatchServerName,
-                })
-              : gt("Updating {environment} server", { environment: versionMismatchServerName })
-            : updateFailed
-              ? gt("Could not update server")
-              : gt("Updating server"),
+        title: updateFailed
+          ? gt("Could not update", { $context: "server update banner title, machine names follow" })
+          : gt("Updating"),
         description:
-          serverUpdateState.status === "failed"
-            ? serverUpdateState.message
-            : serverUpdateStageLabel(serverUpdateState.stage, messages),
+          serverUpdateState.status === "failed" ? (
+            `${versionMismatchServerLabel}: ${serverUpdateState.message}`
+          ) : (
+            <span className="inline-flex flex-col">
+              <span>{serverUpdateStageLabel(serverUpdateState.stage, messages)}</span>
+              <span>
+                {versionMismatchServerName !== null
+                  ? gt("{environment} server to {version}", {
+                      environment: versionMismatchServerName,
+                      version: serverUpdateState.targetVersion,
+                    })
+                  : gt("Server to {version}", { version: serverUpdateState.targetVersion })}
+              </span>
+            </span>
+          ),
         actions: !updateFailed ? (
           disconnectAction
         ) : !versionMismatch ||
@@ -278,7 +300,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
             desktopAppUpdate={versionMismatchDesktopAppUpdate}
             targetVersion={versionMismatch.clientVersion}
             label={gt("Retry", { $context: "verb, retries the server update" })}
-            variant="ghost"
+            variant="secondary"
           />
         ),
         ...(updateFailed
@@ -295,4 +317,29 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
     if (autoBalanceUpdateBanner) items.push(autoBalanceUpdateBanner);
     return items;
   })() as ComposerBannerStackItem[];
+}
+
+/** The reconnect countdown updates its text from the shared clock. */
+function RetryCountdown({ retryAt }: { readonly retryAt: number }) {
+  const gt = useGT();
+  const attachText = (element: HTMLSpanElement | null) => {
+    if (!element) return;
+    const update = () => {
+      const now = Date.now();
+      const seconds = Math.ceil((retryAt - now) / 1000);
+      element.textContent =
+        seconds > 0 ? gt("Trying again in {seconds}s", { seconds }) : gt("Trying again");
+      return now < retryAt;
+    };
+    if (!update()) return;
+    const stop = secondTick.subscribe(() => {
+      if (!update()) stop();
+    });
+    return stop;
+  };
+  return (
+    <span ref={attachText} className="tabular-nums">
+      {gt("Trying again")}
+    </span>
+  );
 }

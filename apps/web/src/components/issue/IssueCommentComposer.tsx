@@ -9,9 +9,12 @@ import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFie
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+import {
+  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
+  ComposerSendPill,
+} from "../chat/ComposerPrimaryActions";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
-import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
@@ -97,23 +100,24 @@ export function IssueCommentComposer({
             />
             <div className="flex flex-wrap items-center justify-end gap-2 px-2.5 pb-2.5">
               <TextFieldSpeechControls speech={speech} disabled={locked} />
-              <Button
-                type="submit"
-                variant="pill"
-                size="icon"
-                disabled={submitDisabled}
-                aria-label={
-                  submitting
-                    ? gt("Posting comment")
-                    : gt("Comment", { $context: "verb, posts the comment" })
-                }
-              >
-                {submitting ? (
-                  <Spinner size="sm" aria-hidden />
-                ) : (
-                  <ArrowUpIcon aria-hidden className="size-4" />
-                )}
-              </Button>
+              <ComposerSendPill>
+                <button
+                  type="submit"
+                  className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
+                  disabled={submitDisabled}
+                  aria-label={
+                    submitting
+                      ? gt("Posting comment")
+                      : gt("Comment", { $context: "verb, posts the comment" })
+                  }
+                >
+                  {submitting ? (
+                    <Spinner size="sm" aria-hidden />
+                  ) : (
+                    <ArrowUpIcon aria-hidden className="size-4" />
+                  )}
+                </button>
+              </ComposerSendPill>
             </div>
           </form>
         </ComposerSurface.Host>

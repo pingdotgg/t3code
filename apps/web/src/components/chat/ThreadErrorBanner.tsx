@@ -4,17 +4,15 @@ import {
   CHATGPT_WORKSPACE_ADMIN_REQUEST,
   CHATGPT_WORKSPACE_USAGE_LIMIT_CODE,
 } from "@t3tools/shared/usageLimits";
-import { msg, T, useGT } from "gt-react";
-import { memo } from "react";
-import { m } from "../../i18n/messages";
+import { msg } from "gt-react";
+import { CircleAlertIcon } from "lucide-react";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
-import { Alert, AlertAction, AlertDescription } from "../ui/alert";
-import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { CircleAlertIcon, XIcon } from "lucide-react";
+import { Button } from "../ui/button";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
-import { ExpandableText } from "../settings/ExpandableText";
+import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
 export function copyAdminRequest() {
   void writeTextToClipboard(CHATGPT_WORKSPACE_ADMIN_REQUEST, {
@@ -75,75 +73,65 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
   return bannerKey !== null && sessionDismissedThreadErrorBannerKeys.has(bannerKey);
 }
 
-export const ThreadErrorBanner = memo(function ThreadErrorBanner({
-  error,
-  onDismiss,
-  errorClass,
-  errorCode,
-}: {
-  error: string | null;
-  errorClass?: OrchestrationV2ProviderFailureClass | null;
-  errorCode?: string | null;
-  onDismiss?: () => void;
-}) {
-  const gt = useGT();
-  if (!error) return null;
+/**
+ * The thread's last error as a tray notice. Structured errors show their message;
+ * exact diagnostics open in the notice's details popover. Retry sends the failed
+ * run's prompt again when the thread can run.
+ */
+export function threadErrorBannerItem(
+  {
+    bannerKey,
+    error,
+    errorClass,
+    errorCode,
+    onDismiss,
+    onRetry,
+    retrying = false,
+  }: {
+    bannerKey: string | null;
+    error: string | null;
+    errorClass?: OrchestrationV2ProviderFailureClass | null;
+    errorCode?: string | null;
+    onDismiss?: () => void;
+    onRetry?: (() => void) | null;
+    retrying?: boolean;
+  },
+  resolve: MessageResolver = m,
+): ComposerBannerStackItem | null {
+  if (!error || bannerKey === null) return null;
+  const message = getThreadErrorBannerMessage(error);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const variant = errorClass === "usage_limit" || chatGptLimit ? "warning" : "error";
-  return (
-    <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
-      <Alert
-        variant={variant}
-        surface="floating"
-        controlAlignment="first-line"
-        data-variant={variant}
-      >
-        {chatGptLimit ? (
-          <OpenAI className="size-4 text-foreground!" aria-hidden="true" />
-        ) : (
-          <CircleAlertIcon />
-        )}
-        <AlertDescription>
-          {chatGptLimit ? (
-            <div className="space-y-1">
-              <p className="font-medium">
-                <T>ChatGPT usage limit reached</T>
-              </p>
-              {workspaceLimit ? (
-                <p>
-                  {gt(
-                    "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits.",
-                  )}
-                </p>
-              ) : null}
-            </div>
-          ) : (
-            <ExpandableText text={error} collapsedText={getThreadErrorBannerMessage(error)} />
-          )}
-        </AlertDescription>
-        {(chatGptLimit || onDismiss) && (
-          <AlertAction>
-            {workspaceLimit ? (
-              <Button variant="default" size="sm" onClick={copyAdminRequest}>
-                <T>Copy request for admin</T>
-              </Button>
-            ) : chatGptLimit ? (
-              <ChatGptUsageButton variant="default" size="sm" />
-            ) : null}
-            {onDismiss ? (
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label={gt("Dismiss error")}
-                onClick={onDismiss}
-              >
-                <XIcon />
-              </Button>
-            ) : null}
-          </AlertAction>
-        )}
-      </Alert>
-    </div>
-  );
-});
+  return {
+    id: `thread-error:${bannerKey}`,
+    variant: errorClass === "usage_limit" || chatGptLimit ? "warning" : "error",
+    icon: chatGptLimit ? <OpenAI aria-hidden="true" /> : <CircleAlertIcon />,
+    title: chatGptLimit ? resolve(msg("ChatGPT usage limit reached")) : resolve(msg("Run failed")),
+    description: workspaceLimit
+      ? resolve(
+          msg(
+            "You've reached your workspace's limit for using your ChatGPT plan in other apps. Copy a request to ask your workspace admin for increased usage limits.",
+          ),
+        )
+      : chatGptLimit
+        ? null
+        : message,
+    descriptionDetails:
+      !chatGptLimit && message !== error ? (
+        <span className="whitespace-pre-wrap">{error}</span>
+      ) : undefined,
+    actions: workspaceLimit ? (
+      <Button variant="default" size="xs" onClick={copyAdminRequest}>
+        {resolve(msg("Copy request for admin"))}
+      </Button>
+    ) : chatGptLimit ? (
+      <ChatGptUsageButton variant="secondary" size="xs" />
+    ) : onRetry ? (
+      <Button size="xs" variant="default" disabled={retrying} onClick={onRetry}>
+        {retrying ? resolve(msg("Retrying...")) : resolve(msg("Retry"))}
+      </Button>
+    ) : undefined,
+    dismissLabel: resolve(msg("Dismiss error")),
+    ...(onDismiss ? { onDismiss } : {}),
+  };
+}

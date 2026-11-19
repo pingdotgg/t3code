@@ -12,16 +12,21 @@ type ComposerSubmissionInput = {
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
+/** Characters the provider will receive for this prompt, citations expanded. */
+export function getComposerPromptInputLength(prompt: string): number {
+  const normalizedPrompt = prompt.trim();
+  return Math.max(
+    normalizedPrompt.length,
+    expandAssistantCitationsForProvider(normalizedPrompt).length,
+  );
+}
+
 export function getComposerPromptLengthValidationMessage(
   prompt: string,
   resolve: MessageResolver = m,
   locale: string = getActiveLocale(),
 ): string | null {
-  const normalizedPrompt = prompt.trim();
-  const inputLength = Math.max(
-    normalizedPrompt.length,
-    expandAssistantCitationsForProvider(normalizedPrompt).length,
-  );
+  const inputLength = getComposerPromptInputLength(prompt);
   const excessCharacters = inputLength - PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
   if (excessCharacters <= 0) return null;
 

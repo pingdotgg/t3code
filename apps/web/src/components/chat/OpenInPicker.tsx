@@ -24,14 +24,18 @@ import {
 import { useEnvironment } from "../../state/environments";
 import {
   AppWindowIcon,
+  CheckIcon,
   ChevronDownIcon,
   FolderClosedIcon,
   SquareArrowOutUpRightIcon,
 } from "lucide-react";
 
 import { Group, GroupSeparator } from "../ui/group";
+import { Kbd } from "../ui/kbd";
 import {
   Menu,
+  MenuGroup,
+  MenuGroupLabel,
   MenuItem,
   MenuItemLabel,
   MenuPopup,
@@ -344,8 +348,25 @@ export const OpenInPicker = memo(function OpenInPicker({
             >
               <Icon aria-hidden="true" className={getOpenInIconClass(kind)} />
               <MenuItemLabel>{label}</MenuItemLabel>
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+              {value !== preferredEditor ? null : presentation === "menu" ? (
+                openFavoriteEditorShortcutLabel && (
+                  <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                )
+              ) : (
+                // The popup marks the preferred editor with a check and its shortcut key cap.
+                <span className="ms-auto flex items-center gap-2 ps-4">
+                  <CheckIcon
+                    aria-label={gt("Preferred editor")}
+                    className="size-3.5 text-foreground"
+                  />
+                  {openFavoriteEditorShortcutLabel ? (
+                    isPanel ? (
+                      <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                    ) : (
+                      <Kbd>{openFavoriteEditorShortcutLabel}</Kbd>
+                    )
+                  ) : null}
+                </span>
               )}
             </MenuItem>
           ))}
@@ -504,7 +525,14 @@ export const OpenInPicker = memo(function OpenInPicker({
             <T>Choose editor</T>
           </TooltipPopup>
         </Tooltip>
-        <MenuPopup align="end">{editorItems}</MenuPopup>
+        <MenuPopup align="end" className="min-w-60">
+          <MenuGroup>
+            <MenuGroupLabel>
+              <T>Open in…</T>
+            </MenuGroupLabel>
+            {editorItems}
+          </MenuGroup>
+        </MenuPopup>
       </Menu>
     </Group>
   );

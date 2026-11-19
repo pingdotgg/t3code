@@ -631,7 +631,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         messages,
       )
     : null;
-  // The relative times read the clock; nowMinute re-renders them on the minute.
+  // Derive the formatter clock from the minute subscription so render stays pure.
+  const statusNowMs = Date.parse(`${nowMinute}:00.000Z`);
   const snoozedUntil = activeThreadShell?.snoozedUntil ?? null;
   const settledAt = activeThreadShell?.settledAt ?? null;
   // Same rounding as the sidebar's snoozed shelf, so both read the same hour.
@@ -660,7 +661,9 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       icon={<CheckCircle2Icon />}
       label={
         settledAt
-          ? gt("Settled {time}", { time: formatRelativeTimeLabel(settledAt, undefined, messages) })
+          ? gt("Settled {time}", {
+              time: formatRelativeTimeLabel(settledAt, statusNowMs, messages),
+            })
           : gt("Settled", { $context: "thread status" })
       }
       clockMinute={nowMinute}

@@ -34,6 +34,8 @@ export interface ExpandedImageItem {
   originalUrl?: string;
   srcFragment?: string;
   actionsSource?: MediaActionSource;
+  /** Known for attachments; markdown images only learn their pixel size once loaded. */
+  sizeBytes?: number;
 }
 
 export interface ExpandedImagePreview {
@@ -192,6 +194,7 @@ export function buildExpandedImagePreview(
             name: image.name,
             mimeType: image.mimeType,
             source: image.source,
+            sizeBytes: image.sizeBytes,
           },
         ]
       : [],
@@ -208,6 +211,7 @@ export function buildExpandedImagePreview(
       src: image.src,
       name: image.name,
       mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
       ...(image.source?.kind === "snap-shot"
         ? {
             source: image.source,
