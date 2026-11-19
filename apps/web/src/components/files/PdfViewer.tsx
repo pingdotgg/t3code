@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { msg, useGT } from "gt-react";
@@ -144,6 +145,7 @@ export default function PdfViewer(props: {
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
+  actions?: ReactNode;
 }) {
   const gt = useGT();
   const [savedPosition] = useState(() =>
@@ -448,6 +450,7 @@ export default function PdfViewer(props: {
             </FileSurfaceAction>
           </>
         ) : null}
+        {props.actions}
       </div>
       <div
         ref={scroll}

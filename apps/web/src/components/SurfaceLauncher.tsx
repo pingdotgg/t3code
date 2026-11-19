@@ -114,10 +114,10 @@ export const SURFACE_LAUNCHER_ENTRIES: ReadonlyArray<{
   },
   {
     kind: "pull-requests",
-    label: msg("Linked pull requests"),
+    label: msg("Linked items"),
     icon: PullRequestGlyph.link,
     shortcut: "L",
-    hint: msg("No linked pull requests available."),
+    hint: msg("No linked items available."),
   },
   {
     kind: "side-chat",

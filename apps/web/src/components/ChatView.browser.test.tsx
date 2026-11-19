@@ -4,6 +4,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environ
 import {
   AgentSessionImportProjectChangedError,
   EnvironmentId,
+  IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
   NodeId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -13,6 +14,9 @@ import {
   TurnItemId,
   WS_METHODS,
   type AgentSessionImportInput,
+  type IssueDetail,
+  type IssueRef,
+  type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
@@ -32,6 +36,7 @@ import "~/components/ChatView";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "~/diffPanelStore";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
+import stylesheet from "~/index.css?inline";
 import { environmentContextRecord } from "~/lib/composerContextRecords";
 import { startWorkspaceFocus } from "~/lib/workspaceFocus";
 import { usePromptStashStore } from "~/promptStashStore";
@@ -132,6 +137,121 @@ function appContainer() {
   container.style.cssText = "height: 100dvh; width: 100%;";
   return container;
 }
+
+it("opens a linked Linear issue from an inactive thread's sidebar badge", async () => {
+  const style = document.createElement("style");
+  style.textContent = stylesheet;
+  document.head.append(style);
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const first = threadWithHistory("issue-first", 1);
+  const linked = threadWithHistory("issue-linked", 1);
+  const issueRef = {
+    projectId: PROJECT_ID,
+    tracker: IssueTrackerKind.make("linear"),
+    host: "linear.app",
+    scope: "WEB",
+    key: "WEB-123",
+  } satisfies IssueRef;
+  const issue: ThreadIssueLink = {
+    ...issueRef,
+    url: "https://linear.app/example/issue/WEB-123/add-keyboard-support",
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    displayKey: issueRef.key,
+    title: "Add keyboard support",
+  };
+  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const liveTitle = "Add keyboard shortcuts to the sidebar";
+  using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
+    expect(input).toEqual(issueRef);
+    return Effect.succeed({
+      ...issue,
+      title: liveTitle,
+      author: { login: "sam", name: null, avatarUrl: null },
+      state: { category: "open", name: "Open" },
+      createdAt: issue.linkedAt,
+      updatedAt: issue.linkedAt,
+      closedAt: null,
+      assignees: [],
+      labels: [],
+      commentCount: 3,
+      projectTitle: "render",
+      writable: false,
+      capabilities: {
+        create: false,
+        edit: false,
+        comment: false,
+        labels: false,
+        assignees: false,
+        reactions: false,
+        templates: false,
+        linkedPullRequests: false,
+        events: false,
+        search: false,
+      },
+      viewerPermissions: {
+        setState: false,
+        comment: false,
+        edit: false,
+        labels: false,
+        assignees: false,
+      },
+      states: [],
+      viewer: null,
+      body: "",
+      comments: [],
+      commentsCursor: null,
+      events: [],
+      linkedPullRequests: [],
+    } satisfies IssueDetail);
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await page.viewport(1400, 900);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${first.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const badge = page.getByRole("button", {
+    name: `Issue ${issue.displayKey}: ${issue.title}, Open`,
+  });
+  await expect.element(badge).toBeVisible();
+  expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  await userEvent.hover(badge);
+  const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
+  const previewLink = page.getByRole("link", { name: issueName });
+  await userEvent.hover(previewLink.getByText("sam", { exact: true }));
+  await expect.element(previewLink).toBeVisible();
+  const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+  await act(() => previewLink.element().dispatchEvent(contextMenu));
+  expect(contextMenu.defaultPrevented).toBe(false);
+  await userEvent.click(badge);
+  const issueRow = page
+    .getByRole("region", { name: "Linked issues" })
+    .getByRole("link", { name: issueName });
+  await expect.element(issueRow.getByRole("img", { name: "Open" })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "3 comments" })).toBeVisible();
+  await expect.element(issueRow.getByRole("img", { name: "Linear" })).toBeVisible();
+  await expect.element(issueRow.getByText(issue.scope, { exact: true })).toBeVisible();
+  await userEvent.click(issueRow);
+  expect(router.history.location.pathname).toBe(`/${ENVIRONMENT_ID}/${linked.id}`);
+  await expect.element(page.getByRole("heading", { name: liveTitle })).toBeVisible();
+  await act(() => useRightPanelStore.getState().close(scopeThreadRef(ENVIRONMENT_ID, linked.id)));
+  await expect
+    .element(
+      page.getByRole("region", { name: "Thread details" }).getByRole("link", {
+        name: issueName,
+        exact: true,
+      }),
+    )
+    .toBeVisible();
+});
 
 it("a machine chip stashed in one thread restores with its machine in another", async () => {
   await using _viewport = await appViewport();
@@ -907,4 +1027,86 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await expect.element(mainEditor).toHaveFocus();
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
+});
+
+it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
+  await page.viewport(1400, 900);
+  const thread = threadWithHistory("side-attachments", 1);
+  let holdFork = false;
+  using _environment = installFakeEnvironment([thread], {
+    acceptCommands: true,
+    holdCommand: (command) => holdFork && command.type === "thread.fork",
+  });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+  );
+  await router.load();
+  await using _app = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  using _uploads = acceptAttachmentUploads();
+  await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
+
+  const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+  const image = page.getByRole("img", { name: "shot.png" });
+  const sendImageToSideChat = async () => {
+    await userEvent.click(editor);
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+    await expect.element(image).toBeVisible();
+    await userEvent.keyboard("/side what is this?{Enter}");
+    await expect.element(image).not.toBeInTheDocument();
+  };
+  const sentMessage = (fields: Record<string, unknown>) =>
+    vi.waitFor(() =>
+      expect(dispatchedCommands()).toContainEqual(
+        expect.objectContaining({ type: "message.dispatch", ...fields }),
+      ),
+    );
+
+  await sendImageToSideChat();
+  await sentMessage({
+    text: "what is this?",
+    attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+    context: {
+      version: 1,
+      records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+    },
+  });
+
+  // A reply alone is enough to send.
+  await page.getByRole("button", { name: "Reply to this response" }).first().click();
+  await userEvent.click(editor);
+  await userEvent.keyboard("/side {Enter}");
+  await sentMessage({
+    context: expect.objectContaining({ records: [expect.objectContaining({ kind: "response" })] }),
+  });
+
+  // A failed start puts the message back after the draft typed meanwhile.
+  holdFork = true;
+  await sendImageToSideChat();
+  await userEvent.keyboard("next draft");
+  await vi.waitFor(() =>
+    expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
+      3,
+    ),
+  );
+  await rejectPendingCommand("Side chats are paused.");
+  await expect.element(image).toBeVisible();
+  await vi.waitFor(() =>
+    expect((editor.element() as HTMLElement).innerText.split("\n").filter(Boolean)).toEqual([
+      "next draft",
+      "/side what is this?",
+    ]),
+  );
 });

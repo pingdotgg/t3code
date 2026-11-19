@@ -847,7 +847,7 @@ function ThreadSurfaceContent({
       return (
         <Suspense fallback={<IssueDetailGhost />}>
           <IssueDetailPanel
-            key={surface.id}
+            key={`${surface.environmentId ?? threadRef.environmentId}:${surface.id}`}
             environmentId={
               (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
             }
