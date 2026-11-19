@@ -1080,9 +1080,10 @@ function acpMcpFallbackInput(value: string | undefined): Record<string, unknown>
   return undefined;
 }
 
-// Known T3 inventory gates matches, so server-name separators can stay loose. Kiro titles "@t3-code/<tool>".
+// Known T3 inventory gates matches, so server-name separators can stay loose. Kiro titles "@t3-code/<tool>";
+// Antigravity titles permission requests "Run mcp_t3-code_<tool>".
 const T3_MCP_TITLE_CALL =
-  /^(?:@|mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
+  /^(?:Run )?(?:@|mcp[-_]{1,2})?t3[-_ ]?code[-_.:/ ]{1,3}(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*)(?::.*)?$/i;
 
 const T3_MCP_TITLE_SUFFIX_CALL =
   /^(?<tool>[A-Za-z0-9][A-Za-z0-9_.-]*?)(?: \(t3[-_ ]?code MCP Server\)(?::|$)|[-_.]t3[-_ ]?code$)/i;

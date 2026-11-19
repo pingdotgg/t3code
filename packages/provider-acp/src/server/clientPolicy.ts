@@ -4,6 +4,8 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
+import { extractMcpToolCallIdentity, parsePermissionRequest } from "./runtimeModel.ts";
+
 export interface AcpRuntimePolicy {
   readonly runtimeMode: RuntimeMode;
   readonly cwd: string | null;
@@ -193,6 +195,17 @@ export function acpPermissionDisposition(
   runtimePolicy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ): AcpPermissionDisposition {
+  const kind = request.toolCall.kind ?? "other";
+  const toolCall = parsePermissionRequest(request).toolCall;
+  if (
+    kind !== "execute" &&
+    !isAcpMutationKind(kind) &&
+    toolCall !== undefined &&
+    extractMcpToolCallIdentity(toolCall)?.server === "t3-code"
+  ) {
+    // Same rule as MCP approval elicitations: T3's MCP endpoint enforces scope itself.
+    return acpPolicyRequiresApproval(runtimePolicy) ? "ask" : "allow";
+  }
   return acpOperationDisposition(runtimePolicy, {
     kind: request.toolCall.kind,
     locations: request.toolCall.locations,
