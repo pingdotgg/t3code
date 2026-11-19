@@ -348,6 +348,19 @@ describe("GitHubAppSignIn", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.effect("does not ask GitHub again after it rejects the client's credentials", () => {
+      const { layer, requests } = harness({
+        signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
+        handle: () => ({ body: { error: "incorrect_client_credentials" } }),
+      });
+      return Effect.gen(function* () {
+        const signIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+        yield* Effect.exit(signIn.token("github.com"));
+        yield* Effect.exit(signIn.token("github.com"));
+        expect(requests).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    });
+
     it.effect("serves the still-valid token when a refresh ahead of expiry fails", () => {
       const { layer } = harness({
         signIns: { "github.com": session({ accessTokenExpiresAt: 3 * 60_000 }) },
