@@ -486,7 +486,10 @@ function RootStackLayout(props: {
       flowKey={draftRoute === undefined ? undefined : newTaskFlowKey(draftRoute)}
       routeDraftId={routeDraftId}
     >
-      <HardwareKeyboardCommandProvider pathname={pathname}>
+      <HardwareKeyboardCommandProvider
+        pathname={pathname}
+        routeName={props.state.routes[props.state.index]?.name}
+      >
         <ShowcaseReadyMarker />
         <SettingsEnvironmentFilterProvider open={settingsOpen}>
           <WorkspaceConnectionStatusProvider>
