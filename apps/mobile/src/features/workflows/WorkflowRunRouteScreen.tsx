@@ -429,11 +429,23 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
             row.kind === "quick" ? (
               <View key={`quick:${row.steps[0]?.name}`} className="items-center">
                 <Wire />
-                <View className="max-w-[85%] rounded-full border border-border px-2.5 py-0.5">
-                  <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={row.steps.map((step) => step.name).join(", ")}
+                  hitSlop={8}
+                  onPress={() => openStep(row.steps[0]?.name ?? "")}
+                  className="max-w-[85%] flex-row items-center gap-1 rounded-full border border-border py-0.5 ps-2 pe-2.5 active:opacity-70"
+                >
+                  <SymbolView
+                    name="checkmark"
+                    size={10}
+                    tintColorClassName="accent-foreground-muted"
+                    type="monochrome"
+                  />
+                  <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
                     {row.steps.map((step) => step.name).join(" · ")}
                   </Text>
-                </View>
+                </Pressable>
               </View>
             ) : row.kind === "together" ? (
               <View key={`together:${row.beats[0]?.name}`}>
