@@ -40,10 +40,12 @@ export function PullRequestLabelPicker({
   environmentId,
   reference,
   allowed,
+  text,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   allowed: boolean;
+  text?: string | undefined;
 }) {
   const gt = useGT();
   const [open, setOpen] = useState(false);
@@ -104,6 +106,7 @@ export function PullRequestLabelPicker({
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
       label={gt("Change labels")}
+      text={text}
       allowed={allowed}
       disabledReason={gt("Changing labels needs triage access on this repository")}
       open={open}

@@ -1141,8 +1141,18 @@ export function PullRequestSummaryTab({
             )}
           </div>
           {/* Labels ride under the description, where the pull request says what it is about. The
-            row is shown empty only where a label could be put on it from here. */}
-          {detail.labels.length > 0 || detail.capabilities.labels === true ? (
+            row is shown empty only where a label could be put on it from here, and then it is only
+            the picker, saying what it adds. */}
+          {detail.labels.length === 0 && detail.capabilities.labels === true ? (
+            <div className="mt-3 -ml-1.75 flex min-w-0">
+              <PullRequestLabelPicker
+                environmentId={environmentId}
+                reference={reference}
+                allowed={detail.viewerPermissions.labels !== false}
+                text={gt("Add labels")}
+              />
+            </div>
+          ) : detail.labels.length > 0 ? (
             <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
               <TagIcon aria-hidden className="mr-0.5 size-3.5 text-muted-foreground" />
               {detail.labels.map((label) => (
