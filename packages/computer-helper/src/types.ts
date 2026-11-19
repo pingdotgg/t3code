@@ -26,6 +26,7 @@ export type ScreenControl = {
     | "link"
     | "textbox"
     | "tab"
+    | "radio"
     | "row"
     | "menuitem"
     | "checkbox"
@@ -46,6 +47,7 @@ export const CONTROL_ROLES = [
   "link",
   "textbox",
   "tab",
+  "radio",
   "row",
   "menuitem",
   "checkbox",

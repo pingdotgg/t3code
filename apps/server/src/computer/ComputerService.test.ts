@@ -37,7 +37,13 @@ import * as LocalComputerHost from "./LocalComputerHost.ts";
  * A helper child as a test drives it. The server's access check is answered the moment it is sent, so a
  * session needs no test clock to start; `exit` is the helper's process going away.
  */
-const fakeHelper = (options: { readonly access?: boolean } = {}) => {
+const fakeHelper = (
+  options: {
+    readonly access?: boolean;
+    /** Takes each control and never answers it, as a hung helper would. */
+    readonly onSilentControl?: () => void;
+  } = {},
+) => {
   const listeners = new Set<(message: ChildMessage) => void>();
   const exits = new Set<() => void>();
   const sent: Array<ChildRequest> = [];
@@ -53,7 +59,9 @@ const fakeHelper = (options: { readonly access?: boolean } = {}) => {
         frame.kind === "access"
           ? ({ id: frame.id, kind: "access", access } as ChildMessage)
           : frame.kind === "control"
-            ? { id: frame.id, kind: "control", done: "Opened Safari" }
+            ? options.onSilentControl !== undefined
+              ? (options.onSilentControl(), null)
+              : { id: frame.id, kind: "control", done: "Opened Safari" }
             : frame.kind === "start"
               ? { id: frame.id, kind: "started", taskId: frame.id }
               : null;
@@ -122,6 +130,8 @@ const layerTest = (
   options: {
     readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
     readonly decider?: ComputerDecider.ComputerDecider["Service"];
+    /** Runs before each audit line is written, as slow audit I/O would. */
+    readonly beforeRecord?: (event: string) => Effect.Effect<void>;
     /** A standalone server hosting this computer, with the helper a test supplies. */
     readonly localHost?: {
       readonly fork: () => LocalComputerHost.HelperChild;
@@ -141,7 +151,14 @@ const layerTest = (
       const directory = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-computer-service-",
       });
-      return yield* ComputerAudit.make(paths.join(directory, "computer", "audit.jsonl"));
+      const audit = yield* ComputerAudit.make(paths.join(directory, "computer", "audit.jsonl"));
+      const beforeRecord = options.beforeRecord;
+      if (beforeRecord === undefined) return audit;
+      return ComputerAudit.ComputerAudit.of({
+        ...audit,
+        record: (event, fields) =>
+          beforeRecord(event).pipe(Effect.andThen(audit.record(event, fields))),
+      });
     }),
   );
   const layerService = ComputerService.layer.pipe(
@@ -214,7 +231,12 @@ const CALCULATOR: ComputerLook = {
  */
 const startHost = (
   overrides: Partial<ComputerHostConnectInput> = {},
-  options: { readonly owner?: string; readonly confirmStops?: boolean } = {},
+  options: {
+    readonly owner?: string;
+    readonly confirmStops?: boolean;
+    /** Runs before a control is answered, so a test can hold a control in flight. */
+    readonly beforeControlReply?: Effect.Effect<void>;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const owner = options.owner ?? "session-mac";
@@ -243,6 +265,9 @@ const startHost = (
           return;
         }
         if (frame.kind === "start") yield* Queue.offer(starts, frame);
+        if (frame.kind === "control" && options.beforeControlReply !== undefined) {
+          yield* options.beforeControlReply;
+        }
         const id = yield* Deferred.await(hostId);
         yield* service.hostRespond({
           hostId: id,
@@ -1095,6 +1120,7 @@ it.effect("an in-process host attaches and detaches", () =>
       send: (sent) => {
         Deferred.doneUnsafe(frame, Effect.succeed(sent));
       },
+      end: Effect.void,
     });
     assert.strictEqual((yield* service.status(null)).hosts.length, 1);
     assert.strictEqual((yield* Deferred.await(frame)).kind, "welcome");
@@ -1196,3 +1222,222 @@ it.effect("a desktop-backed server never forks its own helper", () => {
     ),
   );
 });
+
+it.effect("a grant is handed to the host before its audit line is written", () => {
+  const writing = Deferred.makeUnsafe<void>();
+  const written = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    const host = yield* startHost();
+    const task = yield* startUse();
+
+    const granted = yield* host
+      .authorize({ taskId: task.taskId, step: 1, action: scroll() })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(writing);
+    // Nothing awaited after the check: a Stop or the deadline cannot land between it and the grant.
+    assert.isDefined(granted.pollUnsafe(), "the grant waited on its audit line");
+    yield* Deferred.succeed(written, undefined);
+    assert.deepStrictEqual(yield* Fiber.join(granted), { ok: true, grant: "allow" });
+  }).pipe(
+    Effect.provide(
+      layerTest({
+        beforeRecord: (event) =>
+          event === "grant"
+            ? Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(written)))
+            : Effect.void,
+      }),
+    ),
+  );
+});
+
+it.effect("Stop keeps the computer reserved while a control is still in flight", () => {
+  const sent = Deferred.makeUnsafe<void>();
+  const release = Deferred.makeUnsafe<void>();
+  return Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    yield* startHost(
+      {},
+      {
+        confirmStops: false,
+        beforeControlReply: Deferred.succeed(sent, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+        ),
+      },
+    );
+    const controlled = yield* service
+      .control({ control: { kind: "open_app", app: "Notes" }, requester: "web" })
+      .pipe(Effect.forkScoped);
+    yield* Deferred.await(sent);
+    yield* service.stop({ by: "web" });
+    assert.strictEqual((yield* startUse().pipe(Effect.flip)).reason, "busy");
+
+    yield* Deferred.succeed(release, undefined);
+    assert.strictEqual((yield* Effect.flip(Fiber.join(controlled))).reason, "stopped");
+    yield* startUse();
+  }).pipe(Effect.provide(layerTest()));
+});
+
+it.effect(
+  "a standalone helper that never answers a control is stopped, closing its session",
+  () => {
+    const taken = Deferred.makeUnsafe<void>();
+    const helper = fakeHelper({ onSilentControl: () => Deferred.doneUnsafe(taken, Effect.void) });
+    const stopped = Deferred.makeUnsafe<void>();
+    return Effect.gen(function* () {
+      const service = yield* ComputerService.ComputerService;
+      const snapshots = yield* service.subscribe({ revealTypedText: true });
+      yield* snapshots.pipe(
+        Stream.filter((snapshot) => snapshot.hosts.length === 1),
+        Stream.runHead,
+      );
+
+      const controlled = yield* service
+        .control({ control: { kind: "open_app", app: "Safari" }, requester: "agent: test" })
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(taken);
+      yield* TestClock.adjust("20 seconds");
+      assert.strictEqual((yield* Effect.flip(Fiber.join(controlled))).reason, "unavailable");
+      assert.strictEqual(
+        (yield* startUse().pipe(Effect.flip)).reason,
+        "busy",
+        "a helper that may still be running the control keeps the computer",
+      );
+
+      // Its stop goes unconfirmed too, so the helper is stopped and the session ends, free to start again.
+      yield* TestClock.adjust("20 seconds");
+      yield* Deferred.await(stopped);
+      const withdrawn = yield* snapshots.pipe(
+        Stream.filter((snapshot) => snapshot.hosts.length === 0),
+        Stream.runHead,
+      );
+      assert.strictEqual(withdrawn._tag, "Some");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          localHost: {
+            fork: () => ({
+              ...helper.helper,
+              stop: () => {
+                Deferred.doneUnsafe(stopped, Effect.void);
+                helper.helper.stop();
+              },
+            }),
+          },
+          settings: { enableAgentComputerUse: true },
+        }),
+      ),
+    );
+  },
+);
+
+it.effect(
+  "the typed text in a goal or a question key reaches neither the provider nor a reader",
+  () => {
+    const sent: Array<{ readonly state: unknown; readonly questions: unknown }> = [];
+    return Effect.gen(function* () {
+      const service = yield* ComputerService.ComputerService;
+      const host = yield* startHost();
+      const task = yield* startUse({ goal: "tell Dana on my way" });
+
+      const answers = yield* host.decide({
+        taskId: task.taskId,
+        questions: {
+          "type on my way": {
+            type: "choice",
+            instructions: "What next?",
+            criteria: { "on my way": "Type on my way", stuck: "None" },
+          },
+        },
+      });
+      assert.notInclude(JSON.stringify(sent), "on my way");
+      assert.deepStrictEqual(answers, {
+        "type on my way": { type: "choice", choice: "on my way", probability: 0.9 },
+      });
+
+      yield* host
+        .authorize({ taskId: task.taskId, step: 1, action: click("Send") })
+        .pipe(Effect.forkScoped);
+      yield* waitForApproval(task.taskId);
+      const reader = yield* Stream.runHead(yield* service.subscribe({ revealTypedText: false }));
+      assert.notInclude(JSON.stringify(reader), "on my way");
+      assert.strictEqual((yield* taskOf(task.taskId))?.goal, "tell Dana [typed text]");
+      yield* service.stop({ by: "web" });
+
+      const short = yield* startUse({ goal: "say ok to Dana, okay?", text: "ok" });
+      assert.strictEqual((yield* taskOf(short.taskId))?.goal, "say [typed text] to Dana, okay?");
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          decider: ComputerDecider.ComputerDecider.of({
+            ask: (input) =>
+              Effect.sync(() => {
+                sent.push(input);
+                const [id, question] = Object.entries(input.questions)[0] ?? [];
+                const choice =
+                  question?.type === "choice"
+                    ? Object.entries(question.criteria).find(([, line]) =>
+                        line.includes("[typed text]"),
+                      )?.[0]
+                    : undefined;
+                return {
+                  _tag: "answers",
+                  answers:
+                    id === undefined || choice === undefined
+                      ? {}
+                      : { [id]: { type: "choice", choice, probability: 0.9 } },
+                } as const;
+              }),
+          }),
+        }),
+      ),
+    );
+  },
+);
+
+it.effect("given no text, a task types only the exact address its goal names", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const typing = (text: string): ComputerAction => ({
+      kind: "type",
+      ref: "r1",
+      role: "textbox",
+      label: "Address",
+      text,
+    });
+    const goal = "go to example.com and search for cats";
+
+    const navigating = yield* service.startUse({ goal, requester: "agent: test" });
+    assert.deepStrictEqual(
+      yield* host.authorize({ taskId: navigating.taskId, step: 1, action: typing("example.com") }),
+      { ok: true, grant: "allow" },
+    );
+    yield* service.stop({ by: "web" });
+
+    const searching = yield* service.startUse({ goal, requester: "agent: test" });
+    assert.deepStrictEqual(
+      yield* host.authorize({ taskId: searching.taskId, step: 1, action: typing("search") }),
+      { ok: false, denied: "It tried to type text it was not given." },
+    );
+  }).pipe(Effect.provide(layerTest())),
+);
+
+it.effect("an approval's page title is capped", () =>
+  Effect.gen(function* () {
+    const service = yield* ComputerService.ComputerService;
+    const host = yield* startHost();
+    const task = yield* startUse();
+    yield* service
+      .hostAuthorize({
+        hostId: host.hostId,
+        owner: host.owner,
+        taskId: task.taskId,
+        step: 1,
+        observation: { app: "Messages", title: "t".repeat(5_000) },
+        action: click("Send"),
+      })
+      .pipe(Effect.forkScoped);
+    const approval = yield* waitForApproval(task.taskId);
+    assert.strictEqual(approval.binding.title.length, 400);
+  }).pipe(Effect.provide(layerTest())),
+);

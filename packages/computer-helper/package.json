@@ -6,6 +6,10 @@
     "./child": {
       "types": "./src/child.ts",
       "import": "./src/child.ts"
+    },
+    "./navigation": {
+      "types": "./src/navigation.ts",
+      "import": "./src/navigation.ts"
     }
   },
   "scripts": {

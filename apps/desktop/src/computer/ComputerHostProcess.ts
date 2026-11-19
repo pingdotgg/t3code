@@ -71,7 +71,7 @@ export type ComputerHostStartResult =
 
 export type ComputerHostProcess = {
   readonly alive: boolean;
-  /** The task running on this Mac, if one is. */
+  /** The task running or stopping on this Mac, if one is. */
   readonly task: { readonly environmentId: string; readonly taskId: string } | null;
   readonly access: () => Promise<ComputerAccess>;
   readonly start: (task: ComputerHostTask) => Promise<ComputerHostStartResult>;
@@ -275,7 +275,13 @@ type Pending = {
   readonly deadline: ReturnType<typeof setTimeout>;
 };
 
-type ActiveTask = ComputerHostTask & { readonly deadline: ReturnType<typeof setTimeout> };
+type ActiveTask = ComputerHostTask & {
+  readonly deadline: ReturnType<typeof setTimeout>;
+  /** Told to stop: held until the helper reports its end, and granted nothing meanwhile. */
+  readonly stopping: boolean;
+};
+
+const STOPPED = "It was stopped.";
 
 /**
  * The computer-use helper as this app runs it: one forked child, one task at a time, and a deadline on
@@ -389,8 +395,25 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
     return settled;
   };
 
+  const refuse = (
+    message: Extract<ChildMessage, { kind: "decide" | "authorize" }>,
+    denied: string,
+  ) =>
+    write(
+      message.kind === "decide"
+        ? { id: message.id, kind: "answers", answers: {} }
+        : { id: message.id, kind: "grant", grant: { ok: false, denied } },
+    );
+
+  /** A grant that comes back after its task was told to stop is refused, whatever the environment said. */
+  const late = (taskId: string) => task === null || task.taskId !== taskId || task.stopping;
+
   const answer = (message: Extract<ChildMessage, { kind: "decide" | "authorize" }>) => {
     const running = task === null || task.taskId !== message.taskId ? null : task;
+    if (running?.stopping === true) {
+      refuse(message, STOPPED);
+      return;
+    }
     if (running === null) {
       // The step outlived its task, so nothing waits for this answer: end the helper's step.
       write(
@@ -422,7 +445,10 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
             .then((grant) => ({ id: message.id, kind: "grant" as const, grant }));
     void answered
       .then(
-        (frame) => write(frame),
+        (frame) =>
+          frame.kind === "grant" && frame.grant.ok && late(message.taskId)
+            ? refuse(message, STOPPED)
+            : write(frame),
         (error: unknown) =>
           write(
             message.kind === "decide"
@@ -530,7 +556,7 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
       }, taskTimeoutMs);
       deadline.unref?.();
       // Held from the request on, so a second start racing this one is busy, not sent to the helper.
-      task = { ...next, deadline };
+      task = { ...next, deadline, stopping: false };
       const started = await request<Extract<ChildMessage, { kind: "started" }>>(
         {
           id: next.taskId,
@@ -591,7 +617,16 @@ export function startComputerHostProcess(options: ComputerHostProcessOptions): C
         }),
       ),
     stop: (input) => {
-      if (task?.taskId === input.taskId) clearTask();
+      // The task stays until the helper reports its end, which is what frees the computer for the server.
+      if (task?.taskId === input.taskId && !task.stopping) {
+        clearTimeout(task.deadline);
+        const deadline = setTimeout(() => {
+          log("computer_host.stop_deadline", { taskId: input.taskId });
+          kill("The computer helper did not stop.");
+        }, replyTimeoutMs);
+        deadline.unref?.();
+        task = { ...task, deadline, stopping: true };
+      }
       write({
         id: `stop_${input.taskId}`,
         kind: "stop",

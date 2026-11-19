@@ -24,6 +24,7 @@ import type {
   ComputerObservation,
   ComputerRect,
   ComputerPlannerAnswers,
+  ComputerQuestion,
   ComputerQuestions,
   ComputerSnapshot,
   ComputerTaskId,
@@ -34,6 +35,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { COMPUTER_LIMITS, ComputerError } from "@t3tools/contracts";
+import { navigationText } from "@t3tools/computer-helper/navigation";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
@@ -92,6 +94,12 @@ const TYPED_TEXT = "[typed text]";
 /** Ended tasks kept for the strip and the tools; every snapshot carries them. */
 const MAX_ENDED_TASKS = 10;
 const MAX_ENDED_APPROVALS = 10;
+/** Every string a snapshot carries is at most this long, and a whole snapshot at most `MAX_SNAPSHOT_BYTES`. */
+const MAX_VIEW_FIELD_BYTES = 4_000;
+const MAX_STEP_BYTES = 400;
+const MAX_SNAPSHOT_BYTES = 256_000;
+const MAX_BINDING_FIELD_BYTES = 400;
+const MAX_BINDING_URL_BYTES = 2_000;
 const MAX_TASK_STEPS = 40;
 const MAX_DECISIONS = 2 * COMPUTER_LIMITS.maxSteps + 4;
 /** A waiting task's working clock is paused, so its deadline is looked at again no sooner than this. */
@@ -101,6 +109,8 @@ const TOO_LONG = "It was taking too long.";
 type PendingDecision = {
   readonly id: string;
   readonly questions: ComputerQuestions;
+  /** The questions as the planner reads them: the typed text hidden, keys that held it renamed. */
+  readonly shown: AliasedQuestions;
   readonly wake: Deferred.Deferred<ComputerAnswers, ComputerError>;
 };
 
@@ -138,6 +148,8 @@ type Task = {
   readonly waitingSinceMs: number | null;
   /** A decision or an authorization is being answered: a task takes one step at a time. */
   readonly stepInFlight: boolean;
+  /** Its start or control was sent: its host stays reserved until the host answers or goes away. */
+  readonly onHost: boolean;
 };
 
 type Host = {
@@ -230,31 +242,38 @@ const hostView = (host: Host): ComputerHostView => ({
   connectedAt: DateTime.makeUnsafe(host.connectedAtMs),
 });
 
-/** Only the agent's tools read the planner's questions, so client snapshots leave them out. */
-const taskView = (task: Task, withQuestions = true): ComputerTaskView => ({
-  taskId: task.id,
-  kind: task.kind,
-  hostId: task.hostId,
-  hostName: task.hostName,
-  goal: task.goal,
-  status: task.status,
-  reason: task.reason,
-  surface: task.surface,
-  steps: [...task.steps],
-  requester: task.requester,
-  threadId: task.threadId,
-  startedAt: DateTime.makeUnsafe(task.startedAtMs),
-  endedAt: task.endedAtMs === null ? null : DateTime.makeUnsafe(task.endedAtMs),
-  waitingForApproval: task.approvalId,
-  pendingDecision:
-    task.decision === null
-      ? null
-      : withQuestions
-        ? { id: task.decision.id, questions: task.decision.questions }
-        : { id: task.decision.id },
-  approvalsMode: task.approvalsMode,
-  ...(withQuestions && task.screenText !== "" ? { screenText: task.screenText } : {}),
-});
+/**
+ * Only the agent's tools read the planner's questions, so client snapshots leave them out. The typed text
+ * is hidden in every field, whoever reads it.
+ */
+const taskView = (task: Task, withQuestions = true): ComputerTaskView => {
+  const shown = (value: string, max = MAX_VIEW_FIELD_BYTES) =>
+    capBytes(hideTyped(value, task.text), max);
+  return {
+    taskId: task.id,
+    kind: task.kind,
+    hostId: task.hostId,
+    hostName: task.hostName,
+    goal: shown(task.goal),
+    status: task.status,
+    reason: shown(task.reason),
+    surface: shown(task.surface),
+    steps: task.steps.map((step) => shown(step, MAX_STEP_BYTES)),
+    requester: task.requester,
+    threadId: task.threadId,
+    startedAt: DateTime.makeUnsafe(task.startedAtMs),
+    endedAt: task.endedAtMs === null ? null : DateTime.makeUnsafe(task.endedAtMs),
+    waitingForApproval: task.approvalId,
+    pendingDecision:
+      task.decision === null
+        ? null
+        : withQuestions
+          ? { id: task.decision.id, questions: task.decision.shown.questions }
+          : { id: task.decision.id },
+    approvalsMode: task.approvalsMode,
+    ...(withQuestions && task.screenText !== "" ? { screenText: shown(task.screenText) } : {}),
+  };
+};
 
 const OptionalText = Schema.optionalKey(Schema.String);
 const DecideState = Schema.Struct({
@@ -276,13 +295,96 @@ const DecideState = Schema.Struct({
 });
 const decodeDecideState = Schema.decodeUnknownOption(DecideState);
 
-/** The task's typed text hidden as the helper hides it; shorter text would hide ordinary words. */
-const hideTyped = (value: string, typed: string | null): string =>
-  typed !== null && typed.length >= 3 ? value.split(typed).join(TYPED_TEXT) : value;
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
- * The only state a decision provider is sent: known fields, capped, the typed text hidden, and the goal
- * as the agent gave it. Anything else a host puts in its state stays here.
+ * The task's typed text hidden wherever it appears. Text of one or two characters is hidden where it stands
+ * alone, so it does not take every letter it shares with ordinary words.
+ */
+function hideTyped(value: string, typed: string | null): string {
+  if (typed === null || typed === "") return value;
+  if (typed.length >= 3) return value.split(typed).join(TYPED_TEXT);
+  return value.replace(
+    new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(typed)}(?![\\p{L}\\p{N}])`, "gu"),
+    TYPED_TEXT,
+  );
+}
+
+/** At most `max` UTF-8 bytes, cut on a character. */
+function capBytes(value: string, max: number): string {
+  const encoded = new TextEncoder().encode(value);
+  if (encoded.byteLength <= max) return value;
+  return new TextDecoder().decode(encoded.slice(0, max)).replace(/\uFFFD$/, "");
+}
+
+/** Questions with the typed text hidden, and the ids and choice keys that held it renamed. */
+type AliasedQuestions = {
+  readonly questions: ComputerQuestions;
+  readonly ids: ReadonlyMap<string, string>;
+  readonly choices: ReadonlyMap<string, ReadonlyMap<string, string>>;
+};
+
+function aliasQuestions(questions: ComputerQuestions, typed: string | null): AliasedQuestions {
+  const ids = new Map<string, string>();
+  const choices = new Map<string, Map<string, string>>();
+  const shown: Record<string, ComputerQuestion> = {};
+  let renamed = 0;
+  const alias = (key: string, taken: ReadonlySet<string>) => {
+    if (hideTyped(key, typed) === key) return key;
+    let next = `hidden_${++renamed}`;
+    while (taken.has(next)) next = `hidden_${++renamed}`;
+    return next;
+  };
+  const questionIds = new Set(Object.keys(questions));
+  for (const [id, question] of Object.entries(questions)) {
+    const shownId = alias(id, questionIds);
+    ids.set(shownId, id);
+    if (question.type === "noul") {
+      shown[shownId] = { type: "noul", instructions: hideTyped(question.instructions, typed) };
+      continue;
+    }
+    const keys = new Set(Object.keys(question.criteria));
+    const mapped = new Map<string, string>();
+    const criteria: Record<string, string> = {};
+    for (const [key, line] of Object.entries(question.criteria)) {
+      const shownKey = alias(key, keys);
+      mapped.set(shownKey, key);
+      criteria[shownKey] = hideTyped(line, typed);
+    }
+    choices.set(shownId, mapped);
+    shown[shownId] = {
+      type: "choice",
+      instructions: hideTyped(question.instructions, typed),
+      criteria,
+    };
+  }
+  return { questions: shown, ids, choices };
+}
+
+/** Answers given to aliased questions, under the ids and keys the host asked with. Unknown ones are dropped. */
+function unaliasAnswers<A extends object>(
+  aliased: AliasedQuestions,
+  answers: Readonly<Record<string, A>>,
+): Record<string, A> {
+  const restored: Record<string, A> = {};
+  for (const [shownId, answer] of Object.entries(answers)) {
+    const id = aliased.ids.get(shownId);
+    if (id === undefined) continue;
+    const choice =
+      "choice" in answer && typeof answer.choice === "string" ? answer.choice : undefined;
+    if (choice === undefined) {
+      restored[id] = answer;
+      continue;
+    }
+    const key = aliased.choices.get(shownId)?.get(choice);
+    if (key !== undefined) restored[id] = { ...answer, choice: key };
+  }
+  return restored;
+}
+
+/**
+ * The only state a decision provider is sent: known fields, capped, and the typed text hidden everywhere,
+ * the goal included. Anything else a host puts in its state stays here.
  */
 function outboundState(state: unknown, task: Task) {
   const decided = Option.getOrUndefined(decodeDecideState(state));
@@ -291,7 +393,7 @@ function outboundState(state: unknown, task: Task) {
     (values ?? []).slice(-keep).map((value) => text(value, MAX_STATE_FIELD));
   const screen = decided?.screen;
   return {
-    goal: task.goal,
+    goal: text(task.goal, MAX_VIEW_FIELD_BYTES),
     ...(task.text === null
       ? {}
       : { hasTextToType: true, alreadyTyped: decided?.alreadyTyped === true }),
@@ -309,32 +411,12 @@ function outboundState(state: unknown, task: Task) {
   };
 }
 
-/** The questions with the typed text hidden in every line a provider reads; their keys are kept. */
-function outboundQuestions(questions: ComputerQuestions, typed: string | null): ComputerQuestions {
-  return Object.fromEntries(
-    Object.entries(questions).map(([id, question]) => [
-      id,
-      question.type === "choice"
-        ? {
-            type: "choice" as const,
-            instructions: hideTyped(question.instructions, typed),
-            criteria: Object.fromEntries(
-              Object.entries(question.criteria).map(([key, line]) => [key, hideTyped(line, typed)]),
-            ),
-          }
-        : { type: "noul" as const, instructions: hideTyped(question.instructions, typed) },
-    ]),
-  );
-}
-
 /**
- * A task types only the text it was given. Given none, it types only the address its goal names, which
- * the helper takes from the goal as written.
+ * A task types only the text it was given. Given none, it types only the address its goal names, read by
+ * the same parser the helper uses.
  */
 const mayType = (task: Task, text: string | undefined): boolean =>
-  text !== undefined &&
-  text !== "" &&
-  (task.text === null ? task.goal.includes(text) : text === task.text);
+  text !== undefined && text !== "" && text === (task.text ?? navigationText(task.goal));
 
 const workingMs = (task: Task, nowMs: number): number =>
   nowMs -
@@ -355,11 +437,48 @@ const waitEnded = (task: Task, nowMs: number): Task =>
         waitingSinceMs: null,
       };
 
-/** An approval without the text it types, for a client that cannot answer approvals. */
-function withoutTypedText(approval: ComputerApproval): ComputerApproval {
-  if (approval.binding.action.text === undefined) return approval;
+/**
+ * An approval for a client that cannot answer approvals: without the text it types, and with that text
+ * hidden wherever else it shows.
+ */
+function withoutTypedText(approval: ComputerApproval, typed: string | null): ComputerApproval {
   const { text: _text, ...action } = approval.binding.action;
-  return { ...approval, binding: { ...approval.binding, action } };
+  const hide = (value: string | undefined) =>
+    value === undefined ? undefined : hideTyped(value, typed);
+  const hidden = (field: "label" | "name" | "fieldLabel") => {
+    const value = hide(action[field]);
+    return value === undefined ? {} : { [field]: value };
+  };
+  return {
+    ...approval,
+    binding: {
+      ...approval.binding,
+      title: hideTyped(approval.binding.title, typed),
+      url: hideTyped(approval.binding.url, typed),
+      goal: hideTyped(approval.binding.goal, typed),
+      why: hideTyped(approval.binding.why, typed),
+      action: { ...action, ...hidden("label"), ...hidden("name"), ...hidden("fieldLabel") },
+    },
+  };
+}
+
+/** The oldest ended tasks, then the oldest ended approvals, dropped until the snapshot fits. */
+function withinBytes(snapshot: ComputerSnapshot): ComputerSnapshot {
+  const tasks = [...snapshot.tasks];
+  const approvals = [...snapshot.approvals];
+  const size = () =>
+    new TextEncoder().encode(JSON.stringify({ ...snapshot, tasks, approvals })).byteLength;
+  while (size() > MAX_SNAPSHOT_BYTES) {
+    const endedTask = tasks.findLastIndex((task) => task.status !== "running");
+    if (endedTask !== -1) {
+      tasks.splice(endedTask, 1);
+      continue;
+    }
+    const endedApproval = approvals.findLastIndex((approval) => approval.state !== "pending");
+    if (endedApproval === -1) break;
+    approvals.splice(endedApproval, 1);
+  }
+  return { ...snapshot, tasks, approvals };
 }
 
 /** A control in words for the card and the log ("open Safari", "volume down"). */
@@ -530,6 +649,8 @@ export class ComputerService extends Context.Service<
     readonly attachLocalHost: (
       input: ComputerHostConnectInput & {
         readonly send: (frame: ComputerHostFrame) => void;
+        /** Closes the session, as a disconnect would, so its helper can be started again. */
+        readonly end: Effect.Effect<void>;
       },
     ) => Effect.Effect<
       HostCaller & { readonly hostId: ComputerHostId; readonly detach: Effect.Effect<void> }
@@ -546,7 +667,10 @@ const make = Effect.gen(function* () {
   const random = yield* SecureRandom.SecureRandom;
   const serviceScope = yield* Effect.scope;
   const stateRef = yield* Ref.make<ServiceState>(EMPTY);
-  const changes = yield* PubSub.sliding<ComputerSnapshot>(1);
+  const changes = yield* PubSub.sliding<{
+    readonly approver: ComputerSnapshot;
+    readonly reader: ComputerSnapshot;
+  }>(1);
   // Publishes happen one at a time, so a reader never sees an older snapshot after a newer one.
   const publishLock = yield* Semaphore.make(1);
 
@@ -554,9 +678,11 @@ const make = Effect.gen(function* () {
   const snapshotOf = Effect.fnUntraced(function* (input: {
     readonly withQuestions: boolean;
     readonly threadId: ThreadId | null;
+    readonly revealTypedText: boolean;
   }) {
     const state = yield* Ref.get(stateRef);
     const listed = yield* approvals.list;
+    const typedText = new Map(state.tasks.map((task) => [task.id, task.text]));
     const tasks =
       input.threadId === null
         ? state.tasks
@@ -566,21 +692,29 @@ const make = Effect.gen(function* () {
       ...listed.filter((approval) => approval.state === "pending"),
       ...listed.filter((approval) => approval.state !== "pending").slice(0, MAX_ENDED_APPROVALS),
     ];
-    return {
+    const scoped =
+      input.threadId === null
+        ? kept
+        : kept.filter((approval) => taskIds.has(approval.binding.taskId));
+    return withinBytes({
       hosts: state.hosts.map(hostView),
       tasks: tasks.toReversed().map((task) => taskView(task, input.withQuestions)),
-      approvals:
-        input.threadId === null
-          ? kept
-          : kept.filter((approval) => taskIds.has(approval.binding.taskId)),
-    } satisfies ComputerSnapshot;
+      approvals: input.revealTypedText
+        ? scoped
+        : scoped.map((approval) =>
+            withoutTypedText(approval, typedText.get(approval.binding.taskId) ?? null),
+          ),
+    });
   });
-  const status = (threadId: ThreadId | null) => snapshotOf({ withQuestions: true, threadId });
-  const clientSnapshot = snapshotOf({ withQuestions: false, threadId: null });
+  const status = (threadId: ThreadId | null) =>
+    snapshotOf({ withQuestions: true, threadId, revealTypedText: false });
+  const clientSnapshots = Effect.all({
+    approver: snapshotOf({ withQuestions: false, threadId: null, revealTypedText: true }),
+    reader: snapshotOf({ withQuestions: false, threadId: null, revealTypedText: false }),
+  });
 
   const publish = Effect.gen(function* () {
-    const next = yield* clientSnapshot;
-    yield* PubSub.publish(changes, next);
+    yield* PubSub.publish(changes, yield* clientSnapshots);
   });
 
   /** One short, atomic change, then one snapshot. Never wraps a wait for a person or a model. */
@@ -739,7 +873,7 @@ const make = Effect.gen(function* () {
       for (const [approvalId, entry] of state.approvals) {
         if (entry.taskId === input.taskId) remaining.delete(approvalId);
       }
-      const release = input.confirmed === true || task.kind === "control";
+      const release = input.confirmed === true || !task.onHost;
       const holder = release ? undefined : state.hosts.find((host) => host.taskId === input.taskId);
       return [
         { task: finished, holder },
@@ -851,6 +985,8 @@ const make = Effect.gen(function* () {
     host: Host,
     task: Task | null,
     frame: (requestId: string) => ComputerHostFrame,
+    /** A fixed control runs to its reply even past a stop, so its host is never freed mid-call. */
+    options: { readonly endsWithTask: boolean } = { endsWithTask: true },
   ) {
     const requestId = yield* random.uuidV4();
     const reply = yield* Deferred.make<ComputerHostReply, ComputerError>();
@@ -861,10 +997,14 @@ const make = Effect.gen(function* () {
       if (task !== null && taskIn(state, task.id)?.status !== "running") {
         return ["ended", state] as const;
       }
+      const marked =
+        task === null
+          ? state
+          : patchTask(state, task.id, (running) => ({ ...running, onHost: true }));
       return [
         "ok",
         {
-          ...state,
+          ...marked,
           replies: new Map(state.replies).set(requestId, { hostId: host.id, reply }),
         },
       ] as const;
@@ -881,7 +1021,11 @@ const make = Effect.gen(function* () {
           Effect.fail(failure("unavailable", `${host.name} did not answer.`, { hostId: host.id })),
       }),
     );
-    return yield* (task === null ? answered : Effect.raceFirst(answered, untilEnded(task))).pipe(
+    return yield* (
+      task === null || !options.endsWithTask
+        ? answered
+        : Effect.raceFirst(answered, untilEnded(task))
+    ).pipe(
       Effect.ensuring(
         mutate((state) => {
           const replies = new Map(state.replies);
@@ -944,6 +1088,7 @@ const make = Effect.gen(function* () {
       ended: yield* Deferred.make<void>(),
       waitingSinceMs: null,
       stepInFlight: false,
+      onHost: false,
     };
     const created = yield* mutate((state) => {
       const host = state.hosts.find((candidate) => candidate.id === input.host.id);
@@ -1132,12 +1277,17 @@ const make = Effect.gen(function* () {
           });
         }
       }
-      const reply = yield* askHost(host, task, (requestId) => ({
-        kind: "control",
-        requestId,
-        taskId: task.id,
-        control: input.control,
-      })).pipe(Effect.result);
+      const reply = yield* askHost(
+        host,
+        task,
+        (requestId) => ({
+          kind: "control",
+          requestId,
+          taskId: task.id,
+          control: input.control,
+        }),
+        { endsWithTask: false },
+      ).pipe(Effect.result);
       if (reply._tag === "Failure") {
         yield* finishTask({
           taskId: task.id,
@@ -1146,14 +1296,20 @@ const make = Effect.gen(function* () {
         });
         return yield* reply.failure;
       }
+      // The reply is the host's confirmation, so it frees the host even for a control stopped meanwhile.
+      const ended = yield* finishTask({
+        taskId: task.id,
+        status: reply.success.ok ? "done" : "failed",
+        reason: reply.success.ok
+          ? (reply.success.done ?? "Done.")
+          : (reply.success.error ?? "The computer could not do it."),
+        confirmed: true,
+      });
+      if (ended === null) return yield* stopped(task.id);
       if (!reply.success.ok) {
-        const reason = reply.success.error ?? "The computer could not do it.";
-        yield* finishTask({ taskId: task.id, status: "failed", reason });
-        return yield* failure("unavailable", reason, { taskId: task.id, hostId: host.id });
+        return yield* failure("unavailable", ended.reason, { taskId: task.id, hostId: host.id });
       }
-      const done = reply.success.done ?? "Done.";
-      const ended = yield* finishTask({ taskId: task.id, status: "done", reason: done });
-      return taskView(ended ?? task);
+      return taskView(ended);
     },
   );
 
@@ -1284,7 +1440,12 @@ const make = Effect.gen(function* () {
           true,
           patchTask(state, task.id, (running) => ({
             ...running,
-            decision: { id: decisionId, questions, wake },
+            decision: {
+              id: decisionId,
+              questions,
+              shown: aliasQuestions(questions, task.text),
+              wake,
+            },
             waitingSinceMs: startedAtMs,
           })),
         ] as const;
@@ -1350,7 +1511,7 @@ const make = Effect.gen(function* () {
     }
     const converted = ComputerDecider.keepValid(
       pending.questions,
-      plannerAnswers(pending.questions, input.answers),
+      plannerAnswers(pending.questions, unaliasAnswers(pending.shown, input.answers)),
     );
     const answered = yield* Deferred.succeed(pending.wake, converted).pipe(
       Effect.as(true),
@@ -1423,15 +1584,16 @@ const make = Effect.gen(function* () {
     state: ReturnType<typeof outboundState>,
   ) {
     if (!task.grounderFailed) {
+      const shown = aliasQuestions(questions, task.text);
       const grounded = yield* decider
-        .ask({ state, questions: outboundQuestions(questions, task.text) })
+        .ask({ state, questions: shown.questions })
         .pipe(Effect.raceFirst(untilEnded(task)));
       if (grounded._tag === "answers") {
         yield* record("decision.grounded", {
           taskId: task.id,
           asked: Object.keys(questions).length,
         });
-        return grounded.answers;
+        return ComputerDecider.keepValid(questions, unaliasAnswers(shown, grounded.answers));
       }
       if (grounded._tag === "failed") {
         yield* update((current) =>
@@ -1498,15 +1660,23 @@ const make = Effect.gen(function* () {
     fields: Readonly<Record<string, unknown>>,
   ) {
     const nowMs = yield* Clock.currentTimeMillis;
-    const current = taskIn(yield* Ref.get(stateRef), task.id);
-    if (current === undefined || current.status !== "running") return yield* endedGrant(task.id);
-    if (outOfTime(current, nowMs)) return yield* deny(task.id, TOO_LONG);
+    // The check and the grant's return have nothing awaited between them: a stop or deadline either
+    // lands before the check and wins, or after the grant was handed off.
+    const verdict = yield* Ref.get(stateRef).pipe(
+      Effect.map((state) => {
+        const current = taskIn(state, task.id);
+        if (current === undefined || current.status !== "running") return "ended" as const;
+        return outOfTime(current, nowMs) ? ("late" as const) : ("granted" as const);
+      }),
+    );
+    if (verdict === "ended") return yield* endedGrant(task.id);
+    if (verdict === "late") return yield* deny(task.id, TOO_LONG);
     yield* record("grant", {
       taskId: task.id,
       step: input.step,
       ...fields,
       action: actionAuditFields(input.action),
-    });
+    }).pipe(Effect.forkIn(serviceScope));
     return { ok: true, grant: kind } as const;
   });
 
@@ -1530,9 +1700,9 @@ const make = Effect.gen(function* () {
       hostId: host.id,
       taskId: task.id,
       step: input.step,
-      app: input.observation.app,
-      title: input.observation.title,
-      url: input.observation.url ?? "",
+      app: capBytes(input.observation.app, MAX_BINDING_FIELD_BYTES),
+      title: capBytes(input.observation.title, MAX_BINDING_FIELD_BYTES),
+      url: capBytes(input.observation.url ?? "", MAX_BINDING_URL_BYTES),
       action: input.action,
       why: decision.why,
       goal: task.goal,
@@ -1849,22 +2019,19 @@ const make = Effect.gen(function* () {
   const attachLocalHost: ComputerService["Service"]["attachLocalHost"] = Effect.fn(
     "ComputerService.attachLocalHost",
   )(function* (input) {
-    const { send, ...hello } = input;
+    const { send, end, ...hello } = input;
     const owner = `local_${yield* random.uuidV4()}`;
-    const host = yield* registerHost({ hello, owner, send, end: () => Effect.void });
+    const host = yield* registerHost({ hello, owner, send, end: () => end });
     send({ kind: "welcome", hostId: host.id, limits: COMPUTER_LIMITS });
     return { hostId: host.id, owner, detach: unregisterHost(host.id) };
   });
 
   const subscribe: ComputerService["Service"]["subscribe"] = Effect.fn("ComputerService.subscribe")(
     function* (input) {
-      const current = yield* clientSnapshot;
-      const snapshots = Stream.concat(Stream.make(current), Stream.fromPubSub(changes));
-      if (input.revealTypedText) return snapshots;
-      return Stream.map(snapshots, (snapshot) => ({
-        ...snapshot,
-        approvals: snapshot.approvals.map(withoutTypedText),
-      }));
+      const current = yield* clientSnapshots;
+      return Stream.concat(Stream.make(current), Stream.fromPubSub(changes)).pipe(
+        Stream.map((both) => (input.revealTypedText ? both.approver : both.reader)),
+      );
     },
   );
 

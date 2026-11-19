@@ -294,6 +294,17 @@ describe("DesktopBackend", () => {
     await expect(new DesktopBackend(runner).observe()).rejects.toThrow(/role should be one of/);
   });
 
+  it("reads a radio button as a radio, never as a tab the server could take for one", async () => {
+    expect(SCRIPTS.observe).toContain("AXRadioButton: 'radio'");
+    const { runner } = fakeRunner(() =>
+      JSON.stringify({
+        ...observation,
+        controls: [{ ref: "0.1", role: "radio", label: "Pay now" }],
+      }),
+    );
+    expect((await new DesktopBackend(runner).observe()).controls[0]?.role).toBe("radio");
+  });
+
   it("sends refs, text and key codes only as argv, acting in the background", async () => {
     const { runner, calls } = fakeRunner((call) =>
       call.argv[0] === "value"

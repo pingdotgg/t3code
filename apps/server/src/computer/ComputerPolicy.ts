@@ -15,7 +15,6 @@ const MAX_LABEL_BYTES = 400;
 const MAX_TEXT_BYTES = 4_000;
 
 const SCROLL_DIRECTIONS: ReadonlyArray<string> = ["up", "down", "top", "bottom"];
-const BENIGN_CLICK_ROLES: ReadonlyArray<string> = ["textbox", "tab", "row"];
 /** Keys that move or reveal, never submit: the address bar (⌘L) and a new tab (⌘T) included. */
 const PASSIVE_KEYS: ReadonlyArray<string> = [
   "space",
@@ -103,8 +102,7 @@ export function screen(action: ComputerAction): ComputerDecision {
     case "click": {
       const why = consequential(label);
       if (why) return { verdict: "tap", why };
-      // Focusing a text box, picking a tab or selecting a row in a list commits nothing.
-      if (BENIGN_CLICK_ROLES.includes(action.role ?? "")) return auto();
+      // A role is the page's own claim: a "tab" or "text box" on a web page can be any control.
       return {
         verdict: "tap",
         why: "whether it could send, buy or delete something cannot be told from its label",

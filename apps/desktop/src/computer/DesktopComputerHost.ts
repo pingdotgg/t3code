@@ -220,31 +220,14 @@ const make = Effect.gen(function* () {
   Electron.app.on("browser-window-focus", onWindowFocus);
 
   /**
-   * Ends the task on this Mac first, so it works with the network down, then tells the environment:
-   * the helper's own end is dropped once its task is cleared.
+   * Ends the task on this Mac, without asking the environment, so it works offline. The environment
+   * hears the helper's own end, once the helper has let go of the computer.
    */
   const stopLocally = () => {
     const task = running;
     if (task === null) return;
-    running = null;
     releaseStopShortcut();
     helper?.stop({ taskId: task.taskId, reason: STOPPED_HERE });
-    void ask<void>(
-      (callId) => ({
-        type: "event",
-        callId,
-        environmentId: task.environmentId,
-        taskId: task.taskId,
-        event: {
-          type: "finished",
-          status: "stopped",
-          reason: STOPPED_HERE,
-          steps: [],
-          surface: null,
-        },
-      }),
-      () => undefined,
-    );
   };
 
   const askAuthorize = (
@@ -264,17 +247,12 @@ const make = Effect.gen(function* () {
         ...request,
       }),
       (answer) =>
-        // A grant that arrives after its task stopped here is refused, whatever the environment said.
-        answer.type === "grant" && (!answer.grant.ok || running?.taskId === owner.taskId)
+        answer.type === "grant"
           ? answer.grant
           : {
               ok: false,
               denied:
-                answer.type === "failed"
-                  ? answer.message
-                  : answer.type === "grant"
-                    ? "It was stopped."
-                    : "The environment did not allow it.",
+                answer.type === "failed" ? answer.message : "The environment did not allow it.",
             },
     );
 
@@ -417,10 +395,8 @@ const make = Effect.gen(function* () {
         hosted.add(environmentId);
         return null;
       case "stop": {
-        if (running?.environmentId === environmentId) {
-          running = null;
-          releaseStopShortcut();
-        }
+        // `running` clears when the helper reports the task finished, which the environment waits for.
+        if (running?.environmentId === environmentId) releaseStopShortcut();
         helper?.stop({ taskId: next.taskId, reason: next.reason });
         return null;
       }

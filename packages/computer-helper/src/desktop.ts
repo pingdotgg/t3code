@@ -287,7 +287,7 @@ function front(name) {
 const OBSERVE_SCRIPT = `${JXA_HELPERS}${FRONT}
 var ROLES = {
   AXButton: 'button', AXLink: 'link', AXTextField: 'textbox', AXTextArea: 'textbox', AXComboBox: 'textbox',
-  AXSearchField: 'textbox', AXRadioButton: 'tab', AXTab: 'tab', AXRow: 'row', AXCell: 'row', AXMenuItem: 'menuitem',
+  AXSearchField: 'textbox', AXRadioButton: 'radio', AXTab: 'tab', AXRow: 'row', AXCell: 'row', AXMenuItem: 'menuitem',
   AXMenuButton: 'button', AXPopUpButton: 'button', AXCheckBox: 'checkbox'
 };
 var LEAVES = { AXStaticText: 1, AXImage: 1, AXTextField: 1, AXTextArea: 1, AXSearchField: 1, AXButton: 1, AXMenuButton: 1,

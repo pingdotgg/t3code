@@ -329,6 +329,8 @@ const makeSession = Effect.scoped(
 
     const attached = yield* computer.attachLocalHost({
       ...hello,
+      // A helper the server gave up on is stopped, which ends this session and lets it start again.
+      end: Effect.sync(() => child.stop()),
       send: (frame) => {
         // A send is synchronous, so the map is written and read without a fiber between.
         if (frame.kind === "start") starts.set(frame.taskId, frame.requestId);

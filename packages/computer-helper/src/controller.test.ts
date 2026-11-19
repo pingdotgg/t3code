@@ -2,10 +2,10 @@
 // LocalRouter ported it from Sidebud (github.com/jayleaton/sidebud @70da540); both notices ship in LICENSE.localrouter.
 import { describe, expect, it, vi } from "vite-plus/test";
 import { silentLogger } from "./log.ts";
+import { navigationText } from "./navigation.ts";
 import {
   ComputerUse,
   ComputerUseRuns,
-  navigationText,
   navigationUnmet,
   pureNavigation,
   quotedTargets,

@@ -320,7 +320,7 @@ describe("computer toolkit", () => {
       }).pipe(Effect.forkScoped);
 
       const task = yield* taskWhere((candidate) => candidate.kind === "use");
-      expect(task).toMatchObject({ threadId, goal: "reply to Dana that I am on my way" });
+      expect(task).toMatchObject({ threadId, goal: "reply to Dana that I am [typed text]" });
 
       // The helper asks what to do next; with no grounder those questions come to the agent.
       const decided = yield* host

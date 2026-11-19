@@ -54,17 +54,22 @@ Mac has one helper.
 Approvals guard against mistakes and prompt injection from screen text, which
 is data and never instructions. Every model that reads the screen can be
 steered by it, so no model's verdict grants a step: a click the deterministic
-policy cannot show is safe always becomes a tap. The decision endpoint only
+policy cannot show is safe always becomes a tap. No accessibility role clears a
+click on an untrusted surface, since a `tab`, `row` or `textbox` can still send. The decision endpoint only
 chooses the next step, and the server sends it an allowlisted, capped state,
-never what the host put there beyond it. Only the `text` a task was started
-with is ever typed (the server refuses a typed step with other text), and it
-never reaches the decision endpoint, a log, an error or the audit file.
+never what the host put there beyond it. The goal goes with it. Only the
+`text` a task was started with is ever typed (without one, only the exact
+address the helper's navigation parser reads from the goal), and that text is
+hidden from the decision endpoint, read-only snapshots, logs, errors and the
+audit file wherever it appears, the goal and question keys included.
 
 A host is bound to the authenticated session that connected it. Host calls
 from any other session are refused, and only that session's reconnect
 replaces it. A stopped task keeps its host reserved until the host reports
-the task finished; a host that does not within the reply timeout is
-disconnected.
+the task finished, and a control keeps it until the control's reply, since a
+fixed control cannot be cancelled. A host that does not answer within the
+reply timeout is disconnected, which for a standalone server stops the
+helper so its session can start again.
 
 Approvals do not stop a full-access agent with a shell on the same machine as
 the helper: it can run `osascript` itself. The boundary is real only when the

@@ -43,9 +43,10 @@
       "action": { "kind": "click", "role": "link", "label": "Postcode lookup" },
       "verdict": "tap"
     },
-    { "action": { "kind": "click", "role": "textbox", "label": "Message" }, "verdict": "auto" },
-    { "action": { "kind": "click", "role": "tab", "label": "Inbox" }, "verdict": "auto" },
-    { "action": { "kind": "click", "role": "row", "label": "Dana Lee" }, "verdict": "auto" },
+    { "action": { "kind": "click", "role": "textbox", "label": "Message" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "tab", "label": "Inbox" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "row", "label": "Dana Lee" }, "verdict": "tap" },
+    { "action": { "kind": "click", "role": "radio", "label": "Pay now" }, "verdict": "tap" },
     { "action": { "kind": "click", "role": "button", "label": "OK" }, "verdict": "tap" },
     { "action": { "kind": "click", "role": "text", "label": "Continue" }, "verdict": "tap" },
     {

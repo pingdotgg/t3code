@@ -14,6 +14,7 @@ type SentFrame = {
   readonly task?: { readonly goal: string; readonly text: string | null };
   readonly limits?: { readonly maxSteps: number; readonly timeoutMs: number };
   readonly taskId?: string;
+  readonly grant?: unknown;
 };
 
 function fakeChild() {
@@ -168,6 +169,79 @@ describe("the computer helper process", () => {
     );
     expect(onExit).toHaveBeenCalledWith("The computer helper stopped.");
     expect(process.alive).toBe(false);
+    expect(process.task).toBeNull();
+  });
+
+  it("a stopped task waits for the helper's end, forwards it, and grants nothing meanwhile", async () => {
+    const child = fakeChild();
+    const process = startComputerHostProcess({
+      workerPath: "/app/computer.cjs",
+      fork: (() => child as unknown as ComputerHostChild) as never,
+    });
+    let grantLate: (grant: { ok: true; grant: "allow" }) => void = () => undefined;
+    const running = task({
+      ask: {
+        authorize: vi.fn(
+          () =>
+            new Promise<{ ok: true; grant: "allow" }>((resolve) => {
+              grantLate = resolve;
+            }),
+        ),
+        decide: vi.fn().mockResolvedValue({}),
+        event: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+    const started = process.start(running);
+    deliver(child, { id: "task-1", kind: "started", taskId: "task-1" });
+    await started;
+    const step = (id: string) => ({
+      id,
+      kind: "authorize",
+      taskId: "task-1",
+      request: {
+        step: 1,
+        observation: { app: "Safari", title: "Example" },
+        action: { kind: "scroll", direction: "down" },
+      },
+    });
+
+    deliver(child, step("grant_1"));
+    await vi.waitFor(() => expect(running.ask.authorize).toHaveBeenCalledTimes(1));
+    process.stop({ taskId: "task-1", reason: "You stopped it." });
+    expect(process.task).toEqual({ environmentId: "environment-a", taskId: "task-1" });
+
+    // The environment's grant arrives after the stop: the helper is refused all the same.
+    grantLate({ ok: true, grant: "allow" });
+    await vi.waitFor(() =>
+      expect(sent(child).find((frame) => frame.id === "grant_1")).toMatchObject({
+        kind: "grant",
+        grant: { ok: false, denied: "It was stopped." },
+      }),
+    );
+    // A step asked for while stopping is refused here, without asking the environment.
+    deliver(child, step("grant_2"));
+    await vi.waitFor(() =>
+      expect(sent(child).find((frame) => frame.id === "grant_2")).toMatchObject({
+        grant: { ok: false, denied: "It was stopped." },
+      }),
+    );
+    expect(running.ask.authorize).toHaveBeenCalledTimes(1);
+
+    deliver(child, {
+      id: "task-1",
+      kind: "finished",
+      taskId: "task-1",
+      outcome: { status: "stopped", reason: "You stopped it.", steps: [], surface: null },
+    });
+    await vi.waitFor(() =>
+      expect(running.ask.event).toHaveBeenCalledWith({
+        type: "finished",
+        status: "stopped",
+        reason: "You stopped it.",
+        steps: [],
+        surface: null,
+      }),
+    );
     expect(process.task).toBeNull();
   });
 
