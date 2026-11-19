@@ -4,6 +4,7 @@ import {
   type ModelSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -16,6 +17,7 @@ import {
 
 const now = Date.parse("2026-11-12T12:00:00.000Z");
 const resetsAt = "2026-11-12T15:00:00.000Z";
+const inHours = (hours: number) => DateTime.formatIso(DateTime.makeUnsafe(now + hours * 3_600_000));
 
 const effortCapabilities = {
   optionDescriptors: [
@@ -57,13 +59,18 @@ function claude(id: string, usedPercent: number, autoAware = true): ServerProvid
   } as unknown as ServerProvider;
 }
 
-function withWeekly(provider: ServerProvider, usedPercent: number, weeklyResetsAt: string) {
+function withWeekly(
+  provider: ServerProvider,
+  usedPercent: number,
+  weeklyResetsAt: string,
+  id = "seven_day",
+) {
   return {
     ...provider,
     usageLimits: {
       windows: [
         ...(provider.usageLimits?.windows ?? []),
-        { id: "seven_day", kind: "weekly", label: "Weekly", usedPercent, resetsAt: weeklyResetsAt },
+        { id, kind: "weekly", label: "Weekly", usedPercent, resetsAt: weeklyResetsAt },
       ],
     },
   } as unknown as ServerProvider;
@@ -74,6 +81,9 @@ const auto = (level?: string): ModelSelection => ({
   model: "auto",
   ...(level ? { options: [{ id: "effort", value: level }] } : {}),
 });
+
+const routeTo = (providers: ReadonlyArray<ServerProvider>) =>
+  resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId;
 
 describe("resolveAutoModelSelection", () => {
   it("maps each level to its orchestrator model and effort, medium by default", () => {
@@ -128,6 +138,16 @@ describe("resolveAutoModelSelection", () => {
     expect(
       resolveAutoModelSelection({ selection: auto(), providers: busy, now, current }),
     ).toMatchObject({ sticky: false, selection: { instanceId: "claudeAutoB" } });
+
+    // A higher weekly pace elsewhere does not move a thread whose account still has room.
+    const onB = { instanceId: ProviderInstanceId.make("claudeAutoB"), model: "claude-opus-5-5" };
+    const urgentA = [
+      withWeekly(claude("claudeAuto", 10), 68, inHours(52.8)),
+      withWeekly(claude("claudeAutoB", 45), 40, inHours(149.8)),
+    ];
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers: urgentA, now, current: onB }),
+    ).toMatchObject({ sticky: true, selection: { instanceId: "claudeAutoB" } });
   });
 
   it("steps down to other subscriptions when both Claude accounts are exhausted", () => {
@@ -156,6 +176,75 @@ describe("resolveAutoModelSelection", () => {
     expect(
       resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
     ).toBe("claudeAuto");
+    // Weekly paces within 15% count as equal: B's 0.54%/h does not beat A's 0.5%/h.
+    const closePaces = [
+      withWeekly(claude("claudeAutoB", 10), 46, inHours(100)),
+      withWeekly(claude("claudeAuto", 50), 50, inHours(100)),
+    ];
+    expect(routeTo(closePaces)).toBe("claudeAuto");
+  });
+
+  it("spends first the account whose weekly quota would be lost at its reset", () => {
+    // 2026-11-19 07:15 CET: A has 32% left for 52.8 h (0.61%/h), B 60% for 149.8 h (0.40%/h).
+    // B's 5-hour window is further along, but A's quota is gone in two days.
+    const route = (aWeeklyUsed: number) =>
+      routeTo([
+        withWeekly(claude("claudeAutoB", 45), 40, inHours(149.8)),
+        withWeekly(claude("claudeAuto", 10), aWeeklyUsed, inHours(52.8)),
+      ]);
+    expect(route(68)).toBe("claudeAuto");
+    // With 15% left (0.28%/h), A has less to lose and waits; at 97% it has no room at all.
+    expect(route(85)).toBe("claudeAutoB");
+    expect(route(97)).toBe("claudeAutoB");
+  });
+
+  it("ranks an account without weekly data after one with it", () => {
+    // A's 5-hour window is further along, but A's weekly use is unknown, not 0%.
+    const providers = [
+      claude("claudeAuto", 50),
+      withWeekly(claude("claudeAutoB", 10), 40, inHours(100)),
+    ];
+    expect(routeTo(providers)).toBe("claudeAutoB");
+
+    // A weekly window that has not started reports no reset; it runs a full week from now
+    // (0.6%/h), so the fresh account beats A's 0.47%/h.
+    const unstarted = {
+      ...claude("claudeAutoB", 0),
+      usageLimits: {
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 0,
+            windowDurationMins: 10_080,
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    expect(routeTo([withWeekly(claude("claudeAuto", 50), 30, inHours(150)), unstarted])).toBe(
+      "claudeAutoB",
+    );
+  });
+
+  it("counts a one-model weekly window only for that model", () => {
+    // A's nearly spent Opus allowance resets late, so A has little Opus quota to lose. B's nearly
+    // spent allowance is Fable's, which does not slow B's Opus pace.
+    const providers = [
+      withWeekly(
+        withWeekly(claude("claudeAuto", 50), 20, inHours(30)),
+        85,
+        inHours(140),
+        "seven_day_opus",
+      ),
+      withWeekly(
+        withWeekly(claude("claudeAutoB", 10), 50, inHours(100)),
+        85,
+        inHours(140),
+        "seven_day_fable",
+      ),
+    ];
+    expect(routeTo(providers)).toBe("claudeAutoB");
   });
 
   it("switches to the other account once a 5-hour or weekly window is 90% used", () => {
@@ -181,11 +270,11 @@ describe("resolveAutoModelSelection", () => {
     ).toBe("claudeAuto");
   });
 
-  it("with similar 5-hour use, spends the account whose weekly limit resets first", () => {
-    // B's window is slightly further along, but A's unused weekly quota is gone tomorrow.
+  it("with similar weekly pace and 5-hour use, spends the account whose weekly limit resets first", () => {
+    // Both paces are 0.42%/h and B's window is slightly further along, but A resets a day sooner.
     const providers = [
       withWeekly(claude("claudeAutoB", 30), 40, "2026-11-18T12:00:00.000Z"),
-      withWeekly(claude("claudeAuto", 25), 40, "2026-11-13T12:00:00.000Z"),
+      withWeekly(claude("claudeAuto", 25), 50, "2026-11-17T12:00:00.000Z"),
     ];
     expect(
       resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
