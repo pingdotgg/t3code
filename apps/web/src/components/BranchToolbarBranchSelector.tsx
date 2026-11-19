@@ -581,6 +581,20 @@ export function BranchToolbarBranchSelector({
     if (!canChangeThreadBranch) return;
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
+    const latest = readLatestThreadState();
+    // Refuse before switching the checkout, or a running thread stays bound to the missing one.
+    if (
+      isWorktreeChangeBlocked({
+        runtime: latest.runtime,
+        currentWorktreePath: latest.worktreePath,
+        nextWorktreePath: selectableWorktreePath(activeWorktreePath),
+      })
+    ) {
+      toastManager.add(
+        stackedThreadToast({ type: "warning", title: messages(WORKTREE_CHANGE_BLOCKED_MESSAGE) }),
+      );
+      return;
+    }
     latestSelectionIdRef.current++;
 
     setIsBranchMenuOpen(false);
