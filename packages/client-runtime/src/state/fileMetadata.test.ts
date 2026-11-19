@@ -346,12 +346,15 @@ describe("file metadata", () => {
     }),
   );
 
-  it.effect("uses search and tree kinds without another request", () =>
+  it.effect("uses search and tree kinds for directories but still stats found files", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
       yield* h.seed("folder.ts", "directory");
       expect(yield* h.read("/workspace/folder.ts")).toEqual({ kind: "directory" });
       expect(h.batches).toHaveLength(0);
+      h.values.set("/workspace/notes.md", { kind: "file", byteLength: 2048 });
+      yield* h.seed("notes.md", "file");
+      expect(yield* h.read("/workspace/notes.md")).toEqual({ kind: "file", byteLength: 2048 });
     }),
   );
 
