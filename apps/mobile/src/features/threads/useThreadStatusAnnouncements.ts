@@ -6,6 +6,7 @@ import {
 import { useEffect, useRef } from "react";
 import { AccessibilityInfo } from "react-native";
 
+import { m } from "../../i18n/messages";
 import { useAppActive } from "../../lib/appState";
 import {
   nextThreadActivitySnapshot,
@@ -61,7 +62,7 @@ export function useThreadStatusAnnouncements({
       working,
       run: runId === null || runStatus === null ? null : { runId, status: runStatus },
     });
-    const next = nextThreadAnnouncement(previous?.announcement ?? null, activity.snapshot);
+    const next = nextThreadAnnouncement(previous?.announcement ?? null, activity.snapshot, m);
     memoryRef.current = { threadKey: activeKey, activity, announcement: next.memory };
     // Queued, like the web's polite region, so VoiceOver doesn't cut off what it is reading.
     if (next.announcement !== null) {

@@ -15,6 +15,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { useMessages } from "gt-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -43,8 +44,10 @@ export function useDeviceState(environmentId: EnvironmentId | null): {
   readonly error: string | null;
   readonly refresh: () => void;
 } {
+  const resolve = useMessages();
   const query = useEnvironmentQuery(
     environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
+    resolve,
   );
   return {
     state: query.data ?? EMPTY_DEVICE_STATE,
