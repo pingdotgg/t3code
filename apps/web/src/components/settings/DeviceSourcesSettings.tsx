@@ -32,6 +32,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { incompleteListings } from "../device/DeviceSetup";
+import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
 import { EasDeviceHostEditor } from "./EasDeviceHostEditor";
@@ -173,7 +174,7 @@ export function DeviceSourcesSettings(props: {
     label: label(environment),
     connected: environment.connection.phase === "connected",
   }));
-  const { testConnection } = useHostConnectionChecks(targets);
+  const { checks, testConnection } = useHostConnectionChecks(targets);
   const ids = connectedEnvironments.map((environment) => environment.environmentId);
   const results = useAtomValue(deviceHostStatesAtom(environmentIdsKey(ids)));
   const members = connectedEnvironments.map((environment, index) => {
@@ -320,16 +321,8 @@ export function DeviceSourcesSettings(props: {
       gt("Simlock host not removed everywhere"),
     );
 
-  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
   const testSsh = async (host: SshDeviceHostConfig) => {
-    setTesting((current) => new Set(current).add(host.id));
-    const checked = await testConnection(host).finally(() =>
-      setTesting((current) => {
-        const next = new Set(current);
-        next.delete(host.id);
-        return next;
-      }),
-    );
+    const checked = await testConnection(host);
     if (!checked) return;
     const failed = targets.filter((target) => checked[target.environmentId]?.status === "failed");
     toastManager.add({
@@ -435,6 +428,9 @@ export function DeviceSourcesSettings(props: {
   for (const group of sshGroups) {
     const host = group.host;
     const holders = new Set(group.members.map((member) => member.environmentId));
+    const testing = Object.values(checks[deviceHostConnectionKey(host)] ?? {}).some(
+      (check) => check.status === "pending",
+    );
     rows.push({
       key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
@@ -447,7 +443,7 @@ export function DeviceSourcesSettings(props: {
         );
         if (!held)
           return { environmentId: member.environmentId, label: member.label, added: false };
-        const status = testing.has(host.id)
+        const status = testing
           ? ({ tone: "pending", label: gt("Testing connection") } as const)
           : hostStatus(member.state, held.host.id, m);
         return {
