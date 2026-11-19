@@ -149,6 +149,8 @@ describe("Cursor skills", () => {
             scope: "user",
           },
         ]);
+        const fromHome = yield* discoverCursorSkills(userHome, { HOME: userHome });
+        expect(fromHome.find((skill) => skill.name === "skill-creator")?.scope).toBe("system");
       }),
     ));
 

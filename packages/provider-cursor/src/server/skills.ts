@@ -239,11 +239,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     { directory: path.join(base, ".cursor", "skills"), scope },
     { directory: path.join(base, ".agents", "skills"), scope },
     // Codex installs its bundled skills in `.system`, scanned below as built-in.
-    {
-      directory: path.join(base, ".codex", "skills"),
-      scope,
-      ...(scope === "user" ? { skipDirectory: ".system" } : {}),
-    },
+    { directory: path.join(base, ".codex", "skills"), scope, skipDirectory: ".system" },
     { directory: path.join(base, ".claude", "skills"), scope },
   ];
   const roots = [
