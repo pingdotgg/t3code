@@ -8,6 +8,7 @@ import {
   GuestShareId,
   type GuestStreamEvent,
   MessageId,
+  OrchestrationV2Command,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2TurnItem,
   ProjectId,
@@ -28,6 +29,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -181,6 +183,7 @@ const shareThreadFor = Effect.fn(function* (threadId: ThreadId) {
   return { orchestrator, guestShares, credential };
 });
 const shareThread = shareThreadFor(threadId);
+const decodeCommand = Schema.decodeUnknownSync(OrchestrationV2Command);
 
 it.effect("spends an invite once and ends the guest stream when the owner stops sharing", () =>
   Effect.gen(function* () {
@@ -304,6 +307,35 @@ it.effect("redeems only a short invite whose signature and share id are both cur
     assert.isTrue(
       Exit.isSuccess(yield* Effect.exit(guestShares.redeem({ credential, name: "Sam" }))),
     );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("stops only the guest link the owner chose to close", () =>
+  Effect.gen(function* () {
+    const { orchestrator, guestShares } = yield* shareThread;
+    const original = (yield* orchestrator.getThreadRecords(threadId, [])).thread.guestShare!;
+    const close = (expectedShareId: GuestShareId, id: string) =>
+      orchestrator.dispatch(
+        decodeCommand({
+          type: "thread.guest-share.close",
+          commandId: CommandId.make(id),
+          threadId,
+          expectedShareId,
+        }),
+      );
+
+    const { url, share: replacement } = yield* guestShares.create({ threadId });
+    const staleClose = yield* close(original.id, "close-original");
+    const { token } = yield* guestShares.redeem({
+      credential: url.slice(url.indexOf("#") + 1),
+      name: "Sam",
+    });
+
+    assert.deepEqual(staleClose.storedEvents, []);
+    yield* close(replacement.id, "close-replacement");
+    assert.equal((yield* Effect.flip(guestShares.check(token))).reason, "inactive");
+    const repeatedClose = yield* close(replacement.id, "close-again");
+    assert.deepEqual(repeatedClose.storedEvents, []);
   }).pipe(Effect.provide(layerTest)),
 );
 
