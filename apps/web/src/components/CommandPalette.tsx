@@ -291,7 +291,6 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
-import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
 import { IssueGlyph } from "~/components/issue/issuePresentation";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 
@@ -1865,7 +1864,7 @@ function OpenCommandPaletteDialog(props: {
       title: gt("Open issues"),
       icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
       run: async () => {
-        await navigate({ to: "/issues", search: readIssueListPreferences() });
+        await openLayoutPage("issues");
       },
     });
   }
