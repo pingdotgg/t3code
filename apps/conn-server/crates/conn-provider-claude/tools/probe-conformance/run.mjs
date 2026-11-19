@@ -226,6 +226,8 @@ import { buildThreadTitlePrompt } from "@t3tools/provider-core/server/textGenera
 import { toJsonSchemaObject } from "@t3tools/provider-core/server/textGenerationUtils";
 import * as Exit from "effect/Exit";
 import { makeClaudeContinuationGroupKey, mergeClaudeProcessEnvironment } from "./Drivers/ClaudeHome.ts";
+import * as Layer from "effect/Layer";
+import * as ServerConfig from "../config.ts";
 
 const PLAN = __PLAN__;
 const BASE_ENV = __BASE_ENV__;
@@ -282,7 +284,13 @@ it.live("conn claude probe: every scenario", () =>
         fs.writeFileSync(scenario.tsOut, JSON.stringify(entry, null, 2));
       }),
     { concurrency: "unbounded", discard: true },
-  ).pipe(Effect.provide(NodeServices.layer)), 180_000);
+  ).pipe(
+    Effect.provide(
+      ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "conn-claude-probe-" }).pipe(
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ), 180_000);
 `;
 const server = NodePath.join(MONOREPO, "apps/server");
 const testFile = NodePath.join(server, "src/provider", `ConnClaudeProbe.${process.pid}.tmp.test.ts`);
