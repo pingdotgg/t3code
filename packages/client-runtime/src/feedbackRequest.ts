@@ -36,6 +36,16 @@ export function feedbackRequestDisplay(
   }
 }
 
+/** Exactly what Send sends: the outline, or with the conversation included, its text too. */
+export function feedbackCardPreview(
+  item: Pick<FeedbackRequestItem, "preview" | "conversationTrace">,
+  includeConversation: boolean,
+): AgentFeedbackPreview {
+  return includeConversation && item.conversationTrace !== undefined
+    ? { ...item.preview, trace: item.conversationTrace }
+    : item.preview;
+}
+
 const KIND_LABELS: Record<AgentFeedbackPreview["kind"], string> = {
   bug: msg("Bug"),
   confusing: msg("Confusing"),

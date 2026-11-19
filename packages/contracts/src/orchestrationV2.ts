@@ -7,7 +7,11 @@ import * as SchemaAST from "effect/SchemaAST";
 import * as SchemaGetter from "effect/SchemaGetter";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { AgentFeedbackPreview, AgentFeedbackRequestStatus } from "./agentFeedback.ts";
+import {
+  AgentFeedbackPreview,
+  AgentFeedbackRequestStatus,
+  AgentFeedbackTrace,
+} from "./agentFeedback.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -1717,12 +1721,15 @@ const OrchestrationV2LinkRequestFields = {
 } as const;
 
 /**
- * A report the user asked the agent to send to the T3 team, shown for approval. `preview` is
- * exactly what Send stores and sends.
+ * A report the user asked the agent to send to the T3 team, shown for approval. Send stores and
+ * sends exactly `preview`, with `conversationTrace` as its trace if the user included the
+ * conversation. Once answered, the card keeps only what was sent.
  */
 const OrchestrationV2FeedbackRequestFields = {
   type: Schema.Literal("feedback_request"),
   preview: AgentFeedbackPreview,
+  /** The preview's trace with message text, sent instead if the user includes the conversation. */
+  conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
   feedbackStatus: AgentFeedbackRequestStatus,
 } as const;
 
@@ -3842,6 +3849,7 @@ const OrchestrationV2InternalCommand = Schema.Union([
     nodeId: NodeId,
     turnItemId: TurnItemId,
     preview: AgentFeedbackPreview,
+    conversationTrace: Schema.optionalKey(AgentFeedbackTrace),
     feedbackStatus: AgentFeedbackRequestStatus,
   }),
   /**

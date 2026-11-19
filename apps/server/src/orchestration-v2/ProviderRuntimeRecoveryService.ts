@@ -165,21 +165,13 @@ const cancelledItem = (
 ): OrchestrationV2ThreadProjection["turnItems"][number] =>
   item.type === "secret_request" && item.secretStatus === "pending"
     ? { ...item, status: "cancelled", secretStatus: "cancelled", completedAt: now, updatedAt: now }
-    : item.type === "feedback_request" && item.feedbackStatus === "pending"
-      ? {
-          ...item,
-          status: "cancelled",
-          feedbackStatus: "cancelled",
-          completedAt: now,
-          updatedAt: now,
-        }
-      : {
-          ...item,
-          ...("streaming" in item ? { streaming: false } : {}),
-          status: "cancelled",
-          completedAt: now,
-          updatedAt: now,
-        };
+    : {
+        ...item,
+        ...("streaming" in item ? { streaming: false } : {}),
+        status: "cancelled",
+        completedAt: now,
+        updatedAt: now,
+      };
 
 function latestStartedRun(
   projection: ProjectionStore.ProjectionRuntimeRecoveryState,
@@ -786,6 +778,8 @@ export const make = Effect.gen(function* () {
             !isAppOwnedDelegationItem(candidate) &&
             // A link card waits on the user, not the run, and answers by message.
             candidate.type !== "link_request" &&
+            // So does a feedback card, answered from what it recorded.
+            candidate.type !== "feedback_request" &&
             // The orchestrator queues a steer the provider never reported reading.
             !(
               candidate.type === "user_message" &&

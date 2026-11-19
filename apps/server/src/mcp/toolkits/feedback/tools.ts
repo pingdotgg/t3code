@@ -3,8 +3,8 @@ import * as Schema from "effect/Schema";
 import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import {
+  FeedbackAwaitingApproval,
   FeedbackInput,
-  FeedbackNotApproved,
   FeedbackSubmitResult,
 } from "../../../feedback/FeedbackReport.ts";
 import * as Feedback from "../../../feedback/FeedbackService.ts";
@@ -25,9 +25,9 @@ export const FeedbackToolkit = Toolkit.make(
   Tool.make("t3_feedback", {
     ...shared,
     description:
-      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A requested report also carries an outline of recent turns, without text; set `includeTurns` only if the user asks to include the conversation. The user sees a requested report and approves it before it is sent, so call this when asked without asking first; the result says whether they approved.",
+      "Send feedback to the T3 team: a T3 tool or `t3` command that misbehaved, a confusing instruction, a missing capability, or anything about T3 Code the user asks you to send. Not the user's own code. Use your own words; never quote the user's messages, code, files, or names. A report the user asks for opens a card where they approve it and choose whether to include the conversation, so call this when asked without asking first, and never paste the conversation into it.",
     parameters: FeedbackInput,
-    success: Schema.Union([FeedbackSubmitResult, FeedbackNotApproved]),
+    success: Schema.Union([FeedbackSubmitResult, FeedbackAwaitingApproval]),
   })
     .annotate(Tool.Destructive, false)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileFeedbackOff),

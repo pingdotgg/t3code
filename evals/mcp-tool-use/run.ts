@@ -58,16 +58,12 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { FeedbackToolkit } from "../../apps/server/src/mcp/toolkits/feedback/tools.ts";
 import {
-  FEEDBACK_NOT_APPROVED_NOTE,
+  FEEDBACK_AWAITING_APPROVAL_NOTE,
   FEEDBACK_SUBJECT_MESSAGE,
-  FEEDBACK_TRACE_TURNS,
   FeedbackInput,
+  FeedbackNotRequestedError,
   resolveFeedbackSubject,
 } from "../../apps/server/src/feedback/FeedbackReport.ts";
-import {
-  FeedbackNotRequestedError,
-  FeedbackTurnsError,
-} from "../../apps/server/src/feedback/FeedbackService.ts";
 import { scrubFeedback } from "../../apps/server/src/feedback/scrubFeedback.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
@@ -301,8 +297,6 @@ const McpToolUseWorld = Schema.StructWithRest(
     browserAgentAccess: Schema.optional(Schema.Boolean),
     /** The Agent feedback mode; absent is off. On, T3 lists its tools and its text has the mode's line. */
     agentFeedback: Schema.optional(Contracts.AgentFeedbackMode),
-    /** How the user answers the preview card of a requested report. Defaults to approve. */
-    feedbackCard: Schema.optional(Schema.Literals(["approve", "decline"])),
     /** Every capture reaches T3 with adb screencap's warning ahead of the PNG: T3 reports 0×0. */
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
@@ -2111,35 +2105,26 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isT3Name(call.name) && name === "t3_feedback" && (mock === undefined || mock === "default")) {
     const decoded = decodeFeedbackInput(input);
     if (Result.isFailure(decoded)) return failed(decoded.failure.message);
-    const { includeTurns, ...report } = decoded.success;
+    const report = decoded.success;
     // The same refusals as FeedbackService, in its order.
     if (sample.testCase.setup.world?.agentFeedback === "on-request" && !report.userRequested)
       return failed(new FeedbackNotRequestedError({ source: "mcp" }).message);
-    if (includeTurns > 0 && !report.userRequested)
-      return failed(new FeedbackTurnsError({}).message);
     const subject = resolveFeedbackSubject(
       report.subject,
       t3SourceTools.map((tool) => tool.name),
     );
     if (subject === undefined) return failed(FEEDBACK_SUBJECT_MESSAGE);
-    // T3 shows a requested report to the user, who answers its card as the world says.
-    if (report.userRequested && sample.testCase.setup.world?.feedbackCard === "decline") {
+    // T3 shows a requested report to the user in a card and answers at once.
+    if (report.userRequested) {
       return toolResult(call.id, {
-        approved: false,
-        status: "declined",
-        note: FEEDBACK_NOT_APPROVED_NOTE.declined,
+        status: "awaiting_approval",
+        note: FEEDBACK_AWAITING_APPROVAL_NOTE,
       });
     }
-    const turns = Math.min(
-      FEEDBACK_TRACE_TURNS,
-      (sample.testCase.setup.priorTurns ?? []).filter((turn) => turn.role === "user").length + 1,
-    );
     return toolResult(call.id, {
       ...report,
       subject,
-      trace: report.userRequested
-        ? { turns, textTurns: Math.min(includeTurns, turns), truncated: false }
-        : null,
+      trace: null,
       expected: scrubFeedback(report.expected, []),
       actual: scrubFeedback(report.actual, []),
       workaround: scrubFeedback(report.workaround, []),

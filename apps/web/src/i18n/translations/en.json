@@ -3511,6 +3511,8 @@
   "3ccfbf7e86868c35": "Feedback for the T3 team",
   "4e0710d19dfc2e7e": "Send this report to the T3 team?",
   "87d0ae0723ba75d1": "This is everything that leaves your machine. Nothing is sent unless you press Send.",
+  "bf19826f81484328": "Include the conversation",
+  "dd47d8b0079fcc79": "Adds the text of your messages and the agent's replies in these turns.",
   "ddb7e6f8ce99e657": "Only someone who can run agents on this machine can send or decline it.",
   "03c1eb603c112f47": "Don't send",
   "653405e4ed498d9f": "Send",

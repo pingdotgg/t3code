@@ -1,6 +1,7 @@
 import { T, msg, useMessages } from "gt-react";
 import { pipe } from "effect/Function";
 import {
+  feedbackCardPreview,
   feedbackPreviewFields,
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
@@ -25,6 +26,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
+import { Switch } from "../ui/switch";
 import { WorkLogRow } from "./WorkLog";
 
 const TITLE = msg("Feedback for the T3 team");
@@ -84,6 +86,7 @@ function PendingFeedbackRequest(props: {
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeConversation, setIncludeConversation] = useState(false);
   // Two clicks can land before a render.
   const inFlight = useRef(false);
 
@@ -94,7 +97,12 @@ function PendingFeedbackRequest(props: {
     setError(null);
     const result = await answer({
       environmentId: props.environmentId,
-      input: { threadId: props.item.threadId, turnItemId: props.item.id, answer: reply },
+      input: {
+        threadId: props.item.threadId,
+        turnItemId: props.item.id,
+        answer: reply,
+        includeConversation,
+      },
     }).finally(() => {
       inFlight.current = false;
       setSubmitting(false);
@@ -106,6 +114,7 @@ function PendingFeedbackRequest(props: {
       setError,
     );
   };
+  const disabled = submitting || !canAnswer;
 
   return (
     <section
@@ -122,7 +131,25 @@ function PendingFeedbackRequest(props: {
           <T>This is everything that leaves your machine. Nothing is sent unless you press Send.</T>
         </p>
       </div>
-      <FeedbackPreview preview={props.item.preview} />
+      {props.item.conversationTrace !== undefined ? (
+        <label className="flex min-w-0 items-center justify-between gap-3">
+          <span className="flex min-w-0 flex-col">
+            <span className="text-sm text-foreground">
+              <T>Include the conversation</T>
+            </span>
+            <span className="text-xs text-muted-foreground">
+              <T>Adds the text of your messages and the agent's replies in these turns.</T>
+            </span>
+          </span>
+          <Switch
+            size="sm"
+            checked={includeConversation}
+            onCheckedChange={setIncludeConversation}
+            disabled={disabled}
+          />
+        </label>
+      ) : null}
+      <FeedbackPreview preview={feedbackCardPreview(props.item, includeConversation)} />
       {error !== null ? (
         <p role="alert" className="text-xs text-destructive">
           {error}
@@ -137,17 +164,12 @@ function PendingFeedbackRequest(props: {
           type="button"
           size="sm"
           variant="ghost-muted"
-          disabled={submitting || !canAnswer}
+          disabled={disabled}
           onClick={() => void send("decline")}
         >
           <T>Don't send</T>
         </Button>
-        <Button
-          type="button"
-          size="sm"
-          disabled={submitting || !canAnswer}
-          onClick={() => void send("send")}
-        >
+        <Button type="button" size="sm" disabled={disabled} onClick={() => void send("send")}>
           <T>Send</T>
         </Button>
       </div>

@@ -1,6 +1,7 @@
 import { T, msg, useMessages, useGT } from "gt-react-native";
 import { pipe } from "effect/Function";
 import {
+  feedbackCardPreview,
   feedbackPreviewFields,
   feedbackRequestDisplay,
   feedbackRequestFailureMessage,
@@ -24,6 +25,7 @@ import { Pressable, View, type ColorValue } from "react-native";
 import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -82,6 +84,7 @@ function PendingFeedbackRequest(props: {
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeConversation, setIncludeConversation] = useState(false);
   // Two taps can land before a re-render; this guard is synchronous.
   const inFlight = useRef(false);
 
@@ -92,7 +95,12 @@ function PendingFeedbackRequest(props: {
     setError(null);
     const result = await answer({
       environmentId: props.environmentId,
-      input: { threadId: props.item.threadId, turnItemId: props.item.id, answer: reply },
+      input: {
+        threadId: props.item.threadId,
+        turnItemId: props.item.id,
+        answer: reply,
+        includeConversation,
+      },
     }).finally(() => {
       inFlight.current = false;
       setSubmitting(false);
@@ -115,7 +123,25 @@ function PendingFeedbackRequest(props: {
           <T>This is everything that leaves your machine. Nothing is sent unless you tap Send.</T>
         </Text>
       </View>
-      <FeedbackPreview preview={props.item.preview} />
+      {props.item.conversationTrace !== undefined ? (
+        <View className="flex-row items-center gap-3">
+          <View className="flex-1 gap-0.5">
+            <Text className="font-sans text-sm text-foreground">
+              <T>Include the conversation</T>
+            </Text>
+            <Text className="font-sans text-xs text-foreground-muted">
+              <T>Adds the text of your messages and the agent's replies in these turns.</T>
+            </Text>
+          </View>
+          <ThemedSwitch
+            accessibilityLabel={gt("Include the conversation")}
+            disabled={submitting || !canAnswer}
+            onValueChange={setIncludeConversation}
+            value={includeConversation}
+          />
+        </View>
+      ) : null}
+      <FeedbackPreview preview={feedbackCardPreview(props.item, includeConversation)} />
       {error !== null ? (
         <Text accessibilityRole="alert" className="font-sans text-sm text-danger-foreground">
           {error}

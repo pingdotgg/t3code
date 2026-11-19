@@ -19,7 +19,7 @@ export const layer = McpToolAccess.toLayer(FeedbackToolkit, {
         })
         .pipe(
           Effect.map((outcome) =>
-            "approved" in outcome
+            "status" in outcome
               ? outcome
               : {
                   ...outcome,

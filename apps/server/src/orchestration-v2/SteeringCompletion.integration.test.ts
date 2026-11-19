@@ -1310,7 +1310,7 @@ it.effect("restarts the turn for an image when native steering takes text only",
       const before = yield* orchestrator.getThreadProjection(threadId);
       const originalStart = before.runs[0]!.startedAt;
       assert.isNotNull(originalStart);
-      // A feedback card the run showed before the restart, from a tool call still waiting.
+      // A feedback card the run showed before the restart, still waiting for the user.
       const card = {
         type: "feedback_request.record" as const,
         threadId,
@@ -1371,7 +1371,7 @@ it.effect("restarts the turn for an image when native steering takes text only",
           ["look at this", 1],
         ],
       );
-      // The restart replaced the root, and the waiting call can still close its card.
+      // The restart replaced the root, and the user's answer can still close the card.
       assert.notEqual(after.runs[0]?.rootNodeId, card.nodeId);
       yield* orchestrator.dispatch({
         ...card,

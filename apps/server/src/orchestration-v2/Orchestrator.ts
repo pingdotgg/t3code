@@ -10917,8 +10917,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (existing !== undefined && existing.feedbackStatus !== "pending") return;
       if (existing !== undefined && command.feedbackStatus === "pending") return;
       if (run === undefined) return yield* fail(`Run ${command.runId} does not exist.`);
-      // Only a new card must sit on the run's current root. A steering restart replaces the
-      // root while the asking call still waits, and that call must still be able to close it.
+      // Only a new card must sit on the run's current root. A steering restart can replace the
+      // root before the user answers, and the answer must still close the card.
       if (existing === undefined && run.rootNodeId !== command.nodeId) {
         return yield* fail(`Node ${command.nodeId} is not the root of run ${command.runId}.`);
       }
@@ -10959,6 +10959,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
           type: "feedback_request",
           preview: command.preview,
+          // An answered card keeps only what was sent, so its answer drops the unsent text.
+          ...(command.conversationTrace === undefined
+            ? {}
+            : { conversationTrace: command.conversationTrace }),
           feedbackStatus: command.feedbackStatus,
         },
       });

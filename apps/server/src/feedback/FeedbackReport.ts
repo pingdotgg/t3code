@@ -7,7 +7,7 @@ import * as Struct from "effect/Struct";
 // Code points, as the scrubber caps them, so a valid input stays a valid report after redaction.
 const FeedbackText = Schema.String.check(Schema.isMaxCodePoints(300));
 
-/** Turns the outline of a requested report covers, and the most `includeTurns` can name. */
+/** Turns the trace of a requested report covers. */
 export const FEEDBACK_TRACE_TURNS = 5;
 
 const reportFields = {
@@ -22,15 +22,7 @@ const reportFields = {
   ),
 };
 
-export const FeedbackInput = Schema.Struct({
-  ...reportFields,
-  includeTurns: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: FEEDBACK_TRACE_TURNS }))
-    .annotate({
-      description:
-        "Sends the user's messages and your replies from this many recent turns. 0 unless the user explicitly asks to include the conversation.",
-    })
-    .pipe(Schema.withDecodingDefaultKey(Effect.succeed(0))),
-});
+export const FeedbackInput = Schema.Struct(reportFields);
 
 export const FeedbackTrace = AgentFeedbackTrace;
 export type FeedbackTrace = AgentFeedbackTrace;
@@ -56,22 +48,15 @@ export const FeedbackSubmitResult = Schema.Struct({
   trace: Schema.NullOr(FeedbackTrace.mapFields(Struct.omit(["entries"]))),
 });
 
-/** What `t3_feedback` answers when the user did not approve a requested report. */
-export const FEEDBACK_NOT_APPROVED_NOTE = {
-  declined:
-    "The user did not approve this report, so nothing was sent. Do not send it, or any part of it, another way.",
-  timed_out:
-    "The user did not answer in time, so nothing was sent. Do not send it another way; ask again only if the user wants to.",
-  cancelled:
-    "The turn ended or agent feedback was turned off before the report was sent, so nothing was sent. Do not send it another way.",
-} as const;
+export const FEEDBACK_AWAITING_APPROVAL_NOTE =
+  "The user sees this report in a card and chooses there whether to send it and whether to include the conversation. Nothing is sent until they do, and you will not learn their choice. Do not wait for it, ask again, or send the report another way.";
 
-export const FeedbackNotApproved = Schema.Struct({
-  approved: Schema.Literal(false),
-  status: Schema.Literals(["declined", "timed_out", "cancelled"]),
+/** What `t3_feedback` answers for a requested report: shown to the user, not yet sent. */
+export const FeedbackAwaitingApproval = Schema.Struct({
+  status: Schema.Literal("awaiting_approval"),
   note: Schema.String,
 });
-export type FeedbackNotApproved = typeof FeedbackNotApproved.Type;
+export type FeedbackAwaitingApproval = typeof FeedbackAwaitingApproval.Type;
 
 export const FEEDBACK_OFF_MESSAGE =
   "Agent feedback is off. Turn it on in T3 Code under Settings > Labs, then try again.";
@@ -82,6 +67,40 @@ export class FeedbackOffError extends Schema.TaggedError<FeedbackOffError>()(
 ) {
   override get message() {
     return FEEDBACK_OFF_MESSAGE;
+  }
+}
+
+export type FeedbackSource = "mcp" | "cli";
+
+// Requested reports count when their card is shown, unprompted ones when stored.
+export const MAX_REPORTS_PER_TURN = 3;
+// Reports from no turn, such as `t3 feedback`, have no turn to count in.
+export const MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR = 10;
+
+export class FeedbackLimitError extends Schema.TaggedError<FeedbackLimitError>()(
+  "FeedbackLimitError",
+  { scope: Schema.Literals(["turn", "hour", "cards"]) },
+) {
+  override get message() {
+    switch (this.scope) {
+      case "turn":
+        return `This turn already sent ${MAX_REPORTS_PER_TURN} agent feedback reports; nothing was sent.`;
+      case "cards":
+        return `This turn already showed the user ${MAX_REPORTS_PER_TURN} agent feedback reports to approve; nothing was shown.`;
+      case "hour":
+        return `This machine already sent ${MAX_REPORTS_OUTSIDE_TURNS_PER_HOUR} agent feedback reports outside a turn in the last hour; nothing was sent.`;
+    }
+  }
+}
+
+export class FeedbackNotRequestedError extends Schema.TaggedError<FeedbackNotRequestedError>()(
+  "FeedbackNotRequestedError",
+  { source: Schema.Literals(["mcp", "cli"]) },
+) {
+  override get message() {
+    return this.source === "cli"
+      ? "Agent feedback is set to When I ask: ask your agent in a thread to send it, so you can approve what is sent."
+      : "Agent feedback is set to When I ask: send a report only when the user asks for one.";
   }
 }
 

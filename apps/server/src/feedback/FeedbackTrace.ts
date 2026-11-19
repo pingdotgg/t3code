@@ -60,12 +60,12 @@ const bytes = (trace: FeedbackTrace) => Buffer.byteLength(JSON.stringify(trace))
 
 /**
  * The outline of the last few started turns: who spoke and which tools ran, with no text, input,
- * or output. With `includeTurns`, the scrubbed message text of that many of the newest turns.
+ * or output. With `withText`, also the scrubbed message text of those turns.
  */
 export const buildFeedbackTrace = (input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
-  readonly includeTurns: number;
+  readonly withText: boolean;
   readonly sensitive: ReadonlyArray<string>;
   readonly t3Tools: ReadonlyArray<string>;
   readonly driverOf: (run: OrchestrationV2Run) => string | undefined;
@@ -75,7 +75,6 @@ export const buildFeedbackTrace = (input: {
     .toSorted((a, b) => a.ordinal - b.ordinal)
     .slice(-FEEDBACK_TRACE_TURNS);
   const turnOf = new Map(runs.map((run, index) => [run.id, { turn: index + 1, run }] as const));
-  const firstTextTurn = runs.length - input.includeTurns + 1;
   let truncated = false;
   const entries = input.items
     .filter((item) => item.parentItemId === null && item.runId !== null && turnOf.has(item.runId))
@@ -89,7 +88,7 @@ export const buildFeedbackTrace = (input: {
           type: item.type === "user_message" ? "user" : "assistant",
           length,
         };
-        if (turn < firstTextTurn) return message;
+        if (!input.withText) return message;
         const { text, cut } = scrubFeedbackText(item.text, input.sensitive, MAX_TEXT_CHARS);
         if (cut) truncated = true;
         return { ...message, text };

@@ -54,6 +54,8 @@ export const AgentFeedbackAnswerInput = Schema.Struct({
   threadId: ThreadId,
   turnItemId: TurnItemId,
   answer: Schema.Literals(["send", "decline"]),
+  /** Send the card's conversation trace instead of its outline. */
+  includeConversation: Schema.optionalKey(Schema.Boolean),
 });
 export type AgentFeedbackAnswerInput = typeof AgentFeedbackAnswerInput.Type;
 
@@ -61,7 +63,7 @@ const AGENT_FEEDBACK_REQUEST_FAILURE_MESSAGES = {
   load_failed: "Could not load the feedback report.",
   not_found: "This feedback report no longer exists.",
   already_answered: "This feedback report was already answered.",
-  agent_stopped: "The agent that asked has stopped, so this report can't be sent.",
+  feedback_off: "Agent feedback is off, so this report was not sent.",
   record_failed: "Could not record your answer.",
 } as const;
 
