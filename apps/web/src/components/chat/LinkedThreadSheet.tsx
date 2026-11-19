@@ -81,7 +81,10 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
     <>
       <SheetHeader>
         <SheetTitle>
-          {transcript?.thread.title || target.title || gt("Thread on {label}", { label })}
+          {/* Clear of the close button in the sheet's corner. */}
+          <span className="block pe-8">
+            {transcript?.thread.title || target.title || gt("Thread on {label}", { label })}
+          </span>
         </SheetTitle>
         <SheetDescription>
           <span className="flex flex-wrap items-center gap-x-1.5">
@@ -170,7 +173,11 @@ export function LinkedThreadSheet() {
         if (!open) setTarget(null);
       }}
     >
-      <SheetPopup side="right" className="w-[min(92vw,44rem)] max-w-none">
+      {/* The header's panel toggles float above sheets, so the sheet starts below them. */}
+      <SheetPopup
+        side="right"
+        className="mt-[calc(var(--workspace-controls-top)+var(--workspace-topbar-height))] w-[min(92vw,44rem)] max-w-none"
+      >
         {target === null ? null : (
           <LinkedThreadView
             key={`${target.viaEnvironmentId}:${target.environmentId}:${target.threadId}`}

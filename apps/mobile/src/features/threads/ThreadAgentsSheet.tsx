@@ -24,7 +24,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
 import { environmentThreadDetails } from "../../state/threads";
-import { useEnvironments } from "../../state/environments";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { SubagentStopButton } from "./SubagentStopButton";
@@ -32,6 +31,7 @@ import { ThreadWorkflowGroup } from "./ThreadWorkflowGroup";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { subagentThreadTarget, type SubagentThreadTarget } from "./threadAgentsPresentation";
 import { linkedThreadRouteParams } from "./LinkedThreadSheet";
+import { useLinkedThreadReach } from "../../state/linkedThread";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
 
@@ -152,11 +152,13 @@ function AgentRow(props: {
 }) {
   const { subagent } = props;
   const gt = useGT();
-  const { presentationById } = useEnvironments();
-  const target = subagentThreadTarget(subagent, props.environmentId, (id) => {
-    const own = presentationById.get(id);
-    return own && { connected: own.connection.phase === "connected" };
-  });
+  const reach = useLinkedThreadReach(props.environmentId, [subagent]);
+  const target = subagentThreadTarget(
+    subagent,
+    props.environmentId,
+    reach.ownConnection,
+    reach.isLinked,
+  );
 
   const row = (
     <View className="py-3.5">

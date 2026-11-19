@@ -44,7 +44,16 @@ const hasStringField = <K extends string>(value: unknown, key: K): value is Reco
 type Page = Pick<PeerLinkThreadPage, "label" | "thread" | "items" | "earlierPosition" | "hasMore">;
 
 /** What a linked thread view holds: the pages read so far, as one run of items, oldest first. */
-export type LinkedThreadTranscript = Page;
+export type LinkedThreadTranscript = Page & {
+  /**
+   * Where the next forward read continues while the last one left more behind it, else null. A
+   * page cut short can end before items already shown, so this is not the last item's position.
+   */
+  readonly continueAfter: number | null;
+};
+
+const continuationOf = (page: Page, fallback: number | null) =>
+  page.hasMore ? (page.items.at(-1)?.position ?? fallback) : null;
 
 /**
  * Adds a page to what is shown. An earlier page moves the start back; a later one replaces the
@@ -56,7 +65,7 @@ export function mergeLinkedThreadPage(
   page: Page,
   direction: "earlier" | "later",
 ): LinkedThreadTranscript {
-  if (current === null) return page;
+  if (current === null) return { ...page, continueAfter: continuationOf(page, null) };
   const byPosition = new Map(current.items.map((item) => [item.position, item]));
   for (const item of page.items) byPosition.set(item.position, item);
   return {
@@ -65,6 +74,8 @@ export function mergeLinkedThreadPage(
     items: [...byPosition.values()].sort((left, right) => left.position - right.position),
     earlierPosition: direction === "earlier" ? page.earlierPosition : current.earlierPosition,
     hasMore: direction === "later" ? page.hasMore : current.hasMore,
+    continueAfter:
+      direction === "later" ? continuationOf(page, current.continueAfter) : current.continueAfter,
   };
 }
 
@@ -74,12 +85,12 @@ const REFRESH_WINDOW = 20;
 
 /**
  * The `afterPosition` of the next forward read. While a page left more behind it, that continues
- * from the last item. Otherwise it re-reads from the oldest recent item still in progress, since
+ * from where the page ended. Otherwise it re-reads from the oldest recent item still in progress, since
  * its text and status change in place.
  */
 export function linkedThreadRefreshCursor(transcript: LinkedThreadTranscript): number {
+  if (transcript.continueAfter !== null) return transcript.continueAfter;
   const last = transcript.items.at(-1)?.position ?? -1;
-  if (transcript.hasMore) return last;
   const unsettled = transcript.items
     .slice(-REFRESH_WINDOW)
     .find((item) => UNSETTLED_ITEM_STATUSES.has(item.status));
@@ -92,7 +103,7 @@ export const LINKED_THREAD_ACTIVE_POLL_MS = 2_500;
 export const LINKED_THREAD_IDLE_POLL_MS = 15_000;
 
 /** How long an open view waits before its next read: none while catching up, short while the thread works. */
-export function linkedThreadPollDelayMs(transcript: LinkedThreadTranscript): number {
+export function linkedThreadPollDelayMs(transcript: Pick<Page, "hasMore" | "thread">): number {
   if (transcript.hasMore) return 0;
   return ACTIVE_THREAD_STATUSES.has(transcript.thread.status)
     ? LINKED_THREAD_ACTIVE_POLL_MS
@@ -268,7 +279,7 @@ export function presentLinkedThreadItem(
   };
 }
 
-export const isLinkedThreadWorking = (transcript: LinkedThreadTranscript): boolean =>
+export const isLinkedThreadWorking = (transcript: Pick<Page, "thread">): boolean =>
   ACTIVE_THREAD_STATUSES.has(transcript.thread.status);
 
 export interface LinkedThreadCursor {
@@ -366,6 +377,7 @@ export function createLinkedThreadSession(options: {
         result.ok
           ? {
               transcript: mergeLinkedThreadPage(state.transcript, result.page, "earlier"),
+              error: null,
               loadingEarlier: false,
             }
           : { error: result.error, loadingEarlier: false },

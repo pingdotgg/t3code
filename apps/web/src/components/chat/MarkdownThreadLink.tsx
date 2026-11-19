@@ -8,10 +8,11 @@ import {
   type ThreadLink,
 } from "@t3tools/shared/threadLinks";
 import { unknownThreadLinkLabel } from "@t3tools/shared/threadLinksCopy";
+import { resolveLinkedThreadOpen } from "@t3tools/client-runtime/linked-thread";
 
 import { configuredHostedAppUrl } from "../../hostedPairing";
 import { useThreadRefs, useThreadShell } from "../../state/entities";
-import { useEnvironmentIdentities } from "../../state/environments";
+import { useConnectedEnvironmentIds, useEnvironmentIdentities } from "../../state/environments";
 import { useOpenLinkedThread } from "../../state/linkedThreadView";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { orchestrationEnvironment } from "../../state/orchestration";
@@ -32,10 +33,25 @@ export function MarkdownThreadLink(props: {
   const candidates = threadLinkCandidates(props.link, props.environmentId);
   const writtenRef = candidates[0]!;
   const written = useThreadShell(writtenRef);
-  // A linked machine's threads are reachable only through its server, not from this client.
-  const reachable = useEnvironmentIdentities().some(
+  const saved = useEnvironmentIdentities().some(
     (environment) => environment.environmentId === writtenRef.environmentId,
   );
+  const connected = useConnectedEnvironmentIds().includes(writtenRef.environmentId);
+  // A thread on a machine this client is not connected to still reads through the one that links to it.
+  const linkedLabel = useLinkedEnvironments(
+    written !== null || connected || writtenRef.environmentId === props.environmentId
+      ? null
+      : props.environmentId,
+  ).get(writtenRef.environmentId);
+  const linked =
+    written === null &&
+    resolveLinkedThreadOpen({
+      environmentId: writtenRef.environmentId,
+      viaEnvironmentId: props.environmentId,
+      own: saved ? { connected } : undefined,
+      linked: linkedLabel !== undefined,
+    }) === "linked";
+  const reachable = saved && !linked;
   const lookup = useEnvironmentQuery(
     written === null && reachable
       ? orchestrationEnvironment.threadLinkMetadata({
@@ -63,12 +79,8 @@ export function MarkdownThreadLink(props: {
     : null;
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
-  // A thread on a machine this client cannot reach still reads through the one that links to it.
-  const linkedLabel = useLinkedEnvironments(reachable ? null : props.environmentId).get(
-    writtenRef.environmentId,
-  );
   const openLinked = useOpenLinkedThread();
-  if (resolved === null && linkedLabel !== undefined) {
+  if (resolved === null && linked && linkedLabel !== undefined) {
     const title = props.label ?? gt("Thread on {label}", { label: linkedLabel });
     return (
       <Tooltip>

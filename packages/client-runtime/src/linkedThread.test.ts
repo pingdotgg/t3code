@@ -83,7 +83,11 @@ describe("resolveLinkedThreadOpen", () => {
 });
 
 describe("mergeLinkedThreadPage", () => {
-  const newest = page([item(10, "ten"), item(11, "eleven", "running")], { earlierPosition: 10 });
+  const newest = mergeLinkedThreadPage(
+    null,
+    page([item(10, "ten"), item(11, "eleven", "running")], { earlierPosition: 10 }),
+    "later",
+  );
 
   it("moves the start back with an earlier page and keeps the forward state", () => {
     const merged = mergeLinkedThreadPage(
@@ -112,21 +116,43 @@ describe("mergeLinkedThreadPage", () => {
 });
 
 describe("linkedThreadRefreshCursor", () => {
+  const linkedThreadRefreshCursorOf = (shown: PeerLinkThreadPage) =>
+    linkedThreadRefreshCursor(mergeLinkedThreadPage(null, shown, "later"));
   it("reads after the last item once everything shown has settled", () => {
-    expect(linkedThreadRefreshCursor(page([item(4, "a"), item(5, "b")]))).toBe(5);
-    expect(linkedThreadRefreshCursor(page([]))).toBe(-1);
+    expect(linkedThreadRefreshCursorOf(page([item(4, "a"), item(5, "b")]))).toBe(5);
+    expect(linkedThreadRefreshCursorOf(page([]))).toBe(-1);
   });
 
   it("re-reads from an item that is still being written", () => {
     expect(
-      linkedThreadRefreshCursor(page([item(4, "a"), item(5, "b", "running"), item(6, "c")])),
+      linkedThreadRefreshCursorOf(page([item(4, "a"), item(5, "b", "running"), item(6, "c")])),
     ).toBe(4);
   });
 
   it("continues from the last item while a page left more behind it", () => {
     expect(
-      linkedThreadRefreshCursor(page([item(4, "a", "running"), item(5, "b")], { hasMore: true })),
+      linkedThreadRefreshCursorOf(page([item(4, "a", "running"), item(5, "b")], { hasMore: true })),
     ).toBe(5);
+  });
+
+  it("continues from where a page cut short ended, not from the items it left untouched", () => {
+    const shown = mergeLinkedThreadPage(
+      mergeLinkedThreadPage(
+        null,
+        page([item(80, "a", "running"), item(81, "b"), item(99, "z")]),
+        "later",
+      ),
+      page([item(80, "a, done")], { hasMore: true }),
+      "later",
+    );
+    expect(shown.items.map((entry) => entry.position)).toEqual([80, 81, 99]);
+    expect(linkedThreadRefreshCursor(shown)).toBe(80);
+    // An earlier page leaves the forward continuation alone.
+    const earlier = mergeLinkedThreadPage(shown, page([item(79, "y")]), "earlier");
+    expect(linkedThreadRefreshCursor(earlier)).toBe(80);
+    expect(
+      linkedThreadRefreshCursor(mergeLinkedThreadPage(earlier, page([item(81, "b2")]), "later")),
+    ).toBe(99);
   });
 
   it("stops re-reading an item that stays unsettled once it is far behind", () => {
@@ -134,7 +160,7 @@ describe("linkedThreadRefreshCursor", () => {
       item(0, "stuck", "waiting"),
       ...Array.from({ length: 30 }, (_, i) => item(i + 1, "x")),
     ];
-    expect(linkedThreadRefreshCursor(page(items))).toBe(30);
+    expect(linkedThreadRefreshCursorOf(page(items))).toBe(30);
   });
 });
 
@@ -307,6 +333,19 @@ describe("createLinkedThreadSession", () => {
       4, 5, 6,
     ]);
     expect(session.getSnapshot().transcript?.earlierPosition).toBeNull();
+  });
+
+  it("forgets a failed earlier read once the next one succeeds", async () => {
+    const { session, reads } = harness();
+    session.subscribe(() => {});
+    await reads[0]!.answer({ ok: true, page: page([item(5, "five")], { earlierPosition: 5 }) });
+    void session.loadEarlier();
+    await reads[1]!.answer({ ok: false, error: new Error("offline") });
+    expect(session.getSnapshot()).toMatchObject({ loadingEarlier: false });
+    expect(session.getSnapshot().error).not.toBeNull();
+    void session.loadEarlier();
+    await reads[2]!.answer({ ok: true, page: page([item(4, "four")]) });
+    expect(session.getSnapshot().error).toBeNull();
   });
 
   it("stops asking once the view closes or the read cannot recover", async () => {

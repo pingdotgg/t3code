@@ -43,12 +43,26 @@ export class PeerThreadReader extends Context.Service<
   }
 >()("t3/peer/PeerThreadReader") {}
 
-const reasonOf = (failure: OrchestratorMcpFailure): PeerLinkThreadReadError["reason"] =>
-  failure.code === "thread_not_found"
-    ? "thread_not_found"
-    : failure.code === "capability_denied" || failure.code === "invalid_request"
-      ? "rejected"
-      : "unreachable";
+/** The linked environment's refusal or silence, as the client that asked hears it. */
+const fromCallFailure = (failure: OrchestratorMcpFailure, label: string) => {
+  const reason =
+    failure.code === "thread_not_found"
+      ? "thread_not_found"
+      : failure.code === "capability_denied" || failure.code === "invalid_request"
+        ? "rejected"
+        : "unreachable";
+  return new PeerLinkThreadReadError({
+    reason,
+    label,
+    message:
+      reason === "thread_not_found"
+        ? `That thread is no longer on ${label}.`
+        : reason === "rejected"
+          ? `${label} refused the read. Its link may have been revoked there; link it again.`
+          : `${label} did not answer.`,
+    cause: failure,
+  });
+};
 
 const make = Effect.gen(function* () {
   const links = yield* PeerLinks.PeerLinks;
@@ -69,7 +83,8 @@ const make = Effect.gen(function* () {
             new PeerLinkThreadReadError({
               reason: "unreachable",
               label: null,
-              message: error.message,
+              message: "This environment could not read its links.",
+              cause: error,
             }),
         ),
       );
@@ -111,16 +126,7 @@ const make = Effect.gen(function* () {
           limits: CLIENT_READ_LIMITS,
           success: OrchestratorMcpThreadReadResult,
         })
-        .pipe(
-          Effect.mapError(
-            (failure) =>
-              new PeerLinkThreadReadError({
-                reason: reasonOf(failure),
-                label,
-                message: failure.message,
-              }),
-          ),
-        );
+        .pipe(Effect.mapError((failure) => fromCallFailure(failure, label)));
       // A version that only reads forward ignores `beforePosition` and answers from the start.
       if (backwards && page.earlierPosition === undefined) {
         return yield* new PeerLinkThreadReadError({

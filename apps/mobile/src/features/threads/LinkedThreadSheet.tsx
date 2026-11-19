@@ -66,7 +66,6 @@ function ActivityRow(props: {
       {item.summary}
     </Text>
   );
-  if (item.body === null) return summary;
   return (
     <Pressable
       accessibilityRole="button"
@@ -75,9 +74,9 @@ function ActivityRow(props: {
       className="active:opacity-70"
     >
       {summary}
-      {open ? (
+      {open && item.body !== null ? (
         <View className="mt-1 rounded-lg bg-subtle p-2">
-          <Text selectable numberOfLines={60} className="font-mono text-xs text-foreground-muted">
+          <Text selectable className="font-mono text-xs text-foreground-muted">
             {item.body}
           </Text>
           {item.truncated ? <TruncatedNote /> : null}
@@ -141,7 +140,7 @@ function LinkedThreadView(props: { readonly target: LinkedThreadTarget }) {
     useEnvironments().environments.find(
       (environment) => environment.environmentId === target.viaEnvironmentId,
     )?.label ?? gt("this environment");
-  const { state, session } = useLinkedThreadSession(target);
+  const { state, session } = useLinkedThreadSession(target, () => navigation.isFocused());
   const { transcript } = state;
   const label = transcript?.label ?? target.label;
   const failure = state.error === null ? null : linkedThreadFailure(state.error, { via, label }, m);

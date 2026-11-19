@@ -46,12 +46,16 @@ export interface SubagentThreadTarget {
 
 /**
  * Where an agent's thread opens: here, in the linked environment that runs it when this app is
- * connected there, or read-only through this environment's link. Null when there is no thread.
+ * connected there, or read-only through this environment's link. Once the link is gone a saved
+ * environment opens in place, where the app can reconnect to it; with neither, the read-only view
+ * says what to link again. Null when there is no thread.
  */
 export function subagentThreadTarget(
   subagent: Pick<OrchestrationV2Subagent, "childThreadId" | "remoteChild">,
   environmentId: EnvironmentId,
   ownConnection: (environmentId: EnvironmentId) => { readonly connected: boolean } | undefined,
+  /** Whether `environmentId` still holds a link to the given environment. */
+  isLinked: (environmentId: EnvironmentId) => boolean,
 ): SubagentThreadTarget | null {
   if (subagent.childThreadId !== null) {
     return { environmentId, threadId: subagent.childThreadId };
@@ -63,11 +67,11 @@ export function subagentThreadTarget(
     environmentId: remote.environmentId,
     viaEnvironmentId: environmentId,
     own: ownConnection(remote.environmentId),
-    linked: true,
+    linked: isLinked(remote.environmentId),
   });
-  return open === "linked"
-    ? { ...target, linked: { viaEnvironmentId: environmentId, label: remote.label } }
-    : target;
+  return open === "direct"
+    ? target
+    : { ...target, linked: { viaEnvironmentId: environmentId, label: remote.label } };
 }
 
 function rowTitle(

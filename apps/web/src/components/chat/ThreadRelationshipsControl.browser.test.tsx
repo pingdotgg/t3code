@@ -47,6 +47,7 @@ vi.mock(import("../../state/environments"), () => ({
 }));
 vi.mock(import("../../state/peerLinks"), () => ({
   peerLinkEnvironment: { readThread: {} } as never,
+  useLinkedEnvironments: (() => new Map()) as never,
 }));
 vi.mock(import("../../lib/archivedThreadsState"), () => ({
   useArchivedThreadSnapshots: (() => ({

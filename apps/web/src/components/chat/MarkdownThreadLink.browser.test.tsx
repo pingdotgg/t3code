@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   reply: null as unknown,
   remote: null as unknown,
   linked: new Map<string, string>(),
+  connected: [] as Array<string>,
   openedLinked: [] as Array<unknown>,
 }));
 vi.mock(import("../../state/entities"), () => ({
@@ -27,7 +28,9 @@ vi.mock(import("../../state/environments"), () => ({
   useEnvironmentIdentities: () => [
     { environmentId: EnvironmentId.make("environment"), label: "Here" },
     { environmentId: EnvironmentId.make("remote"), label: "Remote" },
+    { environmentId: EnvironmentId.make("saved-vm"), label: "Saved VM" },
   ],
+  useConnectedEnvironmentIds: () => state.connected as never,
 }));
 vi.mock(import("../../state/peerLinks"), () => ({
   useLinkedEnvironments: ((environmentId: string | null) =>
@@ -58,6 +61,7 @@ function setup() {
   >(AsyncResult.initial());
   state.reply = reply;
   state.linked = new Map();
+  state.connected = ["environment", "remote"];
   state.openedLinked = [];
   state.remote = {
     environmentId: EnvironmentId.make("remote"),
@@ -170,12 +174,15 @@ it("names a thread on a machine this client has no connection to, without waitin
   await expect.element(screen.getByRole("link")).not.toBeInTheDocument();
 });
 
-it("opens a thread on a machine only this environment links to as a read through it", async () => {
+it.for([
+  { name: "a machine only this environment links to", linkedId: "linked-vm" },
+  { name: "a saved machine this client is not connected to", linkedId: "saved-vm" },
+])("opens a thread on $name as a read through the link", async ({ linkedId }) => {
   const { registry } = setup();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
-  state.linked = new Map([["linked-vm", "fs-17"]]);
+  state.linked = new Map([[linkedId, "fs-17"]]);
   const environmentId = EnvironmentId.make("environment");
-  const link = { environmentId: EnvironmentId.make("linked-vm"), threadId: ThreadId.make("there") };
+  const link = { environmentId: EnvironmentId.make(linkedId), threadId: ThreadId.make("there") };
   await using screen = await render(
     <RegistryContext value={registry}>
       <MarkdownThreadLink environmentId={environmentId} link={link} label={null} />
@@ -186,4 +193,23 @@ it("opens a thread on a machine only this environment links to as a read through
     { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: null },
   ]);
   expect(screen.router?.state.location.pathname).toBe("/");
+});
+
+it("opens a linked machine's thread directly once this client is connected to it", async () => {
+  const { registry, reply } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  state.linked = new Map([["saved-vm", "fs-17"]]);
+  state.connected = ["environment", "saved-vm"];
+  registry.set(reply, AsyncResult.success({ there: { title: "Fix the build", projectId: null } }));
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <MarkdownThreadLink
+        environmentId={EnvironmentId.make("environment")}
+        link={{ environmentId: EnvironmentId.make("saved-vm"), threadId: ThreadId.make("there") }}
+        label={null}
+      />
+    </RegistryContext>,
+  );
+  await expect.element(screen.getByText("Fix the build")).toBeVisible();
+  expect(state.openedLinked).toEqual([]);
 });

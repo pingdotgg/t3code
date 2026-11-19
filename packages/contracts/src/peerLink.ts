@@ -134,6 +134,8 @@ export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadRe
     /** What this environment calls the linked one, when it still has the link. */
     label: Schema.NullOr(Schema.String),
     message: Schema.String,
+    /** The failure underneath, when the read got as far as the link or the linked environment. */
+    cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {}
 

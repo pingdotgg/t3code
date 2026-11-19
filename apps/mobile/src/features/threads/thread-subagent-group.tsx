@@ -24,12 +24,12 @@ import type { ThreadFeedActivity } from "../../lib/threadActivity";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
 import { subagentCardElapsed } from "./subagent-card-presentation";
-import { useEnvironments } from "../../state/environments";
 import { useServerConfigs } from "../../state/entities";
 import { SubagentRow } from "./SubagentRow";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
 import { subagentThreadTarget } from "./threadAgentsPresentation";
 import { linkedThreadRouteParams } from "./LinkedThreadSheet";
+import { useLinkedThreadReach } from "../../state/linkedThread";
 import { WorkLogBlock } from "./work-log-layout";
 
 import { useOpenThreadInspector } from "./thread-inspector-navigation";
@@ -121,7 +121,6 @@ export function ThreadSubagentGroup(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, members[0]!.threadId)),
     (thread) => thread?.projection.subagents,
   );
-  const { presentationById } = useEnvironments();
   const agents = members.map((item) => {
     const live = liveAgents?.find((agent) => agent.id === item.subagentId);
     return {
@@ -136,6 +135,7 @@ export function ThreadSubagentGroup(props: {
       modelSelection: live?.modelSelection,
     };
   });
+  const reach = useLinkedThreadReach(props.environmentId, agents);
   const grouped = agents.length > 1;
   const label = gt("{count, plural, one {{count} subagent} other {{count} subagents}}", {
     count: agents.length,
@@ -200,10 +200,12 @@ export function ThreadSubagentGroup(props: {
         <View className="mb-1 gap-px rounded-xl border border-border bg-card/30 p-1">
           {agents.map((agent) => {
             // A task in a linked environment opens there, if this app is connected to it.
-            const target = subagentThreadTarget(agent, props.environmentId, (id) => {
-              const own = presentationById.get(id);
-              return own && { connected: own.connection.phase === "connected" };
-            });
+            const target = subagentThreadTarget(
+              agent,
+              props.environmentId,
+              reach.ownConnection,
+              reach.isLinked,
+            );
             return (
               <Pressable
                 key={agent.item.id}

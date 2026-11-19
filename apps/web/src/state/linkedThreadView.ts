@@ -15,7 +15,7 @@ import { useState, useSyncExternalStore } from "react";
 import { getDocumentActivity } from "../lib/documentActivity";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { useEnvironment } from "./environments";
-import { peerLinkEnvironment } from "./peerLinks";
+import { peerLinkEnvironment, useLinkedEnvironments } from "./peerLinks";
 import { useAtomCommand } from "./use-atom-command";
 
 /** The linked environment's thread the read-only view shows, or none. */
@@ -30,7 +30,9 @@ export function useOpenLinkedThread(): (target: LinkedThreadTarget) => void {
 
 /**
  * How a click opens a thread that a thread in `viaEnvironmentId` says is on a linked environment:
- * in place when this client is connected there itself, else read-only through the link.
+ * in place when this client is connected there itself, else read-only through the link. Once the
+ * link is gone a saved environment opens in place, where the client can reconnect to it; with
+ * neither, the read-only view says what to link again.
  */
 export function useLinkedThreadOpener(
   viaEnvironmentId: EnvironmentId,
@@ -42,17 +44,20 @@ export function useLinkedThreadOpener(
       }
     | undefined,
   title: string | null,
-): { readonly mode: LinkedThreadOpen; readonly open: () => void } | null {
+): { readonly mode: Exclude<LinkedThreadOpen, "unavailable">; readonly open: () => void } | null {
   const navigate = useNavigate();
   const openLinked = useOpenLinkedThread();
   const own = useEnvironment(thread?.environmentId ?? null);
+  const connected = own?.connection.phase === "connected";
+  const links = useLinkedEnvironments(thread === undefined || connected ? null : viaEnvironmentId);
   if (thread === undefined) return null;
-  const mode = resolveLinkedThreadOpen({
+  const resolved = resolveLinkedThreadOpen({
     environmentId: thread.environmentId,
     viaEnvironmentId,
-    own: own === null ? undefined : { connected: own.connection.phase === "connected" },
-    linked: true,
+    own: own === null ? undefined : { connected },
+    linked: links.has(thread.environmentId),
   });
+  const mode = resolved === "direct" ? "direct" : "linked";
   return {
     mode,
     open: () => {
