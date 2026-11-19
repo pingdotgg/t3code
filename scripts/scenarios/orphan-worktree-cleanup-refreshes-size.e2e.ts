@@ -1,6 +1,5 @@
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeCrypto from "node:crypto";
 import { expect } from "e2e";
-import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -9,9 +8,9 @@ import { T3_HOME } from "../e2e.config.ts";
 import { run } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
-const SettingsJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
-const decodeSettings = Schema.decodeEffect(SettingsJson);
-const encodeSettings = Schema.encodeEffect(SettingsJson);
+const decodeSettings = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
 
 test(
   "Cleanup updates the displayed size of a kept worktree",
@@ -31,17 +30,16 @@ test(
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           yield* fs.makeDirectory(build);
-          const random = yield* SecureRandom.SecureRandom;
-          yield* fs.writeFile(`${build}/bundle.js`, yield* random.randomBytes(8 * 1024 * 1024));
+          yield* fs.writeFile(`${build}/bundle.js`, NodeCrypto.randomBytes(8 * 1024 * 1024));
           yield* fs.utimes(worktree, 1, 1);
           yield* fs.writeFileString(
             settingsPath,
-            yield* encodeSettings({
-              ...(yield* decodeSettings(original)),
+            JSON.stringify({
+              ...decodeSettings(original),
               storageCleanup: { worktreeOnDelete: true },
             }),
           );
-        }).pipe(Effect.provide(NodeCrypto.layer)),
+        }),
       );
 
       await t3.open("/settings/maintenance");
