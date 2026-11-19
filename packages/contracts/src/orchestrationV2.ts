@@ -300,6 +300,8 @@ export const OrchestrationV2TurnCapabilities = Schema.Struct({
   emitsTurnStarted: Schema.Boolean,
   emitsTurnCompleted: Schema.Boolean,
   supportsInterrupt: Schema.Boolean,
+  // Continues an interrupted turn without a new message; absent on sessions recorded before it existed.
+  supportsNativeResume: Schema.optional(Schema.Boolean),
   supportsActiveSteering: Schema.Boolean,
   // Some native steering mechanisms cancel pending tools before consuming the message.
   activeSteeringInterruptsTools: Schema.optional(Schema.Boolean),

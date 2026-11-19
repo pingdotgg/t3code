@@ -61,7 +61,7 @@ import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDeliv
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { unsentManualContinuationSource } from "./manualContinuation.ts";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
   ContextHandoffBackgroundWorkError,

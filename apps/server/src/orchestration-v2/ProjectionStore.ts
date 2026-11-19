@@ -5,7 +5,7 @@ import { projectTurnItemForWire } from "./WireProjection.ts";
 import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind } from "./ThreadFind.ts";
-import { unsentManualContinuationSource } from "./manualContinuation.ts";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import type {
   OrchestrationV2ThreadLinkMetadata,
   OrchestrationV2SearchThreadInput,

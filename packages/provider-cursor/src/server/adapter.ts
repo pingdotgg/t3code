@@ -101,6 +101,7 @@ export const CursorProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: true,
     supportsActiveSteering: true,
     // A steer can move a foreground subagent to the background. Mailbox wakes
     // stay queued so a notification does not cut into the live turn.
