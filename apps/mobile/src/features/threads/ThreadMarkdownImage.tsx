@@ -18,6 +18,7 @@ import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
+import { workspaceMediaAssetRevision } from "../../state/asset-url-state";
 import { useAssetUrlState } from "../../state/assets";
 import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 import { ZoomableImagePressable } from "./ZoomableImagePressable";
@@ -290,7 +291,7 @@ export function ThreadMarkdownImage(props: {
   const assetUrl = useAssetUrlState(
     props.environmentId,
     props.resource,
-    props.resource._tag === "media-file" ? workspaceMutationId : undefined,
+    workspaceMediaAssetRevision(props.resource, workspaceMutationId),
   );
   const resourceKey =
     props.resource._tag === "attachment"

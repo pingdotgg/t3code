@@ -1,10 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useIsFocused } from "@react-navigation/native";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import type { ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { environmentThreadDetails } from "../../state/threads";
-import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
+import { ThreadMediaVisitContext, WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 
 const NO_WORKSPACE_MUTATION_ID_ATOM = Atom.make<string | null | undefined>(undefined);
 
@@ -17,9 +18,17 @@ export function WorkspaceMutationIdProvider(props: {
       ? NO_WORKSPACE_MUTATION_ID_ATOM
       : environmentThreadDetails.workspaceMutationIdAtom(props.threadRef),
   );
+  const screenId = useId();
+  const focused = useIsFocused();
+  const [visit, setVisit] = useState({ focused, number: 0 });
+  if (focused !== visit.focused) {
+    setVisit({ focused, number: visit.number + (focused ? 1 : 0) });
+  }
   return (
     <WorkspaceMutationIdContext value={workspaceMutationId}>
-      {props.children}
+      <ThreadMediaVisitContext value={`${screenId}:${visit.number}`}>
+        {props.children}
+      </ThreadMediaVisitContext>
     </WorkspaceMutationIdContext>
   );
 }

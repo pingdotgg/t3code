@@ -4,10 +4,12 @@ import { act, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import type { AppStateStatus } from "react-native";
 import { expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { AssetUrlState } from "../state/asset-url-state";
 
 const mocks = vi.hoisted(() => ({
   focused: true,
+  asset: null as AssetUrlState | null,
   appState: "active" as AppStateStatus,
   appStateListeners: new Set<(state: AppStateStatus) => void>(),
   players: [] as ReturnType<typeof createPlayer>[],
@@ -95,7 +97,7 @@ vi.mock("../state/mediaActions", () => ({
   useMediaActions: () => ({ actions: [], sharing: false }),
 }));
 vi.mock("../state/assets", () => ({
-  useAssetUrlState: () => ({ _tag: "Success", url: "https://media.example/clip.mp4" }),
+  useAssetUrlState: () => mocks.asset ?? { _tag: "Success", url: "https://media.example/clip.mp4" },
   useRefreshAssetUrl: () => mocks.refresh,
 }));
 vi.mock("./localAttachmentPreview", () => ({ loadLocalAttachmentPreview: vi.fn() }));
@@ -150,9 +152,10 @@ function createPlayer() {
   };
 }
 
-function setup(kind: "thread" | "PR" | "files", compact = false) {
+function setup(kind: "thread" | "workspace-embed" | "PR" | "files", compact = false) {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.focused = true;
+  mocks.asset = null;
   mocks.appState = "active";
   mocks.players = [];
   mocks.appStateListeners.clear();
@@ -180,7 +183,7 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
                 visible={visible}
                 resolvePlaybackUri={mocks.refresh}
               />
-            ) : kind === "thread" ? (
+            ) : kind === "thread" || kind === "workspace-embed" ? (
               <ThreadMediaVisibleContext value={visible}>
                 <ThreadMarkdownVideo
                   source={{
@@ -188,11 +191,18 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
                     name: "clip.mp4",
                     mimeType: "video/mp4",
                     environmentId,
-                    resource: {
-                      _tag: "github-media",
-                      cwd: "/project",
-                      url: "https://github.com/user-attachments/assets/video",
-                    },
+                    resource:
+                      kind === "workspace-embed"
+                        ? {
+                            _tag: "media-file",
+                            threadId: ThreadId.make("thread"),
+                            path: "clip.mp4",
+                          }
+                        : {
+                            _tag: "github-media",
+                            cwd: "/project",
+                            url: "https://github.com/user-attachments/assets/video",
+                          },
                   }}
                 />
               </ThreadMediaVisibleContext>
@@ -237,6 +247,28 @@ function setup(kind: "thread" | "PR" | "files", compact = false) {
     },
   };
 }
+
+it("keeps an open workspace video playing when signing disconnects and recovers", async () => {
+  using screen = setup("workspace-embed");
+  const signed = {
+    _tag: "Success",
+    url: "https://media.example/clip.mp4",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    fileRevision: "original",
+  } as const;
+  mocks.asset = signed;
+  screen.render();
+  const player = await screen.open();
+  player.currentTime = 37;
+  mocks.asset = { _tag: "Failure", reason: "disconnected" };
+  screen.render();
+  expect(player.playing).toBe(true);
+  mocks.asset = { ...signed, fileRevision: "replacement" };
+  screen.render();
+  expect(player.playing).toBe(true);
+  expect(player.currentTime).toBe(37);
+  expect(player.replaceAsync).toHaveBeenCalledTimes(1);
+});
 
 it.each(["thread", "PR"] as const)(
   "retains the %s player and position while hidden and requires deliberate resume",

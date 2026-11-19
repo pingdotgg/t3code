@@ -1,13 +1,14 @@
 import { useGT } from "gt-react-native";
 import { createContext, useContext, useId } from "react";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
+import { workspaceMediaAssetRevision } from "../../state/asset-url-state";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import {
   mediaVideoPreviewUri,
   mediaVideoThumbnailKey,
   type MediaVideoPreviewSource,
 } from "../../lib/videoPreviewSource";
-import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
+import { ThreadMediaVisitContext, WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
 
 export const ThreadMediaVisibleContext = createContext(false);
 /** Asks the feed to keep this row out of list recycling while its media holds playback state. */
@@ -26,28 +27,27 @@ export function ThreadMarkdownVideo(props: {
   const feedVisible = useContext(ThreadMediaVisibleContext);
   const visible = props.thumbnailVisible ?? feedVisible;
   const mountId = useId();
+  const visitId = useContext(ThreadMediaVisitContext);
   const workspaceMutationId = useContext(WorkspaceMutationIdContext);
-  const hostFile =
-    "resource" in source &&
-    (source.resource._tag === "media-file" || source.resource._tag === "draft-workspace-file");
-  // A host file can be replaced while no tile shows it, so each mount (and each agent edit)
-  // asks the server for the file's current revision; an unchanged file keeps its URL.
+  const environmentId = "environmentId" in source ? source.environmentId : null;
+  const resource = "resource" in source ? source.resource : null;
+  // Chat embeds share a visit across row recycling; standalone previews use their own mount.
   const asset = useAssetUrlState(
-    "environmentId" in source ? source.environmentId : null,
-    "resource" in source ? source.resource : null,
-    hostFile ? `${mountId}:${workspaceMutationId ?? ""}` : undefined,
+    environmentId,
+    resource,
+    workspaceMediaAssetRevision(resource, workspaceMutationId, visitId ?? mountId),
   );
+  const playbackKey = props.thumbnailKey ?? mediaVideoThumbnailKey(source);
   const thumbnailKey =
     props.thumbnailKey ??
-    mediaVideoThumbnailKey(source, asset._tag === "Success" ? asset.fileRevision : undefined);
-  const refreshAssetUrl = useRefreshAssetUrl(
-    "environmentId" in source ? source.environmentId : null,
-    "resource" in source ? source.resource : null,
-  );
+    (asset._tag === "Success" && asset.fileRevision !== undefined
+      ? mediaVideoThumbnailKey(source, asset.fileRevision)
+      : playbackKey);
+  const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return (
     <MediaVideoPlayer
-      key={thumbnailKey}
+      playbackKey={playbackKey}
       uri={uri}
       resolvePlaybackUri={
         "resource" in source

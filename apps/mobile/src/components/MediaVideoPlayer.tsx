@@ -141,6 +141,8 @@ interface MediaVideoPlayerProps {
   readonly resolvePlaybackUri?: () => Promise<string | null>;
   readonly name: string;
   readonly thumbnailKey: string;
+  /** Set when the poster can change without changing the playback source's identity. */
+  readonly playbackKey?: string;
   readonly thumbnailVisible?: boolean;
   readonly visible?: boolean;
   readonly unavailable?: boolean;
@@ -274,5 +276,5 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
 }
 
 export function MediaVideoPlayer(props: MediaVideoPlayerProps) {
-  return <MediaVideoPlayerContent key={props.thumbnailKey} {...props} />;
+  return <MediaVideoPlayerContent key={props.playbackKey ?? props.thumbnailKey} {...props} />;
 }

@@ -60,3 +60,38 @@ it("gives a workspace video replaced while its thread was closed a new poster", 
   expect(openThread()).not.toBe(red);
   act(() => root.unmount());
 });
+
+const thread = vi.hoisted(() => ({ focused: true }));
+vi.mock("@react-navigation/native", () => ({ useIsFocused: () => thread.focused }));
+vi.mock("../../state/threads", () => ({ environmentThreadDetails: {} }));
+
+import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
+
+it("reuses the poster when an embed is recycled in the same visit and checks again on return", () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  host.fileRevision = "red";
+  host.minted = null;
+  thread.focused = true;
+  const root = createRoot(document.createElement("div"));
+  using _cleanup = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  const render = (showVideo = true) => {
+    act(() =>
+      root.render(
+        <WorkspaceMutationIdProvider threadRef={null}>
+          {showVideo ? <ThreadMarkdownVideo source={source} thumbnailVisible /> : null}
+        </WorkspaceMutationIdProvider>,
+      ),
+    );
+    return host.posterKeys.at(-1);
+  };
+
+  const original = render();
+  render(false);
+  host.fileRevision = "blue";
+  expect(render()).toBe(original);
+
+  thread.focused = false;
+  expect(render()).toBe(original);
+  thread.focused = true;
+  expect(render()).not.toBe(original);
+});

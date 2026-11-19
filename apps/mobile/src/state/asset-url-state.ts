@@ -1,5 +1,20 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { AssetUrlState as SharedAssetUrlState } from "@t3tools/client-runtime/state/assets";
+import type { AssetResource } from "@t3tools/contracts";
+
+export function workspaceMediaAssetRevision(
+  resource: AssetResource | null,
+  mutationId: string | null | undefined,
+  visitId?: string,
+): string | null | undefined {
+  if (
+    visitId !== undefined &&
+    (resource?._tag === "media-file" || resource?._tag === "draft-workspace-file")
+  ) {
+    return JSON.stringify([visitId, mutationId]);
+  }
+  return resource?._tag === "media-file" ? mutationId : undefined;
+}
 
 export type AssetUrlFailureReason = "disconnected" | "failed" | "missing-file-access";
 
