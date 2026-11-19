@@ -1672,9 +1672,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       if (confirmation._tag !== "Success") return false;
     }
     for (const threadKey of threadKeys) {
-      const thread = threadByKeyRef.current.get(threadKey);
-      if (!thread || thread.settledOverride === "settled") continue;
-      attemptSettle(scopeThreadRef(thread.environmentId, thread.id), {
+      const ref = parseScopedThreadKey(threadKey);
+      if (ref === null) continue;
+      const thread = readThreadShell(ref);
+      if (!thread || thread.archivedAt !== null || thread.settledOverride === "settled") continue;
+      attemptSettle(ref, {
         coSettlingKeys,
         watchConfirmed: hasWatch,
       });
