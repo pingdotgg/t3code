@@ -17,7 +17,7 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
-  const filePatch = (path: string) =>
+  const filePatch = (path: string, addition = "after()") =>
     [
       `diff --git a/${path} b/${path}`,
       "index 1111111..2222222 100644",
@@ -25,7 +25,7 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
       `+++ b/${path}`,
       "@@ -1,6 +1,6 @@",
       "-before()",
-      "+after()",
+      `+${addition}`,
       " one()",
       " two()",
       " three()",
@@ -62,8 +62,8 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
-          filePatch("early-0.ts") +
-          filePatch("early-1.test.ts") +
+          filePatch("early-0.ts", mocks.sourceAddition) +
+          filePatch("early-1.test.ts", "testOnly()") +
           filePatch("early-2.generated.ts"),
         truncated: false,
         nextCursor: null,
@@ -77,6 +77,7 @@ const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
+  sourceAddition: "after()",
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -193,6 +194,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.shortPages = false;
   mocks.withTestFile = false;
+  mocks.sourceAddition = "after()";
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -359,6 +361,40 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "early-0.ts");
   await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
   await expectFileHeaderShown(screen, container, "late.test.ts");
+});
+
+it("keeps a linked test file expanded when a refresh changes only the source patch", async () => {
+  setup({ paged: false });
+  mocks.withTestFile = true;
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+  using _preferences = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+  await screen.getByRole("button", { name: "Hide test files" }).click();
+
+  const path = "early-1.test.ts";
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode(path)))}`;
+  const settled = vi.fn();
+  await screen.rerender(tab(0, null, url, settled));
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+  await screen.rerender(tab(0));
+  const testLine = screen.getByText("testOnly()", { exact: true });
+  await expect.element(testLine).toBeVisible();
+  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
+  await expect.element(testLine).not.toBeInTheDocument();
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(testLine).toBeVisible();
+
+  mocks.sourceAddition = "refreshed()";
+  await screen.rerender(tab(1));
+  await expect.element(screen.getByText("refreshed()", { exact: true })).toBeVisible();
+  await expect.element(testLine).toBeVisible();
 });
 
 it("keeps a hidden test file folded when all shown files expand", async () => {
