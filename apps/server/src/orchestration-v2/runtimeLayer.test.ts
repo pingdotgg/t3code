@@ -11759,6 +11759,70 @@ it.layer(layerSharedApplicationDataPlaneTest)("pending provider interruption", (
       assert.isFalse(yield* effectWorker.runOnce());
     }),
   );
+
+  it.effect("cancels a named queued run and leaves the active one running", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectService.ProjectService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const projectId = ProjectId.make("runtime-layer-queued-interrupt-project");
+      const threadId = ThreadId.make("runtime-layer-queued-interrupt-thread");
+
+      yield* projects.create({
+        commandId: CommandId.make("runtime-layer-queued-interrupt-project-create"),
+        projectId,
+        title: "Queued interrupt project",
+        workspaceRoot: "/tmp/runtime-layer-queued-interrupt-project",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-queued-interrupt-create"),
+        threadId,
+        projectId,
+        title: "Queued interrupt",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      for (const [key, dispatchMode] of [
+        ["active", { type: "start_immediately" }],
+        ["queued", { type: "queue_after_active" }],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-queued-interrupt-${key}`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-queued-interrupt-${key}`),
+          text: key,
+          attachments: [],
+          modelSelection,
+          dispatchMode,
+        });
+      }
+      const [active, queued] = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.equal(queued?.status, "queued");
+
+      const interrupt = yield* threadManagement.interruptThread({
+        projectId,
+        commandId: CommandId.make("runtime-layer-queued-interrupt-command"),
+        threadId,
+        runId: queued!.id,
+      });
+      assert.equal(interrupt.type, "interrupt_requested");
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        after.runs.map((run) => run.status),
+        [active!.status, "cancelled"],
+      );
+    }),
+  );
 });
 
 it.layer(layerSharedApplicationDataPlaneTest)("run output after a stop", (it) => {

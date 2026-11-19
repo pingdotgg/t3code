@@ -177,6 +177,7 @@ it.effect("a turn someone stopped there is stopped, and a refused link fails at 
     const stopped = peer({
       t3_thread_wait: [{ ...waited, timedOut: false }],
       t3_thread_read: [run("interrupted")],
+      t3_thread_interrupt: [{ threadId: "thread-1", runId: "turn-1", status: "interrupted" }],
     });
     const result = yield* Effect.provide(
       Effect.flatMap(WorkflowAgentLinks.make, (links) =>
@@ -185,6 +186,14 @@ it.effect("a turn someone stopped there is stopped, and a refused link fails at 
       stopped.layer,
     );
     assert.deepStrictEqual(result, { ending: "stopped", detail: "interrupted", reply: "" });
+    // Stopping names the step's turn, so a person's turn on that thread keeps going.
+    yield* Effect.provide(
+      Effect.flatMap(WorkflowAgentLinks.make, (links) =>
+        links.interrupt("thread-1", "env-b", "turn-1"),
+      ),
+      stopped.layer,
+    );
+    assert.deepInclude(stopped.calls.at(-1)?.arguments, { threadId: "thread-1", runId: "turn-1" });
 
     const revoked = peer({
       t3_thread_wait: [

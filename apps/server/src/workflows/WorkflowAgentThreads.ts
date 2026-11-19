@@ -288,7 +288,8 @@ const make = Effect.gen(function* () {
     }),
     interrupt: Effect.fn("WorkflowAgentThreads.interrupt")(function* (target) {
       const environment = elsewhere(target.environment);
-      if (environment !== undefined) return yield* linked.interrupt(target.threadId, environment);
+      if (environment !== undefined)
+        return yield* linked.interrupt(target.threadId, environment, target.turnId);
       const thread = target.threadId;
       const threadId = ThreadId.make(thread);
       const shell = yield* threads
