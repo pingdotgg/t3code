@@ -42,6 +42,7 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 import { presentSlashCommand } from "./timelineSlashCommands";
@@ -6309,5 +6310,16 @@ describe("slash command prompts", () => {
     for (const text of ["/usr/bin/foo is broken", "/usr is broken", "/tmp", "$doctor"]) {
       expect(commandOf(rowsFor([prompt(text)])), text).toBeUndefined();
     }
+  });
+});
+
+describe("workEntryReadOutput", () => {
+  it("joins relative paths to the workspace root but keeps home paths as written", () => {
+    expect(
+      workEntryReadOutput(
+        { changedFiles: ["src/app.ts", "~/.claude/CLAUDE.md", "~\\.gitconfig"] },
+        "/workspace/t3code",
+      ),
+    ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
   });
 });
