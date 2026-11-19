@@ -315,6 +315,16 @@ describe("createLinkedThreadSession", () => {
     expect(pending().map((timer) => timer.delayMs)).toEqual([LINKED_THREAD_IDLE_POLL_MS]);
   });
 
+  it("waits to read a view that opens while nobody is looking", () => {
+    const active = { current: false };
+    const { session, reads, fire } = harness(active);
+    session.subscribe(() => {});
+    expect(reads).toEqual([]);
+    active.current = true;
+    fire();
+    expect(reads.map((read) => read.cursor)).toEqual([{}]);
+  });
+
   it("ignores a read that a newer one overtook", async () => {
     const { session, reads } = harness();
     session.subscribe(() => {});

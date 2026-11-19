@@ -359,7 +359,8 @@ export function createLinkedThreadSession(options: {
       listeners.add(listener);
       if (listeners.size === 1) {
         generation += 1;
-        void readLatest();
+        if (options.isActive?.() === false) scheduleNext(LINKED_THREAD_ACTIVE_POLL_MS);
+        else void readLatest();
       }
       return () => {
         if (!listeners.delete(listener) || listeners.size > 0) return;
