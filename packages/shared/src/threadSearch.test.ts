@@ -1,5 +1,17 @@
 import { expect, it } from "vite-plus/test";
-import { findThreadSearchOccurrences } from "./threadSearch.ts";
+import { countThreadSearchOccurrences, findThreadSearchOccurrences } from "./threadSearch.ts";
+
+it.each([
+  {
+    text: "📍 İstanbul İstanbul ıstanbul ístanbul i\u0307stanbul",
+    query: "istanbul",
+    offsets: [3, 12],
+  },
+  { text: "Istanbul istanbul", query: "İSTANBUL", offsets: [0, 9] },
+])("finds dotted capital I matches in $text for $query", ({ text, query, offsets }) => {
+  expect(findThreadSearchOccurrences(text, query)).toEqual(offsets);
+  expect(countThreadSearchOccurrences(text, query)).toBe(offsets.length);
+});
 
 it("finds non-overlapping occurrences without invalidating Unicode offsets", () => {
   expect(findThreadSearchOccurrences("Deploy the Deployment", "deploy")).toEqual([0, 11]);
