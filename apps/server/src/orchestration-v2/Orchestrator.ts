@@ -5255,7 +5255,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                         approvalAnnounced: existing.endedWatch.approvalAnnounced,
                       }),
                       // A finished-checks answer may be an older head's; a fresh read decides.
-                      ...(existing.endedWatch?.checksPending === true && { checksPending: true }),
+                      // Prefer the host rollup from watch_pull_request so a pending→failed race
+                      // during the immediate baseline read still wakes; endedWatch only fills
+                      // when that is absent.
+                      ...(command.type === "thread.pull-request.watch" &&
+                      command.checksPending !== undefined
+                        ? { checksPending: command.checksPending }
+                        : existing.endedWatch?.checksPending === true
+                          ? { checksPending: true }
+                          : {}),
                       ...(existing.endedWatch?.checksAwaitedSince !== undefined && {
                         checksAwaitedSince: existing.endedWatch.checksAwaitedSince,
                       }),

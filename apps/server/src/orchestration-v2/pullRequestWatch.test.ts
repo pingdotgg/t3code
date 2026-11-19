@@ -190,6 +190,58 @@ describe("evaluatePullRequestWatch", () => {
     ]);
   });
 
+  // Pending-at-start watches must report failures the baseline read returns; otherwise a
+  // host that flips to red during that read is baselined and never wakes.
+  it("reports failures when the baseline read returns red after a pending-at-start watch", () => {
+    const red = detail({
+      checks: [check("lint", "failure"), check("test", "failure")],
+    });
+    const reported = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      red,
+      noRemarks,
+    );
+    assert.deepEqual(reported.changes, [
+      {
+        kind: "checks-failed",
+        failed: [check("lint", "failure"), check("test", "failure")],
+      },
+    ]);
+    assert.isFalse(reported.next.checksPending);
+
+    // Already terminal when the watch started: still baselined (no wake).
+    assert.deepEqual(
+      evaluatePullRequestWatch(
+        watch({ awaitingBaseline: "all", checksPending: false }),
+        red,
+        noRemarks,
+      ).changes,
+      [],
+    );
+
+    // Partial settle on the first read: keep quiet until the rest finish, but do not lose the
+    // pending-start debt — a later all-green must still surface the earlier failure.
+    const partial = detail({
+      checks: [check("lint", "failure"), check("test", "pending")],
+    });
+    const waiting = evaluatePullRequestWatch(
+      watch({ awaitingBaseline: "all", checksPending: true }),
+      partial,
+      noRemarks,
+    );
+    assert.deepEqual(waiting.changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+    ]);
+    assert.deepEqual(waiting.next.failedChecks, ["lint"]);
+    assert.isTrue(waiting.next.checksPending);
+    const laterGreen = evaluatePullRequestWatch(
+      waiting.next,
+      detail({ checks: [check("lint", "failure"), check("test", "success")] }),
+      noRemarks,
+    );
+    assert.deepEqual(laterGreen.changes, []);
+  });
+
   it("baselines checks already awaiting approval", () => {
     const gated = detail({ checks: [{ ...check("CI", "action-required"), url: run(1) }] });
     const baseline = evaluatePullRequestWatch(watch({ awaitingBaseline: "all" }), gated, noRemarks);
