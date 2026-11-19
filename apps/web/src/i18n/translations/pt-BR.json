@@ -1,4 +1,5 @@
 {
+  "4052bd9a2478988d": "Could not reach this port on the environment",
   "23be753133ae6950": "Thread",
   "0001ae5846061bb6": "Thread em {machine}",
   "eef7f4dacbc3c3f2": "Máquina",
@@ -3692,6 +3693,8 @@
   "071b1cfc4d0d10d9": "Pesquisar modelos...",
   "ffea432e08602f9c": "Mostrar menos",
   "04b2f5e7a86fd8db": "Mostrar mais",
+  "316d2cea8d8145ea": "Unavailable",
+  "84e6a3d4f6d08b5b": "{count, plural, one {{count} modelo} other {{count} modelos}}",
   "aaae02e050a73bc2": "Nenhum favorito ainda",
   "656e11e9444ed41e": "Pesquisando modelos do projeto...",
   "4a1b2d720142a885": "Nenhum modelo encontrado",
@@ -8973,7 +8976,6 @@
   "d0a399c2a9ce6524": "Filtrar modelos",
   "e988564bf678ea40": "Ativar todos",
   "e9b965739869e86f": "Desativar todos",
-  "84e6a3d4f6d08b5b": "{count, plural, one {{count} modelo} other {{count} modelos}}",
   "2439b61eb85cb5be": "{count, plural, one {{count} favorito} other {{count} favoritos}}",
   "75191b82aba347d7": "{count, plural, one {{count} oculto} other {{count} ocultos}}",
   "d318e899fdd202ff": "Nenhum modelo corresponde.",
