@@ -2619,6 +2619,7 @@ export const layerWsRpc = (
                 ),
               ),
           ),
+        [WS_METHODS.providerVoiceSession]: (input) => providerSessionsV2.startVoiceSession(input),
         [WS_METHODS.serverUpdateProvider]: (input) =>
           providerMaintenanceRunner.updateProvider(input),
         [WS_METHODS.providerConsumeResetCredit]:

@@ -218,6 +218,8 @@ import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-scroll-position";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
+import { ComposerVoiceStrip } from "../voice-mode/ComposerVoiceMode";
+import { useVoiceModePhase } from "../voice-mode/useVoiceMode";
 import type { OrchestrationV2ProviderSession } from "@t3tools/contracts";
 import { voiceInputBlocksSubmission } from "@t3tools/client-runtime/voice-input";
 
@@ -949,6 +951,8 @@ function ThreadDetailBody(
       { openQuestionCount: activeUserInputRequestId === null ? 0 : 1 },
       messages,
     ) !== null;
+  const voiceTarget = { environmentId: props.environmentId, threadId: props.selectedThread.id };
+  const voiceLiveHere = useVoiceModePhase(voiceTarget) !== "idle";
   const [usageLimitsPanel, setUsageLimitsPanel] = useState<{
     readonly key: string;
     readonly threadKey: string;
@@ -1807,6 +1811,9 @@ function ThreadDetailBody(
                   </ComposerPanels>
                 </View>
 
+                {/* The composer below hides for a question card; keep a live
+                voice conversation's mute and stop controls reachable. */}
+                {activeUserInputRequestId !== null && voiceLiveHere ? <ComposerVoiceStrip /> : null}
                 <View style={composerSlotHidden ? { display: "none" } : undefined}>
                   {isProviderSubagent ? (
                     <View

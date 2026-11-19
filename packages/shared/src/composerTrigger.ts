@@ -1,5 +1,5 @@
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
-export type ComposerSlashCommand = "model" | "plan" | "default";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "voice";
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
