@@ -201,11 +201,12 @@ export const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function
 ) {
   if (hasExited()) return;
   if (!kill("SIGTERM")) return;
-  yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
+  const sawGroupGone = yield* Effect.sleep(TERMINATION_POLL_INTERVAL).pipe(
     Effect.repeat({ until: groupGone }),
     Effect.timeoutOption(TERMINATION_GRACE),
   );
-  if (hasExited()) return;
+  // Once the group is gone its id may be reused, so never look it up again.
+  if (Option.isSome(sawGroupGone) || hasExited()) return;
   kill("SIGKILL");
 });
 
