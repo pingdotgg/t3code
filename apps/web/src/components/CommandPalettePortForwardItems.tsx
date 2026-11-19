@@ -17,7 +17,7 @@ import {
   findPortForward,
   forwardedUrl,
   forwardPort,
-  forwardSourcesAtom,
+  forwardLocalitiesAtom,
   stopPortForward,
   usePortForwards,
 } from "../state/portForwards";
@@ -59,10 +59,10 @@ export function useCommandPalettePortForwardItem(input: {
   );
   const tunnelling = useEnvironmentsWithScope(reachable, AuthTerminalOperateScope);
   const tunnelled = reachable.filter((environment) => tunnelling.has(environment.environmentId));
-  const onOtherMachine = useAtomValue(
-    forwardSourcesAtom(environmentIdsKey(tunnelled.map(({ environmentId }) => environmentId))),
+  const localities = useAtomValue(
+    forwardLocalitiesAtom(environmentIdsKey(tunnelled.map(({ environmentId }) => environmentId))),
   );
-  const sources = tunnelled.filter((_, index) => onOtherMachine[index]);
+  const sources = tunnelled.filter((_, index) => localities[index] === "remote");
   // Only a forwardable thread's servers are listed, so other clients never subscribe to them.
   const threadEnvironmentId = sources.some(
     (environment) => environment.environmentId === input.activeThread?.environmentId,

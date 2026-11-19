@@ -78,7 +78,8 @@ const unusedPort = Effect.promise(
 
 /** The tunnel service, with every access request answered with `tunnelUrl`. */
 const makeTunnel = (
-  tunnelUrl: string | null,
+  /** A function answers each access request with its current value. */
+  tunnelUrl: string | null | (() => string | null),
   host?: Layer.Layer<FileSystem.FileSystem> | Layer.Layer<never>,
 ) =>
   Effect.gen(function* () {
@@ -106,7 +107,12 @@ const makeTunnel = (
     );
     const tunnel = Context.get(services, LoopbackTunnel.LoopbackTunnel);
     yield* Queue.take(accessRequests).pipe(
-      Effect.flatMap((requestId) => tunnel.resolveAccess({ requestId, url: tunnelUrl })),
+      Effect.flatMap((requestId) =>
+        tunnel.resolveAccess({
+          requestId,
+          url: typeof tunnelUrl === "function" ? tunnelUrl() : tunnelUrl,
+        }),
+      ),
       Effect.forever,
       Effect.forkScoped,
     );
@@ -404,4 +410,25 @@ it.effect("refuses to forward from an environment that shares this machine's loo
     expect(yield* refusesConnections(remotePort)).toBe(true);
     expect(yield* tunnel.forwards).toEqual([]);
   }),
+);
+
+it.effect(
+  "forwards nothing while the environment is out of reach, then forwards once it is back",
+  () =>
+    Effect.gen(function* () {
+      const endpoint = yield* listenEndpoint;
+      const remotePort = yield* unusedPort;
+      let access: string | null = null;
+      const tunnel = yield* makeTunnel(() => access);
+      const environmentId = EnvironmentId.make("remote");
+
+      const unavailable = yield* tunnel.forward({ environmentId, remotePort }).pipe(Effect.flip);
+      expect(unavailable._tag).toBe("LoopbackTunnelUnavailableError");
+      expect(yield* refusesConnections(remotePort)).toBe(true);
+      expect(yield* tunnel.forwards).toEqual([]);
+
+      access = `ws://127.0.0.1:${addressPort(endpoint.server)}/api/preview/tunnel`;
+      const forward = yield* tunnel.forward({ environmentId, remotePort });
+      expect(yield* exchange(forward.localPort, Uint8Array.of(9))).toEqual([0xee, 9]);
+    }),
 );

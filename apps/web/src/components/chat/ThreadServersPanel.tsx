@@ -28,7 +28,7 @@ import {
   forwardedUrl,
   forwardPort,
   stopPortForward,
-  useForwardsFrom,
+  useForwardLocality,
   usePortForwards,
 } from "../../state/portForwards";
 import { previewEnvironment } from "../../state/preview";
@@ -70,7 +70,8 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     useEnvironmentScope(props.environmentId, AuthTerminalOperateScope) &&
     environment?.connection.phase === "connected" &&
     canForwardPorts(environment.entry.target);
-  const canForward = useForwardsFrom(forwardable ? props.environmentId : null);
+  const locality = useForwardLocality(forwardable ? props.environmentId : null);
+  const canForward = locality === "remote";
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
     label: "thread server stop",
@@ -100,15 +101,17 @@ function ThreadServersList(props: ThreadServersPanelProps) {
     if (event.metaKey || event.ctrlKey || event.button === 1) {
       event.preventDefault();
       // This machine's browser reaches another environment's loopback only through a forward.
-      const url = canForward
-        ? await forwardPort(props.environmentId, server.port).then(
-            (forward) => forwardedUrl(forward, server.url),
-            (error: unknown) => {
-              reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
-              return null;
-            },
-          )
-        : resolveExternalServerUrl(props.environmentId, server.url);
+      // Starting a forward runs the probe; only a confirmed local environment opens directly.
+      const url =
+        forwardable && locality !== "local"
+          ? await forwardPort(props.environmentId, server.port).then(
+              (forward) => forwardedUrl(forward, server.url),
+              (error: unknown) => {
+                reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
+                return null;
+              },
+            )
+          : resolveExternalServerUrl(props.environmentId, server.url);
       if (url === null) return;
       await readLocalApi()
         ?.shell.openExternal(url)

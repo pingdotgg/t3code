@@ -241,6 +241,15 @@ export class LoopbackTunnelForwardError extends Schema.TaggedError<LoopbackTunne
   }
 }
 
+export class LoopbackTunnelUnavailableError extends Schema.TaggedError<LoopbackTunnelUnavailableError>()(
+  "LoopbackTunnelUnavailableError",
+  { environmentId: Schema.String },
+) {
+  override get message(): string {
+    return `Environment "${this.environmentId}" can't be reached through the tunnel right now.`;
+  }
+}
+
 export class LoopbackTunnelSameMachineError extends Schema.TaggedError<LoopbackTunnelSameMachineError>()(
   "LoopbackTunnelSameMachineError",
   { environmentId: Schema.String, port: Schema.Number },
@@ -269,7 +278,7 @@ export class LoopbackTunnel extends Context.Service<
       readonly remotePort: number;
     }) => Effect.Effect<
       DesktopPortForward,
-      LoopbackTunnelForwardError | LoopbackTunnelSameMachineError
+      LoopbackTunnelForwardError | LoopbackTunnelSameMachineError | LoopbackTunnelUnavailableError
     >;
     readonly stopForward: (input: {
       readonly environmentId: EnvironmentId;
@@ -277,7 +286,9 @@ export class LoopbackTunnel extends Context.Service<
     }) => Effect.Effect<void>;
     readonly forwards: Effect.Effect<ReadonlyArray<DesktopPortForward>>;
     /** Whether the environment's loopback is this machine's, so forwarding would only loop. */
-    readonly sharesLoopback: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
+    readonly sharesLoopback: (
+      environmentId: EnvironmentId,
+    ) => Effect.Effect<boolean, LoopbackTunnelUnavailableError>;
     readonly subscribeForwards: (
       listener: (forwards: ReadonlyArray<DesktopPortForward>) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -394,10 +405,17 @@ const make = Effect.gen(function* () {
    * Whether the environment's loopback is this machine's, by tunnelling a nonce to a local probe.
    * A forward there would accept the environment's own dials and loop through the tunnel.
    */
-  const sharesLoopback = Effect.fn("LoopbackTunnel.sharesLoopback")(
-    function* (environmentId: string) {
-      const tunnelUrl = yield* requestAccess(environmentId);
-      if (tunnelUrl === null) return false;
+  const sharesLoopback = Effect.fn("LoopbackTunnel.sharesLoopback")(function* (
+    environmentId: string,
+  ) {
+    const tunnelUrl = yield* requestAccess(environmentId);
+    // Without access the answer is unknown, not "another machine": a forward could loop later.
+    if (tunnelUrl === null) return yield* new LoopbackTunnelUnavailableError({ environmentId });
+    return yield* probeLoopback(tunnelUrl);
+  });
+
+  const probeLoopback = Effect.fn("LoopbackTunnel.probeLoopback")(
+    function* (tunnelUrl: string) {
       const nonce = new TextEncoder().encode(yield* random.uuidV4());
       const arrived = yield* Deferred.make<void>();
       const probe = yield* NodeSocketServer.make({ port: 0, host: "127.0.0.1" });
