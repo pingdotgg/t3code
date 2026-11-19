@@ -35,6 +35,8 @@ const TRANSCRIPT_BYTE_CAP = 256 * 1024;
 const BATCH_TRANSCRIPT_BYTES = 512 * 1024;
 const STEP_TEXT_CAP = 4_000;
 const TOOL_INPUT_CAP = 1_000;
+const MAX_MESSAGE_FILES = 256;
+const MAX_DETACHED_CHILDREN = 64;
 
 /** T3's title for a batch whose launch text it never saw. */
 export const ANTIGRAVITY_SUBAGENT_BATCH_TITLE = "Antigravity subagent batch";
@@ -44,10 +46,10 @@ interface AntigravityChildLaunch {
   readonly prompt: string;
 }
 
+const LaunchInput = Schema.Struct({ Role: Schema.String, Prompt: Schema.String });
+// agy 1.5 launches one child per call with a flat input; earlier releases send a batch.
 const decodeLaunchInput = Schema.decodeUnknownOption(
-  Schema.Struct({
-    Subagents: Schema.NonEmptyArray(Schema.Struct({ Role: Schema.String, Prompt: Schema.String })),
-  }),
+  Schema.Union([Schema.Struct({ Subagents: Schema.NonEmptyArray(LaunchInput) }), LaunchInput]),
 );
 
 /** `invoke_subagent` arguments, from the permission prompt or the persisted record. */
@@ -56,7 +58,10 @@ export function antigravitySubagentLaunches(
 ): ReadonlyArray<AntigravityChildLaunch> | undefined {
   return Option.getOrUndefined(
     Option.map(decodeLaunchInput(input), (decoded) =>
-      decoded.Subagents.map((entry) => ({ role: entry.Role, prompt: entry.Prompt })),
+      ("Subagents" in decoded ? decoded.Subagents : [decoded]).map((entry) => ({
+        role: entry.Role,
+        prompt: entry.Prompt,
+      })),
     ),
   );
 }
@@ -476,3 +481,92 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
     catch: (cause) => new AntigravityChildWorkReadError({ cause }),
   });
 });
+
+const decodeChildMessage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      sender: Schema.String,
+      sourceMetadata: Schema.optional(
+        Schema.Struct({
+          tool: Schema.optional(
+            Schema.Struct({
+              toolCall: Schema.optional(Schema.Struct({ id: Schema.String, name: Schema.String })),
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+);
+
+/** A conversation's inbox. Throws past a bound or on a file it cannot read, so nothing is proven. */
+async function readInbox(profileRoot: string, conversationId: string) {
+  const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
+  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox === undefined) return [];
+  // `read.json` is the runtime's read receipts, not a message.
+  const names = (await NodeFSP.readdir(inbox.path)).filter(
+    (name) => name.endsWith(".json") && name !== "read.json",
+  );
+  if (names.length > MAX_MESSAGE_FILES) throw new Error("Too many messages");
+  return Promise.all(
+    names.map(async (name) => {
+      const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
+      if (file === undefined || file.info.size > MAX_STEP_BYTES) throw new Error("Unreadable");
+      return Option.getOrThrow(decodeChildMessage(await NodeFSP.readFile(file.path, "utf8")));
+    }),
+  );
+}
+
+/**
+ * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
+ * a child is done, or waits for guidance, once its message is in the parent's inbox. Returns the
+ * launching tool call ids of children with no message yet; none when the records prove nothing.
+ */
+export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly rootSessionId: string;
+    readonly toolCallIds: ReadonlyArray<string>;
+  }) {
+    if (!NATIVE_ID.test(input.rootSessionId)) return [];
+    const read = async (): Promise<ReadonlyArray<string>> => {
+      const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+      const children =
+        profileRoot === undefined
+          ? undefined
+          : await antigravityManagedPath(
+              profileRoot,
+              ["antigravity-acp", "brain", input.rootSessionId, ".system_generated", "subagents"],
+              "directory",
+            );
+      if (profileRoot === undefined || children === undefined) return [];
+      const childIds = (await NodeFSP.readdir(children.path)).flatMap((name) =>
+        name.endsWith(".json") && NATIVE_ID.test(name.slice(0, -5)) ? [name.slice(0, -5)] : [],
+      );
+      if (childIds.length > MAX_DETACHED_CHILDREN) return [];
+      const reported = new Set(
+        (await readInbox(profileRoot, input.rootSessionId)).map((message) => message.sender),
+      );
+      const atWork: Array<string> = [];
+      for (const childId of childIds) {
+        if (reported.has(childId)) continue;
+        for (const message of await readInbox(profileRoot, childId)) {
+          const launch = message.sourceMetadata?.tool?.toolCall;
+          if (
+            message.sender === input.rootSessionId &&
+            launch?.name === "invoke_subagent" &&
+            input.toolCallIds.includes(launch.id)
+          ) {
+            atWork.push(launch.id);
+          }
+        }
+      }
+      return atWork;
+    };
+    return yield* Effect.tryPromise({
+      try: read,
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    }).pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+  },
+);
