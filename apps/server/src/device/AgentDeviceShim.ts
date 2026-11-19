@@ -268,8 +268,12 @@ const absolute = value => value && value !== "-" && !isAbsolute(value) ? resolve
 const reporter = spec => spec.trim().startsWith(".") ? pathToFileURL(resolve(spec.trim())).href : spec.trim().startsWith("junit:") ? "junit:" + absolute(spec.trim().slice(6)) : spec;
 const flagValue = (flag, value) => flag === "--reporter" ? reporter(value) : pathFlags.has(flag) ? absolute(value) : value;
 const positionals = [];
-for (let index = 0; index < command.length && command[index] !== "--"; index++) {
+// After the first \`--\` every argument is an operand, and agent-device still reads paths there.
+let literal = false;
+for (let index = 0; index < command.length; index++) {
   const arg = command[index];
+  if (literal) { positionals.push(index); continue; }
+  if (arg === "--") { literal = true; continue; }
   const equals = arg.indexOf("=");
   if (!arg.startsWith("-") || arg === "-") positionals.push(index);
   else if (equals > 0) command[index] = arg.slice(0, equals + 1) + flagValue(arg.slice(0, equals), arg.slice(equals + 1));

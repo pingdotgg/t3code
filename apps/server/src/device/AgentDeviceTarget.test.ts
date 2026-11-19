@@ -192,6 +192,11 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
       ).toEqual(["push", "com.example.app", '{"a":1}', ...target]);
       expect(
         yield* Effect.promise(() =>
+          launch(bound, ["replay", "export", "--out", "/o.yaml", "--", "flow.ad"]),
+        ),
+      ).toEqual(["replay", "export", "--out", "/o.yaml", ...target, "--", path.resolve("flow.ad")]);
+      expect(
+        yield* Effect.promise(() =>
           launch(bound, ["metro", "prepare", "--public-base-url", "https://h:8081"]),
         ),
       ).toEqual([
