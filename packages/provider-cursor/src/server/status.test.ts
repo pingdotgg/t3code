@@ -98,6 +98,30 @@ const sdkParameterizedModel = {
   ],
 } satisfies SDKModel;
 
+const sdkOptionalMaxModeModel = {
+  id: "composer-2",
+  displayName: "Composer 2",
+  parameters: [
+    {
+      id: "fast",
+      displayName: "Fast",
+      values: [{ value: "false" }, { value: "true", displayName: "Fast" }],
+    },
+  ],
+  variants: [
+    {
+      displayName: "Composer 2",
+      isDefault: true,
+      params: [{ id: "fast", value: "false" }],
+    },
+    {
+      displayName: "Composer 2 Max",
+      isMaxMode: true,
+      params: [{ id: "fast", value: "false" }],
+    },
+  ],
+} satisfies SDKModel;
+
 describe("buildInitialCursorProviderSnapshot", () => {
   it.effect.each([true, false])("advertises manual compaction only when enabled (%s)", (enabled) =>
     Effect.gen(function* () {
@@ -154,6 +178,17 @@ describe("Cursor SDK model discovery", () => {
     );
   });
 
+  it("adds a Max Mode boolean when the catalog offers optional max mode", () => {
+    expect(buildCursorCapabilitiesFromSdkModel(sdkOptionalMaxModeModel)).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          booleanDescriptor("fastMode", "Fast", false),
+          booleanDescriptor("maxMode", "Max Mode", false),
+        ],
+      }),
+    );
+  });
+
   it("keeps catalog aliases and filters invalid and duplicate SDK model entries", () => {
     const composer = {
       id: "composer-2",
@@ -188,7 +223,7 @@ describe("Cursor SDK model discovery", () => {
 describe("checkCursorProviderStatus", () => {
   it.effect("uses the SDK catalog when CURSOR_API_KEY is configured", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(
         {
           ...baseCursorSettings,
           customModels: ["internal/cursor-model"],
@@ -224,6 +259,7 @@ describe("checkCursorProviderStatus", () => {
           { slug: "internal/cursor-model", isCustom: true },
         ],
       });
+      expect(sdkModels).toEqual([sdkParameterizedModel]);
     }),
   );
 
@@ -250,13 +286,13 @@ describe("checkCursorProviderStatus", () => {
         Effect.forkChild,
       );
       yield* TestClock.adjust("20 seconds");
-      expect((yield* Fiber.join(fiber)).status).toBe("ready");
+      expect((yield* Fiber.join(fiber)).provider.status).toBe("ready");
     }),
   );
 
   it.effect("surfaces SDK authentication failures", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(baseCursorSettings, {
         CURSOR_API_KEY: "invalid-test-key",
       }).pipe(
         Effect.provide(
@@ -276,6 +312,7 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Cursor SDK authentication failed. Check CURSOR_API_KEY.",
       });
+      expect(sdkModels).toBeUndefined();
     }),
   );
 
@@ -294,7 +331,7 @@ describe("checkCursorProviderStatus", () => {
     "explains a rejected plan for $authenticationType authentication",
     ({ authenticationType, message }) =>
       Effect.gen(function* () {
-        const provider = yield* checkCursorProviderStatus(
+        const { provider, sdkModels } = yield* checkCursorProviderStatus(
           baseCursorSettings,
           { CURSOR_API_KEY: "free-plan-key" },
           authenticationType,
@@ -320,6 +357,7 @@ describe("checkCursorProviderStatus", () => {
           auth: { status: "unknown" },
           message,
         });
+        expect(sdkModels).toBeUndefined();
       }),
   );
 
@@ -405,7 +443,7 @@ describe("checkCursorProviderStatus", () => {
           ),
         readModels: () => Effect.succeed([sdkParameterizedModel]),
       });
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings, {
+      const { provider } = yield* checkCursorProviderStatus(baseCursorSettings, {
         CURSOR_API_KEY: "enterprise-key",
       }).pipe(Effect.provideService(CursorSdkCatalog.CursorSdkCatalog, catalog));
 
@@ -437,7 +475,7 @@ describe("checkCursorProviderStatus", () => {
         Effect.forkChild({ startImmediately: true }),
       );
       yield* TestClock.adjust("1 minute");
-      const provider = yield* Fiber.join(fiber);
+      const { provider } = yield* Fiber.join(fiber);
 
       expect(provider.status).not.toBe("error");
     }),
@@ -445,7 +483,7 @@ describe("checkCursorProviderStatus", () => {
 
   it.effect("requires a Cursor API key without probing any external Cursor binary", () =>
     Effect.gen(function* () {
-      const provider = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
+      const { provider, sdkModels } = yield* checkCursorProviderStatus(baseCursorSettings).pipe(
         Effect.provide(
           CursorSdkCatalog.layerTest(() =>
             Effect.die("SDK catalog must not be used without CURSOR_API_KEY"),
@@ -459,6 +497,7 @@ describe("checkCursorProviderStatus", () => {
         auth: { status: "unauthenticated" },
         message: "Sign in with Cursor or add CURSOR_API_KEY in provider settings.",
       });
+      expect(sdkModels).toBeUndefined();
     }),
   );
 });

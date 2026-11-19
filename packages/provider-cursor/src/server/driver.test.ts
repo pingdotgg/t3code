@@ -357,6 +357,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
             {
               displayName: "Claude Opus 5.5",
               isDefault: true,
+              isMaxMode: true,
               params: [{ id: "context", value: "1m" }],
             },
           ],
@@ -389,7 +390,11 @@ it.layer(layerTest)("CursorDriver", (it) => {
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },
         catalogDefault: {
-          model: { id: "claude-opus-5-5", params: [{ id: "context", value: "1m" }] },
+          model: {
+            id: "claude-opus-5-5",
+            params: [{ id: "context", value: "1m" }],
+            maxMode: true,
+          },
           window: 1_000_000,
           allowance: DEFAULT_HANDOFF_TOKEN_CAP,
         },

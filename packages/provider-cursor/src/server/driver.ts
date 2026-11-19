@@ -1,3 +1,4 @@
+import type { SDKModel } from "@cursor/sdk";
 import {
   ProviderDriverKind,
   ProviderSetupError,
@@ -164,10 +165,12 @@ export const CursorDriver: ProviderDriver<
       });
 
     let catalogModels: ReadonlyArray<ServerProviderModel> = [];
+    let catalogSdkModels: ReadonlyArray<SDKModel> = [];
     const orchestrationAdapter = yield* makeCursorAdapterV2({
       instanceId,
       environment: processEnv,
       getModels: () => catalogModels,
+      getSdkModels: () => catalogSdkModels,
     }).pipe(
       Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
         ...sdkRunner,
@@ -211,6 +214,7 @@ export const CursorDriver: ProviderDriver<
       auth.requireApiKey,
       auth.withAccess,
       () => catalogModels,
+      () => catalogSdkModels,
     );
 
     const checkProvider = auth.readApiKey.pipe(
@@ -224,6 +228,15 @@ export const CursorDriver: ProviderDriver<
           },
           auth.usesApiKey ? "api-key" : "browser",
         ).pipe(
+          Effect.tap(({ sdkModels }) =>
+            Effect.sync(() => {
+              // A failed check carries no catalog, so keep the last loaded one.
+              if (sdkModels !== undefined) {
+                catalogSdkModels = sdkModels;
+              }
+            }),
+          ),
+          Effect.map(({ provider }) => provider),
           Effect.filterOrElse(
             (snapshot) =>
               !(
