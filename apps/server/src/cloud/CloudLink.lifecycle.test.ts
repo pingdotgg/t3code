@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -268,11 +269,14 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ),
         ),
 
-        Effect.provide(
+        Effect.provide([
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
-        ),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ]),
         Effect.scoped,
       );
 
@@ -397,6 +401,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(request.headers.authorization).toBe("Bearer cli-access-token");
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
       expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("releases a tunnel only through the configured relay", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    values.set(RELAY_URL_SECRET, new TextEncoder().encode("https://old-relay.example.test"));
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 

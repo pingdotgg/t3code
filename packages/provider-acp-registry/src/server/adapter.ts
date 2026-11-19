@@ -34,6 +34,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -188,6 +189,10 @@ function makeAcpRegistryRuntime(
     });
 }
 
+const isHermes = (
+  initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+) => initializeResult.agentInfo?.name === "hermes-agent";
+
 export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(function* (
   options: AcpRegistryAdapterV2Options,
 ) {
@@ -199,6 +204,9 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
   const isDevin = registryAgentId === "devin";
+  const isAntigravityCli =
+    options.settings.source === "local" &&
+    /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
   const isOmp =
     options.settings.source === "local" &&
     /^omp(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
@@ -254,6 +262,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       : AcpProviderCapabilitiesV2,
     customModels: readCustomModelEntries(options.settings.customModels).map((entry) => entry.slug),
     compactViaAdvertisedCommand: true,
+    ...(isAntigravityCli ? { wakeOnDetachedRequest: true, replyEndsWithUsageUpdate: true } : {}),
     promptFailure: (cause) => {
       if (isFailedPromptRequest(cause)) options.onPromptRequestError?.();
       return acpRegistryPromptFailure(registryAgentId, cause);
@@ -267,7 +276,20 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           : {}),
     // glm-acp-agent is the one agent whose per-turn usage a live probe has verified.
     ...(registryAgentId === "glm-acp-agent" ? { reportsPerTurnPromptUsage: true } : {}),
-    ...(watchKimiPromptOutcome === undefined ? {} : { watchPromptOutcome: watchKimiPromptOutcome }),
+    ...(watchKimiPromptOutcome === undefined
+      ? {}
+      : {
+          watchPromptOutcome: (sessionId: string) =>
+            Effect.map(
+              watchKimiPromptOutcome(sessionId),
+              (check) => (result: EffectAcpSchema.PromptResponse) =>
+                Effect.map(check(result), (failure) =>
+                  failure === undefined
+                    ? undefined
+                    : { failure, threadDisposition: "reusable" as const },
+                ),
+            ),
+        }),
     ...(registryAgentId === "mistral-vibe"
       ? { registerExtensions: registerMistralVibeAcpExtensions }
       : {}),
@@ -279,6 +301,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           extractSubagentSessionEvent: extractClaudeSubagentSessionEvent,
         }
       : {}),
+    // Hermes replies on the root session when a background process it started exits; no
+    // prompt response follows, so the continuation ends on the deferred-finalize debounce.
+    // Hermes is not in the public registry and may run through a wrapper, so only its
+    // initialize reply identifies it. agy does the same and is known by its command.
+    enablePostSettleContinuation: (initializeResult) =>
+      isAntigravityCli || isHermes(initializeResult),
+    deferFinalizeForBackgroundWork: (initializeResult) =>
+      isAntigravityCli || isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {
