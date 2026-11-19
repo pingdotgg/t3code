@@ -15,7 +15,6 @@ import { COMPACT_COMMAND_PATTERN } from "@t3tools/client-runtime/state/context-w
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   latestUnheldRun,
-  runRanAfter,
   usageLimitRunPresentedAsLatest,
 } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Option from "effect/Option";
@@ -1261,8 +1260,8 @@ export function threadErrorIsServerRuntime(input: {
 
 /**
  * Which failure a thread's error banner shows: a run failure is the presented latest run's, and a
- * session error belongs to the run that last failed or completed, so a newer run starting keeps
- * it. The failure time tells a repeated failure of a retried run apart.
+ * session error belongs to the latest run that failed or completed, ranked by ordinal as the
+ * presented run is, so a newer run starting keeps it. The failure time tells a retried run apart.
  */
 export function threadErrorBannerSource(input: {
   readonly runtime: {
@@ -1284,20 +1283,11 @@ export function threadErrorBannerSource(input: {
   let ended: (typeof input.runs)[number] | null = null;
   for (const run of input.runs) {
     if (run.status !== "failed" && run.status !== "completed") continue;
-    if (ended === null || endedAfter(run, ended)) ended = run;
+    if (ended === null || run.ordinal > ended.ordinal) ended = run;
   }
   return ended === null
     ? null
     : `${ended.id}@${ended.completedAt === null ? "" : DateTime.formatIso(ended.completedAt)}`;
-}
-
-// runRanAfter ranks a run without completedAt as still running, which a finished run is not.
-function endedAfter(
-  run: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
-  other: Pick<OrchestrationV2Run, "ordinal" | "completedAt">,
-): boolean {
-  if (run.completedAt === null || other.completedAt === null) return run.ordinal > other.ordinal;
-  return runRanAfter(run, other);
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

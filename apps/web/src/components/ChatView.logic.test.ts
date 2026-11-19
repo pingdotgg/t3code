@@ -1711,7 +1711,6 @@ describe("threadErrorBannerSource", () => {
   it("keys a session error by the completed run that followed a failure, so the failure's dismissal does not hide it", () => {
     expect(
       sessionError([
-        run("run-0", "failed", 0),
         run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
         run("run-b", "completed", 2, "2026-11-16T00:02:00Z"),
       ]),
@@ -1746,10 +1745,11 @@ describe("threadErrorBannerSource", () => {
   it("keeps the failed run's key while a later run starts, so its dismissed error stays hidden", () => {
     expect(
       sessionError([
-        run("run-a", "failed", 1, "2026-11-16T00:01:00Z"),
-        run("run-b", "starting", 2),
+        run("run-a", "failed", 1, "2026-11-16T00:09:00Z"),
+        run("run-b", "failed", 2, "2026-11-16T00:01:00Z"),
+        run("run-c", "starting", 3),
       ]),
-    ).toBe(runFailure("run-a", "2026-11-16T00:01:00.000Z"));
+    ).toBe(runFailure("run-b", "2026-11-16T00:01:00.000Z"));
   });
 
   it("has no key without an error or an ended run", () => {
