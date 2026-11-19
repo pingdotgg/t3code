@@ -160,6 +160,11 @@ function makeTestAdapter(input: {
             Ref.update(closedSessions, (ids) => [...ids, sessionInput.providerSessionId]),
           );
         }
+        if (input.backgroundWork !== undefined) {
+          // Like Claude: background work dies with the provider process.
+          const backgroundWork = input.backgroundWork;
+          yield* Effect.addFinalizer(() => Ref.set(backgroundWork, false));
+        }
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
           id: sessionInput.providerSessionId,
@@ -3687,6 +3692,10 @@ describe("orchestration v2 provider switching", () => {
       { background: true, queued: false, sharedHistory: false },
     ],
     [
+      "lets Stop release an idle session whose background work only the probe sees",
+      { background: true, queued: false, sharedHistory: false, stop: true },
+    ],
+    [
       "keeps a busy previous session running when a queued hand-off starts",
       { background: true, queued: true, sharedHistory: false },
     ],
@@ -3694,8 +3703,10 @@ describe("orchestration v2 provider switching", () => {
       "holds a queued account switch while the replaced session still runs background work",
       { background: true, queued: true, sharedHistory: true },
     ],
-  ] as const)("%s", ([, { background, queued, sharedHistory }]) =>
+  ] as const)("%s", ([, row]) =>
     Effect.gen(function* () {
+      const { background, queued, sharedHistory } = row;
+      const stop = "stop" in row && row.stop;
       const cwd = yield* checkpointWorkspace("handoff-releases-session");
       const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
       const backgroundWork = yield* Ref.make(background);
@@ -3869,7 +3880,17 @@ describe("orchestration v2 provider switching", () => {
             unchanged.providerSessions.map((session) => [session.id, session.status]),
             [[firstSession!.id, "ready"]],
           );
-          yield* Ref.set(backgroundWork, false);
+          if (stop) {
+            // The refusal says to press Stop; the idle thread has no run to interrupt.
+            yield* orchestrator.dispatch({
+              type: "thread.stop",
+              commandId: CommandId.make("command:handoff-releases-session:stop"),
+              threadId: handoffThreadId,
+            });
+            yield* worker.drain();
+          } else {
+            yield* Ref.set(backgroundWork, false);
+          }
         }
 
         yield* send(2, secondSelection);
