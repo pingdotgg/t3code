@@ -54,7 +54,10 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
-        patch: filePatch("a.ts") + filePatch("a.test.ts"),
+        patch:
+          filePatch("early-0.ts") +
+          filePatch("early-1.test.ts") +
+          filePatch("early-2.generated.ts"),
         truncated: false,
         nextCursor: null,
       }),
@@ -351,6 +354,34 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
+it("keeps a hidden test file folded when all shown files expand", async () => {
+  setup({ paged: true });
+  // Test files sort after source files, so this diff puts its only test file second.
+  mocks.paged = false;
+  mocks.withTestFile = true;
+  using _hidden = {
+    [Symbol.dispose]() {
+      window.localStorage.removeItem("t3code.diffHideTestFiles");
+    },
+  };
+  await using screen = await render(tab(0), { container: pagedContainer() });
+  // Every expanded file stays rendered, so the toggles below keep their positions.
+  screen.container.className = "flex h-[1000px] w-[900px]";
+  // Files keep their order, so the second header is early-1.test.ts while tests are shown.
+  const testFileToggle = screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1);
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
+  const filter = screen.getByRole("button", { name: "Hide test files" });
+  await filter.click();
+  await expect.element(filter).toHaveAttribute("aria-pressed", "true");
+
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "true");
+  await filter.click();
+
+  await expect.element(filter).toHaveAttribute("aria-pressed", "false");
+  await expect.element(testFileToggle).toHaveAttribute("aria-expanded", "false");
+});
+
 it("keeps a hidden test file open when all shown files collapse", async () => {
   setup({ paged: false });
   mocks.withTestFile = true;
@@ -374,8 +405,7 @@ it("keeps a hidden test file open when all shown files collapse", async () => {
     .toBeVisible();
   await filter.click();
 
-  await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
-  // Test files sort after the others, so the second header is a.test.ts's.
+  await expect.element(screen.getByText("early-1.test.ts", { exact: true }).first()).toBeVisible();
   await expect
     .element(screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1))
     .toHaveAttribute("aria-expanded", "true");
