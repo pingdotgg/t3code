@@ -24,6 +24,11 @@ import {
   makeAntigravityStdoutTransform,
 } from "../antigravityAuthSupport.ts";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import {
+  acpPermissionDisposition,
+  type AcpRuntimePolicy,
+} from "@t3tools/provider-acp/server/clientPolicy";
+import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import packageJson from "../../../package.json" with { type: "json" };
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
@@ -187,6 +192,7 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
     case "auto-accept-edits":
       return "auto_edit";
     case "auto":
+      return "auto";
     case "approval-required":
       return "default";
   }
@@ -195,10 +201,30 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 /**
  * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
  * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * on the next turn without a restart. Agy does not offer its Auto to every account, such as
+ * Gemini Enterprise; there Auto stays in `default`.
  */
-export function antigravityCliSessionMode(modeId: string): string {
-  return modeId === "yolo" || modeId === "auto_edit" ? "default" : modeId;
+export function antigravitySessionMode(
+  modeId: string,
+  input: { readonly cli: boolean; readonly modeState: AcpSessionModeState | undefined },
+): string {
+  if (modeId === "auto") {
+    return input.modeState?.availableModes.some((mode) => mode.id === "auto") === true
+      ? "auto"
+      : "default";
+  }
+  return input.cli && (modeId === "yolo" || modeId === "auto_edit") ? "default" : modeId;
+}
+
+/** Agy's Auto asks only about what its own review will not approve, so those requests reach the user. */
+export function antigravityPermissionDisposition(
+  policy: AcpRuntimePolicy,
+  request: EffectAcpSchema.RequestPermissionRequest,
+) {
+  return acpPermissionDisposition(
+    policy.runtimeMode === "auto" ? { ...policy, runtimeMode: "approval-required" } : policy,
+    request,
+  );
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
@@ -208,6 +234,8 @@ export function antigravityRuntimeModeForSessionMode(modeId: string): RuntimeMod
       return "full-access";
     case "auto_edit":
       return "auto-accept-edits";
+    case "auto":
+      return "auto";
     case "default":
       return "approval-required";
     default:
