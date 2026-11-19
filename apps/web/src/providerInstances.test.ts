@@ -96,6 +96,22 @@ describe("isProviderInstancePickerReady", () => {
       false,
     );
   });
+
+  it("keeps offering the models a refresh retained when the catalog did not arrive in time", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: "codex",
+          status: "warning",
+          models: [model("gpt-5.5", false, true), model("gpt-5.4")],
+        }),
+        message: "Codex did not return its model catalog in time.",
+      },
+    ]);
+
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
 });
 
 describe("applyProviderInstanceSettings", () => {
