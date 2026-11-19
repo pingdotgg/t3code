@@ -57,10 +57,7 @@ window. Leave it empty for Claude Code's default.
 
 You can also send `/compact` in an existing conversation. Claude Code also
 compacts automatically. A message steered into a turn while Claude compacts
-automatically waits for the compaction to finish, then reaches the same turn. If
-the turn ends first, the message starts the next turn instead, unless you stopped
-the turn.
-To see context usage, see
+reaches the same turn once the compaction finishes. To see context usage, see
 [commands and skills](./composer.md#commands-and-skills).
 
 When you return to a large thread after Claude's prompt cache expires, a

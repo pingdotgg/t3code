@@ -44,8 +44,6 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
     steerDeclined: Schema.optional(Schema.Boolean),
     /** The provider never confirmed the stop; Force stop is the way out. */
     unresponsive: Schema.optional(Schema.Boolean),
-    /** A held steer's outcome is known, but reading its settled turn failed; reading again may work. */
-    settlementUnavailable: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -74,10 +72,7 @@ export interface ProviderTurnControlServiceV2Shape {
     readonly providerTurnId: ProviderTurnId;
     readonly messageId: MessageId;
     readonly modelSelection?: ModelSelection;
-  }) => Effect.Effect<
-    void | { readonly delivered: Effect.Effect<void, ProviderTurnControlError> },
-    ProviderTurnControlError
-  >;
+  }) => Effect.Effect<void, ProviderTurnControlError>;
   /** Best effort: a turn that ended or moved sessions picks the selection up when it next starts. */
   readonly applyModelSelection: (input: {
     readonly threadId: ThreadId;
@@ -456,11 +451,34 @@ export const layer: Layer.Layer<
             mcpAppModelContext,
             input.threadId,
           );
-          // A held steer's later delivery fails the same ways an immediate one does.
-          const asControlError = <A>(
-            steer: Effect.Effect<A, ProviderAdapter.ProviderAdapterV2Error>,
-          ) =>
-            steer.pipe(
+          yield* loaded.session.value
+            .steerTurn({
+              threadId: input.threadId,
+              runId: run.id,
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              ...(input.modelSelection === undefined
+                ? {}
+                : { modelSelection: input.modelSelection }),
+              ...(appContext.length === 0 ? {} : { appContext }),
+              message: {
+                messageId: message.id,
+                text: projectComposerContextForProvider({
+                  text: message.text,
+                  records: message.context?.records ?? [],
+                }),
+                attachments: message.attachments,
+                createdBy: message.createdBy,
+                creationSource: message.creationSource,
+                ...(message.scheduledTaskId === undefined
+                  ? {}
+                  : { scheduledTaskId: message.scheduledTaskId }),
+                ...(message.senderThreadId === undefined
+                  ? {}
+                  : { senderThreadId: message.senderThreadId }),
+              },
+            })
+            .pipe(
               Effect.catchTags({
                 ProviderAdapterSteerDeclinedError: (cause) =>
                   Effect.fail(
@@ -490,74 +508,7 @@ export const layer: Layer.Layer<
                   });
                 }),
               ),
-              Effect.mapError((cause) =>
-                isProviderTurnControlError(cause)
-                  ? cause
-                  : new ProviderTurnControlError({
-                      threadId: input.threadId,
-                      operation: "steer",
-                      providerTurnId: input.providerTurnId,
-                      cause,
-                    }),
-              ),
             );
-          const held = yield* asControlError(
-            loaded.session.value.steerTurn({
-              threadId: input.threadId,
-              runId: run.id,
-              providerThread: loaded.providerThread,
-              providerTurnId: loaded.providerTurn.id,
-              ...(input.modelSelection === undefined
-                ? {}
-                : { modelSelection: input.modelSelection }),
-              ...(appContext.length === 0 ? {} : { appContext }),
-              message: {
-                messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
-                attachments: message.attachments,
-                createdBy: message.createdBy,
-                creationSource: message.creationSource,
-                ...(message.scheduledTaskId === undefined
-                  ? {}
-                  : { scheduledTaskId: message.scheduledTaskId }),
-                ...(message.senderThreadId === undefined
-                  ? {}
-                  : { senderThreadId: message.senderThreadId }),
-              },
-            }),
-          );
-          if (held === undefined) return;
-          // A held steer is declined as its turn ends; its follow-up needs that end persisted.
-          return {
-            delivered: asControlError(held.delivered).pipe(
-              Effect.catchIf(
-                (error) => error.steerDeclined === true,
-                (error) =>
-                  // The run must settle too: a mailbox follow-up is refused while it still runs.
-                  awaitSettled(input.threadId, {
-                    ...input,
-                    ...(loaded.providerTurn.runAttemptId === null
-                      ? {}
-                      : { attemptId: loaded.providerTurn.runAttemptId }),
-                  }).pipe(
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderTurnControlError({
-                          threadId: input.threadId,
-                          operation: "steer",
-                          providerTurnId: input.providerTurnId,
-                          settlementUnavailable: true,
-                          cause,
-                        }),
-                    ),
-                    Effect.andThen(Effect.fail(error)),
-                  ),
-              ),
-            ),
-          };
         },
         (effect, input) =>
           effect.pipe(

@@ -595,6 +595,8 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsNativeResume: true,
     supportsActiveSteering: true,
     activeSteeringInterruptsTools: true,
+    // A "next" steer waits out a running auto-compaction instead of aborting it.
+    activeSteeringDuringCompaction: true,
     supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
