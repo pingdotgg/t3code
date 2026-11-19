@@ -6301,7 +6301,9 @@
     " Showing the issues that loaded."
   ],
   "952ef13679903db1": "Nothing matches that.",
+  "3e2e4940c7332c07": "Clear search",
   "50d0eefcbc70f840": "No issues under these filters.",
+  "3fe9728594a7340c": "Clear filters",
   "c9cae7bac5f42342": "Load more",
   "01e7836447bcad93": "Issues Assigned to Me",
   "3a883fbaed8d7561": "App",
@@ -7168,10 +7170,8 @@
     "”"
   ],
   "335f16c766b675f9": "The hosts were searched for it. Try fewer words, or search by number, author or branch.",
-  "3e2e4940c7332c07": "Clear search",
   "63a10e130e3c6cbf": "No pull requests match",
   "b220e4c42ee8d445": "Widen the filters to see more.",
-  "3fe9728594a7340c": "Clear filters",
   "e10ea4dfae8e79b8": "No open pull requests",
   "1098cfcb63b6807f": "Open pull requests from every project in this workspace appear here.",
   "fe8bc968196a546a": "From a thread",

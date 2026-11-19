@@ -6300,7 +6300,9 @@
     " Affichage des tickets chargés."
   ],
   "952ef13679903db1": "Rien ne correspond.",
+  "3e2e4940c7332c07": "Effacer la recherche",
   "50d0eefcbc70f840": "Aucun ticket avec ces filtres.",
+  "3fe9728594a7340c": "Effacer les filtres",
   "c9cae7bac5f42342": "Charger plus",
   "01e7836447bcad93": "Tickets qui me sont assignés",
   "3a883fbaed8d7561": "App",
@@ -7162,10 +7164,8 @@
     " »"
   ],
   "335f16c766b675f9": "La recherche a porté sur les hôtes. Essayez moins de mots, ou cherchez par numéro, auteur ou branche.",
-  "3e2e4940c7332c07": "Effacer la recherche",
   "63a10e130e3c6cbf": "Aucune pull request ne correspond",
   "b220e4c42ee8d445": "Élargissez les filtres pour en voir plus.",
-  "3fe9728594a7340c": "Effacer les filtres",
   "e10ea4dfae8e79b8": "Aucune pull request ouverte",
   "1098cfcb63b6807f": "Les pull requests ouvertes de tous les projets de cet espace de travail apparaissent ici.",
   "fe8bc968196a546a": "Depuis un fil",

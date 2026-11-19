@@ -6300,7 +6300,9 @@
     " Die geladenen Issues werden angezeigt."
   ],
   "952ef13679903db1": "Nichts passt dazu.",
+  "3e2e4940c7332c07": "Suche leeren",
   "50d0eefcbc70f840": "Keine Issues mit diesen Filtern.",
+  "3fe9728594a7340c": "Filter zurücksetzen",
   "c9cae7bac5f42342": "Mehr laden",
   "01e7836447bcad93": "Mir zugewiesene Issues",
   "3a883fbaed8d7561": "App",
@@ -7162,10 +7164,8 @@
     "“"
   ],
   "335f16c766b675f9": "Die Hosts wurden danach durchsucht. Versuche weniger Wörter oder suche nach Nummer, Autor oder Branch.",
-  "3e2e4940c7332c07": "Suche leeren",
   "63a10e130e3c6cbf": "Keine passenden Pull Requests",
   "b220e4c42ee8d445": "Erweitere die Filter, um mehr zu sehen.",
-  "3fe9728594a7340c": "Filter zurücksetzen",
   "e10ea4dfae8e79b8": "Keine offenen Pull Requests",
   "1098cfcb63b6807f": "Offene Pull Requests aus allen Projekten in diesem Arbeitsbereich erscheinen hier.",
   "fe8bc968196a546a": "Aus einem Thread",

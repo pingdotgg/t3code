@@ -6299,7 +6299,9 @@
     " Mostrando as issues que foram carregadas."
   ],
   "952ef13679903db1": "Nada corresponde a isso.",
+  "3e2e4940c7332c07": "Limpar pesquisa",
   "50d0eefcbc70f840": "Nenhuma issue com esses filtros.",
+  "3fe9728594a7340c": "Limpar filtros",
   "c9cae7bac5f42342": "Carregar mais",
   "01e7836447bcad93": "Issues atribuídas a mim",
   "3a883fbaed8d7561": "App",
@@ -7161,10 +7163,8 @@
     "”"
   ],
   "335f16c766b675f9": "Os hosts foram pesquisados. Tente menos palavras ou pesquise por número, autor ou branch.",
-  "3e2e4940c7332c07": "Limpar pesquisa",
   "63a10e130e3c6cbf": "Nenhum pull request corresponde",
   "b220e4c42ee8d445": "Amplie os filtros para ver mais.",
-  "3fe9728594a7340c": "Limpar filtros",
   "e10ea4dfae8e79b8": "Nenhum pull request aberto",
   "1098cfcb63b6807f": "Os pull requests abertos de todos os projetos deste workspace aparecem aqui.",
   "fe8bc968196a546a": "A partir de uma thread",

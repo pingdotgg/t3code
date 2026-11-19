@@ -6300,7 +6300,9 @@
     " Visar de ärenden som lästes in."
   ],
   "952ef13679903db1": "Inget matchar det.",
+  "3e2e4940c7332c07": "Rensa sökning",
   "50d0eefcbc70f840": "Inga ärenden med de här filtren.",
+  "3fe9728594a7340c": "Rensa filter",
   "c9cae7bac5f42342": "Läs in fler",
   "01e7836447bcad93": "Ärenden tilldelade till mig",
   "3a883fbaed8d7561": "App",
@@ -7167,10 +7169,8 @@
     "”"
   ],
   "335f16c766b675f9": "Värdarna söktes igenom. Prova färre ord eller sök efter nummer, författare eller gren.",
-  "3e2e4940c7332c07": "Rensa sökning",
   "63a10e130e3c6cbf": "Inga pull requests matchar",
   "b220e4c42ee8d445": "Bredda filtren för att se fler.",
-  "3fe9728594a7340c": "Rensa filter",
   "e10ea4dfae8e79b8": "Inga öppna pull requests",
   "1098cfcb63b6807f": "Öppna pull requests från alla projekt i den här arbetsytan visas här.",
   "fe8bc968196a546a": "Från en tråd",
