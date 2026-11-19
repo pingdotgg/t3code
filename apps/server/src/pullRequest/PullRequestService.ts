@@ -210,7 +210,11 @@ export class PullRequestService extends Context.Service<
     readonly batchesReads: (input: PullRequestRef) => Effect.Effect<boolean>;
     readonly stack: (
       input: PullRequestRef,
-      options?: { readonly includeDetails?: boolean },
+      options?: {
+        readonly includeDetails?: boolean;
+        /** A merge pins these heads, so it must not read them from the cache. */
+        readonly bypassCache?: boolean;
+      },
     ) => Effect.Effect<PullRequestStack | null, PullRequestError>;
     readonly subscribeMerges: Effect.Effect<
       Stream.Stream<PullRequestMergeEvent>,
@@ -3212,12 +3216,14 @@ export const make = Effect.gen(function* () {
   );
 
   const stack: PullRequestService["Service"]["stack"] = (input, options) =>
-    persistedRead(
-      input,
-      `stack:${options?.includeDetails !== false}`,
-      stackCodec,
-      stackUncached(input, options),
-    );
+    options?.bypassCache === true
+      ? stackUncached(input, options)
+      : persistedRead(
+          input,
+          `stack:${options?.includeDetails !== false}`,
+          stackCodec,
+          stackUncached(input, options),
+        );
 
   const listCache = yield* Cache.makeWith(
     (key: string) => {
