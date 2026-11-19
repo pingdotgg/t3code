@@ -3121,3 +3121,46 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
     );
   },
 );
+
+it.live("reloads a symlinked settings file after its target directory is replaced", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const service = yield* ServerSettingsModule.ServerSettingsService;
+    const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+    const active = path.join(dotfiles, "active");
+    const restored = path.join(dotfiles, "restored");
+    yield* fs.makeDirectory(active);
+    yield* fs.makeDirectory(restored);
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.writeFileString(
+      path.join(restored, "settings.json"),
+      `{ "responseStreamingMode": "turn" }`,
+    );
+    yield* fs.remove(config.settingsPath, { force: true });
+    yield* fs.symlink(path.join(active, "settings.json"), config.settingsPath);
+    yield* service.start;
+    const changes = yield* service.subscribeChanges;
+
+    yield* fs.rename(active, path.join(dotfiles, "previous"));
+    yield* fs.rename(restored, active);
+    yield* fs.writeFileString(
+      path.join(active, "settings.json"),
+      `{ "responseStreamingMode": "paragraph" }`,
+    );
+
+    const reloaded = yield* changes.pipe(
+      Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+      Stream.runHead,
+    );
+    assert.isTrue(Option.isSome(reloaded));
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(layerServerSettings()),
+    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
+);
