@@ -2637,6 +2637,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               updatedAt: now,
             },
           });
+          // The pre-compaction step would otherwise settle the turn as its newest usage.
+          turn.usage.lastStep = null;
+          if (state.providerThread.contextUsage !== null) {
+            yield* updateProviderThread(state, { contextUsage: null });
+          }
         });
 
         const handleMessageUpdated = Effect.fnUntraced(function* (

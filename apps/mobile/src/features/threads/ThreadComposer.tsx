@@ -193,7 +193,7 @@ export interface ThreadComposerProps {
   readonly onEditorFocusChange?: (focused: boolean) => void;
 }
 
-// Keep a 44px input target after the floating editor's 4px inset on each side.
+// Keep a 44dp input target after the floating editor's 4dp inset on each side.
 const INLINE_EDITOR_COMPACT_MIN_WIDTH = 52;
 
 const COMPOSER_ATTACHMENT_ENTERING =
@@ -682,14 +682,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </>
   ) : null;
 
-  const compactBeforeSend =
-    props.compactBeforeSend && !showResumeAction && queuedEdit === null
-      ? props.compactBeforeSend
-      : null;
-  const hasInlineAndroidCompactControl =
-    Platform.OS === "android" && compactBeforeSend !== null && !compactEditor.isExpanded;
   const modelControl = (
-    <View className={hasInlineAndroidCompactControl ? "min-w-0 shrink-0" : "min-w-0 shrink"}>
+    // Only the expanded label can truncate; shrinking the icon-only control clips the icon.
+    <View className={compactEditor.isExpanded ? "min-w-0 shrink" : "shrink-0"}>
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -704,6 +699,15 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     </View>
   );
 
+  const compactBeforeSend =
+    props.compactBeforeSend && !showResumeAction && queuedEdit === null
+      ? props.compactBeforeSend
+      : null;
+  const reserveCompactInput =
+    Platform.OS === "android" &&
+    compactBeforeSend !== null &&
+    !compactEditor.isExpanded &&
+    stripAttachments.length === 0;
   const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
   const compactControl =
     compactBeforeSend && compactTokens !== null ? (
@@ -711,7 +715,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
         size={usesLargeControls ? "large" : "regular"}
         icon="arrow.down.right.and.arrow.up.left"
         label={compactTokens}
-        hideOverflowingLabel={hasInlineAndroidCompactControl}
+        hideOverflowingLabel={reserveCompactInput}
         selected={!compactBeforeSend.keepFullHistory}
         showChevron={false}
         disabled={!props.canOperateThread}
@@ -833,12 +837,13 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={[
                   {
                     minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
+                      compactEditor.isExpanded ||
+                      stripAttachments.length > 0 ||
+                      compactControl !== null
                         ? 0
-                        : hasInlineAndroidCompactControl
-                          ? INLINE_EDITOR_COMPACT_MIN_WIDTH
-                          : INLINE_EDITOR_MIN_WIDTH,
+                        : INLINE_EDITOR_MIN_WIDTH,
                   },
+                  reserveCompactInput && { minWidth: INLINE_EDITOR_COMPACT_MIN_WIDTH },
                   compactEditor.containerStyle,
                   compactEditor.isExpanded ? { flex: 0, width: 0 } : undefined,
                 ]}
@@ -1014,11 +1019,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   className="min-w-0 shrink flex-row items-center"
                   entering={compactEditor.toolbarControlsEntering}
                 >
-                  {hasInlineAndroidCompactControl ? (
-                    <View className="min-w-0 shrink">{compactControl}</View>
-                  ) : (
-                    compactControl
-                  )}
+                  {compactControl}
                   {modelControl}
                 </Animated.View>
                 <ComposerDictationStartAction
