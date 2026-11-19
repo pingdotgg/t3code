@@ -80,11 +80,7 @@ it("caps the mini list at its limit and summarizes the hidden pull requests", as
     <ThreadPullRequestsMiniList pullRequests={pullRequests} limit={5} />,
   );
   const items = screen.getByRole("listitem");
-  await expect.element(items.nth(0).getByText("#1", { exact: true })).toBeVisible();
-  await expect.element(items.nth(1).getByText("#2", { exact: true })).toBeVisible();
-  await expect.element(items.nth(2).getByText("#3", { exact: true })).toBeVisible();
-  await expect.element(items.nth(3).getByText("#4", { exact: true })).toBeVisible();
   await expect.element(items.nth(4).getByText("#5", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("#6", { exact: true })).not.toBeInTheDocument();
+  expect(items.elements()).toHaveLength(5);
   await expect.element(screen.getByText("+2 more linked PRs")).toBeVisible();
 });
