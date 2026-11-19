@@ -18,9 +18,8 @@ import { gradeCondensed, gradeLeaf } from "./grade.ts";
 import { morphRunner } from "../shared/morph.ts";
 
 /**
- * How a peer reply reaches the model. `main` sends it as a nameless assistant message, as main
- * does. `peer-as-user` renders it as a historical user message with the speaker in its header, as
- * handoff history does. `full` is this checkout.
+ * `main` reproduces omitted peer identity and agent deliveries flattened to user messages.
+ * `peer-as-user` renders group peers through historical input; `full` keeps every sender.
  */
 const arms = ["main", "peer-as-user", "full"] as const;
 
@@ -78,6 +77,8 @@ const asArm = (message: LeafMessage, index: number) => {
     if (text === null) throw new Error(`Fixture tool ${ref} has no summary evidence.`);
     return { ref, role: "tool" as const, text };
   }
+  if ((message.role === "agent" || message.role === "system") && arm === "main")
+    return { ref, role: "user" as const, text: message.text };
   if (message.role !== "peer" || arm === "full") return { ref, ...message };
   if (arm === "main") return { ref, role: "assistant" as const, text: message.text };
   const [, rendered] = historyResponseItems(

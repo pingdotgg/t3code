@@ -30,7 +30,6 @@ import {
   COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS,
   ComposerContextRecord,
   type GuestMessageId,
-  isCompactionCommandMessage,
   isOrchestrationV2PublicationRun,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -68,7 +67,6 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
-  parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -125,7 +123,9 @@ import {
   followUpOwnerRun,
   goalCommandStopsActiveRun,
   isActiveRun,
+  isNativeCompactionCommand as isCompactionCommandMessage,
   isNativeMaintenanceCommand,
+  parseNativeGoalCommand as parseGoalCommand,
   providerSwitchWaitsForTurn,
   providerTurnCapabilities,
   resolveMessageDispatchIntent,
@@ -1720,7 +1720,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
       command: Pick<OrchestrationV2ServerCommand, "commandId" | "type">,
-      message: { readonly text: string; readonly attachments: ReadonlyArray<ChatAttachment> },
+      message: Parameters<typeof parseGoalCommand>[0] & {
+        readonly attachments: ReadonlyArray<ChatAttachment>;
+      },
       providerInstanceId: ProviderInstanceId,
     ) {
       const goalCommand = parseGoalCommand(message);
@@ -7278,7 +7280,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       OrchestrationV2Command,
       { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
     >,
-    message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
+    message: Parameters<typeof parseGoalCommand>[0] &
+      Pick<OrchestrationV2ConversationMessage, "attachments" | "context">,
   ) {
     if (isNativeMaintenanceCommand(message)) {
       return yield* new OrchestratorDispatchError({
@@ -12866,7 +12869,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     yield* ensureGoalCommandSupported(
       command,
-      { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
+      {
+        ...queuedMessage,
+        text: command.text,
+        attachments: command.attachments ?? queuedMessage.attachments,
+      },
       queuedRunModelSelection(projection, queuedRun).instanceId,
     );
     const queuedTurnItem = projection.turnItems.find(

@@ -10,17 +10,16 @@ import {
   TextGenerationError,
   ThreadId,
   type KnowledgeFactSource,
+  type OrchestrationV2MessageProvenance,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
-import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
-import * as Hex from "effect/encoding/Hex";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
@@ -428,7 +427,11 @@ it.effect("keeps a user edit made while curation was reviewing an older revision
   }),
 );
 
-const createMessage = (projectId: ProjectId, text: string) =>
+const createMessage = (
+  projectId: ProjectId,
+  text: string,
+  provenance?: OrchestrationV2MessageProvenance,
+) =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const at = yield* DateTime.now;
@@ -474,6 +477,7 @@ const createMessage = (projectId: ProjectId, text: string) =>
       payload: {
         createdBy: "user",
         creationSource: "web",
+        ...provenance,
         id: messageId,
         threadId,
         runId: null,
@@ -486,21 +490,45 @@ const createMessage = (projectId: ProjectId, text: string) =>
         updatedAt: at,
       },
     });
-    const crypto = yield* Digest.Digest;
-    const digest = Hex.encode(yield* crypto.digest(Digest.sha256, new TextEncoder().encode(text)));
-    return { kind: "message" as const, threadId, messageId, digest };
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const source = yield* knowledge.readSource({ projectId, threadId, messageId });
+    if (source.state !== "available") return yield* Effect.die("Source must be available");
+    return source.source;
   });
 
-it.effect(
-  "includes verified project source text while excluding a corrupt cross-project citation",
-  () => {
+it.effect.each(["human", "local-agent", "linked-agent"] as const)(
+  "preserves verified source attribution and bounds while excluding a corrupt cross-project citation: %s",
+  (kind) => {
     const calls: Array<Parameters<Generate>[0]> = [];
     return Effect.gen(function* () {
       const projectId = ProjectId.make("sources");
       const other = ProjectId.make("other");
       yield* createProject(projectId);
       yield* createProject(other);
-      const own = yield* createMessage(projectId, "Public APIs must keep stable response formats.");
+      const claim = "Public APIs must keep stable response formats.";
+      const provenance: OrchestrationV2MessageProvenance | undefined =
+        kind === "human"
+          ? undefined
+          : kind === "local-agent"
+            ? {
+                createdBy: "user",
+                creationSource: "mcp",
+                senderThreadId: ThreadId.make("coordinator-thread"),
+              }
+            : {
+                createdBy: "agent",
+                creationSource: "mcp",
+                linkedSender: {
+                  environmentId: EnvironmentId.make("coordinator-environment"),
+                  threadId: ThreadId.make("coordinator-thread"),
+                  title: "Lab coordinator",
+                },
+              };
+      const own = yield* createMessage(
+        projectId,
+        kind === "human" ? claim : `${claim} ${"Additional context. ".repeat(200)}`,
+        provenance,
+      );
       const foreign = yield* createMessage(
         other,
         "Unrelated project's secret deployment configuration.",
@@ -511,9 +539,22 @@ it.effect(
       const curator = yield* MemoryCuration.MemoryCuration;
       yield* curator.drainDue;
       assert.equal(calls.length, 1);
-      assert.deepEqual(calls[0]!.facts[0]!.sources, [
-        "user: Public APIs must keep stable response formats.",
-      ]);
+      const sources = calls[0]!.facts[0]!.sources;
+      assert.lengthOf(sources, 1);
+      if (kind === "human") {
+        assert.deepEqual(sources, [`user: ${claim}`]);
+      } else {
+        const excerpt = sources[0]!;
+        assert.include(excerpt, "coordinator-thread");
+        assert.include(excerpt, "not a direct message from the human user");
+        assert.include(excerpt, claim);
+        assert.notMatch(excerpt, /^user:/);
+        assert.equal(excerpt.length, 3_000);
+        if (kind === "linked-agent") {
+          assert.include(excerpt, "coordinator-environment");
+          assert.include(excerpt, "Lab coordinator");
+        }
+      }
     }).pipe(
       Effect.provide(
         makeLayer((input) => {

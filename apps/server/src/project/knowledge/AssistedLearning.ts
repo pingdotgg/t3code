@@ -13,6 +13,10 @@ import {
   AssistedLearningRunOutcome,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import {
+  messageEvidenceDigestInput,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -30,6 +34,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
+import * as ManagedProjectFolders from "../ManagedProjectFolders.ts";
 import {
   AssistedLearningError,
   AssistedLearningRunner,
@@ -92,6 +97,7 @@ const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const textGeneration = yield* TextGeneration.TextGeneration;
+  const managedFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
   const fileSystem = yield* FileSystem.FileSystem;
   const digest = (text: string) =>
     crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
@@ -131,6 +137,8 @@ const make = Effect.gen(function* () {
             }
           }),
         );
+      if (yield* managedFolders.isScratchProject(projectId))
+        return yield* finish("skipped", "Automatic memory is off for threads without a project.");
       const settings = resolveProjectSettings(
         yield* serverSettings.getSettings,
         projectId,
@@ -191,18 +199,42 @@ const make = Effect.gen(function* () {
       );
       if (!finalized.some((message) => message.role === "assistant"))
         return yield* finish("skipped", "The run has no finished reply to learn from.");
-      const userEvidence = finalized.some(
+      const humanMessages = finalized.filter(
         (message) =>
-          message.role === "user" && message.createdBy === "user" && supportsLearning(message.text),
+          message.role === "user" &&
+          message.notification === undefined &&
+          message.delegatedCompletion === undefined &&
+          messageProvenance(message) === undefined &&
+          supportsLearning(message.text),
       );
+      const evidenceSpeaker = (message: (typeof finalized)[number]) => {
+        if (message.role === "assistant") {
+          const thread = speakerThreads.get(message.runId!);
+          return thread === undefined ? undefined : JSON.stringify(["local", thread]);
+        }
+        if (message.linkedSender !== undefined)
+          return JSON.stringify([
+            "linked",
+            message.linkedSender.environmentId,
+            message.linkedSender.threadId,
+          ]);
+        return message.senderThreadId === undefined
+          ? undefined
+          : JSON.stringify(["local", message.senderThreadId]);
+      };
+      const speakersByRef = new Map<string, string>();
       const completedEvidence = finalized.filter((message) =>
         batch.some((entry) => entry.runId === message.runId && entry.runOutcome === "completed"),
       );
       if (
-        !userEvidence &&
+        humanMessages.length === 0 &&
         (new Set(completedEvidence.map((message) => message.runId)).size < 2 ||
-          new Set(completedEvidence.map((message) => speakerThreads.get(message.runId!))).size <
-            2 ||
+          new Set(
+            completedEvidence.flatMap((message) => {
+              const speaker = evidenceSpeaker(message);
+              return speaker === undefined ? [] : [speaker];
+            }),
+          ).size < 2 ||
           new Set(completedEvidence.map((message) => message.text.trim().toLowerCase())).size < 2)
       )
         return yield* finish(
@@ -213,10 +245,6 @@ const make = Effect.gen(function* () {
       const kept: typeof finalized = [];
       const textLimits = new Map<string, number>();
       let budget = MAX_TRANSCRIPT_CHARS;
-      const humanMessages = finalized.filter(
-        (message) =>
-          message.role === "user" && message.createdBy === "user" && supportsLearning(message.text),
-      );
       const prioritized = new Set([
         ...humanMessages.toReversed(),
         finalized[0]!,
@@ -255,18 +283,16 @@ const make = Effect.gen(function* () {
       > = [];
       for (const [index, message] of transcript.entries()) {
         const ref = `M${index + 1}`;
-        if (
-          message.role === "user" &&
-          message.createdBy === "user" &&
-          supportsLearning(message.text)
-        )
-          userRefs.add(ref);
+        if (humanMessages.includes(message)) userRefs.add(ref);
+        const provenance = message.role === "user" ? messageProvenance(message) : undefined;
+        const evidenceSpeakerId = evidenceSpeaker(message);
+        if (evidenceSpeakerId !== undefined) speakersByRef.set(ref, evidenceSpeakerId);
         refs.set(ref, {
           kind: "message",
           threadId: message.threadId,
           runId: message.runId!,
           messageId: message.id,
-          digest: yield* digest(message.text),
+          digest: yield* digest(messageEvidenceDigestInput(message.text, provenance)),
         });
         const speaker =
           message.role === "assistant" ? speakersByMessage.get(message.id) : undefined;
@@ -276,10 +302,19 @@ const make = Effect.gen(function* () {
           runId: message.runId!,
           runOutcome: batch.find((entry) => entry.runId === message.runId)!.runOutcome,
           text: message.text.slice(0, textLimits.get(message.id)),
+          ...(provenance === undefined ? {} : { provenance }),
         };
         messages.push(
           speaker === undefined
-            ? { ...shared, role: message.role as "user" | "assistant" }
+            ? {
+                ...shared,
+                role:
+                  provenance === undefined
+                    ? (message.role as "user" | "assistant")
+                    : provenance.createdBy === "system"
+                      ? "system"
+                      : "agent",
+              }
             : { ...shared, role: "peer" as const, speaker },
         );
       }
@@ -305,6 +340,7 @@ const make = Effect.gen(function* () {
       const proposed: Array<{
         readonly create: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>;
         readonly actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>;
+        readonly userSupported: boolean;
       }> = [];
       for (const raw of generated.candidates.slice(0, MAX_CANDIDATES)) {
         const candidate = Option.getOrNull(decodeCandidate(raw));
@@ -320,7 +356,12 @@ const make = Effect.gen(function* () {
         const corroborated =
           citedMessages.every((message) => message.runOutcome === "completed") &&
           new Set(citedMessages.map((message) => message.runId)).size >= 2 &&
-          new Set(citedMessages.map((message) => speakerThreads.get(message.runId))).size >= 2 &&
+          new Set(
+            citedMessages.flatMap((message) => {
+              const speaker = speakersByRef.get(message.ref);
+              return speaker === undefined ? [] : [speaker];
+            }),
+          ).size >= 2 &&
           new Set(citedMessages.map((message) => message.text.trim().toLowerCase())).size >= 2;
         const userSupported = (candidate?.citations ?? []).some((ref) => userRefs.has(ref.trim()));
         if (
@@ -340,14 +381,18 @@ const make = Effect.gen(function* () {
           runId: support.runId,
           runOutcome: support.runOutcome,
         };
-        const runContentId = `assisted:${actor.runId}:${(yield* digest(candidate.content)).slice(0, 32)}`;
+        const notePrefix = "Unverified agent report: ";
+        const content = userSupported
+          ? candidate.content
+          : notePrefix + candidate.content.slice(0, MAX_CANDIDATE_CHARS - notePrefix.length);
+        const runContentId = `assisted:${actor.runId}:${(yield* digest(content)).slice(0, 32)}`;
         const create = {
           action: "create" as const,
           commandId: CommandId.make(runContentId),
           factId: ProjectFactId.make(runContentId),
           projectId,
-          kind: candidate.kind,
-          content: candidate.content,
+          kind: userSupported ? candidate.kind : ("note" as const),
+          content,
           entities: [
             ...new Set(
               candidate.entities
@@ -362,7 +407,7 @@ const make = Effect.gen(function* () {
           dropped += 1;
           continue;
         }
-        proposed.push({ create, actor });
+        proposed.push({ create, actor, userSupported });
       }
       // The check reads only the statements, from an empty directory, never the transcript.
       const checked = yield* (
@@ -422,9 +467,10 @@ const make = Effect.gen(function* () {
           let saved = 0;
           let duplicates = 0;
           const setAside = { task: 0, code: 0 };
-          for (const [index, { create, actor }] of proposed.entries()) {
+          for (const [index, { create, actor, userSupported }] of proposed.entries()) {
             if (yield* knowledge.hasAssistedRun(projectId, actor.runId)) continue;
-            const verdict = checked.verdicts[index] ?? "task";
+            // Repetition and a text-only classifier cannot verify an agent's causal claim.
+            const verdict = userSupported ? (checked.verdicts[index] ?? "task") : "task";
             const result = yield* knowledge.saveAutomatic(create, actor, verdict).pipe(
               Effect.catchTags({
                 ProjectKnowledgeError: (error) =>
@@ -562,6 +608,7 @@ const make = Effect.gen(function* () {
         .getThreadRecords(input.threadId, [])
         .pipe(Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }));
       if (records === null) return;
+      if (yield* managedFolders.isScratchProject(records.thread.projectId)) return;
       const now = DateTime.toEpochMillis(yield* DateTime.now);
       yield* sql`INSERT INTO project_knowledge_learning_queue
         (run_id, project_id, root_thread_id, thread_id, run_outcome, queued_at)

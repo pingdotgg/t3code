@@ -157,7 +157,7 @@ function providerMessage(summary: string, userText: string): string {
     "Context handoff (merge_back / fork_delta_summary):",
     summary,
     "",
-    "User message:",
+    "Current message:",
     userText,
   ].join("\n");
 }

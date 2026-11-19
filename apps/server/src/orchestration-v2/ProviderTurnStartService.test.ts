@@ -71,6 +71,7 @@ import {
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -114,6 +115,10 @@ const layerWorktreeLocation = (worktreesDir = managedWorktreesDir) =>
     Path.layer,
     Layer.mock(ServerConfig.ServerConfig)({ worktreesDir } as ServerConfig.ServerConfig["Service"]),
     ServerSettings.layerTest(),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/test-projects",
+      isScratchProject: () => Effect.succeed(false),
+    }),
   );
 
 function startWithMissingWorktree(
@@ -2490,6 +2495,56 @@ effectIt.effect(
     }),
 );
 
+effectIt.effect("preserves the sender of agent messages on new and recovered turns", () =>
+  Effect.gen(function* () {
+    const text = "I propose switching the next study to Postgres.";
+    for (const origin of [
+      { createdBy: "user" as const, creationSource: "web" as const },
+      {
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+        senderThreadId: ThreadId.make("study-coordinator"),
+      },
+      {
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+        linkedSender: {
+          environmentId: EnvironmentId.make("remote-lab"),
+          threadId: ThreadId.make("remote-coordinator"),
+          title: "Research coordinator",
+        },
+      },
+      { createdBy: "agent" as const, creationSource: "mcp" as const },
+      { createdBy: "system" as const, creationSource: "server" as const },
+    ]) {
+      for (const contextRun of ["delivered", "current"] as const) {
+        const harness = makeLocalCommandHarness({ text, sideChat: { contextRun } });
+        const projection = harness.projection();
+        harness.setProjection({
+          ...projection,
+          messages: projection.messages.map((message) => ({ ...message, ...origin })),
+        });
+        yield* harness.start;
+        const sent = harness.startTurn.mock.calls[0]![0].message;
+        expect(sent.text).toContain(text);
+        if (origin.createdBy === "user") {
+          expect(sent.text).not.toContain("[T3 message source:");
+        } else {
+          expect(sent.text).toContain("[T3 message source:");
+          expect(sent.text).toContain("not a direct message from the human user");
+          if ("senderThreadId" in origin) expect(sent.text).toContain(origin.senderThreadId);
+          if ("linkedSender" in origin) {
+            expect(sent.text).toContain(origin.linkedSender.environmentId);
+            expect(sent.text).toContain(origin.linkedSender.threadId);
+            expect(sent.linkedSender).toEqual(origin.linkedSender);
+          }
+        }
+        expect(harness.projection().messages[0]?.text).toBe(text);
+      }
+    }
+  }),
+);
+
 effectIt.effect("sends new steering text when restarting a manual continuation", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
@@ -3526,6 +3581,25 @@ effectIt.effect(
       ]);
       expect(projection.providerTurns).toEqual([]);
       expect(projection.checkpoints).toEqual([]);
+      const peer = makeLocalCommandHarness({
+        text: "/logout",
+        previousNativeSession: true,
+        sideChat: { contextRun: "current" },
+      });
+      const peerProjection = peer.projection();
+      peer.setProjection({
+        ...peerProjection,
+        messages: peerProjection.messages.map((message) => ({
+          ...message,
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("coordinator"),
+        })),
+      });
+      yield* peer.start;
+      expect(peer.tryHandlePromptCommand).not.toHaveBeenCalled();
+      expect(peer.startTurn.mock.calls[0]![0].message.text).toContain("[T3 message source:");
+      expect(peer.startTurn.mock.calls[0]![0].message.text).toContain("/logout");
     }),
 );
 

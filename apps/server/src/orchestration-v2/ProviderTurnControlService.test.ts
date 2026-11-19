@@ -392,6 +392,8 @@ it.effect.each([
   true,
   false,
   "agent-authored",
+  "local-peer",
+  "linked-peer",
   "notification",
   "delegated-completion",
   "no-mention",
@@ -403,7 +405,7 @@ it.effect.each([
 ] as const)("steer consumes pstack before native projection, enabled=%s", (mode) =>
   Effect.gen(function* () {
     const enabled = mode !== false;
-    const authoredByUser = mode !== "agent-authored";
+    const authoredByUser = !["agent-authored", "local-peer", "linked-peer"].includes(String(mode));
     const shouldExpand =
       enabled &&
       authoredByUser &&
@@ -439,6 +441,12 @@ it.effect.each([
     const messageId = MessageId.make("pstack-steer-message");
     const runId = RunId.make("pstack-steer-run");
     const attemptId = RunAttemptId.make("pstack-steer-attempt");
+    const senderThreadId = ThreadId.make("thread:peer-coordinator");
+    const linkedSender = {
+      environmentId: EnvironmentId.make("environment:peer-coordinator"),
+      threadId: senderThreadId,
+      title: "Peer coordinator",
+    };
     const providerThread: OrchestrationV2ProviderThread = {
       id: providerThreadId,
       driver,
@@ -477,6 +485,7 @@ it.effect.each([
       label: "review",
     };
     const received: string[] = [];
+    const receivedMessages: ProviderAdapter.ProviderAdapterV2TurnMessage[] = [];
     let threadReads = 0;
     const runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime = {
       instanceId: providerInstanceId,
@@ -501,6 +510,7 @@ it.effect.each([
       steerTurn: (input) =>
         Effect.sync(() => {
           received.push(input.message.text);
+          receivedMessages.push(input.message);
         }),
       interruptTurn: () => Effect.die("unused interruptTurn"),
       respondToRuntimeRequest: () => Effect.die("unused respondToRuntimeRequest"),
@@ -588,7 +598,9 @@ it.effect.each([
                     : {}),
                   attachments: [],
                   createdBy: authoredByUser ? "user" : "agent",
-                  creationSource: authoredByUser ? "web" : "server",
+                  creationSource: authoredByUser ? "web" : "mcp",
+                  ...(mode === "local-peer" ? { senderThreadId } : {}),
+                  ...(mode === "linked-peer" ? { linkedSender } : {}),
                 } as unknown as OrchestrationV2ThreadProjection["messages"][number],
               }),
           }),
@@ -624,6 +636,16 @@ it.effect.each([
     assert.equal(threadReads, shouldExpand || locates ? 1 : 0);
     assert.lengthOf(received, 1);
     assert.include(received[0]!, "native:review");
+    if (mode === "local-peer" || mode === "linked-peer") {
+      assert.include(received[0]!, senderThreadId);
+      assert.include(received[0]!, "agent");
+      if (mode === "linked-peer") {
+        assert.include(received[0]!, linkedSender.environmentId);
+        assert.deepEqual(receivedMessages[0]!.linkedSender, linkedSender);
+      } else {
+        assert.equal(receivedMessages[0]!.senderThreadId, senderThreadId);
+      }
+    }
     if (mode === "pack-failure" || mode === "settings-failure") {
       assert.include(received[0]!, "pstack is unavailable:");
       assert.include(received[0]!, "$pstack:architect");

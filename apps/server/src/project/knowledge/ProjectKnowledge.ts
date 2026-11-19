@@ -1,6 +1,7 @@
 import {
   ActiveProjectFact,
   type AssistedLearningRun,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2Notification,
   type CommandId,
   ComposerContextId,
@@ -35,7 +36,13 @@ import {
   type ProjectKnowledgeReadFactInput,
   type ProjectKnowledgeStatus,
   type ProjectKnowledgeStatusInput,
+  OrchestrationV2MessageProvenance,
 } from "@t3tools/contracts";
+import {
+  formatMessageWithProvenance,
+  messageEvidenceDigestInput,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
 import {
   formatComposerContextReference,
   projectComposerContextForProvider,
@@ -86,6 +93,16 @@ type RecallComposer = {
   readonly text: string;
   readonly records: ReadonlyArray<ComposerContextRecord>;
 };
+const decodeMessageProvenance = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      ...OrchestrationV2MessageProvenance.fields,
+      notification: Schema.optional(Schema.Unknown),
+      delegatedCompletion: Schema.optional(Schema.Unknown),
+      scheduledTaskId: Schema.optional(Schema.Unknown),
+    }),
+  ),
+);
 
 export type RecallOutcome =
   | {
@@ -95,7 +112,15 @@ export type RecallOutcome =
     }
   | {
       readonly _tag: "Skipped";
-      readonly reason: "slash" | "hand_attached" | "progress_notice" | "no_budget" | "no_match";
+      readonly reason:
+        | "slash"
+        | "hand_attached"
+        | "progress_notice"
+        | "nonhuman"
+        | "current_correction"
+        | "scratch_project"
+        | "no_budget"
+        | "no_match";
       readonly top?: ReadonlyArray<{ readonly factId: string }>;
     }
   | { readonly _tag: "Omitted"; readonly reason: "timed_out" | "failed" };
@@ -116,7 +141,7 @@ type KnowledgeFormat = "attached" | "recalled";
 // The rating instruction is in the recalled block, so a turn with no recall spends no tokens
 // on it.
 const recalledPreamble = (projectId: ProjectId) =>
-  `Saved facts from project ${projectId}, for reference. Rate any you rely on with t3_knowledge_mutate feedback: helpful, or unhelpful if it misled you.`;
+  `Historical claims from project ${projectId}; may be stale. Current direct human instructions override conflicts. Rate facts you rely on via t3_knowledge_mutate feedback: helpful, or unhelpful if misleading.`;
 
 export class ProjectKnowledge extends Context.Service<
   ProjectKnowledge,
@@ -184,6 +209,10 @@ export class ProjectKnowledge extends Context.Service<
       readonly requestId: CommandId;
       readonly query: string;
       readonly notification?: OrchestrationV2Notification;
+      readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
+      readonly provenance?: OrchestrationV2MessageProvenance;
+      /** The caller resolves the managed scratch project; its unrelated chats share no automatic memory. */
+      readonly scratchProject?: boolean;
       readonly candidateLimit?: number;
       readonly composer: RecallComposer;
       /** The turn's remaining knowledge budget, in bytes. */
@@ -390,9 +419,10 @@ const make = Effect.gen(function* () {
         if (reason !== null) return { state: "unavailable", reason };
         if (!projection || !message || (message.role !== "user" && message.role !== "assistant"))
           return { state: "unavailable", reason: "missing" };
-        const contentDigest = yield* digest(message.text).pipe(
-          Effect.mapError(storageError(input.projectId)),
-        );
+        const provenance = message.role === "user" ? messageProvenance(message) : undefined;
+        const contentDigest = yield* digest(
+          messageEvidenceDigestInput(message.text, provenance),
+        ).pipe(Effect.mapError(storageError(input.projectId)));
         if (source.digest !== undefined && source.digest !== contentDigest)
           return { state: "unavailable", reason: "changed" };
         return {
@@ -407,6 +437,7 @@ const make = Effect.gen(function* () {
           text: message.text,
           title: projection.thread.title,
           role: message.role,
+          ...(provenance === undefined ? {} : { provenance }),
           ...(speakers.has(message.id) ? { speaker: speakers.get(message.id)! } : {}),
           createdAt: DateTime.formatIso(message.createdAt),
           archived: projection.thread.archivedAt !== null,
@@ -471,8 +502,9 @@ const make = Effect.gen(function* () {
       readonly role: string;
       readonly streaming: number;
       readonly text: string | null;
+      readonly provenanceJson: string;
     }>`SELECT message_id AS "messageId", run_id AS "runId", thread_id AS "threadId", role, streaming,
-        json_extract(payload_json, '$.text') AS text
+        json_extract(payload_json, '$.text') AS text, payload_json AS "provenanceJson"
       FROM orchestration_v2_projection_messages
       WHERE ${sql.in("message_id", [...new Set(refs.map((ref) => ref.source.messageId))])}
         AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runs AS run
@@ -495,7 +527,11 @@ const make = Effect.gen(function* () {
       if (reason === null && message) {
         let contentDigest = digests.get(message.messageId);
         if (contentDigest === undefined) {
-          contentDigest = yield* digest(message.text ?? "");
+          const provenance =
+            message.role === "user"
+              ? messageProvenance(yield* decodeMessageProvenance(message.provenanceJson))
+              : undefined;
+          contentDigest = yield* digest(messageEvidenceDigestInput(message.text ?? "", provenance));
           digests.set(message.messageId, contentDigest);
         }
         if (
@@ -705,7 +741,9 @@ const make = Effect.gen(function* () {
                 supersedes: factId,
                 supersededBy: null,
                 // Like an edit, an agent's replacement keeps a set-aside fact out of recall.
-                ...(actor.kind !== "user" && existing.verdict ? { verdict: existing.verdict } : {}),
+                ...(actor.kind !== "user" && existing.verdict && existing.verdict.by !== "person"
+                  ? { verdict: existing.verdict }
+                  : {}),
               };
               const replaced: ProjectFact = {
                 ...existing,
@@ -812,9 +850,12 @@ const make = Effect.gen(function* () {
                 }
                 case "edit": {
                   const { verdict, ...rest } = fact;
+                  // An owner's restoration approves this content, not a later agent rewrite.
+                  const keepsVerdict =
+                    verdict && !clearsCheck && (actor.kind === "user" || verdict.by !== "person");
                   fact = {
                     ...rest,
-                    ...(verdict && !clearsCheck ? { verdict } : {}),
+                    ...(keepsVerdict ? { verdict } : {}),
                     content: input.content,
                     entities: input.entities,
                     tags: input.tags,
@@ -1039,7 +1080,7 @@ const make = Effect.gen(function* () {
               projectId: input.projectId,
             });
           parts.push(
-            `[Message ${selection.threadId}/${selection.messageId} sha256:${selection.digest}]\n${source.text}`,
+            `[Message ${selection.threadId}/${selection.messageId} sha256:${selection.digest}]\n${formatMessageWithProvenance(source.text, source.provenance)}`,
           );
           items.push({ label: `Message ${selection.messageId}`, text: source.text });
         } else {
@@ -1476,9 +1517,15 @@ const make = Effect.gen(function* () {
         }).pipe(Effect.andThen(note({ _tag: "Omitted", reason })));
       if (input.composer.records.some((record) => record.kind === "project-knowledge"))
         return yield* note({ _tag: "Skipped", reason: "hand_attached" });
+      if (input.scratchProject === true)
+        return yield* note({ _tag: "Skipped", reason: "scratch_project" });
       const trigger = recallTrigger({
         text: input.query,
         ...(input.notification === undefined ? {} : { notification: input.notification }),
+        ...(input.delegatedCompletion === undefined
+          ? {}
+          : { delegatedCompletion: input.delegatedCompletion }),
+        ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
       });
       if (!trigger.recall) return yield* note({ _tag: "Skipped", reason: trigger.reason });
       const factBytes = Math.min(
@@ -1526,12 +1573,54 @@ const make = Effect.gen(function* () {
           docs: (term) => counted.docs.get(term) ?? 0,
           tokenize,
         };
-        const ranked = rankRecallCandidates(input.query, active, stats, input.notification);
+        const ranked = rankRecallCandidates(input.query, active, stats);
         const top = ranked.slice(0, 5).map((match) => ({ factId: match.fact.id }));
         const selections = [];
+        const sourcesByKey = new Map<string, ProjectKnowledgeSource>();
+        const sourceKey = (source: Extract<KnowledgeFactSource, { kind: "message" }>) =>
+          JSON.stringify([source.threadId, source.messageId, source.digest]);
         for (const match of ranked) {
           if (!match.passes) continue;
-          if (!(yield* sourcesAvailable(match.fact, false))) continue;
+          const unread = new Map<
+            ThreadId,
+            Array<Extract<KnowledgeFactSource, { kind: "message" }>>
+          >();
+          for (const source of match.fact.sources) {
+            if (source.kind !== "message" || sourcesByKey.has(sourceKey(source))) continue;
+            const sources = unread.get(source.threadId) ?? [];
+            sources.push(source);
+            unread.set(source.threadId, sources);
+          }
+          for (const [threadId, sources] of unread) {
+            const loaded = yield* readSources({ projectId: input.projectId, threadId, sources });
+            for (let index = 0; index < sources.length; index++)
+              sourcesByKey.set(sourceKey(sources[index]!), loaded[index]!);
+          }
+          let available = true;
+          const ownerRestored =
+            match.fact.verdict?.value === "standing" && match.fact.verdict.by === "person";
+          let humanSupport = ownerRestored;
+          for (const source of match.fact.sources) {
+            if (source.kind === "user") {
+              const ownerAssertion = match.fact.origin.kind === "user" || ownerRestored;
+              available &&= ownerAssertion;
+              humanSupport ||= ownerAssertion;
+              continue;
+            }
+            const loaded = sourcesByKey.get(sourceKey(source));
+            if (
+              loaded?.state !== "available" ||
+              (source.runId !== undefined && loaded.source.runId !== source.runId)
+            ) {
+              available = false;
+              break;
+            }
+            humanSupport ||= loaded.role === "user" && loaded.provenance === undefined;
+          }
+          const requiresHumanSupport =
+            match.fact.origin.kind !== "user" &&
+            (match.fact.origin.kind === "assisted" || match.fact.kind !== "note");
+          if (!available || (requiresHumanSupport && !humanSupport)) continue;
           selections.push({
             kind: "fact" as const,
             factId: match.fact.id,

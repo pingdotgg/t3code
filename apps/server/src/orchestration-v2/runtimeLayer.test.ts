@@ -111,6 +111,10 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const layerPlatformTest = Layer.mergeAll(
   NodeServices.layer,
   NodeCrypto.layer,
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/test-projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
   Layer.mock(ModelEvaluations.ModelEvaluations)({ enqueueRun: () => Effect.void }),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),

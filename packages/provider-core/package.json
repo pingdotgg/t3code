@@ -71,6 +71,10 @@
       "types": "./src/server/maintenance.ts",
       "import": "./src/server/maintenance.ts"
     },
+    "./server/messageProvenance": {
+      "types": "./src/server/messageProvenance.ts",
+      "import": "./src/server/messageProvenance.ts"
+    },
     "./server/maintenanceResolver": {
       "types": "./src/server/maintenanceResolver.ts",
       "import": "./src/server/maintenanceResolver.ts"

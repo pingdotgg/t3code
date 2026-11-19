@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EnvironmentId,
   MessageId,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ThreadProjection,
@@ -9,6 +10,7 @@ import {
   ProviderThreadId,
   RunAttemptId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -51,7 +53,15 @@ function dispatchProjection(
               userMessageId,
             },
           ],
-    messages: [{ id: userMessageId, text: "first", attachments: [] }],
+    messages: [
+      {
+        id: userMessageId,
+        text: "first",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+      },
+    ],
     providerThreads:
       sessionCapabilities === undefined ? [] : [{ id: providerThreadId, providerSessionId }],
     providerSessions:
@@ -252,11 +262,97 @@ it("steers a Grok follow-up into its running turn without restarting it", () => 
   assert.isTrue(grok.turns.supportsActiveSteering);
 });
 
+it.each([
+  {
+    name: "human",
+    source: { createdBy: "user", creationSource: "web" },
+    goal: true,
+    compact: true,
+    logout: true,
+  },
+  {
+    name: "local peer",
+    source: { createdBy: "user", creationSource: "mcp", senderThreadId: ThreadId.make("peer") },
+    goal: false,
+    compact: false,
+    logout: false,
+  },
+  {
+    name: "linked peer",
+    source: {
+      createdBy: "user",
+      creationSource: "mcp",
+      linkedSender: {
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("peer"),
+        title: "Coordinator",
+      },
+    },
+    goal: false,
+    compact: false,
+    logout: false,
+  },
+  {
+    name: "unattributed agent",
+    source: { createdBy: "agent", creationSource: "mcp" },
+    goal: false,
+    compact: false,
+    logout: false,
+  },
+  {
+    name: "scheduled agent task",
+    source: {
+      createdBy: "agent",
+      creationSource: "mcp",
+      scheduledTaskId: ScheduledTaskId.make("task"),
+    },
+    goal: true,
+    compact: true,
+    logout: true,
+  },
+  {
+    name: "idle compaction",
+    source: { createdBy: "agent", creationSource: "server", idleCompaction: "beforeCacheExpires" },
+    goal: false,
+    compact: true,
+    logout: false,
+  },
+  {
+    name: "legacy idle compaction",
+    source: { createdBy: "agent", creationSource: "server" },
+    goal: false,
+    compact: true,
+    logout: false,
+  },
+  {
+    name: "system notification",
+    source: {
+      createdBy: "user",
+      creationSource: "server",
+      notification: { source: { kind: "system" }, outcome: "updated", summary: "Recovery" },
+    },
+    goal: false,
+    compact: false,
+    logout: false,
+  },
+] as const)(
+  "only executes authorized native controls from $name",
+  ({ source, goal, compact, logout }) => {
+    const message = { ...source, text: "/goal all tests pass", role: "user", attachments: [] };
+    assert.equal(CommandPolicy.parseNativeGoalCommand(message) !== null, goal);
+    assert.equal(
+      CommandPolicy.isNativeCompactionCommand({ ...message, text: "/compact" }),
+      compact,
+    );
+    assert.equal(CommandPolicy.isNativeMaintenanceCommand({ ...message, text: "/logout" }), logout);
+  },
+);
+
 it.each(["/compact", " /LOGOUT "])("queues a steer sent while %s runs", (text) => {
   const projection = dispatchProjection(baseCapabilities);
   const maintenance = {
     ...projection,
-    messages: [{ id: userMessageId, text, attachments: [] }],
+    messages: [{ ...projection.messages[0]!, text }],
   } as unknown as OrchestrationV2ThreadProjection;
   for (const deliveryIntent of ["auto", "steer"] as const) {
     assert.deepEqual(

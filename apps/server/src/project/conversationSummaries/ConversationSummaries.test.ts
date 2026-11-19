@@ -671,6 +671,102 @@ it.effect(
   },
 );
 
+it.effect(
+  "keeps agent senders distinct from the user and invalidates summaries without attribution",
+  () => {
+    const model = citing();
+    return Effect.gen(function* () {
+      yield* seedThread(20);
+      const legacy = yield* persistSummary(
+        901,
+        Array.from({ length: 14 }, (_, index) => index),
+      );
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const service = yield* ConversationSummaries.ConversationSummaries;
+      const senderThreadId = ThreadId.make("coordinator-thread");
+      const linkedSender = {
+        environmentId: EnvironmentId.make("remote-environment"),
+        threadId: ThreadId.make("remote-coordinator-thread"),
+        title: "Remote coordinator",
+      };
+      const notification = {
+        source: { kind: "background_task" },
+        outcome: "updated",
+        summary: "Background activity updated",
+      } as const;
+      for (const [index, metadata] of [
+        [0, { senderThreadId }],
+        [2, { linkedSender }],
+        [4, {}],
+        [8, { createdBy: "system", creationSource: "server" }],
+        [10, { creationSource: "server", notification }],
+        [12, { creationSource: "provider", notification }],
+      ] as const) {
+        const event = messageEvent(index, rawText(index));
+        if (event.type !== "message.updated") return yield* Effect.die("Expected a message");
+        yield* projections.apply({
+          ...event,
+          id: EventId.make(`forwarded-message-${index}`),
+          payload: {
+            ...event.payload,
+            createdBy: "agent",
+            creationSource: "mcp",
+            ...metadata,
+          },
+        });
+      }
+      assert.equal((yield* service.describe({ ...scope, summaryId: legacy.id })).state, "stale");
+      yield* summarize;
+      const regenerated = yield* onlySummary;
+      assert.notEqual(regenerated.id, legacy.id);
+      const messages = model.calls[0]!.messages;
+      assert.include(JSON.stringify(messages[0]), senderThreadId);
+      assert.include(JSON.stringify(messages[2]), linkedSender.threadId);
+      assert.include(JSON.stringify(messages[2]), linkedSender.environmentId);
+      assert.equal(messages[0]?.role, "agent");
+      assert.equal(messages[2]?.role, "agent");
+      assert.equal(messages[4]?.role, "agent");
+      assert.equal(messages[8]?.role, "system");
+      assert.equal(messages[10]?.role, "agent");
+      assert.equal(messages[12]?.role, "agent");
+      assert.deepEqual(messages[6], { ref: "M7", role: "user", text: rawText(6) });
+      assert.equal(
+        (yield* service.describe({ ...scope, summaryId: regenerated.id })).state,
+        "available",
+      );
+
+      const sql = yield* SqlClient.SqlClient;
+      const parent = {
+        ...regenerated,
+        id: `summary:${"d".repeat(64)}`,
+        sources: [{ kind: "summary" as const, threadId, summaryId: regenerated.id }],
+        statements: [{ text: "The coordinator proposed the plan.", citations: [regenerated.id] }],
+      };
+      yield* sql`INSERT INTO conversation_summaries
+      (summary_id, project_id, thread_id, position, created_at, payload_json)
+      SELECT ${parent.id}, project_id, thread_id, position || ':parent', created_at, ${yield* encodeSummary(parent)}
+      FROM conversation_summaries WHERE summary_id = ${regenerated.id}`;
+      const changed = messageEvent(0, rawText(0));
+      if (changed.type !== "message.updated") return yield* Effect.die("Expected a message");
+      yield* projections.apply({
+        ...changed,
+        id: EventId.make("corrected-agent-sender"),
+        payload: {
+          ...changed.payload,
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("another-coordinator-thread"),
+        },
+      });
+      assert.equal(
+        (yield* service.describe({ ...scope, summaryId: regenerated.id })).state,
+        "stale",
+      );
+      assert.equal((yield* service.describe({ ...scope, summaryId: parent.id })).state, "stale");
+    }).pipe(Effect.provide(makeLayer(model.generate, optedIn)));
+  },
+);
+
 it.effect("negotiates ranged summary responses while preserving legacy whole-message reads", () => {
   const model = citing();
   return Effect.gen(function* () {

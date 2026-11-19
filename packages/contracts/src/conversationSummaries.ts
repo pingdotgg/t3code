@@ -10,6 +10,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { OrchestrationV2MessageProvenance } from "./messageProvenance.ts";
 import {
   KnowledgeMessageRef,
   KnowledgeDigest,
@@ -86,6 +87,7 @@ export const ConversationSummarySourceResult = Schema.Union([
     title: Schema.String,
     /** "summary" when the source is a child summary; its text is that summary's statements. */
     role: Schema.Literals(["user", "assistant", "tool", "summary"]),
+    provenance: Schema.optionalKey(OrchestrationV2MessageProvenance),
     /** Set when an assistant message was spoken by another model in the thread. */
     speaker: Schema.optionalKey(
       Schema.Struct({ label: TrimmedNonEmptyString, model: TrimmedNonEmptyString }),

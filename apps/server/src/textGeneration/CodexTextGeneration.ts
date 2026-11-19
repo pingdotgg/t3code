@@ -514,6 +514,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const isolatedConfiguration =
         operation === "generateModelEvaluation" ||
         operation === "generateConversationSummary" ||
+        operation === "generateKnowledgeCandidates" ||
         operation === "checkFactStanding" ||
         operation === "curateProjectMemory"
           ? yield* readIsolatedConfiguration(originalHome, launchArgs, operation).pipe(

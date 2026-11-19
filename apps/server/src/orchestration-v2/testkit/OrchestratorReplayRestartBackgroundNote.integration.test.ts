@@ -271,7 +271,7 @@ describe("restart-cancelled background work", () => {
       Effect.gen(function* () {
         const projection = yield* runRestart({
           resumedPrompts: [
-            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
+            `${NOTE}\n\nCurrent message:\n${FIRST_AFTER_RESTART}`,
             SECOND_AFTER_RESTART,
           ],
           userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],

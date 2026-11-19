@@ -3,7 +3,12 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
-import type { OrchestrationV2NotificationSource } from "@t3tools/contracts";
+import {
+  NodeId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2NotificationSource,
+} from "@t3tools/contracts";
 
 import { renderSeatTurnPrompt } from "../../orchestration-v2/GroupPrompt.ts";
 import { runMigrations } from "../../persistence/Migrations.ts";
@@ -131,6 +136,18 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
       ids: [],
     },
     {
+      name: "delegated completion without a notification field",
+      message: {
+        text: "Completed the ledger labs toggle before billing changes.",
+        delegatedCompletion: {
+          parentRunId: RunId.make("parent-run"),
+          generation: 1,
+          taskIds: [NodeId.make("completed-task")],
+        },
+      },
+      ids: [],
+    },
+    {
       name: "pull request watch has only seven matching terms",
       message: {
         text: "Checks failed: during exports, invoice timestamps in archive receipts were lost; preserve them.",
@@ -139,17 +156,29 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
       ids: [],
     },
     {
-      name: "pull request watch has eight matching terms",
+      name: "pull request watch still skips memory with eight matching terms",
       message: {
         text: "Checks failed: during nightly exports, invoice timestamps in archive receipts were lost; preserve them.",
         notification: { source: { kind: "monitor" } },
       },
-      ids: ["receipt-archive"],
+      ids: [],
     },
     {
       name: "a person names the fact",
       message: { text: "Enable the ledger labs toggle" },
       ids: ["ledger-labs"],
+    },
+    {
+      name: "a collaborator message carries its own context",
+      message: {
+        text: "Enable the ledger labs toggle",
+        provenance: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("peer-coordinator"),
+        },
+      },
+      ids: [],
     },
     {
       name: "a seat prompt names the fact and has no notification",
@@ -180,7 +209,7 @@ it("recalls a fact the message actually names, and stays quiet otherwise", () =>
   );
 });
 
-it("classifies every notification kind, and only a pull request watch stays eligible", () => {
+it("skips every notification kind", () => {
   const expectSkip: { [Kind in OrchestrationV2NotificationSource["kind"]]: boolean } = {
     command: true,
     subagent: true,
@@ -188,7 +217,7 @@ it("classifies every notification kind, and only a pull request watch stays elig
     system: true,
     group: true,
     delegated_task: true,
-    monitor: false,
+    monitor: true,
   };
   for (const kind of Object.keys(expectSkip) as Array<OrchestrationV2NotificationSource["kind"]>) {
     const trigger = recallTrigger({
@@ -386,6 +415,27 @@ it("enforces coverage, overlap and relevance order", () => {
       facts: [fact("prohibition", "Never disable tenant authorization checks.")],
       docs: 1,
       ids: ["prohibition"],
+    },
+    {
+      name: "an explicit current correction does not recall the previous requirement",
+      text: "Stop using build-host for integration tests. Run them on the workstation instead.",
+      facts: [fact("previous-host", "Integration tests must run on build-host.")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "a current allowance does not recall an obsolete blanket prohibition",
+      text: "You can use build-host for native x86 builds. Native builds are allowed there now.",
+      facts: [fact("old-ban", "Never use build-host for native x86 builds or any other purpose.")],
+      docs: 1,
+      ids: [],
+    },
+    {
+      name: "a correction late in a long message suppresses recall too",
+      text: `${"Integration tests on build-host. ".repeat(400)}No longer use build-host for these tests.`,
+      facts: [fact("previous-host", "Integration tests must run on build-host.")],
+      docs: 1,
+      ids: [],
     },
     {
       name: "shared wording does not carry the fact's qualification",

@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import {
   ContextTransferId,
+  EnvironmentId,
+  EventId,
   MessageId,
   NodeId,
   OrchestrationV2ContextHandoffJson,
@@ -12,6 +14,8 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -23,17 +27,54 @@ import * as Schema from "effect/Schema";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
+  historicalMessage,
   historyCost,
   REPLACEMENT_HANDOFF_TOKEN_CAP,
 } from "@t3tools/provider-core/server/handoffBudget";
-import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
-import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
+import {
+  deliverContextHandoffs,
+  refreshHistoricalMessageSources,
+} from "./ContextHandoffDelivery.ts";
+import {
+  ProjectionStoreThreadNotFoundError,
+  ProjectionStoreV2,
+  emptyProjection,
+} from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
 const encodeHandoff = Schema.encodeEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJson));
 const decodeHandoff = Schema.decodeUnknownEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJson),
 );
+
+function threadFixture(threadId: ThreadId): OrchestrationV2AppThread {
+  const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
+  return {
+    createdBy: "user",
+    creationSource: "web",
+    id: threadId,
+    projectId: ProjectId.make("project:handoff"),
+    title: "Handoff source",
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    deletedAt: null,
+  };
+}
 
 function importedItem(
   input:
@@ -569,12 +610,12 @@ it.effect("caps the side chat context block without summarizing discarded parent
         digest: [agentRow],
         seat: true,
       }),
-      "- Agent: From an agent",
+      "- agent (mcp; sender thread unavailable): From an agent",
     );
     assert.include(
       ContextHandoffService.makeSideChatContext({ parentThreadId, digest: [agentRow] }),
-      "- User: From an agent",
-      "an ordinary side chat keeps its text",
+      "- agent (mcp; sender thread unavailable): From an agent",
+      "ordinary side chats preserve the same sender attribution as group seats",
     );
 
     const multiFilePatch = ContextHandoffService.makeSideChatContext({
@@ -609,6 +650,199 @@ it.effect("caps the side chat context block without summarizing discarded parent
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("preserves incoming message sources in side chats, seats, and fork summaries", () =>
+  Effect.gen(function* () {
+    const source = importedItem({
+      role: "user",
+      id: "sender",
+      text: "Draft the next plan",
+      ordinal: 1,
+    });
+    if (source.type !== "user_message") return assert.fail("Expected user message fixture");
+    const cases: ReadonlyArray<{
+      readonly item: typeof source;
+      readonly label: string;
+    }> = [
+      { item: source, label: "User" },
+      {
+        item: { ...source, senderThreadId: ThreadId.make("thread:coordinator") },
+        label: 'agent (thread "thread:coordinator")',
+      },
+      {
+        item: {
+          ...source,
+          linkedSender: {
+            environmentId: EnvironmentId.make("environment:lab"),
+            threadId: ThreadId.make("thread:linked"),
+            title: "Lab coordinator",
+          },
+        },
+        label: 'agent "Lab coordinator" (thread "thread:linked", environment "environment:lab")',
+      },
+      {
+        item: { ...source, createdBy: "agent", creationSource: "mcp" },
+        label: "agent (mcp; sender thread unavailable)",
+      },
+      {
+        item: { ...source, createdBy: "system" },
+        label: "system event (server)",
+      },
+    ];
+    const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+    for (const { item, label } of cases) {
+      const expected = `- ${label}: ${item.text}`;
+      for (const seat of [false, true])
+        assert.include(
+          ContextHandoffService.makeSideChatContext({
+            parentThreadId: source.threadId,
+            digest: [item],
+            seat,
+          }),
+          expected,
+        );
+      const handoff = yield* service.prepareForkDelta({
+        sourceThreadId: source.threadId,
+        targetThreadId: ThreadId.make("thread:target"),
+        targetRunId: RunId.make("run:target"),
+        transferId: null,
+        fromProviderThreadIds: [],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:target"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        deltaItems: [item],
+        createdAt: DateTime.makeUnsafe(0),
+      });
+      assert.include(handoff.summaryText, expected);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect(
+  "recovers stored history attribution without replacing its text or guessing missing senders",
+  () =>
+    Effect.gen(function* () {
+      const source = importedItem({
+        role: "user",
+        id: "canonical",
+        text: "Draft the next plan",
+        ordinal: 1,
+      });
+      if (source.type !== "user_message") return assert.fail("Expected user message fixture");
+      const forwarded = { ...source, senderThreadId: ThreadId.make("thread:coordinator") };
+      const human = {
+        ...source,
+        id: TurnItemId.make("item:human"),
+        messageId: MessageId.make("message:human"),
+        text: "Compare both plans first.",
+      };
+      const notice = {
+        ...source,
+        id: TurnItemId.make("item:notice"),
+        messageId: MessageId.make("message:notice"),
+        text: "The delegated review finished.",
+      };
+      const missingMessage = {
+        ...source,
+        id: TurnItemId.make("item:missing-message"),
+        messageId: MessageId.make("message:missing"),
+      };
+      const conversationMessage = (item: typeof source): OrchestrationV2ConversationMessage => ({
+        id: item.messageId,
+        threadId: item.threadId,
+        runId: item.runId,
+        nodeId: item.nodeId,
+        role: "user",
+        createdBy: item.createdBy,
+        creationSource: item.creationSource,
+        ...(item.senderThreadId === undefined ? {} : { senderThreadId: item.senderThreadId }),
+        text: item.text,
+        attachments: [],
+        streaming: false,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+      });
+      const canonicalMessages = [
+        conversationMessage(forwarded),
+        conversationMessage(human),
+        {
+          ...conversationMessage(notice),
+          notification: {
+            source: { kind: "background_task" },
+            outcome: "updated",
+            summary: notice.text,
+          },
+        } satisfies OrchestrationV2ConversationMessage,
+      ];
+      const known = historicalMessage(forwarded)!;
+      const { provenance: _provenance, ...oldForwarded } = known;
+      const saved: ReadonlyArray<OrchestrationV2HistoricalMessage> = [
+        { ...oldForwarded, status: "interrupted" },
+        { ...historicalMessage(human)!, senderUnknown: true },
+        { ...oldForwarded, itemId: TurnItemId.make("item:missing") },
+        { ...oldForwarded, text: "An earlier body with no known sender" },
+        { ...oldForwarded, runId: RunId.make("run:other") },
+        { ...known, itemId: TurnItemId.make("item:missing-known") },
+        historicalMessage(notice)!,
+        { ...known, itemId: missingMessage.id },
+        {
+          ...historicalMessage(missingMessage)!,
+          speaker: { label: "Reviewer", model: "review-model" },
+        },
+        historicalMessage(missingMessage)!,
+      ];
+      const requested: Array<ReadonlyArray<TurnItemId>> = [];
+      const thread = threadFixture(source.threadId);
+      const projection = {
+        ...emptyProjection({
+          id: EventId.make("event:source-thread"),
+          type: "thread.created",
+          threadId: source.threadId,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        }),
+        turnItems: [forwarded, human, notice, missingMessage],
+      };
+      const refreshed = yield* refreshHistoricalMessageSources(saved).pipe(
+        Effect.provide(
+          Layer.mock(ProjectionStoreV2)({
+            getThreadRecords: (threadId, _fields, filter) => {
+              assert.equal(threadId, source.threadId);
+              requested.push(filter?.turnItemIds ?? []);
+              return Effect.succeed(projection);
+            },
+            getMessagesById: (threadId, messageIds) => {
+              assert.equal(threadId, source.threadId);
+              assert.deepEqual(
+                messageIds,
+                projection.turnItems.map((entry) => entry.messageId),
+              );
+              return Effect.succeed(new Map(canonicalMessages.map((entry) => [entry.id, entry])));
+            },
+          }),
+        ),
+      );
+      assert.lengthOf(requested, 1);
+      assert.lengthOf(requested[0]!, 6);
+      assert.deepEqual(refreshed[0]?.provenance, known.provenance);
+      assert.equal(refreshed[0]?.status, "interrupted");
+      assert.isUndefined(refreshed[1]?.provenance);
+      assert.isUndefined(refreshed[1]?.senderUnknown);
+      for (const index of [2, 3, 4]) assert.isTrue(refreshed[index]?.senderUnknown);
+      assert.deepEqual(refreshed[5], saved[5]);
+      assert.equal(refreshed[6]?.provenance?.createdBy, "system");
+      assert.isUndefined(refreshed[6]?.senderUnknown);
+      assert.deepEqual(refreshed[7], saved[7]);
+      assert.deepEqual(refreshed[8], saved[8]);
+      assert.isTrue(refreshed[9]?.senderUnknown);
+      assert.deepEqual(
+        refreshed.map((entry) => entry.text),
+        saved.map((entry) => entry.text),
+      );
+      assert.isUndefined(saved[0]?.provenance);
+    }),
+);
+
 it("covers the run range of a very long delta", () => {
   const runs = [
     { id: RunId.make("run:long-delta-early"), ordinal: 2 },
@@ -626,36 +860,14 @@ it("covers the run range of a very long delta", () => {
 
 it.effect("inherited history stops at a missing fork ancestor", () =>
   Effect.gen(function* () {
-    const now = DateTime.makeUnsafe("2026-01-01T00:00:00.000Z");
     const threadId = ThreadId.make("thread:fork-of-missing");
     const thread: OrchestrationV2AppThread = {
-      createdBy: "user",
-      creationSource: "web",
-      id: threadId,
-      projectId: ProjectId.make("project:fork-of-missing"),
-      title: "Fork of a missing thread",
-      providerInstanceId: ProviderInstanceId.make("codex"),
-      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-      runtimeMode: "full-access",
-      interactionMode: "default",
-      branch: null,
-      worktreePath: null,
-      activeProviderThreadId: null,
-      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      ...threadFixture(threadId),
       forkedFrom: {
         type: "run",
         threadId: ThreadId.make("thread:missing-ancestor"),
         runId: RunId.make("run:missing-ancestor"),
       },
-      createdAt: now,
-      updatedAt: now,
-      archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
-      lastVisitedAt: null,
-      snoozedUntil: null,
-      snoozedAt: null,
-      deletedAt: null,
     };
     const items = yield* ContextHandoffService.readInheritedHandoffItems(
       {

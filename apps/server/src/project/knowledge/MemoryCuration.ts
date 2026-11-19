@@ -5,6 +5,7 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { formatMessageWithProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import { validateProjectMemoryCuration } from "@t3tools/provider-core/server/textGeneration";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -224,9 +225,14 @@ const make = Effect.gen(function* () {
             (requested.runId !== undefined && requested.runId !== source.source.runId)
           )
             continue;
-          const excerpt = source.text.slice(0, Math.min(MAX_SOURCE_MESSAGE_CHARS, sourceBudget));
-          if (excerpt.length === 0) continue;
-          verified.set(key, { excerpt: `${source.role}: ${excerpt}`, source: source.source });
+          const prefix =
+            source.provenance === undefined
+              ? `${source.role}: `
+              : formatMessageWithProvenance("", source.provenance);
+          const remaining = Math.min(MAX_SOURCE_MESSAGE_CHARS, sourceBudget) - prefix.length;
+          if (remaining <= 0 || source.text.length === 0) continue;
+          const excerpt = `${prefix}${source.text.slice(0, remaining)}`;
+          verified.set(key, { excerpt, source: source.source });
           sourceBudget -= excerpt.length;
         }
       }

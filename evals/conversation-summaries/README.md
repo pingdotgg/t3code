@@ -21,7 +21,7 @@ For a payload baseline, export the earlier production `conversationEvidence.ts` 
 
 `--arm` sets how a peer reply reaches the model, so the arms compare from one checkout:
 
-- `main` sends it as a nameless assistant message, as `main` does. Its leaf case fails by construction, because the name the grader wants is not in the input.
+- `main` sends group peers as nameless assistant messages and forwarded agent messages as plain user messages, reproducing the attribution failures. Their cases fail by construction because the sender the grader wants is absent from the input.
 - `peer-as-user` renders it as a historical user message with the speaker in its header, as handoff history renders a peer.
 - `full` is this checkout, where it carries the peer's name. It is the default.
 
@@ -33,6 +33,9 @@ Cases:
 - `condensed-later-evidence-resolves-earlier-unknown` keeps a later resolution and distinguishes a design requirement from observed test coverage.
 - `leaf-peer-proposal-is-not-a-user-decision` passes when the summary names Astra as the one who proposed Postgres, and credits that proposal to neither the user nor the agent.
 - `leaf-ordinary-exchange-has-no-peer` is the leaf control: an ordinary docs task with no peer.
+- `leaf-forwarded-agent-plan-is-not-a-user-direction` preserves the coordinator thread as the source of a migration proposal, without turning it into the user's selected direction.
+- `leaf-linked-agent-report-is-not-a-user-report` attributes a study report to the coordinator in a linked environment and keeps its results unverified.
+- `leaf-automated-wake-is-not-a-user-request` keeps a server continuation notification separate from a human request.
 - `leaf-image-envelope-keeps-text-evidence` and `leaf-attachment-envelope-retains-failure` reject raw image/PDF bytes while retaining layout and ledger failures.
 - `leaf-tool-failure-overrides-success-claim` preserves a failing command despite the assistant's contrary claim.
 - `leaf-partial-source-does-not-invent-outcome` keeps the result unknown when only the start of a long source is available.

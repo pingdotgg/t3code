@@ -71,6 +71,44 @@ const messages = [
       },
     }),
   },
+  {
+    message_id: "delegated-completion",
+    project_id: "replay-project",
+    thread_id: "asking-thread",
+    payload_json: JSON.stringify({
+      text: "Do the cache keys carry tenant IDs?",
+      createdBy: "system",
+      creationSource: "server",
+      delegatedCompletion: { parentRunId: "parent-run", generation: 1, taskIds: [] },
+    }),
+  },
+  {
+    message_id: "linked-peer",
+    project_id: "replay-project",
+    thread_id: "asking-thread",
+    payload_json: JSON.stringify({
+      text: "Do the cache keys carry tenant IDs?",
+      createdBy: "user",
+      creationSource: "mcp",
+      linkedSender: { environmentId: "other-server", threadId: "peer", title: "Coordinator" },
+    }),
+  },
+  {
+    message_id: "local-peer",
+    project_id: "replay-project",
+    thread_id: "asking-thread",
+    text: "Do the cache keys carry tenant IDs?",
+    created_by: "user",
+    creation_source: "mcp",
+    sender_thread_id: "peer",
+  },
+  {
+    message_id: "correction",
+    project_id: "replay-project",
+    thread_id: "asking-thread",
+    text: "Stop using tenant IDs in cache keys. Use request IDs instead.",
+    created_by: "user",
+  },
 ];
 
 it.effect("replays invented facts through recall and names the gate", () =>
@@ -96,8 +134,8 @@ it.effect("replays invented facts through recall and names the gate", () =>
     assert.equal(match?.characters, "Do the cache keys carry tenant IDs?".length);
     assert.isAbove(match?.candidatesMs ?? -1, -1);
     assert.equal(typeof match?.candidatesMs, "number");
-    assert.equal(byId.get("greeting")?.gate, "no_match");
-    assert.equal(typeof byId.get("greeting")?.candidatesMs, "number");
+    assert.equal(byId.get("greeting")?.gate, "nonhuman");
+    assert.equal(byId.get("greeting")?.candidatesMs, null);
     assert.deepEqual(byId.get("greeting")?.deliveredFactIds, []);
     assert.equal(byId.get("unrelated")?.gate, "no_match");
     assert.deepEqual(byId.get("unrelated")?.deliveredFactIds, []);
@@ -105,25 +143,46 @@ it.effect("replays invented facts through recall and names the gate", () =>
     assert.equal(byId.get("command-notice")?.gate, "progress_notice");
     assert.equal(byId.get("command-notice")?.candidatesMs, null);
     assert.deepEqual(byId.get("command-notice")?.deliveredFactIds, []);
+    for (const [id, gate] of [
+      ["delegated-completion", "progress_notice"],
+      ["linked-peer", "nonhuman"],
+      ["local-peer", "nonhuman"],
+      ["correction", "current_correction"],
+    ] as const) {
+      assert.equal(byId.get(id)?.gate, gate);
+      assert.equal(byId.get(id)?.candidatesMs, null);
+      assert.deepEqual(byId.get(id)?.deliveredFactIds, []);
+    }
     assert.equal(summary.byGate.delivered, 1);
-    assert.equal(summary.byGate.no_match, 2);
+    assert.equal(summary.byGate.no_match, 1);
     assert.equal(summary.byGate.slash, 1);
-    assert.equal(summary.byGate.progress_notice, 1);
-    assert.equal(summary.byCreatedBy.user?.messages, 3);
+    assert.equal(summary.byGate.progress_notice, 2);
+    assert.equal(summary.byGate.nonhuman, 3);
+    assert.equal(summary.byGate.current_correction, 1);
+    assert.equal(summary.byCreatedBy.user?.messages, 6);
     assert.equal(summary.byCreatedBy.agent?.messages, 2);
-    assert.equal(summary.lookupLatencyMs.n, 3);
+    assert.equal(summary.byCreatedBy.system?.messages, 1);
+    assert.equal(summary.lookupLatencyMs.n, 2);
     assert.equal(summary.factsLoaded, 1);
     const written = (
       JSON.parse(yield* fs.readFileString(path.join(out, "summary.json"))) as {
         messages: number;
       }
     ).messages;
-    assert.equal(written, 5);
+    assert.equal(written, 9);
     const lines = (yield* fs.readFileString(path.join(out, "results.ndjson")))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as ReplayRow);
-    assert.equal(lines.length, 5);
+    assert.equal(lines.length, 9);
+    const scratch = yield* replayProjectMemory({
+      facts: factsPath,
+      messages: messagesPath,
+      out,
+      scratchProject: "replay-project",
+    });
+    assert.equal(scratch.rows.find((row) => row.messageId === "match")?.gate, "scratch_project");
+    assert.equal(scratch.summary.byGate.delivered, 0);
     yield* fs.writeFileString(factsPath, "[]");
     const failure = yield* replayProjectMemory({
       facts: factsPath,

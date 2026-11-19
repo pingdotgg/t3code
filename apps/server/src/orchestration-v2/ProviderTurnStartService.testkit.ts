@@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 
 export const layer = Layer.mergeAll(
   disabledLayer,
@@ -29,6 +30,10 @@ export const layer = Layer.mergeAll(
   }),
   Layer.mock(ProjectService.ProjectService)({
     getById: () => Effect.succeedNone,
+  }),
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/test-projects",
+    isScratchProject: () => Effect.succeed(false),
   }),
 );
 

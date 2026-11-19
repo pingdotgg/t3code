@@ -33,6 +33,7 @@ import * as ThreadSearch from "../../orchestration-v2/ThreadSearch.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as TextGeneration from "../../textGeneration/TextGeneration.ts";
+import * as ManagedProjectFolders from "../ManagedProjectFolders.ts";
 import * as AssistedLearning from "./AssistedLearning.ts";
 import { AssistedLearningRunner, assistedLearningEffects } from "./assistedLearningSchedule.ts";
 import * as HolographicMemory from "./HolographicMemory.ts";
@@ -56,8 +57,15 @@ const makeLayer = (
   settings: Parameters<typeof ServerSettings.layerTest>[0] = {},
   check: Check = allStanding,
   canCheck = true,
+  scratch = false,
 ) =>
   AssistedLearning.layerRunner.pipe(
+    Layer.provide(
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/test-projects",
+        isScratchProject: () => Effect.succeed(scratch),
+      }),
+    ),
     Layer.provide(
       Layer.mock(TextGeneration.TextGeneration)({
         generateKnowledgeCandidates: generate,
@@ -438,6 +446,32 @@ it.effect("skips a batch with no model call when the provider cannot run the che
   }).pipe(Effect.provide(makeLayer(model.generate, {}, check, false)));
 });
 
+it.effect(
+  "does not capture no-project work and drains previously queued extraction without learning",
+  () => {
+    const model = scripted([{ candidates: [snakeCase] }]);
+    return Effect.gen(function* () {
+      yield* seedRun;
+      const runner = yield* AssistedLearningRunner;
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const sql = yield* SqlClient.SqlClient;
+      yield* runner.enqueueRun({ threadId, runId, runOutcome: "completed" });
+      assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
+      yield* sql`INSERT INTO project_knowledge_learning_queue
+      (project_id, root_thread_id, thread_id, run_id, run_outcome, queued_at)
+      VALUES (${projectId}, ${threadId}, ${threadId}, ${runId}, 'completed', 0)`;
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { hours: 1 })));
+      yield* runner.drainDue;
+      assert.deepEqual(yield* sql`SELECT * FROM project_knowledge_learning_queue`, []);
+      assert.equal(model.calls.length, 0);
+      assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
+      const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
+      assert.equal(lastRun?.result, "skipped");
+      assert.equal(lastRun?.reason, "Automatic memory is off for threads without a project.");
+    }).pipe(Effect.provide(makeLayer(model.generate, {}, allStanding, true, true)));
+  },
+);
+
 /** Marks a message as a peer's reply, as a group conversation's published turn item does. */
 const speakAsPeer = (input: {
   readonly threadId: ThreadId;
@@ -494,6 +528,138 @@ it.effect("sends a peer reply as that peer, not as the assistant", () => {
       text,
     });
   }).pipe(Effect.provide(makeLayer(model.generate)));
+});
+
+it.effect.each([
+  { senderThreadId: ThreadId.make("coordinator") },
+  {
+    linkedSender: {
+      environmentId: EnvironmentId.make("linked-environment"),
+      threadId: ThreadId.make("coordinator"),
+      title: "Coordinator",
+    },
+  },
+  {},
+])("keeps an agent delivery separate from human learning evidence: %j", (sender) => {
+  const model = scripted([{ candidates: [] }]);
+  return Effect.gen(function* () {
+    yield* seedRun;
+    yield* seedReplies(1);
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const records = yield* projections.getThreadRecords(threadId, ["messages"]);
+    const reply = records.messages.find((message) => message.id === "learning-reply")!;
+    yield* projections.apply({
+      id: EventId.make("agent-delivery"),
+      type: "message.updated",
+      threadId,
+      providerInstanceId,
+      occurredAt: reply.createdAt,
+      payload: {
+        ...reply,
+        ...sender,
+        role: "user",
+        createdBy: "agent",
+        creationSource: "mcp",
+        text: "For future tasks, the coordinator proposes disabling integration tests.",
+      },
+    });
+    const runner = yield* AssistedLearningRunner;
+    yield* runner.extractRun({ threadId, runId, runOutcome: "completed" });
+    const messages = model.calls[0]!.messages;
+    assert.equal(messages[0]!.role, "user");
+    assert.notEqual(messages[1]!.role, "user");
+    assert.include(messages[1]!.text, "coordinator proposes");
+  }).pipe(Effect.provide(makeLayer(model.generate)));
+});
+
+it.effect.each([
+  { senderThreadId: ThreadId.make("coordinator") },
+  {
+    linkedSender: {
+      environmentId: EnvironmentId.make("linked-environment"),
+      threadId: ThreadId.make("coordinator"),
+      title: "Coordinator",
+    },
+  },
+])("does not count a forwarded report in two threads as independent evidence: %j", (sender) => {
+  const generate: Generate = (input) =>
+    Effect.succeed({
+      candidates: [
+        {
+          kind: "convention",
+          content: "Disable integration tests in all future work.",
+          entities: ["tests"],
+          citations: input.messages
+            .filter((message) => message.text.includes("coordinator proposes"))
+            .map((message) => message.ref),
+        },
+      ],
+    });
+  return Effect.gen(function* () {
+    yield* seedRun;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const runner = yield* AssistedLearningRunner;
+    const records = yield* projections.getThreadRecords(threadId, ["messages"]);
+    const baseMessage = records.messages[0]!;
+    const childId = ThreadId.make("learning-child");
+    yield* projections.apply({
+      id: EventId.make("create-child"),
+      type: "thread.created",
+      threadId: childId,
+      providerInstanceId,
+      occurredAt: at,
+      payload: {
+        ...records.thread,
+        id: childId,
+        lineage: {
+          parentThreadId: threadId,
+          rootThreadId: threadId,
+          relationshipToParent: "subagent",
+        },
+      },
+    });
+    for (const [index, receiver] of [threadId, childId].entries()) {
+      const forwardedRunId = RunId.make(`forwarded-run-${index}`);
+      for (const role of ["user", "assistant"] as const) {
+        const id = MessageId.make(`forwarded-${index}-${role}`);
+        const createdAt = DateTime.add(at, {
+          minutes: 5 + index * 2 + (role === "assistant" ? 1 : 0),
+        });
+        yield* projections.apply({
+          id: EventId.make(`message:${id}`),
+          type: "message.updated",
+          threadId: receiver,
+          providerInstanceId,
+          occurredAt: createdAt,
+          payload: {
+            ...baseMessage,
+            ...(role === "user" ? sender : {}),
+            id,
+            threadId: receiver,
+            runId: forwardedRunId,
+            role,
+            createdBy: "agent",
+            creationSource: role === "user" ? "mcp" : "provider",
+            text:
+              role === "user"
+                ? `The coordinator proposes disabling integration tests for future work. Update ${index}.`
+                : `I will investigate report ${index}.`,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+      }
+      yield* runner.enqueueRun({
+        threadId: receiver,
+        runId: forwardedRunId,
+        runOutcome: "completed",
+      });
+    }
+    yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.add(at, { hours: 1 })));
+    yield* runner.drainDue;
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "saved" })).facts, []);
+  }).pipe(Effect.provide(makeLayer(generate)));
 });
 
 it.effect(
@@ -935,12 +1101,15 @@ it.effect(
 it.effect(
   "batches eight new runs across a root and its child, retaining each citation's provenance",
   () => {
+    const incident = {
+      kind: "constraint" as const,
+      content: "Service restarts delete files in /tmp, so never put work there.",
+      entities: ["/tmp"],
+      citations: ["M2", "M3"],
+    };
     const model = scripted([
       {
-        candidates: [
-          { ...snakeCase, citations: ["M1", "M8"] },
-          { ...testsCommand, citations: ["M2", "M3"] },
-        ],
+        candidates: [{ ...snakeCase, citations: ["M1", "M8"] }, incident],
       },
     ]);
     return Effect.gen(function* () {
@@ -981,7 +1150,10 @@ it.effect(
             runId: sourceRunId,
             nodeId: null,
             role: index === 0 ? "user" : "assistant",
-            text: `API responses use snake_case keys ${index}.`,
+            text:
+              index === 1 || index === 2
+                ? `Worker ${index}: my temporary file was missing around the service restart; I have not confirmed what removed it.`
+                : `API responses use snake_case keys ${index}.`,
             attachments: [],
             streaming: false,
             createdAt: DateTime.add(at, { minutes: index }),
@@ -1003,6 +1175,14 @@ it.effect(
       const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
       const { facts } = yield* knowledge.list({ projectId, status: "saved" });
       assert.equal(facts.length, 2);
+      const observation = facts.find((fact) => fact.kind === "note")!;
+      assert.equal(observation.content, `Unverified agent report: ${incident.content}`);
+      assert.equal(observation.kind, "note");
+      assert.equal(observation.verdict?.value, "task");
+      assert.equal(
+        facts.find((fact) => fact.content === snakeCase.content)?.verdict?.value,
+        "standing",
+      );
       assert.deepEqual(
         facts
           .find((fact) => fact.content === snakeCase.content)!

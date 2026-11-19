@@ -2260,7 +2260,7 @@ describe("orchestration v2 provider switching", () => {
           assert.include(deliveredHistory, '"role":"user"');
           assert.equal(handoff?.delivery?.status, "injected");
         } else {
-          assert.include(delivered.text, "User message:\nContinue");
+          assert.include(delivered.text, "Current message:\nContinue");
           assert.equal(handoff?.delivery?.status, "inline");
         }
         assert.notInclude(deliveredHistory, "Earlier successful request.");

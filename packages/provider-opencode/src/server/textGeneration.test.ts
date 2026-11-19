@@ -671,11 +671,11 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
   );
 
   it.effect.each([
-    ["checkFactStanding", "answer"],
-    ["checkFactStanding", "tool activity"],
-    ["curateProjectMemory", "answer"],
-    ["curateProjectMemory", "tool activity"],
-  ] as const)("runs %s on an isolated deny-all server (%s)", (operation, reply) =>
+    { operation: "checkFactStanding", reply: "answer" },
+    { operation: "checkFactStanding", reply: "tool activity" },
+    { operation: "curateProjectMemory", reply: "answer" },
+    { operation: "curateProjectMemory", reply: "tool activity" },
+  ] as const)("runs $operation on an isolated deny-all server ($reply)", ({ operation, reply }) =>
     withOpenCodeTextGeneration(
       DEFAULT_OPENCODE_SETTINGS,
       (textGeneration) =>
@@ -695,7 +695,7 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
               ],
             },
           };
-          const request =
+          const request: Effect.Effect<unknown, TextGenerationError> =
             operation === "checkFactStanding"
               ? textGeneration.checkFactStanding({
                   cwd: process.cwd(),

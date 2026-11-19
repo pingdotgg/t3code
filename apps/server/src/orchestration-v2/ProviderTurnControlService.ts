@@ -17,6 +17,10 @@ import {
   nativeContextHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import {
+  formatMessageWithProvenance,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
+import {
   MessageId,
   type ModelSelection,
   type NodeId,
@@ -35,6 +39,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import {
+  isNativeMaintenanceCommand,
+  parseNativeGoalCommand as parseGoalCommand,
+} from "./CommandPolicy.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -513,6 +521,15 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          const supportsNativeGoals =
+            loaded.session.value.driver === "codex" ||
+            loaded.session.value.driver === "claudeAgent" ||
+            loaded.session.value.providerSession.capabilities.turns.supportsNativeGoals === true;
+          const provenance =
+            isNativeMaintenanceCommand(message) ||
+            (supportsNativeGoals && parseGoalCommand(message) !== null)
+              ? undefined
+              : messageProvenance(message);
           let composer = { text: message.text, records: message.context?.records ?? [] };
           if (
             referencesPstack(composer, message) &&
@@ -622,7 +639,10 @@ export const layer: Layer.Layer<
             yield* knowledgeDelivery.checkBudget(
               handoffBudgetAssumptions({
                 tokenCap,
-                userText: knowledgeDelivery.composer.baseText,
+                userText: formatMessageWithProvenance(
+                  knowledgeDelivery.composer.baseText,
+                  provenance,
+                ),
                 attachments: message.attachments,
                 providerThread,
                 nativeContextEstimate,
@@ -681,7 +701,7 @@ export const layer: Layer.Layer<
                 : { modelSelection: input.modelSelection }),
               message: {
                 messageId: message.id,
-                text,
+                text: formatMessageWithProvenance(text, provenance),
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,
@@ -691,6 +711,9 @@ export const layer: Layer.Layer<
                 ...(message.senderThreadId === undefined
                   ? {}
                   : { senderThreadId: message.senderThreadId }),
+                ...(message.linkedSender === undefined
+                  ? {}
+                  : { linkedSender: message.linkedSender }),
               },
             })
             .pipe(

@@ -330,7 +330,8 @@ export function ProjectKnowledgeSourceInspector(props: {
       {source?.state === "available" ? (
         <>
           <AppText className="text-xs text-foreground-muted">
-            {source.title} · {messageAuthorLabel(source.role, source.speaker)} · {source.createdAt}
+            {source.title} · {messageAuthorLabel(source.role, source.speaker, source.provenance)} ·{" "}
+            {source.createdAt}
             {source.archived ? " · archived" : ""}
           </AppText>
           <AppText selectable>{source.text}</AppText>

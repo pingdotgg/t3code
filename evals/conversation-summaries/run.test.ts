@@ -138,6 +138,36 @@ it("passes an ordinary leaf with no peer", () => {
   ).toEqual([]);
 });
 
+it.each([
+  {
+    id: "leaf-forwarded-agent-plan-is-not-a-user-direction",
+    attributed: "The agent in coordinator-thread directed drafting the v3 plan using option B.",
+    misattributed: "The user directed drafting the v3 plan using option B.",
+  },
+  {
+    id: "leaf-linked-agent-report-is-not-a-user-report",
+    attributed:
+      "The Lab coordinator reported five studies, with two improvements; results still need review.",
+    misattributed:
+      "The user reported five studies, with two improvements; results still need review.",
+  },
+  {
+    id: "leaf-automated-wake-is-not-a-user-request",
+    attributed:
+      "The server notification requested reading the review report next; it has not been read.",
+    misattributed:
+      "The user said a delegated review had finished and asked the agent to read its report before continuing; it has not yet been reviewed.",
+  },
+])(
+  "rejects human attribution of a forwarded agent's message: $id",
+  ({ id, attributed, misattributed }) => {
+    const fixture = leafCases.find((row) => row.id === id)!;
+    const citations = [id === "leaf-automated-wake-is-not-a-user-request" ? "M1" : "M2"];
+    expect(gradeLeaf(fixture, [{ text: attributed, citations }])).toEqual([]);
+    expect(gradeLeaf(fixture, [{ text: misattributed, citations }])).not.toEqual([]);
+  },
+);
+
 it.each([{ citations: [] }, { citations: ["M2", "M900"] }])(
   "rejects missing or partly fabricated citations: %j",
   ({ citations }) => {

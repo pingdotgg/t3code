@@ -15,6 +15,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
+import { OrchestrationV2MessageProvenance } from "./messageProvenance.ts";
 import {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
@@ -358,6 +359,7 @@ const ProjectKnowledgeSourceSchema = Schema.Union([
     text: Schema.String,
     title: Schema.String,
     role: Schema.Literals(["user", "assistant"]),
+    provenance: Schema.optionalKey(OrchestrationV2MessageProvenance),
     /** Set when an assistant message was spoken by another model in the thread. */
     speaker: Schema.optionalKey(
       Schema.Struct({ label: TrimmedNonEmptyString, model: TrimmedNonEmptyString }),

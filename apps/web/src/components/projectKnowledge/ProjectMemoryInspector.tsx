@@ -337,7 +337,7 @@ export function SourceInspector(props: {
       ) : data?.state === "available" ? (
         <>
           <p className="text-muted-foreground text-xs">
-            {data.title} · {messageAuthorLabel(data.role, data.speaker)} ·{" "}
+            {data.title} · {messageAuthorLabel(data.role, data.speaker, data.provenance)} ·{" "}
             {dateFormatter.format(new Date(data.createdAt))}
             {data.archived ? " · archived" : ""}
           </p>

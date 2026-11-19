@@ -822,6 +822,11 @@ it("readThread and sendToThread reach threads in other projects", async () => {
   ];
   const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
   const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");
+  const linkedSender = {
+    environmentId: EnvironmentId.make("environment:linked-peer"),
+    threadId: ThreadId.make("thread:linked-peer"),
+    title: "Peer coordinator",
+  };
   const parentProjection = {
     thread: baseThread({
       threadId: parentThreadId,
@@ -860,8 +865,8 @@ it("readThread and sendToThread reach threads in other projects", async () => {
           sourceItemId: "item-1",
           item: {
             id: "item-1",
-            type: "assistant_message",
-            messageId: "assistant-1",
+            type: "user_message",
+            messageId: "peer-1",
             status: "completed",
             title: null,
             text: "Foreign thread said hello",
@@ -872,7 +877,16 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       ],
       providerTurns: [],
       runtimeRequests: [],
-      messages: [],
+      messages: [
+        {
+          id: "peer-1",
+          role: "user",
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkedSender,
+          text: "Foreign thread said hello",
+        },
+      ],
       contextTransfers: [],
       subagents: [],
       updatedAt: now,
@@ -952,6 +966,11 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     expect(foreign.thread.threadId).toBe(foreignThreadId);
     expect(foreign.thread.projectId).toBe(foreignProjectId);
     expect(foreign.items.map((item) => item.text)).toEqual(["Foreign thread said hello"]);
+    expect(foreign.items[0]).toMatchObject({
+      createdBy: "agent",
+      creationSource: "mcp",
+      linkedSender,
+    });
 
     const sent = yield* service.sendToThread(makeScope(), {
       threadId: foreignThreadId,

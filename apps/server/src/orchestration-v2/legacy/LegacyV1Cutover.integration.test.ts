@@ -928,7 +928,7 @@ describe("orchestration v2 legacy v1 cutover", () => {
             const turns = yield* Ref.get(capturedTurns);
             assert.equal(turns.length, 1);
             assert.include(turns[0]!.text, "Context handoff (manual_context):");
-            assert.include(turns[0]!.text, `User message:\n${CONTINUATION_PROMPT}`);
+            assert.include(turns[0]!.text, `Current message:\n${CONTINUATION_PROMPT}`);
 
             const continuedAgain = yield* dispatchMessageAwaitingRun({
               threadId: longThreadId,

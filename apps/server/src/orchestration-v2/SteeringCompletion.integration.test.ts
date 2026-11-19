@@ -45,6 +45,12 @@ const driver = ProviderDriverKind.make("codex");
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "test-model" };
 
+function assertAttributedMessage(text: string | undefined, source: string, body: string) {
+  const delivered = text ?? "";
+  assert.include(delivered, `[T3 message source: ${source}`);
+  assert.isTrue(delivered.endsWith(`\n\n${body}`), "the original message body is preserved");
+}
+
 it.effect.each(
   (
     [
@@ -433,8 +439,12 @@ it.effect.each(
       }
       assert.equal(started.length, 2);
       assert.equal(started[1]?.message.messageId, messageId);
-      if (mailbox) assert.include(started[1]?.message.text ?? "", String(taskId));
-      else assert.equal(started[1]?.message.text, "fix the popover");
+      if (mailbox) {
+        assert.include(started[1]?.message.text ?? "", "[T3 message source: agent (server;");
+        assert.include(started[1]?.message.text ?? "", String(taskId));
+      } else if (question) {
+        assertAttributedMessage(started[1]?.message.text, "agent (server;", "fix the popover");
+      } else assert.equal(started[1]?.message.text, "fix the popover");
       assert.deepEqual(started[1]?.message.attachments, [
         {
           type: "image",
@@ -774,10 +784,14 @@ it.effect.each([
         });
         yield* worker.drain();
         const after = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(
-          steered,
-          steers ? [`${notification.summary}\nexit 0: built 12 files`] : [],
-        );
+        if (steers) {
+          assert.lengthOf(steered, 1);
+          assertAttributedMessage(
+            steered[0],
+            "agent (server;",
+            `${notification.summary}\nexit 0: built 12 files`,
+          );
+        } else assert.deepEqual(steered, []);
         assert.lengthOf(started, 1);
         assert.equal(
           after.runs.some((run) => run.status === "queued"),
@@ -2272,7 +2286,8 @@ it.effect("steers a promoted scheduled delivery with the thread's current select
         yield* worker.drain();
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
-        assert.deepEqual(steered, ["scheduled"]);
+        assert.lengthOf(steered, 1);
+        assertAttributedMessage(steered[0], "system event (web)", "scheduled");
         assert.deepEqual(projection.thread.modelSelection, composerSelection);
       }).pipe(Effect.provide(layer));
     }),
@@ -2901,6 +2916,53 @@ it.effect.each([undefined, false, true])(
     }),
 );
 
+it.effect.each(["local", "linked", "unattributed"] as const)(
+  "treats native control text from a %s peer as an attributed message",
+  (source) =>
+    Effect.gen(function* () {
+      const { steered, layer, startFirstTurn, read } = yield* goalHarness(
+        `peer-controls-${source}`,
+      );
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = yield* startFirstTurn;
+        for (const [index, text] of ["/goal all tests pass", "/compact", "/logout"].entries()) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`peer:${index}`),
+            threadId,
+            messageId: MessageId.make(`peer-message:${index}`),
+            text,
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            deliveryIntent: "auto",
+            createdBy: "agent",
+            creationSource: "mcp",
+            ...(source === "local" ? { senderThreadId: ThreadId.make("peer") } : {}),
+            ...(source === "linked"
+              ? {
+                  linkedSender: {
+                    environmentId: EnvironmentId.make("remote"),
+                    threadId: ThreadId.make("peer"),
+                    title: "Coordinator",
+                  },
+                }
+              : {}),
+          });
+          yield* worker.drain();
+          assert.include(steered[index]!, "[T3 message source: agent");
+          assert.include(steered[index]!, text);
+        }
+        assert.deepEqual(yield* read(threadId), {
+          queue: [],
+          started: ["first"],
+          stopRequested: false,
+        });
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
 it.effect("starts a goal that names no model on the thread's model ahead of a queued pick", () =>
   Effect.gen(function* () {
     const { started, layer, startFirstTurn, read } = yield* goalHarness("goal-ahead-of-pick");
@@ -2964,11 +3026,14 @@ it.effect("restarts by stopping the running turn when the provider cannot interr
       yield* worker.drain();
 
       assert.deepEqual(steered, []);
-      assert.deepEqual(yield* read(threadId), {
+      const { started: delivered, ...state } = yield* read(threadId);
+      assert.deepEqual(state, {
         queue: ["queued"],
-        started: ["first", "do this instead"],
         stopRequested: true,
       });
+      assert.lengthOf(delivered, 2);
+      assert.equal(delivered[0], "first");
+      assertAttributedMessage(delivered[1], "agent (server;", "do this instead");
     }).pipe(Effect.provide(layer));
   }),
 );
@@ -3023,10 +3088,11 @@ it.effect("starts a restart that stops the running turn ahead of an older held q
       yield* worker.drain();
 
       const { queue, started: startedTexts } = yield* read(threadId);
-      assert.deepEqual(
-        { queue, started: startedTexts },
-        { queue: ["queued"], started: ["first", "second", "do this instead"] },
-      );
+      assert.deepEqual(queue, ["queued"]);
+      assert.lengthOf(startedTexts, 3);
+      assert.equal(startedTexts[0], "first");
+      assertAttributedMessage(startedTexts[1], "agent (mcp;", "second");
+      assertAttributedMessage(startedTexts[2], "agent (mcp;", "do this instead");
     }).pipe(Effect.provide(layer));
   }),
 );

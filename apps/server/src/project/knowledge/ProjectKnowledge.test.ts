@@ -627,6 +627,116 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect.each(["agent", "linked-agent", "notification"] as const)(
+  "invalidates unattributed sources and preserves identity when they are re-read: %s",
+  (sourceKind) =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const projectId = ProjectId.make("source-provenance");
+      const threadId = ThreadId.make("source-receiver");
+      const messageId = MessageId.make("source-agent-message");
+      const text = "Cache keys include tenant IDs.";
+      yield* createProject(projectId);
+      yield* projections.apply(thread(threadId, projectId));
+      yield* projections.apply(message(threadId, messageId, "user", text));
+      const legacy = yield* knowledge.readSource({ projectId, threadId, messageId });
+      if (legacy.state !== "available") return assert.fail("The source should exist");
+      const fact = yield* knowledge.mutate(
+        { ...createFact(projectId), sources: [legacy.source] },
+        { kind: "agent-client", sessionId: "test-agent", label: "Test agent" },
+      );
+      const records = yield* projections.getThreadRecords(threadId, ["messages"]);
+      const provenance =
+        sourceKind === "agent"
+          ? {
+              createdBy: "agent" as const,
+              creationSource: "mcp" as const,
+              senderThreadId: ThreadId.make("coordinator"),
+            }
+          : sourceKind === "linked-agent"
+            ? {
+                createdBy: "agent" as const,
+                creationSource: "mcp" as const,
+                linkedSender: {
+                  environmentId: EnvironmentId.make("other-environment"),
+                  threadId: ThreadId.make("coordinator"),
+                  title: "Lab coordinator",
+                },
+              }
+            : { createdBy: "system" as const, creationSource: "server" as const };
+      yield* projections.apply({
+        id: EventId.make("source-attribution"),
+        type: "message.updated",
+        threadId,
+        providerInstanceId,
+        occurredAt: at(2),
+        payload: {
+          ...records.messages[0]!,
+          ...provenance,
+          createdBy: "user",
+          ...(sourceKind === "notification"
+            ? {
+                notification: {
+                  source: { kind: "system" as const },
+                  outcome: "updated" as const,
+                  summary: text,
+                },
+              }
+            : {}),
+        },
+      });
+      assert.deepEqual(yield* knowledge.readSource({ projectId, ...legacy.source }), {
+        state: "unavailable",
+        reason: "changed",
+      });
+      assert.deepEqual((yield* knowledge.list({ projectId })).unavailableSources, [
+        { factId: fact.id, reason: "changed" },
+      ]);
+      const search = yield* knowledge.search({
+        projectId,
+        query: "tenant IDs",
+        requestId: CommandId.make("provenance-search"),
+      });
+      const hit = search.messages.matches[0]!;
+      if (hit.digest === undefined) return assert.fail("Search must return a source digest");
+      assert.deepEqual(hit.provenance, provenance);
+      const threadSearch = yield* ThreadSearch.ThreadSearch;
+      assert.deepEqual(
+        (yield* threadSearch.search({ query: "tenant IDs" })).matches[0]?.provenance,
+        provenance,
+      );
+      const source = yield* knowledge.readSource({
+        projectId,
+        threadId,
+        messageId,
+        digest: hit.digest,
+      });
+      if (source.state !== "available")
+        return assert.fail("The current search digest must resolve");
+      assert.deepEqual(source.provenance, provenance);
+      assert.equal(source.text, text);
+      assert.notEqual(source.source.digest, legacy.source.digest);
+      const context = yield* knowledge.prepareContext({
+        environmentId,
+        projectId,
+        selections: [source.source],
+        maxBytes: 4096,
+      });
+      assert.include(context.text, sourceKind === "notification" ? "system event" : "coordinator");
+      assert.include(context.text, text);
+      const stale = yield* knowledge
+        .prepareContext({
+          environmentId,
+          projectId,
+          selections: [{ kind: "fact", factId: fact.id, revision: fact.revision }],
+          maxBytes: 4096,
+        })
+        .pipe(Effect.result);
+      assert.equal(Result.isFailure(stale) && stale.failure.reason, "stale_context");
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("MCP rejects unauthorized mutations and saves authorized facts directly", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
@@ -1943,13 +2053,41 @@ it.effect(
       assert.deepEqual(
         composer.items.map((item) => item.text),
         [
-          "Saved facts from project automatic-recall, for reference. Rate any you rely on with t3_knowledge_mutate feedback: helpful, or unhelpful if it misled you.\n[fact fact-one rev 1, from user] Cache keys include tenant IDs.",
+          "Historical claims from project automatic-recall; may be stale. Current direct human instructions override conflicts. Rate facts you rely on via t3_knowledge_mutate feedback: helpful, or unhelpful if misleading.\n[fact fact-one rev 1, from user] Cache keys include tenant IDs.",
         ],
       );
       assert.include(composer.text, composer.items[0]!.text);
 
       // Recall adds nothing to a message the user attached knowledge to by hand.
       assert.isNull(yield* recall({ composer: { text: query, records: [record] } }, "hand-picked"));
+      assert.isNull(yield* recall({ scratchProject: true }, "scratch-chat"));
+      assert.isNull(
+        yield* recall(
+          {
+            delegatedCompletion: {
+              parentRunId: RunId.make("completed-parent"),
+              generation: 1,
+              taskIds: [NodeId.make("completed-child")],
+            },
+          },
+          "delegated-completion",
+        ),
+      );
+      assert.isNull(
+        yield* recall(
+          { provenance: { createdBy: "agent", creationSource: "mcp" } },
+          "peer-message",
+        ),
+      );
+      assert.isNull(
+        yield* recall(
+          { query: "Stop using tenant IDs in cache keys. Use request IDs instead." },
+          "current-correction",
+        ),
+      );
+      // Explicit selection still resolves in a scratch chat, even though automatic recall skips it.
+      const selectedInScratch = yield* knowledge.resolveForTurn(record.knowledge);
+      assert.include(selectedInScratch.text, "Cache keys include tenant IDs.");
       // A nearly full context has no room for recall.
       assert.isNull(yield* recall({ knowledgeAllowance: 1200 }, "no-room"));
 
@@ -2301,6 +2439,186 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
       knowledgeAllowance: 48000,
     });
     assert.equal(attachedFactIds(outcome)[0], ids[40]);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("automatic recall requires human support for learned and agent policy facts", () =>
+  Effect.gen(function* () {
+    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const projectId = ProjectId.make("recall-authority");
+    const sourceThreadId = ThreadId.make("recall-authority-source");
+    yield* createProject(projectId);
+    yield* projections.apply(thread(sourceThreadId, projectId));
+    yield* projections.apply(
+      message(sourceThreadId, "human-policy", "user", "Cache keys must include tenant IDs."),
+    );
+    yield* projections.apply(
+      message(sourceThreadId, "agent-policy", "assistant", "Cache keys must include tenant IDs."),
+    );
+    const citations = [];
+    for (const messageId of ["human-policy", "agent-policy"]) {
+      const source = yield* knowledge.readSource({
+        projectId,
+        threadId: sourceThreadId,
+        messageId: MessageId.make(messageId),
+      });
+      if (source.state !== "available") return yield* Effect.die("source unavailable");
+      citations.push(source.source);
+    }
+    const actor = {
+      kind: "assisted" as const,
+      threadId: sourceThreadId,
+      runId: RunId.make("recall-authority-run"),
+      runOutcome: "completed" as const,
+    };
+    for (const [factId, citation] of [
+      ["human-backed", citations[0]!],
+      ["agent-only", citations[1]!],
+    ] as const) {
+      yield* knowledge.saveAutomatic(
+        {
+          ...createFact(projectId, factId),
+          content: `Cache keys include tenant IDs in ${factId} jobs.`,
+          sources: [citation],
+        },
+        actor,
+        "standing",
+      );
+    }
+    const agent = { kind: "agent-thread" as const, threadId: sourceThreadId, providerInstanceId };
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "agent-policy"),
+        content: "Cache keys include tenant IDs for all new jobs.",
+        sources: [citations[1]!],
+      },
+      agent,
+    );
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "agent-observation"),
+        content: "Cache keys include tenant IDs in observed production responses.",
+        kind: "note",
+        sources: [citations[1]!],
+      },
+      agent,
+    );
+    const query = "Do cache keys carry tenant IDs?";
+    const recall = (requestId: string) =>
+      knowledge.recall({
+        projectId,
+        threadId: ThreadId.make("recall-authority-reader"),
+        requestId: CommandId.make(requestId),
+        query,
+        composer: { text: query, records: [] },
+        knowledgeAllowance: 48000,
+      });
+    const eligible = [ProjectFactId.make("human-backed"), ProjectFactId.make("agent-observation")];
+    assert.deepEqual(
+      attachedFactIds(yield* recall("before-curation")).toSorted(),
+      eligible.toSorted(),
+    );
+    const learned = (yield* knowledge.readFact({
+      projectId,
+      factId: ProjectFactId.make("agent-only"),
+    })).fact;
+    yield* knowledge.mutate(
+      {
+        ...createFact(projectId, "agent-only"),
+        action: "edit",
+        commandId: CommandId.make("curate-agent-policy"),
+        expectedRevision: learned.revision,
+        content: "Cache keys must always include tenant IDs in every job.",
+        sources: [citations[1]!],
+      },
+      agent,
+    );
+    assert.deepEqual(
+      attachedFactIds(yield* recall("after-curation")).toSorted(),
+      eligible.toSorted(),
+    );
+    const explicit = yield* knowledge.resolveForTurn({
+      environmentId,
+      projectId,
+      selections: [{ kind: "fact", factId: learned.id, revision: learned.revision + 1 }],
+      maxBytes: 48000,
+    });
+    assert.include(explicit.text, "Cache keys must always include tenant IDs in every job.");
+    let approved = (yield* knowledge.readFact({ projectId, factId: learned.id })).fact;
+    // Current agent mutations reject synthetic user citations; seed a legacy record directly.
+    const seedLegacyUserSource = () =>
+      sql`UPDATE project_knowledge_facts
+        SET sources_json = ${JSON.stringify([...approved.sources, { kind: "user" }])}
+        WHERE project_id = ${projectId} AND id = ${approved.id}`;
+    for (const action of ["edit", "supersede"] as const) {
+      yield* seedLegacyUserSource();
+      assert.deepEqual(
+        attachedFactIds(yield* recall(`before-owner-restore-${action}`)).toSorted(),
+        eligible.toSorted(),
+      );
+      const restore = {
+        action: "restore" as const,
+        projectId,
+        factId: approved.id,
+        expectedRevision: approved.revision,
+        commandId: CommandId.make(`owner-restore-${action}`),
+      };
+      assert.equal(
+        (yield* knowledge.mutate(restore, agent).pipe(Effect.flip)).reason,
+        "user_required",
+      );
+      approved = yield* knowledge.mutate(restore, { kind: "user" });
+      assert.equal(approved.verdict?.by, "person");
+      const restoredIds = attachedFactIds(yield* recall(`after-owner-restore-${action}`));
+      assert.include(restoredIds, approved.id);
+      assert.lengthOf(restoredIds, 2);
+      assert.isTrue(restoredIds.every((id) => [...eligible, approved.id].includes(id)));
+
+      const rewritten = {
+        ...createFact(projectId, approved.id),
+        commandId: CommandId.make(`rewrite-owner-restored-${action}`),
+        expectedRevision: approved.revision,
+        content: `Cache keys must include tenant IDs in ${action} jobs.`,
+        sources: [citations[1]!],
+      };
+      approved = yield* knowledge.mutate(
+        action === "edit"
+          ? { ...rewritten, action }
+          : {
+              ...rewritten,
+              action,
+              replacementFactId: ProjectFactId.make("agent-policy-replacement"),
+            },
+        agent,
+      );
+      assert.isUndefined(approved.verdict);
+      assert.deepEqual(
+        attachedFactIds(yield* recall(`after-agent-rewrite-${action}`)).toSorted(),
+        eligible.toSorted(),
+      );
+    }
+
+    yield* seedLegacyUserSource();
+    yield* knowledge.mutate(
+      {
+        action: "restore",
+        projectId,
+        factId: approved.id,
+        expectedRevision: approved.revision,
+        commandId: CommandId.make("restore-before-source-change"),
+      },
+      { kind: "user" },
+    );
+    yield* projections.apply(
+      message(sourceThreadId, "agent-policy", "assistant", "This report was withdrawn.", {
+        minute: 2,
+      }),
+    );
+    assert.deepEqual(attachedFactIds(yield* recall("after-source-change")), [
+      ProjectFactId.make("human-backed"),
+    ]);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -4064,7 +4382,7 @@ it.effect("lost-source fact outranks a valid one", () =>
 );
 
 it.effect(
-  "recall uses exact terms before the candidate bound and forwards watch notifications",
+  "recall uses exact terms before the candidate bound and skips background notifications",
   () =>
     Effect.gen(function* () {
       const knowledge = yield* ProjectKnowledge.ProjectKnowledge;

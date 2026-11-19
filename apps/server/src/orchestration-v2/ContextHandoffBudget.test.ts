@@ -2,6 +2,8 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 import { assert, describe, it } from "@effect/vitest";
 import {
   ProjectId,
+  EnvironmentId,
+  MessageId,
   ContextHandoffId,
   NodeId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -31,6 +33,7 @@ import {
   nativeContextHistory,
   selectHistory,
   historicalMessage,
+  renderHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
@@ -323,6 +326,41 @@ describe("handoff budget", () => {
       }),
     );
     assert.equal(historyResponseItems([command!], "Activity")[1]?.type, "message");
+    const peerText = "I propose changing the next experiment.";
+    for (const sender of [
+      { senderThreadId: ThreadId.make("coordinator") },
+      {
+        linkedSender: {
+          environmentId: EnvironmentId.make("remote-lab"),
+          threadId: ThreadId.make("coordinator"),
+          title: "Study coordinator",
+        },
+      },
+      {},
+    ]) {
+      const peer = historicalMessage({
+        ...base,
+        type: "user_message",
+        messageId: MessageId.make("peer-message"),
+        createdBy: "agent",
+        creationSource: "mcp",
+        ...sender,
+        text: peerText,
+        inputIntent: "turn_start",
+        attachments: [],
+      })!;
+      assert.deepEqual(peer.provenance, { createdBy: "agent", creationSource: "mcp", ...sender });
+      for (const rendered of [
+        renderHistory([peer], "Historical context"),
+        historyResponseItems([peer], "Historical context")[1]!.content[0]!.text,
+      ]) {
+        assert.include(rendered, peerText);
+        assert.include(rendered, "not a direct message from the human user");
+        assert.notInclude(rendered, "Historical user;");
+        if ("senderThreadId" in sender) assert.include(rendered, sender.senderThreadId!);
+        if ("linkedSender" in sender) assert.include(rendered, sender.linkedSender!.environmentId);
+      }
+    }
   });
 
   it("omits oversized multilingual items whole, preserves original constraints and recent work", () => {
@@ -939,6 +977,62 @@ describe("handoff delivery", () => {
       );
       assert.deepEqual(durable.delivery?.omittedItemIds, [omittedBeforeDelivery, oversized.itemId]);
       assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
+    }),
+  );
+
+  it.effect.each([
+    { native: true, label: "native" },
+    { native: false, label: "inline" },
+  ])("restores old sender attribution before evidence and $label history budgeting", ({ native }) =>
+    Effect.gen(function* () {
+      const unknown = message("item:unknown", "user", "Unverified legacy message");
+      const savedMessages = [...messages, unknown];
+      let captured: ProviderAdapter.ProviderAdapterV2HistoricalContext | undefined;
+      const result = yield* deliverContextHandoffs({
+        handoffs: [{ ...handoff, history: { ...handoff.history!, messages: savedMessages } }],
+        providerThread,
+        budget: 4_500,
+        alreadyDeliveredItemIds: new Set(),
+        refreshSources: (candidates) =>
+          Effect.succeed(
+            candidates.map((candidate) =>
+              candidate.itemId === messages[0]!.itemId
+                ? {
+                    ...candidate,
+                    provenance: {
+                      createdBy: "agent" as const,
+                      creationSource: "mcp" as const,
+                      senderThreadId: ThreadId.make("thread:coordinator"),
+                    },
+                  }
+                : candidate.itemId === unknown.itemId
+                  ? { ...candidate, senderUnknown: true as const }
+                  : candidate,
+            ),
+          ),
+        evidence: (candidates) => {
+          assert.equal(candidates[0]?.provenance?.senderThreadId, "thread:coordinator");
+          assert.isTrue(candidates[2]?.senderUnknown);
+          return Effect.succeed(new Map([[messages[0]!.itemId, "AS-SENT EVIDENCE"]]));
+        },
+        inject: (value) => {
+          captured = value;
+          return Effect.succeed(native);
+        },
+        persist: () => Effect.void,
+      });
+      assert.isDefined(captured);
+      assert.isAtMost(historyCost(captured.messages, captured.context), 4_500);
+      const text = native
+        ? JSON.stringify(historyResponseItems(captured.messages, captured.context))
+        : result.context;
+      assert.include(text, "thread:coordinator");
+      assert.include(text, "not a direct message from the human user");
+      assert.include(text, "unknown sender");
+      assert.include(text, "AS-SENT EVIDENCE");
+      assert.include(text, "Unverified legacy message");
+      assert.isUndefined(savedMessages[0]?.provenance);
+      assert.isUndefined(savedMessages[2]?.senderUnknown);
     }),
   );
 

@@ -89,17 +89,18 @@ import {
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
 
-export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
-export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
-
-export const OrchestrationV2CreationSource = Schema.Literals([
-  "web",
-  "mobile",
-  "mcp",
-  "provider",
-  "server",
-]);
-export type OrchestrationV2CreationSource = typeof OrchestrationV2CreationSource.Type;
+import {
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2LinkedSender,
+  OrchestrationV2MessageProvenance,
+} from "./messageProvenance.ts";
+export {
+  OrchestrationV2Actor,
+  OrchestrationV2CreationSource,
+  OrchestrationV2LinkedSender,
+  OrchestrationV2MessageProvenance,
+} from "./messageProvenance.ts";
 
 export const OrchestrationV2ThreadHistoryOrigin = Schema.Literals(["native", "v1_import"]);
 export type OrchestrationV2ThreadHistoryOrigin = typeof OrchestrationV2ThreadHistoryOrigin.Type;
@@ -141,18 +142,6 @@ export const OrchestrationV2DelegatedFrom = Schema.Struct({
   title: Schema.String,
 });
 export type OrchestrationV2DelegatedFrom = typeof OrchestrationV2DelegatedFrom.Type;
-
-/**
- * The thread in a linked environment whose agent sent this message here, and its title
- * then, for a client that cannot reach that environment. `senderThreadId` names only a
- * thread in this environment.
- */
-export const OrchestrationV2LinkedSender = Schema.Struct({
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
-  title: Schema.String,
-});
-export type OrchestrationV2LinkedSender = typeof OrchestrationV2LinkedSender.Type;
 
 export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
 export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
@@ -1259,6 +1248,8 @@ export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread
 export const OrchestrationV2HistoricalMessage = Schema.Struct({
   role: Schema.Literals(["user", "assistant"]),
   text: Schema.String,
+  provenance: Schema.optional(OrchestrationV2MessageProvenance),
+  senderUnknown: Schema.optional(Schema.Literal(true)),
   speaker: Schema.optional(OrchestrationV2MessageSpeaker),
   runStatus: Schema.optional(Schema.String),
   threadId: ThreadId,

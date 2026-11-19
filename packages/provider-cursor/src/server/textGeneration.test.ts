@@ -235,7 +235,7 @@ describe("CursorTextGeneration", () => {
         const generation = yield* makeCursorTextGeneration(cursorSettings, {
           CURSOR_API_KEY: "key",
         });
-        const request =
+        const request: Effect.Effect<unknown, TextGenerationError> =
           operation === "checkFactStanding"
             ? generation.checkFactStanding({
                 cwd: "/empty-check-directory",
@@ -256,7 +256,7 @@ describe("CursorTextGeneration", () => {
                   },
                 ],
               });
-        const error = yield* request.pipe(Effect.flip);
+        const error = yield* request.pipe(Effect.asVoid, Effect.flip);
         expect(error.detail).toContain("tool");
         expect(cursorSdkMock.create).toHaveBeenCalledWith(
           expect.objectContaining({

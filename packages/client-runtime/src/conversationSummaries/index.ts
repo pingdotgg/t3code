@@ -3,6 +3,7 @@ import {
   type ConversationSummaryPass,
   type ConversationSummarySourceRef,
   type ConversationSummarySourceResult,
+  type OrchestrationV2MessageProvenance,
 } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -53,7 +54,14 @@ export interface ConversationSummarySourceCursor {
 export function messageAuthorLabel(
   role: "user" | "assistant",
   speaker?: { readonly label: string; readonly model: string },
+  provenance?: OrchestrationV2MessageProvenance,
 ): string {
+  if (provenance?.linkedSender !== undefined) {
+    const sender = provenance.linkedSender;
+    return `Agent: ${sender.title || sender.threadId} (${sender.environmentId})`;
+  }
+  if (provenance?.senderThreadId !== undefined) return `Agent (${provenance.senderThreadId})`;
+  if (provenance !== undefined) return provenance.createdBy === "system" ? "System" : "Agent";
   if (role === "user") return "User";
   if (speaker === undefined) return "Assistant";
   // A seat without a label is named by its model.
@@ -69,7 +77,7 @@ export function conversationSummarySourceLabel(
   switch (result.role) {
     case "user":
     case "assistant":
-      return messageAuthorLabel(result.role, result.speaker);
+      return messageAuthorLabel(result.role, result.speaker, result.provenance);
     case "tool":
       return "Tool";
     case "summary":
