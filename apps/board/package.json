@@ -1,0 +1,9 @@
+{
+  "name": "@agent-board/app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check:boundary": "node scripts/check-engine-untouched.mjs",
+    "test": "node --test scripts/*.test.mjs"
+  }
+}
