@@ -208,6 +208,8 @@ fn locations(update: &Value) -> Option<Vec<Value>> {
     (!out.is_empty()).then_some(out)
 }
 
+const TOOL_FALLBACK_SUMMARY: &str = "Tool";
+
 /// `makeToolCallState` for a `tool_call` / `tool_call_update` (or a permission's `toolCall`).
 pub(crate) fn parse_tool_call(update: &Value, fallback_status: Option<&str>) -> Option<ToolState> {
     let tool_call_id = trimmed(&update["toolCallId"])?;
@@ -277,14 +279,19 @@ pub(crate) fn parse_tool_call(update: &Value, fallback_status: Option<&str>) -> 
             title.as_deref(),
             fallback_detail.as_deref(),
             &Value::Object(data.clone()),
-            title.as_deref().unwrap_or("Tool"),
+            title.as_deref().unwrap_or(TOOL_FALLBACK_SUMMARY),
         )
     });
+    // A titleless update omits an unchanged title; the generic fallback must not replace it (#38989).
+    let presentation_title = presentation
+        .as_ref()
+        .map(|p| p.0.clone())
+        .filter(|summary| title.is_some() || summary != TOOL_FALLBACK_SUMMARY);
     let status = normalize_status(&update["status"], fallback_status);
     Some(ToolState {
         tool_call_id,
         kind,
-        title: presentation.as_ref().map(|p| p.0.clone()),
+        title: presentation_title,
         status,
         command,
         detail: presentation.and_then(|p| p.1),
