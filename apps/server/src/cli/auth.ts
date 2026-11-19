@@ -86,6 +86,8 @@ const revokeThroughServer = Effect.fn("auth.revokeThroughServer")(function* <
       scopes: [AuthAccessWriteScope],
       subject: "auth-cli",
       label: "t3 auth cli",
+      // Outlives the request; the release revokes it, and this bounds it if that never runs.
+      ttl: Duration.minutes(2),
     }),
     (issued) =>
       HttpApiClient.make(EnvironmentHttpApi, { baseUrl: runtimeState.value.origin }).pipe(
