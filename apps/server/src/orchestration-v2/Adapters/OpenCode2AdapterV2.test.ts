@@ -353,6 +353,14 @@ const resumed = (
         ...(options?.version === "2.2.5" || options?.version === "2.2.6"
           ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
           : []),
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
+        ...(options?.supervised === true
+          ? [
+              out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
+              reply("session.update", null),
+            ]
+          : []),
         ...(options?.shellRecovery ??
           (options?.version === undefined
             ? []
@@ -361,17 +369,7 @@ const resumed = (
                   ? [out("job.list", { kind: "shell" }), reply("job.list", { data: [] })]
                   : emptyShellInventory),
               ])),
-        ...withInstructions([
-          ...(options?.supervised === true
-            ? [
-                out("agent.list", "<any>"),
-                reply("agent.list", agentList),
-                out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
-                reply("session.update", null),
-              ]
-            : []),
-          ...entries,
-        ]),
+        ...withInstructions(entries),
       ],
       {
         ...(options?.version === undefined ? {} : { version: options.version }),
@@ -1580,8 +1578,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         ...backgroundLaunch(CHILD),
         event("session.execution.succeeded", { sessionID: SESSION }),
-        out("agent.list", "<any>"),
-        reply("agent.list", agentList),
         out("session.update", { sessionID: SESSION, permissions: supervisedRules }),
         reply("session.update", null),
         out("session.update", {
@@ -1880,6 +1876,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   replyData("permission.list", []),
                   out("session.form.list", { sessionID: CHILD }),
                   replyData("session.form.list", []),
+                  out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+                  reply("session.update", null),
                   out("shell.list", "<any>"),
                   reply("shell.list", response([shell])),
                   out("shell.get", { id: shell.id }),
@@ -1889,8 +1887,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                     "shell.output",
                     response({ output: "done", cursor: 4, size: 4, truncated: false }),
                   ),
-                  out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-                  reply("session.update", null),
                 ]
               : []),
             ...launchedAndRunning,
@@ -2901,6 +2897,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
         ),
         ...noOpenRequests,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
         out("session.update", { sessionID: SESSION, permissions: t3Rules }),
         reply("session.update", null),
       ]);
@@ -2921,6 +2919,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
         out("session.move", { sessionID: SESSION, directory: "/work/opencode2-feature" }),
         reply("session.move", null),
       ]);
@@ -2976,6 +2976,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           reply("permission.reply", null),
           out("session.form.cancel", { sessionID: SESSION, formID: colorForm.id }),
           reply("session.form.cancel", null),
+          out("agent.list", "<any>"),
+          reply("agent.list", agentList),
           out("session.active"),
           reply("session.active", { data: {} }),
           event("session.execution.interrupted", { sessionID: SESSION, reason: "user" }),
@@ -3190,6 +3192,164 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }),
+  );
+
+  it.effect.each([
+    ["auto", true],
+    ["full-access", true],
+    ["approval-required", true],
+    ["auto-accept-edits", true],
+    ["auto", false],
+  ] as const)(
+    "preserves OpenCode permissions in %s (configured: %s)",
+    ([runtimeMode, configured]) =>
+      Effect.gen(function* () {
+        const nativeRules = configured
+          ? [
+              { action: "shell", resource: "*", effect: "allow" },
+              { action: "shell", resource: "git push *", effect: "ask" },
+              { action: "shell", resource: "rm *", effect: "deny" },
+              { action: "read", resource: "*.env*", effect: "deny" },
+              { action: "read", resource: "*.env.example", effect: "allow" },
+              { action: "webfetch", resource: "*", effect: "ask" },
+            ]
+          : [];
+        const permissions = [
+          ...(runtimeMode === "auto"
+            ? [...supervisedRules.slice(configured ? 1 : 0, 3), ...buildPaths, ...nativeRules]
+            : runtimeMode === "full-access"
+              ? [
+                  t3Rules[0],
+                  ...nativeRules.slice(2, -1),
+                  { action: "webfetch", resource: "*", effect: "allow" },
+                ]
+              : [
+                  { action: "shell", resource: "*", effect: "ask" },
+                  {
+                    action: "edit",
+                    resource: "*",
+                    effect: runtimeMode === "auto-accept-edits" ? "allow" : "ask",
+                  },
+                  { action: "external_directory", resource: "*", effect: "ask" },
+                  ...buildPaths,
+                ]),
+          ...mcpRules,
+        ];
+        const runtime = yield* openCode2ReplayRuntime([
+          ...opening,
+          out("agent.list", "<any>"),
+          reply("agent.list", {
+            ...agentList,
+            data: agentList.data.map((agent) => ({
+              ...agent,
+              permissions: [...agent.permissions, ...nativeRules],
+            })),
+          }),
+          out("session.create", {
+            location: { directory: WORK },
+            model: { providerID: "opencode", id: "big-pickle" },
+            permissions,
+          }),
+          replyData("session.create", sessionInfo({ permissions })),
+        ]);
+        const thread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: { ...policy(), runtimeMode },
+        });
+        assert.equal(thread.nativeThreadRef?.nativeId, SESSION);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect.each(["auto", "full-access"] as const)(
+    "retains ordered native edit denies and exceptions in %s plan mode",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const privatePath = { action: "edit", resource: "/plans/private/*", effect: "allow" };
+        const denied = { action: "edit", resource: "/plans/*", effect: "deny" };
+        const allowed = { action: "edit", resource: "/plans/allowed.md", effect: "allow" };
+        const externalDeny = {
+          action: "external_directory",
+          resource: "/private/*",
+          effect: "deny",
+        };
+        const externalAsk = {
+          action: "external_directory",
+          resource: "/private/reference/*",
+          effect: "ask",
+        };
+        const externalFallback = { ...externalAsk, resource: "*" };
+        const permissions = [
+          ...(runtimeMode === "full-access" ? [t3Rules[0]] : [supervisedRules[0]]),
+          // Native outside-directory rules keep their order, ahead of any session grant.
+          externalDeny,
+          ...(runtimeMode === "full-access"
+            ? [
+                { ...externalAsk, effect: "allow" },
+                { ...externalFallback, effect: "allow" },
+              ]
+            : [externalAsk, externalFallback]),
+          { action: "edit", resource: "*", effect: "deny" },
+          ...buildPaths,
+          privatePath,
+          denied,
+          allowed,
+          ...mcpRules,
+        ];
+        const runtime = yield* openCode2ReplayRuntime([
+          ...opening,
+          out("agent.list", "<any>"),
+          reply("agent.list", {
+            ...agentList,
+            data: agentList.data.map((agent) => ({
+              ...agent,
+              permissions: [
+                ...agent.permissions,
+                privatePath,
+                { ...denied, effect: "allow" },
+                denied,
+                allowed,
+                externalDeny,
+                externalAsk,
+                externalFallback,
+              ],
+            })),
+          }),
+          out("session.create", {
+            location: { directory: WORK },
+            model: { providerID: "opencode", id: "big-pickle" },
+            permissions,
+          }),
+          replyData("session.create", sessionInfo({ permissions })),
+        ]);
+        const thread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: { ...policy(), runtimeMode, interactionMode: "plan" },
+        });
+        assert.equal(thread.nativeThreadRef?.nativeId, SESSION);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not create an unrestricted session when native permissions cannot be read", () =>
+    Effect.gen(function* () {
+      const runtime = yield* openCode2ReplayRuntime([
+        ...opening,
+        out("agent.list", "<any>"),
+        reply("agent.list", {
+          status: 500,
+          body: { _tag: "UnknownError", message: "Cannot load permissions" },
+        }),
+      ]);
+      const failed = yield* runtime
+        .ensureThread({
+          threadId,
+          modelSelection: bigPickle,
+          runtimePolicy: policy(),
+        })
+        .pipe(Effect.flip);
+      assert.equal(failed._tag, "ProviderAdapterEnsureThreadError");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("reads the agents again while a fresh server still lists none", () =>
@@ -4184,6 +4344,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
 
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
+      const denied = { action: "shell", resource: "*", effect: "deny" };
       const { runtime, thread } = yield* resumed([
         out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
         promptAccepted,
@@ -4195,6 +4356,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           ordinal: 0,
           text: "Arrived on the new stream.",
         }),
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        ...directoryModels(WORK),
+        out("agent.list", "<any>"),
+        reply("agent.list", {
+          ...agentList,
+          data: agentList.data.map((agent) => ({
+            ...agent,
+            permissions: [...agent.permissions, denied],
+          })),
+        }),
+        out("session.update", {
+          sessionID: SESSION,
+          permissions: [t3Rules[0], denied, ...mcpRules],
+        }),
+        reply("session.update", null),
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ]);
       const events = yield* runtime.events.pipe(
@@ -4214,6 +4392,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "Arrived on the new stream.",
       ]);
       assert.deepInclude(collected.at(-1), { type: "turn.terminal", status: "completed" });
+      const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+      yield* runtime.startTurn({ ...turnInput(thread), runOrdinal: 2, providerTurnOrdinal: 2 });
+      assert.equal((yield* Fiber.join(terminal))?.status, "completed");
     }),
   );
 
@@ -5310,6 +5491,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
         ),
         ...noOpenRequests,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
         out("mcp.add", {
           server,
           "location[directory]": WORK,
@@ -5681,6 +5864,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.get", { sessionID: SESSION }),
         replyData("session.get", sessionInfo()),
         ...noOpenRequests,
+        out("agent.list", "<any>"),
+        reply("agent.list", agentList),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -6040,6 +6225,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             limit: { context: 64000, input: 48000, output: 8000 },
           })),
         }),
+        out("agent.list", { "location[directory]": custom }),
+        reply("agent.list", { ...agentList, location: { directory: custom } }),
         out("session.create", {
           location: { directory: custom },
           model: { providerID: "opencode", id: "big-pickle" },
@@ -6726,6 +6913,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               out("session.get", { sessionID: SESSION }),
               replyData("session.get", sessionInfo()),
               ...noOpenRequests,
+              out("agent.list", "<any>"),
+              reply("agent.list", agentList),
               out("message.list", "<any>"),
               reply("message.list", {
                 data: [
@@ -6892,6 +7081,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const { runtime, thread } = yield* resumed([
         out("session.fork", { sessionID: SESSION }),
         replyData("session.fork", sessionInfo({ id: FORK })),
+        out("agent.list", { "location[directory]": target }),
+        reply("agent.list", { ...agentList, location: { directory: target } }),
         out("session.update", {
           sessionID: FORK,
           permissions: [
@@ -7622,6 +7813,9 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { id: "buffered", providerID: "opencode" },
           }),
+          ...directoryModels(WORK),
+          out("agent.list", "<any>"),
+          reply("agent.list", agentList),
           out("session.switchModel", { sessionID: SESSION, model: "<any>" }),
           reply("session.switchModel", null),
           ...backgroundLaunch(CHILD),
@@ -8101,6 +8295,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             input: { sessionID: SESSION },
           }),
           reply("rpc.call", { output: nativeGoal("paused") }),
+          out("agent.list", "<any>"),
+          reply("agent.list", agentList),
           ...emptyShellInventory,
         ],
         { version: "2.2.5" },

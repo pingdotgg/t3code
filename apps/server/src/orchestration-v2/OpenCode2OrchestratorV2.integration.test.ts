@@ -119,8 +119,9 @@ const autoEditRules = (name: string) => [
 
 const planRules = (name: string) => [
   { action: "*", resource: "*", effect: "allow" },
+  ...BUILD_PATHS,
   { action: "edit", resource: "*", effect: "deny" },
-  ...PLAN_PATHS,
+  ...PLAN_PATHS.slice(BUILD_PATHS.length),
   ...mcpRules(name),
 ];
 
@@ -186,8 +187,6 @@ const createdSession = (
   directory: string,
   name: string,
   permissions: ReadonlyArray<unknown> = t3Rules(name),
-
-  narrows = false,
 ): ReadonlyArray<ProviderReplayEntry> => [
   out("event.subscribe"),
   out("model.list", "<any>"),
@@ -198,7 +197,8 @@ const createdSession = (
       catalogModel("mimo-v2.6-flash-free", "MiMo V2.6 Flash Free"),
     ],
   }),
-  ...(narrows ? [out("agent.list", "<any>"), reply("agent.list", agentList(directory))] : []),
+  out("agent.list", "<any>"),
+  reply("agent.list", agentList(directory)),
 
   out("session.create", { location: { directory }, model: "<any>", permissions, title: name }),
   reply("session.create", sessionInfo(directory, permissions, name)),
@@ -371,8 +371,6 @@ describe("OpenCode 2 through the orchestrator", () => {
 
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, t3Rules(name), name)),
-          out("agent.list", "<any>"),
-          reply("agent.list", agentList(cwd)),
           out("session.update", { sessionID: SESSION, permissions: autoEditRules(name) }),
           reply("session.update", null),
           ...answeredPrompt("SECOND"),
@@ -409,7 +407,7 @@ describe("OpenCode 2 through the orchestrator", () => {
         name,
         threadId: thread.threadId,
         entries: [
-          ...createdSession(cwd, name, planRules(name), true),
+          ...createdSession(cwd, name, planRules(name)),
 
           out("session.switchAgent", { sessionID: SESSION, agent: "plan" }),
           reply("session.switchAgent", null),
@@ -417,10 +415,20 @@ describe("OpenCode 2 through the orchestrator", () => {
           ...answeredPrompt("PLANNED"),
           out("session.get", { sessionID: SESSION }),
           reply("session.get", sessionInfo(cwd, planRules(name), name)),
-          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          out("session.update", {
+            sessionID: SESSION,
+            permissions: [
+              ...FULL_ACCESS,
+              { action: "edit", resource: "*", effect: "deny" },
+              ...PLAN_PATHS.slice(BUILD_PATHS.length),
+              ...mcpRules(name),
+            ],
+          }),
           reply("session.update", null),
           out("session.switchAgent", { sessionID: SESSION, agent: "build" }),
           reply("session.switchAgent", null),
+          out("session.update", { sessionID: SESSION, permissions: t3Rules(name) }),
+          reply("session.update", null),
           ...answeredPrompt("BUILT"),
         ],
         commands: [
@@ -598,7 +606,7 @@ describe("OpenCode 2 through the orchestrator", () => {
     readonly name: string;
     readonly cut: string;
     readonly hold?: string;
-    readonly reconnect: (parent: string) => ReadonlyArray<ProviderReplayEntry>;
+    readonly reconnect: (parent: string, directory: string) => ReadonlyArray<ProviderReplayEntry>;
     readonly steps: (
       thread: ReturnType<typeof threadCommands>,
       run: (ordinal: number) => OrchestrationV2Run["id"],
@@ -631,7 +639,7 @@ describe("OpenCode 2 through the orchestrator", () => {
       entries: [
         ...kept,
         { type: "runtime_exit", status: "success" },
-        ...input.reconnect(BACKGROUND_PARENT),
+        ...input.reconnect(BACKGROUND_PARENT, cwd),
       ],
     });
     const thread = threadCommands({ name: input.name, worktreePath: cwd });
@@ -756,7 +764,7 @@ describe("OpenCode 2 through the orchestrator", () => {
           name: "opencode2-background-lost",
 
           cut: "session.step.started.3",
-          reconnect: (parent) => [
+          reconnect: (parent, directory) => [
             out("event.subscribe"),
 
             out("session.active"),
@@ -789,6 +797,10 @@ describe("OpenCode 2 through the orchestrator", () => {
               ],
               cursor: {},
             }),
+            out("model.list", { "location[directory]": directory }),
+            reply("model.list", { location: { directory }, data: [] }),
+            out("agent.list", "<any>"),
+            reply("agent.list", agentList(directory)),
             out("session.prompt", { sessionID: parent, id: "<any>", text: "<any>" }),
             reply("session.prompt", {
               data: {

@@ -440,23 +440,34 @@ const mcpRules = (mcpServerName: string | null): ReadonlyArray<Rule> =>
 
 const sessionRules = (
   policy: RulesPolicy,
+  nativeRules: ReadonlyArray<Rule>,
   paths: ReadonlyArray<Rule>,
   grants: ReadonlyArray<Rule>,
   mcpServerName: string | null,
-): ReadonlyArray<Rule> => [
-  ...(policy.runtimeMode === "full-access"
-    ? [rule("*", "allow")]
-    : [
-        rule("shell", "ask"),
-        rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
-        rule("external_directory", "ask"),
-      ]),
-  ...grants,
-  // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
-  ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
-  ...paths,
-  ...mcpRules(mcpServerName),
-];
+): ReadonlyArray<Rule> => {
+  const rules = [
+    ...(policy.runtimeMode === "full-access"
+      ? [rule("*", "allow")]
+      : [
+          rule("shell", "ask"),
+          rule("edit", policy.runtimeMode === "auto-accept-edits" ? "allow" : "ask"),
+          rule("external_directory", "ask"),
+        ]),
+    ...nativeRules,
+    ...grants,
+    // Plan edits are re-allowed only for plan paths; free-tier sessions refuse denied shell/read.
+    ...(policy.interactionMode === "plan" ? [rule("edit", "deny")] : []),
+    ...paths,
+    ...mcpRules(mcpServerName),
+  ];
+  const lastRules = new Map<string, Rule>();
+  for (const entry of rules) {
+    const key = `${entry.action}\u0000${entry.resource}`;
+    lastRules.delete(key);
+    lastRules.set(key, entry);
+  }
+  return [...lastRules.values()];
+};
 
 const sameRules = (left: ReadonlyArray<Rule> | undefined, right: ReadonlyArray<Rule>) =>
   left?.length === right.length &&
@@ -546,6 +557,30 @@ const agentPaths = (rules: ReadonlyArray<Rule>) =>
       entry.resource !== "*" &&
       (entry.action === "edit" || entry.action === "external_directory"),
   );
+
+// Plan's edit deny is re-opened only by native edit allows, replayed in order with edit denies so a
+// later deny still wins. Other rules stay where Auto and Full access put them, before session grants.
+const planPaths = (rules: ReadonlyArray<Rule>) =>
+  rules.filter((entry) =>
+    entry.action === "edit"
+      ? entry.effect === "deny" || (entry.effect === "allow" && entry.resource !== "*")
+      : entry.action === "external_directory" && entry.effect === "allow" && entry.resource !== "*",
+  );
+
+const nativeSessionRules = (rules: ReadonlyArray<Rule>, policy: RulesPolicy) => {
+  if (policy.runtimeMode === "auto") {
+    // The default agent's catch-all allow is not an explicit opt-in to unrestricted Auto.
+    return rules.filter((entry) => entry.action !== "*" || entry.effect !== "allow");
+  }
+  if (policy.runtimeMode !== "full-access") return [];
+  const firstDeny = rules.findIndex((entry) => entry.effect === "deny");
+  // Keep later exceptions in order: a deny-only copy would also block allowed .env.example files.
+  return firstDeny < 0
+    ? []
+    : rules
+        .slice(firstDeny)
+        .map((entry) => (entry.effect === "ask" ? { ...entry, effect: "allow" as const } : entry));
+};
 
 const ref = (nativeId: string, strength: "strong" | "weak" = "strong") => ({
   driver: OPENCODE_PROVIDER,
@@ -3772,6 +3807,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       );
     });
 
+    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
+    const staleAgentRules = new Set<string>();
     const reconnect = Effect.gen(function* () {
       // Release the borrow on every failure, including reconnect interruption, so spawned servers can idle-stop.
       const scope = yield* Scope.make();
@@ -3792,6 +3829,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       currentScope = scope;
       yield* Scope.close(previous, Exit.void);
+      // A restarted server may load a changed native config; re-read permissions on next use.
+      for (const directory of agentRules.keys()) staleAgentRules.add(directory);
+      agentRules.clear();
       // A restarted server forgot T3's MCP servers; the next turn adds them again.
       // The gap may have started a pending prompt unseen, so none may set a later wake's boundary.
       for (const state of threads.values()) {
@@ -3972,13 +4012,16 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       contextWindows.has(directoryOf(cwd)) ? Effect.void : readModels(directoryOf(cwd));
     yield* readModels(session.cwd);
 
-    const agentRules = new Map<string, ReadonlyMap<string, ReadonlyArray<Rule>>>();
-    const pathsFor = Effect.fnUntraced(function* (
+    const rulesForAgents = Effect.fn("OpenCode2Adapter.rulesForAgents")(function* (
       directory: string,
       agents: ReadonlyArray<string>,
     ) {
       let known = agentRules.get(directory);
       if (known === undefined) {
+        if (staleAgentRules.delete(directory)) {
+          // model.list waits for native config plugins; agent.list can return builtins before they load.
+          yield* readModels(directory);
+        }
         // A fresh server lists no agents for its first moments, like its models.
         const listed = yield* client.agent.list({ location: { directory } }).pipe(
           Effect.repeat({
@@ -3986,27 +4029,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             schedule: Schedule.spaced("250 millis"),
           }),
           Effect.timeout("5 seconds"),
-          Effect.tapCause((cause) =>
-            Effect.logWarning(
-              "Could not list OpenCode agents; their path rules are skipped.",
-              cause,
-            ).pipe(Effect.annotateLogs({ errorTag: causeErrorTag(cause) })),
-          ),
-          Effect.option,
         );
-        if (listed._tag === "None") return [];
-        known = new Map(
-          listed.value.data.map((agent) => [agent.id, agentPaths(agent.permissions)]),
-        );
+        known = new Map(listed.data.map((agent) => [agent.id, agent.permissions]));
         agentRules.set(directory, known);
       }
-      const paths = new Map<string, Rule>();
-      for (const agent of agents) {
-        for (const entry of known.get(agent) ?? []) {
-          paths.set(`${entry.action}\u0000${entry.resource}`, entry);
-        }
-      }
-      return [...paths.values()];
+      return agents.flatMap((agent) => known.get(agent) ?? []);
     });
 
     const rulesFor = Effect.fnUntraced(function* (
@@ -4015,12 +4042,15 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       appThreadId: string | null,
     ) {
       const plan = policy.interactionMode === "plan";
-      const paths =
-        policy.runtimeMode === "full-access" && !plan
+      const nativeRules = yield* rulesForAgents(thread.directory, [thread.agent]);
+      const paths = plan
+        ? planPaths(yield* rulesForAgents(thread.directory, [thread.agent, "plan"]))
+        : policy.runtimeMode === "auto" || policy.runtimeMode === "full-access"
           ? []
-          : yield* pathsFor(thread.directory, plan ? [thread.agent, "plan"] : [thread.agent]);
+          : agentPaths(nativeRules);
       return sessionRules(
         policy,
+        nativeSessionRules(nativeRules, policy),
         paths,
         policy.runtimeMode === "full-access" ? [] : thread.grants,
         appThreadId === null ? null : yield* mcpServerNameFor(appThreadId),
@@ -4790,8 +4820,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               Effect.ignore({ log: true }),
             );
           }
-          if (!loaded) yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
           yield* writeRules(state, threadInput.runtimePolicy ?? state.policy);
+          if (!loaded) yield* recoverShells(state).pipe(Effect.ignore({ log: true }));
           if (cwd != null && native.location.directory !== cwd) {
             yield* client.session.move({
               sessionID: Session.ID.make(sessionId),
