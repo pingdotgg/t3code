@@ -76,6 +76,8 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
         deletions: 0,
         changedFiles: 0,
         mergedAt: null,
+        mergeCommit: null,
+        mergedBy: null,
         closedAt: null,
         isCrossRepository: false,
         maintainerCanModify: true,
