@@ -39,11 +39,12 @@ vi.mock("./SettingsRow", () => ({
 import * as Dialog from "../../../components/ui/Dialog";
 import { AppSignInRow } from "./SourceControlSignInSection";
 
+// @ts-expect-error the row never reads expiresAt, so the fixture leaves its type loose
 const PROMPT: SourceControlSignInPrompt = {
   userCode: "ABCD-1234",
   verificationUri: "https://github.com/login/device",
-  expiresAt: 15 * 60 * 1000,
-};
+  expiresAt: new Date(15 * 60 * 1000).toISOString(),
+} as SourceControlSignInPrompt;
 
 function settle() {
   let resolve: (outcome: Outcome) => void = () => undefined;
@@ -66,12 +67,12 @@ function renderRow() {
         label="T3 Code for GitHub"
         definition={{ kind: "github" } as SourceControlDefinition}
         appSignIn={
+          // @ts-expect-error the row reads only appName and installUrl, so the fixture omits revokeUrl
           {
             appName: "T3 Code for GitHub",
             hosts: ["github.com"],
-            installUrl: "https://github.com/apps/t3-code-for-github/installations/new",
-            revokeUrl: "https://github.com/settings/apps/authorizations",
-          } satisfies SourceControlAppSignIn
+            installUrl: "https://github.com/apps/t3-code/installations/new",
+          } as SourceControlAppSignIn
         }
         disabled={false}
       />,
