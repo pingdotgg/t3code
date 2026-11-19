@@ -406,6 +406,10 @@ it.live("caps the grant at the scope the client requested", () =>
       const clientId = yield* registeredClientId(handler);
       const pairing = yield* auth.issuePairingCredential();
       const params = { ...authorizeParams(clientId), scope: "orchestration:read" };
+      const details = yield* handler(postJson("/oauth/mcp/approval", params)).pipe(
+        Effect.flatMap(json<{ requestedAccess?: string }>),
+      );
+      expect(details.requestedAccess).toBe("read-only");
 
       const approved = yield* decide(handler, params, {
         _tag: "pairing-code",
