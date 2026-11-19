@@ -192,11 +192,16 @@ export class WorkflowStore extends Context.Service<
       name: string,
       threadId: string,
       environment: string | null,
+      turnId: string,
     ) => Effect.Effect<void>;
-    /** The threads of agent steps still running in this run. */
-    readonly runningThreads: (
-      runId: string,
-    ) => Effect.Effect<ReadonlyArray<{ readonly threadId: string; readonly environment?: string }>>;
+    /** The threads of agent steps still running in this run, with each step's own turn. */
+    readonly runningThreads: (runId: string) => Effect.Effect<
+      ReadonlyArray<{
+        readonly threadId: string;
+        readonly environment?: string;
+        readonly turnId?: string;
+      }>
+    >;
     readonly waitAt: (address: SignalAddress) => Effect.Effect<WaitRow | undefined>;
     /** Every open wait on `key`, in one workflow or in all of them. */
     readonly waitsOn: (
@@ -544,24 +549,30 @@ export const make = Effect.gen(function* () {
       `.pipe(Effect.orDie);
     }),
     stepThread: Effect.fn("WorkflowStore.stepThread")(
-      function* (runId, name, threadId, environment) {
+      function* (runId, name, threadId, environment, turnId) {
         yield* write(
           runId,
           sql`
-          UPDATE workflow_steps SET thread_id = ${threadId}, environment_id = ${environment}
+          UPDATE workflow_steps
+          SET thread_id = ${threadId}, environment_id = ${environment}, turn_id = ${turnId}
           WHERE run_id = ${runId} AND name = ${name}
         `,
         );
       },
     ),
     runningThreads: Effect.fn("WorkflowStore.runningThreads")(function* (runId) {
-      const rows = yield* sql<{ thread_id: string; environment_id: string | null }>`
-        SELECT thread_id, environment_id FROM workflow_steps
+      const rows = yield* sql<{
+        thread_id: string;
+        environment_id: string | null;
+        turn_id: string | null;
+      }>`
+        SELECT thread_id, environment_id, turn_id FROM workflow_steps
         WHERE run_id = ${runId} AND status = 'running' AND thread_id IS NOT NULL
       `.pipe(Effect.orDie);
       return rows.map((row) => ({
         threadId: row.thread_id,
         ...(row.environment_id === null ? {} : { environment: row.environment_id }),
+        ...(row.turn_id === null ? {} : { turnId: row.turn_id }),
       }));
     }),
     waitAt: Effect.fn("WorkflowStore.waitAt")(function* (address) {

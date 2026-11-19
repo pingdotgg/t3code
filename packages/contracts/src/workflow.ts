@@ -136,7 +136,9 @@ export const WorkflowDefinitionSaveInput = Schema.Struct({
 });
 export const WorkflowDefinitionDeleteInput = Schema.Struct({ name: Schema.String });
 export const WorkflowDefinitionChangeResult = Schema.Struct({
-  /** Empty when the change was made and is what runs now. Otherwise nothing changed. */
+  /** The file was written or deleted. */
+  changed: Schema.Boolean,
+  /** Empty when the change is what runs now. With `changed`, why it does not run yet. */
   problems: Schema.Array(WorkflowDefinitionProblem),
 });
 export type WorkflowDefinitionChangeResult = typeof WorkflowDefinitionChangeResult.Type;
