@@ -112,9 +112,18 @@ const evaluate = async (url: string): Promise<ReadonlyArray<unknown>> => {
     Duration,
     Schedule,
   });
-  const loaded = (await import(url)) as { readonly default?: unknown };
-  // A file may also export what it defines, which is how one passes on what another file made.
-  const exported = loaded.default;
+  const loaded = (await import(url)) as { readonly default?: unknown; "module.exports"?: unknown };
+  // A file with no `import` or `export` loads as CommonJS, whose default is its `module.exports`:
+  // an empty object unless the file set one, which says nothing about what it defines.
+  const commonJs = "module.exports" in loaded;
+  const exported =
+    commonJs &&
+    typeof loaded.default === "object" &&
+    loaded.default !== null &&
+    !Array.isArray(loaded.default) &&
+    Object.keys(loaded.default).length === 0
+      ? undefined
+      : loaded.default;
   // One workflow exported by itself is as good as a list of one.
   const listed =
     exported === undefined
