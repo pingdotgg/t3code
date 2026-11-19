@@ -181,33 +181,43 @@ describe("thread execution presentation", () => {
       lastErrorClass: "usage_limit",
       lastErrorSource: "limit-error@2026-07-28T10:00:00.000Z",
     });
-    // A retried run fails again through the same item, so only the failure time tells it apart.
-    const refailedAt = DateTime.makeUnsafe("2026-07-28T10:05:00.000Z");
-    expect(
-      deriveThreadRuntime({ ...projection, turnItems: [{ ...item, updatedAt: refailedAt }] })
-        ?.lastErrorSource,
-    ).toBe("limit-error@2026-07-28T10:05:00.000Z");
-    const session = {
+    // A retried run fails again through the same item, so only its failure time tells it apart.
+    const later = DateTime.makeUnsafe("2026-07-28T10:05:00.000Z");
+    const source = (input: Partial<Parameters<typeof deriveThreadRuntime>[0]>) =>
+      deriveThreadRuntime({ ...projection, ...input })?.lastErrorSource;
+    expect(source({ turnItems: [{ ...item, completedAt: later, updatedAt: later }] })).toBe(
+      "limit-error@2026-07-28T10:05:00.000Z",
+    );
+    expect(source({ turnItems: [{ ...item, updatedAt: later }] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
+    const session = (lastError: string) => ({
       id: ProviderSessionId.make("failed-session"),
-      driver: ProviderDriverKind.make("codex"),
+      driver: ProviderDriverKind.make("pi"),
       providerInstanceId: v2Projection.thread.providerInstanceId,
       status: "error" as const,
       cwd: "/repo",
       model: null,
       capabilities: {} as never,
       createdAt: now,
-      updatedAt: refailedAt,
-      lastError: "Session failed",
-    };
-    // The text is the session's, so the source is too, and a newer run starting keeps it.
-    const withSession = { ...projection, providerSessions: [session] };
-    expect(deriveThreadRuntime(withSession)?.lastErrorSource).toBe(
-      "failed-session@2026-07-28T10:05:00.000Z",
+      updatedAt: later,
+      lastError,
+    });
+    // A session that repeats the failure keeps its source, whatever the session's own updates.
+    expect(source({ providerSessions: [session("Plan limit reached")] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
+    // Any other session error belongs to the latest ended run, kept while a newer run starts.
+    const ended = { ...failed, completedAt: now };
+    expect(source({ runs: [ended], providerSessions: [session("Session failed")] })).toBe(
+      "limited@2026-07-28T10:00:00.000Z",
     );
     expect(
-      deriveThreadRuntime({ ...withSession, runs: [failed, run("next", 2, "starting")] })
-        ?.lastErrorSource,
-    ).toBe("failed-session@2026-07-28T10:05:00.000Z");
+      source({
+        runs: [ended, run("next", 2, "starting")],
+        providerSessions: [session("Session failed")],
+      }),
+    ).toBe("limited@2026-07-28T10:00:00.000Z");
     expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     expect(
       deriveThreadRuntime({

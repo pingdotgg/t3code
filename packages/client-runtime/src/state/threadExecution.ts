@@ -396,13 +396,34 @@ export function deriveThreadStructureRuntime(
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(failureItem?.failure ?? null, sessionError),
-    lastErrorSource:
-      sessionError !== null && providerSession !== undefined
-        ? `${providerSession.id}@${DateTime.formatIso(providerSession.updatedAt)}`
-        : failureItem === null
-          ? null
-          : `${failureItem.id}@${DateTime.formatIso(failureItem.updatedAt)}`,
+    lastErrorSource: threadErrorSource(failureItem, sessionError, projection.runs),
   };
+}
+
+const isoOrEmpty = (at: DateTime.Utc | null) => (at === null ? "" : DateTime.formatIso(at));
+
+/**
+ * A session error that repeats the run's failure is that failure: providers rewrite session
+ * timestamps on unrelated updates. Any other session error belongs to the latest ended run.
+ */
+function threadErrorSource(
+  failureItem: ReturnType<typeof latestRootProviderFailureItem>,
+  sessionError: string | null,
+  runs: ThreadStructure["runs"],
+): string | null {
+  if (
+    failureItem !== null &&
+    (sessionError === null || sessionError === failureItem.failure.message)
+  ) {
+    return `${failureItem.id}@${isoOrEmpty(failureItem.completedAt)}`;
+  }
+  if (sessionError === null) return null;
+  let ended: ThreadStructure["runs"][number] | null = null;
+  for (const run of runs) {
+    if (run.status !== "failed" && run.status !== "completed") continue;
+    if (ended === null || run.ordinal > ended.ordinal) ended = run;
+  }
+  return ended === null ? null : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
 }
 
 export interface UsageLimitNoticeRows {
