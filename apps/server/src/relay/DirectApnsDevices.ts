@@ -52,7 +52,7 @@ const make = Effect.gen(function* () {
         onSome: (bytes) =>
           decodeDevices(new TextDecoder().decode(bytes)).pipe(
             // A corrupt file must not block registering a fresh token.
-            Effect.catch(() => Effect.succeed<ReadonlyArray<StoredPushDevice>>([])),
+            Effect.orElseSucceed((): ReadonlyArray<StoredPushDevice> => []),
           ),
       }),
     ),
