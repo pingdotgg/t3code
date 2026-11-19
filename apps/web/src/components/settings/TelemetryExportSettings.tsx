@@ -260,7 +260,9 @@ function TelemetryExportForm() {
                     type="button"
                     size="sm"
                     variant="outline"
-                    disabled={!isHttpUrl(url) || checks[key]?.result === null}
+                    disabled={
+                      !isHttpUrl(url) || (checks[key]?.url === url && checks[key].result === null)
+                    }
                     onClick={() => void checkEndpoint(key, signal, url)}
                   >
                     <T>Test</T>
