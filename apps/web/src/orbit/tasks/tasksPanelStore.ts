@@ -1,11 +1,14 @@
-import type { OrbitTaskInsightsPeriod, OrbitTaskLane } from "@t3tools/client-runtime/orbit-gateway";
+import type {
+  InsightId,
+  OrbitTaskInsightsPeriod,
+  OrbitTaskLane,
+} from "@t3tools/client-runtime/orbit-gateway";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { resolveStorage } from "../../lib/storage";
 import type { PullRequestDetailTab } from "../../rightPanelStore";
-import type { InsightId } from "./tasksInsights.logic";
 
 // Where each thread's Tasks tab is, kept outside the panel because only the active surface
 // mounts. Keyed per thread like the panel's tabs; other panel apps keep their own state.

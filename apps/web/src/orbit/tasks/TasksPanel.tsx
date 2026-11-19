@@ -52,7 +52,7 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { useOrbitTaskNavigation } from "./orbitAgentConversation";
 import { TaskDetail, type TasksPanelHost } from "./TaskDetail";
 import { TasksInsightsStrip } from "./TasksInsights";
-import { INSIGHT_PERIODS, INSIGHTS } from "./tasksInsights.logic";
+import { INSIGHT_PERIODS, INSIGHTS } from "@t3tools/client-runtime/orbit-gateway";
 import { INPUT_TONE } from "./taskDetail.logic";
 import {
   followTasksUpdates,

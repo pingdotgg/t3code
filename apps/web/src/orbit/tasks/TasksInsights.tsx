@@ -1,7 +1,15 @@
-import type {
-  OrbitTaskInsights,
-  OrbitTaskInsightsPeriod,
-  OrbitTasksResult,
+import {
+  formatInsightValue,
+  INSIGHTS,
+  insightChangeTone,
+  insightResults,
+  insightTrend,
+  type InsightId,
+  type InsightResult,
+  type InsightSpec,
+  type OrbitTaskInsights,
+  type OrbitTaskInsightsPeriod,
+  type OrbitTasksResult,
 } from "@t3tools/client-runtime/orbit-gateway";
 import { msg, useGT, useMessages } from "gt-react";
 import { TrendingDownIcon, TrendingUpIcon, XIcon } from "lucide-react";
@@ -14,18 +22,7 @@ import { cn } from "~/lib/utils";
 
 import { Sparkline, TrendChart } from "./InsightCharts";
 import { loadOrbitTasksClient } from "./orbitTasksClient";
-import {
-  formatInsightValue,
-  INSIGHTS,
-  insightByProvider,
-  insightChangeTone,
-  insightProviderName,
-  insightResults,
-  insightTrend,
-  type InsightId,
-  type InsightResult,
-  type InsightSpec,
-} from "./tasksInsights.logic";
+import { insightByProvider, insightProviderName } from "./tasksInsights.logic";
 import { useTasksBoardSettings } from "./tasksPanelStore";
 
 /** Orbit's numbers move slowly; the strip re-reads every few minutes, like Orbit's own board. */

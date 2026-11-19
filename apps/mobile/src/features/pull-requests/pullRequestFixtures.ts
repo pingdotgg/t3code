@@ -9,10 +9,12 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
 
-// Design and screenshot data only: with `EXPO_PUBLIC_CONN_TASKS_FIXTURE=1` at build time, the
+import { TASKS_FIXTURES } from "../tasks/tasksFixtureMode";
+
+// Design and screenshot data only: with `EXPO_PUBLIC_CONN_TASKS_FIXTURE=1` in a development build, the
 // fixture task's pull request opens this one, decoded through the real schemas. It mirrors the
 // approved iPhone mockup (Tasks and PR screens, 2026-11-19).
-const USE_FIXTURES = process.env.EXPO_PUBLIC_CONN_TASKS_FIXTURE === "1";
+const USE_FIXTURES = TASKS_FIXTURES;
 
 const FIXTURE_ENVIRONMENT = "fixture-pull-requests";
 const MINUTE = 60_000;

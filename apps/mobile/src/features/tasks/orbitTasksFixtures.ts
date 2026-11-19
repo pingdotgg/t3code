@@ -2,7 +2,7 @@
 import type { OrbitGatewayTransport } from "@t3tools/client-runtime/orbit-gateway";
 
 // Design and screenshot data only, in the Gateway's wire form so it runs through the real decoder.
-// It mirrors the approved mobile mockup. Only builds with EXPO_PUBLIC_CONN_TASKS_FIXTURE=1 use it.
+// It mirrors the approved mobile mockup. Only development builds with EXPO_PUBLIC_CONN_TASKS_FIXTURE=1 use it.
 
 const ENV = "a5bf17aa-d514-4c78-a644-edf55dba343f";
 const MINUTE = 60_000;
@@ -387,9 +387,65 @@ function wireDetail(task: FixtureTask, now: number) {
 const json = (status: number, body: unknown) => ({ status, body: JSON.stringify(body) });
 
 /** A Gateway transport that answers the two Conn Tasks routes from the mockup's data. */
-export function fixtureOrbitTasksTransport(): OrbitGatewayTransport {
+const DAY = 24 * 60 * MINUTE;
+
+/**
+ * The board's numbers, as Orbit's `task-insights` would send them. Merge wait stays out: it needs
+ * the PR's opened time (Orbit 6042), so the strip shows its dash.
+ */
+function wireInsights(now: number) {
+  const merges = [
+    0, 1, 0, 2, 1, 0, 0, 1, 1, 0, 2, 0, 1, 0, 1, 0, 0, 1, 2, 0, 1, 1, 0, 1, 0, 2, 1, 0, 1, 1,
+  ];
+  const day = (index: number) => new Date(now - (29 - index) * DAY).toISOString().slice(0, 10);
+  return {
+    data: {
+      period: "30d",
+      current: {
+        tasks: 27,
+        merged: 22,
+        tokens: 941_600_000,
+        tokens_per_merged_pr: 42_800_000,
+        lead_time_ms: 15_120_000,
+        pr_first_pass: 0.58,
+        wasted_share: 0.18,
+        review_rounds: 1.6,
+      },
+      previous: {
+        tasks: 24,
+        merged: 18,
+        tokens: 820_000_000,
+        tokens_per_merged_pr: 45_600_000,
+        lead_time_ms: 18_000_000,
+        pr_first_pass: 0.52,
+        wasted_share: 0.21,
+        review_rounds: 1.8,
+      },
+      weekly: [51.2, 47.9, 44.1, 42.8].map((millions, index) => ({
+        week_start: day(index * 7),
+        tokens_per_merged_pr: millions * 1_000_000,
+      })),
+      daily: merges.map((merged, index) => ({ date: day(index), merged })),
+    },
+  };
+}
+
+/**
+ * The Gateway as fixtures. `insights: "unhandled"` answers the board's numbers the way the live
+ * Gateway does until Orbit 6040, so the strip shows its dashes.
+ */
+export function fixtureOrbitTasksTransport(
+  options: { readonly insights?: "fixture" | "unhandled" } = {},
+): OrbitGatewayTransport {
   return async (request) => {
     const now = Date.now();
+    if (request.path === "/task-insights")
+      return options.insights === "unhandled"
+        ? json(500, {
+            status: 500,
+            error: { code: "gateway.unhandled", message: "Not completed.", details: {} },
+          })
+        : json(200, wireInsights(now));
     if (request.path === "/tasks" && Number(request.query?.limit ?? 0) > 100)
       return json(422, {
         status: 422,

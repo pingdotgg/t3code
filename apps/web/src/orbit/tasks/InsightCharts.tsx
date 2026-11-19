@@ -3,7 +3,7 @@ import { useId, useLayoutEffect, useRef, useState, type PointerEvent } from "rea
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 
-import type { TrendPoint } from "./tasksInsights.logic";
+import type { TrendPoint } from "@t3tools/client-runtime/orbit-gateway";
 
 // Plain SVG measured to its box, so lines and text stay crisp at any width. Lines take theme
 // colours; text stays in text colours.

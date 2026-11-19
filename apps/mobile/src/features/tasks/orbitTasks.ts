@@ -4,6 +4,8 @@ import {
   orbitTaskLane,
   type OrbitGatewayTransport,
   type OrbitTaskDetail,
+  type OrbitTaskInsights,
+  type OrbitTaskInsightsPeriod,
   type OrbitTasksClient,
   type OrbitTasksLiveStatus,
   type OrbitTasksResult,
@@ -11,17 +13,19 @@ import {
 } from "@t3tools/client-runtime/orbit-gateway";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AppState } from "react-native";
 
 import { orbitGatewayTransport } from "../orbit/orbitGatewayClient";
 import { fixtureOrbitTasksTransport } from "./orbitTasksFixtures";
 import { listAllTasks } from "./taskList";
+import { pollWhileActive } from "./taskInsightsPolling";
+import { TASKS_FIXTURE_INSIGHTS, TASKS_FIXTURES } from "./tasksFixtureMode";
 
-// Design and screenshot builds only: `EXPO_PUBLIC_CONN_TASKS_FIXTURE=1` at build time swaps the
-// Gateway for fixture data in the Gateway's wire form, so it still runs through the real decoder.
-const USE_FIXTURES = process.env.EXPO_PUBLIC_CONN_TASKS_FIXTURE === "1";
+// Fixture data stays in the Gateway's wire form, so it still runs through the real decoder.
+const USE_FIXTURES = TASKS_FIXTURES;
 
 const transport: OrbitGatewayTransport = USE_FIXTURES
-  ? fixtureOrbitTasksTransport()
+  ? fixtureOrbitTasksTransport({ insights: TASKS_FIXTURE_INSIGHTS })
   : orbitGatewayTransport;
 
 /** One client for the app, so a realtime notice reaches every open Tasks screen. */
@@ -128,6 +132,43 @@ export function useOrbitTask(taskId: number) {
     setRefreshing(false);
   };
   return { state, refreshing, refresh };
+}
+
+/** Orbit's numbers move slowly; the strip re-reads every few minutes, like the desktop board. */
+const INSIGHTS_POLL_MS = 300_000;
+
+/**
+ * The board's insights for the last `period`, read while the Tasks list is on screen. A failed
+ * read replaces the numbers: stale numbers would read as current.
+ */
+export function useOrbitTaskInsights(period: OrbitTaskInsightsPeriod) {
+  const [state, setState] = useState<OrbitTasksState<OrbitTaskInsights>>({ status: "loading" });
+  useFocusEffect(
+    useCallback(() => {
+      let disposed = false;
+      const stop = pollWhileActive({
+        intervalMs: INSIGHTS_POLL_MS,
+        app: {
+          isActive: () => AppState.currentState === "active",
+          onActive: (listener) => {
+            const subscription = AppState.addEventListener("change", (next) => {
+              if (next === "active") listener();
+            });
+            return () => subscription.remove();
+          },
+        },
+        read: () =>
+          void orbitTasksClient.getTaskInsights({ period }).then((result) => {
+            if (!disposed) setState(result);
+          }),
+      });
+      return () => {
+        disposed = true;
+        stop();
+      };
+    }, [period]),
+  );
+  return state;
 }
 
 /** Re-renders every 30 s while `active`, for minute timers on running rows. */

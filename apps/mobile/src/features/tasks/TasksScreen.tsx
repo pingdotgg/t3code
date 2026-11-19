@@ -18,6 +18,7 @@ import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
 import { useWorkspacePhoneBar } from "../layout/workspace/useWorkspacePhoneBar";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { useNow, useOrbitTaskList } from "./orbitTasks";
+import { TaskInsightsStrip } from "./TaskInsightsStrip";
 import {
   MOBILE_TASK_LANES,
   TASK_LANE_LABELS,
@@ -171,6 +172,7 @@ export function TasksScreen() {
         }
         alwaysBounceVertical
       >
+        <TaskInsightsStrip />
         {state.status === "loading" ? (
           <ActivityIndicator className="mt-10" />
         ) : state.status === "error" ? (
