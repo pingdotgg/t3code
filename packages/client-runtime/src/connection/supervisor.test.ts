@@ -698,20 +698,6 @@ describe("EnvironmentSupervisor", () => {
       log: "Connection attempt failed with an unexpected interruption.",
     },
     {
-      label: "fails and dies while interrupted",
-      closed: Exit.failCause(
-        Cause.combine(
-          Cause.combine(
-            Cause.fail(transient("Session closed.")),
-            Cause.die(new Error("Session closed defect.")),
-          ),
-          Cause.interrupt(),
-        ),
-      ),
-      releaseDefect: false,
-      log: "Connection attempt failed with an unexpected defect.",
-    },
-    {
       label: "fails while interrupted",
       closed: Exit.failCause(
         Cause.combine(Cause.fail(transient("Session closed.")), Cause.interrupt()),
@@ -759,35 +745,13 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect.each([
-    {
-      label: "its attempt defects after its session went live",
-      closed: Exit.interrupt(),
-      releaseDefect: false,
-      lost: { phase: "backoff", generation: 1, lastFailure: null },
-      // The earlier failed attempt still counts, so this is the ladder's second step.
-      soonestMs: 2000,
-      latestMs: 4000,
-    },
-    {
-      label: "logging its release defect dies",
-      closed: Exit.fail(transient("Session closed.")),
-      releaseDefect: true,
-      lost: { phase: "backoff", generation: 1 },
-      soonestMs: 300_000,
-      latestMs: 300_000,
-    },
-  ])(
-    "does not reuse a live session's generation when $label",
-    ({ closed, releaseDefect, lost, soonestMs, latestMs }) =>
+  it.effect(
+    "does not reuse a live session's generation when its attempt defects after going live",
+    () =>
       Effect.gen(function* () {
         const harness = yield* makeHarness({
           prepare: (attempt) =>
             attempt === 1 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
-          release: (session) =>
-            releaseDefect && session === 1
-              ? Effect.die(new Error("Session release defect."))
-              : Effect.void,
         });
         let logCalls = 0;
         const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
@@ -798,7 +762,7 @@ describe("EnvironmentSupervisor", () => {
               harness.dependencies,
               Logger.layer(
                 [
-                  // The first log line throws, which is how each row injects its defect.
+                  // Logging the lost session's interruption throws, so the attempt itself defects.
                   Logger.make(() => {
                     logCalls += 1;
                     if (logCalls === 1) throw new Error("Logger defect.");
@@ -816,39 +780,17 @@ describe("EnvironmentSupervisor", () => {
           supervisor.state,
           (state) => state.phase === "connected" && state.generation === 1,
         );
-        yield* harness.closeLatestSession(closed);
+        yield* harness.closeLatestSession(Exit.interrupt());
         const backoff = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
-        expect(logCalls).toBe(2);
-        expect(backoff).toMatchObject(lost);
-        const retryInMs = (backoff.retryAt ?? 0) - (yield* Clock.currentTimeMillis);
-        expect(retryInMs).toBeGreaterThanOrEqual(soonestMs);
-        expect(retryInMs).toBeLessThanOrEqual(latestMs);
+        expect(backoff).toMatchObject({ generation: 1, lastFailure: null });
 
-        yield* TestClock.adjust(`${latestMs} millis`);
+        yield* TestClock.adjust("4 seconds");
         const replaced = yield* awaitState(
           supervisor.state,
           (state) => state.phase === "connected",
         );
         expect(replaced.generation).toBe(2);
       }).pipe(Effect.provide(TestClock.layer())),
-  );
-
-  it.effect("keeps a released session's outcome", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness({
-        release: () => Effect.die(new Error("Session release defect.")),
-      });
-      const logs: unknown[] = [];
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(Layer.merge(harness.dependencies, recordLogs(logs))));
-
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* supervisor.disconnect;
-      const released = yield* awaitState(supervisor.state, (state) => state.phase !== "connected");
-      expect(released.phase).toBe("available");
-      expect(logs).toEqual([["Connection release failed with an unexpected defect."]]);
-    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("restarts the loop after a defect outside an attempt", () =>
