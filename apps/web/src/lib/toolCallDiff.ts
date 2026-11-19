@@ -53,6 +53,31 @@ function toolCallPatch(item: Pick<FileChange, "diffStr" | "fileName" | "changes"
   return `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${newPath}`)}\n--- ${before}\n+++ ${after}\n${patch.trimStart()}`;
 }
 
+// Claude records absolute paths; name files under the workspace relative to it, as other diffs do.
+// Only header lines, from the start or a `diff --git` line up to the first hunk, are rewritten.
+function relativeHeaderPaths(patch: string | undefined, workspaceRoot: string | undefined) {
+  const root = workspaceRoot?.replace(/[\\/]+$/, "");
+  if (!patch || !root) return patch;
+  // Separators match / and \, which a quoted header escapes as \\. Git's a/ and b/ can stand in
+  // for an absolute path's leading separator.
+  const segments = root
+    .split(/[\\/]+/)
+    .map((segment) => segment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const prefix = new RegExp(
+    String.raw`((?:^|[ "])(?:[ab]/)?)[\\/]*${segments.filter(Boolean).join(String.raw`[\\/]+`)}[\\/]+`,
+    /^[A-Za-z]:/.test(root) ? "gi" : "g",
+  );
+  let inHeader = true;
+  return patch
+    .split("\n")
+    .map((line) => {
+      if (line.startsWith("diff --git ")) inHeader = true;
+      else if (line.startsWith("@@")) inHeader = false;
+      return inHeader ? line.replace(prefix, "$1") : line;
+    })
+    .join("\n");
+}
+
 function recordedText(value: string | undefined) {
   const suffix = "\n… output truncated for transport";
   const truncated = value !== undefined && value.endsWith(suffix);
@@ -61,6 +86,7 @@ function recordedText(value: string | undefined) {
 
 export function toolCallDiff(
   item: Pick<FileChange, "diffStr" | "fileName" | "changes" | "oldStr" | "newStr">,
+  workspaceRoot?: string,
   resolve: MessageResolver = m,
 ) {
   const diff = recordedText(item.diffStr);
@@ -69,7 +95,10 @@ export function toolCallDiff(
   const before = recordedText(item.oldStr ?? (operation === "delete" ? emptyContent : undefined));
   const after = recordedText(item.newStr ?? (operation === "add" ? emptyContent : undefined));
   return {
-    patch: toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
+    patch: relativeHeaderPaths(
+      toolCallPatch({ ...item, ...(diff.text === undefined ? {} : { diffStr: diff.text }) }),
+      workspaceRoot,
+    ),
     content: diff.text?.trim()
       ? []
       : [

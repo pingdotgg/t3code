@@ -104,6 +104,48 @@ describe("toolCallDiff", () => {
     });
   });
 
+  it("names files under the workspace relative to it in headers only", () => {
+    const root = "/Users/me/project";
+    const paths = (patch: string | undefined) => {
+      const rendered = getRenderablePatch(patch);
+      if (rendered?.kind !== "files") throw new Error("Expected a file diff");
+      return rendered.files.map((file) => resolveFileDiffPath(file));
+    };
+    // Claude's Edit: absolute headers; hunk lines that look like headers keep the root.
+    const claude = `--- ${root}/docs/plan.md\n+++ ${root}/docs/plan.md\n@@ -2 +2 @@\n-- ${root}/x\n++ ${root}/y\n`;
+    const { patch } = toolCallDiff({ fileName: `${root}/docs/plan.md`, diffStr: claude }, root);
+    expect(paths(patch)).toEqual(["docs/plan.md"]);
+    expect(patch).toContain(`\n-- ${root}/x\n++ ${root}/y\n`);
+    // Synthesized headers, a trailing separator on the root, and a path outside it.
+    const hunk = "@@ -1 +1 @@\n-x\n+y\n";
+    expect(
+      paths(toolCallDiff({ fileName: `${root}/src/a.ts`, diffStr: hunk }, `${root}/`).patch),
+    ).toEqual(["src/a.ts"]);
+    expect(paths(toolCallDiff({ fileName: "/elsewhere/b.ts", diffStr: hunk }, root).patch)).toEqual(
+      ["/elsewhere/b.ts"],
+    );
+    // Each file of a multi-file patch; a path that merely contains the root keeps it.
+    const twoFiles = [
+      `diff --git a${root}/a.ts b${root}/a.ts`,
+      `--- a${root}/a.ts`,
+      `+++ b${root}/a.ts`,
+      hunk.trimEnd(),
+      `diff --git a/backup${root}/b.ts b/backup${root}/b.ts`,
+      `--- a/backup${root}/b.ts`,
+      `+++ b/backup${root}/b.ts`,
+      hunk,
+    ].join("\n");
+    expect(
+      paths(toolCallDiff({ fileName: `${root}/a.ts`, diffStr: twoFiles }, root).patch),
+    ).toEqual(["a.ts", `backup${root}/b.ts`]);
+    // Windows paths, which a quoted header escapes, compared without case.
+    const windows = toolCallDiff(
+      { fileName: "C:\\repo\\src\\a.ts", diffStr: hunk },
+      "c:\\repo",
+    ).patch;
+    expect(paths(windows)).toEqual(["src\\a.ts"]);
+  });
+
   it("preserves complete patches and unsupported provider output", () => {
     for (const operation of ["add", "delete"]) {
       const diffStr = [
