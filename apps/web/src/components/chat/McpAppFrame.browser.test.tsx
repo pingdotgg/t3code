@@ -14,6 +14,10 @@ addEventListener("message", (event) => {
   if (message === "close") {
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" }, "*");
     parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/request-teardown" }, "*");
+  } else if (message === "call-tool") {
+    parent.postMessage({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "change", arguments: {} } }, "*");
+  } else if (message?.id === "call") {
+    parent.postMessage({ toolCallAnswer: message }, "*");
   } else if (message?.method === "ui/resource-teardown" && !answered) {
     answered = true;
     parent.postMessage({ jsonrpc: "2.0", id: message.id, result: {} }, "*");
@@ -30,7 +34,46 @@ vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
   }),
 }));
 
+const mocks = vi.hoisted(() => ({
+  requestConfirmDialog: vi.fn(async () => false),
+}));
+
+vi.mock(import("~/confirmDialog"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  requestConfirmDialog: mocks.requestConfirmDialog,
+}));
+
+// The app's tool is callable from the app and not marked read-only.
+vi.mock(import("~/state/use-atom-command"), () => ({
+  useAtomCommand: (() => async () => ({
+    _tag: "Success",
+    value: { callable: true, readOnly: false, content: [] },
+  })) as never,
+}));
+
 import { McpAppFrame } from "./McpAppFrame";
+
+const setup = () => {
+  mocks.requestConfirmDialog.mockClear();
+};
+
+const renderApp = () =>
+  render(
+    <McpAppFrame
+      environmentId={EnvironmentId.make("environment")}
+      threadId={ThreadId.make("thread")}
+      conversationThreadId={ThreadId.make("thread")}
+      itemId={TurnItemId.make("item")}
+      revision="1"
+      app={{
+        attachmentId: "attachment",
+        server: "Demo",
+        tool: "show",
+        resourceUri: "ui://demo/app",
+      }}
+      onSendMessage={undefined}
+    />,
+  );
 
 const nextInitializedFrom = () =>
   new Promise<MessageEventSource>((resolve) => {
@@ -42,25 +85,34 @@ const nextInitializedFrom = () =>
     window.addEventListener("message", listen);
   });
 
+const nextToolCallAnswer = () =>
+  new Promise<{ readonly error?: unknown; readonly result?: unknown }>((resolve) => {
+    const listen = (event: MessageEvent) => {
+      if (event.data?.toolCallAnswer === undefined) return;
+      window.removeEventListener("message", listen);
+      resolve(event.data.toolCallAnswer);
+    };
+    window.addEventListener("message", listen);
+  });
+
 describe("McpAppFrame", () => {
+  it("refuses a non-read-only tool call the app makes without a click, without asking", async () => {
+    setup();
+    const initialized = nextInitializedFrom();
+    await using _screen = await renderApp();
+    const app = (await initialized) as Window;
+
+    const answer = nextToolCallAnswer();
+    app.postMessage("call-tool", "*");
+
+    expect((await answer).error).toBeDefined();
+    expect(mocks.requestConfirmDialog).not.toHaveBeenCalled();
+  });
+
   it("keeps a reopened app when the old document's second teardown finishes late", async () => {
+    setup();
     const firstInitialized = nextInitializedFrom();
-    await using screen = await render(
-      <McpAppFrame
-        environmentId={EnvironmentId.make("environment")}
-        threadId={ThreadId.make("thread")}
-        conversationThreadId={ThreadId.make("thread")}
-        itemId={TurnItemId.make("item")}
-        revision="1"
-        app={{
-          attachmentId: "attachment",
-          server: "Demo",
-          tool: "show",
-          resourceUri: "ui://demo/app",
-        }}
-        onSendMessage={undefined}
-      />,
-    );
+    await using screen = await renderApp();
     const firstApp = await firstInitialized;
     using _timers = fakeTimers();
 
