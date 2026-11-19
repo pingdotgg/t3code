@@ -2,7 +2,7 @@
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
 The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
-The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
+The PRs, in stack order, are B0, B1, S1, K1, B2, U1, B3, W1, B4, B5, B6, B7, B8, B9, B10, B11, B12, and O1.
 
 ## How to read this
 
@@ -11,6 +11,8 @@ One box is one unit of work. Every box names the evidence that checks it. A nest
 The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator granted standing merge approval. Wherever this plan says the operator lands a PR, the root merges it bottom-up with a merge commit once its verdict is clean, retargets the next PR to `main`, and keeps every remote branch.
 
 Speed comes last, by the operator's call. Each PR still runs its perf probe and records the numbers, which checks its perf boxes. A missed perf rule never blocks a merge. O1, the last PR, fixes every recorded miss.
+
+The board is a UI over T3's engine. Every feature drives a capability T3 already has, and a PR that needs one T3 lacks stops and reports it instead of building engine logic in the board. Screens take their layout and components from Orca, drawn in the board's T3 dark tokens.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -35,10 +37,10 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Spawn one owner per PR with the full lifecycle the execution playbook names.
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
-  - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. B4 after B3. B5 after B4. B6 after B5.
+  - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. U1 after B2. B3 after U1. W1 after B3. B4 after W1. B5 after B4. B6 after B5.
   - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11. O1 after B12.
 - [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
-- [ ] Hold the review gate. B1, B2, U1, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
+- [ ] Hold the review gate. B1, B2, U1, W1, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They post their screenshots and video in chat at merge, so the operator can ask for a follow-up PR.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
 ### PR mechanics, for every PR
@@ -517,9 +519,68 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B3 to the base-branch stack and the operator lands it bottom-up.
 
-## Show the engine version and update the engine from the app (B4)
+## Add an Orca-style settings screen with worktree setup and cleanup (W1)
 
 **Depends on.** B3.
+
+**Files.**
+
+- [ ] Create `apps/board/src/settings/SettingsScreen.tsx` and `apps/board/src/settings/SettingsNav.tsx`.
+- [ ] Create `apps/board/src/settings/WorktreesPage.tsx` and `apps/board/src/settings/CleanupPage.tsx`.
+- [ ] Create `apps/board/src/settings/settingsModel.ts` and `apps/board/src/settings/settingsModel.test.ts`.
+- [ ] Edit `apps/board/src/sidebar/Sidebar.tsx` so the footer's settings icon opens the screen.
+
+**Build.**
+
+- [ ] In `SettingsScreen.tsx`, lay the screen out like Orca's settings, with a category list on the left, the selected page on the right, and a back control. Use U1's rows and the board's T3 dark tokens.
+- [ ] In `WorktreesPage.tsx`, edit T3's own worktree settings for the environment, with a per-project override, the way T3's Settings, then Worktrees page does. The fields are the project setup script that runs when T3 creates a worktree (T3's `ProjectSetupScriptRunner`), the worktree location, and the worktree branch naming. Read and write them through the engine's settings RPCs in `@t3tools/contracts`, so T3 runs the script. Edit the script in a multi-line field with a monospace font.
+- [ ] In `CleanupPage.tsx`, drive T3's storage cleanup. Show the automatic cleanup policies (inactive days, after settle, after merge, unchanged, delete with deleted threads, and which local files to keep), with a per-project override. Add **Delete now**, the latest results with each removed or kept worktree and its reason, and T3's manual delete for a single worktree. Follow `docs/user/project-settings.md:229-262`.
+- [ ] In `settingsModel.ts`, turn the engine's settings into page values and back, keeping inherited and overridden values apart.
+
+**You see.**
+
+- [ ] The sidebar's settings icon opens an Orca-style settings screen where the operator edits the worktree setup script, the location, and the branch naming, and cleans up worktrees now or by policy.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `settingsModel.test.ts` maps a fixed settings payload with one project override into literal page values, marks which ones are inherited, and turns an edited setup script back into the literal RPC input. Run `vp test run src/settings/settingsModel.test.ts` from `apps/board`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk has no settings screen, so record that fact. Open the screen at head. Save `w1-settings.png`. Pass when the category list and the Worktrees page render in the Orca layout.
+- [ ] Lane 2. Save a setup script for a lane project, then create a worktree for it through the engine. Save `w1-setup-script.txt`. Pass when the script's output appears in the new worktree.
+- [ ] Lane 3. Set a project override for the script, then clear it. Save `w1-override.png`. Pass when the page shows overridden, then inherited.
+- [ ] Lane 4. Change the worktree location to a scratch folder and create a worktree. Save `w1-location.txt`. Pass when the worktree lands in that folder.
+- [ ] Lane 5. Change the branch naming prefix and create a worktree. Save `w1-branch.txt`. Pass when the new branch uses that prefix.
+- [ ] Lane 6. Leave a settled lane thread with a worktree, set settled retention to 0, and click **Delete now**. Save `w1-delete-now.png`. Pass when the results list that worktree as removed and its folder is gone.
+- [ ] Lane 7. Repeat lane 6 with uncommitted changes in the worktree. Save `w1-kept.png`. Pass when the results list it as kept with the local-changes reason.
+- [ ] Lane 8. Delete one worktree by hand from the page. Save `w1-manual.png`. Pass when T3's confirm appears and the worktree is removed after it.
+- [ ] Lane 9. Run the Windows app and open the screen. Save `w1-windows.png` from a full-window capture. Pass when the layout fits the window with the usage bar still at the bottom.
+- [ ] Lane 10. Run the boundary check and the standards check at head. Save `w1-checks.txt`. Pass when both exit 0.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Time from clicking the settings icon to the Worktrees page's first paint. Trunk has no screen, so the budget is absolute.
+- [ ] Probe. Log `board:settings-click` and `board:settings-painted` ten times.
+- [ ] Baseline. Record that trunk has no screen, then record the head times.
+- [ ] Rule. The median stays under 300 ms, recorded for O1.
+
+**Review gate.** The operator reviews at merge.
+
+- [ ] Copy lane 1, 6, and 9 screenshots into `apps/board/docs/media/w1-review-<slug>.png`.
+- [ ] Record a 30 to 60 second video of the change from a lane. Save it as `apps/board/docs/media/w1-review.mp4`.
+- [ ] Post the screenshots and the video in chat for the operator at merge.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends W1 to the base-branch stack and the operator lands it bottom-up.
+
+## Show the engine version and update the engine from the app (B4)
+
+**Depends on.** W1.
 
 **Files.**
 
@@ -894,6 +955,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] In `prStatus.ts`, find each ticket's PR from `tickets.json` or the owner thread's `pullRequests`, and read checks with `pullRequests.checks`.
 - [ ] In `domain/readiness.ts`, compute the six merge-ready conditions from the ticket's verdicts, its fix rounds, the parent ticket's state, its evidence paths, and live CI. Flag a check that has run longer than 20 minutes as stuck.
 - [ ] In `PrChip.tsx`, show the PR number, state, checks state, and mergeability on the ticket frame.
+- [ ] On a merged ticket's frame, offer **Remove worktree**, which runs T3's manual worktree delete with its confirm.
 - [ ] In `ReadinessChecklist.tsx`, show each condition as met or missing in the peek drawer and on merge approval cards.
 
 **You see.**
