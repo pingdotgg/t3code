@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -608,6 +609,87 @@ it.effect.each(["run.interrupt", "thread.stop"] as const)(
         walks.map((row) => row.command_id),
         [stopCommandId],
       );
+    }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect.each([
+  { completed: false, stopDelegatedTasks: true },
+  { completed: true, stopDelegatedTasks: true },
+  { completed: false, stopDelegatedTasks: false },
+])(
+  "thread Stop reaches remote-only tasks (completed: $completed, walk: $stopDelegatedTasks)",
+  ({ completed, stopDelegatedTasks }) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const parentThreadId = ThreadId.make("thread:remote-only-stop");
+      yield* createWatchingThread(parentThreadId, 1);
+      yield* send(parentThreadId, "parent", "start_immediately");
+      const parentRun = (yield* orchestrator.getThreadProjection(parentThreadId)).runs[0]!;
+      yield* orchestrator.dispatch({
+        type: "delegated_task.remote.request",
+        commandId: CommandId.make("delegate:remote-only-stop"),
+        parentThreadId,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Work in the linked environment",
+        modelSelection,
+        driver: ProviderDriverKind.make("remote"),
+        remoteChild: {
+          environmentId: EnvironmentId.make("environment:remote-only-stop"),
+          threadId: ThreadId.make("thread:remote-child"),
+          label: "Linked environment",
+        },
+      });
+      const task = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      if (completed) {
+        yield* orchestrator.dispatch({
+          type: "delegated_task.remote.complete",
+          commandId: CommandId.make("complete:remote-only-stop"),
+          parentThreadId,
+          taskId: task.id,
+          status: "completed",
+          result: "Saved result",
+          stoppedThere: "ran-out",
+        });
+        const now = yield* DateTime.now;
+        yield* projections.apply({
+          id: EventId.make("event:remote-only-stop:parent-completed"),
+          type: "run.updated",
+          threadId: parentThreadId,
+          runId: parentRun.id,
+          occurredAt: now,
+          payload: { ...parentRun, status: "completed", completedAt: now },
+        });
+      }
+      const commandId = CommandId.make("stop:remote-only-stop");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId,
+        threadId: parentThreadId,
+        ...(stopDelegatedTasks ? {} : { stopDelegatedTasks: false }),
+      });
+      const queued = yield* sql`
+        SELECT 1 FROM orchestration_v2_effect_outbox
+        WHERE command_id = ${commandId} AND effect_type = 'delegated-tasks.stop'
+      `;
+      assert.lengthOf(queued, stopDelegatedTasks ? 1 : 0);
+      if (queued.length > 0) {
+        yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId });
+      }
+      const after = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents[0]!;
+      assert.equal(after.childThreadId, null);
+      assert.equal(
+        after.status,
+        completed ? "completed" : stopDelegatedTasks ? "interrupted" : "running",
+      );
+      if (completed) {
+        assert.equal(after.result, "Saved result");
+        assert.equal(after.remoteChild?.stoppedThere, false);
+        assert.equal(after.remoteChild?.stopCount, 1);
+      }
     }).pipe(Effect.provide(layerTest)),
 );
 

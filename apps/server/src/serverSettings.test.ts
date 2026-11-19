@@ -786,20 +786,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
-  it.effect("buffers changes after a subscription is acquired but before it is consumed", () =>
-    Effect.scoped(
+  it.effect.each([false, true])(
+    "buffers committed changes before subscription consumption (interrupted=%s)",
+    (interrupted) =>
       Effect.gen(function* () {
-        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-        const changes = yield* serverSettings.subscribeChanges;
-
-        yield* serverSettings.updateSettings({
-          addProjectBaseDirectory: "~/next",
+        const fileSystem = yield* FileSystem.FileSystem;
+        const committed = yield* Deferred.make<void>();
+        const releaseCommit = yield* Deferred.make<void>();
+        let settingsPath: string | undefined;
+        const gatedFileSystem = FileSystem.FileSystem.of({
+          ...fileSystem,
+          rename: (from, to) =>
+            fileSystem
+              .rename(from, to)
+              .pipe(
+                Effect.tap(() =>
+                  to === settingsPath
+                    ? Deferred.succeed(committed, undefined).pipe(
+                        Effect.andThen(Deferred.await(releaseCommit)),
+                      )
+                    : Effect.void,
+                ),
+              ),
         });
-
-        const firstChange = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
-        assert.equal(Option.getOrUndefined(firstChange)?.addProjectBaseDirectory, "~/next");
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+            const config = yield* ServerConfig.ServerConfig;
+            yield* serverSettings.getSettings;
+            const changes = yield* serverSettings.subscribeChanges;
+            settingsPath = config.settingsPath;
+            const updating = yield* serverSettings
+              .updateSettings({ addProjectBaseDirectory: "~/next" })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(committed).pipe(
+              Effect.andThen(
+                interrupted
+                  ? Fiber.interrupt(updating).pipe(Effect.forkChild({ startImmediately: true }))
+                  : Effect.void,
+              ),
+              Effect.ensuring(Deferred.succeed(releaseCommit, undefined)),
+            );
+            const result = yield* Fiber.await(updating);
+            assert.equal(result._tag, interrupted ? "Failure" : "Success");
+            const persisted = yield* fileSystem
+              .readFileString(config.settingsPath)
+              .pipe(Effect.flatMap(decodeServerSettingsJson));
+            assert.equal(persisted.addProjectBaseDirectory, "~/next");
+            assert.equal(
+              (yield* serverSettings.getSettings).addProjectBaseDirectory,
+              persisted.addProjectBaseDirectory,
+            );
+            const firstChange = yield* changes.pipe(Stream.runHead, Effect.timeout("1 second"));
+            assert.equal(Option.getOrUndefined(firstChange)?.addProjectBaseDirectory, "~/next");
+          }),
+        ).pipe(
+          Effect.provide(
+            layerServerSettings().pipe(
+              Layer.provideMerge(Layer.succeed(FileSystem.FileSystem, gatedFileSystem)),
+            ),
+          ),
+        );
       }),
-    ).pipe(Effect.provide(layerServerSettings())),
   );
 
   it.effect("preserves saved usage settings during cleanup edits and removes custom prices", () =>
