@@ -502,12 +502,6 @@ export interface AcpAdapterV2Flavor {
     event: AcpSessionRuntime.AcpSessionRuntimeEvent,
   ) => Effect.Effect<void>;
   readonly subagentsIdleOnTurnCompletion?: boolean;
-  /**
-   * The agent reports no child lifecycle; it wakes with a reply of its own once its subagents
-   * finish. Running subagents hold the turn, and the end of a reply after the prompt settles
-   * completes them. Needs `replyEndsWithUsageUpdate`.
-   */
-  readonly subagentsEndWithPostSettleReply?: boolean;
   readonly supportsCompaction?: boolean;
   /** Sends `/compact` as a prompt, only to sessions whose advertised commands include `compact`. */
   readonly compactViaAdvertisedCommand?: boolean;
@@ -3711,21 +3705,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
         });
 
-        const completeRunningSubagents = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
-          for (const subagent of context.subagents.values()) {
-            if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) continue;
-            yield* emitSubagent(context, {
-              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
-              prompt: subagent.task.prompt,
-              title: subagent.task.title,
-              model: subagent.task.model,
-              status: "completed",
-              childSessionId: subagent.childSessionId,
-              result: null,
-            });
-          }
-        });
-
         const nativeChild = (sessionId: string) => {
           let child = nativeChildren.get(sessionId);
           if (child === undefined) {
@@ -4086,11 +4065,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (status === "pending" || status === "running") return true;
           }
           // finalizeTurn idles these subagents, so waiting on them would never settle.
-          if (
-            flavor.subagentsIdleOnTurnCompletion === true &&
-            flavor.subagentsEndWithPostSettleReply !== true
-          )
-            return false;
+          if (flavor.subagentsIdleOnTurnCompletion === true) return false;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
@@ -5439,13 +5414,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             } else if (context.nativeThreadId === notification.sessionId) {
               if (update.sessionUpdate === "usage_update") {
-                if (
-                  flavor.subagentsEndWithPostSettleReply === true &&
-                  context.promptSettled &&
-                  context.replyOpen
-                ) {
-                  yield* completeRunningSubagents(context);
-                }
                 context.replyOpen = false;
                 yield* rearmDeferredFinalize(context);
               } else if (acpRootSessionUpdateIngestsOutput(notification)) {
