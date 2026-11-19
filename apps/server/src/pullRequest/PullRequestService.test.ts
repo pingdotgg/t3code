@@ -3288,6 +3288,115 @@ it.effect("asks on its own for a repository a search could not vouch for", () =>
     );
   }),
 );
+// A search page filled by busy repositories, silent about quiet ones that search covers.
+const quietWorkspace = (input: {
+  readonly reads: Array<string>;
+  readonly quiet?: ReadonlyArray<string>;
+  readonly failing?: string;
+}) =>
+  makeService({
+    projects: [
+      project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+      project({ id: "p2", title: "docs", workspaceRoot: "/b", repository: "acme/docs" }),
+      project({ id: "p3", title: "api", workspaceRoot: "/c", repository: "acme/api" }),
+    ],
+    providers: [
+      fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+        listChangeRequests: ({ repository }) => {
+          input.reads.push(repository);
+          return repository === input.failing
+            ? Effect.fail(requestFailed)
+            : Effect.succeed({
+                items: [changeRequest(repository === "acme/docs" ? 7 : 8, "2026-06-01T00:00:00Z")],
+                truncated: false,
+                continues: false,
+              });
+        },
+        listChangeRequestsAcross: () =>
+          Effect.succeed({
+            items: [batchedChangeRequest(1, "acme/web", "2026-07-03T00:00:00Z")],
+            truncated: true,
+            unresolved: ["acme/docs", "acme/api"],
+            quiet: input.quiet ?? ["acme/docs", "acme/api"],
+          }),
+      }),
+    ],
+  });
+const everyListing = { state: "open" as const };
+// Past the listing cache, so each list reads the host again.
+const afterListingCache = TestClock.adjust("31 seconds");
+
+it.effect("reuses a quiet repository's own read until its project or the listings move", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads });
+
+    const first = yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs"]);
+    assert.deepStrictEqual(
+      first.entries.map((entry) => entry.number),
+      [1, 7, 8],
+    );
+
+    reads.length = 0;
+    yield* afterListingCache;
+    const again = yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, [], "a quiet repository is not read again");
+    assert.deepStrictEqual(
+      again.entries.map((entry) => entry.number),
+      [1, 7, 8],
+    );
+
+    yield* service.refreshAfterTurn("p2" as ProjectId);
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads, ["acme/docs"], "a turn in its project ends its reuse alone");
+
+    reads.length = 0;
+    yield* service.invalidate({});
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(
+      reads.toSorted(),
+      ["acme/api", "acme/docs"],
+      "a refresh ends every reuse",
+    );
+
+    reads.length = 0;
+    yield* TestClock.adjust("10 minutes");
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs"], "and so does time");
+  }),
+);
+
+it.effect("reads a silent repository every time unless search vouches it quiet", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads, quiet: ["acme/docs"] });
+
+    yield* service.list(everyListing);
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/api", "acme/docs"]);
+  }),
+);
+
+it.effect("keeps no failed read of a quiet repository", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* quietWorkspace({ reads, failing: "acme/docs" });
+
+    const first = yield* service.list(everyListing);
+    assert.deepStrictEqual(
+      first.errors.map((error) => error.projectId),
+      ["p2" as ProjectId],
+    );
+    yield* afterListingCache;
+    yield* service.list(everyListing);
+    assert.deepStrictEqual(reads.toSorted(), ["acme/api", "acme/docs", "acme/docs"]);
+  }),
+);
+
 it.effect("believes a search's silence about a repository it vouches for", () =>
   Effect.gen(function* () {
     const separately: string[] = [];

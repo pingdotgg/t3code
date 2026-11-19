@@ -144,6 +144,10 @@ const VIEWER_CACHE_TTL = Duration.minutes(10);
 const STALE_DETAIL_WINDOW = Duration.minutes(10);
 const isPullRequestProviderError = Schema.is(PullRequestProviderError);
 const LIST_CACHE_CAPACITY = 64;
+// A quiet repository's own read: see `quietRead` in `listUncached`.
+const QUIET_READ_TTL = Duration.minutes(10);
+const QUIET_READ_CAPACITY = 512;
+const encodeQuietReadKey = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const LIST_STATS_CACHE_CAPACITY = 32;
 const DETAIL_CACHE_CAPACITY = 128;
 const DIFF_CACHE_CAPACITY = 128;
@@ -1374,6 +1378,12 @@ export const make = Effect.gen(function* () {
     };
   };
 
+  // Reads of quiet repositories, reused by `quietRead` while their epoch holds.
+  const quietReads = new Map<
+    string,
+    { readonly at: number; readonly epoch: number; readonly batch: RepositoryBatch }
+  >();
+
   const listUncached: PullRequestService["Service"]["list"] = Effect.fn(
     "PullRequestService.listUncached",
   )(function* (input) {
@@ -1575,6 +1585,53 @@ export const make = Effect.gen(function* () {
       return readSlice(project, cursorOf(project)).pipe(Effect.flatMap((batch) => fill(batch, 1)));
     };
 
+    // A quiet repository has nothing newer than the search page, which shows any newer row, so its
+    // own read is reused rather than repeated on every refresh. A push, PR action or refresh through
+    // T3 and a turn in its project end the reuse; other edits to its older rows wait QUIET_READ_TTL.
+    const quietRead = Effect.fn("PullRequestService.quietRead")(function* (
+      project: SupportedProject,
+    ) {
+      const key = encodeQuietReadKey([
+        project.host,
+        project.repository.trim().toLowerCase(),
+        input.state,
+        involvement,
+        viewers[project.host] ?? null,
+        limit,
+        input.query ?? null,
+        input.filters ?? null,
+      ]);
+      const epoch = Math.max(
+        listingsEpoch,
+        projectEpochs.get(project.project.id) ?? projectEpochFloor,
+      );
+      const now = yield* Clock.currentTimeMillis;
+      const held = quietReads.get(key);
+      if (
+        held !== undefined &&
+        held.epoch === epoch &&
+        now - held.at <= Duration.toMillis(QUIET_READ_TTL)
+      ) {
+        return { ...held.batch, key: project.cursorKey };
+      }
+      const batch = yield* readRepository(project);
+      // Only a clean read is kept, and only if nothing moved its epoch while it was read.
+      const epochAfter = Math.max(
+        listingsEpoch,
+        projectEpochs.get(project.project.id) ?? projectEpochFloor,
+      );
+      if (batch.errors.length === 0 && epochAfter === epoch) {
+        quietReads.delete(key);
+        quietReads.set(key, { at: now, epoch, batch });
+        while (quietReads.size > QUIET_READ_CAPACITY) {
+          const oldest = quietReads.keys().next().value;
+          if (oldest === undefined) break;
+          quietReads.delete(oldest);
+        }
+      }
+      return batch;
+    });
+
     const readTogether = (
       chunk: ReadonlyArray<SupportedProject>,
     ): Effect.Effect<ReadonlyArray<RepositoryBatch>> => {
@@ -1622,6 +1679,9 @@ export const make = Effect.gen(function* () {
           const unresolved = new Set(
             (page.unresolved ?? []).map((repository) => repository.trim().toLowerCase()),
           );
+          const quiet = new Set(
+            (page.quiet ?? []).map((repository) => repository.trim().toLowerCase()),
+          );
           const boundary = page.items.reduce<string | null>(
             (oldest, item) =>
               oldest === null || item.updatedAt < oldest ? item.updatedAt : oldest,
@@ -1632,7 +1692,11 @@ export const make = Effect.gen(function* () {
             (project): Effect.Effect<RepositoryBatch> => {
               const key = project.repository.trim().toLowerCase();
               const fetched = rows.get(key) ?? [];
-              if (fetched.length === 0 && unresolved.has(key)) return readRepository(project);
+              if (fetched.length === 0 && unresolved.has(key)) {
+                return quiet.has(key) && cursorOf(project) === undefined
+                  ? quietRead(project)
+                  : readRepository(project);
+              }
               const cursorHere = cursorOf(project);
               const items =
                 cursorHere === undefined
