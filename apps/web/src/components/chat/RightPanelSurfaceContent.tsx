@@ -11,8 +11,9 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, type ComponentProps } from "react";
 import SideChatPane from "./SideChatPane";
+import { FileLinkOpenerContext } from "../files/FilePreviewDialog";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -36,6 +37,11 @@ const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
+const openFileLinkInPanel: ComponentProps<typeof FileLinkOpenerContext>["value"] = (
+  threadRef,
+  path,
+  line,
+) => useRightPanelStore.getState().openFile(threadRef, path, line);
 
 type RightPanelTerminalProps = Omit<
   PersistentThreadTerminalPanelProps,
@@ -134,46 +140,50 @@ export function RightPanelSurfaceContent(props: {
         );
       }
       return (
-        <PullRequestDetailPanel
-          getShortcutContext={props.getShortcutContext}
-          shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
-          key={`${scopedThreadKey(threadRef)}:${surface.id}`}
-          environmentId={props.environmentId}
-          onSelectPullRequest={(reference) => {
-            useRightPanelStore.getState().openPullRequest(threadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-          }}
-          threadRef={threadRef}
-          reference={{
-            projectId: surface.projectId as ProjectId,
-            ...(surface.host ? { host: surface.host } : {}),
-            repository: surface.repository,
-            number: surface.number,
-          }}
-          initialTab={surface.detailTab ?? "summary"}
-          revealUrl={surface.revealUrl}
-          onRevealSettled={(revealUrl) => {
-            useRightPanelStore.getState().settlePullRequestReveal(threadRef, surface.id, revealUrl);
-          }}
-          onTabChange={(tab) => {
-            useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
-          }}
-          context={pullRequestPanelContext(
-            {
-              projectId: pullRequest.projectId,
-              pullRequests: pullRequest.pullRequests,
-              linkedPullRequest: pullRequest.linkedPullRequest,
-              branchPullRequest: pullRequest.branchPullRequest,
-            },
-            surface,
-          )}
-          composerDraftTarget={props.composerDraftTarget}
-          onBack={pullRequest.onBack}
-        />
+        <FileLinkOpenerContext value={openFileLinkInPanel}>
+          <PullRequestDetailPanel
+            getShortcutContext={props.getShortcutContext}
+            shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
+            key={`${scopedThreadKey(threadRef)}:${surface.id}`}
+            environmentId={props.environmentId}
+            onSelectPullRequest={(reference) => {
+              useRightPanelStore.getState().openPullRequest(threadRef, {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+                ...(reference.host ? { host: reference.host } : {}),
+              });
+            }}
+            threadRef={threadRef}
+            reference={{
+              projectId: surface.projectId as ProjectId,
+              ...(surface.host ? { host: surface.host } : {}),
+              repository: surface.repository,
+              number: surface.number,
+            }}
+            initialTab={surface.detailTab ?? "summary"}
+            revealUrl={surface.revealUrl}
+            onRevealSettled={(revealUrl) => {
+              useRightPanelStore
+                .getState()
+                .settlePullRequestReveal(threadRef, surface.id, revealUrl);
+            }}
+            onTabChange={(tab) => {
+              useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
+            }}
+            context={pullRequestPanelContext(
+              {
+                projectId: pullRequest.projectId,
+                pullRequests: pullRequest.pullRequests,
+                linkedPullRequest: pullRequest.linkedPullRequest,
+                branchPullRequest: pullRequest.branchPullRequest,
+              },
+              surface,
+            )}
+            composerDraftTarget={props.composerDraftTarget}
+            onBack={pullRequest.onBack}
+          />
+        </FileLinkOpenerContext>
       );
     }
     case "issue":
@@ -187,28 +197,30 @@ export function RightPanelSurfaceContent(props: {
         );
       }
       return (
-        <IssueDetailPanel
-          key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
-          environmentId={
-            (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
-          }
-          reference={{
-            projectId: surface.projectId as ProjectId,
-            tracker: surface.tracker as IssueTrackerKind,
-            ...(surface.host ? { host: surface.host } : {}),
-            scope: surface.scope,
-            key: surface.key,
-          }}
-          threadRef={threadRef}
-          onSelectPullRequest={(reference) => {
-            useRightPanelStore.getState().openPullRequest(threadRef, {
-              projectId: reference.projectId,
-              repository: reference.repository,
-              number: reference.number,
-              ...(reference.host ? { host: reference.host } : {}),
-            });
-          }}
-        />
+        <FileLinkOpenerContext value={openFileLinkInPanel}>
+          <IssueDetailPanel
+            key={`${surface.environmentId ?? props.environmentId}:${surface.id}`}
+            environmentId={
+              (surface.environmentId as EnvironmentId | undefined) ?? props.environmentId
+            }
+            reference={{
+              projectId: surface.projectId as ProjectId,
+              tracker: surface.tracker as IssueTrackerKind,
+              ...(surface.host ? { host: surface.host } : {}),
+              scope: surface.scope,
+              key: surface.key,
+            }}
+            threadRef={threadRef}
+            onSelectPullRequest={(reference) => {
+              useRightPanelStore.getState().openPullRequest(threadRef, {
+                projectId: reference.projectId,
+                repository: reference.repository,
+                number: reference.number,
+                ...(reference.host ? { host: reference.host } : {}),
+              });
+            }}
+          />
+        </FileLinkOpenerContext>
       );
     case "pull-requests":
       return <ThreadPullRequestsPanel threadRef={threadRef} />;
@@ -245,36 +257,40 @@ export function RightPanelSurfaceContent(props: {
       const attachment = surface.kind === "file" ? surface.attachment : undefined;
       if (!attachment && (files.projectName === null || !files.workspaceRoot)) return null;
       return (
-        <Suspense fallback={null}>
-          <FilePreviewPanel
-            key={`${props.environmentId}:${
-              attachment ? `attachment:${attachment.id}` : files.workspaceRoot
-            }`}
-            environmentId={props.environmentId}
-            cwd={files.workspaceRoot ?? ""}
-            projectName={files.projectName ?? ""}
-            projectId={files.projectId}
-            threadRef={threadRef}
-            composerDraftTarget={props.composerDraftTarget}
-            keybindings={props.keybindings}
-            availableEditors={files.availableEditors}
-            openInShortcutEnabled={visible}
-            relativePath={surface.kind === "file" ? surface.relativePath : null}
-            {...(attachment ? { attachment } : {})}
-            revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
-            revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
-            onOpenFile={files.onOpenFile}
-            onNavigateFolder={(relativePath, folderTrail, keepSource) =>
-              useRightPanelStore
-                .getState()
-                .navigateFolder(threadRef, surface.id, relativePath, folderTrail, keepSource)
-            }
-            folderTrail={surface.folderTrail}
-            onPendingChange={files.onPendingChange}
-            selectedFilePending={surface.kind === "file" && files.pendingSurfaceIds.has(surface.id)}
-            workspaceMutationId={props.workspaceMutationId}
-          />
-        </Suspense>
+        <FileLinkOpenerContext value={openFileLinkInPanel}>
+          <Suspense fallback={null}>
+            <FilePreviewPanel
+              key={`${props.environmentId}:${
+                attachment ? `attachment:${attachment.id}` : files.workspaceRoot
+              }`}
+              environmentId={props.environmentId}
+              cwd={files.workspaceRoot ?? ""}
+              projectName={files.projectName ?? ""}
+              projectId={files.projectId}
+              threadRef={threadRef}
+              composerDraftTarget={props.composerDraftTarget}
+              keybindings={props.keybindings}
+              availableEditors={files.availableEditors}
+              openInShortcutEnabled={visible}
+              relativePath={surface.kind === "file" ? surface.relativePath : null}
+              {...(attachment ? { attachment } : {})}
+              revealLine={surface.kind === "file" ? (surface.revealLine ?? null) : null}
+              revealRequestId={surface.kind === "file" ? surface.revealRequestId : 0}
+              onOpenFile={files.onOpenFile}
+              onNavigateFolder={(relativePath, folderTrail, keepSource) =>
+                useRightPanelStore
+                  .getState()
+                  .navigateFolder(threadRef, surface.id, relativePath, folderTrail, keepSource)
+              }
+              folderTrail={surface.folderTrail}
+              onPendingChange={files.onPendingChange}
+              selectedFilePending={
+                surface.kind === "file" && files.pendingSurfaceIds.has(surface.id)
+              }
+              workspaceMutationId={props.workspaceMutationId}
+            />
+          </Suspense>
+        </FileLinkOpenerContext>
       );
     }
   }
