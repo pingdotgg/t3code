@@ -2,7 +2,6 @@ import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
-  normalizeProjectPathForComparison,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
 
@@ -120,6 +119,8 @@ function pickStrippedWorkspaceMatch(
   return files.find((entry) => key(entry.path) === key(strippedPath))?.path ?? null;
 }
 
+type CanonicalPaths = ReadonlyArray<string | undefined>;
+
 /**
  * The absolute path of the one file a chat link names across other project roots, or null when
  * no root has it or roots name different files. Agents cite paths relative to their repo.
@@ -131,17 +132,44 @@ export function pickProjectLinkMatch(
     readonly root: string;
     readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
   }>,
-): string | null {
+  canonicalPathsFor?: (paths: ReadonlyArray<string>) => CanonicalPaths | Promise<CanonicalPaths>,
+): string | null | Promise<string | null> {
   const matches = new Map<string, string>();
   for (const { root, entries } of searches) {
     const match = pickWorkspaceLinkMatch(relativePath, root, entries);
     if (match === null) continue;
     const path = resolveWorkspaceFilePath(match, root);
-    const key = normalizeProjectPathForComparison(path);
+    const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
     if (!matches.has(key)) matches.set(key, path);
   }
-  const [only, ...rest] = matches.values();
-  return rest.length === 0 ? (only ?? null) : null;
+  const paths = [...matches.values()];
+  const [first] = paths;
+  if (first === undefined) return null;
+  if (paths.length === 1) return first;
+
+  // Windows directories can be case-sensitive. Folding only identifies possible aliases.
+  if (
+    !canonicalPathsFor ||
+    !isWindowsAbsolutePath(first) ||
+    paths.length > FILESYSTEM_METADATA_BATCH_LIMIT ||
+    paths.some((path) => path.trim() !== path)
+  ) {
+    return null;
+  }
+  const folded = first.replaceAll("/", "\\").toLowerCase();
+  if ([...matches.keys()].some((key) => key.toLowerCase() !== folded)) return null;
+  const pickConfirmedMatch = (canonicalPaths: CanonicalPaths) => {
+    const [target] = canonicalPaths;
+    return target !== undefined &&
+      canonicalPaths.length === paths.length &&
+      canonicalPaths.every((path) => path === target)
+      ? first
+      : null;
+  };
+  const canonicalPaths = canonicalPathsFor(paths);
+  return canonicalPaths instanceof Promise
+    ? canonicalPaths.then(pickConfirmedMatch)
+    : pickConfirmedMatch(canonicalPaths);
 }
 
 const AGENT_DIRECTORY_SEARCH_LIMIT = 4;
@@ -159,8 +187,9 @@ export async function findAgentDirectoryMatch(
   }>,
 ): Promise<string | null> {
   for (const directory of directories.slice(0, AGENT_DIRECTORY_SEARCH_LIMIT)) {
-    const match = pickProjectLinkMatch(relativePath, [await searchRoot(directory)]);
-    if (match !== null) return match;
+    const { root, entries } = await searchRoot(directory);
+    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
+    if (match !== null) return resolveWorkspaceFilePath(match, root);
   }
   return null;
 }

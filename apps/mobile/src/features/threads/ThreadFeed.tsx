@@ -277,6 +277,7 @@ import { assetEnvironment, useAssetUrl, useRefreshAssetUrl } from "../../state/a
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { environmentProjects, projectEnvironment } from "../../state/projects";
+import { filesystemEnvironment } from "../../state/filesystem";
 import {
   agentWorkingDirectories,
   findAgentDirectoryMatch,
@@ -3353,7 +3354,23 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         match =
           otherRoots.length === 0
             ? null
-            : pickProjectLinkMatch(relativePath, await Promise.all(otherRoots.map(searchRoot)));
+            : await pickProjectLinkMatch(
+                relativePath,
+                await Promise.all(otherRoots.map(searchRoot)),
+                async (paths) => {
+                  const metadata = await executeAtomQuery(
+                    appAtomRegistry,
+                    filesystemEnvironment.getMetadata({
+                      environmentId: props.environmentId,
+                      input: { paths, includeCanonicalPath: true },
+                    }),
+                    { ...queryOptions, refresh: true },
+                  );
+                  return metadata._tag === "Success"
+                    ? metadata.value.entries.map((entry) => entry?.canonicalPath)
+                    : [];
+                },
+              );
       }
       if (match === null && reply !== undefined && !signal.aborted) {
         // No project has the file, so it opens where the agent last worked, as written.

@@ -137,6 +137,16 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             null,
             null,
           ]);
+          const alias = `${cwd}${path.sep}.${path.sep}custom-name`;
+          const { entries } = yield* service.getMetadata({
+            paths: [alias, path.join(cwd, ".npmrc")],
+            includeCanonicalPath: true,
+          });
+          const canonicalRoot = yield* Effect.promise(() => NodeFSP.realpath(cwd));
+          expect(entries).toEqual([
+            { kind: "file", byteLength: 5, canonicalPath: path.join(canonicalRoot, "custom-name") },
+            { kind: "file", byteLength: 13, canonicalPath: path.join(canonicalRoot, ".npmrc") },
+          ]);
         }),
     );
 

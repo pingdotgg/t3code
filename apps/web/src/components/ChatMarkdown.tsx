@@ -874,9 +874,18 @@ function useChatMarkdownState({
       });
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
-    const projectMatch = pickProjectLinkMatch(
+    const projectMatch = await pickProjectLinkMatch(
       workspaceRelativePath,
       await Promise.all(otherRoots.map(searchRoot)),
+      async (paths) => {
+        const metadata = await getFilesystemMetadata({
+          environmentId,
+          input: { paths, includeCanonicalPath: true },
+        });
+        return metadata._tag === "Success"
+          ? metadata.value.entries.map((entry) => entry?.canonicalPath)
+          : [];
+      },
     );
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
     // No project has the file, so it opens where the agent last worked, as written.

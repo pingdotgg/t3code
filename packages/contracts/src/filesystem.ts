@@ -10,6 +10,7 @@ export const FilesystemGetMetadataInput = Schema.Struct({
   paths: Schema.Array(
     TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   ).check(Schema.isMinLength(1), Schema.isMaxLength(FILESYSTEM_METADATA_BATCH_LIMIT)),
+  includeCanonicalPath: Schema.optionalKey(Schema.Boolean),
 });
 export type FilesystemGetMetadataInput = typeof FilesystemGetMetadataInput.Type;
 
@@ -17,6 +18,7 @@ export const FilesystemEntryMetadata = Schema.Struct({
   kind: Schema.Literals(["file", "directory", "other"]),
   byteLength: Schema.optionalKey(NonNegativeInt),
   mimeType: Schema.optionalKey(TrimmedNonEmptyString),
+  canonicalPath: Schema.optionalKey(Schema.String),
 });
 export type FilesystemEntryMetadata = typeof FilesystemEntryMetadata.Type;
 

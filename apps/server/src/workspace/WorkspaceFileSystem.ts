@@ -171,7 +171,10 @@ export const make = Effect.gen(function* () {
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );
 
-  const metadataForPath = Effect.fnUntraced(function* (requestedPath: string) {
+  const metadataForPath = Effect.fnUntraced(function* (
+    requestedPath: string,
+    includeCanonicalPath: boolean,
+  ) {
     const expandedPath = expandHomePath(
       yield* toHostPath(requestedPath),
       yield* HostProcess.HomeDirectory,
@@ -204,10 +207,14 @@ export const make = Effect.gen(function* () {
         catch: () => undefined,
       }).pipe(Effect.orElseSucceed(() => undefined));
     }
+    const canonicalPath = includeCanonicalPath
+      ? yield* Effect.promise(() => NodeFSP.realpath(expandedPath).catch(() => undefined))
+      : undefined;
     return {
       kind: "file",
       byteLength: Number(stat.value.size),
       ...(mimeType === undefined ? {} : { mimeType }),
+      ...(canonicalPath === undefined ? {} : { canonicalPath }),
     } satisfies FilesystemEntryMetadata;
   });
 
@@ -215,7 +222,11 @@ export const make = Effect.gen(function* () {
     "WorkspaceFileSystem.getMetadata",
   )(function* (input) {
     const paths = [...new Set(input.paths)];
-    const entries = yield* Effect.forEach(paths, metadataForPath, { concurrency: 8 });
+    const entries = yield* Effect.forEach(
+      paths,
+      (value) => metadataForPath(value, input.includeCanonicalPath === true),
+      { concurrency: 8 },
+    );
     const byPath = new Map(paths.map((value, index) => [value, entries[index] ?? null]));
     return { entries: input.paths.map((value) => byPath.get(value) ?? null) };
   });
