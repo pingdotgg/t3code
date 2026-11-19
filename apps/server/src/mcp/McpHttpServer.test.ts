@@ -1761,14 +1761,8 @@ it.effect("hides tools for links and refuses another environment while the beta 
 it.effect("lists only read tools to a read-only client and still refuses its writes", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const AccessToolkit = Toolkit.make(
-        Tool.make("peek", {
-          description: "Reads.",
-          success: Schema.Struct({ ok: Schema.Boolean }),
-          failure: OrchestratorMcpFailure,
-          failureMode: "return",
-        }),
-        Tool.make("poke", {
+      const writeTool = <const Name extends string>(name: Name) =>
+        Tool.make(name, {
           description: "Writes.",
           success: Schema.Struct({ ok: Schema.Boolean }),
           failure: OrchestratorMcpFailure,
@@ -1777,8 +1771,18 @@ it.effect("lists only read tools to a read-only client and still refuses its wri
             McpInvocationContext.McpInvocationContext,
             ThreadManagementService.ThreadManagementService,
           ],
+        });
+      const AccessToolkit = Toolkit.make(
+        Tool.make("peek", {
+          description: "Reads.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
         }),
+        writeTool("poke"),
       );
+      // A second registration, so each toolkit's own writes must be hidden.
+      const OtherToolkit = Toolkit.make(writeTool("shove"));
       const scopeFor = (
         token: string,
         access: "read-only" | "auto",
@@ -1791,12 +1795,20 @@ it.effect("lists only read tools to a read-only client and still refuses its wri
         issuedAt: 1,
       });
       const serverLayer = McpHttpServer.layerMcpTransport(
-        McpHttpServer.toolkitRegistration(
-          AccessToolkit,
-          McpToolAccess.toLayer(AccessToolkit, {
-            peek: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
-            poke: McpToolAccess.writes(() => Effect.succeed({ ok: true })),
-          }),
+        Layer.mergeAll(
+          McpHttpServer.toolkitRegistration(
+            AccessToolkit,
+            McpToolAccess.toLayer(AccessToolkit, {
+              peek: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+              poke: McpToolAccess.writes(() => Effect.succeed({ ok: true })),
+            }),
+          ),
+          McpHttpServer.toolkitRegistration(
+            OtherToolkit,
+            McpToolAccess.toLayer(OtherToolkit, {
+              shove: McpToolAccess.writes(() => Effect.succeed({ ok: true })),
+            }),
+          ),
         ),
       ).pipe(
         Layer.provide(ServerSettings.layerTest()),
@@ -1866,7 +1878,7 @@ it.effect("lists only read tools to a read-only client and still refuses its wri
       });
 
       const operator = yield* session("operator");
-      expect(names(yield* operator("tools/list", {}))).toEqual(["peek", "poke"]);
+      expect(names(yield* operator("tools/list", {}))).toEqual(["peek", "poke", "shove"]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
