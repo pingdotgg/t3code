@@ -482,6 +482,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
   private var writingDirection: NSWritingDirection = .natural
+  private var needsWritingDirectionUpdate = false
   private var contentInsetVertical: CGFloat = 0
   private var shouldAutoFocus = false
   private var didAutoFocus = false
@@ -774,9 +775,19 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     writingDirection = next
     restoreBaseTypingAttributes()
-    // Attribute changes keep the selection, unlike re-applying the controlled document.
+    needsWritingDirectionUpdate = true
+    applyPendingWritingDirection()
+  }
+
+  // Attribute changes keep the selection, unlike re-applying the controlled document.
+  // Marked text defers the update until the composition commits.
+  private func applyPendingWritingDirection() {
+    guard needsWritingDirectionUpdate, textView.markedTextRange == nil else {
+      return
+    }
+    needsWritingDirectionUpdate = false
     let storage = textView.textStorage
-    guard textView.markedTextRange == nil, storage.length > 0 else {
+    guard storage.length > 0 else {
       return
     }
     storage.beginEditing()
@@ -784,7 +795,8 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       guard let current = value as? NSParagraphStyle else {
         return
       }
-      let paragraph = current.mutableCopy() as! NSMutableParagraphStyle
+      let paragraph = NSMutableParagraphStyle()
+      paragraph.setParagraphStyle(current)
       applyWritingDirection(to: paragraph)
       storage.addAttribute(.paragraphStyle, value: paragraph, range: range)
     }
@@ -910,6 +922,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   }
 
   public func textViewDidChange(_ textView: UITextView) {
+    applyPendingWritingDirection()
     emitTextChange()
   }
 
