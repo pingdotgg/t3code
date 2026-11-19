@@ -3323,7 +3323,7 @@ export const OrchestrationV2Command = Schema.Union([
     watching: Schema.Boolean,
     /** With `watching`, sets how long the watch holds its thread; absent keeps the current one. */
     until: Schema.optional(PullRequestWatchUntil),
-    /** Whether CI was running (or unknown) when the watch started, so its failures are news. */
+    /** Whether CI may have been running when the watch started, so its failures are news. */
     checksPending: Schema.optional(Schema.Boolean),
     link: Schema.optional(
       Schema.Struct({

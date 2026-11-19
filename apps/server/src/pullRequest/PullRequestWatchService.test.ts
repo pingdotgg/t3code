@@ -170,7 +170,8 @@ describe("PullRequestWatchService", () => {
     Effect.gen(function* () {
       const cases: ReadonlyArray<readonly [HarnessOptions, boolean]> = [
         [{}, true],
-        [{ readChecksState: "failing" }, false],
+        [{ readChecksState: "failing" }, true],
+        [{ readChecksState: "passing" }, false],
         [
           {
             readFailure: new PullRequestOperationError({
