@@ -10,7 +10,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { PopoverTitle } from "../ui/popover";
 import { toastManager } from "../ui/toast";
-import { WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
+import { useWorkItemCommentForm, WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
 import {
   WorkItemComposerClose,
   WorkItemComposerPopover,
@@ -50,6 +50,16 @@ export function IssueCommentComposer({
     return true;
   };
 
+  const form = useWorkItemCommentForm({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["issue-comment", environmentId, reference]),
+    active: open,
+    textareaRef,
+    locked: blocked !== null,
+    onSubmit: submit,
+  });
+
   return (
     <WorkItemComposerPopover
       open={open}
@@ -65,16 +75,10 @@ export function IssueCommentComposer({
       }
     >
       <WorkItemCommentForm
-        environmentId={environmentId}
-        projectId={reference.projectId}
-        ownerKey={JSON.stringify(["issue-comment", environmentId, reference])}
-        active={open}
-        textareaRef={textareaRef}
+        form={form}
         completionScope={null}
         label={gt("Add a comment")}
         placeholder={blocked ?? gt("Leave a comment")}
-        locked={blocked !== null}
-        onSubmit={submit}
       />
     </WorkItemComposerPopover>
   );

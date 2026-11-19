@@ -56,7 +56,12 @@ function IssueRowImpl({
         type="button"
         aria-current={selected ? "true" : undefined}
         onClick={() => onSelect(entry)}
-        className={cn(PULL_REQUEST_ROW_CLASS, PAGE_ROW_CLASS, PAGE_ROW_PRESS_CLASS, "min-w-0 flex-1")}
+        className={cn(
+          PULL_REQUEST_ROW_CLASS,
+          PAGE_ROW_CLASS,
+          PAGE_ROW_PRESS_CLASS,
+          "min-w-0 flex-1",
+        )}
       >
         {/* Centred on the title line, in the pull request glyph's column. */}
         <span className="mt-0.5 flex w-4 shrink-0 justify-center self-start">

@@ -12,7 +12,10 @@ import { useRef, useState } from "react";
 
 import { PopoverTitle } from "../ui/popover";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
-import { WorkItemComposerClose, WorkItemComposerPopover } from "../workItem/WorkItemComposerPopover";
+import {
+  WorkItemComposerClose,
+  WorkItemComposerPopover,
+} from "../workItem/WorkItemComposerPopover";
 import { PullRequestCommentForm } from "./PullRequestCommentForm";
 import { PullRequestReviewForm } from "./PullRequestReviewForm";
 import {
@@ -190,46 +193,46 @@ export function PullRequestComposer({
         )
       }
     >
-        {/* Keep forms mounted to preserve drafts and submit guards across dismissal. */}
-        {verdicts.length > 0 ? (
-          <div hidden={!sendsReview}>
-            <PullRequestReviewForm
-              active={open && sendsReview}
-              environmentId={environmentId}
-              reference={reference}
-              completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
-              verdict={mode}
-              term={term}
-              requestChangesSummaryRequired={sourceControlClients
-                .get(detail.provider)
-                .reviewSummaryRequired("request-changes")}
-              textareaRef={reviewRef}
-              pending={reviewPending}
-              onPendingChange={setReviewPending}
-              onSubmitted={() => {
-                setPopover("closed");
-                onReviewSubmitted();
-              }}
-            />
-          </div>
-        ) : null}
-        {canComment ? (
-          <div hidden={sendsReview}>
-            <PullRequestCommentForm
-              active={open && mode === "comment"}
-              environmentId={environmentId}
-              reference={reference}
-              detail={detail}
-              actionPending={actionPending}
-              textareaRef={commentRef}
-              onCommentAction={onCommentAction}
-              onCommented={onCommented}
-              onClose={() => {
-                setPopover("closed");
-              }}
-            />
-          </div>
-        ) : null}
+      {/* Keep forms mounted to preserve drafts and submit guards across dismissal. */}
+      {verdicts.length > 0 ? (
+        <div hidden={!sendsReview}>
+          <PullRequestReviewForm
+            active={open && sendsReview}
+            environmentId={environmentId}
+            reference={reference}
+            completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
+            verdict={mode}
+            term={term}
+            requestChangesSummaryRequired={sourceControlClients
+              .get(detail.provider)
+              .reviewSummaryRequired("request-changes")}
+            textareaRef={reviewRef}
+            pending={reviewPending}
+            onPendingChange={setReviewPending}
+            onSubmitted={() => {
+              setPopover("closed");
+              onReviewSubmitted();
+            }}
+          />
+        </div>
+      ) : null}
+      {canComment ? (
+        <div hidden={sendsReview}>
+          <PullRequestCommentForm
+            active={open && mode === "comment"}
+            environmentId={environmentId}
+            reference={reference}
+            detail={detail}
+            actionPending={actionPending}
+            textareaRef={commentRef}
+            onCommentAction={onCommentAction}
+            onCommented={onCommented}
+            onClose={() => {
+              setPopover("closed");
+            }}
+          />
+        </div>
+      ) : null}
     </WorkItemComposerPopover>
   );
 }

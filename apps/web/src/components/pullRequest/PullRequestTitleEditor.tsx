@@ -120,7 +120,10 @@ export function WorkItemTitleEditor({
           <TooltipPopup side="top">{title}</TooltipPopup>
         </Tooltip>
         {canEdit ? (
-          <PullRequestEditButton aria-label={gt("Edit title")} onClick={() => onDraftChange(title)} />
+          <PullRequestEditButton
+            aria-label={gt("Edit title")}
+            onClick={() => onDraftChange(title)}
+          />
         ) : null}
       </PullRequestDetailTitleRow>
     );

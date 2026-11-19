@@ -1576,7 +1576,9 @@ export function PullRequestsPage() {
   const columnProps = {
     area: "pull-requests",
     title: gt("Pull requests"),
-    icon: <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0 text-foreground" />,
+    icon: (
+      <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0 text-foreground" />
+    ),
     refreshLabel: gt("Refresh pull requests"),
     refreshing,
     onRefresh: () => void refreshFromHost(),

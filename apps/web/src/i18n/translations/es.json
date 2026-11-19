@@ -2999,7 +2999,7 @@
   "8c311e84f7bdf4e0": "Cerrar pestaña ({shortcut})",
   "e1c99915f0166c75": "Nueva pestaña ({shortcut})",
   "9d2fc1003e82feb1": "Uso",
-  "0b65f2ca0727b467": "Issues",
+  "8e9626aa27cb188a": "Issues",
   "d95fdf3259707d2b": "Superficie",
   "6ae127cb4162f3c6": "Fijados",
   "1d774ad4756f9260": "Recientes",
@@ -3283,10 +3283,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "en el ordenador que abrió esta página"
-      ]
+      "c": [" ", "en el ordenador que abrió esta página"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3298,10 +3295,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(quien lo ejecute obtiene este acceso)"
-      ]
+      "c": [" ", "(quien lo ejecute obtiene este acceso)"]
     }
   ],
   "c54cc9c75db9dc58": "Aprueba solo un inicio de sesión que acabes de iniciar.",
@@ -6190,11 +6184,9 @@
   "8ff29c78798e6ac1": "No se pudo cargar este elemento.",
   "94ab4591ce101233": "No se pudo publicar el comentario",
   "92d0d4eab2596772": "El gestor de issues lo rechazó.",
-  "81382a281202d92c": "Comment on {issue}",
   "33591d9596fb7cb7": "Añadir un comentario",
   "225329f7d2adc33c": "Deja un comentario",
   "02de63c7a0ebd94c": "Cargando issue",
-  "80bb66fe1c536e09": "Abrir en {provider}",
   "6899d17239a4b04e": [
     "abierta ",
     {
@@ -6203,18 +6195,6 @@
       "v": "v"
     }
   ],
-  "aaa1e21cddb497b2": [
-    "cerrada ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "166e4903e8ae7b37": "Etiquetas",
-  "cdac45c7efe1cfcc": "ninguna",
-  "115e0df4e8da2704": "Asignados",
-  "7dd58ad67a6de5ba": "nadie",
   "ae9a4e2921967de9": "No se pudieron cambiar las etiquetas",
   "6ec1aa91fbfa75d2": "No se pudieron cambiar los asignados",
   "4f2e859dcaa7569c": "No se pudieron leer los comentarios anteriores",
@@ -6236,7 +6216,6 @@
   "6081fdaabe34daf7": "Asignado",
   "2d9b7c42374ecd04": "No se pudo cargar esta issue",
   "a98a269e3061a069": "Abrir {issue} en {provider}",
-  "a493c8cb48082fa9": "More issue actions",
   "c1e9b460741b0723": "Back to issues",
   "78398e2d7d040498": "Título de la issue",
   "8ab83a75cae667a2": "No se pudo actualizar esta issue",
@@ -6250,6 +6229,14 @@
   "ddc5e5413923c471": "No puedes comentar aquí.",
   "516def6f5a881e00": "Cierra esta issue",
   "1a573846e5637317": "Actualizar",
+  "aaa1e21cddb497b2": [
+    "cerrada ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "0014ce0aaf1bd68a": "Solo lectura",
   "fd93f4720ff70aaf": "Ninguna",
   "b6a29fff7c7c0808": "Nadie",
@@ -6262,6 +6249,7 @@
   "cd4ec4acf33c65b9": "{count, plural, one {{count} etiqueta} other {{count} etiquetas}}",
   "bfd20acb8b7dee6b": "Cualquiera",
   "af7eb4f9c7f0f575": "Filtros",
+  "166e4903e8ae7b37": "Etiquetas",
   "08247dd39b0c85ff": "Asignado",
   "5cad5a7879c8d38c": "No se encontraron etiquetas",
   "74452d03a978e159": "No se pudieron leer las etiquetas",
@@ -6290,8 +6278,6 @@
   "fc18975e50af8dca": "No se pudo cargar la página siguiente.",
   "59319a2f40023e3e": "Loading issues…",
   "6c9ddaddd15094b9": "Could not load issues",
-  "9f341a45df358710": "No trackers to read",
-  "616b3cd868f3d2af": "Add a project whose remote is on a supported tracker.",
   "283ada62d3847554": "{count, plural, one {{count} proyecto} other {{count} proyectos}}",
   "7cae1b414ae74c6b": "Ahora mismo no se puede leer este gestor de issues.",
   "d44aed6ee67982dd": "Actualizar issues",
@@ -6300,6 +6286,8 @@
   "86798f07ba2d7f4d": "Buscar issues",
   "6a96bfc102d57501": "Ordenar issues",
   "df6dce0b31c89f02": "Ordenar",
+  "2ccf231996dc89c2": "No trackers to read",
+  "ffdb63a22901a1fa": "Add a project whose remote is on a supported tracker.",
   "403e9debff81d7df": [
     {
       "i": 1,
@@ -12296,7 +12284,6 @@
   "d39dd343104c5458": "Cambiar atajo",
   "9c73aa0c2e2b4e7d": "Elegir atajo",
   "8aa6404c8018ea67": "Inicio de T3 Code",
-  "8e9626aa27cb188a": "Issues",
   "20283eb1dd6119f9": "{count, plural, one {{count} adjunto} other {{count} adjuntos}}",
   "ffedb03b620f97a9": "Borrador sin enviar",
   "90a349d827d1dcf5": "Descartar borrador",

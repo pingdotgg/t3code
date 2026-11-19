@@ -541,8 +541,8 @@ export function IssuesPage() {
   ) : groups.length === 0 ? (
     <PullRequestListNotice
       icon={IssueGlyph.issue}
-      title={gt("No trackers to read")}
-      description={gt("Add a project whose remote is on a supported tracker.")}
+      title={<T>No trackers to read</T>}
+      description={<T>Add a project whose remote is on a supported tracker.</T>}
     />
   ) : (
     <div className="flex flex-col gap-3">
@@ -576,17 +576,20 @@ export function IssuesPage() {
           <section key={issueTrackerKey(group.tracker)} className="flex flex-col">
             <WorkItemGroupHeader
               icon={presentation.Icon}
-              label={
-                <>
-                  <span className="shrink-0">{presentation.providerName}</span>
+              label={presentation.providerName}
+              // The host sits with the count, in the quieter ink, after the tracker's name.
+              count={
+                <span className="inline-flex gap-2">
                   {presentation.providerName.toLowerCase() !== group.tracker.host ? (
-                    <span className="truncate font-normal">{group.tracker.host}</span>
+                    <span>{group.tracker.host}</span>
                   ) : null}
-                </>
+                  <span>
+                    {gt("{count, plural, one {{count} project} other {{count} projects}}", {
+                      count: group.tracker.projectCount,
+                    })}
+                  </span>
+                </span>
               }
-              count={gt("{count, plural, one {{count} project} other {{count} projects}}", {
-                count: group.tracker.projectCount,
-              })}
             />
             {!group.tracker.configured
               ? note(
@@ -723,8 +726,7 @@ export function IssuesPage() {
               label={gt("Search issues")}
               placeholder={gt("Search issues")}
               busy={
-                (search.q ?? "") !== debouncedQuery ||
-                (debouncedQuery.length > 0 && list.isPending)
+                (search.q ?? "") !== debouncedQuery || (debouncedQuery.length > 0 && list.isPending)
               }
               onChange={(q) => updateSearch({ q: q || undefined })}
               onSubmit={(q) => updateSearch({ q: q || undefined })}

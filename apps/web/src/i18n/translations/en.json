@@ -2999,7 +2999,7 @@
   "8c311e84f7bdf4e0": "Close tab ({shortcut})",
   "e1c99915f0166c75": "New tab ({shortcut})",
   "9d2fc1003e82feb1": "Usage",
-  "0b65f2ca0727b467": "Issues",
+  "8e9626aa27cb188a": "Issues",
   "d95fdf3259707d2b": "Surface",
   "6ae127cb4162f3c6": "Pinned",
   "1d774ad4756f9260": "Recent",
@@ -3283,10 +3283,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "on the computer that opened this page"
-      ]
+      "c": [" ", "on the computer that opened this page"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3298,10 +3295,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(whoever runs it gets this access)"
-      ]
+      "c": [" ", "(whoever runs it gets this access)"]
     }
   ],
   "c54cc9c75db9dc58": "Only approve a sign-in you just started.",
@@ -6192,11 +6186,9 @@
   "8ff29c78798e6ac1": "Could not load this item.",
   "94ab4591ce101233": "The comment could not be posted",
   "92d0d4eab2596772": "The tracker refused it.",
-  "81382a281202d92c": "Comment on {issue}",
   "33591d9596fb7cb7": "Add a comment",
   "225329f7d2adc33c": "Leave a comment",
   "02de63c7a0ebd94c": "Loading issue",
-  "80bb66fe1c536e09": "Open on {provider}",
   "6899d17239a4b04e": [
     "opened ",
     {
@@ -6205,18 +6197,6 @@
       "v": "v"
     }
   ],
-  "aaa1e21cddb497b2": [
-    "closed ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "166e4903e8ae7b37": "Labels",
-  "cdac45c7efe1cfcc": "none",
-  "115e0df4e8da2704": "Assignees",
-  "7dd58ad67a6de5ba": "none",
   "ae9a4e2921967de9": "Could not change labels",
   "6ec1aa91fbfa75d2": "Could not change assignees",
   "4f2e859dcaa7569c": "Older comments could not be read",
@@ -6238,7 +6218,6 @@
   "6081fdaabe34daf7": "Assigned",
   "2d9b7c42374ecd04": "Could not load this issue",
   "a98a269e3061a069": "Open {issue} on {provider}",
-  "a493c8cb48082fa9": "More issue actions",
   "c1e9b460741b0723": "Back to issues",
   "78398e2d7d040498": "Issue title",
   "8ab83a75cae667a2": "Could not refresh this issue",
@@ -6252,6 +6231,14 @@
   "ddc5e5413923c471": "You cannot comment here.",
   "516def6f5a881e00": "Closes this issue",
   "1a573846e5637317": "Refresh",
+  "aaa1e21cddb497b2": [
+    "closed ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "0014ce0aaf1bd68a": "Read-only",
   "fd93f4720ff70aaf": "None",
   "b6a29fff7c7c0808": "None",
@@ -6264,6 +6251,7 @@
   "cd4ec4acf33c65b9": "{count, plural, one {{count} label} other {{count} labels}}",
   "bfd20acb8b7dee6b": "Anyone",
   "af7eb4f9c7f0f575": "Filters",
+  "166e4903e8ae7b37": "Labels",
   "08247dd39b0c85ff": "Assignee",
   "5cad5a7879c8d38c": "No labels found",
   "74452d03a978e159": "The labels could not be read",
@@ -6292,8 +6280,6 @@
   "fc18975e50af8dca": "The next page failed.",
   "59319a2f40023e3e": "Loading issues…",
   "6c9ddaddd15094b9": "Could not load issues",
-  "9f341a45df358710": "No trackers to read",
-  "616b3cd868f3d2af": "Add a project whose remote is on a supported tracker.",
   "283ada62d3847554": "{count, plural, one {{count} project} other {{count} projects}}",
   "7cae1b414ae74c6b": "This tracker cannot be read right now.",
   "d44aed6ee67982dd": "Refresh issues",
@@ -6302,6 +6288,8 @@
   "86798f07ba2d7f4d": "Search issues",
   "6a96bfc102d57501": "Sort issues",
   "df6dce0b31c89f02": "Sort",
+  "2ccf231996dc89c2": "No trackers to read",
+  "ffdb63a22901a1fa": "Add a project whose remote is on a supported tracker.",
   "403e9debff81d7df": [
     {
       "i": 1,
@@ -12311,7 +12299,6 @@
   "d39dd343104c5458": "Change shortcut",
   "9c73aa0c2e2b4e7d": "Choose shortcut",
   "8aa6404c8018ea67": "T3 Code home",
-  "8e9626aa27cb188a": "Issues",
   "20283eb1dd6119f9": "{count, plural, one {{count} attachment} other {{count} attachments}}",
   "ffedb03b620f97a9": "Unsent draft",
   "90a349d827d1dcf5": "Discard draft",

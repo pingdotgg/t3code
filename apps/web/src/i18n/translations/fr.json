@@ -2999,7 +2999,7 @@
   "8c311e84f7bdf4e0": "Fermer l’onglet ({shortcut})",
   "e1c99915f0166c75": "Nouvel onglet ({shortcut})",
   "9d2fc1003e82feb1": "Utilisation",
-  "0b65f2ca0727b467": "Issues",
+  "8e9626aa27cb188a": "Tickets",
   "d95fdf3259707d2b": "Surface",
   "6ae127cb4162f3c6": "Épinglés",
   "1d774ad4756f9260": "Récents",
@@ -3283,10 +3283,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "sur l’ordinateur qui a ouvert cette page"
-      ]
+      "c": [" ", "sur l’ordinateur qui a ouvert cette page"]
     }
   ],
   "e0740b2e9ec8ebf7": [
@@ -3298,10 +3295,7 @@
     {
       "t": "span",
       "i": 2,
-      "c": [
-        " ",
-        "(quiconque l’exécute obtient cet accès)"
-      ]
+      "c": [" ", "(quiconque l’exécute obtient cet accès)"]
     }
   ],
   "c54cc9c75db9dc58": "N’approuvez qu’une connexion que vous venez de lancer.",
@@ -6191,11 +6185,9 @@
   "8ff29c78798e6ac1": "Impossible de charger cet élément.",
   "94ab4591ce101233": "Le commentaire n’a pas pu être publié",
   "92d0d4eab2596772": "Le gestionnaire de tickets l’a refusé.",
-  "81382a281202d92c": "Comment on {issue}",
   "33591d9596fb7cb7": "Ajouter un commentaire",
   "225329f7d2adc33c": "Laisser un commentaire",
   "02de63c7a0ebd94c": "Chargement du ticket",
-  "80bb66fe1c536e09": "Ouvrir sur {provider}",
   "6899d17239a4b04e": [
     "ouvert ",
     {
@@ -6204,18 +6196,6 @@
       "v": "v"
     }
   ],
-  "aaa1e21cddb497b2": [
-    "fermé ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    }
-  ],
-  "166e4903e8ae7b37": "Libellés",
-  "cdac45c7efe1cfcc": "aucun",
-  "115e0df4e8da2704": "Assignés",
-  "7dd58ad67a6de5ba": "personne",
   "ae9a4e2921967de9": "Impossible de modifier les libellés",
   "6ec1aa91fbfa75d2": "Impossible de modifier les assignés",
   "4f2e859dcaa7569c": "Les commentaires plus anciens n’ont pas pu être lus",
@@ -6237,7 +6217,6 @@
   "6081fdaabe34daf7": "Assigné",
   "2d9b7c42374ecd04": "Impossible de charger ce ticket",
   "a98a269e3061a069": "Ouvrir {issue} sur {provider}",
-  "a493c8cb48082fa9": "More issue actions",
   "c1e9b460741b0723": "Back to issues",
   "78398e2d7d040498": "Titre du ticket",
   "8ab83a75cae667a2": "Impossible d’actualiser ce ticket",
@@ -6251,6 +6230,14 @@
   "ddc5e5413923c471": "Vous ne pouvez pas commenter ici.",
   "516def6f5a881e00": "Ferme ce ticket",
   "1a573846e5637317": "Actualiser",
+  "aaa1e21cddb497b2": [
+    "fermé ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    }
+  ],
   "0014ce0aaf1bd68a": "Lecture seule",
   "fd93f4720ff70aaf": "Aucun",
   "b6a29fff7c7c0808": "Personne",
@@ -6263,6 +6250,7 @@
   "cd4ec4acf33c65b9": "{count, plural, one {{count} libellé} other {{count} libellés}}",
   "bfd20acb8b7dee6b": "N’importe qui",
   "af7eb4f9c7f0f575": "Filtres",
+  "166e4903e8ae7b37": "Libellés",
   "08247dd39b0c85ff": "Assigné",
   "5cad5a7879c8d38c": "Aucun libellé trouvé",
   "74452d03a978e159": "Les libellés n’ont pas pu être lus",
@@ -6291,8 +6279,6 @@
   "fc18975e50af8dca": "Le chargement de la page suivante a échoué.",
   "59319a2f40023e3e": "Loading issues…",
   "6c9ddaddd15094b9": "Could not load issues",
-  "9f341a45df358710": "No trackers to read",
-  "616b3cd868f3d2af": "Add a project whose remote is on a supported tracker.",
   "283ada62d3847554": "{count, plural, one {{count} projet} other {{count} projets}}",
   "7cae1b414ae74c6b": "Ce gestionnaire de tickets ne peut pas être lu pour le moment.",
   "d44aed6ee67982dd": "Actualiser les tickets",
@@ -6301,6 +6287,8 @@
   "86798f07ba2d7f4d": "Rechercher des tickets",
   "6a96bfc102d57501": "Trier les tickets",
   "df6dce0b31c89f02": "Trier",
+  "2ccf231996dc89c2": "No trackers to read",
+  "ffdb63a22901a1fa": "Add a project whose remote is on a supported tracker.",
   "403e9debff81d7df": [
     {
       "i": 1,
@@ -12301,7 +12289,6 @@
   "d39dd343104c5458": "Changer le raccourci",
   "9c73aa0c2e2b4e7d": "Choisir un raccourci",
   "8aa6404c8018ea67": "Accueil T3 Code",
-  "8e9626aa27cb188a": "Tickets",
   "20283eb1dd6119f9": "{count, plural, one {{count} pièce jointe} other {{count} pièces jointes}}",
   "ffedb03b620f97a9": "Brouillon non envoyé",
   "90a349d827d1dcf5": "Abandonner le brouillon",

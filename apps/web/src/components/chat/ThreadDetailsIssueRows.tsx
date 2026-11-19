@@ -92,24 +92,25 @@ function LinkedIssueRow({
       className="size-3 shrink-0"
     />
   );
+  const rowLines = (
+    <PullRequestRowLines
+      number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{link.displayKey}</span>}
+      title={title}
+      status={comments}
+      meta={
+        <>
+          {detail?.author ? <PullRequestActorLabel actor={detail.author} tooltip={false} /> : null}
+          {trackerIcon}
+          <span className="truncate">{link.scope}</span>
+        </>
+      }
+      updatedAt={detail?.updatedAt ?? link.linkedAt}
+    />
+  );
   const lines = (
     <>
       {glyph}
-      <PullRequestRowLines
-        number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{link.displayKey}</span>}
-        title={title}
-        status={comments}
-        meta={
-          <>
-            {detail?.author ? (
-              <PullRequestActorLabel actor={detail.author} tooltip={false} />
-            ) : null}
-            {trackerIcon}
-            <span className="truncate">{link.scope}</span>
-          </>
-        }
-        updatedAt={detail?.updatedAt ?? link.linkedAt}
-      />
+      {rowLines}
     </>
   );
   if (variant === "mini") {
@@ -152,15 +153,12 @@ function LinkedIssueRow({
     </div>
   ) : (
     // The linked items panel's pull request row: content on the panel's 16px lines.
-    <a
-      {...anchorProps}
-      className={cn(
-        PULL_REQUEST_ROW_CLASS,
-        "relative ps-2.5 pr-2.5 hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-      )}
-    >
-      {lines}
-    </a>
+    <div className={cn(PULL_REQUEST_ROW_CLASS, "relative ps-2.5 pr-2.5 hover:surface-ghost-hover")}>
+      {glyph}
+      <a {...anchorProps} className="flex min-w-0 flex-1">
+        {rowLines}
+      </a>
+    </div>
   );
 }
 

@@ -159,7 +159,11 @@ export function WorkItemDetailCrumbs({
                 : subject.scope}
             </TooltipPopup>
           </Tooltip>
-          <KeyLink subject={subject} toneClassName={toneClassName} openOnHostText={openOnHostText} />
+          <KeyLink
+            subject={subject}
+            toneClassName={toneClassName}
+            openOnHostText={openOnHostText}
+          />
           {badge}
           {children}
         </>
@@ -228,7 +232,11 @@ export function PullRequestDetailCrumbs({
           <Badge
             size="status"
             variant={
-              detail.state === "merged" ? "merged" : detail.state === "closed" ? "error" : "secondary"
+              detail.state === "merged"
+                ? "merged"
+                : detail.state === "closed"
+                  ? "error"
+                  : "secondary"
             }
           >
             <state.Icon aria-hidden />

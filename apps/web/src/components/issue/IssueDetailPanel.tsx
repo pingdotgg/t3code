@@ -546,7 +546,7 @@ export function IssueDetailPanel({
         <span className="@max-sm/pr-header:sr-only">{currentState.label}</span>
       </Badge>
     );
-  const actionsLabel = gt("More actions");
+  const actionsLabel = gt("Actions");
   // Moving the issue lives in the actions menu, where a pull request's close and reopen do.
   const actionsMenu = (
     <Menu>
@@ -692,11 +692,7 @@ export function IssueDetailPanel({
           </div>
         ) : null}
 
-        <PullRequestSection
-          key={`description:${detail.url}`}
-          title={gt("Description")}
-          keepMounted
-        >
+        <PullRequestSection key={`description:${detail.url}`} title={gt("Description")} keepMounted>
           <div className="group">
             {editingBody ? (
               <PullRequestMarkdownEditor
@@ -897,9 +893,7 @@ export function IssueDetailPanel({
                     outcome={null}
                     stateLabel={issueEventSentence(item.event, messages)}
                     preview={null}
-                    icon={
-                      <IssueGlyph.issue aria-hidden className="size-3.5 text-dim-foreground" />
-                    }
+                    icon={<IssueGlyph.issue aria-hidden className="size-3.5 text-dim-foreground" />}
                   >
                     {null}
                   </PullRequestReviewEntry>

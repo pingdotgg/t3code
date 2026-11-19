@@ -10,7 +10,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
-import { WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
+import { useWorkItemCommentForm, WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
@@ -75,13 +75,19 @@ export function PullRequestCommentForm({
     return true;
   };
 
+  const form = useWorkItemCommentForm<"close" | "reopen">({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
+    active,
+    textareaRef,
+    locked: actionPending,
+    onSubmit: submit,
+  });
+
   return (
-    <WorkItemCommentForm<"close" | "reopen">
-      environmentId={environmentId}
-      projectId={reference.projectId}
-      ownerKey={JSON.stringify(["pr-comment", environmentId, reference])}
-      active={active}
-      textareaRef={textareaRef}
+    <WorkItemCommentForm
+      form={form}
       completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
       label={gt(
         "Comment on this {term, select, mr {merge request} cr {change request} other {pull request}}",
@@ -90,45 +96,42 @@ export function PullRequestCommentForm({
         },
       )}
       placeholder={gt("Leave a comment")}
-      locked={actionPending}
-      onSubmit={submit}
-      actions={({ submit: submitAction, disabled, submitting }) =>
-        followUpAction === null ? null : (
-          <Button
-            size="xs"
-            variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
-            disabled={disabled}
-            {...(followUpAction === "close"
-              ? inlineConfirm.props("close", () => submitAction("close"))
-              : { onClick: () => submitAction("reopen") })}
-          >
-            {followUpAction === "close" ? (
-              <PullRequestGlyph.closed className="size-3.5" />
-            ) : (
-              <PullRequestGlyph.reopen className="size-3.5" />
-            )}
-            {followUpAction === "close" ? (
-              // The longest label holds the width, so the confirming click lands on the button.
-              <span className="inline-grid">
-                <span aria-hidden className="invisible col-start-1 row-start-1">
-                  <T>Close with comment</T>
-                </span>
-                <span className="col-start-1 row-start-1">
-                  {submitting === "close"
-                    ? gt("Closing...")
-                    : inlineConfirm.isArmed("close")
-                      ? gt("Confirm close?")
-                      : gt("Close with comment")}
-                </span>
+    >
+      {followUpAction === null ? null : (
+        <Button
+          size="xs"
+          variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
+          disabled={form.submitDisabled}
+          {...(followUpAction === "close"
+            ? inlineConfirm.props("close", () => form.submit("close"))
+            : { onClick: () => form.submit("reopen") })}
+        >
+          {followUpAction === "close" ? (
+            <PullRequestGlyph.closed className="size-3.5" />
+          ) : (
+            <PullRequestGlyph.reopen className="size-3.5" />
+          )}
+          {followUpAction === "close" ? (
+            // The longest label holds the width, so the confirming click lands on the button.
+            <span className="inline-grid">
+              <span aria-hidden className="invisible col-start-1 row-start-1">
+                <T>Close with comment</T>
               </span>
-            ) : submitting === "reopen" ? (
-              gt("Reopening...")
-            ) : (
-              gt("Reopen with comment")
-            )}
-          </Button>
-        )
-      }
-    />
+              <span className="col-start-1 row-start-1">
+                {form.submitting === "close"
+                  ? gt("Closing...")
+                  : inlineConfirm.isArmed("close")
+                    ? gt("Confirm close?")
+                    : gt("Close with comment")}
+              </span>
+            </span>
+          ) : form.submitting === "reopen" ? (
+            gt("Reopening...")
+          ) : (
+            gt("Reopen with comment")
+          )}
+        </Button>
+      )}
+    </WorkItemCommentForm>
   );
 }

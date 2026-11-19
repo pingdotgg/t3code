@@ -12,29 +12,19 @@ import {
 } from "../pullRequest/PullRequestMarkdownTextarea";
 import { PullRequestSubmitKeyHint } from "../pullRequest/PullRequestSubmitKeyHint";
 
-/** What the form hands a follow-up action beside Comment, such as Close with comment. */
-export interface WorkItemCommentFormActions<Action extends string> {
-  readonly submit: (action: Action) => void;
-  readonly disabled: boolean;
-  readonly submitting: Action | "comment" | null;
-}
-
 /**
  * A comment on a pull request or an issue: markdown with dictation, posted with the button or
- * the submit chord. `onSubmit` says whether the comment went, which clears the draft.
+ * the submit chord. `onSubmit` says whether the comment went, which clears the draft. A caller
+ * with an action beside Comment, such as Close with comment, reads the form's state from here.
  */
-export function WorkItemCommentForm<Action extends string = never>({
+export function useWorkItemCommentForm<Action extends string = never>({
   environmentId,
   projectId,
   ownerKey,
   active,
   textareaRef,
-  completionScope,
-  label,
-  placeholder,
   locked: lockedFromOutside = false,
   onSubmit,
-  actions,
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
@@ -43,15 +33,10 @@ export function WorkItemCommentForm<Action extends string = never>({
   /** False while the form stays mounted but hidden; dictation is cancelled then. */
   active: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  completionScope: PullRequestCompletionScope | null;
-  label: string;
-  placeholder: string;
   /** Held from outside, as while another action on the subject is under way. */
   locked?: boolean;
   onSubmit: (action: Action | "comment", text: string) => Promise<boolean>;
-  actions?: (form: WorkItemCommentFormActions<Action>) => ReactNode;
 }) {
-  const gt = useGT();
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<Action | "comment" | null>(null);
   const locked = submitting !== null || lockedFromOutside;
@@ -78,24 +63,48 @@ export function WorkItemCommentForm<Action extends string = never>({
     if (posted) setBody("");
     setSubmitting(null);
   };
-  const submitAfterDictation = (action: Action | "comment") =>
-    speech.submitAfterDictation((text) => void submit(action, text));
-  const submitDisabled =
-    speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked;
+  return {
+    setBody,
+    speech,
+    locked,
+    submitting,
+    textareaRef,
+    submit: (action: Action | "comment") =>
+      speech.submitAfterDictation((text) => void submit(action, text)),
+    submitDisabled:
+      speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked,
+  };
+}
 
+export function WorkItemCommentForm<Action extends string = never>({
+  form,
+  completionScope,
+  label,
+  placeholder,
+  children,
+}: {
+  form: ReturnType<typeof useWorkItemCommentForm<Action>>;
+  completionScope: PullRequestCompletionScope | null;
+  label: string;
+  placeholder: string;
+  /** Actions beside Comment, such as Close with comment. */
+  children?: ReactNode;
+}) {
+  const gt = useGT();
+  const { speech } = form;
   return (
     <div className="space-y-2">
       <PullRequestMarkdownTextarea
-        ref={textareaRef}
+        ref={form.textareaRef}
         completionScope={completionScope}
         // Lock while posting because success clears the draft.
-        disabled={locked}
+        disabled={form.locked}
         readOnly={speech.freezesEditor}
         value={speech.displayText}
         rows={3}
         placeholder={placeholder}
         aria-label={label}
-        onValueChange={setBody}
+        onValueChange={form.setBody}
         onKeyDown={(event) => {
           if (event.nativeEvent.isComposing || event.keyCode === 229) return;
           if (
@@ -106,16 +115,16 @@ export function WorkItemCommentForm<Action extends string = never>({
           ) {
             event.preventDefault();
             event.stopPropagation();
-            if (!event.repeat) submitAfterDictation("comment");
+            if (!event.repeat) form.submit("comment");
           }
         }}
       />
       <div className="flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={locked} />
-        {actions?.({ submit: submitAfterDictation, disabled: submitDisabled, submitting })}
-        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
+        <TextFieldSpeechControls speech={speech} disabled={form.locked} />
+        {children}
+        <Button size="xs" disabled={form.submitDisabled} onClick={() => form.submit("comment")}>
           <SendIcon className="size-3.5" />
-          {submitting === "comment"
+          {form.submitting === "comment"
             ? gt("Posting...")
             : gt("Comment", { $context: "verb, submit button" })}
           <PullRequestSubmitKeyHint />
