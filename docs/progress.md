@@ -186,6 +186,7 @@
 - Why: the switch was off on both hubs. When Claude A hit its 5-hour limit, Auto benched it but never moved the thread, which sat idle for 50 minutes. The old text only spoke of resuming at reset.
 - Numbers: `vp run i18n:check` pass; `vp run check:changed`: format, lint, knip, typecheck (3 packages), 2 test files and react compiler pass.
 - Real run: dev server on a seeded worktree `.t3`; Settings → Threads shows the new text, and searching "failover" lists the switch.
+- Next: Tomáš merges the PR.
 
 ## 2026-11-19: Fork Usage strings translated
 
