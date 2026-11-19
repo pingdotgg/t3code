@@ -495,6 +495,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       const path = argsOfCall(0)[1] ?? "";
       expect(path).not.toContain("updated_before=");
       expect(path).toContain("order_by=updated_at");
+      expect(path).toContain("with_labels_details=true");
       expect(path).toContain("per_page=11");
       expect(path).toContain("page=1");
     }),
@@ -1129,6 +1130,90 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("counts a file GitLab withheld as too large and offers to read it alone", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify([
+                { old_path: "src/a.ts", new_path: "src/a.ts", diff: "@@ -1 +1 @@\n-a\n+b\n" },
+                { old_path: "src/huge.txt", new_path: "src/huge.txt", diff: "", too_large: true },
+              ]),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              JSON.stringify({
+                data: {
+                  project: {
+                    mergeRequest: {
+                      diffStatsSummary: { fileCount: 2 },
+                      diffStats: [
+                        { path: "src/a.ts", additions: 1, deletions: 1 },
+                        { path: "src/huge.txt", additions: 20000, deletions: 0 },
+                      ],
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const diff = yield* cli.getMergeRequestDiff({ cwd: "/w", repository: "acme/web", number: 7 });
+
+      expect(diff.omittedFileStats).toEqual([
+        { path: "src/huge.txt", additions: 20000, deletions: 0 },
+      ]);
+      assert.isTrue(diff.withheldFilesReadable);
+    }),
+  );
+
+  it.effect("reads one withheld file's section from the merge request's raw diff", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            [
+              "diff --git a/src/a.ts b/src/a.ts",
+              "--- a/src/a.ts",
+              "+++ b/src/a.ts",
+              "@@ -1 +1 @@",
+              "-a",
+              "+b",
+              "diff --git a/src/huge.txt b/src/huge.txt",
+              "new file mode 100644",
+              "--- /dev/null",
+              "+++ b/src/huge.txt",
+              "@@ -0,0 +1,2 @@",
+              "+one",
+              "+two",
+              "",
+            ].join("\n"),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const diff = yield* cli.getMergeRequestDiff({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        path: "src/huge.txt",
+      });
+
+      expect(argsOfCall(0)[1]).toBe("projects/acme%2Fweb/merge_requests/7/raw_diffs");
+      assert.strictEqual(
+        diff.patch,
+        "diff --git a/src/huge.txt b/src/huge.txt\nnew file mode 100644\n--- /dev/null\n+++ b/src/huge.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n",
+      );
+    }),
+  );
+
   it.effect(
     "pages a merge request diff 30 files at a time, which GitLab 15.7 to 17.10 accept",
     () =>
@@ -1721,39 +1806,49 @@ layer("GitLabPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("removes an award by listing them and deleting the reader's own id", () =>
+  it.effect("removes the reader's own award from a later page, and stops at an empty page", () =>
     Effect.gen(function* () {
+      const others = Array.from({ length: 100 }, (_, index) =>
+        index === 0 ? null : { id: index, name: "thumbsup", user: { username: "julius" } },
+      );
+      const page = (awards: ReadonlyArray<unknown>) =>
+        Effect.succeed(output(JSON.stringify(awards)));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
       );
+      mockedExecute.mockReturnValueOnce(page(others));
       mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            JSON.stringify([
-              { id: 5, name: "thumbsup", user: { username: "bilal" } },
-              { id: 6, name: "thumbsup", user: { username: "julius" } },
-            ]),
-          ),
-        ),
+        page([{ id: 500, name: "thumbsup", user: { username: "bilal" } }]),
       );
       mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(JSON.stringify({ username: "bilal" }))),
+      );
+      mockedExecute.mockReturnValueOnce(page(others));
+      mockedExecute.mockReturnValueOnce(page([]));
       const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-      yield* cli.setReaction({
+      const remove = {
         cwd: "/w",
         repository: "acme/web",
         number: 7,
         content: "thumbs-up",
         reacted: false,
-      });
+      } as const;
 
-      assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(argsOfCall(2)).toEqual([
-        "api",
-        "projects/acme%2Fweb/merge_requests/7/award_emoji/5",
-        "--method",
-        "DELETE",
+      yield* cli.setReaction(remove);
+      yield* cli.setReaction(remove);
+
+      const awards = "projects/acme%2Fweb/merge_requests/7/award_emoji";
+      expect(mockedExecute.mock.calls.map((_, index) => argsOfCall(index)[1])).toEqual([
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
+        `${awards}/500`,
+        "user",
+        `${awards}?per_page=100&page=1`,
+        `${awards}?per_page=100&page=2`,
       ]);
+      expect(argsOfCall(3)).toContain("DELETE");
     }),
   );
 
@@ -2236,6 +2331,63 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       expect(detail.maintainerCanModify).toBe(allowCollaboration);
       expect(detail.viewerCanEditMaintainerEdits).toBe(row.allowed);
+    }),
+  );
+
+  it.effect("asks GraphQL for merge request label colours the single REST GET cannot return", () =>
+    Effect.gen(function* () {
+      const restLabels = ["bug", ...Array.from({ length: 100 }, (_, index) => `extra-${index}`)];
+      const graphqlNodes = [
+        { title: "bug", color: "#E24329", description: "Something is broken" },
+        ...Array.from({ length: 99 }, (_, index) => ({
+          title: `extra-${index}`,
+          color: "#FFFFFF",
+        })),
+      ];
+      mockedExecute.mockImplementation(({ args }) =>
+        Effect.succeed(
+          output(
+            args[1] === "graphql"
+              ? JSON.stringify({
+                  data: {
+                    project: {
+                      mergeRequest: {
+                        userPermissions: { adminMergeRequest: false },
+                        labels: { nodes: graphqlNodes },
+                      },
+                    },
+                  },
+                })
+              : mergeRequestJson({ labels: restLabels }),
+          ),
+        ),
+      );
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const detail = yield* cli.getMergeRequestDetail({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        downstreamChecks: false,
+        maintainerEdits: false,
+      });
+
+      const graphql = mockedExecute.mock.calls.find(([call]) => call.args[1] === "graphql");
+      assert.isDefined(graphql);
+      expect(JSON.parse(graphql[0].stdin ?? "").query).toContain(
+        "labels(first: 100) { nodes { title color description } }",
+      );
+      expect(
+        mockedExecute.mock.calls.some(([call]) => call.args[1]?.includes("with_labels_details")),
+      ).toBe(false);
+      expect(detail.labels).toHaveLength(101);
+      expect(detail.labels[0]).toEqual({
+        name: "bug",
+        color: "#E24329",
+        description: "Something is broken",
+      });
+      expect(detail.labels[1]).toEqual({ name: "extra-0", color: "#FFFFFF", description: null });
+      expect(detail.labels.at(-1)).toEqual({ name: "extra-99", color: null });
     }),
   );
 

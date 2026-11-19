@@ -367,8 +367,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         ? Object.entries(processEnvironment).findLast(([key]) => key.toUpperCase() === "PATH")?.[1]
         : processEnvironment.PATH;
     const candidates: string[] = [];
-    for (const directory of (pathValue ?? "").split(platform === "win32" ? ";" : ":")) {
-      const entry = directory.trim().replace(/^"|"$/gu, "");
+    for (const entry of (pathValue ?? "").split(platform === "win32" ? ";" : ":")) {
       if (entry.length === 0) continue;
       const resolved = yield* commandPath(command, { ...processEnvironment, PATH: entry });
       if (resolved !== null) candidates.push(resolved);
@@ -401,9 +400,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         return installed;
       }
-      for (const candidate of yield* commandCandidates(names.executable, processEnvironment)) {
-        const selected = yield* fromExternal(candidate, "path");
-        if (selected) return selected;
+      for (const command of [names.executable, "agy"]) {
+        for (const candidate of yield* commandCandidates(command, processEnvironment)) {
+          const selected = yield* fromExternal(candidate, "path");
+          if (selected) return selected;
+        }
       }
       return yield* installationError(
         "resolve",
@@ -442,6 +443,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         ),
     );
 
+  const withValidationTimeout = Effect.timeoutOrElse({
+    duration: VALIDATION_TIMEOUT,
+    orElse: () =>
+      Effect.fail(
+        installationError(
+          "verify",
+          "Antigravity runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+        ),
+      ),
+  });
   const validate =
     options.validate ??
     Effect.fn("AntigravityInstallation.validate")(
@@ -529,6 +540,22 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       }),
     );
 
+  // Each update lands in its own directory. Best effort: a busy gate means a session is
+  // resolving, so the next start or update finishes the cleanup.
+  const pruneInactiveReleases = Effect.gen(function* () {
+    const active = yield* readRecord(activePath, ActiveRelease);
+    for (const entry of yield* fs.readDirectory(versionsDirectory)) {
+      if (entry === active.releaseId || !/^[a-f0-9]{64}$/u.test(entry)) continue;
+      const directory = path.join(versionsDirectory, entry);
+      if (leases.has(directory)) continue;
+      yield* fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore);
+    }
+  }).pipe(
+    gate.withPermitsIfAvailable(1),
+    Effect.ignore,
+    Effect.withSpan("AntigravityInstallation.pruneInactiveReleases"),
+  );
+
   const install = Effect.fn("AntigravityInstallation.install")(
     function* (asset: AntigravityReleaseAsset | AntigravityCliReleaseAsset) {
       yield* ensureEligible(asset.version);
@@ -574,6 +601,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             mode: 0o600,
           });
           yield* fs.rename(pointerPath, activePath);
+          yield* pruneInactiveReleases;
           yield* SubscriptionRef.update(
             state,
             (current) =>
@@ -604,10 +632,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           );
         }
         yield* report("verifying", "Checking the installed runtime.");
-        yield* validate(existing, asset.version).pipe(
-          Effect.scoped,
-          Effect.timeout(VALIDATION_TIMEOUT),
-        );
+        yield* validate(existing, asset.version).pipe(Effect.scoped, withValidationTimeout);
         yield* activate();
         return;
       }
@@ -864,7 +889,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           managedVersionDirectory: pairDirectory,
         },
         asset.version,
-      ).pipe(Effect.scoped, Effect.timeout(VALIDATION_TIMEOUT));
+      ).pipe(Effect.scoped, withValidationTimeout);
       const record: InstalledRelease = {
         releaseId,
         version: asset.version,
@@ -887,10 +912,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           completedRelease(releaseId).pipe(
             Effect.flatMap((existing) =>
               existing.version === asset.version
-                ? validate(existing, asset.version).pipe(
-                    Effect.scoped,
-                    Effect.timeout(VALIDATION_TIMEOUT),
-                  )
+                ? validate(existing, asset.version).pipe(Effect.scoped, withValidationTimeout)
                 : Effect.fail(
                     installationError(
                       "activate",
@@ -898,12 +920,14 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
                     ),
                   ),
             ),
-            Effect.mapError(() =>
-              installationError(
-                "activate",
-                "Could not publish the Antigravity runtime. The previous release is unchanged. Try again.",
-                cause,
-              ),
+            Effect.mapError((error) =>
+              isInstallationError(error) && error.operation === "verify"
+                ? error
+                : installationError(
+                    "activate",
+                    "Could not publish the Antigravity runtime. The previous release is unchanged. Try again.",
+                    cause,
+                  ),
             ),
           ),
         ),
@@ -1017,7 +1041,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             ? install(asset!)
             : validate(reuse, reuse.version!).pipe(
                 Effect.scoped,
-                Effect.timeout(VALIDATION_TIMEOUT),
+                withValidationTimeout,
                 Effect.andThen(ensureEligible(reuse.version!)),
                 Effect.andThen(
                   SubscriptionRef.update(state, (value) => ({
@@ -1162,6 +1186,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       ),
     ),
   );
+
+  // A startup install prunes when it activates; pruning now could delete the release it is verifying.
+  if (!isRunning(yield* SubscriptionRef.get(state))) yield* pruneInactiveReleases;
 
   return AntigravityInstallation.of({
     managedDirectory,

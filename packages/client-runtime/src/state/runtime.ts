@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableMessage } from "../errors/translatable.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
 import { followStreamInEnvironment } from "./environmentStreams.ts";
@@ -573,7 +575,7 @@ const isStale = (result: AsyncResult.AsyncResult<unknown, unknown>, staleTimeMs:
  * TTL skips on a remount; this layer has no TTL (a transform drops it) while `self` keeps the cache.
  * It reads `self` as a dependency, not a subscription, so `self` goes idle with its last reader.
  */
-const revalidateOnMount =
+export const revalidateOnMount =
   (staleTimeMs: number) =>
   <A, E>(
     self: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
@@ -711,15 +713,14 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
     | AtomRegistry.AtomRegistry
     | R
   >,
-): (target: {
-  readonly environmentId: EnvironmentIdType;
-  readonly input: Input;
-}) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
+): (
+  target: { readonly environmentId: EnvironmentIdType; readonly input: Input },
+  mountScope?: string,
+) => Atom.Atom<AsyncResult.AsyncResult<A, E | ER | Error>> {
   const connectionAtom = environmentConnectionAtoms(runtime);
   // `Atom.family` holds members weakly and the mounted layer has no TTL, so each member lives
   // as long as its cache: keyed weakly, this lets both go once the cache's TTL ends.
-  const membersByCache = new WeakMap<Atom.Atom<unknown>, Atom.Atom<unknown>>();
-  const family = Atom.family((key: string) => {
+  const cacheFamily = Atom.family((key: string) => {
     const target = parseEnvironmentRpcKey<Input>(key);
     const idleTtlMs = options.idleTtlMs ?? 5 * 60_000;
     const queryAtom = runtime
@@ -803,9 +804,19 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
               return Effect.fail(
                 new EnvironmentRpcUnavailableError({
                   environmentId: target.environmentId,
-                  message: `Environment ${target.environmentId} is ${
-                    connectionState.phase === "available" ? "not connected" : connectionState.phase
-                  }.`,
+                  ...translatableMessage(
+                    connectionState.phase === "offline"
+                      ? msg("Environment {environmentId} is offline.", {
+                          environmentId: target.environmentId,
+                        })
+                      : connectionState.phase === "blocked"
+                        ? msg("Environment {environmentId} is blocked.", {
+                            environmentId: target.environmentId,
+                          })
+                        : msg("Environment {environmentId} is not connected.", {
+                            environmentId: target.environmentId,
+                          }),
+                  ),
                 }),
               );
           }
@@ -853,19 +864,31 @@ export function createEnvironmentQueryAtomFamily<R, ER, Input, A, E>(
         ? queryAtom
         : queryAtom.pipe(refreshEveryUntilFinal(options.refreshIntervalMs, isFinal));
     const refreshTrigger = options.refreshTrigger?.(target);
-    const cache = (
+    return (
       refreshTrigger === undefined
         ? intervalQuery
         : intervalQuery.pipe(refreshOnSignalWhileRead(refreshTrigger, isFinal))
     ).pipe(Atom.setIdleTTL(idleTtlMs));
+  });
+  type QueryAtom = ReturnType<typeof cacheFamily>;
+  const membersByCache = new WeakMap<QueryAtom, Map<string | undefined, QueryAtom>>();
+  return (target, mountScope) => {
+    const key = environmentRpcKey(target);
+    const cache = cacheFamily(key);
+    let members = membersByCache.get(cache);
+    if (members === undefined) {
+      members = new Map();
+      membersByCache.set(cache, members);
+    }
+    const existing = members.get(mountScope);
+    if (existing !== undefined) return existing;
     const member = cache.pipe(
       revalidateOnMount(options.staleTimeMs ?? 30_000),
-      Atom.withLabel(`${options.label}:${key}`),
+      Atom.withLabel(`${options.label}:${key}${mountScope === undefined ? "" : `:${mountScope}`}`),
     );
-    membersByCache.set(cache, member);
+    members.set(mountScope, member);
     return member;
-  });
-  return (target) => family(environmentRpcKey(target));
+  };
 }
 
 export function createEnvironmentSubscriptionAtomFamily<R, ER, Input, A, E>(
