@@ -59,6 +59,7 @@ export type ModelOption = {
   readonly capabilities: ModelCapabilities | null;
   readonly selection: ModelSelection;
   readonly providerWithheldModels?: ProviderWithheldModels;
+  readonly providerSubProviders?: T3ServerConfig["providers"][number]["subProviders"];
 };
 
 /** The provider fields naming models it never offers, which pickers explain instead. */
@@ -72,6 +73,7 @@ export type ProviderGroup = {
   readonly providerLabel: string;
   readonly models: ReadonlyArray<ModelOption>;
   readonly withheldModels?: ProviderWithheldModels;
+  readonly subProviders?: ModelOption["providerSubProviders"];
 };
 
 function providerDisplayLabel(provider: {
@@ -466,6 +468,7 @@ export function buildModelOptions(
         isDefault: model.isDefault === true,
         isLegacy: model.isLegacy === true,
         ...(withheldModels ? { providerWithheldModels: withheldModels } : {}),
+        ...(provider.subProviders?.length ? { providerSubProviders: provider.subProviders } : {}),
         capabilities: model.capabilities,
         selection: normalizeSelectionOptions(
           {
@@ -561,6 +564,7 @@ export function groupByProvider(
       providerLabel: string;
       models: ModelOption[];
       withheldModels: ProviderWithheldModels | undefined;
+      subProviders: ModelOption["providerSubProviders"];
     }
   >();
   for (const option of options) {
@@ -568,11 +572,13 @@ export function groupByProvider(
     if (existing) {
       existing.models.push(option);
       existing.withheldModels ??= option.providerWithheldModels;
+      existing.subProviders ??= option.providerSubProviders;
     } else {
       groups.set(option.providerKey, {
         providerLabel: option.providerLabel,
         models: [option],
         withheldModels: option.providerWithheldModels,
+        subProviders: option.providerSubProviders,
       });
     }
   }
@@ -594,6 +600,7 @@ export function groupByProvider(
       providerLabel: providerDisplayLabel(provider),
       models: [],
       withheldModels,
+      subProviders: undefined,
     });
   }
 
@@ -602,5 +609,6 @@ export function groupByProvider(
     providerLabel: group.providerLabel,
     models: group.models,
     ...(group.withheldModels ? { withheldModels: group.withheldModels } : {}),
+    ...(group.subProviders ? { subProviders: group.subProviders } : {}),
   }));
 }

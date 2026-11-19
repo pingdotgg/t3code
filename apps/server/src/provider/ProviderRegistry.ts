@@ -269,8 +269,16 @@ const mergeProviderModels = (
     ...restrictedSlugs,
     ...(provider.updateRequiredModels ?? []).map((model) => model.slug),
   ]);
+  const unavailableSubProviders = new Set(
+    provider.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [] : [subProvider.name],
+    ),
+  );
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !withheldSlugs.has(model.slug),
+    (model) =>
+      !model.isCustom &&
+      !withheldSlugs.has(model.slug) &&
+      !unavailableSubProviders.has(model.subProvider ?? ""),
   );
   const entitledNextModels = nextModels.filter((model) => !restrictedSlugs.has(model.slug));
 
