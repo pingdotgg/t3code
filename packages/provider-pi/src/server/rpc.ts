@@ -194,7 +194,7 @@ function parsePiRecord(line: string): PiRpcRecord | undefined {
  * gone its pid/pgid can be recycled by the OS, so escalating blindly could
  * deliver SIGKILL to an unrelated process.
  */
-const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
+export const terminatePiProcess = Effect.fn("PiRpc.terminatePiProcess")(function* (
   kill: (signal: NodeJS.Signals) => boolean,
   hasExited: () => boolean,
   groupGone: () => boolean,
