@@ -39,12 +39,10 @@ export function MarkdownThreadLink(props: {
   const connected = useConnectedEnvironmentIds().includes(writtenRef.environmentId);
   // A thread on a machine this client is not connected to still reads through the one that links to it.
   const linkedLabel = useLinkedEnvironments(
-    written !== null || connected || writtenRef.environmentId === props.environmentId
-      ? null
-      : props.environmentId,
+    connected || writtenRef.environmentId === props.environmentId ? null : props.environmentId,
   ).get(writtenRef.environmentId);
+  // A shell cached from an earlier connection does not make the thread open there now.
   const linked =
-    written === null &&
     resolveLinkedThreadOpen({
       environmentId: writtenRef.environmentId,
       viaEnvironmentId: props.environmentId,
@@ -80,8 +78,9 @@ export function MarkdownThreadLink(props: {
   const remote = useThreadShell(remoteRef);
   const resolved = target ?? (remoteRef && remote ? { ref: remoteRef, metadata: remote } : null);
   const openLinked = useOpenLinkedThread();
-  if (resolved === null && linked && linkedLabel !== undefined) {
-    const title = props.label ?? gt("Thread on {label}", { label: linkedLabel });
+  if (linked && linkedLabel !== undefined) {
+    const knownTitle = props.label ?? written?.title ?? null;
+    const title = knownTitle ?? gt("Thread on {label}", { label: linkedLabel });
     return (
       <Tooltip>
         <TooltipTrigger
@@ -96,7 +95,7 @@ export function MarkdownThreadLink(props: {
                       viaEnvironmentId: props.environmentId,
                       ...writtenRef,
                       label: linkedLabel,
-                      title: props.label,
+                      title: knownTitle,
                     })
                   }
                 />

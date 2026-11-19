@@ -10,13 +10,18 @@ import { MarkdownThreadLink } from "./MarkdownThreadLink";
 const state = vi.hoisted(() => ({
   reply: null as unknown,
   remote: null as unknown,
+  cached: null as unknown,
   linked: new Map<string, string>(),
   connected: [] as Array<string>,
   openedLinked: [] as Array<unknown>,
 }));
 vi.mock(import("../../state/entities"), () => ({
   useThreadShell: ((ref: { environmentId: string } | null) =>
-    ref?.environmentId === "remote" ? state.remote : null) as never,
+    ref?.environmentId === "remote"
+      ? state.remote
+      : ref?.environmentId === "saved-vm"
+        ? state.cached
+        : null) as never,
   useThreadRefs: (enabled = true) =>
     enabled
       ? [{ environmentId: EnvironmentId.make("remote"), threadId: ThreadId.make("older-thread") }]
@@ -61,6 +66,7 @@ function setup() {
   >(AsyncResult.initial());
   state.reply = reply;
   state.linked = new Map();
+  state.cached = null;
   state.connected = ["environment", "remote"];
   state.openedLinked = [];
   state.remote = {
@@ -193,6 +199,24 @@ it.for([
     { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: null },
   ]);
   expect(screen.router?.state.location.pathname).toBe("/");
+});
+
+it("reads through the link when a disconnected machine's thread is only cached here", async () => {
+  const { registry } = setup();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  state.linked = new Map([["saved-vm", "fs-17"]]);
+  state.cached = { id: ThreadId.make("there"), title: "Cached title", projectId: null };
+  const environmentId = EnvironmentId.make("environment");
+  const link = { environmentId: EnvironmentId.make("saved-vm"), threadId: ThreadId.make("there") };
+  await using screen = await render(
+    <RegistryContext value={registry}>
+      <MarkdownThreadLink environmentId={environmentId} link={link} label={null} />
+    </RegistryContext>,
+  );
+  await screen.getByRole("button", { name: "Thread, Cached title" }).click();
+  expect(state.openedLinked).toEqual([
+    { viaEnvironmentId: environmentId, ...link, label: "fs-17", title: "Cached title" },
+  ]);
 });
 
 it("opens a linked machine's thread directly once this client is connected to it", async () => {
