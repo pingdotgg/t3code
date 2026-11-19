@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
-  themeCssFetchCandidates,
   themeCssLoadsRemoteFiles,
   themeCssValueFetches,
+  themeCssWithoutDeclarations,
 } from "./themeCss.ts";
 
 // %23 decodes to # inside the SVG, so url(%23g) names its own gradient.
@@ -64,7 +64,7 @@ describe("themeCssLoadsRemoteFiles", () => {
   });
 });
 
-describe("themeCssFetchCandidates", () => {
+describe("themeCssWithoutDeclarations", () => {
   it.each([
     // A harmless var() shorthand and an escape elsewhere name no shorthand that fetches.
     ["a { border: var(--edge); border-left-width: 0; } .b { c\\6flor: red; }", [" c\\6flor: red"]],
@@ -90,6 +90,17 @@ describe("themeCssFetchCandidates", () => {
     // A closing bracket of another kind closes nothing, so the declaration stays whole.
     ["a { background: var(--none, ( ] ; url(x))); }", [" background: var(--none, ( ] ; url(x)))"]],
   ])("%s", (css, candidates) => {
-    expect(themeCssFetchCandidates(css)).toEqual(candidates);
+    const asked: string[] = [];
+    expect(themeCssWithoutDeclarations(css, (candidate) => asked.push(candidate) < 0)).toBe(css);
+    expect(asked).toEqual(candidates);
+  });
+
+  it("removes only the declarations that are refused", () => {
+    expect(
+      themeCssWithoutDeclarations(
+        "a { mask: var(--none, url(https://e.com/k)); mask-size: auto } b { cursor: url(x) }",
+        (candidate) => candidate.includes("mask"),
+      ),
+    ).toBe("a {; mask-size: auto } b { cursor: url(x) }");
   });
 });

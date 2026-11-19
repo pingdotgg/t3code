@@ -35,11 +35,12 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(style.listStyleImage).toBe("none");
   expect(style.borderImageSource).toBe("none");
   expect(style.maskImage).toBe("none");
-  const kept = document.adoptedStyleSheets.flatMap((sheet) =>
-    Array.from(sheet.cssRules, (rule) => rule.cssText),
-  );
-  expect(kept.join("\n")).not.toContain("example.com");
-  expect(kept.join("\n")).toContain(
+  const themeCssText = () =>
+    document.adoptedStyleSheets
+      .flatMap((sheet) => Array.from(sheet.cssRules, (rule) => rule.cssText))
+      .join("\n");
+  expect(themeCssText()).not.toContain("example.com");
+  expect(themeCssText()).toContain(
     "background: var(--theme-background-image) center / cover no-repeat;",
   );
   expect(style.cursor).toBe("auto");
@@ -65,7 +66,9 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
       background: var(--none, linear-gradient(red, blue)); background-color: red;
     }
     .unused { c\\6flor: red; b\\61 ckground: var(--none); cursor: url(https://example.com/x), auto; }
+    .unused { background: var(--none, url(https://example.com/y)); background-size: auto; }
   `);
+  expect(themeCssText()).not.toContain("example.com");
   expect(style.borderTopWidth).toBe("4px");
   expect(style.borderLeftWidth).toBe("0px");
   expect(style.backgroundImage).toContain("linear-gradient");

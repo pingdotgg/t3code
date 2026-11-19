@@ -1,4 +1,4 @@
-import { themeCssFetchCandidates, themeCssValueFetches } from "@t3tools/shared/themeCss";
+import { themeCssValueFetches, themeCssWithoutDeclarations } from "@t3tools/shared/themeCss";
 
 // Theme CSS comes from imported files and from agents, so it must not fetch: a
 // url() on an attribute selector can send what is on screen to another host.
@@ -37,39 +37,34 @@ function parsedStyles(text: string): CSSStyleDeclaration[] {
 }
 
 /**
- * The pending longhands of `style` that can fetch. cssText shows a pending shorthand's text until
- * a later declaration overrides one of its longhands. After that only the theme's source has the
- * text, so a longhand that does not come back from parsing cssText is judged by `hiddenFetches`.
+ * Whether a shorthand that `style` leaves pending can fetch. cssText shows its text until a later
+ * declaration overrides one of its longhands; `hiddenFetches` says what to make of one that then
+ * does not come back from parsing cssText.
  */
-function fetchingPendingLonghands(
-  style: CSSStyleDeclaration,
-  hiddenFetches: (longhand: string) => boolean,
-): string[] {
+function pendingShorthandFetches(style: CSSStyleDeclaration, hiddenFetches: boolean): boolean {
   const pending = pendingLonghands(style);
-  if (pending.length === 0) return pending;
+  if (pending.length === 0) return false;
   const text = style.cssText;
-  if (themeCssValueFetches(text)) return pending;
-  const suspects = pending.filter(hiddenFetches);
-  if (suspects.length === 0) return suspects;
+  if (themeCssValueFetches(text)) return true;
+  if (!hiddenFetches) return false;
   const shown = new Set(parsedStyles(`x{${text}}`).flatMap(pendingLonghands));
-  return suspects.filter((longhand) => !shown.has(longhand));
+  return pending.some((longhand) => !shown.has(longhand));
 }
 
 /**
- * The longhands that a var() shorthand able to fetch leaves pending anywhere in the CSS. The
- * browser parses each candidate alone, as rules and as a block, so escapes resolve as they will.
+ * The theme's source without the var() shorthands that can fetch, so that none is left for a later
+ * declaration to hide. The browser parses each candidate alone, as rules and as a block, so
+ * escapes resolve as they will.
  */
-function fetchingShorthandLonghands(css: string): Set<string> {
-  const longhands = new Set<string>();
-  for (const candidate of themeCssFetchCandidates(css)) {
-    for (const style of [...parsedStyles(candidate), ...parsedStyles(`x{${candidate}}`)]) {
-      for (const longhand of fetchingPendingLonghands(style, () => true)) longhands.add(longhand);
-    }
-  }
-  return longhands;
+function withoutFetchingShorthands(css: string): string {
+  return themeCssWithoutDeclarations(css, (candidate) =>
+    [...parsedStyles(candidate), ...parsedStyles(`x{${candidate}}`)].some((style) =>
+      pendingShorthandFetches(style, true),
+    ),
+  );
 }
 
-function stripDeclarations(rule: CSSRule, hiddenFetches: ReadonlySet<string>): boolean {
+function stripDeclarations(rule: CSSRule): boolean {
   if (!("style" in rule) || !(rule.style instanceof CSSStyleDeclaration)) return false;
   for (let item = rule.style.length - 1; item >= 0; item--) {
     const property = rule.style.item(item);
@@ -77,21 +72,22 @@ function stripDeclarations(rule: CSSRule, hiddenFetches: ReadonlySet<string>): b
       rule.style.removeProperty(property);
     }
   }
-  const fetching = fetchingPendingLonghands(rule.style, (longhand) => hiddenFetches.has(longhand));
-  for (const longhand of fetching) rule.style.removeProperty(longhand);
+  if (pendingShorthandFetches(rule.style, false)) {
+    for (const longhand of pendingLonghands(rule.style)) rule.style.removeProperty(longhand);
+  }
   return true;
 }
 
 /** Keeps only rule shapes it can check, so a new at-rule that fetches is dropped by default. */
-function stripFetches(parent: RuleParent, hiddenFetches: ReadonlySet<string>): void {
+function stripFetches(parent: RuleParent): void {
   for (let index = parent.cssRules.length - 1; index >= 0; index--) {
     const rule = parent.cssRules[index];
     if (!rule) continue;
-    const hasStyle = stripDeclarations(rule, hiddenFetches);
+    const hasStyle = stripDeclarations(rule);
     if (rule instanceof CSSKeyframesRule) {
-      for (const frame of rule.cssRules) stripDeclarations(frame, hiddenFetches);
+      for (const frame of rule.cssRules) stripDeclarations(frame);
     } else if (isRuleParent(rule)) {
-      stripFetches(rule, hiddenFetches);
+      stripFetches(rule);
     } else if (rule instanceof CSSPropertyRule) {
       // A registered property's initial value is used wherever var() reads it.
       if (themeCssValueFetches(rule.initialValue ?? "")) parent.deleteRule(index);
@@ -116,6 +112,6 @@ export function applyThemeCss(css: string | undefined): void {
     themeSheet = new CSSStyleSheet();
     document.adoptedStyleSheets = [...document.adoptedStyleSheets, themeSheet];
   }
-  themeSheet.replaceSync(next);
-  stripFetches(themeSheet, fetchingShorthandLonghands(next));
+  themeSheet.replaceSync(withoutFetchingShorthands(next));
+  stripFetches(themeSheet);
 }
