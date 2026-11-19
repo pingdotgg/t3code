@@ -26,16 +26,17 @@ export class MobileAccessService extends Context.Service<
 >()("t3/mobileAccess/MobileAccessService") {}
 
 /** Upstream T3 Code mobile releases this host was checked against; see the README test matrix. */
-export const VERIFIED_MOBILE_CLIENTS = ["T3 Code Android 2.3.0 (Play beta 784, protocol 2)"];
+const VERIFIED_MOBILE_CLIENTS = ["T3 Code Android 2.3.0 (Play beta 784, protocol 2)"];
 const LIMIT = 20;
 
-export function explainRejection(
+function explainRejection(
   outcome: MobileConnectionAttempt["outcome"],
   clientProtocol: number | null,
   reason: string | null,
 ): string {
   if (outcome === "protocol-mismatch") {
-    if (clientProtocol === null) return `The app did not say which protocol it speaks. Update the T3 Code app; this Continuum speaks protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`;
+    if (clientProtocol === null)
+      return `The app did not say which protocol it speaks. Update the T3 Code app; this Continuum speaks protocol ${ORCHESTRATION_PROTOCOL_VERSION}.`;
     return clientProtocol > ORCHESTRATION_PROTOCOL_VERSION
       ? `The app speaks protocol ${clientProtocol}, newer than this Continuum (protocol ${ORCHESTRATION_PROTOCOL_VERSION}). Update Continuum to connect it.`
       : `The app speaks protocol ${clientProtocol}, older than this Continuum (protocol ${ORCHESTRATION_PROTOCOL_VERSION}). Update the app from the App Store or Google Play.`;
@@ -59,23 +60,26 @@ export const layer = Layer.effect(
           attempts: list,
         })),
       ),
-      recordRejection: ({ url, outcome, reason }) =>
-        Effect.gen(function* () {
-          const surface = url.searchParams.get("clientSurface") ?? "unknown";
-          if (surface !== "mobile") return;
-          const raw = url.searchParams.get("orchestrationProtocol");
-          const clientProtocol = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null;
-          const attempt: MobileConnectionAttempt = {
-            at: new Date().toISOString(),
-            surface,
-            appVersion: url.searchParams.get("clientAppVersion")?.slice(0, 64) ?? null,
-            os: url.searchParams.get("clientOs")?.slice(0, 32) ?? null,
-            clientProtocol,
-            outcome,
-            explanation: explainRejection(outcome, clientProtocol, reason),
-          };
-          yield* Ref.update(attempts, (list) => [attempt, ...list].slice(0, LIMIT));
-        }),
+      recordRejection: Effect.fn("MobileAccessService.recordRejection")(function* ({
+        url,
+        outcome,
+        reason,
+      }) {
+        const surface = url.searchParams.get("clientSurface") ?? "unknown";
+        if (surface !== "mobile") return;
+        const raw = url.searchParams.get("orchestrationProtocol");
+        const clientProtocol = raw !== null && /^\d+$/.test(raw) ? Number(raw) : null;
+        const attempt: MobileConnectionAttempt = {
+          at: new Date().toISOString(),
+          surface,
+          appVersion: url.searchParams.get("clientAppVersion")?.slice(0, 64) ?? null,
+          os: url.searchParams.get("clientOs")?.slice(0, 32) ?? null,
+          clientProtocol,
+          outcome,
+          explanation: explainRejection(outcome, clientProtocol, reason),
+        };
+        yield* Ref.update(attempts, (list) => [attempt, ...list].slice(0, LIMIT));
+      }),
     });
   }),
 );

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { applyCompletion, backlinksOf, positionAt, resolveNoteLink, wantsLinkCompletion, wikiLinksToMarkdown } from "./IweNotesPanel.logic";
+import {
+  applyCompletion,
+  backlinksOf,
+  positionAt,
+  resolveNoteLink,
+  wantsLinkCompletion,
+  wikiLinksToMarkdown,
+} from "./IweNotesPanel.logic";
 
 describe("IWE notes panel logic", () => {
   it("resolves links relative to the open note, with or without extensions", () => {
@@ -19,7 +26,15 @@ describe("IWE notes panel logic", () => {
   });
 
   it("merges inclusion parents and references into one backlink list", () => {
-    expect(backlinksOf({ includedBy: [{ key: "index", title: "Garden" }], referencedBy: [{ key: "a", title: "A" }, { key: "index", title: "Garden" }] })).toEqual([
+    expect(
+      backlinksOf({
+        includedBy: [{ key: "index", title: "Garden" }],
+        referencedBy: [
+          { key: "a", title: "A" },
+          { key: "index", title: "Garden" },
+        ],
+      }),
+    ).toEqual([
       { key: "index", title: "Garden" },
       { key: "a", title: "A" },
     ]);

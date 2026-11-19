@@ -44,7 +44,7 @@ export class ImproveService extends Context.Service<
 
 const KEEP_JOBS = 200;
 
-export function improvedThreadId(requestId: string): ThreadId {
+function improvedThreadId(requestId: string): ThreadId {
   return ThreadId.make(`improve:${requestId}`);
 }
 
@@ -69,19 +69,20 @@ const make = Effect.gen(function* () {
   });
 
   const save = Effect.promise(async () => {
-    const list = [...jobs.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt)).slice(-KEEP_JOBS);
+    const list = [...jobs.values()]
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .slice(-KEEP_JOBS);
     await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
     await NodeFSP.writeFile(`${file}.tmp`, JSON.stringify({ version: 1, jobs: list }, null, 2));
     await NodeFSP.rename(`${file}.tmp`, file);
   });
 
-  const put = (job: ImproveJob) =>
-    Effect.gen(function* () {
-      const updated = { ...job, updatedAt: new Date().toISOString() };
-      jobs.set(job.requestId, updated);
-      yield* save;
-      return updated;
-    });
+  const put = Effect.fn("ImproveService.put")(function* (job: ImproveJob) {
+    const updated = { ...job, updatedAt: new Date().toISOString() };
+    jobs.set(job.requestId, updated);
+    yield* save;
+    return updated;
+  });
 
   const label = (selection: ModelSelection) =>
     providers.getProviders.pipe(
@@ -95,7 +96,9 @@ const make = Effect.gen(function* () {
   const failure = (message: string) => new ImproveError({ message });
 
   const sourceContext = Effect.fn("ImproveService.sourceContext")(function* (threadId: ThreadId) {
-    const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(() => failure("Could not read the session.")));
+    const shell = yield* threads
+      .getThreadShell(threadId)
+      .pipe(Effect.mapError(() => failure("Could not read the session.")));
     if (shell === null) return yield* failure("That session no longer exists.");
     const { projection } = yield* threads
       .getThreadSnapshotWindow(threadId, { rowLimit: 80 })
@@ -103,7 +106,9 @@ const make = Effect.gen(function* () {
     const messages: ImproveConversationMessage[] = projection.messages
       .filter((message) => message.role === "user" || message.role === "assistant")
       .map((message) => ({ role: message.role as "user" | "assistant", text: message.text }));
-    const project = Option.getOrNull(yield* projects.getById(shell.projectId).pipe(Effect.orElseSucceed(() => Option.none())));
+    const project = Option.getOrNull(
+      yield* projects.getById(shell.projectId).pipe(Effect.orElseSucceed(() => Option.none())),
+    );
     return { shell, messages, project };
   });
 
@@ -153,7 +158,11 @@ const make = Effect.gen(function* () {
         runtimeMode: shell.runtimeMode,
         interactionMode: shell.interactionMode,
         workspaceStrategy: shell.worktreePath
-          ? { type: "existing_worktree", worktreePath: shell.worktreePath, ...(shell.branch ? { branch: shell.branch } : {}) }
+          ? {
+              type: "existing_worktree",
+              worktreePath: shell.worktreePath,
+              ...(shell.branch ? { branch: shell.branch } : {}),
+            }
           : { type: "root" },
         initialMessage: {
           messageId: MessageId.make(`improve:${job.requestId}:message`),
@@ -164,82 +173,101 @@ const make = Effect.gen(function* () {
         createdBy: "user",
         creationSource: "web",
       })
-      .pipe(Effect.mapError((error: { readonly message?: string; readonly _tag: string }) => failure(`Could not open the new session: ${error.message ?? error._tag}`)));
+      .pipe(
+        Effect.mapError((error: { readonly message?: string; readonly _tag: string }) =>
+          failure(`Could not open the new session: ${error.message ?? error._tag}`),
+        ),
+      );
     return threadId;
   });
 
-  const runFrom = (job: ImproveJob, step: "rewrite" | "launch"): Effect.Effect<ImproveJob, ImproveError> =>
-    Effect.gen(function* () {
-      let current = job;
-      if (step === "rewrite") {
-        current = yield* put({ ...current, phase: "rewriting", error: null, failedStep: null });
-        const rewritten = yield* rewrite(current).pipe(
-          Effect.tapError((error) => put({ ...current, phase: "failed", failedStep: "rewrite", error: error.message })),
-        );
-        current = yield* put({ ...current, phase: "rewritten", improvedPrompt: rewritten.improved, contextSummary: rewritten.summary });
-      }
-      current = yield* put({ ...current, phase: "launching", error: null, failedStep: null });
-      const threadId = yield* launch(current).pipe(
-        Effect.tapError((error) => put({ ...current, phase: "failed", failedStep: "launch", error: error.message })),
+  const runFrom = Effect.fn("ImproveService.runFrom")(function* (
+    job: ImproveJob,
+    step: "rewrite" | "launch",
+  ): Effect.fn.Return<ImproveJob, ImproveError> {
+    let current = job;
+    if (step === "rewrite") {
+      current = yield* put({ ...current, phase: "rewriting", error: null, failedStep: null });
+      const rewritten = yield* rewrite(current).pipe(
+        Effect.tapError((error) =>
+          put({ ...current, phase: "failed", failedStep: "rewrite", error: error.message }),
+        ),
       );
-      return yield* put({ ...current, phase: "launched", newThreadId: threadId });
-    });
+      current = yield* put({
+        ...current,
+        phase: "rewritten",
+        improvedPrompt: rewritten.improved,
+        contextSummary: rewritten.summary,
+      });
+    }
+    current = yield* put({ ...current, phase: "launching", error: null, failedStep: null });
+    const threadId = yield* launch(current).pipe(
+      Effect.tapError((error) =>
+        put({ ...current, phase: "failed", failedStep: "launch", error: error.message }),
+      ),
+    );
+    return yield* put({ ...current, phase: "launched", newThreadId: threadId });
+  });
 
   return ImproveService.of({
     start: (input) =>
-      lock.withPermits(1)(
-        Effect.gen(function* () {
-          const existing = jobs.get(input.requestId);
-          // The same request id never opens a second session.
-          if (existing) return existing;
-          const now = new Date().toISOString();
-          const job: ImproveJob = {
-            requestId: input.requestId,
-            sourceThreadId: input.sourceThreadId,
-            originalPrompt: input.prompt,
-            improvedPrompt: null,
-            contextSummary: null,
-            improver: input.improver,
-            destination: input.destination,
-            phase: "rewriting",
-            failedStep: null,
-            error: null,
-            newThreadId: null,
-            createdAt: now,
-            updatedAt: now,
-          };
-          jobs.set(job.requestId, job);
-          return job;
-        }),
-      ).pipe(
-        Effect.flatMap((job) => {
-          const fresh = job.phase === "rewriting" && job.improvedPrompt === null && job.newThreadId === null;
-          return fresh ? runFrom(job, "rewrite") : Effect.succeed(job);
-        }),
-        Effect.withSpan("ImproveService.start"),
-      ),
-    retry: (input) =>
-      Effect.gen(function* () {
-        const job = jobs.get(input.requestId);
-        if (!job) return yield* failure("That /improve request is no longer kept. Run /improve again.");
-        if (job.phase === "launched") return job;
-        const updated: ImproveJob = {
-          ...job,
-          ...(input.improver ? { improver: input.improver } : {}),
-          ...(input.destination ? { destination: input.destination } : {}),
-          ...(input.improvedPrompt ? { improvedPrompt: input.improvedPrompt } : {}),
-        };
-        return yield* runFrom(updated, updated.improvedPrompt === null ? "rewrite" : "launch");
-      }).pipe(Effect.withSpan("ImproveService.retry")),
+      lock
+        .withPermits(1)(
+          Effect.sync(() => {
+            const existing = jobs.get(input.requestId);
+            // The same request id never opens a second session.
+            if (existing) return existing;
+            const now = new Date().toISOString();
+            const job: ImproveJob = {
+              requestId: input.requestId,
+              sourceThreadId: input.sourceThreadId,
+              originalPrompt: input.prompt,
+              improvedPrompt: null,
+              contextSummary: null,
+              improver: input.improver,
+              destination: input.destination,
+              phase: "rewriting",
+              failedStep: null,
+              error: null,
+              newThreadId: null,
+              createdAt: now,
+              updatedAt: now,
+            };
+            jobs.set(job.requestId, job);
+            return job;
+          }),
+        )
+        .pipe(
+          Effect.flatMap((job) => {
+            const fresh =
+              job.phase === "rewriting" && job.improvedPrompt === null && job.newThreadId === null;
+            return fresh ? runFrom(job, "rewrite") : Effect.succeed(job);
+          }),
+          Effect.withSpan("ImproveService.start"),
+        ),
+    retry: Effect.fn("ImproveService.retry")(function* (input) {
+      const job = jobs.get(input.requestId);
+      if (!job)
+        return yield* failure("That /improve request is no longer kept. Run /improve again.");
+      if (job.phase === "launched") return job;
+      const updated: ImproveJob = {
+        ...job,
+        ...(input.improver ? { improver: input.improver } : {}),
+        ...(input.destination ? { destination: input.destination } : {}),
+        ...(input.improvedPrompt ? { improvedPrompt: input.improvedPrompt } : {}),
+      };
+      return yield* runFrom(updated, updated.improvedPrompt === null ? "rewrite" : "launch");
+    }),
     list: (sourceThreadId) =>
       Effect.sync(() =>
-        [...jobs.values()].filter((job) => job.sourceThreadId === sourceThreadId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+        [...jobs.values()]
+          .filter((job) => job.sourceThreadId === sourceThreadId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       ),
-    dismiss: (requestId) =>
-      Effect.gen(function* () {
-        jobs.delete(requestId);
-        yield* save;
-      }),
+    dismiss: Effect.fn("ImproveService.dismiss")(function* (requestId) {
+      jobs.delete(requestId);
+      yield* save;
+    }),
   });
 });
 

@@ -40,15 +40,27 @@ export class GameDevService extends Context.Service<
   {
     readonly core: GameDevCore;
     readonly overview: Effect.Effect<GameDevOverview, GameDevError>;
-    readonly detectProjects: (root: string) => Effect.Effect<ReadonlyArray<GameProject>, GameDevError>;
+    readonly detectProjects: (
+      root: string,
+    ) => Effect.Effect<ReadonlyArray<GameProject>, GameDevError>;
     readonly install: (
       input: GameDevInstallInput,
       report: (event: GameInstallEvent) => void,
     ) => Effect.Effect<void, GameDevError>;
-    readonly locate: (target: GameInstallTarget, path: string) => Effect.Effect<GameDevOverview, GameDevError>;
-    readonly openProject: (input: GameDevOpenProjectInput) => Effect.Effect<GameDevOpenProjectResult, GameDevError>;
-    readonly bindSession: (sessionId: string, projectRoot: string) => Effect.Effect<GameDevWorkspace, GameDevError>;
-    readonly updateSettings: (patch: GameDevSettingsPatch) => Effect.Effect<GameDevOverview, GameDevError>;
+    readonly locate: (
+      target: GameInstallTarget,
+      path: string,
+    ) => Effect.Effect<GameDevOverview, GameDevError>;
+    readonly openProject: (
+      input: GameDevOpenProjectInput,
+    ) => Effect.Effect<GameDevOpenProjectResult, GameDevError>;
+    readonly bindSession: (
+      sessionId: string,
+      projectRoot: string,
+    ) => Effect.Effect<GameDevWorkspace, GameDevError>;
+    readonly updateSettings: (
+      patch: GameDevSettingsPatch,
+    ) => Effect.Effect<GameDevOverview, GameDevError>;
     readonly workspace: (projectRoot: string) => Effect.Effect<GameDevWorkspace, GameDevError>;
     readonly userCommand: (input: {
       readonly sessionId: string;
@@ -56,17 +68,44 @@ export class GameDevService extends Context.Service<
       readonly args: Record<string, unknown>;
     }) => Effect.Effect<GameDevCommandResult, GameDevError>;
     readonly capture: (captureId: string) => Effect.Effect<GameDevCapture, GameDevError>;
-    readonly resolveApproval: (approvalId: string, approve: boolean) => Effect.Effect<{ readonly resolved: boolean }, GameDevError>;
-    readonly checkpointCreate: (input: { readonly projectRoot: string; readonly label: string; readonly paths?: ReadonlyArray<string> }) => Effect.Effect<GameCheckpoint, GameDevError>;
-    readonly checkpointDiff: (projectRoot: string, checkpointId: string) => Effect.Effect<GameCheckpointDiff, GameDevError>;
-    readonly checkpointRestore: (projectRoot: string, checkpointId: string) => Effect.Effect<GameCheckpointDiff, GameDevError>;
+    readonly resolveApproval: (
+      approvalId: string,
+      approve: boolean,
+    ) => Effect.Effect<{ readonly resolved: boolean }, GameDevError>;
+    readonly checkpointCreate: (input: {
+      readonly projectRoot: string;
+      readonly label: string;
+      readonly paths?: ReadonlyArray<string>;
+    }) => Effect.Effect<GameCheckpoint, GameDevError>;
+    readonly checkpointDiff: (
+      projectRoot: string,
+      checkpointId: string,
+    ) => Effect.Effect<GameCheckpointDiff, GameDevError>;
+    readonly checkpointRestore: (
+      projectRoot: string,
+      checkpointId: string,
+    ) => Effect.Effect<GameCheckpointDiff, GameDevError>;
     readonly assets: (projectRoot: string) => Effect.Effect<ReadonlyArray<GameAsset>, GameDevError>;
-    readonly assetPreview: (projectRoot: string, assetId: string, revision: number) => Effect.Effect<GameDevCapture, GameDevError>;
-    readonly assetImport: (input: { readonly projectRoot: string; readonly assetId: string; readonly revision: number; readonly confirmReplace: boolean }) => Effect.Effect<GameDevAssetImportResult, GameDevError>;
-    readonly setForgeGuiKey: (apiKey: string | null) => Effect.Effect<GameDevOverview, GameDevError>;
+    readonly assetPreview: (
+      projectRoot: string,
+      assetId: string,
+      revision: number,
+    ) => Effect.Effect<GameDevCapture, GameDevError>;
+    readonly assetImport: (input: {
+      readonly projectRoot: string;
+      readonly assetId: string;
+      readonly revision: number;
+      readonly confirmReplace: boolean;
+    }) => Effect.Effect<GameDevAssetImportResult, GameDevError>;
+    readonly setForgeGuiKey: (
+      apiKey: string | null,
+    ) => Effect.Effect<GameDevOverview, GameDevError>;
     readonly testForgeGui: Effect.Effect<GameDevForgeGuiTestResult, GameDevError>;
     /** Runs promise-based core work for agent tools with the same error mapping. */
-    readonly run: <A>(name: string, work: (core: GameDevCore) => Promise<A>) => Effect.Effect<A, GameDevError>;
+    readonly run: <A>(
+      name: string,
+      work: (core: GameDevCore) => Promise<A>,
+    ) => Effect.Effect<A, GameDevError>;
   }
 >()("t3/gameDev/GameDevService") {}
 
@@ -96,7 +135,10 @@ const make = Effect.gen(function* () {
             ),
           setSecret: (name, value) =>
             Effect.runPromise(
-              (value === null ? secrets.remove(name) : secrets.set(name, new TextEncoder().encode(value))).pipe(Effect.orDie),
+              (value === null
+                ? secrets.remove(name)
+                : secrets.set(name, new TextEncoder().encode(value))
+              ).pipe(Effect.orDie),
             ),
         }),
       catch: toError,
@@ -110,28 +152,49 @@ const make = Effect.gen(function* () {
     install: (input, report) => attempt("install", () => core.install(input, report)),
     locate: (target, path) => attempt("locate", () => core.locate(target, path)),
     openProject: (input) => attempt("openProject", () => core.openProject(input)),
-    bindSession: (sessionId, projectRoot) => attempt("bindSession", () => core.bind(sessionId, projectRoot)),
+    bindSession: (sessionId, projectRoot) =>
+      attempt("bindSession", () => core.bind(sessionId, projectRoot)),
     updateSettings: (patch) => attempt("updateSettings", () => core.updateSettings(patch)),
     workspace: (projectRoot) => attempt("workspace", () => core.workspace(projectRoot)),
     userCommand: (input) =>
       attempt("userCommand", () =>
-        core.command({ sessionId: input.sessionId, projectRoot: null, operation: input.operation, args: input.args, actor: "user", threadId: null }),
+        core.command({
+          sessionId: input.sessionId,
+          projectRoot: null,
+          operation: input.operation,
+          args: input.args,
+          actor: "user",
+          threadId: null,
+        }),
       ),
     capture: (captureId) => attempt("capture", async () => core.capture(captureId)),
-    resolveApproval: (approvalId, approve) => attempt("resolveApproval", async () => core.resolveApproval(approvalId, approve)),
-    checkpointCreate: (input) => attempt("checkpointCreate", () => core.checkpointCreate({ ...input, createdBy: "user" })),
-    checkpointDiff: (projectRoot, checkpointId) => attempt("checkpointDiff", () => core.checkpointDiff(projectRoot, checkpointId)),
+    resolveApproval: (approvalId, approve) =>
+      attempt("resolveApproval", async () => core.resolveApproval(approvalId, approve)),
+    checkpointCreate: (input) =>
+      attempt("checkpointCreate", () => core.checkpointCreate({ ...input, createdBy: "user" })),
+    checkpointDiff: (projectRoot, checkpointId) =>
+      attempt("checkpointDiff", () => core.checkpointDiff(projectRoot, checkpointId)),
     checkpointRestore: (projectRoot, checkpointId) =>
-      attempt("checkpointRestore", () => core.checkpointRestore(projectRoot, checkpointId, "user", null)),
+      attempt("checkpointRestore", () =>
+        core.checkpointRestore(projectRoot, checkpointId, "user", null),
+      ),
     assets: (projectRoot) => attempt("assets", () => core.listAssets(projectRoot)),
-    assetPreview: (projectRoot, assetId, revision) => attempt("assetPreview", () => core.assetPreview(projectRoot, assetId, revision)),
+    assetPreview: (projectRoot, assetId, revision) =>
+      attempt("assetPreview", () => core.assetPreview(projectRoot, assetId, revision)),
     assetImport: (input) =>
       attempt("assetImport", async () => {
         const result = await core.assetImport({ ...input, actor: "user", threadId: null });
         return result.import === null
           ? {
               asset: result.asset,
-              import: { revision: input.revision, engine: "unity" as const, at: new Date().toISOString(), location: "", status: "awaiting-approval" as const, checks: [] },
+              import: {
+                revision: input.revision,
+                engine: "unity" as const,
+                at: new Date().toISOString(),
+                location: "",
+                status: "awaiting-approval" as const,
+                checks: [],
+              },
               replaceRequired: result.replaceRequired,
             }
           : { asset: result.asset, import: result.import, replaceRequired: result.replaceRequired };

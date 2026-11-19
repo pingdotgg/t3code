@@ -53,7 +53,11 @@ export async function sha256File(path: string): Promise<string> {
 export function run(
   command: string,
   args: ReadonlyArray<string>,
-  options: { readonly cwd?: string; readonly timeoutMs?: number; readonly env?: NodeJS.ProcessEnv } = {},
+  options: {
+    readonly cwd?: string;
+    readonly timeoutMs?: number;
+    readonly env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolve) => {
     let stdout = "";
@@ -89,7 +93,11 @@ export function run(
 }
 
 /** Starts a GUI program the user keeps using after Continuum exits. */
-export function launchDetached(command: string, args: ReadonlyArray<string>, cwd?: string): Promise<number> {
+export function launchDetached(
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd?: string,
+): Promise<number> {
   return new Promise((resolve, reject) => {
     const child = NodeChildProcess.spawn(command, [...args], {
       cwd,
@@ -143,7 +151,8 @@ export async function downloadResumable(input: {
     redirect: "follow",
     ...(input.signal ? { signal: input.signal } : {}),
   });
-  if (!response.ok || response.body === null) throw new Error(`Download failed with HTTP ${response.status}.`);
+  if (!response.ok || response.body === null)
+    throw new Error(`Download failed with HTTP ${response.status}.`);
   const resumed = already > 0 && response.status === 206;
   const length = Number(response.headers.get("content-length"));
   const total = Number.isFinite(length) && length > 0 ? length + (resumed ? already : 0) : null;
@@ -157,7 +166,8 @@ export async function downloadResumable(input: {
       const { done, value } = await reader.read();
       if (done) break;
       completed += value.byteLength;
-      if (!stream.write(value)) await new Promise<void>((resolve) => stream.once("drain", () => resolve()));
+      if (!stream.write(value))
+        await new Promise<void>((resolve) => stream.once("drain", () => resolve()));
       if (completed - reported > 4_000_000) {
         reported = completed;
         input.onProgress({ completed, total, resumed });

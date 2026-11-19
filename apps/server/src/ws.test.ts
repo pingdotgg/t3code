@@ -880,7 +880,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(UsageService.UsageService)({}),
   Layer.mock(OllamaService.OllamaService)({}),
   Layer.mock(GameDevService.GameDevService)({ core: undefined as never }),
-  Layer.mock(SuperchargeService.SuperchargeService)({ started: undefined as never, active: () => null, config: () => DEFAULT_SUPERCHARGE_CONFIG }),
+  Layer.mock(SuperchargeService.SuperchargeService)({
+    started: undefined as never,
+    active: () => null,
+    config: () => DEFAULT_SUPERCHARGE_CONFIG,
+  }),
   Layer.mock(ImproveService.ImproveService)({}),
   Layer.mock(MobileAccessService.MobileAccessService)({}),
   Layer.mock(IweService.IweService)({ core: undefined as never }),

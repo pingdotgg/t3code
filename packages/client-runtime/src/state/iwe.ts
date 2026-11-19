@@ -1,4 +1,4 @@
-import { WS_METHODS } from "@t3tools/contracts";
+import { type ScopedThreadRef, WS_METHODS } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
@@ -9,14 +9,37 @@ import {
 } from "./runtime.ts";
 
 /** IWE notes workspaces on the chosen environment. */
-export function createIweEnvironmentAtoms<R, E>(runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>) {
-  const command = <const Tag extends Parameters<typeof createEnvironmentRpcCommand>[1]["tag"]>(name: string, tag: Tag) =>
-    createEnvironmentRpcCommand(runtime, { label: `environment-data:iwe:${name}`, tag });
+export function createIweEnvironmentAtoms<R, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
+  threadRunSignal: (ref: ScopedThreadRef) => Atom.Atom<unknown>,
+) {
+  const command = <const Tag extends Parameters<typeof createEnvironmentRpcCommand>[1]["tag"]>(
+    name: string,
+    tag: Tag,
+  ) => createEnvironmentRpcCommand(runtime, { label: `environment-data:iwe:${name}`, tag });
   return {
-    status: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:iwe:status", tag: WS_METHODS.iweStatus, staleTimeMs: 30_000 }),
-    workspace: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:iwe:workspace", tag: WS_METHODS.iweWorkspace, staleTimeMs: 15_000 }),
-    searchResults: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:iwe:search-results", tag: WS_METHODS.iweSearch, staleTimeMs: 5_000 }),
-    threadState: createEnvironmentRpcQueryAtomFamily(runtime, { label: "environment-data:iwe:thread-state", tag: WS_METHODS.iweThreadState, staleTimeMs: 3_000 }),
+    status: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:iwe:status",
+      tag: WS_METHODS.iweStatus,
+      staleTimeMs: 30_000,
+    }),
+    workspace: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:iwe:workspace",
+      tag: WS_METHODS.iweWorkspace,
+      staleTimeMs: 15_000,
+    }),
+    searchResults: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:iwe:search-results",
+      tag: WS_METHODS.iweSearch,
+      staleTimeMs: 5_000,
+    }),
+    threadState: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:iwe:thread-state",
+      tag: WS_METHODS.iweThreadState,
+      staleTimeMs: 3_000,
+      refreshTrigger: ({ environmentId, input }) =>
+        threadRunSignal({ environmentId, threadId: input.threadId }),
+    }),
     install: createEnvironmentRpcStreamCommand(runtime, {
       label: "environment-data:iwe:install",
       tag: WS_METHODS.iweInstall,

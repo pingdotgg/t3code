@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { normalizeEntertainmentUrl, shouldOpenExternally, youtubeEmbedUrl } from "./entertainment.ts";
+import {
+  normalizeEntertainmentUrl,
+  shouldOpenExternally,
+  youtubeEmbedUrl,
+} from "./entertainment.ts";
 
 describe("entertainment URLs", () => {
   it("turns YouTube links into the official privacy-enhanced embed", () => {
@@ -8,7 +12,9 @@ describe("entertainment URLs", () => {
       "https://www.youtube-nocookie.com/embed/aqz-KE-bpKQ?autoplay=1&rel=0&start=30",
     );
     expect(youtubeEmbedUrl("https://youtu.be/aqz-KE-bpKQ")).toContain("/embed/aqz-KE-bpKQ?");
-    expect(youtubeEmbedUrl("https://www.youtube.com/shorts/aqz-KE-bpKQ")).toContain("/embed/aqz-KE-bpKQ?");
+    expect(youtubeEmbedUrl("https://www.youtube.com/shorts/aqz-KE-bpKQ")).toContain(
+      "/embed/aqz-KE-bpKQ?",
+    );
     expect(youtubeEmbedUrl("https://example.com/watch?v=aqz-KE-bpKQ")).toBeNull();
     expect(youtubeEmbedUrl("https://www.youtube.com/watch?v=<script>")).toBeNull();
   });

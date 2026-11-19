@@ -6,7 +6,7 @@
  * See https://github.com/elwinhe/forgegui-plugins (SETUP.md) for the endpoint and scopes.
  */
 
-export const FORGEGUI_MCP_URL = "https://azyjlkhpdgafuobyxoax.supabase.co/functions/v1/forgegui-mcp";
+const FORGEGUI_MCP_URL = "https://azyjlkhpdgafuobyxoax.supabase.co/functions/v1/forgegui-mcp";
 const PROTOCOL_VERSION = "2025-06-18";
 
 /** Tools that spend credits or upload to Roblox; Continuum asks before each call. */
@@ -25,7 +25,7 @@ export interface ForgeGuiToolResult {
   readonly structured: unknown;
 }
 
-export class ForgeGuiError extends Error {
+class ForgeGuiError extends Error {
   readonly status: number | null;
   constructor(message: string, status: number | null = null) {
     super(message);
@@ -36,7 +36,10 @@ export class ForgeGuiError extends Error {
 type Fetch = typeof fetch;
 
 /** JSON-RPC responses arrive as JSON or as a server-sent event stream. */
-async function readRpcResponse(response: Response, id: number): Promise<{ result?: unknown; error?: { message?: string } }> {
+async function readRpcResponse(
+  response: Response,
+  id: number,
+): Promise<{ result?: unknown; error?: { message?: string } }> {
   const type = response.headers.get("content-type") ?? "";
   const body = await response.text();
   if (type.includes("text/event-stream")) {
@@ -47,12 +50,18 @@ async function readRpcResponse(response: Response, id: number): Promise<{ result
         .map((line) => line.slice(5).trim())
         .join("\n");
       if (data === "") continue;
-      const message = JSON.parse(data) as { id?: number; result?: unknown; error?: { message?: string } };
+      const message = JSON.parse(data) as {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string };
+      };
       if (message.id === id) return message;
     }
     throw new ForgeGuiError("ForgeGUI ended the stream without a reply.");
   }
-  return body === "" ? {} : (JSON.parse(body) as { result?: unknown; error?: { message?: string } });
+  return body === ""
+    ? {}
+    : (JSON.parse(body) as { result?: unknown; error?: { message?: string } });
 }
 
 export class ForgeGuiClient {
@@ -65,7 +74,12 @@ export class ForgeGuiClient {
   private readonly fetchImpl: Fetch;
   private readonly timeoutMs: number;
 
-  constructor(apiKey: string, endpoint: string = FORGEGUI_MCP_URL, fetchImpl: Fetch = fetch, timeoutMs = 120_000) {
+  constructor(
+    apiKey: string,
+    endpoint: string = FORGEGUI_MCP_URL,
+    fetchImpl: Fetch = fetch,
+    timeoutMs = 120_000,
+  ) {
     this.apiKey = apiKey;
     this.endpoint = endpoint;
     this.fetchImpl = fetchImpl;
@@ -91,9 +105,21 @@ export class ForgeGuiClient {
       redirect: "error",
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    if (response.status === 401) throw new ForgeGuiError("ForgeGUI rejected the API key. Create a new key under Profile → MCP API keys and save it in Settings.", 401);
-    if (response.status === 403) throw new ForgeGuiError("ForgeGUI denied access. The key may be missing a scope this needs.", 403);
-    if (!response.ok && response.status !== 202) throw new ForgeGuiError(`ForgeGUI answered HTTP ${response.status}. The outcome may be unknown; check job status before retrying paid work.`, response.status);
+    if (response.status === 401)
+      throw new ForgeGuiError(
+        "ForgeGUI rejected the API key. Create a new key under Profile → MCP API keys and save it in Settings.",
+        401,
+      );
+    if (response.status === 403)
+      throw new ForgeGuiError(
+        "ForgeGUI denied access. The key may be missing a scope this needs.",
+        403,
+      );
+    if (!response.ok && response.status !== 202)
+      throw new ForgeGuiError(
+        `ForgeGUI answered HTTP ${response.status}. The outcome may be unknown; check job status before retrying paid work.`,
+        response.status,
+      );
     const session = response.headers.get("mcp-session-id");
     if (session) this.#sessionId = session;
     if (!expectReply) await response.body?.cancel();
@@ -123,10 +149,17 @@ export class ForgeGuiClient {
     return this.#initialized;
   }
 
-  async listTools(): Promise<ReadonlyArray<{ readonly name: string; readonly description: string }>> {
+  async listTools(): Promise<
+    ReadonlyArray<{ readonly name: string; readonly description: string }>
+  > {
     await this.#initialize();
-    const result = (await this.#request("tools/list", {})) as { tools?: Array<{ name: string; description?: string }> };
-    return (result.tools ?? []).map((tool) => ({ name: tool.name, description: tool.description ?? "" }));
+    const result = (await this.#request("tools/list", {})) as {
+      tools?: Array<{ name: string; description?: string }>;
+    };
+    return (result.tools ?? []).map((tool) => ({
+      name: tool.name,
+      description: tool.description ?? "",
+    }));
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<ForgeGuiToolResult> {
@@ -136,7 +169,9 @@ export class ForgeGuiClient {
       structuredContent?: unknown;
       isError?: boolean;
     };
-    const text = (result.content ?? []).flatMap((part) => (part.type === "text" && part.text ? [part.text] : [])).join("\n");
+    const text = (result.content ?? [])
+      .flatMap((part) => (part.type === "text" && part.text ? [part.text] : []))
+      .join("\n");
     let structured = result.structuredContent ?? null;
     if (structured === null) {
       try {
@@ -150,23 +185,39 @@ export class ForgeGuiClient {
 }
 
 /** Credits only as ForgeGUI reports them; never estimated. */
-export function reportedCredits(value: unknown): { readonly charged: number | null; readonly note: string | null } {
+export function reportedCredits(value: unknown): {
+  readonly charged: number | null;
+  readonly note: string | null;
+} {
   let charged: number | null = null;
   let deferred = false;
   let outOfCredits = false;
   const visit = (node: unknown, depth: number) => {
     if (depth > 6 || node === null || typeof node !== "object") return;
     for (const [key, entry] of Object.entries(node as Record<string, unknown>)) {
-      if (/^(credits?_?(charged|used|spent|cost)|cost_credits|credit_cost)$/i.test(key) && typeof entry === "number") charged = (charged ?? 0) + entry;
+      if (
+        /^(credits?_?(charged|used|spent|cost)|cost_credits|credit_cost)$/i.test(key) &&
+        typeof entry === "number"
+      )
+        charged = (charged ?? 0) + entry;
       if (/commitDeferred/i.test(key) || entry === "commitDeferred") deferred = true;
       if (key === "error_code" && entry === "insufficient_credits") outOfCredits = true;
       visit(entry, depth + 1);
     }
   };
   visit(value, 0);
-  if (outOfCredits) return { charged: null, note: "ForgeGUI says the account is out of credits. Add credits at https://forgegui.com/plans." };
+  if (outOfCredits)
+    return {
+      charged: null,
+      note: "ForgeGUI says the account is out of credits. Add credits at https://forgegui.com/plans.",
+    };
   if (charged !== null) return { charged, note: null };
-  return { charged: null, note: deferred ? "ForgeGUI deferred billing and reported no amount." : "ForgeGUI did not report a cost for this call." };
+  return {
+    charged: null,
+    note: deferred
+      ? "ForgeGUI deferred billing and reported no amount."
+      : "ForgeGUI did not report a cost for this call.",
+  };
 }
 
 /** The first https preview or artifact URL in a result, for showing the artwork. */
@@ -175,7 +226,12 @@ export function previewUrlOf(value: unknown): string | null {
   const visit = (node: unknown, depth: number) => {
     if (found !== null || depth > 6 || node === null || typeof node !== "object") return;
     for (const [key, entry] of Object.entries(node as Record<string, unknown>)) {
-      if (typeof entry === "string" && /^https:\/\//.test(entry) && /(preview|thumbnail|image|png|url)/i.test(key) && /\.(png|jpe?g|webp)(\?|$)|preview|thumbnail/i.test(entry)) {
+      if (
+        typeof entry === "string" &&
+        /^https:\/\//.test(entry) &&
+        /(preview|thumbnail|image|png|url)/i.test(key) &&
+        /\.(png|jpe?g|webp)(\?|$)|preview|thumbnail/i.test(entry)
+      ) {
         found = entry;
         return;
       }
@@ -187,12 +243,26 @@ export function previewUrlOf(value: unknown): string | null {
 }
 
 /** Status fields ForgeGUI documents for generation jobs and publications. */
-export function publicationStatus(value: unknown): { readonly status: string | null; readonly assetId: string | null; readonly publicationId: string | null } {
+export function publicationStatus(value: unknown): {
+  readonly status: string | null;
+  readonly assetId: string | null;
+  readonly publicationId: string | null;
+} {
   const record = (value ?? {}) as Record<string, unknown>;
   const delivery = (record.delivery ?? record.publication ?? record) as Record<string, unknown>;
-  const status = typeof delivery.status === "string" ? delivery.status : typeof record.status === "string" ? record.status : null;
+  const status =
+    typeof delivery.status === "string"
+      ? delivery.status
+      : typeof record.status === "string"
+        ? record.status
+        : null;
   const rawAsset = delivery.roblox_asset_id ?? delivery.asset_id ?? record.roblox_asset_id;
-  const assetId = typeof rawAsset === "string" || typeof rawAsset === "number" ? String(rawAsset) : null;
+  const assetId =
+    typeof rawAsset === "string" || typeof rawAsset === "number" ? String(rawAsset) : null;
   const rawPublication = delivery.publication_id ?? record.publication_id;
-  return { status, assetId, publicationId: typeof rawPublication === "string" ? rawPublication : null };
+  return {
+    status,
+    assetId,
+    publicationId: typeof rawPublication === "string" ? rawPublication : null,
+  };
 }

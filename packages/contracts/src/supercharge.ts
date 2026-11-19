@@ -14,7 +14,9 @@ export const SuperchargeLimits = Schema.Struct({
   maxIterations: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 8 })),
   maxMinutes: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 240 })),
   /** Total tokens the provider reports for the run. Null means no ceiling. */
-  maxTokens: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 50_000_000 }))),
+  maxTokens: Schema.NullOr(
+    Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 50_000_000 })),
+  ),
 });
 export type SuperchargeLimits = typeof SuperchargeLimits.Type;
 
@@ -28,11 +30,10 @@ export const SuperchargeConfig = Schema.Struct({
 });
 export type SuperchargeConfig = typeof SuperchargeConfig.Type;
 
-export const SUPERCHARGE_DEFAULT_LIMITS: Record<Exclude<SuperchargePreset, "off">, SuperchargeLimits> =
-  {
-    verify: { maxIterations: 3, maxMinutes: 30, maxTokens: null },
-    deep: { maxIterations: 5, maxMinutes: 60, maxTokens: null },
-  };
+const SUPERCHARGE_DEFAULT_LIMITS: Record<Exclude<SuperchargePreset, "off">, SuperchargeLimits> = {
+  verify: { maxIterations: 3, maxMinutes: 30, maxTokens: null },
+  deep: { maxIterations: 5, maxMinutes: 60, maxTokens: null },
+};
 
 export const DEFAULT_SUPERCHARGE_CONFIG: SuperchargeConfig = {
   preset: "off",

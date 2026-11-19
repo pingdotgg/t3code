@@ -67,7 +67,7 @@ const REPORT_FORMAT = [
   'Mark a check "pass" only with evidence from this turn. Set "done" to false while any check fails.',
 ].join("\n");
 
-export function superchargeLabel(preset: SuperchargePreset): string {
+function superchargeLabel(preset: SuperchargePreset): string {
   return preset === "deep" ? "Deep" : preset === "verify" ? "Verify" : "Off";
 }
 
@@ -139,10 +139,18 @@ export function decideNextSupercharge(input: {
 }): SuperchargeDecision {
   const { run, report } = input;
   if (input.outcome === "interrupted") {
-    return { type: "stop", reason: "cancelled", message: "The turn was stopped, so Supercharge stopped too." };
+    return {
+      type: "stop",
+      reason: "cancelled",
+      message: "The turn was stopped, so Supercharge stopped too.",
+    };
   }
   if (input.outcome === "failed") {
-    return { type: "stop", reason: "turn-failed", message: "The turn failed. Supercharge does not retry failed turns." };
+    return {
+      type: "stop",
+      reason: "turn-failed",
+      message: "The turn failed. Supercharge does not retry failed turns.",
+    };
   }
   const allPassed =
     report !== null &&
@@ -171,7 +179,11 @@ export function decideNextSupercharge(input: {
       message: `The ${run.limits.maxMinutes}-minute limit ran out before every check passed.`,
     };
   }
-  if (run.limits.maxTokens !== null && run.tokensUsed !== null && run.tokensUsed >= run.limits.maxTokens) {
+  if (
+    run.limits.maxTokens !== null &&
+    run.tokensUsed !== null &&
+    run.tokensUsed >= run.limits.maxTokens
+  ) {
     return {
       type: "stop",
       reason: "usage-limit",
@@ -189,7 +201,11 @@ export function decideNextSupercharge(input: {
   const counter = `Supercharge (${superchargeLabel(run.preset)}) · follow-up ${next} of ${run.limits.maxIterations}`;
   if (report === null) {
     if (hasPhase(run, "verifying") && run.log.at(-1)?.phase === "verifying") {
-      return { type: "stop", reason: "no-report", message: "The agent did not report its checks after being asked to." };
+      return {
+        type: "stop",
+        reason: "no-report",
+        message: "The agent did not report its checks after being asked to.",
+      };
     }
     return {
       type: "continue",

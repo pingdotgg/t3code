@@ -8,7 +8,11 @@ import type {
   GameTimelineEntry,
   GameTimelineKind,
 } from "@t3tools/contracts";
-import { BRIDGE_PROTOCOL_VERSION, GAME_OPERATIONS, isGameOperation } from "@t3tools/shared/gameDevCatalog";
+import {
+  BRIDGE_PROTOCOL_VERSION,
+  GAME_OPERATIONS,
+  isGameOperation,
+} from "@t3tools/shared/gameDevCatalog";
 import { redactSecrets } from "@t3tools/shared/secretRedaction";
 
 /**
@@ -115,22 +119,27 @@ const SYSTEM_CLOCK: RegistryClock = {
 const TIMELINE_LIMIT = 2_000;
 const CAPTURE_LIMIT = 30;
 const CAPTURE_BYTES_LIMIT = 96 * 1024 * 1024;
-export const POLL_TIMEOUT_MS = 20_000;
-export const DISCONNECT_AFTER_MS = 45_000;
+const POLL_TIMEOUT_MS = 20_000;
+const DISCONNECT_AFTER_MS = 45_000;
 const FORGET_AFTER_MS = 30 * 60_000;
 const MAX_MESSAGE_CHARS = 4_000;
 
 const clean = (text: string) => redactSecrets(text.slice(0, MAX_MESSAGE_CHARS)).text;
 
 let idCounter = 0;
-const nextId = (prefix: string) => `${prefix}_${Date.now().toString(36)}${(idCounter++).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+const nextId = (prefix: string) =>
+  `${prefix}_${Date.now().toString(36)}${(idCounter++).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 
 export class GameBridgeRegistry {
   readonly #sessions = new Map<string, SessionRecord>();
   readonly #captures = new Map<string, BridgeCapture>();
   readonly #approvals = new Map<
     string,
-    { readonly request: GameApprovalRequest; readonly resolve: (approved: boolean) => void; readonly timer: ReturnType<typeof setTimeout> }
+    {
+      readonly request: GameApprovalRequest;
+      readonly resolve: (approved: boolean) => void;
+      readonly timer: ReturnType<typeof setTimeout>;
+    }
   >();
   readonly #listeners = new Set<() => void>();
 
@@ -140,7 +149,9 @@ export class GameBridgeRegistry {
 
   constructor(
     token: () => string,
-    bindings: { readonly resolvePlace: (placeKey: string) => string | null } = { resolvePlace: () => null },
+    bindings: { readonly resolvePlace: (placeKey: string) => string | null } = {
+      resolvePlace: () => null,
+    },
     clock: RegistryClock = SYSTEM_CLOCK,
   ) {
     this.token = token;
@@ -181,7 +192,9 @@ export class GameBridgeRegistry {
       );
     }
     const operations = hello.operations.filter(isGameOperation);
-    const existing = [...this.#sessions.values()].find((record) => record.instanceId === hello.instanceId);
+    const existing = [...this.#sessions.values()].find(
+      (record) => record.instanceId === hello.instanceId,
+    );
     const now = this.#iso();
     const projectRoot =
       hello.projectRoot ?? (hello.placeKey ? this.bindings.resolvePlace(hello.placeKey) : null);
@@ -201,9 +214,11 @@ export class GameBridgeRegistry {
       existing.placeKey = hello.placeKey;
       // A reload drops in-flight work; writes are not replayed, reads are.
       const inflight = new Set(hello.inflight ?? []);
-      for (const pending of [...existing.pending.values()]) {
+      for (const pending of existing.pending.values()) {
         if (!pending.delivered || inflight.has(pending.command.id)) continue;
-        const spec = isGameOperation(pending.command.operation) ? GAME_OPERATIONS[pending.command.operation] : null;
+        const spec = isGameOperation(pending.command.operation)
+          ? GAME_OPERATIONS[pending.command.operation]
+          : null;
         if (spec && !spec.writes) {
           pending.delivered = false;
           existing.queue.push(pending.command);
@@ -216,7 +231,12 @@ export class GameBridgeRegistry {
           });
         }
       }
-      this.#record(existing, "connection", wasReloading ? "Editor reconnected after reloading scripts." : "Editor reconnected.", {});
+      this.#record(
+        existing,
+        "connection",
+        wasReloading ? "Editor reconnected after reloading scripts." : "Editor reconnected.",
+        {},
+      );
       this.#changed();
       return existing.session;
     }
@@ -247,14 +267,23 @@ export class GameBridgeRegistry {
       latestCaptureId: null,
     };
     this.#sessions.set(session.sessionId, record);
-    this.#record(record, "connection", `${hello.projectName} connected (${hello.engine} ${hello.editorVersion}).`, {});
+    this.#record(
+      record,
+      "connection",
+      `${hello.projectName} connected (${hello.engine} ${hello.editorVersion}).`,
+      {},
+    );
     this.#changed();
     return session;
   }
 
   #touch(record: SessionRecord) {
     const wasDisconnected = record.session.state === "disconnected";
-    record.session = { ...record.session, lastSeenAt: this.#iso(), state: record.session.state === "reloading" ? "reloading" : "connected" };
+    record.session = {
+      ...record.session,
+      lastSeenAt: this.#iso(),
+      state: record.session.state === "reloading" ? "reloading" : "connected",
+    };
     if (wasDisconnected) this.#changed();
   }
 
@@ -297,7 +326,11 @@ export class GameBridgeRegistry {
       let value = result.value ?? null;
       const capture = extractCapture(value);
       if (capture) {
-        captureId = this.storeCapture({ ...capture, source: "editor", projectRoot: record.session.projectRoot });
+        captureId = this.storeCapture({
+          ...capture,
+          source: "editor",
+          projectRoot: record.session.projectRoot,
+        });
         value = { ...(value as Record<string, unknown>), capture: undefined, captureId };
         record.latestCaptureId = captureId;
         this.#record(record, "capture", "Viewport captured.", { captureId });
@@ -330,20 +363,24 @@ export class GameBridgeRegistry {
     for (const event of events) {
       switch (event.type) {
         case "log": {
-          const kind: GameTimelineKind = event.level === "error" ? "error" : event.level === "warning" ? "warning" : "log";
+          const kind: GameTimelineKind =
+            event.level === "error" ? "error" : event.level === "warning" ? "warning" : "log";
           this.#record(record, kind, clean(event.message), {});
           break;
         }
         case "play_state": {
           if (event.state === record.session.playState) break;
-          if (event.state === "playing" && record.session.playState === "edit") record.playtest += 1;
+          if (event.state === "playing" && record.session.playState === "edit")
+            record.playtest += 1;
           record.session = { ...record.session, playState: event.state };
           this.#record(record, "play-state", playStateText(event.state), {});
           this.#changed();
           break;
         }
         case "compile": {
-          record.compile = event.messages.slice(0, 200).map((message) => ({ ...message, message: clean(message.message) }));
+          record.compile = event.messages
+            .slice(0, 200)
+            .map((message) => ({ ...message, message: clean(message.message) }));
           const errors = record.compile.filter((message) => message.severity === "error");
           record.session = { ...record.session, compileErrorCount: errors.length };
           this.#record(
@@ -381,8 +418,13 @@ export class GameBridgeRegistry {
   #disconnect(record: SessionRecord, reason: string) {
     record.session = { ...record.session, state: "disconnected" };
     record.waiter?.([]);
-    for (const pending of [...record.pending.values()]) {
-      this.#settle(record, pending.command.id, { ok: false, value: null, error: reason, captureId: null });
+    for (const pending of record.pending.values()) {
+      this.#settle(record, pending.command.id, {
+        ok: false,
+        value: null,
+        error: reason,
+        captureId: null,
+      });
     }
     record.queue.length = 0;
     this.#record(record, "connection", reason, {});
@@ -407,11 +449,20 @@ export class GameBridgeRegistry {
     sessionId: string,
     operation: string,
     args: Record<string, unknown>,
-    options: { readonly timeoutMs: number; readonly actor: "agent" | "user"; readonly summary: string },
+    options: {
+      readonly timeoutMs: number;
+      readonly actor: "agent" | "user";
+      readonly summary: string;
+    },
   ): Promise<CallOutcome> {
     const record = this.#sessions.get(sessionId);
     if (!record || record.session.state === "disconnected") {
-      return Promise.resolve({ ok: false, value: null, error: "That editor is not connected.", captureId: null });
+      return Promise.resolve({
+        ok: false,
+        value: null,
+        error: "That editor is not connected.",
+        captureId: null,
+      });
     }
     if (!record.session.operations.includes(operation)) {
       return Promise.resolve({
@@ -440,7 +491,7 @@ export class GameBridgeRegistry {
       this.#record(
         record,
         options.actor === "agent" ? "agent-action" : "user-action",
-        `${clean(options.summary)}${outcome.ok ? "" : ` — failed: ${outcome.error}`}`,
+        `${clean(options.summary)}${outcome.ok ? "" : `. Failed: ${outcome.error}`}`,
         { operation, ok: outcome.ok, captureId: outcome.captureId },
       );
       return outcome;
@@ -451,19 +502,27 @@ export class GameBridgeRegistry {
     record: SessionRecord,
     kind: GameTimelineKind,
     text: string,
-    extra: { readonly operation?: string; readonly ok?: boolean; readonly captureId?: string | null },
+    extra: {
+      readonly operation?: string;
+      readonly ok?: boolean;
+      readonly captureId?: string | null;
+    },
   ) {
     record.timeline.push({
       id: nextId("tl"),
       at: this.#iso(),
       kind,
       text,
-      playtest: record.session.playState === "playing" || record.session.playState === "paused" ? record.playtest : null,
+      playtest:
+        record.session.playState === "playing" || record.session.playState === "paused"
+          ? record.playtest
+          : null,
       captureId: extra.captureId ?? null,
       operation: extra.operation ?? null,
       ok: extra.ok ?? null,
     });
-    if (record.timeline.length > TIMELINE_LIMIT) record.timeline.splice(0, record.timeline.length - TIMELINE_LIMIT);
+    if (record.timeline.length > TIMELINE_LIMIT)
+      record.timeline.splice(0, record.timeline.length - TIMELINE_LIMIT);
   }
 
   /** Adds an entry from outside the bridge, such as an asset import or a checkpoint. */
@@ -512,11 +571,15 @@ export class GameBridgeRegistry {
 
   #forProject(projectRoot: string): SessionRecord | null {
     const matching = [...this.#sessions.values()].filter(
-      (record) => record.session.projectRoot !== null && sameOrInside(record.session.projectRoot, projectRoot),
+      (record) =>
+        record.session.projectRoot !== null &&
+        sameOrInside(record.session.projectRoot, projectRoot),
     );
     return (
       matching.find((record) => record.session.state !== "disconnected") ??
-      matching.sort((left, right) => right.session.lastSeenAt.localeCompare(left.session.lastSeenAt))[0] ??
+      matching.sort((left, right) =>
+        right.session.lastSeenAt.localeCompare(left.session.lastSeenAt),
+      )[0] ??
       null
     );
   }
@@ -539,7 +602,15 @@ export class GameBridgeRegistry {
       : null;
   }
 
-  logs(sessionId: string, input: { readonly levels: ReadonlyArray<GameTimelineKind>; readonly contains: string | null; readonly limit: number; readonly playtest: number | "latest" | null }) {
+  logs(
+    sessionId: string,
+    input: {
+      readonly levels: ReadonlyArray<GameTimelineKind>;
+      readonly contains: string | null;
+      readonly limit: number;
+      readonly playtest: number | "latest" | null;
+    },
+  ) {
     const record = this.#sessions.get(sessionId);
     if (!record) return [];
     const playtest = input.playtest === "latest" ? record.playtest : input.playtest;
@@ -558,7 +629,10 @@ export class GameBridgeRegistry {
     return this.#sessions.get(sessionId)?.compile ?? [];
   }
 
-  requestApproval(request: Omit<GameApprovalRequest, "approvalId" | "requestedAt">, timeoutMs: number): Promise<boolean> {
+  requestApproval(
+    request: Omit<GameApprovalRequest, "approvalId" | "requestedAt">,
+    timeoutMs: number,
+  ): Promise<boolean> {
     const approvalId = nextId("ap");
     return new Promise<boolean>((resolve) => {
       const timer = this.clock.setTimeout(() => {
@@ -582,7 +656,11 @@ export class GameBridgeRegistry {
     this.#approvals.delete(approvalId);
     entry.resolve(approve);
     if (entry.request.projectRoot) {
-      this.note(entry.request.projectRoot, "user-action", `${approve ? "Approved" : "Denied"}: ${entry.request.summary}`);
+      this.note(
+        entry.request.projectRoot,
+        "user-action",
+        `${approve ? "Approved" : "Denied"}: ${entry.request.summary}`,
+      );
     }
     this.#changed();
     return true;
@@ -591,7 +669,12 @@ export class GameBridgeRegistry {
   approvals(projectRoot?: string): ReadonlyArray<GameApprovalRequest> {
     return [...this.#approvals.values()]
       .map((entry) => entry.request)
-      .filter((request) => projectRoot === undefined || request.projectRoot === null || sameOrInside(request.projectRoot, projectRoot));
+      .filter(
+        (request) =>
+          projectRoot === undefined ||
+          request.projectRoot === null ||
+          sameOrInside(request.projectRoot, projectRoot),
+      );
   }
 }
 
@@ -622,7 +705,8 @@ function extractCapture(value: unknown) {
   };
 }
 
-const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+const normalizePath = (value: string) =>
+  value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 
 /** True when `inner` is `outer` or below it. Case-insensitive, for Windows and macOS. */
 export function sameOrInside(inner: string, outer: string): boolean {

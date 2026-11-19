@@ -82,7 +82,10 @@ export function cleanImprovedPrompt(raw: string): string {
   const fenced = /^```[a-z]*\n([\s\S]*?)\n```$/i.exec(text);
   if (fenced) text = fenced[1]!.trim();
   text = text.replace(/^<<<DRAFT\n?|\n?DRAFT>>>$/g, "").trim();
-  text = text.replace(/^(?:here(?:'s| is) (?:the |an |a )?(?:improved|rewritten|stronger) prompt:?\s*)/i, "");
+  text = text.replace(
+    /^(?:here(?:'s| is) (?:the |an |a )?(?:improved|rewritten|stronger) prompt:?\s*)/i,
+    "",
+  );
   return text.trim();
 }
 
@@ -92,7 +95,8 @@ export function summarizeForHandoff(
   budget = 2_400,
 ): string {
   const lines = recentConversation(messages, budget).map(
-    (message) => `- ${message.role === "user" ? "User" : "Agent"}: ${clip(message.text.replace(/\s+/g, " "), 400)}`,
+    (message) =>
+      `- ${message.role === "user" ? "User" : "Agent"}: ${clip(message.text.replace(/\s+/g, " "), 400)}`,
   );
   return lines.join("\n");
 }

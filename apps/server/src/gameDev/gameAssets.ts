@@ -48,7 +48,7 @@ async function saveAssets(projectRoot: string, assets: ReadonlyArray<GameAsset>)
   if (!(await exists(ignore))) await NodeFSP.writeFile(ignore, "bridge.json\nassets/*/work*\n");
 }
 
-export function assetIdFor(name: string): string {
+function assetIdFor(name: string): string {
   const slug = name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
@@ -71,12 +71,23 @@ export async function getAsset(projectRoot: string, assetId: string): Promise<Ga
   return (await listAssets(projectRoot)).find((asset) => asset.assetId === assetId) ?? null;
 }
 
-export async function ensureAsset(projectRoot: string, input: { readonly assetId?: string; readonly name: string; readonly kind: GameAssetKind }): Promise<GameAsset> {
+export async function ensureAsset(
+  projectRoot: string,
+  input: { readonly assetId?: string; readonly name: string; readonly kind: GameAssetKind },
+): Promise<GameAsset> {
   const assets = await listAssets(projectRoot);
   const assetId = input.assetId ?? assetIdFor(input.name);
   const existing = assets.find((asset) => asset.assetId === assetId);
   if (existing) return existing;
-  const created: GameAsset = { assetId, name: input.name, kind: input.kind, projectRoot, revisions: [], imports: [], activeRevision: null };
+  const created: GameAsset = {
+    assetId,
+    name: input.name,
+    kind: input.kind,
+    projectRoot,
+    revisions: [],
+    imports: [],
+    activeRevision: null,
+  };
   await NodeFSP.mkdir(assetDir(projectRoot, assetId), { recursive: true });
   await saveAssets(projectRoot, [...assets, created]);
   return created;
@@ -91,7 +102,10 @@ export async function addRevision(
     readonly createdBy: "agent" | "user";
     readonly tool: GameAssetRevision["tool"];
     readonly note: string;
-    readonly files: ReadonlyArray<{ readonly role: GameAssetFile["role"]; readonly source: string }>;
+    readonly files: ReadonlyArray<{
+      readonly role: GameAssetFile["role"];
+      readonly source: string;
+    }>;
     readonly preview: string | null;
     readonly stats: GameAssetStats;
     readonly checks: ReadonlyArray<GameAssetCheck>;
@@ -105,15 +119,26 @@ export async function addRevision(
   if (index === -1) throw new Error(`No asset ${assetId}.`);
   const asset = assets[index]!;
   const number = (asset.revisions.at(-1)?.revision ?? 0) + 1;
-  const folder = NodePath.join(assetDir(projectRoot, assetId), `r${String(number).padStart(3, "0")}`);
+  const folder = NodePath.join(
+    assetDir(projectRoot, assetId),
+    `r${String(number).padStart(3, "0")}`,
+  );
   await NodeFSP.mkdir(folder, { recursive: true });
   const files: GameAssetFile[] = [];
   const copy = async (role: GameAssetFile["role"], source: string) => {
     const resolved = NodePath.resolve(projectRoot, source);
-    const destination = NodePath.join(folder, `${role === "preview" ? "preview" : NodePath.parse(resolved).name}${NodePath.extname(resolved)}`);
+    const destination = NodePath.join(
+      folder,
+      `${role === "preview" ? "preview" : NodePath.parse(resolved).name}${NodePath.extname(resolved)}`,
+    );
     await NodeFSP.copyFile(resolved, destination);
     const stat = await NodeFSP.stat(destination);
-    const entry: GameAssetFile = { role, path: NodePath.relative(projectRoot, destination).split(NodePath.sep).join("/"), format: FORMAT_OF(destination), bytes: stat.size };
+    const entry: GameAssetFile = {
+      role,
+      path: NodePath.relative(projectRoot, destination).split(NodePath.sep).join("/"),
+      format: FORMAT_OF(destination),
+      bytes: stat.size,
+    };
     files.push(entry);
     return entry;
   };
@@ -139,7 +164,11 @@ export async function addRevision(
   return { asset: updated, revision };
 }
 
-export async function updateAsset(projectRoot: string, assetId: string, update: (asset: GameAsset) => GameAsset): Promise<GameAsset> {
+async function updateAsset(
+  projectRoot: string,
+  assetId: string,
+  update: (asset: GameAsset) => GameAsset,
+): Promise<GameAsset> {
   const assets = await listAssets(projectRoot);
   const index = assets.findIndex((asset) => asset.assetId === assetId);
   if (index === -1) throw new Error(`No asset ${assetId}.`);
@@ -149,7 +178,11 @@ export async function updateAsset(projectRoot: string, assetId: string, update: 
   return updated;
 }
 
-export async function recordImport(projectRoot: string, assetId: string, entry: GameAssetImport): Promise<GameAsset> {
+export async function recordImport(
+  projectRoot: string,
+  assetId: string,
+  entry: GameAssetImport,
+): Promise<GameAsset> {
   return updateAsset(projectRoot, assetId, (asset) => ({
     ...asset,
     imports: [...asset.imports, entry].slice(-50),
@@ -157,10 +190,17 @@ export async function recordImport(projectRoot: string, assetId: string, entry: 
   }));
 }
 
-export async function recordPublication(projectRoot: string, assetId: string, revision: number, publication: GameAssetPublication): Promise<GameAsset> {
+export async function recordPublication(
+  projectRoot: string,
+  assetId: string,
+  revision: number,
+  publication: GameAssetPublication,
+): Promise<GameAsset> {
   return updateAsset(projectRoot, assetId, (asset) => ({
     ...asset,
-    revisions: asset.revisions.map((entry) => (entry.revision === revision ? { ...entry, publication } : entry)),
+    revisions: asset.revisions.map((entry) =>
+      entry.revision === revision ? { ...entry, publication } : entry,
+    ),
   }));
 }
 
@@ -169,8 +209,6 @@ export function revisionOf(asset: GameAsset, revision: number): GameAssetRevisio
   if (!found) throw new Error(`${asset.name} has no revision ${revision}.`);
   return found;
 }
-
-// Blender -------------------------------------------------------------------------------------
 
 export interface BlenderResult {
   readonly ok: boolean;
@@ -191,20 +229,46 @@ export async function runBlender(input: {
   readonly scratchDir: string;
 }): Promise<BlenderResult> {
   await NodeFSP.mkdir(input.scratchDir, { recursive: true });
-  const stem = NodePath.join(input.scratchDir, `blender-${Date.now().toString(36)}-${NodeCrypto.randomBytes(3).toString("hex")}`);
+  const stem = NodePath.join(
+    input.scratchDir,
+    `blender-${Date.now().toString(36)}-${NodeCrypto.randomBytes(3).toString("hex")}`,
+  );
   const request = `${stem}.request.json`;
   const response = `${stem}.response.json`;
-  await NodeFSP.writeFile(request, JSON.stringify({ operation: input.operation, args: input.args, blend: input.saveTo, reset: input.reset }));
+  await NodeFSP.writeFile(
+    request,
+    JSON.stringify({
+      operation: input.operation,
+      args: input.args,
+      blend: input.saveTo,
+      reset: input.reset,
+    }),
+  );
   const args = ["--background"];
   if (input.blend !== null && (await exists(input.blend))) args.push(input.blend);
   args.push("--factory-startup", "--python", input.script, "--", request, response);
   const result = await run(input.executable, args, { timeoutMs: 10 * 60_000 });
   try {
-    const parsed = JSON.parse(await NodeFSP.readFile(response, "utf8")) as { ok: boolean; value?: unknown; error?: string; blenderVersion?: string };
-    return { ok: parsed.ok, value: parsed.value ?? null, error: parsed.error ?? null, blenderVersion: parsed.blenderVersion ?? null };
+    const parsed = JSON.parse(await NodeFSP.readFile(response, "utf8")) as {
+      ok: boolean;
+      value?: unknown;
+      error?: string;
+      blenderVersion?: string;
+    };
+    return {
+      ok: parsed.ok,
+      value: parsed.value ?? null,
+      error: parsed.error ?? null,
+      blenderVersion: parsed.blenderVersion ?? null,
+    };
   } catch {
     const tail = `${result.stderr}\n${result.stdout}`.trim().split("\n").slice(-12).join("\n");
-    return { ok: false, value: null, error: `Blender exited with ${result.code ?? "no code"} without a result.\n${tail}`, blenderVersion: null };
+    return {
+      ok: false,
+      value: null,
+      error: `Blender exited with ${result.code ?? "no code"} without a result.\n${tail}`,
+      blenderVersion: null,
+    };
   } finally {
     await NodeFSP.rm(request, { force: true });
     await NodeFSP.rm(response, { force: true });
@@ -213,7 +277,12 @@ export async function runBlender(input: {
 
 /** Compares what an engine reports after import with what the export promised. */
 export function importChecks(input: {
-  readonly expected: { readonly x: number; readonly y: number; readonly z: number; readonly units: string } | null;
+  readonly expected: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly units: string;
+  } | null;
   readonly measured: { readonly x: number; readonly y: number; readonly z: number } | null;
   readonly engineUpAxis: "y" | "z";
   readonly materials: number | null;
@@ -225,7 +294,8 @@ export function importChecks(input: {
   if (input.expected && input.measured) {
     const expected = input.expected;
     // Blender is Z-up; Y-up engines swap the vertical axis.
-    const wanted = input.engineUpAxis === "y" ? { x: expected.x, y: expected.z, z: expected.y } : expected;
+    const wanted =
+      input.engineUpAxis === "y" ? { x: expected.x, y: expected.z, z: expected.y } : expected;
     const sorted = (value: { x: number; y: number; z: number }) => [value.x, value.y, value.z];
     const ratio = Math.max(...sorted(input.measured)) / Math.max(...sorted(wanted), 1e-6);
     const scaleOk = Math.abs(ratio - 1) <= 0.05;
@@ -236,7 +306,8 @@ export function importChecks(input: {
     });
     const verticalMeasured = input.engineUpAxis === "y" ? input.measured.y : input.measured.z;
     const verticalWanted = input.engineUpAxis === "y" ? wanted.y : wanted.z;
-    const orientationOk = Math.abs(verticalMeasured - verticalWanted) <= Math.max(0.05 * verticalWanted, 0.01);
+    const orientationOk =
+      Math.abs(verticalMeasured - verticalWanted) <= Math.max(0.05 * verticalWanted, 0.01);
     checks.push({
       name: "Orientation (up axis)",
       status: !scaleOk ? "warn" : orientationOk ? "pass" : "fail",
@@ -248,7 +319,10 @@ export function importChecks(input: {
     checks.push({
       name: "Materials",
       status: input.materials === 0 ? "warn" : missing > 0 ? "fail" : "pass",
-      detail: input.materials === 0 ? "No materials imported" : `${input.materials} material${input.materials === 1 ? "" : "s"}${missing > 0 ? `, ${missing} missing texture${missing === 1 ? "" : "s"}` : ""}`,
+      detail:
+        input.materials === 0
+          ? "No materials imported"
+          : `${input.materials} material${input.materials === 1 ? "" : "s"}${missing > 0 ? `, ${missing} missing texture${missing === 1 ? "" : "s"}` : ""}`,
     });
   }
   if (input.triangles !== null && input.polygonBudget !== null) {
@@ -261,4 +335,5 @@ export function importChecks(input: {
   return checks;
 }
 
-const fmt = (value: { x: number; y: number; z: number }) => `${value.x.toFixed(3)} × ${value.y.toFixed(3)} × ${value.z.toFixed(3)}`;
+const fmt = (value: { x: number; y: number; z: number }) =>
+  `${value.x.toFixed(3)} × ${value.y.toFixed(3)} × ${value.z.toFixed(3)}`;

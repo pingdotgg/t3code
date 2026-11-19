@@ -33,22 +33,29 @@ export interface WorkspaceEdit {
 
 const IDLE_MS = 5 * 60_000;
 
-export class IweLanguageServerError extends Error {}
+class IweLanguageServerError extends Error {}
 
 /** Applies LSP text edits to a string; positions are UTF-16 like JavaScript strings. */
 export function applyTextEdits(text: string, edits: ReadonlyArray<TextEdit>): string {
   const lineStarts = [0];
-  for (let index = 0; index < text.length; index += 1) if (text[index] === "\n") lineStarts.push(index + 1);
+  for (let index = 0; index < text.length; index += 1)
+    if (text[index] === "\n") lineStarts.push(index + 1);
   const offset = (position: Position) => {
     if (position.line >= lineStarts.length) return text.length;
     const start = lineStarts[position.line]!;
-    const end = position.line + 1 < lineStarts.length ? lineStarts[position.line + 1]! - 1 : text.length;
+    const end =
+      position.line + 1 < lineStarts.length ? lineStarts[position.line + 1]! - 1 : text.length;
     return Math.min(start + position.character, end);
   };
-  const sorted = [...edits].sort((left, right) => offset(right.range.start) - offset(left.range.start));
+  const sorted = [...edits].sort(
+    (left, right) => offset(right.range.start) - offset(left.range.start),
+  );
   let result = text;
   for (const edit of sorted) {
-    result = result.slice(0, offset(edit.range.start)) + edit.newText + result.slice(offset(edit.range.end));
+    result =
+      result.slice(0, offset(edit.range.start)) +
+      edit.newText +
+      result.slice(offset(edit.range.end));
   }
   return result;
 }
@@ -56,12 +63,14 @@ export function applyTextEdits(text: string, edits: ReadonlyArray<TextEdit>): st
 const pathOf = (uri: string) => NodeURL.fileURLToPath(uri);
 
 /** Writes a workspace edit to disk inside `root` and returns the files it touched. */
-export async function applyWorkspaceEdit(root: string, edit: WorkspaceEdit): Promise<string[]> {
+async function applyWorkspaceEdit(root: string, edit: WorkspaceEdit): Promise<string[]> {
   const touched = new Set<string>();
   const inside = (path: string) => {
     const resolved = NodePath.resolve(path);
     if (!resolved.startsWith(NodePath.resolve(root) + NodePath.sep)) {
-      throw new IweLanguageServerError(`The language server tried to change ${resolved}, outside the workspace.`);
+      throw new IweLanguageServerError(
+        `The language server tried to change ${resolved}, outside the workspace.`,
+      );
     }
     return resolved;
   };
@@ -100,7 +109,10 @@ export async function applyWorkspaceEdit(root: string, edit: WorkspaceEdit): Pro
 
 export class IweLanguageServer {
   readonly #child: NodeChildProcess.ChildProcessWithoutNullStreams;
-  readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>();
+  readonly #pending = new Map<
+    number,
+    { resolve: (value: unknown) => void; reject: (error: Error) => void }
+  >();
   readonly #versions = new Map<string, number>();
   readonly #root: string;
   #buffer = Buffer.alloc(0);
@@ -113,17 +125,30 @@ export class IweLanguageServer {
   constructor(executable: string, root: string, onExit: () => void) {
     this.#root = root;
     this.#onExit = onExit;
-    this.#child = NodeChildProcess.spawn(executable, [], { cwd: root, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    this.#child = NodeChildProcess.spawn(executable, [], {
+      cwd: root,
+      stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
+    });
     this.#child.stdout.on("data", (chunk: Buffer) => this.#read(chunk));
     this.#child.stderr.on("data", () => {});
-    this.#child.on("exit", () => this.#shutdown(new IweLanguageServerError("The IWE language server stopped.")));
-    this.#child.on("error", (error) => this.#shutdown(new IweLanguageServerError(`Could not start iwes: ${error.message}`)));
+    this.#child.on("exit", () =>
+      this.#shutdown(new IweLanguageServerError("The IWE language server stopped.")),
+    );
+    this.#child.on("error", (error) =>
+      this.#shutdown(new IweLanguageServerError(`Could not start iwes: ${error.message}`)),
+    );
     this.#ready = this.#request("initialize", {
       processId: process.pid,
       rootUri: NodeURL.pathToFileURL(root).href,
       capabilities: {
         textDocument: { completion: { completionItem: {} }, rename: { prepareSupport: true } },
-        workspace: { workspaceEdit: { documentChanges: true, resourceOperations: ["create", "rename", "delete"] } },
+        workspace: {
+          workspaceEdit: {
+            documentChanges: true,
+            resourceOperations: ["create", "rename", "delete"],
+          },
+        },
       },
     }).then((result) => {
       this.#notify("initialized", {});
@@ -145,9 +170,13 @@ export class IweLanguageServer {
     for (;;) {
       const header = this.#buffer.indexOf("\r\n\r\n");
       if (header < 0) return;
-      const length = Number(/Content-Length: (\d+)/i.exec(this.#buffer.subarray(0, header).toString())?.[1] ?? NaN);
+      const length = Number(
+        /Content-Length: (\d+)/i.exec(this.#buffer.subarray(0, header).toString())?.[1] ?? NaN,
+      );
       if (!Number.isFinite(length) || this.#buffer.length < header + 4 + length) return;
-      const message = JSON.parse(this.#buffer.subarray(header + 4, header + 4 + length).toString("utf8")) as {
+      const message = JSON.parse(
+        this.#buffer.subarray(header + 4, header + 4 + length).toString("utf8"),
+      ) as {
         id?: number;
         method?: string;
         result?: unknown;
@@ -172,7 +201,8 @@ export class IweLanguageServer {
   }
 
   #request(method: string, params: unknown): Promise<unknown> {
-    if (this.closed) return Promise.reject(new IweLanguageServerError("The IWE language server stopped."));
+    if (this.closed)
+      return Promise.reject(new IweLanguageServerError("The IWE language server stopped."));
     const id = this.#nextId++;
     return new Promise((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
@@ -197,14 +227,24 @@ export class IweLanguageServer {
     const uri = NodeURL.pathToFileURL(path).href;
     const version = (this.#versions.get(uri) ?? 0) + 1;
     this.#versions.set(uri, version);
-    if (version === 1) this.#notify("textDocument/didOpen", { textDocument: { uri, languageId: "markdown", version, text } });
-    else this.#notify("textDocument/didChange", { textDocument: { uri, version }, contentChanges: [{ text }] });
+    if (version === 1)
+      this.#notify("textDocument/didOpen", {
+        textDocument: { uri, languageId: "markdown", version, text },
+      });
+    else
+      this.#notify("textDocument/didChange", {
+        textDocument: { uri, version },
+        contentChanges: [{ text }],
+      });
     return uri;
   }
 
   async complete(path: string, text: string, position: Position) {
     const uri = await this.#sync(path, text);
-    const result = (await this.#request("textDocument/completion", { textDocument: { uri }, position })) as
+    const result = (await this.#request("textDocument/completion", {
+      textDocument: { uri },
+      position,
+    })) as
       | { items?: Array<{ label: string; textEdit?: TextEdit; insertText?: string }> }
       | Array<{ label: string; textEdit?: TextEdit; insertText?: string }>
       | null;
@@ -219,9 +259,17 @@ export class IweLanguageServer {
 
   async rename(path: string, text: string, position: Position, newName: string): Promise<string[]> {
     const uri = await this.#sync(path, text);
-    const prepared = await this.#request("textDocument/prepareRename", { textDocument: { uri }, position });
-    if (prepared === null) throw new IweLanguageServerError("Put the cursor on a link to the note you want to rename.");
-    const edit = (await this.#request("textDocument/rename", { textDocument: { uri }, position, newName })) as WorkspaceEdit | null;
+    const prepared = await this.#request("textDocument/prepareRename", {
+      textDocument: { uri },
+      position,
+    });
+    if (prepared === null)
+      throw new IweLanguageServerError("Put the cursor on a link to the note you want to rename.");
+    const edit = (await this.#request("textDocument/rename", {
+      textDocument: { uri },
+      position,
+      newName,
+    })) as WorkspaceEdit | null;
     if (edit === null) throw new IweLanguageServerError("IWE did not rename anything.");
     return applyWorkspaceEdit(this.#root, edit);
   }

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHandoffMessage, buildImproveRequest, cleanImprovedPrompt, recentConversation } from "./improvePrompt.ts";
+import {
+  buildHandoffMessage,
+  buildImproveRequest,
+  cleanImprovedPrompt,
+  recentConversation,
+} from "./improvePrompt.ts";
 
 describe("improve prompt", () => {
   it("carries decisions from the conversation and the multiline draft verbatim", () => {
@@ -22,7 +27,10 @@ describe("improve prompt", () => {
   });
 
   it("keeps the newest messages within the budget", () => {
-    const messages = Array.from({ length: 40 }, (_, index) => ({ role: "user" as const, text: `message ${index} ${"x".repeat(900)}` }));
+    const messages = Array.from({ length: 40 }, (_, index) => ({
+      role: "user" as const,
+      text: `message ${index} ${"x".repeat(900)}`,
+    }));
     const kept = recentConversation(messages, 5_000);
     expect(kept.at(-1)?.text.startsWith("message 39")).toBe(true);
     expect(kept.length).toBeLessThan(10);

@@ -18,16 +18,28 @@ const withWorkspace = Effect.fn("IweMcp.withWorkspace")(function* <A>(
   return yield* service
     .run(name, async (core) => {
       const root = await core.workspaceForThread(thread.threadId, projectRoot);
-      if (root === null) throw new Error("This thread has no IWE workspace. Open one with Add project → Open IWE Workspace, or pick one in the IWE panel.");
+      if (root === null)
+        throw new Error(
+          "This thread has no IWE workspace. Open one with Add project → Open IWE Workspace, or pick one in the IWE panel.",
+        );
       return work(core, root, thread.threadId);
     })
-      .pipe(Effect.mapError((error) => new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })));
+    .pipe(
+      Effect.mapError(
+        (error) => new OrchestratorMcpFailure({ code: "invalid_request", message: error.message }),
+      ),
+    );
 });
 
 const handlers = {
   continuum_iwe_find: McpToolAccess.readsAsCaller((input) =>
     withWorkspace("agentFind", async (core, root, threadId) => {
-      const results = await core.search(root, input.query ?? "", input.mode ?? "both", Math.min(input.limit ?? 20, 100));
+      const results = await core.search(
+        root,
+        input.query ?? "",
+        input.mode ?? "both",
+        Math.min(input.limit ?? 20, 100),
+      );
       core.record(threadId, results.slice(0, 10), "searched", "agent");
       return { workspace: root, results };
     }),
@@ -40,7 +52,14 @@ const handlers = {
         children: input.children ?? 0,
         parents: input.parents ?? 0,
       });
-      const titles = await Promise.all(input.keys.map((key) => core.note(root, key).then((note) => ({ key, title: note.title })).catch(() => ({ key, title: key }))));
+      const titles = await Promise.all(
+        input.keys.map((key) =>
+          core
+            .note(root, key)
+            .then((note) => ({ key, title: note.title }))
+            .catch(() => ({ key, title: key })),
+        ),
+      );
       core.record(threadId, titles, "read", "agent");
       return { workspace: root, markdown };
     }),
@@ -51,9 +70,19 @@ const handlers = {
         if (!input.key) throw new Error("update needs the note's key.");
         const note = await core.save(root, input.key, input.content);
         core.record(threadId, [note], "updated", "agent");
-        return { key: note.key, title: note.title, path: note.path, links: note.references.length, backlinks: note.referencedBy.length + note.includedBy.length };
+        return {
+          key: note.key,
+          title: note.title,
+          path: note.path,
+          links: note.references.length,
+          backlinks: note.referencedBy.length + note.includedBy.length,
+        };
       }
-      const note = await core.create(root, { ...(input.key ? { key: input.key } : {}), ...(input.title ? { title: input.title } : {}), content: input.content });
+      const note = await core.create(root, {
+        ...(input.key ? { key: input.key } : {}),
+        ...(input.title ? { title: input.title } : {}),
+        content: input.content,
+      });
       core.record(threadId, [note], "created", "agent");
       return { key: note.key, title: note.title, path: note.path };
     }),

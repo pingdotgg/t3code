@@ -909,7 +909,10 @@ export const layer: Layer.Layer<
       const superchargeContext =
         goalCommand || Option.isNone(supercharge)
           ? ""
-          : yield* supercharge.value.contextForTurn({ threadId: projection.thread.id, runId: run.id });
+          : yield* supercharge.value.contextForTurn({
+              threadId: projection.thread.id,
+              runId: run.id,
+            });
       // An IWE thread names its notes workspace; attached notes go out once, with linked context.
       const iweProjectRoot =
         projection.thread.worktreePath ??
@@ -921,7 +924,9 @@ export const layer: Layer.Layer<
         goalCommand || Option.isNone(iwe)
           ? ""
           : yield* iwe.value
-              .run("contextForTurn", (core) => core.contextForTurn(projection.thread.id, iweProjectRoot))
+              .run("contextForTurn", (core) =>
+                core.contextForTurn(projection.thread.id, iweProjectRoot),
+              )
               .pipe(Effect.orElseSucceed(() => ""));
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),

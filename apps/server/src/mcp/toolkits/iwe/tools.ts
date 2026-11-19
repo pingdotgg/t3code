@@ -10,7 +10,12 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 const shared = {
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
-  dependencies: [McpInvocationContext.McpInvocationContext, IweService.IweService, ThreadManagementService.ThreadManagementService, Project.ProjectService],
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    IweService.IweService,
+    ThreadManagementService.ThreadManagementService,
+    Project.ProjectService,
+  ],
 };
 
 const FindTool = Tool.make("continuum_iwe_find", {
@@ -58,7 +63,8 @@ const WriteTool = Tool.make("continuum_iwe_write", {
 
 const RenameTool = Tool.make("continuum_iwe_rename", {
   ...shared,
-  description: "Rename an IWE note's key and update every link to it across the workspace, with IWE's own rename.",
+  description:
+    "Rename an IWE note's key and update every link to it across the workspace, with IWE's own rename.",
   parameters: Schema.Struct({ key: Schema.String, newKey: Schema.String }),
   success: Schema.Unknown,
 }).annotate(Tool.Destructive, false);

@@ -456,7 +456,9 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
-  const prepareIweWorkspace = useAtomCommand(iweEnvironment.prepareWorkspace, { reportFailure: false });
+  const prepareIweWorkspace = useAtomCommand(iweEnvironment.prepareWorkspace, {
+    reportFailure: false,
+  });
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -2046,13 +2048,17 @@ function OpenCommandPaletteDialog(props: {
     if (iweMode !== null) {
       const path = resolveProjectPathForDispatch(rawCwd, currentProjectCwdForBrowse);
       if (path.length === 0) return;
-      const prepared = await prepareIweWorkspace({ environmentId: browseEnvironmentId, input: { path, mode: iweMode } });
+      const prepared = await prepareIweWorkspace({
+        environmentId: browseEnvironmentId,
+        input: { path, mode: iweMode },
+      });
       if (prepared._tag !== "Success") {
         const error = squashAtomCommandFailure(prepared);
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: iweMode === "open" ? "Not an IWE workspace" : "Could not create the IWE workspace",
+            title:
+              iweMode === "open" ? "Not an IWE workspace" : "Could not create the IWE workspace",
             description: error instanceof Error ? error.message : "IWE did not respond.",
           }),
         );
@@ -2539,8 +2545,8 @@ function OpenCommandPaletteDialog(props: {
         ? iweMode === "open"
           ? "IWE workspace folder (with .iwe/config.toml)"
           : "Folder for the new IWE workspace"
-      : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
-        getCommandPaletteInputPlaceholder(paletteMode));
+        : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
+          getCommandPaletteInputPlaceholder(paletteMode));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";
   const hasHighlightedBrowseItem = highlightedItemValue?.startsWith("browse:") ?? false;
   const canWriteSourceControl = useEnvironmentScope(

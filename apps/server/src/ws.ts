@@ -2818,7 +2818,10 @@ export const layerWsRpc = (
         [WS_METHODS.superchargeStop]: (input) =>
           SuperchargeService.stopThread(input.threadId).pipe(
             Effect.provideService(SuperchargeService.SuperchargeService, supercharge),
-            Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
+            Effect.provideService(
+              ThreadManagementService.ThreadManagementService,
+              threadManagement,
+            ),
           ),
         [WS_METHODS.improveStart]: (input) => improve.start(input),
         [WS_METHODS.improveRetry]: (input) => improve.retry(input),
@@ -2840,31 +2843,50 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.iwePrepareWorkspace]: (input) => iwe.prepare(input.path, input.mode),
         [WS_METHODS.iweWorkspace]: (input) => iwe.workspace(input.root),
-        [WS_METHODS.iweSearch]: (input) => iwe.search(input.root, input.query, input.mode, input.limit ?? 50),
+        [WS_METHODS.iweSearch]: (input) =>
+          iwe.search(input.root, input.query, input.mode, input.limit ?? 50),
         [WS_METHODS.iweNote]: (input) => iwe.note(input.root, input.key),
-        [WS_METHODS.iweSaveNote]: (input) => iwe.save(input.root, input.key, input.content, input.threadId ?? null),
-        [WS_METHODS.iweCreateNote]: (input) => iwe.create(input.root, input.title, input.content ?? ""),
+        [WS_METHODS.iweSaveNote]: (input) =>
+          iwe.save(input.root, input.key, input.content, input.threadId ?? null),
+        [WS_METHODS.iweCreateNote]: (input) =>
+          iwe.create(input.root, input.title, input.content ?? ""),
         [WS_METHODS.iweRenameNote]: (input) => iwe.rename(input.root, input.key, input.newKey),
-        [WS_METHODS.iweComplete]: (input) => iwe.complete(input.root, input.key, input.text, input.line, input.character),
+        [WS_METHODS.iweComplete]: (input) =>
+          iwe.complete(input.root, input.key, input.text, input.line, input.character),
         [WS_METHODS.iweRenameLink]: (input) =>
-          iwe.renameLink(input.root, input.key, input.text, input.line, input.character, input.newName),
+          iwe.renameLink(
+            input.root,
+            input.key,
+            input.text,
+            input.line,
+            input.character,
+            input.newName,
+          ),
         [WS_METHODS.iweThreadState]: (input) =>
           iweProjectRoot(input.threadId).pipe(
-            Effect.flatMap((projectRoot) => iwe.run("threadState", (core) => core.threadState(input.threadId, projectRoot))),
+            Effect.flatMap((projectRoot) =>
+              iwe.run("threadState", (core) => core.threadState(input.threadId, projectRoot)),
+            ),
           ),
         [WS_METHODS.iweAttach]: (input) =>
           iweProjectRoot(input.threadId).pipe(
             Effect.flatMap((projectRoot) =>
-              iwe.run("attach", (core) => core.attach(input.threadId, input.root, input.key, input.depth, projectRoot)),
+              iwe.run("attach", (core) =>
+                core.attach(input.threadId, input.root, input.key, input.depth, projectRoot),
+              ),
             ),
           ),
         [WS_METHODS.iweDetach]: (input) =>
           iweProjectRoot(input.threadId).pipe(
-            Effect.flatMap((projectRoot) => iwe.run("detach", (core) => core.detach(input.threadId, input.key, projectRoot))),
+            Effect.flatMap((projectRoot) =>
+              iwe.run("detach", (core) => core.detach(input.threadId, input.key, projectRoot)),
+            ),
           ),
         [WS_METHODS.iweSelectWorkspace]: (input) =>
           iweProjectRoot(input.threadId).pipe(
-            Effect.flatMap((projectRoot) => iwe.run("select", (core) => core.select(input.threadId, input.root, projectRoot))),
+            Effect.flatMap((projectRoot) =>
+              iwe.run("select", (core) => core.select(input.threadId, input.root, projectRoot)),
+            ),
           ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
@@ -3747,7 +3769,11 @@ export const layer = Layer.unwrap(
           if (Option.isSome(url)) {
             yield* MobileAccessService.MobileAccessService.pipe(
               Effect.flatMap((mobile) =>
-                mobile.recordRejection({ url: url.value, outcome: "protocol-mismatch", reason: null }),
+                mobile.recordRejection({
+                  url: url.value,
+                  outcome: "protocol-mismatch",
+                  reason: null,
+                }),
               ),
               Effect.ignore,
             );
@@ -3766,10 +3792,15 @@ export const layer = Layer.unwrap(
         const analytics = yield* AnalyticsService.AnalyticsService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request, "rpc").pipe(
           Effect.tapError((error) =>
-            EnvironmentAuth.isServerAuthCredentialError(error) && error._tag !== "ServerAuthMissingCredentialError"
+            EnvironmentAuth.isServerAuthCredentialError(error) &&
+            error._tag !== "ServerAuthMissingCredentialError"
               ? MobileAccessService.MobileAccessService.pipe(
                   Effect.flatMap((mobile) =>
-                    mobile.recordRejection({ url: url.value, outcome: "credential-rejected", reason: null }),
+                    mobile.recordRejection({
+                      url: url.value,
+                      outcome: "credential-rejected",
+                      reason: null,
+                    }),
                   ),
                   Effect.ignore,
                 )

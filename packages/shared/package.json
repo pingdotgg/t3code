@@ -591,10 +591,6 @@
       "types": "./src/gameDevCatalog.ts",
       "import": "./src/gameDevCatalog.ts"
     },
-    "./gameDevRecipes": {
-      "types": "./src/gameDevRecipes.ts",
-      "import": "./src/gameDevRecipes.ts"
-    },
     "./superchargeWorkflow": {
       "types": "./src/superchargeWorkflow.ts",
       "import": "./src/superchargeWorkflow.ts"

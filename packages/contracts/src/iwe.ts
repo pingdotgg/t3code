@@ -32,7 +32,9 @@ export const IweToolStatus = Schema.Struct({
   /** The recommended route for this OS first. */
   setup: Schema.Array(IweSetupStep),
   /** A prebuilt release Continuum can download into its tools folder. */
-  managedInstall: Schema.NullOr(Schema.Struct({ version: Schema.String, url: Schema.String, source: Schema.String })),
+  managedInstall: Schema.NullOr(
+    Schema.Struct({ version: Schema.String, url: Schema.String, source: Schema.String }),
+  ),
 });
 export type IweToolStatus = typeof IweToolStatus.Type;
 
@@ -93,7 +95,9 @@ export const IweThreadState = Schema.Struct({
   threadId: ThreadId,
   workspaceRoot: Schema.NullOr(Schema.String),
   /** Notes waiting to go out with the next message, each with its linked context. */
-  attachments: Schema.Array(Schema.Struct({ key: Schema.String, title: Schema.String, depth: Schema.Int })),
+  attachments: Schema.Array(
+    Schema.Struct({ key: Schema.String, title: Schema.String, depth: Schema.Int }),
+  ),
   activity: Schema.Array(IweNoteActivity),
 });
 export type IweThreadState = typeof IweThreadState.Type;

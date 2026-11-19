@@ -64,7 +64,7 @@ function tokenOf(request: NodeHttp.IncomingMessage): string | null {
 }
 
 /** Routes for editor plugins. Loopback only; every route but /v1/status needs the bridge token. */
-export function makeBridgeRequestHandler(registry: GameBridgeRegistry) {
+function makeBridgeRequestHandler(registry: GameBridgeRegistry) {
   return async (request: NodeHttp.IncomingMessage, response: NodeHttp.ServerResponse) => {
     if (!isLoopback(request.socket.remoteAddress)) {
       send(response, 403, { error: "The Continuum bridge accepts only this computer." });
@@ -81,32 +81,50 @@ export function makeBridgeRequestHandler(registry: GameBridgeRegistry) {
       return;
     }
     if (!registry.authenticate(tokenOf(request))) {
-      send(response, 401, { error: "The bridge token does not match. Reconnect the project from Continuum." });
+      send(response, 401, {
+        error: "The bridge token does not match. Reconnect the project from Continuum.",
+      });
       return;
     }
     try {
       if (request.method === "POST" && url.pathname === "/v1/hello") {
         const body = (await readBody(request)) as Record<string, unknown>;
         const engine = str(body.engine);
-        if (!ENGINES.has(engine)) return send(response, 400, { error: `Unknown engine ${engine}.` });
+        if (!ENGINES.has(engine))
+          return send(response, 400, { error: `Unknown engine ${engine}.` });
         const session = registry.hello({
           protocol: typeof body.protocol === "number" ? body.protocol : 0,
           engine: engine as GameEngineId,
           editorVersion: str(body.editorVersion, "unknown"),
           pluginVersion: str(body.pluginVersion, "unknown"),
           instanceId: str(body.instanceId) || `anonymous-${Date.now()}`,
-          projectRoot: typeof body.projectRoot === "string" && body.projectRoot !== "" ? body.projectRoot : null,
+          projectRoot:
+            typeof body.projectRoot === "string" && body.projectRoot !== ""
+              ? body.projectRoot
+              : null,
           projectName: str(body.projectName, "Untitled"),
-          placeKey: typeof body.placeKey === "string" && body.placeKey !== "" ? body.placeKey : null,
-          operations: Array.isArray(body.operations) ? body.operations.filter((entry): entry is string => typeof entry === "string") : [],
-          playState: PLAY_STATES.has(str(body.playState)) ? (body.playState as GamePlayState) : "unknown",
-          inflight: Array.isArray(body.inflight) ? body.inflight.filter((entry): entry is string => typeof entry === "string") : [],
+          placeKey:
+            typeof body.placeKey === "string" && body.placeKey !== "" ? body.placeKey : null,
+          operations: Array.isArray(body.operations)
+            ? body.operations.filter((entry): entry is string => typeof entry === "string")
+            : [],
+          playState: PLAY_STATES.has(str(body.playState))
+            ? (body.playState as GamePlayState)
+            : "unknown",
+          inflight: Array.isArray(body.inflight)
+            ? body.inflight.filter((entry): entry is string => typeof entry === "string")
+            : [],
         });
-        return send(response, 200, { sessionId: session.sessionId, pollTimeoutMs: 20_000, serverTime: new Date().toISOString() });
+        return send(response, 200, {
+          sessionId: session.sessionId,
+          pollTimeoutMs: 20_000,
+          serverTime: new Date().toISOString(),
+        });
       }
       if (request.method === "GET" && url.pathname === "/v1/poll") {
         const pending = registry.poll(url.searchParams.get("session") ?? "");
-        if (pending === null) return send(response, 404, { error: "Unknown session; say hello again." });
+        if (pending === null)
+          return send(response, 404, { error: "Unknown session; say hello again." });
         let closed = false;
         request.on("close", () => {
           closed = true;
@@ -135,7 +153,8 @@ export function makeBridgeRequestHandler(registry: GameBridgeRegistry) {
       }
       send(response, 404, { error: "Not found." });
     } catch (error) {
-      if (error instanceof BridgeHelloError) return send(response, error.status, { error: error.message });
+      if (error instanceof BridgeHelloError)
+        return send(response, error.status, { error: error.message });
       send(response, 400, { error: error instanceof Error ? error.message : "Bad request." });
     }
   };

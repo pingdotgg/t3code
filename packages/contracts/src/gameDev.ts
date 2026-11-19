@@ -400,8 +400,6 @@ export const GameDevCheckpointRefInput = Schema.Struct({
 });
 export type GameDevCheckpointRefInput = typeof GameDevCheckpointRefInput.Type;
 
-// Assets ------------------------------------------------------------------------------------
-
 export const GameAssetKind = Schema.Literals(["model", "texture", "ui", "icon", "other"]);
 export type GameAssetKind = typeof GameAssetKind.Type;
 

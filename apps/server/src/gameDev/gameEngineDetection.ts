@@ -1,7 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalFetch:off globalTimers:off globalRandom:off extendsNativeError:off - Plain-TypeScript game bridge core (sockets, files, vendor HTTP), unit-tested without an Effect runtime; GameDevService wraps it.
 import * as NodePath from "node:path";
 
-import type { GameEngineInstall, GameEngineId, GameInstallTarget, GameProject } from "@t3tools/contracts";
+import type {
+  GameEngineInstall,
+  GameEngineId,
+  GameInstallTarget,
+  GameProject,
+} from "@t3tools/contracts";
 import {
   BRIDGE_PROJECT_PATHS,
   blenderExecutableCandidates,
@@ -48,16 +53,30 @@ const pathJoin = (platform: HostPlatform, ...parts: string[]) =>
 async function unityInstalls(host: DetectionHost): Promise<GameEngineInstall[]> {
   const roots = [...unityHubEditorRoots(host.platform, host.paths)];
   const secondary = parseUnityHubSecondaryPath(
-    (await readText(pathJoin(host.platform, unityHubConfigDir(host.platform, host.paths), "secondaryInstallPath.json"))) ?? "",
+    (await readText(
+      pathJoin(
+        host.platform,
+        unityHubConfigDir(host.platform, host.paths),
+        "secondaryInstallPath.json",
+      ),
+    )) ?? "",
   );
   if (secondary) roots.push(secondary);
   const installs: GameEngineInstall[] = [];
   for (const root of roots) {
     for (const entry of await listDir(root)) {
       if (!entry.isDirectory() || !/^\d+\.\d+\.\d+[abfp]\d+/.test(entry.name)) continue;
-      const executable = unityEditorExecutable(host.platform, pathJoin(host.platform, root, entry.name));
+      const executable = unityEditorExecutable(
+        host.platform,
+        pathJoin(host.platform, root, entry.name),
+      );
       if (await exists(executable)) {
-        installs.push({ target: "unity", version: entry.name, path: executable, source: "detected" });
+        installs.push({
+          target: "unity",
+          version: entry.name,
+          path: executable,
+          source: "detected",
+        });
       }
     }
   }
@@ -90,8 +109,9 @@ async function unrealRoot(host: DetectionHost, root: string): Promise<GameEngine
   const executable = unrealEditorExecutable(host.platform, root);
   if (!(await exists(executable))) return null;
   const version =
-    parseUnrealBuildVersion((await readText(pathJoin(host.platform, root, "Engine", "Build", "Build.version"))) ?? "") ??
-    "unknown";
+    parseUnrealBuildVersion(
+      (await readText(pathJoin(host.platform, root, "Engine", "Build", "Build.version"))) ?? "",
+    ) ?? "unknown";
   return { target: "unreal", version, path: executable, source: "detected" };
 }
 
@@ -99,17 +119,21 @@ async function unrealInstalls(host: DetectionHost): Promise<GameEngineInstall[]>
   const roots = new Set<string>();
   const launcherFile = unrealLauncherDataFile(host.platform, host.paths);
   if (launcherFile) {
-    for (const entry of parseLauncherInstalled((await readText(launcherFile)) ?? "")) roots.add(entry.location);
+    for (const entry of parseLauncherInstalled((await readText(launcherFile)) ?? ""))
+      roots.add(entry.location);
   }
   if (host.platform === "linux") {
-    for (const path of parseUnrealInstallIni((await readText(`${host.paths.home}/.config/Epic/UnrealEngine/Install.ini`)) ?? "")) {
+    for (const path of parseUnrealInstallIni(
+      (await readText(`${host.paths.home}/.config/Epic/UnrealEngine/Install.ini`)) ?? "",
+    )) {
       roots.add(path);
     }
   }
   for (const base of unrealDefaultRoots(host.platform, host.paths)) {
     if (await exists(pathJoin(host.platform, base, "Engine"))) roots.add(base);
     for (const entry of await listDir(base)) {
-      if (entry.isDirectory() && /^UE_\d/.test(entry.name)) roots.add(pathJoin(host.platform, base, entry.name));
+      if (entry.isDirectory() && /^UE_\d/.test(entry.name))
+        roots.add(pathJoin(host.platform, base, entry.name));
     }
   }
   const installs: GameEngineInstall[] = [];
@@ -141,14 +165,27 @@ async function robloxInstalls(host: DetectionHost): Promise<GameEngineInstall[]>
     if (host.platform === "darwin") {
       if (!(await exists(root))) continue;
       const plist = (await readText(`${root}/Contents/Info.plist`)) ?? "";
-      const version = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1] ?? "installed";
-      installs.push({ target: "roblox", version, path: `${root}/Contents/MacOS/RobloxStudio`, source: "detected" });
+      const version =
+        /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1] ??
+        "installed";
+      installs.push({
+        target: "roblox",
+        version,
+        path: `${root}/Contents/MacOS/RobloxStudio`,
+        source: "detected",
+      });
       continue;
     }
     for (const entry of await listDir(root)) {
       if (!entry.isDirectory() || !entry.name.startsWith("version-")) continue;
       const executable = pathJoin(host.platform, root, entry.name, "RobloxStudioBeta.exe");
-      if (await exists(executable)) installs.push({ target: "roblox", version: entry.name, path: executable, source: "detected" });
+      if (await exists(executable))
+        installs.push({
+          target: "roblox",
+          version: entry.name,
+          path: executable,
+          source: "detected",
+        });
     }
   }
   return installs;
@@ -156,7 +193,7 @@ async function robloxInstalls(host: DetectionHost): Promise<GameEngineInstall[]>
 
 const blenderVersionCache = new Map<string, string>();
 
-export async function blenderVersion(path: string): Promise<string | null> {
+async function blenderVersion(path: string): Promise<string | null> {
   const cached = blenderVersionCache.get(path);
   if (cached) return cached;
   const result = await run(path, ["--version"], { timeoutMs: 20_000 });
@@ -169,22 +206,41 @@ async function blenderInstall(host: DetectionHost): Promise<GameEngineInstall | 
   const managedRoot = pathJoin(host.platform, host.toolsDir, "blender");
   for (const entry of await listDir(managedRoot)) {
     if (!entry.isDirectory()) continue;
-    const executable = pathJoin(host.platform, managedRoot, entry.name, host.platform === "win32" ? "blender.exe" : "blender");
+    const executable = pathJoin(
+      host.platform,
+      managedRoot,
+      entry.name,
+      host.platform === "win32" ? "blender.exe" : "blender",
+    );
     if (await exists(executable)) {
-      return { target: "blender", version: (await blenderVersion(executable)) ?? entry.name, path: executable, source: "managed" };
+      return {
+        target: "blender",
+        version: (await blenderVersion(executable)) ?? entry.name,
+        path: executable,
+        source: "managed",
+      };
     }
   }
   const candidates = [...blenderExecutableCandidates(host.platform, host.paths)];
   if (host.platform === "win32") {
     const foundation = candidates[0]!;
     candidates.length = 0;
-    for (const entry of (await listDir(foundation)).filter((item) => item.isDirectory()).reverse()) {
+    for (const entry of (await listDir(foundation))
+      .filter((item) => item.isDirectory())
+      .reverse()) {
       candidates.push(pathJoin(host.platform, foundation, entry.name, "blender.exe"));
     }
   }
-  const path = (await firstExisting(candidates)) ?? (await onPath(host, host.platform === "win32" ? ["blender.exe"] : ["blender"]));
+  const path =
+    (await firstExisting(candidates)) ??
+    (await onPath(host, host.platform === "win32" ? ["blender.exe"] : ["blender"]));
   if (!path) return null;
-  return { target: "blender", version: (await blenderVersion(path)) ?? "installed", path, source: "detected" };
+  return {
+    target: "blender",
+    version: (await blenderVersion(path)) ?? "installed",
+    path,
+    source: "detected",
+  };
 }
 
 export interface DetectedInstalls {
@@ -196,9 +252,13 @@ export interface DetectedInstalls {
   readonly blender: GameEngineInstall | null;
 }
 
-const byVersionDesc = (left: GameEngineInstall, right: GameEngineInstall) => compareEngineVersions(right.version, left.version);
+const byVersionDesc = (left: GameEngineInstall, right: GameEngineInstall) =>
+  compareEngineVersions(right.version, left.version);
 
-export async function detectInstalls(host: DetectionHost, located: ReadonlyArray<LocatedInstall>): Promise<DetectedInstalls> {
+export async function detectInstalls(
+  host: DetectionHost,
+  located: ReadonlyArray<LocatedInstall>,
+): Promise<DetectedInstalls> {
   const [unity, hub, unreal, launcher, roblox, blender] = await Promise.all([
     unityInstalls(host),
     unityHub(host),
@@ -210,10 +270,17 @@ export async function detectInstalls(host: DetectionHost, located: ReadonlyArray
   const extra = (target: GameInstallTarget) =>
     located
       .filter((entry) => entry.target === target)
-      .map((entry): GameEngineInstall => ({ target, version: entry.version, path: entry.path, source: "located" }));
+      .map((entry): GameEngineInstall => ({
+        target,
+        version: entry.version,
+        path: entry.path,
+        source: "located",
+      }));
   const merge = (detected: ReadonlyArray<GameEngineInstall>, target: GameInstallTarget) => {
     const all = [...detected, ...extra(target)];
-    return all.filter((install, index) => all.findIndex((other) => other.path === install.path) === index).sort(byVersionDesc);
+    return all
+      .filter((install, index) => all.findIndex((other) => other.path === install.path) === index)
+      .sort(byVersionDesc);
   };
   return {
     unity: merge(unity, "unity"),
@@ -226,7 +293,11 @@ export async function detectInstalls(host: DetectionHost, located: ReadonlyArray
 }
 
 /** Checks a path the user picked and works out its version. */
-export async function inspectLocated(host: DetectionHost, target: GameInstallTarget, path: string): Promise<LocatedInstall | null> {
+export async function inspectLocated(
+  host: DetectionHost,
+  target: GameInstallTarget,
+  path: string,
+): Promise<LocatedInstall | null> {
   if (!(await exists(path))) return null;
   switch (target) {
     case "unreal": {
@@ -255,25 +326,39 @@ export async function detectProjects(root: string): Promise<GameProject[]> {
     }
     if (depth === 0) return;
     for (const entry of entries) {
-      if (entry.isDirectory() && !entry.name.startsWith(".") && !["node_modules", "Library", "Intermediate", "Saved"].includes(entry.name)) {
+      if (
+        entry.isDirectory() &&
+        !entry.name.startsWith(".") &&
+        !["node_modules", "Library", "Intermediate", "Saved"].includes(entry.name)
+      ) {
         await visit(NodePath.join(dir, entry.name), depth - 1);
       }
     }
   };
   await visit(root, 1);
-  return projects.sort((left, right) => left.root.localeCompare(right.root) || left.engine.localeCompare(right.engine));
+  return projects.sort(
+    (left, right) => left.root.localeCompare(right.root) || left.engine.localeCompare(right.engine),
+  );
 }
 
-async function describeProject(engine: GameEngineId, root: string, projectFile: string): Promise<GameProject> {
+async function describeProject(
+  engine: GameEngineId,
+  root: string,
+  projectFile: string,
+): Promise<GameProject> {
   let pinnedVersion: string | null = null;
   let pinnedRevision: string | null = null;
   let name = NodePath.basename(root);
   if (engine === "unity") {
-    const parsed = parseUnityProjectVersion((await readText(NodePath.join(root, "ProjectSettings", "ProjectVersion.txt"))) ?? "");
+    const parsed = parseUnityProjectVersion(
+      (await readText(NodePath.join(root, "ProjectSettings", "ProjectVersion.txt"))) ?? "",
+    );
     pinnedVersion = parsed?.version ?? null;
     pinnedRevision = parsed?.revision ?? null;
   } else if (engine === "unreal") {
-    pinnedVersion = parseUProject((await readText(NodePath.join(root, projectFile))) ?? "")?.engineAssociation ?? null;
+    pinnedVersion =
+      parseUProject((await readText(NodePath.join(root, projectFile))) ?? "")?.engineAssociation ??
+      null;
     name = projectFile.replace(/\.uproject$/i, "");
   }
   const bridgePath = BRIDGE_PROJECT_PATHS[engine];
@@ -284,6 +369,9 @@ async function describeProject(engine: GameEngineId, root: string, projectFile: 
     projectFile,
     pinnedVersion,
     pinnedRevision,
-    bridgeInstalled: bridgePath === null ? await exists(NodePath.join(root, ".continuum", "bridge.json")) : await exists(NodePath.join(root, bridgePath)),
+    bridgeInstalled:
+      bridgePath === null
+        ? await exists(NodePath.join(root, ".continuum", "bridge.json"))
+        : await exists(NodePath.join(root, bridgePath)),
   };
 }

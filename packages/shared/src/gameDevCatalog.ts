@@ -37,7 +37,7 @@ export function parseOsRelease(text: string): LinuxDistro {
 
 export type LinuxFamily = "debian" | "rhel" | "fedora" | "nixos" | "arch" | "other";
 
-export function linuxFamily(distro: LinuxDistro | null): LinuxFamily {
+function linuxFamily(distro: LinuxDistro | null): LinuxFamily {
   if (distro === null) return "other";
   const ids = [distro.id, ...distro.idLike];
   if (distro.id === "nixos") return "nixos";
@@ -47,8 +47,6 @@ export function linuxFamily(distro: LinuxDistro | null): LinuxFamily {
   if (ids.includes("arch")) return "arch";
   return "other";
 }
-
-// Operations ---------------------------------------------------------------------------------
 
 export interface GameOperationSpec {
   readonly description: string;
@@ -68,22 +66,38 @@ export const GAME_OPERATIONS = {
     approval: false,
     writes: false,
   },
-  "selection.get": { description: "Read what is selected in the editor.", approval: false, writes: false },
+  "selection.get": {
+    description: "Read what is selected in the editor.",
+    approval: false,
+    writes: false,
+  },
   "object.get": {
     description: "Read one object's properties, components, attributes, and tags.",
     approval: false,
     writes: false,
   },
-  "object.create": { description: "Create an object with properties.", approval: false, writes: true },
+  "object.create": {
+    description: "Create an object with properties.",
+    approval: false,
+    writes: true,
+  },
   "object.update": { description: "Set properties on an object.", approval: false, writes: true },
-  "object.delete": { description: "Delete an object and its children.", approval: true, writes: true },
+  "object.delete": {
+    description: "Delete an object and its children.",
+    approval: true,
+    writes: true,
+  },
   "script.read": { description: "Read a script's source.", approval: false, writes: false },
   "script.write": {
     description: "Create or replace a script's source (Luau, C#, or editor Python).",
     approval: false,
     writes: true,
   },
-  "asset.list": { description: "List project assets under a folder.", approval: false, writes: false },
+  "asset.list": {
+    description: "List project assets under a folder.",
+    approval: false,
+    writes: false,
+  },
   "asset.update": {
     description: "Set properties on an asset (material, ScriptableObject, Data Asset).",
     approval: false,
@@ -99,13 +113,37 @@ export const GAME_OPERATIONS = {
     approval: false,
     writes: true,
   },
-  "build.status": { description: "Report compile errors and warnings.", approval: false, writes: false },
-  "build.compile": { description: "Compile scripts or C++ and report errors.", approval: false, writes: false },
-  "playtest.start": { description: "Start a playtest (Play/Run/PIE).", approval: false, writes: false },
+  "build.status": {
+    description: "Report compile errors and warnings.",
+    approval: false,
+    writes: false,
+  },
+  "build.compile": {
+    description: "Compile scripts or C++ and report errors.",
+    approval: false,
+    writes: false,
+  },
+  "playtest.start": {
+    description: "Start a playtest (Play/Run/PIE).",
+    approval: false,
+    writes: false,
+  },
   "playtest.stop": { description: "Stop the playtest.", approval: false, writes: false },
-  "playtest.status": { description: "Report whether a playtest is running.", approval: false, writes: false },
-  "tests.run": { description: "Run project tests and report results.", approval: false, writes: false },
-  "viewport.capture": { description: "Capture the editor or game viewport as an image.", approval: false, writes: false },
+  "playtest.status": {
+    description: "Report whether a playtest is running.",
+    approval: false,
+    writes: false,
+  },
+  "tests.run": {
+    description: "Run project tests and report results.",
+    approval: false,
+    writes: false,
+  },
+  "viewport.capture": {
+    description: "Capture the editor or game viewport as an image.",
+    approval: false,
+    writes: false,
+  },
   "viewport.focus": {
     description: "Move the editor camera to frame an object (opt-in in Settings).",
     approval: false,
@@ -118,8 +156,16 @@ export const GAME_OPERATIONS = {
   },
   "snapshot.restore": { description: "Restore a captured snapshot.", approval: true, writes: true },
   "editor.undo": { description: "Undo the last editor change.", approval: false, writes: true },
-  "project.save": { description: "Save open scenes, levels, and assets.", approval: false, writes: true },
-  "project.publish": { description: "Publish or upload the project.", approval: true, writes: true },
+  "project.save": {
+    description: "Save open scenes, levels, and assets.",
+    approval: false,
+    writes: true,
+  },
+  "project.publish": {
+    description: "Publish or upload the project.",
+    approval: true,
+    writes: true,
+  },
 } as const satisfies Record<string, GameOperationSpec>;
 
 export type GameOperation = keyof typeof GAME_OPERATIONS;
@@ -131,8 +177,6 @@ export function isGameOperation(value: string): value is GameOperation {
 export function operationNeedsApproval(operation: string): boolean {
   return isGameOperation(operation) && GAME_OPERATIONS[operation].approval;
 }
-
-// Engines ------------------------------------------------------------------------------------
 
 export interface GameEngineSpec {
   readonly engine: GameEngineId;
@@ -293,22 +337,20 @@ export function platformLabel(platform: HostPlatform): string {
         : platform;
 }
 
-// Installers ---------------------------------------------------------------------------------
-
 const UNITY_HUB_CDN = "https://public-cdn.cloud.unity3d.com/hub/prod";
-const EPIC_INSTALLER = "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download";
+const EPIC_INSTALLER =
+  "https://launcher-public-service-prod06.ol.epicgames.com/launcher/api/installer/download";
 export const UNITY_RELEASES_API =
   "https://services.api.unity.com/unity/editor/release/v1/releases?limit=1&stream=LTS";
-export const ROBLOX_STUDIO_VERSION_API = "https://clientsettingscdn.roblox.com/v2/client-version";
 export const BLENDER_RELEASES = "https://download.blender.org/release";
 
 const UNITY_APT_COMMANDS = [
   "wget -qO - https://hub.unity3d.com/linux/keys/public | gpg --dearmor | sudo tee /usr/share/keyrings/Unity_Technologies_ApS.gpg > /dev/null",
-  'sudo sh -c \'echo "deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main" > /etc/apt/sources.list.d/unityhub.list\'',
+  "sudo sh -c 'echo \"deb [signed-by=/usr/share/keyrings/Unity_Technologies_ApS.gpg] https://hub.unity3d.com/linux/repos/deb stable main\" > /etc/apt/sources.list.d/unityhub.list'",
   "sudo apt update && sudo apt-get install -y unityhub",
 ];
 const UNITY_RPM_COMMANDS = [
-  'sudo sh -c \'printf "[unityhub]\\nname=Unity Hub\\nbaseurl=https://hub.unity3d.com/linux/repos/rpm/stable\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://hub.unity3d.com/linux/repos/rpm/stable/repodata/repomd.xml.key\\nrepo_gpgcheck=1\\n" > /etc/yum.repos.d/unityhub.repo\'',
+  "sudo sh -c 'printf \"[unityhub]\\nname=Unity Hub\\nbaseurl=https://hub.unity3d.com/linux/repos/rpm/stable\\nenabled=1\\ngpgcheck=1\\ngpgkey=https://hub.unity3d.com/linux/repos/rpm/stable/repodata/repomd.xml.key\\nrepo_gpgcheck=1\\n\" > /etc/yum.repos.d/unityhub.repo'",
   "sudo dnf install -y unityhub",
 ];
 
@@ -548,7 +590,10 @@ export function installerPlan(target: GameInstallTarget, context: PlanContext): 
           source: "Blender Foundation (blender.org)",
           url: "https://www.blender.org/download/",
           official: version === null,
-          note: version === null ? null : `No official Blender ${version} build for ${platform}-${arch}.`,
+          note:
+            version === null
+              ? null
+              : `No official Blender ${version} build for ${platform}-${arch}.`,
         });
       }
       const url = `${BLENDER_RELEASES}/Blender${majorMinor(version)}/${file}`;
@@ -563,7 +608,9 @@ export function installerPlan(target: GameInstallTarget, context: PlanContext): 
         steps:
           platform === "darwin"
             ? ["Drag Blender into Applications, then choose Refresh."]
-            : ["Continuum unpacks a portable Blender into its tools folder. Nothing system-wide changes."],
+            : [
+                "Continuum unpacks a portable Blender into its tools folder. Nothing system-wide changes.",
+              ],
       });
     }
   }
@@ -612,19 +659,15 @@ export function findSha256(sums: string, fileName: string): string | null {
   return null;
 }
 
-// Versions -----------------------------------------------------------------------------------
-
 /** Orders `2022.3.20f1`, `6000.0.58f2`, `5.4.4`, and `5.3` the way their vendors do. */
 export function compareEngineVersions(left: string, right: string): number {
   const parse = (value: string) =>
-    value
-      .split(/[.\s]/)
-      .flatMap((part) => {
-        const match = /^(\d+)([a-z])?(\d+)?/i.exec(part);
-        if (!match) return [];
-        const stage = match[2] ? "abfp".indexOf(match[2].toLowerCase()) : 3;
-        return [Number(match[1]), stage, Number(match[3] ?? 0)];
-      });
+    value.split(/[.\s]/).flatMap((part) => {
+      const match = /^(\d+)([a-z])?(\d+)?/i.exec(part);
+      if (!match) return [];
+      const stage = match[2] ? "abfp".indexOf(match[2].toLowerCase()) : 3;
+      return [Number(match[1]), stage, Number(match[3] ?? 0)];
+    });
   const a = parse(left);
   const b = parse(right);
   for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
@@ -652,8 +695,6 @@ export function versionRelation(
   return compareEngineVersions(editor, pinned) > 0 ? "upgrade" : "downgrade";
 }
 
-// Project and install file parsers ---------------------------------------------------------
-
 export function parseUnityProjectVersion(
   text: string,
 ): { readonly version: string; readonly revision: string | null } | null {
@@ -680,7 +721,9 @@ export function parseUProject(text: string): {
           ? value.EngineAssociation
           : null,
       plugins: (value.Plugins ?? []).flatMap((plugin) =>
-        typeof plugin.Name === "string" ? [{ name: plugin.Name, enabled: plugin.Enabled !== false }] : [],
+        typeof plugin.Name === "string"
+          ? [{ name: plugin.Name, enabled: plugin.Enabled !== false }]
+          : [],
       ),
       hasModules: Array.isArray(value.Modules) && value.Modules.length > 0,
     };
@@ -692,8 +735,13 @@ export function parseUProject(text: string): {
 /** `Engine/Build/Build.version` in an Unreal install. */
 export function parseUnrealBuildVersion(text: string): string | null {
   try {
-    const value = JSON.parse(text) as { MajorVersion?: number; MinorVersion?: number; PatchVersion?: number };
-    if (typeof value.MajorVersion !== "number" || typeof value.MinorVersion !== "number") return null;
+    const value = JSON.parse(text) as {
+      MajorVersion?: number;
+      MinorVersion?: number;
+      PatchVersion?: number;
+    };
+    if (typeof value.MajorVersion !== "number" || typeof value.MinorVersion !== "number")
+      return null;
     return `${value.MajorVersion}.${value.MinorVersion}.${value.PatchVersion ?? 0}`;
   } catch {
     return null;
@@ -710,7 +758,9 @@ export function parseLauncherInstalled(
     };
     return (value.InstallationList ?? []).flatMap((entry) => {
       const match = /^UE_(\d+\.\d+)$/.exec(entry.AppName ?? "");
-      return match && entry.InstallLocation ? [{ version: match[1]!, location: entry.InstallLocation }] : [];
+      return match && entry.InstallLocation
+        ? [{ version: match[1]!, location: entry.InstallLocation }]
+        : [];
     });
   } catch {
     return [];
@@ -746,7 +796,8 @@ export function parseUnityHubSecondaryPath(text: string): string | null {
 export function parseUnityLtsRelease(
   json: unknown,
 ): { readonly version: string; readonly revision: string | null } | null {
-  const results = (json as { results?: Array<{ version?: unknown; shortRevision?: unknown }> })?.results;
+  const results = (json as { results?: Array<{ version?: unknown; shortRevision?: unknown }> })
+    ?.results;
   const first = Array.isArray(results) ? results[0] : undefined;
   return typeof first?.version === "string"
     ? {
@@ -755,8 +806,6 @@ export function parseUnityLtsRelease(
       }
     : null;
 }
-
-// Install locations --------------------------------------------------------------------------
 
 export interface HostPaths {
   readonly home: string;
@@ -767,9 +816,14 @@ export interface HostPaths {
 }
 
 const join = (platform: HostPlatform, ...parts: ReadonlyArray<string>) =>
-  parts.join(platform === "win32" ? "\\" : "/").replace(/[\\/]+/g, platform === "win32" ? "\\" : "/");
+  parts
+    .join(platform === "win32" ? "\\" : "/")
+    .replace(/[\\/]+/g, platform === "win32" ? "\\" : "/");
 
-export function unityHubEditorRoots(platform: HostPlatform, paths: HostPaths): ReadonlyArray<string> {
+export function unityHubEditorRoots(
+  platform: HostPlatform,
+  paths: HostPaths,
+): ReadonlyArray<string> {
   if (platform === "win32") {
     return [join(platform, paths.programFiles ?? "C:\\Program Files", "Unity", "Hub", "Editor")];
   }
@@ -778,7 +832,8 @@ export function unityHubEditorRoots(platform: HostPlatform, paths: HostPaths): R
 }
 
 export function unityHubConfigDir(platform: HostPlatform, paths: HostPaths): string {
-  if (platform === "win32") return join(platform, paths.appData ?? `${paths.home}\\AppData\\Roaming`, "UnityHub");
+  if (platform === "win32")
+    return join(platform, paths.appData ?? `${paths.home}\\AppData\\Roaming`, "UnityHub");
   if (platform === "darwin") return `${paths.home}/Library/Application Support/UnityHub`;
   return `${paths.home}/.config/UnityHub`;
 }
@@ -794,7 +849,9 @@ export function unityHubExecutableCandidates(
   paths: HostPaths,
 ): ReadonlyArray<string> {
   if (platform === "win32") {
-    return [join(platform, paths.programFiles ?? "C:\\Program Files", "Unity Hub", "Unity Hub.exe")];
+    return [
+      join(platform, paths.programFiles ?? "C:\\Program Files", "Unity Hub", "Unity Hub.exe"),
+    ];
   }
   if (platform === "darwin") return ["/Applications/Unity Hub.app/Contents/MacOS/Unity Hub"];
   return ["/opt/unityhub/unityhub", "/usr/bin/unityhub", `${paths.home}/.nix-profile/bin/unityhub`];
@@ -802,7 +859,13 @@ export function unityHubExecutableCandidates(
 
 export function unrealLauncherDataFile(platform: HostPlatform, paths: HostPaths): string | null {
   if (platform === "win32") {
-    return join(platform, paths.programData ?? "C:\\ProgramData", "Epic", "UnrealEngineLauncher", "LauncherInstalled.dat");
+    return join(
+      platform,
+      paths.programData ?? "C:\\ProgramData",
+      "Epic",
+      "UnrealEngineLauncher",
+      "LauncherInstalled.dat",
+    );
   }
   if (platform === "darwin") {
     return `${paths.home}/Library/Application Support/Epic/UnrealEngineLauncher/LauncherInstalled.dat`;
@@ -810,14 +873,24 @@ export function unrealLauncherDataFile(platform: HostPlatform, paths: HostPaths)
   return null;
 }
 
-export function unrealDefaultRoots(platform: HostPlatform, paths: HostPaths): ReadonlyArray<string> {
-  if (platform === "win32") return [join(platform, paths.programFiles ?? "C:\\Program Files", "Epic Games")];
+export function unrealDefaultRoots(
+  platform: HostPlatform,
+  paths: HostPaths,
+): ReadonlyArray<string> {
+  if (platform === "win32")
+    return [join(platform, paths.programFiles ?? "C:\\Program Files", "Epic Games")];
   if (platform === "darwin") return ["/Users/Shared/Epic Games"];
-  return [`${paths.home}/UnrealEngine`, `${paths.home}/Unreal Engine`, "/opt/unreal-engine", "/opt/UnrealEngine"];
+  return [
+    `${paths.home}/UnrealEngine`,
+    `${paths.home}/Unreal Engine`,
+    "/opt/unreal-engine",
+    "/opt/UnrealEngine",
+  ];
 }
 
 export function unrealEditorExecutable(platform: HostPlatform, engineRoot: string): string {
-  if (platform === "win32") return join(platform, engineRoot, "Engine", "Binaries", "Win64", "UnrealEditor.exe");
+  if (platform === "win32")
+    return join(platform, engineRoot, "Engine", "Binaries", "Win64", "UnrealEditor.exe");
   if (platform === "darwin") {
     return `${engineRoot}/Engine/Binaries/Mac/UnrealEditor.app/Contents/MacOS/UnrealEditor`;
   }
@@ -825,7 +898,8 @@ export function unrealEditorExecutable(platform: HostPlatform, engineRoot: strin
 }
 
 export function unrealBuildScript(platform: HostPlatform, engineRoot: string): string {
-  if (platform === "win32") return join(platform, engineRoot, "Engine", "Build", "BatchFiles", "Build.bat");
+  if (platform === "win32")
+    return join(platform, engineRoot, "Engine", "Build", "BatchFiles", "Build.bat");
   if (platform === "darwin") return `${engineRoot}/Engine/Build/BatchFiles/Mac/Build.sh`;
   return `${engineRoot}/Engine/Build/BatchFiles/Linux/Build.sh`;
 }
@@ -837,12 +911,19 @@ export function robloxStudioRoots(platform: HostPlatform, paths: HostPaths): Rea
       join(platform, "C:\\Program Files (x86)", "Roblox", "Versions"),
     ];
   }
-  if (platform === "darwin") return ["/Applications/RobloxStudio.app", `${paths.home}/Applications/RobloxStudio.app`];
+  if (platform === "darwin")
+    return ["/Applications/RobloxStudio.app", `${paths.home}/Applications/RobloxStudio.app`];
   return [];
 }
 
 export function robloxPluginsDir(platform: HostPlatform, paths: HostPaths): string | null {
-  if (platform === "win32") return join(platform, paths.localAppData ?? `${paths.home}\\AppData\\Local`, "Roblox", "Plugins");
+  if (platform === "win32")
+    return join(
+      platform,
+      paths.localAppData ?? `${paths.home}\\AppData\\Local`,
+      "Roblox",
+      "Plugins",
+    );
   if (platform === "darwin") return `${paths.home}/Documents/Roblox/Plugins`;
   return null;
 }
@@ -855,7 +936,10 @@ export function blenderExecutableCandidates(
     return [join(platform, paths.programFiles ?? "C:\\Program Files", "Blender Foundation")];
   }
   if (platform === "darwin") {
-    return ["/Applications/Blender.app/Contents/MacOS/Blender", `${paths.home}/Applications/Blender.app/Contents/MacOS/Blender`];
+    return [
+      "/Applications/Blender.app/Contents/MacOS/Blender",
+      `${paths.home}/Applications/Blender.app/Contents/MacOS/Blender`,
+    ];
   }
   return [
     "/usr/bin/blender",
@@ -873,8 +957,6 @@ export function parseBlenderVersionOutput(text: string): string | null {
   return /Blender\s+(\d+\.\d+(?:\.\d+)?)/.exec(text)?.[1] ?? null;
 }
 
-// Projects -----------------------------------------------------------------------------------
-
 /** How Continuum recognizes an engine project from the files at its root. */
 export function engineForProjectFiles(names: ReadonlyArray<string>): ReadonlyArray<{
   readonly engine: GameEngineId;
@@ -887,7 +969,9 @@ export function engineForProjectFiles(names: ReadonlyArray<string>): ReadonlyArr
     found.push({ engine: "unity", projectFile: "ProjectSettings/ProjectVersion.txt" });
   }
   const place = names.find((name) => /\.rbxlx?$/i.test(name));
-  const rojo = names.find((name) => name === "default.project.json" || name.endsWith(".project.json"));
+  const rojo = names.find(
+    (name) => name === "default.project.json" || name.endsWith(".project.json"),
+  );
   if (place || rojo) found.push({ engine: "roblox", projectFile: (place ?? rojo)! });
   return found;
 }

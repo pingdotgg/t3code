@@ -78,7 +78,18 @@ const GameLogsTool = Tool.make("continuum_game_logs", {
   parameters: Schema.Struct({
     kinds: Schema.optionalKey(
       Schema.Array(
-        Schema.Literals(["log", "warning", "error", "build-error", "test-result", "agent-action", "play-state", "asset", "checkpoint", "capture"]),
+        Schema.Literals([
+          "log",
+          "warning",
+          "error",
+          "build-error",
+          "test-result",
+          "agent-action",
+          "play-state",
+          "asset",
+          "checkpoint",
+          "capture",
+        ]),
       ),
     ),
     contains: Schema.optionalKey(Schema.String),
@@ -120,10 +131,21 @@ const AssetBlenderTool = Tool.make("continuum_asset_blender", {
   description:
     "Edit a 3D asset in Blender (background mode) for this project, with or without an engine. Each asset has a working .blend. Operations: inspect; create_mesh {name, primitive cube|plane|uv_sphere|ico_sphere|cylinder|cone|torus, size, location, rotationDegrees, scale, dimensions, shadeSmooth} or {name, vertices, faces}; modify {object, location, rotationDegrees, scale, dimensions, modifiers:[{type, ...}], applyModifiers, applyTransforms, bevel, shadeSmooth}; material {object, name, baseColor [r,g,b,a], metallic, roughness, emission, imageTexture}; delete {objects}; import {path}; render_preview {output, width, height}; check {polygonBudget, textureResolution, dimensions}. Blender units are meters. Use fresh=true to start an empty scene.",
   parameters: Schema.Struct({
-    asset: Schema.String.annotate({ description: "Asset id: lowercase letters, digits, and dashes, such as wooden-crate." }),
+    asset: Schema.String.annotate({
+      description: "Asset id: lowercase letters, digits, and dashes, such as wooden-crate.",
+    }),
     name: Schema.optionalKey(Schema.String),
     kind: Schema.optionalKey(Schema.Literals(["model", "texture", "ui", "icon", "other"])),
-    operation: Schema.Literals(["inspect", "create_mesh", "modify", "material", "delete", "import", "render_preview", "check"]),
+    operation: Schema.Literals([
+      "inspect",
+      "create_mesh",
+      "modify",
+      "material",
+      "delete",
+      "import",
+      "render_preview",
+      "check",
+    ]),
     args: Schema.optionalKey(Json),
     fresh: Schema.optionalKey(Schema.Boolean),
   }),
@@ -152,7 +174,12 @@ const AssetRegisterTool = Tool.make("continuum_asset_register", {
     asset: Schema.String,
     name: Schema.String,
     kind: Schema.Literals(["model", "texture", "ui", "icon", "other"]),
-    files: Schema.Array(Schema.Struct({ role: Schema.Literals(["source", "export", "texture", "reference"]), path: Schema.String })),
+    files: Schema.Array(
+      Schema.Struct({
+        role: Schema.Literals(["source", "export", "texture", "reference"]),
+        path: Schema.String,
+      }),
+    ),
     preview: Schema.optionalKey(Schema.String),
     note: Schema.String,
     brief: Schema.optionalKey(Brief),
@@ -174,7 +201,8 @@ const AssetImportTool = Tool.make("continuum_asset_import", {
 
 const AssetListTool = Tool.make("continuum_asset_list", {
   ...shared,
-  description: "List this project's generated and edited assets with revisions, previews, files, checks, and import status.",
+  description:
+    "List this project's generated and edited assets with revisions, previews, files, checks, and import status.",
   // No `parameters`: an empty Schema.Struct({}) is not a valid MCP input schema (see worktree tools).
   success: Result,
 })
