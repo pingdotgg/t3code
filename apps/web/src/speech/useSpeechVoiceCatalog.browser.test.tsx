@@ -350,10 +350,27 @@ function setupCloud({ elevenLabsConfigured = false } = {}) {
   };
 }
 
-it.each(["OpenAI", "ElevenLabs"])(
-  "keeps the previous destination when %s key setup is dismissed or reloaded",
-  async (provider) => {
+it.each(
+  ["OpenAI", "ElevenLabs"].flatMap((provider) => [
+    { provider, previous: "Off", dismissal: "Cancel" },
+    ...["Cancel", "Close", "Escape", "reload"].map((dismissal) => ({
+      provider,
+      previous: "Piper",
+      dismissal,
+    })),
+  ]),
+)(
+  "preserves $previous when $provider key setup ends with $dismissal",
+  async ({ provider, previous, dismissal }) => {
     const { prepared, withSettings } = setupCloud();
+    const destination =
+      previous === "Off"
+        ? null
+        : { environmentId: prepared.environmentId, engine: "piper" as const };
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      speechOutputDestination: destination,
+    });
     await withSettings(async () => {
       await using screen = await render(<SpeechOutputSettings />);
       await screen.getByRole("combobox", { name: "Read aloud with" }).click();
@@ -361,43 +378,23 @@ it.each(["OpenAI", "ElevenLabs"])(
       await expect
         .element(page.getByRole("dialog", { name: `Add ${provider} API key` }))
         .toBeVisible();
-      expect(getClientSettings().speechOutputDestination).toBeNull();
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByLabelText(`${provider} API key`, { exact: true }).fill("unsaved-fixture");
+      expect(getClientSettings().speechOutputDestination).toEqual(destination);
+      if (dismissal === "reload") await screen.rerender(<SpeechOutputSettings key="reloaded" />);
+      else if (dismissal === "Escape") await userEvent.keyboard("{Escape}");
+      else await page.getByRole("button", { name: dismissal, exact: true }).click();
       await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-      await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-      await page.getByRole("option", { name: "Cloud server", exact: true }).click();
-      const previous = { environmentId: prepared.environmentId, engine: "piper" };
-      expect(getClientSettings().speechOutputDestination).toEqual(previous);
-      for (const dismissal of ["Cancel", "Close", "Escape"]) {
-        await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-        await page.getByRole("option", { name: provider, exact: true }).click();
-        await expect
-          .element(page.getByRole("dialog", { name: `Add ${provider} API key` }))
-          .toBeVisible();
-        await page.getByLabelText(`${provider} API key`, { exact: true }).fill("unsaved-fixture");
-        expect(getClientSettings().speechOutputDestination).toEqual(previous);
-        if (dismissal === "Escape") await userEvent.keyboard("{Escape}");
-        else await page.getByRole("button", { name: dismissal, exact: true }).click();
-        await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-        expect(getClientSettings().speechOutputDestination).toEqual(previous);
-        await expect
-          .element(screen.getByRole("combobox", { name: "Read aloud with" }))
-          .toHaveTextContent("Cloud server");
-      }
-      await screen.getByRole("combobox", { name: "Read aloud with" }).click();
-      await page.getByRole("option", { name: provider, exact: true }).click();
-      await expect.element(page.getByRole("dialog")).toBeVisible();
-      await page.getByLabelText(`${provider} API key`, { exact: true }).fill("lost-on-reload");
-      await screen.rerender(<SpeechOutputSettings key="reloaded" />);
-      await expect.element(page.getByRole("dialog")).not.toBeInTheDocument();
-      expect(getClientSettings().speechOutputDestination).toEqual(previous);
+      expect(getClientSettings().speechOutputDestination).toEqual(destination);
+      await expect
+        .element(screen.getByRole("combobox", { name: "Read aloud with" }))
+        .toHaveTextContent(previous === "Off" ? "Off" : "Cloud server");
       expect(cloudSettings.save).not.toHaveBeenCalled();
     });
   },
 );
 
-it("saves ElevenLabs keys before switching destination and loads account voices and vault references", async () => {
-  const { prepared, environment, withSettings } = setupCloud();
+it("switches to ElevenLabs only after its API key is saved successfully", async () => {
+  const { prepared, withSettings } = setupCloud();
   const previous = { environmentId: prepared.environmentId, engine: "piper" as const };
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, speechOutputDestination: previous });
   await withSettings(async () => {
@@ -427,6 +424,17 @@ it("saves ElevenLabs keys before switching destination and loads account voices 
       environmentId: prepared.environmentId,
       input: { patch: { speechOutput: { elevenLabsApiKey: "eleven-fixture" } } },
     });
+  });
+});
+
+it("loads ElevenLabs account voices and saves vault references for a configured destination", async () => {
+  const { prepared, environment, withSettings } = setupCloud({ elevenLabsConfigured: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    speechOutputDestination: { environmentId: prepared.environmentId, engine: "elevenlabs" },
+  });
+  await withSettings(async () => {
+    await using screen = await render(<SpeechOutputSettings />);
     await screen.getByRole("button", { name: "Load more voices" }).click();
     await vi.waitFor(() =>
       expect(getElevenLabsSpeechVoices).toHaveBeenLastCalledWith(prepared, {
