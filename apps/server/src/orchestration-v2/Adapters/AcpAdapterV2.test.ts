@@ -5084,9 +5084,11 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live(
-    "restores the native build mode after a Plan turn that followed a late session/load",
-    () =>
+  // Adoption either reaches the adapter after openSession configured the
+  // provisional setup, or before it, so openSession configures the adopted one.
+  it.live.each([false, true])(
+    "restores the native build mode after a Plan turn that followed a late session/load (adopted before configuration: %s)",
+    (adoptedBeforeConfiguration) =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -5096,6 +5098,8 @@ describe("AcpAdapterV2", () => {
         );
         const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
         const adopted = yield* Deferred.make<void>();
+        const adoptionHandled = yield* Deferred.make<void>();
+        let holdFirstModeRead = adoptedBeforeConfiguration;
         let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
         const instanceId = ProviderInstanceId.make("acp-test-late-session-load-plan");
         const threadId = ThreadId.make("thread-acp-late-session-load-plan");
@@ -5104,6 +5108,10 @@ describe("AcpAdapterV2", () => {
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
+            onSessionEvent: (event) =>
+              event._tag === "SessionSetupAdopted"
+                ? Deferred.succeed(adoptionHandled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,
@@ -5117,6 +5125,13 @@ describe("AcpAdapterV2", () => {
                 acpRuntime = runtime;
                 return {
                   ...runtime,
+                  getModeState: Effect.suspend(() => {
+                    if (!holdFirstModeRead) return runtime.getModeState;
+                    holdFirstModeRead = false;
+                    return Deferred.await(adoptionHandled).pipe(
+                      Effect.andThen(runtime.getModeState),
+                    );
+                  }),
                   getEvents: () =>
                     runtime
                       .getEvents()
@@ -5180,7 +5195,11 @@ describe("AcpAdapterV2", () => {
           }
         });
 
-        assert.deepEqual(yield* runTurn(0, planPolicy), ["architect"]);
+        // Configured against the adopted setup, openSession already switched to Plan.
+        assert.deepEqual(
+          yield* runTurn(0, planPolicy),
+          adoptedBeforeConfiguration ? [] : ["architect"],
+        );
         assert.deepEqual(
           yield* runTurn(1, policy("default")),
           ["ask"],

@@ -7111,6 +7111,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const adoptLateSessionSetup = Effect.fnUntraced(function* (
           targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
           result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
+          provisionalBuildSnapshot: AcpNativeBuildConfiguration | undefined,
         ) {
           const current = yield* Ref.get(activeSessionSetup);
           if (current === null || current.sessionId !== result.sessionId) {
@@ -7121,10 +7122,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);
-          // The runtime only adopts when no mode or option changed since the
-          // provisional start, so no Plan switch was applied and any build
-          // snapshot holds the provisional state rather than the real one.
-          nativeBuildConfigurationBySessionId.delete(result.sessionId);
+          // A build snapshot saved before the adoption was seen holds the
+          // provisional state; one saved by a deferred openSession
+          // configuration already read the adopted options and stays.
+          if (
+            provisionalBuildSnapshot !== undefined &&
+            nativeBuildConfigurationBySessionId.get(result.sessionId) === provisionalBuildSnapshot
+          ) {
+            nativeBuildConfigurationBySessionId.delete(result.sessionId);
+          }
           yield* refreshModelSwitchCapability;
           yield* (
             flavor.onSessionConfigurationUpdate?.(
@@ -7157,7 +7163,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     ? refreshModelSwitchCapability
                     : event._tag === "SessionSetupAdopted"
                       ? Effect.suspend(() => {
-                          const adopt = adoptLateSessionSetup(targetRuntime, event.result);
+                          const adopt = adoptLateSessionSetup(
+                            targetRuntime,
+                            event.result,
+                            nativeBuildConfigurationBySessionId.get(event.result.sessionId),
+                          );
                           if (lateSessionSetup.openSessionConfigured) return adopt;
                           lateSessionSetup.pending = adopt;
                           return Effect.void;
