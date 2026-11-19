@@ -335,6 +335,7 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   notAppliedVersion: Schema.optionalKey(Schema.String),
+  channelBlockedByPolicy: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export const DesktopCliCommandStateSchema = Schema.Struct({
@@ -986,6 +987,19 @@ export const DesktopPreviewConfigInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   /** Main must derive the partition to ensure its session has UA rewrites and permission handlers. */
   profileId: Schema.optional(BrowserProfileId),
+  /** Carry the partition's loopback traffic to the environment instead of this machine. */
+  tunnelLoopback: Schema.optional(Schema.Boolean),
+});
+
+export interface DesktopPreviewTunnelAccessRequest {
+  readonly requestId: string;
+  readonly environmentId: EnvironmentId;
+}
+
+export const DesktopPreviewTunnelAccessResolutionInputSchema = Schema.Struct({
+  requestId: Schema.String,
+  /** The environment's tunnel WebSocket URL with its ticket, or null when it cannot be reached. */
+  url: Schema.NullOr(Schema.String),
 });
 
 export const DesktopPreviewClearDataInputSchema = Schema.Struct({
@@ -1057,7 +1071,8 @@ export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
-  getRelayTelemetryEnabled: () => boolean;
+  /** `null` until the desktop host has read the login shell's environment; ask again later. */
+  getRelayTelemetryEnabled: () => boolean | null;
   getPathForFile: (file: File) => string;
   getClientPlatform: () => string;
   restartAudioService?: () => Promise<boolean>;
@@ -1150,6 +1165,7 @@ export interface DesktopBridge {
   ) => Promise<T | null>;
   receiveProviderAuthCallback: (authorizationUrl: string) => Promise<string>;
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
+  startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
@@ -1301,7 +1317,13 @@ export interface DesktopPreviewBridge {
   getPreviewConfig: (
     environmentId: EnvironmentId,
     profileId?: string,
+    tunnelLoopback?: boolean,
   ) => Promise<DesktopPreviewWebviewConfig>;
+  /** Main asks for an environment's tunnel URL once per connection a tunnelled page opens. */
+  onTunnelAccessRequest: (
+    listener: (request: DesktopPreviewTunnelAccessRequest) => void,
+  ) => () => void;
+  resolveTunnelAccess: (requestId: string, url: string | null) => Promise<void>;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {
     readonly environmentId: EnvironmentId;

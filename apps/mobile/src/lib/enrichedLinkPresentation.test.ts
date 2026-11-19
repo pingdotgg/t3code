@@ -34,6 +34,8 @@ describe("Enriched link presentation", () => {
       "https://example.com/app.tsx",
       "x + y",
       "README.md",
+      "Dockerfile",
+      "docker/Dockerfiles",
       "/app/settings",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
@@ -66,6 +68,7 @@ describe("Enriched link presentation", () => {
       "Try (model:codex/gpt-6.1).",
       "Try [model:codex/gpt-6.1] next",
       '"model:codex/gpt-6.1"',
+      "‏model:codex/gpt-6.1 هذا شرح",
     ]) {
       const source = regex?.exec(text)?.[0];
       expect(source, text).toBe("model:codex/gpt-6.1");
