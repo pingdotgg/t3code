@@ -80,13 +80,17 @@ export function PreviewChromeRow({
   leadingActions,
 }: Props) {
   const gt = useGT();
-  const [draft, setDraft] = useState(url);
+  const [edit, setEdit] = useState<{ text: string; baseUrl: string } | null>(null);
   const [inputFocused, setInputFocused] = useState(false);
+
+  // A typed edit survives blur, but a navigation replaces it.
+  const addressText = edit !== null && edit.baseUrl === url ? edit.text : url;
 
   const submit = (event?: FormEvent | KeyboardEvent) => {
     event?.preventDefault();
-    const next = draft.trim();
+    const next = addressText.trim();
     if (next.length === 0) return;
+    setEdit(null);
     onSubmit(next);
     inputRef.current?.blur();
   };
@@ -168,15 +172,15 @@ export function PreviewChromeRow({
               render={
                 <InputGroupInput
                   ref={inputRef}
-                  value={inputFocused ? draft : url}
-                  onChange={(event) => setDraft(event.target.value)}
+                  value={addressText}
+                  onChange={(event) => setEdit({ text: event.target.value, baseUrl: url })}
                   onFocus={() => {
-                    setDraft(url);
                     setInputFocused(true);
                     queueMicrotask(() => inputRef.current?.select());
                   }}
                   onBlur={() => {
                     setInputFocused(false);
+                    if (edit?.text.trim() === "") setEdit(null);
                   }}
                   onKeyDown={(event) => {
                     if (event.nativeEvent.isComposing || event.keyCode === 229) {
@@ -187,7 +191,7 @@ export function PreviewChromeRow({
                     if (event.key === "Enter") submit(event);
                     if (event.key === "Escape") {
                       event.preventDefault();
-                      setDraft(url);
+                      setEdit(null);
                       inputRef.current?.blur();
                     }
                   }}
