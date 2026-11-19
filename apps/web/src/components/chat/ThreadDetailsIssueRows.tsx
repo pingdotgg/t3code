@@ -32,13 +32,13 @@ function LinkedIssueRow({
   threadRef,
   compact,
   mountScope,
-  onOpen,
+  openWith,
 }: {
   link: ThreadIssueLink;
   threadRef: ScopedThreadRef;
   compact: boolean;
   mountScope: "thread-details" | "linked-items" | "sidebar-tooltip";
-  onOpen: (() => void) | undefined;
+  openWith: ((open: () => void) => void) | undefined;
 }) {
   const gt = useGT();
   const configs = useServerConfigs();
@@ -57,8 +57,9 @@ function LinkedIssueRow({
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       if (configs.get(threadRef.environmentId)?.environment.capabilities.issues !== true) return;
       event.preventDefault();
-      useRightPanelStore.getState().openIssue(threadRef, link);
-      onOpen?.();
+      const open = () => useRightPanelStore.getState().openIssue(threadRef, link);
+      if (openWith) openWith(open);
+      else open();
     },
   };
   const glyph = (
@@ -155,13 +156,14 @@ export function ThreadDetailsIssueRows({
   threadRef,
   compact = true,
   mountScope = "thread-details",
-  onOpen,
+  openWith,
 }: {
   links: ReadonlyArray<ThreadIssueLink>;
   threadRef: ScopedThreadRef;
   compact?: boolean;
   mountScope?: "thread-details" | "linked-items" | "sidebar-tooltip";
-  onOpen?: () => void;
+  /** Runs the open itself, for a caller that must show the thread first. */
+  openWith?: (open: () => void) => void;
 }) {
   return links.map((link) => (
     <LinkedIssueRow
@@ -170,7 +172,7 @@ export function ThreadDetailsIssueRows({
       threadRef={threadRef}
       compact={compact}
       mountScope={mountScope}
-      onOpen={onOpen}
+      openWith={openWith}
     />
   ));
 }

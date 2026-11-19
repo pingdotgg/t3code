@@ -1197,12 +1197,13 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
       </span>
     );
 
-  const openLinkedItems = () => {
-    const open = () => useRightPanelStore.getState().open(threadRef, "pull-requests");
+  const whenThreadShown = (open: () => void) => {
     if (props.isRouteThread) return open();
     // Once the thread is shown, so the panel lands beside its chat and stays in front.
-    void Promise.resolve(onThreadActivate(threadRef)).then(open);
+    void Promise.resolve(onThreadActivate(threadRef)).then(open, () => undefined);
   };
+  const openLinkedItems = () =>
+    whenThreadShown(() => useRightPanelStore.getState().open(threadRef, "pull-requests"));
   const handlePrLinkPress = (event: ReactPointerEvent<HTMLElement>, url: string) => {
     const surface = readThreadPullRequestSurface(threadRef, url);
     if (surface) beginLayoutContentDrag(event, { kind: "surface", threadRef, surface });
@@ -1292,9 +1293,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             threadRef={threadRef}
             compact={false}
             mountScope="sidebar-tooltip"
-            onOpen={() => {
-              if (!props.isRouteThread) onThreadActivate(threadRef);
-            }}
+            openWith={whenThreadShown}
           />
         </div>
       </TooltipPopup>
