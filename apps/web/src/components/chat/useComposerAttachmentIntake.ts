@@ -37,6 +37,7 @@ import {
 } from "./composerAttachmentFiles";
 import {
   fileAttachmentTooLargeMessage,
+  formatAttachmentLimit,
   formatAttachmentSize,
 } from "@t3tools/client-runtime/state/attachments";
 import { fileContextReference, imageContextReference } from "~/lib/composerContextRecords";
@@ -145,7 +146,7 @@ export function useComposerAttachmentIntake(input: {
         title: m(msg("Linked {name} by path", { name: file.name })),
         description: m(
           msg("It is over {size}, so the agent will read it from disk instead of an upload.", {
-            size: formatAttachmentSize(stagingLimit, m),
+            size: formatAttachmentLimit(stagingLimit, m),
           }),
         ),
         data: { hideCopyButton: true },
