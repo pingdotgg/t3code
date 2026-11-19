@@ -561,6 +561,56 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("gives Windows npm commands only the managed prefix spelling", () => {
+    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-windows-npm-prefix-",
+      });
+      const toolchain = yield* makeFakeNpmToolchain(cacheDir);
+      const environment = { ...toolchain.environment, NPM_CONFIG_PREFIX: "C:\\inherited-npm" };
+      const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const npmEnvironments: Array<Record<string, unknown>> = [];
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Environment, environment),
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (command) =>
+          command === "npm" ? toolchain.npmPath : undefined,
+        ),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (command._tag === "StandardCommand" && command.command === toolchain.npmPath) {
+              npmEnvironments.push({ ...command.options.env });
+            }
+            return realSpawner.spawn(command);
+          }),
+        ),
+      );
+
+      yield* resolver.resolve(settings(), "C:\\workspace", environment).pipe(Effect.ignore);
+
+      expect(npmEnvironments.length).toBeGreaterThan(0);
+      for (const env of npmEnvironments) {
+        expect(Object.keys(env).filter((key) => key.toLowerCase() === "npm_config_prefix")).toEqual(
+          ["npm_config_prefix"],
+        );
+      }
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent)))),
+        ),
+      ),
+    );
+  });
+
   it.effect("keeps only the end of a failed install's output in its error", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
@@ -738,6 +788,55 @@ describe("AcpRegistrySupport", () => {
                 );
           return Effect.succeed(HttpClientResponse.fromWeb(request, response));
         }),
+      ),
+    );
+  });
+
+  it.effect("gives Antigravity a T3-owned temp directory that is removed with the process", () => {
+    const agent = {
+      ...makeAgent({ binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./agy" } } }),
+      id: "antigravity-acp",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-runtime-temp-",
+      });
+      const runtimeTempDir = `${cacheDir}/antigravity-tmp/acp-registry`;
+      yield* fileSystem.makeDirectory(`${runtimeTempDir}/run-killed/_MEI123`, { recursive: true });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        runtimeTempDir,
+        registryUrl,
+      });
+      expect(yield* fileSystem.exists(`${runtimeTempDir}/run-killed`)).toBe(false);
+
+      const temp = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolve(
+            settings({ agentId: "antigravity-acp" }),
+            "/workspace",
+            { TMPDIR: "/tmp" },
+          );
+          const directory = resolved.spawn.env?.TMPDIR ?? "";
+          expect(directory.startsWith(`${runtimeTempDir}/run-`)).toBe(true);
+          expect(yield* fileSystem.exists(directory)).toBe(true);
+          return directory;
+        }),
+      );
+      expect(yield* fileSystem.exists(temp)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
       ),
     );
   });
