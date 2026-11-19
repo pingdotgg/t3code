@@ -208,6 +208,7 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
         }).pipe(Effect.map(path.dirname));
       const own = yield* bind("t3-a");
       const hostOpened = yield* bind("t3-b", openedIn);
+      const shared = yield* ensureAgentDeviceShim({ entryPath, stateDir: dir });
       const launch = (launcher: string, args: ReadonlyArray<string>) =>
         exec(process.execPath, [path.join(launcher, "agent-device-launcher.mjs"), ...args], {
           cwd: caller,
@@ -254,6 +255,15 @@ exec '${process.execPath.replaceAll("'", "'\"'\"'")}' "$@"
           cwd,
           args: [...expected, ...target],
         });
+      }
+      // The shared launcher claims in the session's bound launcher directory, or the caller's without one.
+      for (const [session, cwd] of [
+        ["t3-a", own],
+        ["t3-none", caller],
+        ["../t3-a", caller],
+      ] as const) {
+        const args = ["open", "App.app", "--config", "/h.json", "--session", session];
+        expect(yield* Effect.promise(() => launch(shared, args))).toEqual({ cwd, args });
       }
     }).pipe(
       Effect.scoped,

@@ -189,12 +189,12 @@ const launcherSource = (
   node: string,
   entryPath: string,
   boundArgs: ReadonlyArray<string>,
-  claimDirectory: string | undefined,
+  claim: { readonly directory: string } | { readonly targetsDir: string },
 ) =>
   `import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
-import { isAbsolute, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 const entry = ${JSON.stringify(entryPath)};
 const bound = ${JSON.stringify(boundArgs)};
 const refused = new Map([["cdp", ["--platform", "--udid", "--config", "--session"]], ["connection", ["--platform", "--udid"]]]);
@@ -250,7 +250,10 @@ if (local) {
     process.exit(1);
   }
 }
-const claimDirectory = ${JSON.stringify(claimDirectory ?? null)};
+// The shared launcher uses the directory of the session's bound launcher, so both hold one claim.
+const targets = ${JSON.stringify("targetsDir" in claim ? claim.targetsDir : null)};
+const session = targets ? valueOf("--session") ?? "" : "";
+const claimDirectory = targets ? (/^[\\w-][\\w.-]*$/.test(session) ? join(targets, session) : null) : ${JSON.stringify("directory" in claim ? claim.directory : null)};
 const cwd = !informational && claimDirectory && ${JSON.stringify(CLAIM_COMMANDS)}.includes(name) && existsSync(claimDirectory) ? claimDirectory : undefined;
 if (cwd) {
   const pathFlags = new Set(${JSON.stringify(CLAIM_PATH_FLAGS)});
@@ -286,7 +289,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   readonly dir: string;
   readonly entryPath: string;
   readonly boundArgs: ReadonlyArray<string>;
-  readonly claimDirectory?: string;
+  readonly claim: { readonly directory: string } | { readonly targetsDir: string };
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -296,7 +299,7 @@ const writeLauncher = Effect.fn("AgentDeviceShim.writeLauncher")(function* (inpu
   const launcherPath = path.join(input.dir, "agent-device-launcher.mjs");
   yield* fs.writeFileString(
     launcherPath,
-    launcherSource(node, input.entryPath, input.boundArgs, input.claimDirectory),
+    launcherSource(node, input.entryPath, input.boundArgs, input.claim),
   );
   if (platform === "win32") {
     const script = `@echo off\r\nsetlocal EnableExtensions DisableDelayedExpansion\r\nif not exist "${node}" (echo ${STALE_RUNTIME} 1>&2 & exit /b 1)\r\nset "ELECTRON_RUN_AS_NODE=1"\r\n"${node}" "${launcherPath}" %*\r\n`;
@@ -318,7 +321,12 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
 }) {
   const path = yield* Path.Path;
   const shimDir = path.join(input.stateDir, SHIM_DIR);
-  yield* writeLauncher({ dir: shimDir, entryPath: input.entryPath, boundArgs: [] });
+  yield* writeLauncher({
+    dir: shimDir,
+    entryPath: input.entryPath,
+    boundArgs: [],
+    claim: { targetsDir: path.join(input.stateDir, TARGETS_DIR) },
+  });
   return shimDir;
 });
 
@@ -340,7 +348,7 @@ export const bindAgentDeviceLauncher = Effect.fn("AgentDeviceShim.bind")(functio
     dir,
     entryPath: input.entryPath,
     boundArgs: input.targetArgs,
-    claimDirectory: input.openedIn ?? dir,
+    claim: { directory: input.openedIn ?? dir },
   });
 });
 
