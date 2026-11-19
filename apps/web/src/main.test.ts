@@ -16,6 +16,7 @@ async function bootThenFailLazyChunk(sessionStorage: Map<string, string>) {
       removeItem: (key: string) => sessionStorage.delete(key),
     },
     location: { reload },
+    matchMedia: () => ({ matches: true }),
   });
   vi.stubGlobal("window", page);
   vi.stubGlobal("document", { getElementById: () => ({}) });

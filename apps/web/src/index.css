@@ -7,12 +7,16 @@
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
 
-/* Secondary hovering pointers reveal sidebar actions on touch-primary devices. */
+/* Secondary hovering pointers reveal sidebar actions on touch-primary devices.
+   data-mouse-hover covers VDI/VM mice that Chromium reports as non-hovering (main.tsx). */
 @custom-variant any-hover {
   @media (any-hover: hover) {
     &:hover {
       @slot;
     }
+  }
+  &:is([data-mouse-hover] *):hover {
+    @slot;
   }
 }
 
