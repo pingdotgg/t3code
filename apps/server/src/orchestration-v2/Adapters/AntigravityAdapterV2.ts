@@ -72,11 +72,17 @@ const AntigravityProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+/** Thread variables reach the driver here; `makeAntigravityAcpRuntime` never reads them. */
+export type AntigravityAdapterV2RuntimeInput = Omit<
+  AntigravityAcpRuntimeInput,
+  "spawn" | "childProcessSpawner"
+> & { readonly processEnvironment?: NodeJS.ProcessEnv };
+
 export interface AntigravityAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly selfInvocation: SelfInvocation;
   readonly makeRuntime: (
-    input: Omit<AntigravityAcpRuntimeInput, "spawn" | "childProcessSpawner">,
+    input: AntigravityAdapterV2RuntimeInput,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError | ProviderSetupError,
@@ -238,6 +244,12 @@ export function makeAntigravityAcpAdapterFlavor(
       ),
     // Loading history replays tool calls; resume avoids replay.
     subagentsIdleOnTurnCompletion: true,
+    // A finished background command or timer wakes the agent with no prompt open: it streams a
+    // reply and asks for permissions, and no prompt response ever ends that reply.
+    enablePostSettleContinuation: true,
+    deferFinalizeForBackgroundWork: true,
+    wakeOnDetachedRequest: true,
+    replyEndsWithUsageUpdate: true,
     ...(options.onSessionEvent === undefined ? {} : { onSessionEvent: options.onSessionEvent }),
     applyModelSelection: Effect.fn("AntigravityAdapterV2.applyModelSelection")(function* ({
       runtime,

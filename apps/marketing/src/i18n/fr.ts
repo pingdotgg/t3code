@@ -27,6 +27,8 @@ export const fr: Messages = {
     downloadForMac: "Télécharger pour macOS",
     downloadForWindows: "Télécharger pour Windows",
     downloadForLinux: "Télécharger pour Linux",
+    downloadForIos: "Télécharger pour iOS",
+    downloadForAndroid: "Télécharger pour Android",
     sourceLink: "Volez notre code (légalement)",
     alsoOnPhone: "Aussi sur votre téléphone :",
     screenshotAlt:
@@ -66,7 +68,7 @@ export const fr: Messages = {
       { lead: "Ajoutez un agent.", rest: "Branchez vos propres outils, modèles et workflows." },
       {
         lead: "Publiez votre propre version.",
-        rest: "Hébergez-le vous-même ou distribuez-le sous votre nom.",
+        rest: "Hébergez-la vous-même ou distribuez-la sous votre nom.",
       },
     ],
     stars: "{stars} étoiles",
