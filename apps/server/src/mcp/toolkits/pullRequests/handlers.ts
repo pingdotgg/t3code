@@ -407,7 +407,9 @@ const make = Effect.gen(function* () {
   ) {
     if (input.auto === true)
       return yield* new PullRequestForgeError({ detail: "A stack merge cannot wait with auto." });
-    const stack = yield* pullRequests.stack(ref).pipe(Effect.mapError(forgeFailure));
+    const stack = yield* pullRequests
+      .stack(ref, { bypassCache: true })
+      .pipe(Effect.mapError(forgeFailure));
     const end = stack?.layers.findIndex((layer) => layer.number === ref.number) ?? -1;
     if (stack === null || end === -1)
       return yield* new PullRequestForgeError({

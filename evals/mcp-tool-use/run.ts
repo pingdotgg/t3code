@@ -921,8 +921,8 @@ type Sample = {
   readonly openedByBranch: Map<string, number>;
   /** PR changes the agent made through T3's tools, which gh and the host show from then on. */
   readonly forgeChanges: Array<string>;
-  /** PRs pull_request_merge merged, which reads show as merged from then on. */
-  readonly merged: Set<number>;
+  /** PRs pull_request_merge merged, as `repo#number`, which reads show as merged from then on. */
+  readonly merged: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -1242,9 +1242,12 @@ const linkedEntry = (sample: Sample, url: string) => {
   const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
     ({ number }) => number === pr.number && pr.repository === sample.repo,
   );
-  const state = sample.merged.has(pr.number) ? "merged" : (seeded?.state ?? "open");
+  const state = mergedIn(sample, pr.repository, pr.number) ? "merged" : (seeded?.state ?? "open");
   return { ...pr, state, title: seeded?.title ?? null };
 };
+
+const mergedIn = (sample: Sample, repository: string, number: unknown) =>
+  sample.merged.has(`${repository.toLowerCase()}#${Number(number)}`);
 
 /** The world's PRs. `prs` is free-form world data: number, title, headRefName, checks. */
 const worldPullRequests = (sample: Sample) => {
@@ -1436,7 +1439,7 @@ export const t3Default = (
                   world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
                 ),
                 body: valueText(world?.body ?? ""),
-                state: sample.merged.has(number) ? "merged" : worldState(world),
+                state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
                 isDraft: false,
                 author: "user",
                 headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
@@ -1502,9 +1505,11 @@ export const t3Default = (
     }
     case "pull_request_list": {
       const state = valueText(input.state ?? "open");
+      const stateOf = (pr: Readonly<Record<string, unknown>>) =>
+        mergedIn(sample, sample.repo, pr.number) ? "merged" : worldState(pr);
       return {
         pullRequests: worldPullRequests(sample)
-          .filter((pr) => state === "all" || worldState(pr) === state)
+          .filter((pr) => state === "all" || stateOf(pr) === state)
           .map((pr) => ({
             number: Number(pr.number),
             title: valueText(pr.title),
@@ -1512,7 +1517,7 @@ export const t3Default = (
             author: "user",
             headBranch: valueText(pr.headRefName),
             baseBranch: "main",
-            state: worldState(pr),
+            state: stateOf(pr),
             isDraft: false,
             reviewDecision: null,
             checksState: null,
@@ -1539,7 +1544,8 @@ export const t3Default = (
           input.stack === true && sample.testCase.setup.world?.stack !== undefined
             ? layers.slice(0, layers.indexOf(Number(number)) + 1)
             : [];
-        for (const merged of [Number(number), ...below]) sample.merged.add(merged);
+        for (const merged of [Number(number), ...below])
+          sample.merged.add(`${sample.repo.toLowerCase()}#${merged}`);
       }
       return {
         ...pullRequest(sample.repo, { number }),

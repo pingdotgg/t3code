@@ -1032,19 +1032,21 @@ describe("source control tools", () => {
       const harness = yield* makeHarness({
         thread: branchThread,
         pullRequests: {
-          stack: () =>
-            Effect.succeed({
-              id: "stack-1",
-              number: 7,
-              url: "https://github.com/acme/app/stacks/7",
-              base: "main",
-              layers: [
-                layer(40, "merged", "aaa"),
-                layer(41, "open", "bbb"),
-                layer(42, "open", "stale"),
-                layer(43, "open", "ddd"),
-              ],
-            }),
+          stack: (_input, options) =>
+            options?.bypassCache !== true
+              ? Effect.die("a merge must not pin heads from the cache")
+              : Effect.succeed({
+                  id: "stack-1",
+                  number: 7,
+                  url: "https://github.com/acme/app/stacks/7",
+                  base: "main",
+                  layers: [
+                    layer(40, "merged", "aaa"),
+                    layer(41, "open", "bbb"),
+                    layer(42, "open", "stale"),
+                    layer(43, "open", "ddd"),
+                  ],
+                }),
           runAction: (input) => Effect.sync(() => void actions.push(input)),
           summary: () => Effect.succeed({ state: "merged" } as never),
         },
