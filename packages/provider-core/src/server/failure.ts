@@ -35,7 +35,6 @@ export class ContextHandoffBackgroundWorkError extends Schema.TaggedError<Contex
   }
 }
 
-export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
@@ -43,8 +42,6 @@ const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 // Gateways answer an oversized body with a 413 page; resending the same history fails identically.
 const REQUEST_TOO_LARGE_STATUS = /^\s*(?:(?:API Error|Error|HTTP|status)(?:\s*:)?\s*)?413\b/iu;
 const REQUEST_TOO_LARGE_REASON = /\b(?:Request Entity|Payload|Content) Too Large\b/u;
-const REQUEST_TOO_LARGE_MESSAGE =
-  "This thread's request is too large for the provider (HTTP 413), so retrying fails the same way. Start a fresh session with /clear, or continue in a new thread.";
 
 const PROVIDER_FAILURE_CATEGORIES: Partial<
   Record<string, { readonly summary: string; readonly guidance: string }>
@@ -294,10 +291,9 @@ export function makeProviderFailure(input: {
   const requestTooLarge =
     input.message !== undefined &&
     (REQUEST_TOO_LARGE_STATUS.test(input.message) || REQUEST_TOO_LARGE_REASON.test(input.message));
-  const rawMessage = requestTooLarge
-    ? REQUEST_TOO_LARGE_MESSAGE
-    : (input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE);
-  const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+  const rawMessage =
+    input.message ?? curated.known ?? curated.category ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const message = redactProviderFailureText(rawMessage);
   const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;

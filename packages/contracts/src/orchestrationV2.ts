@@ -1567,15 +1567,12 @@ export const OrchestrationV2ProviderFailureClass = Schema.Literals([
 ]);
 export type OrchestrationV2ProviderFailureClass = typeof OrchestrationV2ProviderFailureClass.Type;
 
-const OrchestrationV2ProviderFailureMessage = TrimmedNonEmptyString.check(
-  Schema.isMaxLength(4_096),
-);
 const OrchestrationV2ProviderFailureCode = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 
 /** Producers must redact credentials before construction. */
 export const OrchestrationV2ProviderFailure = Schema.Struct({
   class: OrchestrationV2ProviderFailureClass,
-  message: OrchestrationV2ProviderFailureMessage,
+  message: TrimmedNonEmptyString,
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),

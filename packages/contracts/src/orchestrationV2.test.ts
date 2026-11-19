@@ -7,6 +7,7 @@ import {
   latestProviderTurnForAttempt,
   OrchestrationV2CheckpointFileSummary,
   OrchestrationV2ProviderCapabilities,
+  OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
   OrchestrationV2RpcSchemas,
@@ -37,6 +38,19 @@ const decodeOrchestrationV2ProviderCapabilities = Schema.decodeUnknownSync(
 );
 
 describe("orchestration V2 contracts", () => {
+  it("round-trips complete provider diagnostics beyond 4096 characters", () => {
+    const codec = Schema.toCodecJson(OrchestrationV2ProviderFailure);
+    const message = `provider=synthetic status=413 request_id=req-full\nPayload Too Large\n${"detail ".repeat(1024)}diagnostic tail`;
+    const failure = {
+      class: "provider_error" as const,
+      message,
+      code: "other",
+      retryable: false,
+    };
+    const encoded = Schema.encodeSync(codec)(failure);
+    expect(Schema.decodeUnknownSync(codec)(encoded)).toEqual(failure);
+  });
+
   it("decodes thread event types from a newer server as skippable items", () => {
     const decodeWireItems = Schema.decodeUnknownSync(
       Schema.toCodecJson(Schema.Array(OrchestrationV2RpcSchemas.subscribeThread.output)),
