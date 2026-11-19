@@ -1043,7 +1043,26 @@ function PullRequestCodeTab({
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setFoldChoices(new Map());
+    // A file the test filter hides keeps the fold it has now.
+    const shownFiles = new Set(files);
+    setFoldChoices(
+      (current) =>
+        new Map(
+          loadedFiles
+            .filter((file) => !shownFiles.has(file))
+            .map((file) => {
+              const fileKey = buildFileDiffRenderKey(file);
+              const viewed = foldsAsViewed(resolveFileDiffPath(file));
+              const collapsed = isFileDiffCollapsed(
+                fileKey,
+                effectiveFoldOverride,
+                current,
+                viewed,
+              );
+              return [fileKey, collapsed] as const;
+            }),
+        ),
+    );
   };
 
   const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
