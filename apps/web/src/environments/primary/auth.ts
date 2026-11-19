@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type {
   AuthBrowserSessionResult,
   AuthClientMetadata,
@@ -20,6 +21,8 @@ import {
 
 import { PrimaryEnvironmentHttpClient } from "./httpClient";
 import { runPrimaryHttp } from "../../lib/runtime";
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 
 const PrimaryEnvironmentRequestOperation = Schema.Literals([
   "fetch-session-state",
@@ -82,7 +85,7 @@ export class PrimaryEnvironmentPairingCredentialRejectedError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Invalid pairing token. Check the token and try again.";
+    return m(msg("Invalid pairing token. Check the token and try again."));
   }
 }
 
@@ -94,7 +97,7 @@ export class PrimaryEnvironmentAuthSessionTimeoutError extends Schema.TaggedErro
   },
 ) {
   override get message(): string {
-    return "Timed out waiting for authenticated session after bootstrap.";
+    return m(msg("Timed out waiting for authenticated session after bootstrap."));
   }
 }
 
@@ -105,7 +108,7 @@ export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.Tag
   },
 ) {
   override get message(): string {
-    return "Enter a pairing token to continue.";
+    return m(msg("Enter a pairing token to continue."));
   }
 }
 
@@ -340,7 +343,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
     return {
       status: "requires-auth",
       auth: currentSession.auth,
-      errorMessage: error instanceof Error ? error.message : "Authentication failed.",
+      errorMessage: thrownErrorMessage(error, m) ?? m(msg("Authentication failed.")),
     };
   }
 }

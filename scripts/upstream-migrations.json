@@ -94,5 +94,8 @@
   [93, "ProviderTurnAttemptIndex"],
   [94, "TurnItemMessageOrdinalIndex"],
   [95, "TurnItemInlineWorkOutput"],
-  [96, "RepairStaleTitleRegeneration"]
+  [96, "RepairStaleTitleRegeneration"],
+  [97, "IssueTrackerBindings"],
+  [98, "ActiveShellIndexIndexes"],
+  [99, "BackgroundRecoveryIndexes"]
 ]

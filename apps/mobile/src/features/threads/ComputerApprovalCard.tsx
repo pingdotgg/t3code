@@ -9,6 +9,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { ComputerApproval, EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useState, type ReactNode } from "react";
 import { ScrollView, View } from "react-native";
 
@@ -55,6 +56,8 @@ function ApprovalCountdown(props: { readonly expiresAtMs: number; readonly runni
  */
 export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
   const { approval, environmentId } = props;
+  const gt = useGT();
+  const m = useMessages();
   const expiresAtMs = DateTime.toEpochMillis(approval.expiresAt);
   const expired = useDeadlinePassed(expiresAtMs);
   const canApprove = useCanApproveComputerSteps(environmentId);
@@ -72,7 +75,7 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not answer that step.");
+      setError(failure instanceof Error ? failure.message : gt("Could not answer that step."));
     }
     setResponding(null);
   };
@@ -95,11 +98,13 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
             type="monochrome"
           />
           <Text className="min-w-0 flex-1 font-t3-bold text-base text-warning-foreground">
-            {computerActionSentence(approval.binding.action)}
+            {computerActionSentence(approval.binding.action, m)}
           </Text>
         </View>
         {expired ? (
-          <Text className="shrink-0 font-sans text-xs text-foreground-muted">Expired</Text>
+          <Text className="shrink-0 font-sans text-xs text-foreground-muted">
+            <T>Expired</T>
+          </Text>
         ) : (
           <ApprovalCountdown expiresAtMs={expiresAtMs} running={!expired} />
         )}
@@ -109,21 +114,25 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
       </Text>
       <View className="gap-2">
         {surface.length === 0 ? null : (
-          <Field label="On">
+          <Field
+            label={gt("On", {
+              $context: "label for where a computer step happens, such as the app and window",
+            })}
+          >
             <Text className="font-mono text-xs text-foreground">{surface}</Text>
           </Field>
         )}
-        <Field label="Goal">
+        <Field label={gt("Goal")}>
           <Text className="font-sans text-sm text-foreground">{approval.binding.goal}</Text>
         </Field>
-        <Field label="Asked by">
+        <Field label={gt("Asked by")}>
           <Text className="font-sans text-sm text-foreground">
             {approval.binding.requester} · {props.environmentLabel}
           </Text>
         </Field>
       </View>
       {typedText === null ? null : (
-        <Field label="Will type">
+        <Field label={gt("Will type")}>
           <ScrollView
             className="mt-1 rounded-xl border border-border/60 bg-subtle"
             contentContainerClassName="p-3"
@@ -139,7 +148,7 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
       <View className="mt-1 flex-row items-center gap-2">
         <View className="flex-1">
           <Button
-            label={responding === false ? "Denying…" : "Deny"}
+            label={responding === false ? gt("Denying…") : gt("Deny")}
             tone="danger"
             fullWidth
             disabled={disabled}
@@ -148,7 +157,7 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
         </View>
         <View className="flex-1">
           <Button
-            label={responding === true ? "Approving…" : "Approve"}
+            label={responding === true ? gt("Approving…") : gt("Approve")}
             tone="primary"
             fullWidth
             disabled={disabled}
@@ -158,8 +167,10 @@ export function ComputerApprovalCard(props: ComputerApprovalCardProps) {
       </View>
       {canApprove ? null : (
         <Text className="font-sans text-xs leading-normal text-foreground-muted">
-          This connection cannot approve computer steps. Pair this device again in Settings →
-          Environments.
+          <T>
+            This connection cannot approve computer steps. Pair this device again in Settings →
+            Environments.
+          </T>
         </Text>
       )}
       {error !== null ? (

@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { AppImageUpdater, autoUpdater } from "electron-updater";
+import { AppImageUpdater, autoUpdater, CancellationToken } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
 type SpawnLog = (cmd: string, args?: Array<string>, ...rest: Array<unknown>) => Promise<boolean>;
@@ -163,7 +163,12 @@ export const make = ElectronUpdater.of({
   downloadUpdate: Effect.suspend(() => {
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
-      try: () => autoUpdater.downloadUpdate(),
+      // Interrupting cancels the download, which also frees electron-updater for the next one.
+      try: (signal) => {
+        const cancellation = new CancellationToken();
+        signal.addEventListener("abort", () => cancellation.cancel(), { once: true });
+        return autoUpdater.downloadUpdate(cancellation);
+      },
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
   }),

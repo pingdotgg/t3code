@@ -41,6 +41,7 @@ vi.mock("../../panelAnimations", () => ({
   usePanelNavigationSuppression: () => false,
   PanelAnimationSuppressionProvider: ({ children }: { children: ReactNode }) => children,
 }));
+vi.mock("../useCheckForUpdates", () => ({ useCheckForUpdates: () => async () => [] }));
 vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: () => null,
   resolveSidebarStageFocusRingOffsetClass: () => "",

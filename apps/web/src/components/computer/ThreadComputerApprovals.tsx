@@ -3,6 +3,7 @@ import {
   nextComputerApprovalDeadline,
 } from "@t3tools/client-runtime/state/computer";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import { useNowAfter } from "../../hooks/useDeadline";
 import { useThreadComputer } from "../../state/computer";
@@ -18,6 +19,7 @@ export function ThreadComputerApprovals({
 }: {
   readonly threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const { approvals } = useThreadComputer(threadRef);
   const nowMs = useNowAfter(nextComputerApprovalDeadline(approvals));
   const environment = useEnvironment(threadRef?.environmentId ?? null);
@@ -30,7 +32,7 @@ export function ThreadComputerApprovals({
         <ComputerApprovalCard
           key={approval.id}
           environmentId={threadRef.environmentId}
-          environmentLabel={environment?.label ?? "This computer"}
+          environmentLabel={environment?.label ?? gt("This computer")}
           approval={approval}
           announce={index === 0}
         />

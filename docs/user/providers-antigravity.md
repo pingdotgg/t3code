@@ -61,6 +61,9 @@ Install [Antigravity CLI](https://antigravity.google/docs/getting-started) on th
 Set **Binary path** to its `agy` executable and update it yourself.
 Leave the field blank to use the managed runtime, or a compatible executable on
 `PATH` if no managed runtime is installed.
+On Windows, **Binary path** can also be a `.cmd` or `.bat` script that only sets
+variables and then runs `agy_acp_server.exe` by its full path or a `%~dp0`-relative
+path; keep `localharness_external.exe` beside that executable.
 
 ## Update the managed runtime
 
@@ -90,9 +93,10 @@ Use Antigravity's native `/plan` command for planning. Tool approvals follow [Pe
 Questions with fixed choices still need one of the offered answers, even in
 **Full access**.
 
-Ada keeps conversation history and file diffs, but Antigravity cannot rewind
-its conversation. Reverting a thread or editing and resubmitting an earlier turn
-is unavailable. Continue with a follow-up message or start a new thread.
+On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
+Antigravity. Antigravity cannot rewind its own conversation, so the next turn
+starts a fresh Antigravity session and Ada sends it the kept conversation,
+without the turns you removed.
 
 Manual context compaction is unavailable through Antigravity's ACP runtime, even
 though its CLI has `/compact`. Send `/clear` when you need a fresh context.
@@ -163,8 +167,9 @@ times. Limits refresh with provider status and include usage outside Ada.
 A server restart keeps your Google sign-in. The provider shows the saved account
 until a session, a refresh, or a sign-out reports something new.
 
-To check access and reload models, use **Refresh provider status** in web or desktop
-provider settings, or **Refresh models** in mobile thread settings. If asked to
+To check access and reload models, for example after a plan change, use **Refresh provider
+status** in web or desktop provider settings, or **Refresh providers** in mobile environment
+settings. An agent can do the same for you. If asked to
 sign in again, use provider settings on web or desktop, or **Settings > Providers** on mobile.
 
 If Google reports `SUBSCRIPTION_REQUIRED`, an account restriction, or a usage limit,

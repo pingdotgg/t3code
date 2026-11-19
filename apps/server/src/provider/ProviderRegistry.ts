@@ -4,6 +4,7 @@ import {
   isProviderWorkspaceSnapshotPending,
   ProviderDriverKind,
   type ProviderInstanceId,
+  ProviderSetupError,
   type SecretReference,
   type ServerProvider,
   type ServerProviderUpdateState,
@@ -104,6 +105,15 @@ export class ProviderRegistry extends Context.Service<
       readonly cwd?: string | undefined;
       readonly fresh?: boolean | undefined;
     }) => Effect.Effect<void>;
+
+    /**
+     * An explicit model refresh: drop model caches, refresh, and let drivers that list models
+     * only inside a session open one. Every instance runs; the first failure is returned.
+     */
+    readonly refreshModels: (input: {
+      readonly instanceId?: ProviderInstanceId | undefined;
+      readonly reloadSecrets?: boolean | undefined;
+    }) => Effect.Effect<ReadonlyArray<ServerProvider>, ProviderSetupError>;
 
     /**
      * For an opened model picker: refetch a model manifest older than a few
@@ -264,8 +274,16 @@ const mergeProviderModels = (
 ): ReadonlyArray<ServerProvider["models"][number]> => {
   const shouldRetainMissingModels = shouldRetainMissingProviderModels(provider);
   const updateRequiredSlugs = new Set(provider.updateRequiredModels?.map((model) => model.slug));
+  const unavailableSubProviders = new Set(
+    provider.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [] : [subProvider.name],
+    ),
+  );
   const retainablePreviousModels = previousModels.filter(
-    (model) => !model.isCustom && !updateRequiredSlugs.has(model.slug),
+    (model) =>
+      !model.isCustom &&
+      !updateRequiredSlugs.has(model.slug) &&
+      !unavailableSubProviders.has(model.subProvider ?? ""),
   );
 
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
@@ -329,15 +347,25 @@ export const mergeProviderSnapshot = (
         ...snapshot,
         modelsPending: true,
       }));
+  const nextWorkspaceSnapshots = nextProvider.workspaceSnapshots;
+  // A provider reports only folders its own sessions saw, so registry scans of other folders stay.
+  const workspaceSnapshots =
+    nextWorkspaceSnapshots === undefined ||
+    !nextProvider.enabled ||
+    nextProvider.auth.status === "unauthenticated" ||
+    (!nextProvider.installed && nextProvider.status === "error")
+      ? (nextWorkspaceSnapshots ?? previousWorkspaceSnapshots)
+      : [
+          ...(previousWorkspaceSnapshots ?? []).filter(
+            ({ cwd }) => !nextWorkspaceSnapshots.some((snapshot) => snapshot.cwd === cwd),
+          ),
+          ...nextWorkspaceSnapshots,
+        ].slice(-MAX_WORKSPACE_SNAPSHOTS_PER_PROVIDER);
   return {
     ...(savedAccount?.status === "ready" ? nextWithoutMessage : nextProvider),
     ...savedAccount,
     models,
-    ...(nextProvider.workspaceSnapshots !== undefined
-      ? { workspaceSnapshots: nextProvider.workspaceSnapshots }
-      : previousWorkspaceSnapshots !== undefined
-        ? { workspaceSnapshots: previousWorkspaceSnapshots }
-        : {}),
+    ...(workspaceSnapshots === undefined ? {} : { workspaceSnapshots }),
     ...(nextProvider.workspaceRescannedAt === undefined &&
     previousProvider.workspaceRescannedAt !== undefined
       ? { workspaceRescannedAt: previousProvider.workspaceRescannedAt }
@@ -1269,6 +1297,45 @@ export const layer = Layer.effect(
       );
     });
 
+    const refreshModels = Effect.fn("ProviderRegistry.refreshModels")(function* (
+      input: Parameters<ProviderRegistry["Service"]["refreshModels"]>[0],
+    ) {
+      const { instanceId } = input;
+      yield* invalidateModelCaches({ instanceId });
+      const recover = Effect.catchCause(recoverRefreshFailure);
+      let providers = yield* (
+        input.reloadSecrets === true
+          ? reloadSecretsAndRefresh(instanceId)
+          : instanceId === undefined
+            ? refresh()
+            : refreshInstance(instanceId)
+      ).pipe(recover);
+      let failure: ProviderSetupError | undefined;
+      for (const instance of yield* instanceRegistry.listInstances) {
+        if (
+          !instance.refreshModels ||
+          (instanceId !== undefined && instanceId !== instance.instanceId) ||
+          !providers.some(
+            (provider) =>
+              provider.instanceId === instance.instanceId && provider.enabled && provider.installed,
+          )
+        ) {
+          continue;
+        }
+        const discovered = yield* instance.refreshModels().pipe(Effect.result);
+        if (discovered._tag === "Failure") {
+          failure ??= new ProviderSetupError({
+            instanceId: instance.instanceId,
+            operation: "refresh-models",
+            detail: discovered.failure.detail,
+          });
+        }
+        providers = yield* refreshInstance(instance.instanceId).pipe(recover);
+      }
+      if (failure) return yield* failure;
+      return providers;
+    });
+
     const refreshModelCatalog = Effect.fn("ProviderRegistry.refreshModelCatalog")(function* () {
       const { updatedAt } = yield* manifestService.refreshOnDemand;
       // The first pass can be one that started before the fetch, so allow one more.
@@ -1294,6 +1361,7 @@ export const layer = Layer.effect(
         refreshWorkspaceSnapshot(input).pipe(Effect.catchCause(recoverRefreshFailure)),
       refreshAfterUpdate,
       invalidateModelCaches,
+      refreshModels,
       refreshModelCatalog: refreshModelCatalog().pipe(
         Effect.catchCause(recoverRefreshFailure),
         Effect.asVoid,

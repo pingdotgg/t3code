@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { TRIAGE_CLI_GUIDANCE } from "~/hooks/useStartTriage";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -14,14 +15,14 @@ export function TriageDraftHero(props: {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col items-center">
       <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
-        What went wrong?
+        <T>What went wrong?</T>
       </h1>
       <p className="mt-2 flex h-6 w-full items-center justify-center gap-1.5 text-sm">
         <Tooltip>
           <TooltipTrigger
             render={<span tabIndex={0} className="min-w-0 truncate font-medium text-foreground" />}
           >
-            {props.machineLabel ?? "This machine"}
+            {props.machineLabel ?? <T>This machine</T>}
             {props.serverVersion === null ? null : (
               <span className="ml-1.5 font-normal text-muted-foreground">
                 v{props.serverVersion}

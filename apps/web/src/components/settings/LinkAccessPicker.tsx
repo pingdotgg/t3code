@@ -1,4 +1,5 @@
 import { AuthMcpClientAccess } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 import { useId } from "react";
 
 import { accessConfig } from "../auth/ConnectAgentSurface";
@@ -22,6 +23,7 @@ export function LinkAccessPicker({
   readonly note?: string;
 }) {
   const labelId = useId();
+  const m = useMessages();
   const selected = accessConfig[value];
   return (
     <div className="space-y-1.5">
@@ -39,7 +41,7 @@ export function LinkAccessPicker({
           <SelectValue>
             <span className="flex items-center gap-2">
               <selected.icon aria-hidden className="size-4" />
-              {selected.label}
+              {m(selected.label)}
             </span>
           </SelectValue>
         </SelectTrigger>
@@ -53,7 +55,7 @@ export function LinkAccessPicker({
                     <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
                     {optionLabel}
                   </span>
-                  <span className="text-xs leading-4 text-muted-foreground">{description}</span>
+                  <span className="text-xs leading-4 text-muted-foreground">{m(description)}</span>
                 </span>
               </SelectItem>
             );

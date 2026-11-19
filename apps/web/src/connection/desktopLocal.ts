@@ -5,6 +5,8 @@ import {
   type DesktopEnvironmentBootstrap,
 } from "@t3tools/contracts";
 
+import { isElectron } from "../env";
+
 const DESKTOP_LOCAL_CONNECTION_ID_PREFIX = "local:";
 
 export function desktopLocalConnectionId(backendId: string): string {
@@ -17,6 +19,17 @@ export function isDesktopLocalConnectionTarget(
   return (
     target._tag === "BearerConnectionTarget" &&
     target.connectionId.startsWith(DESKTOP_LOCAL_CONNECTION_ID_PREFIX)
+  );
+}
+
+/** Servers this desktop app runs; they update with it. */
+export function isHostedByThisApp(environment: {
+  readonly entry: { readonly target: ConnectionTarget };
+}): boolean {
+  return (
+    isElectron &&
+    (environment.entry.target._tag === "PrimaryConnectionTarget" ||
+      isDesktopLocalConnectionTarget(environment.entry.target))
   );
 }
 

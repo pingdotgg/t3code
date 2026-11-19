@@ -11,6 +11,7 @@ import { AcpRegistryCatalog } from "@t3tools/provider-acp-registry/server/AcpReg
 import { decodeAcpReplayTranscript, makeAcpReplayRuntime } from "./AcpAdapterV2.testkit.ts";
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
+import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
 
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -103,6 +104,7 @@ import {
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 const DROID_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "factory-droid" });
+const DEVIN_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({ agentId: "devin" });
 const OMP_SETTINGS = Schema.decodeSync(AcpRegistrySettings)({
   source: "local",
   commandPath: "/usr/local/bin/omp",
@@ -1334,6 +1336,10 @@ describe("AcpAdapterV2", () => {
   );
   it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
     Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const cancelled = yield* Deferred.make<void>();
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const instanceId = ProviderInstanceId.make("acp-test-prompt-outcome");
       const threadId = ThreadId.make("thread-acp-prompt-outcome");
       const quota = {
@@ -1342,6 +1348,12 @@ describe("AcpAdapterV2", () => {
         code: "RESOURCE_EXHAUSTED",
         retryable: true,
         resetAt: "2030-01-01T00:00:00.000Z",
+      } as const;
+      const poisoned = {
+        class: "provider_error",
+        message: "Saved history is unusable.",
+        code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
       } as const;
       // The runtime ordinal of each prompt, and the session each check watched.
       const promptRuntimes: Array<number> = [];
@@ -1356,14 +1368,27 @@ describe("AcpAdapterV2", () => {
           watchPromptOutcome: (sessionId) =>
             Effect.sync(() => {
               watchedSessions.push(sessionId);
-              const failed = watchedSessions.length === 1;
-              return () => Effect.succeed(failed ? quota : undefined);
+              const outcome =
+                watchedSessions.length === 1
+                  ? { failure: quota, threadDisposition: "reusable" as const }
+                  : watchedSessions.length >= 3
+                    ? { failure: poisoned, threadDisposition: "broken" as const }
+                    : undefined;
+              const interrupted = watchedSessions.length === 4;
+              return () =>
+                interrupted
+                  ? Deferred.succeed(checking, undefined).pipe(
+                      Effect.andThen(Deferred.await(releaseCheck)),
+                      Effect.as(outcome),
+                    )
+                  : Effect.succeed(outcome);
             }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
             mockAgentPath: yield* bundledMockAgentPath,
             wrapRuntime: (runtime, runtimeOrdinal) => ({
               ...runtime,
+              cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
               prompt: (payload) =>
                 Effect.sync(() => {
                   promptRuntimes.push(runtimeOrdinal);
@@ -1407,19 +1432,20 @@ describe("AcpAdapterV2", () => {
               ordinal,
             }),
           );
-          const events = yield* runtime.events.pipe(
-            Stream.takeUntil((event) => event.type === "turn.terminal"),
-            Stream.runCollect,
+          return Array.from(
+            yield* runtime.events.pipe(
+              Stream.takeUntil((event) => event.type === "turn.terminal"),
+              Stream.runCollect,
+            ),
           );
-          return events.at(-1);
         });
 
-      const failed = yield* runTurn(1);
+      const failed = (yield* runTurn(1)).at(-1);
       if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, quota);
-      const completed = yield* runTurn(2);
+      const completed = (yield* runTurn(2)).at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
       // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
@@ -1427,6 +1453,61 @@ describe("AcpAdapterV2", () => {
       assert.include(promptTexts[1] ?? "", "Ada interaction mode: Default");
       assert.equal(watchedSessions.length, 2);
       assert.equal(watchedSessions[0], watchedSessions[1]);
+
+      // Poisoned native history marks the thread broken; its persisted error row is never resumed.
+      const poisonedEvents = yield* runTurn(3);
+      const broken = poisonedEvents.at(-1);
+      if (broken?.type !== "turn.terminal" || broken.status !== "failed") {
+        return assert.fail("expected a failed terminal");
+      }
+      assert.deepEqual(broken.failure, poisoned);
+      assert.equal(broken.threadDisposition, "broken");
+      const brokenThread = poisonedEvents.findLast(
+        (event) => event.type === "provider_thread.updated",
+      );
+      assert.equal(
+        brokenThread?.type === "provider_thread.updated"
+          ? brokenThread.providerThread.status
+          : null,
+        "error",
+      );
+      const resumed = yield* Effect.result(
+        runtime.resumeThread({
+          threadId,
+          providerThread: { ...providerThread, status: "error" },
+          modelSelection,
+          runtimePolicy,
+        }),
+      );
+      assert.equal(
+        resumed._tag === "Failure" ? resumed.failure._tag : null,
+        "ProviderAdapterResumeThreadError",
+      );
+
+      const turn = yield* Effect.forkChild(runTurn(4));
+      yield* Deferred.await(checking);
+      const stop = yield* Effect.forkChild(
+        runtime.interruptTurn({
+          providerThread,
+          providerTurnId: idAllocator.derive.providerTurn({
+            driver: ACP_TEST_DRIVER,
+            nativeTurnId: acpScopedNativeId(instanceId, `${watchedSessions[3]}:turn:4`),
+          }),
+        }),
+      );
+      yield* Deferred.await(cancelled);
+      yield* Deferred.succeed(releaseCheck, undefined);
+      const interruptedEvents = yield* Fiber.join(turn);
+      yield* Fiber.join(stop);
+      const interrupted = interruptedEvents.at(-1);
+      assert.equal(
+        interrupted?.type === "turn.terminal" ? interrupted.status : null,
+        "interrupted",
+      );
+      assert.equal(
+        interrupted?.type === "turn.terminal" ? interrupted.threadDisposition : null,
+        "broken",
+      );
     }).pipe(Effect.provide(layerTest)),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
@@ -2037,6 +2118,39 @@ describe("AcpAdapterV2", () => {
       answers: { q0: "blue" },
       result: { action: "accept", content: { q0: "blue" } },
     },
+    {
+      scenario: "Devin allowOther choice accepts a typed answer",
+      settings: DEVIN_SETTINGS,
+      meta: { "cognition.ai/allowOther": true },
+      schema: {
+        type: "object",
+        properties: {
+          q0: {
+            type: "string",
+            title: "Fruit",
+            description: "Which fruit?",
+            oneOf: [
+              { const: "Apple", title: "Apple" },
+              { const: "Banana", title: "Banana" },
+            ],
+          },
+        },
+        required: ["q0"],
+      },
+      questions: [
+        {
+          id: "q0",
+          header: "Fruit",
+          question: "Which fruit?",
+          options: [
+            { label: "Apple", description: "Apple", value: "Apple" },
+            { label: "Banana", description: "Banana", value: "Banana" },
+          ],
+        },
+      ],
+      answers: { q0: "Mango" },
+      result: { action: "accept", content: { q0: "Mango" } },
+    },
   ])("Registry elicitation $scenario", (fixture) => {
     const { schema, questions, answers, result } = fixture;
     const withAttachments = "withAttachments" in fixture && fixture.withAttachments;
@@ -2120,6 +2234,7 @@ describe("AcpAdapterV2", () => {
                   sessionId: "droid-session",
                   message: "Your answer?",
                   requestedSchema: schema,
+                  ...("meta" in fixture ? { _meta: fixture.meta } : {}),
                 },
               },
             },
@@ -4532,6 +4647,28 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const fileSearch = (nativeId: string) => {
+        const item = items.find(
+          (candidate) =>
+            candidate.type === "file_search" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "file_search"
+          ? { pattern: item.pattern, results: item.results }
+          : null;
+      };
+      assert.deepEqual(fileSearch("structured-search-explicit-location"), {
+        pattern: "README.md",
+        results: [{ fileName: "README.md", preview: "# Title" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-only"), {
+        pattern: "TODO",
+        results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-no-output"), {
+        pattern: "FIXME",
+        results: undefined,
+      });
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>
@@ -4557,6 +4694,25 @@ describe("AcpAdapterV2", () => {
         title: "Web search: t3 code",
         patterns: ["t3 code"],
         results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
+      });
+      assert.deepEqual(webItem("antigravity-web-search", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+          },
+        ],
+      });
+      assert.deepEqual(webItem("antigravity-run-search-web", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: undefined,
+      });
+      assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
+        title: "Web search: streamed citations",
+        patterns: ["streamed citations"],
+        results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
@@ -5792,6 +5948,128 @@ describe("AcpAdapterV2", () => {
         providerThread,
         providerTurnId: pending.runtimeRequest.providerTurnId,
       });
+      yield* Fiber.join(turnFiber);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live("Stop closes an MCP-over-ACP call stalled on its SSE response", () =>
+    Effect.gen(function* () {
+      const responseStarted = yield* Deferred.make<void>();
+      const responseClosed = yield* Deferred.make<void>();
+      const server = yield* Effect.acquireRelease(
+        Effect.promise(
+          () =>
+            new Promise<NodeHttp.Server>((resolve) => {
+              const server = NodeHttp.createServer((_request, response) => {
+                response.on("close", () => Deferred.doneUnsafe(responseClosed, Effect.void));
+                response.writeHead(200, { "content-type": "text/event-stream" });
+                response.write('data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n');
+                Deferred.doneUnsafe(responseStarted, Effect.void);
+              });
+              server.listen(0, "127.0.0.1", () => resolve(server));
+            }),
+        ),
+        (server) =>
+          Effect.sync(() => {
+            server.closeAllConnections();
+            server.close();
+          }),
+      );
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        return yield* Effect.die("Expected a TCP address");
+      }
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let mcpConnect: Parameters<RuntimeService["handleMcpConnect"]>[0] | undefined;
+      let mcpMessage: Parameters<RuntimeService["handleMcpMessage"]>[0] | undefined;
+      const instanceId = ProviderInstanceId.make("acp-test-stop-mcp-call");
+      const threadId = ThreadId.make("thread-acp-stop-mcp-call");
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      yield* (yield* McpProviderSessions.McpProviderSessions).set({
+        environmentId: EnvironmentId.make("environment-acp-stop-mcp-call"),
+        threadId,
+        providerSessionId: "mcp-session-acp-stop-mcp-call",
+        providerInstanceId: instanceId,
+        endpoint: `http://127.0.0.1:${address.port}/mcp`,
+        authorizationHeader: "Bearer stop-mcp-call-token",
+        browserToolsAvailable: false,
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+            environment: { T3_ACP_HANG_PROMPT_FOREVER: "1" },
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleMcpConnect: (handler) =>
+                Effect.sync(() => {
+                  mcpConnect = handler;
+                }).pipe(Effect.andThen(runtime.handleMcpConnect(handler))),
+              handleMcpMessage: (handler) =>
+                Effect.sync(() => {
+                  mcpMessage = handler;
+                }).pipe(Effect.andThen(runtime.handleMcpMessage(handler))),
+            }),
+          }),
+        },
+        selfInvocation: yield* resolveSelfInvocation(),
+        clientTerminals: {},
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-stop-mcp-call"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      if (mcpConnect === undefined || mcpMessage === undefined) {
+        return yield* Effect.die("ACP runtime must register MCP-over-ACP handlers");
+      }
+      const { connectionId } = yield* mcpConnect(
+        { serverId: "t3-code" },
+        { requestId: "stop-mcp-connect", method: "mcp/connect" },
+      );
+      const call = yield* mcpMessage(
+        { connectionId, method: "tools/call", params: { name: "task_status", arguments: {} } },
+        { requestId: "stop-mcp-call", method: "mcp/message" },
+      ).pipe(Effect.exit, Effect.forkScoped);
+      yield* Deferred.await(responseStarted);
+
+      yield* runtime.interruptTurn({
+        providerThread,
+        providerTurnId: idAllocator.derive.providerTurn({
+          driver: ACP_TEST_DRIVER,
+          nativeTurnId: acpScopedNativeId(instanceId, "mock-session-1:turn:1"),
+        }),
+      });
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(call)));
+      yield* Deferred.await(responseClosed);
       yield* Fiber.join(turnFiber);
     }).pipe(Effect.provide(layerTest)),
   );
@@ -7203,6 +7481,26 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          extractSubagentUpdate: (tool) =>
+            tool.toolCallId === "native-failed-tool"
+              ? {
+                  nativeTaskId: tool.toolCallId,
+                  childSessionId: null,
+                  prompt: "Run a command",
+                  title: null,
+                  model: null,
+                  status: tool.status === "failed" ? "failed" : "running",
+                  result: tool.status === "failed" ? "Permission denied" : null,
+                  suppressNormalTool: tool.status !== "failed",
+                }
+              : undefined,
+          isCancelledToolCall: Schema.is(
+            Schema.Struct({
+              update: Schema.Struct({
+                toolCallId: Schema.Literals(["native-cancel-tool", "native-unseen-cancel-tool"]),
+              }),
+            }),
+          ),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath: yield* bundledMockAgentPath,
@@ -7271,15 +7569,57 @@ describe("AcpAdapterV2", () => {
       );
       yield* native.current.request("_test/finish-cancel", {});
       yield* Fiber.join(interrupt);
-      const terminal = Option.getOrThrow(
+      const untilTerminal = Array.from(
         yield* runtime.events.pipe(
-          Stream.filter(
+          Stream.takeUntil(
             (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
           ),
-          Stream.runHead,
+          Stream.runCollect,
         ),
       );
-      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+      const terminal = untilTerminal.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
+      // The agent fails the command Stop cut off, then updates its output.
+      const command = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      const unseenCommand = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-unseen-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(unseenCommand?.status, "interrupted");
+      assert.equal(command?.status, "interrupted");
+      assert.include(command?.type === "command_execution" ? command.output : "", "exit 130");
+      const failure = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-failed-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(failure?.status, "failed");
+      const subagent = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(subagent?.status, "failed");
+      assert.include(
+        failure?.type === "command_execution" ? failure.output : "",
+        "Permission denied",
+      );
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
       );

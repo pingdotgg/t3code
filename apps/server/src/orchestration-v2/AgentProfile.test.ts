@@ -5,6 +5,7 @@ import {
   RunAttemptId,
   RunId,
   type McpGatewayProfile,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import {
   agentInstructionsInContext,
@@ -12,6 +13,11 @@ import {
   agentProfileReminder,
   resolveThreadCreateProfile,
 } from "./AgentProfile.ts";
+import { compileClaudeModelSelection } from "../claudeModelOptions.ts";
+import {
+  BUNDLED_CLAUDE_MODEL_CATALOG,
+  getClaudeCatalogModelCapabilities,
+} from "../provider/ClaudeModelCatalog.ts";
 
 const profile: McpGatewayProfile = {
   profileId: "review",
@@ -121,6 +127,90 @@ describe("V2 profile association", () => {
     expect(resolved.modelSelection).toEqual(modelSelection);
     expect(resolved.profileSnapshot?.effectiveSource.modelSelection).toBe("thread-override");
     expect(resolved.profileContent?.systemPrompt).toBe(profile.systemPrompt);
+  });
+  it("applies the agent's effort under the selected model's own effort option", () => {
+    const levels = ["low", "medium", "high", "xhigh"].map((id) => ({ id, label: id }));
+    const provider = (
+      instanceId: string,
+      displayName: string,
+      descriptor: Record<string, unknown>,
+    ) =>
+      ({
+        instanceId: ProviderInstanceId.make(instanceId),
+        driver: instanceId,
+        displayName,
+        enabled: true,
+        models: [
+          {
+            slug: `${instanceId}-model`,
+            name: `${displayName} Model`,
+            isCustom: false,
+            capabilities: {
+              optionDescriptors: [
+                { label: "Effort", type: "select", options: levels, ...descriptor },
+              ],
+            },
+          },
+        ],
+      }) as unknown as ServerProvider;
+    const providers = [
+      provider("antigravity", "Antigravity", { id: "thought_level", role: "reasoning" }),
+      provider("codex", "Codex", { id: "reasoningEffort" }),
+      {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        driver: "claudeAgent",
+        displayName: "Claude",
+        enabled: true,
+        models: [
+          {
+            slug: "claude-opus-5-5",
+            name: "Opus 5.5",
+            isCustom: false,
+            capabilities: getClaudeCatalogModelCapabilities(
+              BUNDLED_CLAUDE_MODEL_CATALOG,
+              "claude-opus-5-5",
+            ),
+          },
+        ],
+      } as unknown as ServerProvider,
+    ];
+    const launch: { modelSelection?: McpGatewayProfile["modelSelection"] } & typeof command =
+      command;
+    const resolve = (agent: Partial<McpGatewayProfile>) =>
+      resolveThreadCreateProfile(launch, [{ ...profile, ...agent }], providers).modelSelection;
+    const claude = resolve({
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      },
+    });
+    expect(claude?.options).toEqual([{ id: "effort", value: "high" }]);
+    expect(compileClaudeModelSelection(claude!).effort).toBe("high");
+    for (const [instanceId, id] of [
+      ["antigravity", "thought_level"],
+      ["codex", "reasoningEffort"],
+    ]) {
+      expect(
+        resolve({
+          modelSelection: {
+            instanceId: ProviderInstanceId.make(instanceId!),
+            model: `${instanceId}-model`,
+          },
+        })?.options,
+      ).toEqual([{ id, value: "high" }]);
+    }
+    expect(
+      resolve({
+        modelSelection: undefined,
+        providerLabel: "Antigravity",
+        modelLabel: "antigravity-model-xhigh",
+        reasoningEffort: undefined,
+      }),
+    ).toEqual({
+      instanceId: "antigravity",
+      model: "antigravity-model",
+      options: [{ id: "thought_level", value: "xhigh" }],
+    });
   });
 });
 

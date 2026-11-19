@@ -52,7 +52,11 @@ export function cancelledTurnItemWork(
         label: labelWithId(
           compactLabel(item.title) === undefined ? item.prompt : item.title,
           "subagent",
-          nativeId === undefined ? "" : ` (id ${nativeId})`,
+          nativeId == null
+            ? ""
+            : item.nativeItemRef?.driver === "claudeAgent"
+              ? ` (id ${nativeId}; resume it with SendMessage to '${nativeId}')`
+              : ` (id ${nativeId})`,
         ),
         id: item.id,
       };

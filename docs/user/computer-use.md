@@ -1,5 +1,8 @@
 # Computer use
 
+**Beta.** Computer use is in early testing and may make mistakes, so keep
+approvals on for anything important.
+
 Agents in any thread can use a Mac you connect: open and quit apps, change
 the volume, media, dark mode or lock the screen, and work through an app's
 window by reading it through accessibility and clicking, typing and scrolling.

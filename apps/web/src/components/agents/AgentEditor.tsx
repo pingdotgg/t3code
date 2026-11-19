@@ -54,6 +54,7 @@ import {
   type AgentPresetSkill,
 } from "@t3tools/shared/agentPresets";
 import { APP_NAME } from "@t3tools/shared/branding";
+import { matchModelLabel } from "@t3tools/shared/model";
 
 const emptySkills: ReadonlyArray<AgentSkill> = [];
 const PROVIDER_DEFAULT = "";
@@ -210,11 +211,11 @@ export function AgentEditor({
   const provider = providerLabel || (soleOption(providerLabels) ?? "");
   const models = agentModelOptions(providers, environmentIds, provider);
   const model = modelLabel || (soleOption(models)?.slug ?? "");
-  const selectedModel =
-    models.find((item) => item.slug === model) ??
-    (models.filter((item) => item.name === model).length === 1
-      ? models.find((item) => item.name === model)
-      : undefined);
+  const modelMatches = matchModelLabel(models, model);
+  const modelMatch =
+    modelMatches.find((match) => match.model.slug === model) ?? soleOption(modelMatches);
+  const selectedModel = modelMatch?.model;
+  const effort = thinking.trim() || (modelMatch?.effort ?? "");
   const ids = useId();
   const providerOptions = [...new Set([...providerLabels, ...(provider ? [provider] : [])])];
   const modelItems = [
@@ -229,7 +230,7 @@ export function AgentEditor({
   ];
   const thinkingItems = [
     { value: PROVIDER_DEFAULT, label: "Provider default" },
-    ...agentThinkingChoices(selectedModel, thinking.trim()),
+    ...agentThinkingChoices(selectedModel, effort),
   ];
   const customColor = !agentColors.includes(color);
   const swatchClass =
@@ -267,7 +268,7 @@ export function AgentEditor({
                   revision: profile?.revision ?? 1,
                   providerLabel: provider,
                   modelLabel: selectedModel?.slug ?? model,
-                  ...(thinking.trim() ? { reasoningEffort: thinking.trim() } : {}),
+                  ...(effort ? { reasoningEffort: effort } : {}),
                   runtimeMode,
                   interactionMode,
                   ...(environmentIds.length ? { environmentIds } : {}),
@@ -462,7 +463,7 @@ export function AgentEditor({
                   <FormField label="Thinking" htmlFor={`${ids}-thinking`}>
                     <Select
                       items={thinkingItems}
-                      value={thinking.trim()}
+                      value={effort}
                       disabled={thinkingItems.length === 1}
                       onValueChange={(value) => {
                         if (value !== null) setThinking(value);

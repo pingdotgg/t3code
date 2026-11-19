@@ -70,11 +70,18 @@ describe("decodeMergeRequestListJson", () => {
             reviewers: [{ username: "julius" }],
             labels: ["backend", "  "],
           },
+          {
+            iid: 43,
+            labels: [
+              { name: "bug", color: "#E24329", description: "Something is broken" },
+              { name: " ", color: "#000000" },
+            ],
+          },
         ]),
       ),
     );
 
-    expect(batch.items).toHaveLength(1);
+    expect(batch.items).toHaveLength(2);
     expect(batch.items[0]).toMatchObject({
       number: 42,
       author: { login: "bilal", name: "Bilal" },
@@ -86,6 +93,9 @@ describe("decodeMergeRequestListJson", () => {
       reviewRequestLogins: ["julius"],
       labels: [{ name: "backend", color: null }],
     });
+    expect(batch.items[1]?.labels).toEqual([
+      { name: "bug", color: "#E24329", description: "Something is broken" },
+    ]);
   });
 
   it("treats a merged timestamp as merged whatever the state says", () => {
@@ -681,6 +691,7 @@ describe("decodeMergeRequestDiffsJson", () => {
 
     expect(result.truncated).toBe(true);
     expect(result.patch).toContain("diff --git a/big.bin b/big.bin");
+    expect(result.withheldPaths).toEqual(["big.bin"]);
   });
 
   it("reports how many files GitLab returned, so the caller can page", () => {
@@ -1187,7 +1198,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
                     conflicts: true,
                     mergeStatusEnum: "CHECKING",
                     author: { username: "bilal", name: "Bilal", avatarUrl: null },
-                    labels: { nodes: [{ title: "bug" }] },
+                    labels: { nodes: [{ title: "bug", color: "#E24329", description: null }] },
                     approved: false,
                     approvedBy: { nodes: [] },
                     reviewers: {
@@ -1216,7 +1227,7 @@ describe("decodeMergeRequestGraphqlListJson", () => {
         isDraft: true,
         mergeability: "conflicting",
         reviewRequestLogins: ["julius"],
-        labels: [expect.objectContaining({ name: "bug" })],
+        labels: [{ name: "bug", color: "#E24329", description: null }],
       }),
     ]);
     expect([...page.states]).toEqual([

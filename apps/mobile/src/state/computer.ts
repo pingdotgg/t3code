@@ -7,6 +7,7 @@ import {
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { m } from "../i18n/messages";
 import { appAtomRegistry } from "./atom-registry";
 import { environmentPresentations } from "./presentation";
 
@@ -46,5 +47,5 @@ export function stopComputerTask(input: {
   readonly environmentId: EnvironmentId;
   readonly taskId: string;
 }): Promise<string | null> {
-  return stopComputerTasks(appAtomRegistry, computerEnvironment, input);
+  return stopComputerTasks(appAtomRegistry, computerEnvironment, input, m);
 }

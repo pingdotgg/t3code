@@ -1,4 +1,5 @@
 import type { DesktopBridge, DesktopComputerPermissions, EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -43,14 +44,15 @@ function useComputerPermissions(bridge: DesktopBridge | undefined) {
 
 function hostStatusText(
   status: ReturnType<typeof useDesktopComputerHostStatus>,
+  gt: ReturnType<typeof useGT>,
 ): string | undefined {
   switch (status.phase) {
     case "off":
       return undefined;
     case "starting":
-      return "Offering this computer to the environment.";
+      return gt("Offering this computer to the environment.");
     case "hosting":
-      return "This computer is available to this environment while Ada is open.";
+      return gt("This computer is available to this environment while Ada is open.");
     case "waiting":
     case "denied":
     case "unavailable":
@@ -67,6 +69,7 @@ export function ComputerPermissionRows({
 }: {
   readonly environmentId: EnvironmentId | null;
 }) {
+  const gt = useGT();
   const bridge = desktopBridge();
   const offering = bridge?.computerHost !== undefined;
   const offered = useClientSettings(
@@ -85,14 +88,16 @@ export function ComputerPermissionRows({
   return (
     <>
       <SettingsRow
-        title="Let this environment use this computer"
-        description="Ada runs its agent's steps on this Mac while the app is open, asking before consequential ones."
-        status={hostStatusText(status)}
+        title={gt("Let this environment use this computer")}
+        description={gt(
+          "Ada runs its agent's steps on this Mac while the app is open, asking before consequential ones.",
+        )}
+        status={hostStatusText(status, gt)}
         control={
           <Switch
             checked={offered}
             disabled={environmentId === null}
-            aria-label="Let this environment use this computer"
+            aria-label={gt("Let this environment use this computer")}
             onCheckedChange={(checked) => {
               if (environmentId === null) return;
               void setDesktopComputerHostOffered(environmentId, checked);
@@ -103,31 +108,43 @@ export function ComputerPermissionRows({
       {permissions === null ? null : (
         <>
           <SettingsRow
-            title="Accessibility"
-            description="Lets computer use read the screen and press the controls it finds."
-            status={permissions.accessibility ? "Allowed" : "Not allowed"}
+            title={gt("Accessibility", { $context: "macOS privacy permission name" })}
+            description={gt("Lets computer use read the screen and press the controls it finds.")}
+            status={
+              permissions.accessibility
+                ? gt("Allowed", { $context: "permission status" })
+                : gt("Not allowed", { $context: "permission status" })
+            }
             control={
               <Button size="xs" variant="outline" onClick={() => openPane("accessibility")}>
-                Open System Settings
+                <T>Open System Settings</T>
               </Button>
             }
           />
           <SettingsRow
-            title="Screen Recording"
-            description="Used only when an app hides its window from Accessibility; the picture is read and then dropped."
-            status={permissions.screenRecording ? "Allowed" : "Not allowed"}
+            title={gt("Screen Recording", { $context: "macOS privacy permission name" })}
+            description={gt(
+              "Used only when an app hides its window from Accessibility; the picture is read and then dropped.",
+            )}
+            status={
+              permissions.screenRecording
+                ? gt("Allowed", { $context: "permission status" })
+                : gt("Not allowed", { $context: "permission status" })
+            }
             control={
               <Button size="xs" variant="outline" onClick={() => openPane("screen-recording")}>
-                Open System Settings
+                <T>Open System Settings</T>
               </Button>
             }
           />
           <SettingsRow
-            title="Automation"
-            description="macOS asks per app the first time Ada controls it, so there is nothing to switch on here yet."
+            title={gt("Automation", { $context: "macOS privacy permission name" })}
+            description={gt(
+              "macOS asks per app the first time Ada controls it, so there is nothing to switch on here yet.",
+            )}
             control={
               <Button size="xs" variant="outline" onClick={() => openPane("automation")}>
-                Open System Settings
+                <T>Open System Settings</T>
               </Button>
             }
           />

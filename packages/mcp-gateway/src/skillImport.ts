@@ -122,7 +122,15 @@ const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown
 const decodeEnvelope = Schema.decodeUnknownSync(Schema.Struct({ data: Schema.Unknown }));
 const decodeSync = Schema.decodeUnknownSync(
   Schema.Struct({
-    sync: Schema.optionalKey(Schema.Struct({ failedEnvironmentIds: Schema.Array(Schema.String) })),
+    sync: Schema.optionalKey(
+      Schema.Struct({
+        failedEnvironmentIds: Schema.Array(Schema.String),
+        // Older servers report only the ids.
+        failures: Schema.optionalKey(
+          Schema.Array(Schema.Struct({ environmentId: Schema.String, reason: Schema.String })),
+        ),
+      }),
+    ),
   }),
 );
 
@@ -139,9 +147,14 @@ export async function callSkillImportTool(
   const envelope = result.structuredContent ?? (text === undefined ? undefined : decodeJson(text));
   const { data } = decodeEnvelope(envelope);
   const syncResult = decodeSync(data);
-  if (syncResult.sync?.failedEnvironmentIds.length)
+  const sync = syncResult.sync;
+  if (sync?.failedEnvironmentIds.length) {
+    const failed =
+      sync.failures?.map(({ environmentId, reason }) => `${environmentId} (${reason})`) ??
+      sync.failedEnvironmentIds;
     throw new Error(
-      `Skill replication failed on ${syncResult.sync.failedEnvironmentIds.join(", ")}. Update/reconnect those environments and retry; workaround retained.`,
+      `Skill replication failed on ${failed.join(", ")}. Update/reconnect those environments and retry; workaround retained.`,
     );
+  }
   return data;
 }

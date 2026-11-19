@@ -254,6 +254,9 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as TriageService from "./triage/TriageService.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as IssueService from "./issue/IssueService.ts";
+import * as ThreadIssueService from "./orchestration-v2/ThreadIssueService.ts";
+import * as IssueTrackerConnections from "./issue/IssueTrackerConnections.ts";
 import * as PullRequestReviewGuideService from "./pullRequest/PullRequestReviewGuideService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
 import { pullRequestSyncKey } from "./pullRequest/pullRequestSyncKey.ts";
@@ -718,7 +721,14 @@ const ServerWsRpcGroup = WsRpcGroup.middleware(RpcInstrumentation);
 // crosses TypeScript's instantiation limit and the layer's requirements degrade to
 // `any`, so the handlers are registered as two disjoint, smaller groups.
 type ServerWsRpc = RpcGroup.Rpcs<typeof ServerWsRpcGroup>;
-const SPLIT_WS_RPC_PREFIXES = ["server", "pullRequests", "provider", "orchestration"] as const;
+const SPLIT_WS_RPC_PREFIXES = [
+  "server",
+  "pullRequests",
+  "issues",
+  "issueTrackers",
+  "provider",
+  "orchestration",
+] as const;
 type SplitWsRpc = Extract<
   ServerWsRpc,
   { readonly _tag: `${(typeof SPLIT_WS_RPC_PREFIXES)[number]}.${string}` }
@@ -1443,6 +1453,9 @@ export const layerWsRpc = (
         });
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const issues = yield* IssueService.IssueService;
+      const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+      const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
@@ -1960,6 +1973,20 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.issuesList]: (input) => issues.list(input),
+        [WS_METHODS.issuesDetail]: (input) => issues.detail(input),
+        [WS_METHODS.issuesComments]: (input) => issues.comments(input),
+        [WS_METHODS.issuesTemplates]: (input) => issues.templates(input),
+        [WS_METHODS.issuesCandidates]: (input) => issues.candidates(input),
+        [WS_METHODS.issuesLinkedThreads]: (input) => threadIssues.linkedThreads(input),
+        [WS_METHODS.issuesCreate]: (input) => issues.create(input),
+        [WS_METHODS.issuesComment]: (input) => issues.comment(input),
+        [WS_METHODS.issuesUpdate]: (input) => issues.update(input),
+        [WS_METHODS.issuesSetState]: (input) => issues.setState(input),
+        [WS_METHODS.issuesReact]: (input) => issues.react(input),
+        [WS_METHODS.issueTrackersList]: () => issueTrackers.list,
+        [WS_METHODS.issueTrackersConnect]: (input) => issueTrackers.connect(input),
+        [WS_METHODS.issueTrackersBindProject]: (input) => issueTrackers.bindProject(input),
         [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command) =>
           Effect.annotateCurrentSpan({
             "orchestration_v2.command_id": command.commandId,
@@ -2488,7 +2515,7 @@ export const layerWsRpc = (
               yield* providerRegistry.refreshModelCatalog;
               return { providers: [] };
             }
-            if (input.refreshModels) {
+            if (input.refreshModels && input.cwd !== undefined && input.instanceId !== undefined) {
               yield* providerRegistry.invalidateModelCaches({
                 instanceId: input.instanceId,
                 cwd: input.cwd,
@@ -2502,45 +2529,23 @@ export const layerWsRpc = (
             if (input.instanceId === undefined) {
               yield* usageLimitSources.refresh;
             }
-            let providers = yield* input.cwd !== undefined && input.instanceId !== undefined
+            const providers = yield* input.cwd !== undefined && input.instanceId !== undefined
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
                   cwd: input.cwd,
                   scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
                 })
-              : input.reloadSecrets === true
-                ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
-                : input.instanceId !== undefined
-                  ? providerRegistry.refreshInstance(input.instanceId)
-                  : providerRegistry.refresh();
-            if (input.refreshModels) {
-              const instances = yield* providerInstances.listInstances;
-              for (const instance of instances) {
-                if (
-                  !instance.refreshModels ||
-                  (input.instanceId !== undefined && input.instanceId !== instance.instanceId) ||
-                  !providers.some(
-                    (provider) =>
-                      provider.instanceId === instance.instanceId &&
-                      provider.enabled &&
-                      provider.installed,
-                  )
-                )
-                  continue;
-                yield* instance.refreshModels().pipe(
-                  Effect.mapError(
-                    (error) =>
-                      new ProviderSetupError({
-                        instanceId: instance.instanceId,
-                        operation: "refresh-models",
-                        detail: error.detail,
-                      }),
-                  ),
-                );
-                providers = yield* providerRegistry.refreshInstance(instance.instanceId);
-              }
-            }
+              : input.refreshModels
+                ? providerRegistry.refreshModels({
+                    instanceId: input.instanceId,
+                    reloadSecrets: input.reloadSecrets,
+                  })
+                : input.reloadSecrets === true
+                  ? providerRegistry.reloadSecretsAndRefresh(input.instanceId)
+                  : input.instanceId !== undefined
+                    ? providerRegistry.refreshInstance(input.instanceId)
+                    : providerRegistry.refresh();
             const { instanceId, cwd } = input;
             if (input.omitProviders === true && (instanceId === undefined || cwd === undefined)) {
               return { providers: [] };
@@ -3682,6 +3687,9 @@ const provideWsRpcDependencies = <A, E, R>(
     readonly serverSelfUpdate: ServerSelfUpdate.ServerSelfUpdate["Service"];
     readonly npmRelease: NpmRelease.NpmRelease["Service"];
     readonly pullRequests: PullRequestService.PullRequestService["Service"];
+    readonly issues: IssueService.IssueService["Service"];
+    readonly threadIssues: ThreadIssueService.ThreadIssueService["Service"];
+    readonly issueTrackers: IssueTrackerConnections.IssueTrackerConnections["Service"];
     readonly reviewGuides: PullRequestReviewGuideService.PullRequestReviewGuideService["Service"];
   },
 ) => {
@@ -3690,6 +3698,9 @@ const provideWsRpcDependencies = <A, E, R>(
     serverSelfUpdate,
     npmRelease,
     pullRequests,
+    issues,
+    threadIssues,
+    issueTrackers,
     reviewGuides,
     peerLinks,
     tailnetDevices,
@@ -3711,6 +3722,9 @@ const provideWsRpcDependencies = <A, E, R>(
     // One server-lifetime service means clients share the same PR caches, and a WS
     // mutation invalidates the HTTP diff cache that every client reads from.
     Layer.provide(Layer.succeed(PullRequestService.PullRequestService, pullRequests)),
+    Layer.provide(Layer.succeed(IssueService.IssueService, issues)),
+    Layer.provide(Layer.succeed(ThreadIssueService.ThreadIssueService, threadIssues)),
+    Layer.provide(Layer.succeed(IssueTrackerConnections.IssueTrackerConnections, issueTrackers)),
     Layer.provide(OtlpEndpointCheck.layer),
     Layer.provide(PushRegistrations.layer),
     Layer.provide(
@@ -3759,6 +3773,9 @@ export const makeInProcessWsRpcLayer = (session: EnvironmentAuth.AuthenticatedSe
             serverSelfUpdate: yield* ServerSelfUpdate.ServerSelfUpdate,
             npmRelease: yield* NpmRelease.NpmRelease,
             pullRequests: yield* PullRequestService.PullRequestService,
+            issues: yield* IssueService.IssueService,
+            threadIssues: yield* ThreadIssueService.ThreadIssueService,
+            issueTrackers: yield* IssueTrackerConnections.IssueTrackerConnections,
             reviewGuides: yield* PullRequestReviewGuideService.PullRequestReviewGuideService,
           },
         ),
@@ -3774,6 +3791,9 @@ export const layer = Layer.unwrap(
     const serverSelfUpdate = yield* ServerSelfUpdate.ServerSelfUpdate;
     const npmRelease = yield* NpmRelease.NpmRelease;
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const issues = yield* IssueService.IssueService;
+    const threadIssues = yield* ThreadIssueService.ThreadIssueService;
+    const issueTrackers = yield* IssueTrackerConnections.IssueTrackerConnections;
     const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
     const peerLinks = yield* PeerLinks.PeerLinks;
     const tailnetDevices = yield* TailnetDevices.TailnetDevices;
@@ -3873,6 +3893,9 @@ export const layer = Layer.unwrap(
                 serverSelfUpdate,
                 npmRelease,
                 pullRequests,
+                issues,
+                threadIssues,
+                issueTrackers,
                 reviewGuides,
                 peerLinks,
                 tailnetDevices,
@@ -3899,7 +3922,7 @@ export const layer = Layer.unwrap(
           () =>
             Effect.raceFirst(
               Effect.raceFirst(framedRpcWebSocketHttpEffect, resetUnresponsiveClient),
-              sessions.awaitInvalidation(session.sessionId, session.proofKeyThumbprint).pipe(
+              sessions.awaitInvalidation(session.sessionId).pipe(
                 Effect.as(HttpServerResponse.empty()),
                 Effect.catchTags({
                   SessionCredentialVerificationError: (error) =>

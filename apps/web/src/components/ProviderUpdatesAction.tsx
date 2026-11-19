@@ -1,15 +1,17 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import {
-  isAtomCommandInterrupted,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+  checkEnvironmentUpdates,
+  type UpdateCheckItem,
+} from "@t3tools/client-runtime/update-check";
 import { useRef, useState } from "react";
+import { T } from "gt-react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { isHostedByThisApp } from "~/connection/desktopLocal";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -22,44 +24,31 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
-export function useCheckProviderUpdates() {
+export function useCheckEnvironmentUpdates() {
   const { environments } = useEnvironments();
   const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const inFlight = useRef<Promise<void> | null>(null);
+  const lookupNpmRelease = useAtomCommand(serverEnvironment.lookupNpmRelease, {
+    reportFailure: false,
+  });
+  const inFlight = useRef<Promise<UpdateCheckItem[]> | null>(null);
 
-  const check = async (quiet: boolean) => {
-    const failures = await Promise.all(
-      environments
-        .filter(
-          (environment) =>
-            environment.connection.phase === "connected" &&
-            manageableIds.has(environment.environmentId),
-        )
-        .map(async ({ environmentId, label }) => {
-          const result = await refreshProviders({ environmentId, input: { refreshModels: true } });
-          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
-          const error = squashAtomCommandFailure(result);
-          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
-        }),
+  const check = () =>
+    checkEnvironmentUpdates(
+      environments.map((environment) => ({
+        ...environment,
+        hostedByThisApp: isHostedByThisApp(environment),
+        canManageProviders: manageableIds.has(environment.environmentId),
+      })),
+      { lookupNpmRelease, refreshProviders },
     );
-    const lines = failures.flat();
-    if (quiet || lines.length === 0) return;
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not check provider updates",
-        description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
-      }),
-    );
-  };
 
   // A repeat click must not start a second model rediscovery while one is running.
-  return ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
+  return () => {
     if (inFlight.current) return inFlight.current;
-    const running = check(quiet).finally(() => {
+    const running = check().finally(() => {
       inFlight.current = null;
     });
     inFlight.current = running;
@@ -147,7 +136,7 @@ export function ProviderUpdatesAction() {
             disabled={isPending}
             onClick={() => void handleUpdate()}
           >
-            {isPending ? "Updating…" : "Update all"}
+            {isPending ? <T>Updating…</T> : <T>Update all</T>}
           </Button>
         }
       />

@@ -12,6 +12,8 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
@@ -197,6 +199,7 @@ export async function stopComputerTasks(
   registry: AtomRegistry.AtomRegistry,
   atoms: Pick<ComputerEnvironmentAtoms, "stop">,
   input: { readonly environmentId: EnvironmentId; readonly taskId?: string },
+  resolve: MFunctionType = mFallback,
 ): Promise<string | null> {
   const result = await runAtomCommand(
     registry,
@@ -211,7 +214,7 @@ export async function stopComputerTasks(
   const failure = squashAtomCommandFailure(result);
   return failure instanceof Error && failure.message.trim().length > 0
     ? failure.message
-    : "Could not stop computer use.";
+    : resolve(msg("Could not stop computer use."));
 }
 
 /** The approvals still answerable at `nowMs`: each lasts until its own deadline. */
@@ -247,27 +250,43 @@ const quoted = (value: string) => `“${clipped(value, 120)}”`;
  * One line for the step an approval covers. Screen text is data: it is quoted, clipped and never
  * read as an instruction.
  */
-export function computerActionSentence(action: ComputerAction): string {
+export function computerActionSentence(
+  action: ComputerAction,
+  resolve: MFunctionType = mFallback,
+): string {
   const where = action.role && action.label ? `${action.role} ${quoted(action.label)}` : null;
   switch (action.kind) {
     case "click":
-      return where === null ? "Click an element" : `Click ${where}`;
+      return where === null
+        ? resolve(msg("Click an element"))
+        : resolve(msg("Click {where}", { where }));
     case "type":
-      return action.text === undefined
-        ? "Type text"
-        : `Type ${action.text.length} characters${where === null ? "" : ` into ${where}`}`;
+      if (action.text === undefined) return resolve(msg("Type text"));
+      return where === null
+        ? resolve(msg("Type {count} characters", { count: action.text.length }))
+        : resolve(
+            msg("Type {count} characters into {where}", { count: action.text.length, where }),
+          );
     case "press":
-      return action.key === undefined ? "Press a key" : `Press ${action.key}`;
+      return action.key === undefined
+        ? resolve(msg("Press a key"))
+        : resolve(msg("Press {key}", { key: action.key }));
     case "scroll":
-      return action.direction === undefined
-        ? "Scroll"
-        : `Scroll ${action.direction}${where === null ? "" : ` on ${where}`}`;
+      if (action.direction === undefined) return resolve(msg("Scroll"));
+      return where === null
+        ? resolve(msg("Scroll {direction}", { direction: action.direction }))
+        : resolve(msg("Scroll {direction} on {where}", { direction: action.direction, where }));
     case "surface":
       return action.name === undefined
-        ? `Bring the ${action.what ?? "app"} forward`
-        : `Bring ${action.what ?? "app"} ${quoted(action.name)} forward`;
+        ? resolve(msg("Bring the {what} forward", { what: action.what ?? "app" }))
+        : resolve(
+            msg("Bring {what} {name} forward", {
+              what: action.what ?? "app",
+              name: quoted(action.name),
+            }),
+          );
     case "pointer":
-      return action.why === undefined ? "Use your mouse" : clipped(action.why, 160);
+      return action.why === undefined ? resolve(msg("Use your mouse")) : clipped(action.why, 160);
     default:
       return action.kind;
   }

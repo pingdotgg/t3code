@@ -7,6 +7,7 @@ import {
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
@@ -371,6 +372,27 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     Effect.gen(function* () {
       const { threads, projection, caller } = yield* readThread(input.threadId);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
+      if (input.follows !== undefined) {
+        if (
+          (input.action !== "settle" && input.action !== "unsettle") ||
+          projection.thread.parentEnvironmentId == null
+        ) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "follows applies only to settling a child of a chat on another environment.",
+          });
+        }
+        const result = yield* threads
+          .dispatch({
+            ...common,
+            type: "thread.settlement.follow",
+            action: input.action,
+            settledBy: input.follows.settledBy,
+            settledAt: DateTime.makeUnsafe(input.follows.settledAt),
+          })
+          .pipe(Effect.mapError(dispatchFailure));
+        return { sequence: result.sequence };
+      }
       if (input.action === "settle") {
         return yield* threads
           .settleThread({ ...common, byOwnAgent: caller?.id === projection.thread.id })

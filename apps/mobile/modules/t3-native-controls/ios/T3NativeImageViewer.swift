@@ -870,7 +870,7 @@ final class T3ImageViewerController: UIViewController, UIScrollViewDelegate, UIG
     PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
       guard status == .authorized || status == .limited else {
         cleanUp()
-        DispatchQueue.main.async { self?.showSaveError("Allow T3 Code to add photos in Settings.") }
+        DispatchQueue.main.async { self?.showSaveError("Allow Ada to add photos in Settings.") }
         return
       }
       PHPhotoLibrary.shared().performChanges({

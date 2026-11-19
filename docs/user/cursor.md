@@ -54,14 +54,17 @@ The adapter supports:
 - Cursor `task` subagents, projected as read-only child app threads with their tool activity and
   final result.
 
-The public SDK does not currently expose native agent fork, conversation rollback, or interactive
-approval callbacks. A text-only steer reaches the current run without restarting it.
+The public SDK does not currently expose native agent fork or interactive approval callbacks. A
+text-only steer reaches the current run without restarting it.
 When Cursor cannot deliver the steer, the same message is queued for the next turn after
 this run finishes. If you press Stop, that follow-up stays held until you resume the queue. Steers
 with attachments and provider or runtime changes that must apply immediately interrupt and restart
 the run.
 Same-provider Cursor forks use the orchestrator's portable full-thread context handoff into a fresh
-Cursor agent. The SDK has in-process custom callback tools, but the V2 adapter intentionally uses the
+Cursor agent. **Edit from here** and checkpoint rollback rewind the same Cursor agent to just before
+the selected message, as `cursor-agent`'s `/rewind` does, so it keeps its exact earlier history.
+Rewinding to the thread's first message starts a fresh Cursor agent instead.
+The SDK has in-process custom callback tools, but the V2 adapter intentionally uses the
 authenticated, thread-scoped MCP server instead.
 
 Portable handoffs summarize eligible timeline items and can omit the end of long messages. Read

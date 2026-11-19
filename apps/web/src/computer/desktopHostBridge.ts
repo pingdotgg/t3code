@@ -17,9 +17,11 @@ import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult } from "effect/reactivity";
+import { msg } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import { environmentCatalog } from "~/connection/catalog";
+import { m } from "~/i18n/messages";
 import { connectionAtomRuntime } from "~/connection/runtime";
 import {
   getClientSettings,
@@ -144,10 +146,13 @@ export function startDesktopComputerHost(): () => void {
       } else if (!readEnvironmentScope(environmentId, AuthComputerHostScope)) {
         setStatus(environmentId, {
           phase: "denied",
-          detail: "Pair this connection again to let it use this computer.",
+          detail: m(msg("Pair this connection again to let it use this computer.")),
         });
       } else if (relay?.environmentId !== environmentId) {
-        setStatus(environmentId, { phase: "waiting", detail: "Waiting to offer this computer." });
+        setStatus(environmentId, {
+          phase: "waiting",
+          detail: m(msg("Waiting to offer this computer.")),
+        });
       }
     }
 
@@ -176,7 +181,7 @@ export function startDesktopComputerHost(): () => void {
       if (abort.signal.aborted) return;
       setStatus(chosen, {
         phase: "unavailable",
-        detail: error instanceof Error ? error.message : "The computer host stopped.",
+        detail: error instanceof Error ? error.message : m(msg("The computer host stopped.")),
       });
     });
     trackEnvironment(abort.signal, bridge, chosen, hostIds);

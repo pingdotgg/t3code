@@ -20,6 +20,7 @@ import {
   EnvironmentId,
   GitCommandError,
   MessageId,
+  RunId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -62,6 +63,7 @@ import * as TextGeneration from "../textGeneration/TextGeneration.ts";
 import { ClaudeProviderCapabilitiesV2 } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -142,6 +144,10 @@ interface HarnessOptions {
   readonly getLaunchSettings?: ServerSettings.ServerSettingsService["Service"]["getSettings"];
   readonly providers?: ReadonlyArray<ServerProvider>;
   readonly git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
+  readonly dispatch?: (
+    command: Parameters<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>[0],
+    dispatch: ThreadManagement.ThreadManagementService["Service"]["dispatch"],
+  ) => ReturnType<ThreadManagement.ThreadManagementService["Service"]["dispatch"]>;
   readonly isGitRepository?: CheckpointStore.CheckpointStore["Service"]["isGitRepository"];
 }
 
@@ -258,11 +264,25 @@ function makeHarness(options: HarnessOptions = {}) {
         folderForThread: () => Effect.succeedNone,
       }),
   );
+  const interceptDispatch = options.dispatch;
+  const layerLaunchThreads =
+    interceptDispatch === undefined
+      ? layerThreadManagement
+      : Layer.effect(
+          ThreadManagement.ThreadManagementService,
+          Effect.gen(function* () {
+            const threads = yield* ThreadManagement.ThreadManagementService;
+            return ThreadManagement.ThreadManagementService.of({
+              ...threads,
+              dispatch: (command) => interceptDispatch(command, threads.dispatch),
+            });
+          }),
+        ).pipe(Layer.provide(layerThreadManagement));
   const layerLaunch = ThreadLaunch.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         layerExternalServices,
-        layerThreadManagement,
+        layerLaunchThreads,
         layerReceipts,
         layerOrchestrator,
         IdAllocator.layer,
@@ -491,6 +511,8 @@ it.effect("leaves a task delegated from a linked environment out of the top-leve
       ...launchInput({ command: "command:delegated", thread: "thread:delegated" }),
       createdBy: "agent",
       creationSource: "mcp",
+      parentThreadId: ThreadId.make("thread:remote-parent"),
+      parentEnvironmentId: EnvironmentId.make("environment:linked"),
       linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop" },
       delegatedFrom: {
         environmentId: EnvironmentId.make("environment:linked"),
@@ -504,9 +526,14 @@ it.effect("leaves a task delegated from a linked environment out of the top-leve
       [ThreadId.make("thread:top-level")],
     );
     const all = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
-    assert.include(
-      all.map((thread) => thread.id),
-      delegated.threadId,
+    // The linked environment's settle finds its children here by this parent.
+    assert.deepInclude(
+      all.map((thread) => [thread.id, thread.parentThreadId, thread.parentEnvironmentId]),
+      [
+        delegated.threadId,
+        ThreadId.make("thread:remote-parent"),
+        EnvironmentId.make("environment:linked"),
+      ],
     );
   }).pipe(Effect.provide(harness.layer));
 });
@@ -2062,6 +2089,102 @@ it.effect.each(["fails", "is interrupted"] as const)(
         }
       }).pipe(Effect.provide(harness.layer));
     }),
+);
+
+it.effect("returns from prepareRun without retrying a scheduling failure", () =>
+  Effect.gen(function* () {
+    const rejected = yield* Deferred.make<void>();
+    let rejectedWrites = 0;
+    const harness = makeHarness({
+      dispatch: (command, dispatch) =>
+        command.type !== "prepared-run.fail"
+          ? dispatch(command)
+          : Effect.suspend(() => {
+              rejectedWrites += 1;
+              return Deferred.succeed(rejected, undefined).pipe(
+                Effect.andThen(Effect.die("SQLITE_FULL: database or disk is full")),
+              );
+            }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.prepareRun({
+        commandId: CommandId.make("command:prepare:missing-thread"),
+        threadId: ThreadId.make("thread:prepare:missing-thread"),
+        runId: RunId.make("run:prepare:missing-thread"),
+      });
+      yield* Deferred.await(rejected);
+      yield* TestClock.adjust("1 second");
+      assert.equal(rejectedWrites, 1);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("fails a run whose preparation failure could not be stored until storage recovers", () =>
+  Effect.gen(function* () {
+    const storageFull = yield* Deferred.make<void>();
+    let rejectedWrites = 0;
+    let preparations = 0;
+    const harness = makeHarness({
+      fetchWorktreeBaseCommit: () =>
+        Effect.sync(() => preparations++).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitCommandError({
+                operation: "GitVcsDriver.fetchRemote",
+                command: "git",
+                cwd: project.workspaceRoot,
+                detail: "Git could not reach the remote.",
+                exitCode: 128,
+              }),
+            ),
+          ),
+        ),
+      dispatch: (command, dispatch) =>
+        command.type !== "prepared-run.fail"
+          ? dispatch(command)
+          : Effect.suspend(() => {
+              if (rejectedWrites >= 2) return dispatch(command);
+              rejectedWrites += 1;
+              return Deferred.succeed(storageFull, undefined).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new Orchestrator.OrchestratorDispatchError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      cause: new Error("SQLITE_FULL: database or disk is full"),
+                    }),
+                  ),
+                ),
+              );
+            }),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const input = launchInput({
+        command: "command:launch:storage-full",
+        thread: "thread:launch:storage-full",
+        message: "First message",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      });
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(storageFull);
+      yield* TestClock.adjust("0 seconds");
+      yield* launches.launch(input);
+      yield* TestClock.adjust("0 seconds");
+      assert.equal(preparations, 1);
+      yield* TestClock.adjust("1 second");
+      yield* threads.streamStoredEventsFrom({ threadId: launched.threadId }).pipe(
+        Stream.filter(
+          (stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+        ),
+        Stream.runHead,
+      );
+      assert.equal(rejectedWrites, 2);
+    }).pipe(Effect.provide(harness.layer));
+  }),
 );
 
 it.effect.each(["failed", "interrupted"] as const)(

@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg, useGT } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useEffectEvent,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -12,6 +14,7 @@ import { useLocation, useParams, useRouter, type AnyRouter } from "@tanstack/rea
 import { moveWorkspaceFocus, workspaceAreaProps } from "../lib/workspaceFocus";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
+import { m } from "../i18n/messages";
 import {
   releaseThreadUndoShortcut,
   threadUndoClaimsShortcut,
@@ -40,6 +43,7 @@ import {
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { ComputerActivityStrip } from "./computer/ComputerActivityStrip";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
+import { useCheckForUpdates } from "./useCheckForUpdates";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { useThreadShell } from "../state/entities";
@@ -241,7 +245,7 @@ function registerComputerStopCommand(): () => void {
         if (failures.length === 0) return;
         toastManager.add({
           type: "error",
-          title: "Could not stop computer use",
+          title: m(msg("Could not stop computer use")),
           description: failures[0],
         });
       });
@@ -337,6 +341,7 @@ function registerAppShellCommands(router: AnyRouter, shellElement: Element): () 
 }
 
 function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
+  const gt = useGT();
   const router = useRouter();
   const usagePageOpen = useLocation({ select: (location) => location.pathname === "/usage" });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -413,12 +418,14 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
                   "pointer-events-auto",
                   isSidebarVisible && stageBackdropVariant && "relative top-auto translate-y-0",
                 )}
-                aria-label="Toggle main sidebar"
+                aria-label={gt("Toggle main sidebar")}
               />
             }
           />
           <TooltipPopup side="bottom">
-            Toggle main sidebar{shortcutLabel ? ` (${shortcutLabel})` : ""}
+            {shortcutLabel
+              ? gt("Toggle main sidebar ({shortcut})", { shortcut: shortcutLabel })
+              : gt("Toggle main sidebar")}
           </TooltipPopup>
         </Tooltip>
       ) : null}
@@ -433,12 +440,17 @@ export function AppSidebarLayout({
   children: ReactNode;
   showSidebar?: boolean;
 }) {
+  const gt = useGT();
   const router = useRouter();
   const [appShellCommandsRef] = useState(
     () => (node: HTMLDivElement | null) =>
       node === null ? undefined : registerAppShellCommands(router, node),
   );
   const toggleWorkspaceView = useToggleWorkspaceView();
+  const checkForUpdates = useCheckForUpdates();
+  const runMenuUpdateCheck = useEffectEvent(() => void checkForUpdates());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the desktop menu's update check while the shell is mounted
+  useEffect(() => registerMenuAction("check-for-updates", () => runMenuUpdateCheck()), []);
   const routeRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const routeThread = useThreadShell(routeRef);
   const pathname = useLocation({ select: (location) => location.pathname });
@@ -517,7 +529,7 @@ export function AppSidebarLayout({
               data-app-sidebar=""
               {...sidebarArea}
               role="navigation"
-              aria-label="Threads"
+              aria-label={gt("Threads")}
               resizable={{
                 maxWidth: sidebarMaximumWidth,
                 minWidth: sidebarMinimumWidth,

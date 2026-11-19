@@ -597,7 +597,7 @@ export const layerWithOptions = (
                 } = yield* agentAccessSettings(threadId);
                 const capabilities = new Set<
                   import("../mcp/McpInvocationContext.ts").McpCapability
-                >(["orchestration", "worktree", "pull-requests"]);
+                >(["orchestration", "worktree", "pull-requests", "issues"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (computerToolsAvailable) capabilities.add("computer");
                 if (deviceToolsAvailable) capabilities.add("device");
