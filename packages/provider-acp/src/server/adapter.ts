@@ -297,11 +297,6 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
-/**
- * Maps one per-turn usage sample (flavors with reportsPerTurnPromptUsage)
- * directly onto TurnTokenUsage: the response's counters already cover exactly
- * this prompt.
- */
 /** A prompt-steered turn spans several prompts, each reporting its own usage. */
 function addAcpUsage(
   total: EffectAcpSchema.Usage | undefined,
@@ -324,6 +319,11 @@ function addAcpUsage(
   };
 }
 
+/**
+ * Maps one per-turn usage sample (flavors with reportsPerTurnPromptUsage)
+ * directly onto TurnTokenUsage: the response's counters already cover exactly
+ * this prompt.
+ */
 export function acpPerTurnPromptUsage(
   usage: EffectAcpSchema.Usage | null | undefined,
   hasSubagents: boolean,
@@ -7864,14 +7864,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         yield* setActiveSessionSetup(started);
         rememberTerminalEnvironment(started.sessionId, yield* readMcpContext(input.threadId));
         yield* runtime.drainEvents;
+        const steersWithPrompt = flavor.steersWithPrompt?.(started.initializeResult) === true;
         const capabilities = negotiatedCapabilities(
           yield* readCapabilities,
           started,
           flavor.modelOptionArrivesLate === true,
           flavor.forkFromTurn?.supported(started.initializeResult) === true,
-          flavor.steersWithPrompt?.(started.initializeResult) === true,
+          steersWithPrompt,
         );
-        const steersWithPrompt = flavor.steersWithPrompt?.(started.initializeResult) === true;
         const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
         const canResumeSession =
           started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
@@ -9402,7 +9402,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
         });
 
-        const steerWithPrompt = Effect.fnUntraced(function* (
+        const steerWithPrompt = Effect.fn("AcpAdapterV2.steerWithPrompt")(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2SteerInput,
         ) {
           const text = yield* providerMessageTextWithAttachmentPaths({
