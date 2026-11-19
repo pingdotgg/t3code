@@ -47,9 +47,10 @@ import {
   type ReactNode,
 } from "react";
 import { Modal, Pressable, ScrollView, View } from "react-native";
-import { useKeyboardState } from "react-native-keyboard-controller";
+import { KeyboardAvoidingView, useKeyboardState } from "react-native-keyboard-controller";
 import { READABLE_WIDTH_STYLE, ROW_MIN_HEIGHT } from "../../components/ui/listMetrics";
 import { RefreshControl } from "../../components/ui/RefreshControl";
+import { useBarOverlap } from "../../components/ui/useBarInset";
 import Animated, {
   FadeIn,
   FadeOut,
@@ -936,12 +937,15 @@ function buildThreadSettingsCatalogItems(
               !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
           );
     const visibleModels = favoritesFirst(
-      catalogModels.filter((model) =>
-        modelMatchesCatalogQuery({
-          model,
-          providerLabel: group.providerLabel,
-          query: session.searchQuery,
-        }),
+      catalogModels.filter(
+        (model) =>
+          (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
+            session.favoriteKeys.has(model.key)) &&
+          modelMatchesCatalogQuery({
+            model,
+            providerLabel: group.providerLabel,
+            query: session.searchQuery,
+          }),
       ),
       session.favoriteKeys,
     );
@@ -1006,7 +1010,7 @@ function SettingSegments(props: {
   return (
     <View className="gap-1.5">
       <Text className="text-sm text-foreground-muted">{props.label}</Text>
-      <View className="flex-row flex-wrap gap-1">
+      <View className="min-h-11 flex-row gap-1 rounded-xl border border-border-subtle bg-subtle p-1">
         {props.choices.map((choice) => {
           const selected = choice.value === props.selected;
           return (
@@ -1015,12 +1019,15 @@ function SettingSegments(props: {
               accessibilityRole="radio"
               accessibilityState={{ checked: selected }}
               className={cn(
-                "min-h-11 min-w-11 flex-1 items-center justify-center rounded-lg bg-grouped-card px-1 py-1",
-                selected && "bg-subtle-strong",
+                "min-h-9 min-w-10 flex-1 items-center justify-center rounded-lg px-1.5 py-1",
+                selected && "bg-grouped-card",
               )}
               onPress={() => props.onChange(choice.value)}
             >
               <Text
+                adjustsFontSizeToFit
+                minimumFontScale={0.8}
+                numberOfLines={1}
                 className={cn(
                   "text-center text-sm text-foreground-muted",
                   selected && "font-t3-medium text-foreground",
@@ -1089,7 +1096,7 @@ function ThreadSettingsOptionsItem(props: {
       <ChatGptSharingStatus provider={selectedProvider} />
       <View className="flex-row items-end gap-2">
         {speed ? (
-          <View className="w-32 shrink-0">
+          <View className="w-40 shrink-0">
             <SettingSegments
               label={gt("Speed")}
               choices={speedChoices}
@@ -1108,7 +1115,7 @@ function ThreadSettingsOptionsItem(props: {
             ]
               .filter(Boolean)
               .join(", ")}
-            className="min-h-11 flex-row items-center gap-2 rounded-lg bg-grouped-card px-2 py-1"
+            className="min-h-11 flex-row items-center gap-2 rounded-xl bg-grouped-card px-3 py-1"
             onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
           >
             <SymbolView
@@ -1158,7 +1165,14 @@ function ThreadSettingsOptionsItem(props: {
       {reasoning ? (
         <SettingSegments
           label={gt("Reasoning")}
-          choices={selectableChoices(reasoning).map((choice) => ({
+          choices={(session.promptTraits.ultrathinkPromptControlled
+            ? reasoning.options.filter(
+                (choice) =>
+                  !reasoning.promptInjectedValues?.includes(choice.id) ||
+                  choice.id === "ultrathink",
+              )
+            : selectableChoices(reasoning)
+          ).map((choice) => ({
             value: choice.id,
             label: choice.label,
           }))}
@@ -1191,6 +1205,7 @@ function ThreadSettingsMainContent(props: {
   const locale = useLocale();
   const session = useThreadSettingsSession();
   const insets = useSafeAreaInsets();
+  const barOverlap = useBarOverlap();
   const searching = useKeyboardState((state) => state.isVisible);
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -1289,8 +1304,21 @@ function ThreadSettingsMainContent(props: {
   };
 
   return (
-    <View className="flex-1 bg-sheet">
-      {!searching ? <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} /> : null}
+    <KeyboardAvoidingView
+      automaticOffset
+      behavior="padding"
+      className="flex-1 bg-sheet"
+      style={{ paddingTop: barOverlap }}
+    >
+      {!searching ? (
+        <ScrollView
+          bounces={false}
+          className="max-h-[45%] grow-0"
+          showsVerticalScrollIndicator={false}
+        >
+          <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} />
+        </ScrollView>
+      ) : null}
       <View className="min-h-0 flex-1 flex-row">
         <ScrollView
           className="w-14 grow-0 border-r border-border-subtle"
@@ -1332,11 +1360,11 @@ function ThreadSettingsMainContent(props: {
         {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content is outside workspace columns. */}
         <AnimatedLegendList
           alwaysBounceVertical
-          automaticallyAdjustsScrollIndicatorInsets
+          automaticallyAdjustsScrollIndicatorInsets={false}
           className="flex-1 bg-sheet"
           style={READABLE_WIDTH_STYLE}
           contentContainerStyle={{ paddingTop: 4 }}
-          contentInsetAdjustmentBehavior="automatic"
+          contentInsetAdjustmentBehavior="never"
           data={listItems}
           estimatedItemSize={ROW_MIN_HEIGHT.item}
           extraData={animationsReady}
@@ -1372,7 +1400,7 @@ function ThreadSettingsMainContent(props: {
           value={session.searchQuery}
         />
       </View>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -1411,7 +1439,15 @@ function ThreadSettingsChoiceContent(props: {
         }
       : activeDescriptor?.type === "select"
         ? {
-            rows: selectableChoices(activeDescriptor).map((choice) => ({
+            rows: (session.promptTraits.ultrathinkPromptControlled &&
+            activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+              ? activeDescriptor.options.filter(
+                  (choice) =>
+                    !activeDescriptor.promptInjectedValues?.includes(choice.id) ||
+                    choice.id === "ultrathink",
+                )
+              : selectableChoices(activeDescriptor)
+            ).map((choice) => ({
               id: choice.id,
               label: choice.label,
               description: choice.description,
