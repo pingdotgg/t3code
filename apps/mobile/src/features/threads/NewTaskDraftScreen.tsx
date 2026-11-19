@@ -725,9 +725,34 @@ export function NewTaskDraftScreen(props: {
     return message.messageId;
   }
 
-  // Keep the current surface until the local draft selection is ready. Publishing
-  // an empty loading surface here flashes between two already-cached threads.
-  if (!selectedProject) return null;
+  const chooseProject = () => {
+    if (isComposerInteractionLocked) {
+      return;
+    }
+    promptInputRef.current?.blur();
+    void KeyboardController.dismiss({ animated: true });
+    navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
+  };
+
+  if (!selectedProject) {
+    // Preserve the current surface while an ordinary draft resolves its selection.
+    if (isIncomingShareReady) return null;
+
+    return (
+      <ThreadScreenFallback header={<AppBar title={gt("New thread")} onBack={goBack} />}>
+        <View className="flex-1 items-center justify-center p-4">
+          <ComposerInlineControl
+            accessibilityLabel={gt("Choose project")}
+            chevronDirection="right"
+            disabled={isComposerInteractionLocked}
+            icon="folder"
+            label={gt("Choose project")}
+            onPress={chooseProject}
+          />
+        </View>
+      </ThreadScreenFallback>
+    );
+  }
 
   const setupBlockReason =
     isIncomingShareReady && !isImportingShare
@@ -739,14 +764,6 @@ export function NewTaskDraftScreen(props: {
             ? gt("Choose a base branch before creating a worktree.")
             : null
       : gt("Wait for shared content to finish importing.");
-  const chooseProject = () => {
-    if (isComposerInteractionLocked) {
-      return;
-    }
-    promptInputRef.current?.blur();
-    void KeyboardController.dismiss({ animated: true });
-    navigation.navigate("NewTaskProject", { incomingShareId: props.incomingShareId });
-  };
   const openContextPicker = (routeName: "NewTaskBranch" | "NewTaskEnvironment") => {
     if (isComposerInteractionLocked) {
       return;

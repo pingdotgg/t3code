@@ -147,7 +147,9 @@ function project(id: string): EnvironmentProject {
   };
 }
 
-it("reopens a dismissed share picker and unlocks the draft after importing into the chosen project", async () => {
+const sharePickerCases = ["with a fallback project", "with an empty catalog"];
+
+it.each(sharePickerCases)("reopens the dismissed share picker %s", async (scenario) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.clearAllMocks();
   using _globals = { [Symbol.dispose]: () => vi.unstubAllGlobals() };
@@ -242,7 +244,14 @@ it("reopens a dismissed share picker and unlocks the draft after importing into 
     container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
   const editor = () => container.querySelector("textarea")!;
 
-  harness.flow.mockImplementation(() => ({ ...flow, selectedModel: null }));
+  const hasFallback = scenario === "with a fallback project";
+  harness.projects.mockReturnValue(hasFallback ? projects : []);
+  harness.flow.mockImplementation(() => ({
+    ...flow,
+    projectScopes: hasFallback ? flow.projectScopes : [],
+    selectedModel: null,
+    selectedProject: hasFallback ? fallback : null,
+  }));
   act(() => root.render(render(true)));
   expect(harness.navigation.dispatch).toHaveBeenCalledWith({
     type: "NAVIGATE",
@@ -251,13 +260,15 @@ it("reopens a dismissed share picker and unlocks the draft after importing into 
   act(() => root.render(render(false)));
   act(() => root.render(render(true)));
 
-  expect(editor().readOnly).toBe(true);
-  expect(button("Project: fallback")?.disabled).toBe(false);
-  act(() => button("Project: fallback").click());
+  if (hasFallback) expect(editor().readOnly).toBe(true);
+  const initialProjectLabel = hasFallback ? "Project: fallback" : "Choose project";
+  expect(button(initialProjectLabel)?.disabled).toBe(false);
+  act(() => button(initialProjectLabel).click());
   expect(harness.navigation.navigate).toHaveBeenCalledExactlyOnceWith("NewTaskProject", {
     incomingShareId: share.id,
   });
   harness.navigation.navigate.mockClear();
+  harness.projects.mockReturnValue(projects);
   harness.flow.mockImplementation(() => ({ ...flow }));
   act(() => root.render(render(true)));
 
