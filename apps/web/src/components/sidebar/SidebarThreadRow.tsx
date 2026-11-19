@@ -727,7 +727,7 @@ type SidebarThreadRowProps = {
   providerEntryByInstanceId: ReadonlyMap<string, SidebarProviderEntry>;
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
-  onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onThreadActivate: (threadRef: ScopedThreadRef) => void | Promise<unknown>;
   onThreadOpen: (threadRef: ScopedThreadRef) => void;
   onThreadDoubleClick: (threadRef: ScopedThreadRef, title: string) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -1198,8 +1198,10 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     );
 
   const openLinkedItems = () => {
-    useRightPanelStore.getState().open(threadRef, "pull-requests");
-    if (!props.isRouteThread) onThreadActivate(threadRef);
+    const open = () => useRightPanelStore.getState().open(threadRef, "pull-requests");
+    if (props.isRouteThread) return open();
+    // Once the thread is shown, so the panel lands beside its chat and stays in front.
+    void Promise.resolve(onThreadActivate(threadRef)).then(open);
   };
   const handlePrLinkPress = (event: ReactPointerEvent<HTMLElement>, url: string) => {
     const surface = readThreadPullRequestSurface(threadRef, url);
