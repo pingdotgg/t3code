@@ -1711,6 +1711,7 @@ const NAMED_NOT_SERVED: &[&str] = &[
     "device_open",
     "device_screenshot",
     "fill_credential",
+    "link_issue",
     "t3_environment_link",
     "t3_environment_links",
 ];

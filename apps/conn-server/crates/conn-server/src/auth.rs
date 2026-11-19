@@ -50,8 +50,27 @@ pub const STANDARD_SCOPES: &[&str] = &[
     "access:write",
     "relay:write",
 ];
-/// Every scope a grant may name (`AuthGrantScope`): the environment scopes but `review:write`.
-const GRANT_SCOPES: &[&str] = STANDARD_SCOPES;
+/// Every scope a grant may name (`AuthGrantScope`): the environment scopes but `review:write`,
+/// so the standard ones plus `relay:configure`, which no standard client gets.
+const GRANT_SCOPES: &[&str] = &[
+    "orchestration:read",
+    "orchestration:operate",
+    "settings:write",
+    "providers:manage",
+    "environment:maintain",
+    "preview:operate",
+    "diagnostics:read",
+    "terminal:read",
+    "terminal:operate",
+    "source-control:write",
+    "filesystem:read",
+    "filesystem:write",
+    "relay:read",
+    "access:read",
+    "access:write",
+    "relay:write",
+    "relay:configure",
+];
 /// Scopes clients from before granular permissions know; `scopes` lists only these.
 const LEGACY_SCOPES: &[&str] = &[
     "orchestration:read",
@@ -200,6 +219,7 @@ pub fn legacy_parent(scope: &str) -> &str {
         | "source-control:write"
         | "filesystem:write" => "orchestration:operate",
         "terminal:read" => "terminal:operate",
+        "relay:configure" => "relay:write",
         other => other,
     }
 }
