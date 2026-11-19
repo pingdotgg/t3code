@@ -100,14 +100,18 @@ export const mcpToolSession = (
 
   const send = Effect.fn("AcpMcpStdioBridge.send")(function* (
     message: unknown,
-  ): Effect.fn.Return<ReadonlyArray<unknown>, AcpMcpBridgeError> {
+  ): Effect.fn.Return<ReadonlyArray<unknown>, AcpMcpBridgeError, Scope.Scope> {
+    const controller = yield* Effect.acquireRelease(
+      Effect.sync(() => new AbortController()),
+      (controller) => Effect.sync(() => controller.abort()),
+    );
     const response = yield* Effect.tryPromise({
-      try: (signal) =>
+      try: () =>
         fetchImplementation(options.endpoint, {
           method: "POST",
           headers: { "content-type": "application/json", ...headers() },
           body: JSON.stringify(message),
-          signal,
+          signal: controller.signal,
         }),
       catch: bridgeError,
     });
@@ -129,7 +133,7 @@ export const mcpToolSession = (
       return Effect.void;
     });
     return payloads;
-  });
+  }, Effect.scoped);
 
   const request = Effect.fn("AcpMcpStdioBridge.request")(function* (
     method: string,
@@ -150,10 +154,14 @@ export const mcpToolSession = (
     sessionId === null
       ? Effect.void
       : Effect.tryPromise({
-          try: () =>
-            fetchImplementation(options.endpoint, { method: "DELETE", headers: headers() }),
+          try: (signal) =>
+            fetchImplementation(options.endpoint, { method: "DELETE", headers: headers(), signal }),
           catch: bridgeError,
-        }).pipe(Effect.flatMap(discardResponseBody), Effect.ignore),
+        }).pipe(
+          Effect.flatMap(discardResponseBody),
+          Effect.timeoutOption("10 seconds"),
+          Effect.ignore,
+        ),
   );
 
   // Registered before the handshake so a session the server opened is ended

@@ -280,6 +280,13 @@ export class CloudCliTokenManager extends Context.Service<
       CloudCliTokenManagerError | Terminal.QuitError
     >;
     readonly getExisting: Effect.Effect<Option.Option<PersistedToken>, CloudCliTokenManagerError>;
+    readonly peek: Effect.Effect<
+      Option.Option<{
+        readonly token: PersistedToken;
+        readonly needsRefresh: boolean;
+      }>,
+      CloudCliTokenManagerError
+    >;
     readonly hasCredential: Effect.Effect<boolean, CloudCliTokenManagerError>;
     readonly store: (token: PersistedToken) => Effect.Effect<void, CloudCliTokenManagerError>;
     readonly clear: Effect.Effect<void, CloudCliTokenManagerError>;
@@ -605,6 +612,17 @@ export const make = Effect.gen(function* () {
       Effect.provide(services),
     ),
   );
+  const peek = semaphore.withPermits(1)(
+    Effect.gen(function* () {
+      const stored = yield* read();
+      const now = yield* Clock.currentTimeMillis;
+      return Option.map(stored, (token) => ({
+        token,
+        needsRefresh: token.expiresAtEpochMs - CLOUD_CLI_OAUTH_REFRESH_EARLY_MS <= now,
+      }));
+    }).pipe(Effect.mapError((cause) => new CloudCliCredentialReadError({ cause }))),
+  );
+
   const hasCredential = semaphore.withPermits(1)(
     read().pipe(
       Effect.map(Option.isSome),
@@ -639,7 +657,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  return CloudCliTokenManager.of({ get, getExisting, hasCredential, store, clear });
+  return CloudCliTokenManager.of({ get, getExisting, peek, hasCredential, store, clear });
 });
 
 export const layer = Layer.effect(CloudCliTokenManager, make);

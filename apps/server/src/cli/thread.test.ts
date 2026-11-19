@@ -18,6 +18,7 @@ import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/cli";
 import { vi } from "vite-plus/test";
 
+import type { ThreadTools } from "./discovery.ts";
 import * as McpBridge from "../mcp/AcpMcpStdioBridge.ts";
 import {
   makePersistedServerRuntimeState,
@@ -28,7 +29,6 @@ import {
   readLatestMessages,
   resolveProject,
   threadCommand,
-  type ThreadTools,
   titleFromMessage,
   waitForRun,
 } from "./thread.ts";
@@ -82,9 +82,11 @@ it.effect(
           port: 3_773,
         }),
       });
+      const calls: string[] = [];
       using _session = vi.spyOn(McpBridge, "mcpToolSession").mockReturnValue(
         Effect.succeed({
           call: (tool, args) => {
+            calls.push(tool);
             switch (tool) {
               case "t3_project_list":
                 return Effect.succeed({ structuredContent: { projects, nextCursor: null } });
@@ -98,6 +100,23 @@ it.effect(
           },
         }),
       );
+
+      const unknownId = "e7a60774-3d3e-4ed7-9147-b0cfce631234";
+      yield* fs.makeDirectory(path.join(cwd, unknownId));
+      for (const args of [
+        ["start", unknownId, "Do not dispatch"],
+        ["list", "--project", unknownId],
+      ]) {
+        const failed = yield* Command.runWith(threadCommand, { version: "0.0.0" })([
+          ...args,
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.provideService(HostProcess.WorkingDirectory, cwd), Effect.result);
+        assert(failed._tag === "Failure");
+        assert.deepStrictEqual(calls, ["t3_project_list"]);
+        assert.isFalse(yield* fs.exists(path.join(baseDir, "userdata", "statev2.sqlite")));
+        calls.length = 0;
+      }
 
       for (const [identifier, expectedProjectId] of [
         ["intended-project", "intended-project"],
@@ -566,7 +585,7 @@ it.live("resolves a path inside a git worktree of the project's repository to th
 
     assert.deepStrictEqual(yield* resolveFrom([sample], worktree), sample);
     assert.deepStrictEqual(yield* resolveFrom([sample], path.join(worktree, "pkg")), sample);
-    assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "pkg/index.ts"), sample);
+    assert.deepStrictEqual(yield* resolveFrom([sample], worktree, "./pkg/index.ts"), sample);
     assert.deepStrictEqual(yield* resolveFrom([featureProject], featureWorktree), featureProject);
     const ambiguous = yield* Effect.flip(resolveFrom([sample, featureProject], featureWorktree));
     assert.strictEqual(ambiguous._tag, "ThreadUsageError");
