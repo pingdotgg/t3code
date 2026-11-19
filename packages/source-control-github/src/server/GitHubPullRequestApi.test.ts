@@ -2665,32 +2665,44 @@ layer("GitHubPullRequestApi.layer", (it) => {
       description: "an unchanged message",
       body: "Details\n\nCo-authored-by: Alice <alice@example.com>",
       queued: false,
+      messageQueued: false,
     },
     {
       description: "a merge queue",
       body: "Co-authored-by: Claude <noreply@anthropic.com>",
       queued: true,
+      messageQueued: true,
     },
-  ] as const)("keeps GitHub's default message for $description", ({ body, queued }) =>
-    Effect.gen(function* () {
-      route(
-        ["query PullRequestMergeMessage", mergeMessage(body, queued)],
-        ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      yield* cli.runPullRequestAction({
-        cwd: "/w",
-        repository: "acme/web",
-        host: "github.com",
-        number: 7,
-        action: "merge",
-        removeAgentCreditsOnMerge: true,
-      });
-      expect(variablesOf("query PullRequestMergeMessage")[0]?.["method"]).toBe("MERGE");
-      expect(variablesOf(queued ? "enablePullRequestAutoMerge(" : "mergePullRequest(")).toEqual([
-        { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
-      ]);
-    }),
+    {
+      description: "a merge queue enabled before the message read",
+      body: "Co-authored-by: Claude <noreply@anthropic.com>",
+      queued: false,
+      messageQueued: true,
+    },
+  ] as const)(
+    "keeps GitHub's default message for $description",
+    ({ body, queued, messageQueued }) =>
+      Effect.gen(function* () {
+        route(
+          ["query PullRequestMergeMessage", mergeMessage(body, messageQueued)],
+          ["query PullRequestActionState", actionState({ isMergeQueueEnabled: queued })],
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        yield* cli.runPullRequestAction({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          number: 7,
+          action: "merge",
+          removeAgentCreditsOnMerge: true,
+        });
+        expect(variablesOf("query PullRequestMergeMessage")).toEqual(
+          queued ? [] : [{ owner: "acme", name: "web", number: 7, method: "MERGE" }],
+        );
+        expect(variablesOf(queued ? "enablePullRequestAutoMerge(" : "mergePullRequest(")).toEqual([
+          { input: { pullRequestId: "PR_7", mergeMethod: "MERGE" } },
+        ]);
+      }),
   );
 
   it.effect("passes an explicitly empty body when the proposed message only credits an agent", () =>
