@@ -80,6 +80,17 @@ export function SettingsScopeSentence() {
     environments,
     onChange: scope.selectScope,
   };
+  if (pathname === "/settings/skills")
+    return (
+      <p className="flex items-center gap-1.5 px-3 text-sm text-muted-foreground sm:px-4">
+        <T>
+          Managing skills on{" "}
+          <Var>
+            <EnvironmentScopeMenu {...props} />
+          </Var>
+        </T>
+      </p>
+    );
   const group = scope.groups.find((candidate) => candidate.projectKey === scope.search.project);
   const hasCheckouts = group ? settingsScopeCheckoutChoices(group, scope.search).length > 0 : false;
   const project = <ProjectScopeMenu {...props} />;

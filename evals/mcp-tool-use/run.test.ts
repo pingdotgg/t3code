@@ -7,6 +7,8 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { FetchHttpClient } from "effect/http";
 import { assert, expect, it } from "@effect/vitest";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import {
   ComposerContextId,
   EnvironmentId,
@@ -23,8 +25,9 @@ import {
   executeCodex,
   gradeSample,
   makeSample,
-  ranCalls,
+  loadCaseSkills,
   McpToolUseCase,
+  ranCalls,
   savesPastedSecrets,
   mockOutput,
   normalizeToolInput,
@@ -44,6 +47,8 @@ import {
 } from "./run.ts";
 import { briefRoute, gradeDevice, shellInvocations } from "./device-grading.ts";
 import { taskPrompt } from "../../apps/server/src/mcp/delegatedTaskModes.ts";
+
+const isMcpToolUseCase = Schema.is(McpToolUseCase);
 
 it("grades Codex shell and subagent calls with the shared rules", () => {
   const calls = [
@@ -668,6 +673,31 @@ const childCase: McpToolUseCase = {
   expect: { calls: [{ tool: "link_pull_request" }], notCalls: ["watch_pull_request"] },
 };
 
+it.effect("loads the current skill source into a case without changing ordinary cases", () =>
+  Effect.gen(function* () {
+    assert.strictEqual(yield* loadCaseSkills(childCase), childCase);
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const source = yield* fs.readFileString(
+      path.join(import.meta.dirname, "../../.agents/skills/t3code-orchestration/SKILL.md"),
+    );
+    const loaded = yield* loadCaseSkills({
+      ...childCase,
+      setup: { ...childCase.setup, context: "Case context", skills: ["t3code-orchestration"] },
+    });
+    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+    const messages = buildMessages(makeSample(loaded, base));
+    assert.include(messages[0]?.content.map((block) => block.text).join("\n"), source);
+    assert.include(loaded.setup.context, "Case context");
+    assert.isTrue(isMcpToolUseCase(loaded));
+    assert.isFalse(
+      isMcpToolUseCase({
+        ...childCase,
+        setup: { ...childCase.setup, skills: ["../../private"] },
+      }),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 const decodeDeviceCase = Schema.decodeSync(Schema.fromJsonString(McpToolUseCase));
 const browserCase = (id: string) =>
   NodeFS.readFileSync(new URL("./cases/browser-routing.ndjson", import.meta.url), "utf8")
