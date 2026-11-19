@@ -9844,7 +9844,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             .filter((row) => row.id !== run.id && row.delegatedTaskId !== undefined)
             .toSorted((a, b) => b.ordinal - a.ordinal)[0]?.delegatedTaskId;
     const parent = yield* projectionStore
-      .getThreadRecords(parentThreadId, ["runs", "subagents", "providerTurns", "attempts"], {
+      .getThreadRecords(parentThreadId, ["runs", "subagents"], {
+        // Every run followUpOwnerRun can pick, so a long parent's history stays unread.
+        runStatuses: ["preparing", "starting", "running", "waiting"],
+        includeLatestExecutedRun: true,
         subagentIds: [
           ...(child.forkedFrom?.type === "node" ? [child.forkedFrom.nodeId] : []),
           ...(latestFollowupId === undefined ? [] : [latestFollowupId]),
@@ -9881,6 +9884,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     const owner = followUpOwnerRun(parent.runs);
     if (owner === null || owner.rootNodeId === null) return;
+    const ownerRecords = yield* projectionStore
+      .getRunProviderRecords(parentThreadId, owner.id, owner.rootNodeId)
+      .pipe(mapDispatchError(command));
     const now = message.createdAt;
     const adapter = yield* providerAdapters.get(run.providerInstanceId);
     const taskId = idAllocator.derive.delegatedTaskNode({ commandId: command.commandId });
@@ -9930,7 +9936,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       runId: owner.id,
       nodeId: taskId,
       providerThreadId: owner.providerThreadId,
-      providerTurnId: providerTurnForRun(parent, owner)?.id ?? null,
+      providerTurnId: providerTurnForRun(ownerRecords, owner)?.id ?? null,
       nativeItemRef: null,
       parentItemId: null,
       ordinal: yield* nextTurnItemOrdinal(parent),
