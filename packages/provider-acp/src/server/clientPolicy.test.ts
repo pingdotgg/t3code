@@ -113,7 +113,7 @@ describe("acpPermissionDisposition", () => {
       ...permissionRequest("other"),
       toolCall: {
         kind: "other",
-        title: "Run mcp_t3-code_preview_status",
+        title: "Run mcp_t3-code_preview_status?",
         toolCallId: "permission-tool-call",
       },
     };
