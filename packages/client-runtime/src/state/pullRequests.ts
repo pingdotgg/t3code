@@ -787,12 +787,9 @@ type PullRequestDiffCacheInput = PullRequestDiffInput & {
   readonly cacheRevision?: string;
 };
 
-const createDiffRevision = Effect.suspend(() =>
-  globalThis.crypto?.getRandomValues
-    ? Effect.succeed<ArrayLike<number>>(globalThis.crypto.getRandomValues(new Uint8Array(16)))
-    : Effect.all(Array.from({ length: 16 }, () => Random.nextIntBetween(0, 255))),
-).pipe(
-  Effect.map((bytes) => Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")),
+// Only tells page chains of one diff apart, so it need not be unguessable.
+const createDiffRevision = Effect.map(Random.nextIntBetween(0, Number.MAX_SAFE_INTEGER), (value) =>
+  value.toString(36),
 );
 
 const diffPersistence = persistQuery(CachedPullRequestDiff);
