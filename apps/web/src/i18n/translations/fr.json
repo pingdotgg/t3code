@@ -8531,7 +8531,7 @@
   "13e86eb5d8287a71": "Affiche un prochain message suggéré dans la zone de saisie vide après un tour Claude ou Codex. Tab l’utilise. Chaque suggestion est une requête en cache supplémentaire sur votre forfait. Nécessite Codex 0.165+. Les fils Claude se mettent à jour au redémarrage.",
   "d4b2a2ec812aafb0": "Suggérer le prochain prompt",
   "298c7150a7621c80": "Hôtes d’appareils Simlock",
-  "67937aa49179285e": "Sur Mac, clone les nouveaux worktrees depuis une copie en cache dans le dossier T3 home au lieu d’écrire chaque fichier. Utilise le checkout Git normal quand ce n’est pas possible. La désactivation supprime le cache.",
+  "53962249c9da1b97": "Démarre les nouveaux worktrees depuis une copie tenue prête dans le dossier T3 home au lieu d’écrire chaque fichier. Utilise le checkout Git normal quand ce n’est pas possible. La désactivation supprime le cache.",
   "f9904f78d3003f58": "Checkout rapide des worktrees",
   "ec7623deed751c05": [
     "Partagez un fil avec un invité qui le suit en direct dans un navigateur et envoie des messages que vous approuvez. Nécessite T3 Connect : connectez-vous et associez cette machine dans",
@@ -11422,7 +11422,7 @@
   "4a21cf825a2045b0": "bêta tab autocomplétion prédire prochain message claude codex texte fantôme",
   "fea2dc36585c4a20": "Hôtes d’appareils Simlock (alpha)",
   "9d834d178130180e": "bêta alpha simlock callstack simulateur émulateur ios android pool bail passerelle",
-  "bcb520297a9ae143": "bêta rapide worktree extraction clone apfs copie sur écriture cache macos vitesse",
+  "3c7f54b1b06d14aa": "bêta rapide worktree extraction clone apfs copie sur écriture cache macos windows vitesse",
   "4c83ac419da342bd": "envoyer microphone audio dictée destination parole voix stt transcription environnement machine consentement confidentialité cloud OpenAI Grok OpenRouter",
   "f9c000e92379d027": "micro entrée audio appareil ordre priorité préféré",
   "22811f405e0b4b28": "parole voix clavier raccourci maintenir basculer auto",

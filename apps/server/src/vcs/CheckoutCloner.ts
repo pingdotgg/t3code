@@ -3,6 +3,7 @@ import * as NodeModule from "node:module";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
@@ -21,21 +22,47 @@ export class CheckoutCloneError extends Schema.TaggedError<CheckoutCloneError>()
 }
 
 /**
- * Copies a file or a whole folder copy-on-write in one call, sharing data blocks until either
- * copy changes. The destination must not exist. Undefined where the platform has no such call.
+ * Puts a file or a whole folder at a destination that must not exist. `clone` shares data blocks
+ * copy-on-write until either side changes. `move` renames, so the source is gone afterwards; it
+ * stands in where the platform has no clone call. Undefined where neither is used.
  */
 export const CheckoutCloner = Context.Reference<
-  ((source: string, destination: string) => Effect.Effect<void, CheckoutCloneError>) | undefined
+  | {
+      readonly mode: "clone" | "move";
+      readonly transfer: (
+        source: string,
+        destination: string,
+      ) => Effect.Effect<void, CheckoutCloneError>;
+    }
+  | undefined
 >("t3/vcs/CheckoutCloner", { defaultValue: () => undefined });
 
 // A single-executable server resolves packages on disk only through `require`.
 const requireForFfi = NodeModule.createRequire(import.meta.url);
 
-/** macOS `clonefile(2)`, which clones a folder hierarchy in the kernel; elsewhere nothing. */
+/**
+ * macOS `clonefile(2)`, which clones a folder hierarchy in the kernel. Windows has no such call on
+ * NTFS, so a cached checkout is moved there. Elsewhere nothing.
+ */
 export const layer = Layer.effect(
   CheckoutCloner,
   Effect.gen(function* () {
-    if ((yield* HostProcess.Platform) !== "darwin") return undefined;
+    const platform = yield* HostProcess.Platform;
+    if (platform === "win32") {
+      const fileSystem = yield* FileSystem.FileSystem;
+      return {
+        mode: "move" as const,
+        // A rename within one volume takes the same time for a folder of any size.
+        transfer: Effect.fn("CheckoutCloner.move")((source: string, destination: string) =>
+          fileSystem
+            .rename(source, destination)
+            .pipe(
+              Effect.mapError((cause) => new CheckoutCloneError({ source, destination, cause })),
+            ),
+        ),
+      };
+    }
+    if (platform !== "darwin") return undefined;
     const loadClonefile = yield* Effect.cached(
       Effect.try({
         try: () => {
@@ -58,7 +85,10 @@ export const layer = Layer.effect(
           new CheckoutCloneError({ source: "ffi-rs", destination: "clonefile", cause }),
       }),
     );
-    return Effect.fn("CheckoutCloner.clonefile")(function* (source: string, destination: string) {
+    const transfer = Effect.fn("CheckoutCloner.clonefile")(function* (
+      source: string,
+      destination: string,
+    ) {
       const clonefile = yield* loadClonefile.pipe(
         Effect.mapError(
           (error) => new CheckoutCloneError({ source, destination, cause: error.cause }),
@@ -77,5 +107,6 @@ export const layer = Layer.effect(
         });
       }
     });
+    return { mode: "clone" as const, transfer };
   }),
 );

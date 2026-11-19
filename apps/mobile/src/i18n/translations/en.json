@@ -3635,7 +3635,7 @@
   "f0e853acd2006d53": "Linked environments",
   "0b83813eb16a9bc0": "Let agents on a machine work on your other machines, and theirs on it. Turn it on for each machine. While off, nothing new starts over a link; running tasks finish.",
   "f9904f78d3003f58": "Fast worktree checkout",
-  "67937aa49179285e": "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+  "53962249c9da1b97": "Start new worktrees from a checkout kept ready in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
   "d6ada5ec242e37ff": "Usage limits",
   "62127e7b5c0f57a3": "Resume after usage limits",
   "4df30d44eb0b0728": "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",

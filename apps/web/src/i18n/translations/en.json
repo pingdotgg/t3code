@@ -8540,7 +8540,7 @@
   "13e86eb5d8287a71": "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
   "d4b2a2ec812aafb0": "Suggest next prompt",
   "298c7150a7621c80": "Simlock device hosts",
-  "67937aa49179285e": "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
+  "53962249c9da1b97": "Start new worktrees from a checkout kept ready in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",
   "f9904f78d3003f58": "Fast worktree checkout",
   "ec7623deed751c05": [
     "Share a thread with a guest who watches it live in a browser and sends messages you approve. Needs T3 Connect: sign in and link this machine in",
@@ -11432,7 +11432,7 @@
   "4a21cf825a2045b0": "beta tab autocomplete predict next message claude codex ghost text",
   "fea2dc36585c4a20": "Simlock device hosts (alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
-  "bcb520297a9ae143": "beta fast worktree checkout clone apfs copy-on-write cache macos speed",
+  "3c7f54b1b06d14aa": "beta fast worktree checkout clone apfs copy-on-write cache macos windows speed",
   "4c83ac419da342bd": "send microphone audio dictation destination speech voice stt transcription environment machine consent privacy cloud OpenAI Grok OpenRouter",
   "f9c000e92379d027": "mic input audio device order priority preferred",
   "22811f405e0b4b28": "speech voice keyboard hotkey hold toggle auto",

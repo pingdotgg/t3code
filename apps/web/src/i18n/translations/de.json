@@ -8532,7 +8532,7 @@
   "13e86eb5d8287a71": "Nach einer Claude- oder Codex-Runde eine vorhergesagte nächste Nachricht im leeren Eingabefeld anzeigen. Tab übernimmt sie. Jede ist eine zusätzliche gecachte Anfrage in deinem Tarif. Erfordert Codex 0.165+. Claude-Threads werden nach einem Neustart aktualisiert.",
   "d4b2a2ec812aafb0": "Nächsten Prompt vorschlagen",
   "298c7150a7621c80": "Simlock-Geräte-Hosts",
-  "67937aa49179285e": "Auf einem Mac neue Worktrees aus einem im T3-Home-Ordner zwischengespeicherten Checkout klonen, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
+  "53962249c9da1b97": "Neue Worktrees aus einem im T3-Home-Ordner bereitgehaltenen Checkout starten, statt jede Datei zu schreiben. Verwendet den normalen Git-Checkout, wenn das nicht geht. Beim Ausschalten wird der Cache gelöscht.",
   "f9904f78d3003f58": "Schneller Worktree-Checkout",
   "ec7623deed751c05": [
     "Teile einen Thread mit einem Gast, der ihn live im Browser verfolgt und Nachrichten sendet, die du genehmigst. Erfordert T3 Connect: Melde dich an und verknüpfe diesen Rechner unter",
@@ -11424,7 +11424,7 @@
   "4a21cf825a2045b0": "beta tab autovervollständigung nächste nachricht vorhersagen claude codex ghost text",
   "fea2dc36585c4a20": "Simlock-Geräte-Hosts (Alpha)",
   "9d834d178130180e": "beta alpha simlock callstack simulator emulator ios android pool lease gateway",
-  "bcb520297a9ae143": "beta schneller worktree checkout klonen apfs copy-on-write cache macos geschwindigkeit",
+  "3c7f54b1b06d14aa": "beta schneller worktree checkout klonen apfs copy-on-write cache macos windows geschwindigkeit",
   "4c83ac419da342bd": "mikrofon audio senden diktat ziel sprache spracheingabe stt transkription umgebung rechner einwilligung datenschutz cloud OpenAI Grok OpenRouter",
   "f9c000e92379d027": "mikrofon eingabe audio gerät reihenfolge priorität bevorzugt",
   "22811f405e0b4b28": "sprache spracheingabe tastatur hotkey halten umschalten auto",
