@@ -370,6 +370,12 @@ describe("codexTimeZone", () => {
   it("uses Codex's TZ and falls back to the server's zone", () => {
     const local = DateTime.zoneToString(DateTime.zoneMakeLocal());
     expect(DateTime.zoneToString(codexTimeZone({ TZ: ":Asia/Dhaka" }))).toBe("Asia/Dhaka");
+    expect(DateTime.zoneToString(codexTimeZone({ TZ: ":/usr/share/zoneinfo/Asia/Dhaka" }))).toBe(
+      "Asia/Dhaka",
+    );
+    expect(
+      DateTime.zoneToString(codexTimeZone({ TZ: "/usr/share/zoneinfo/America/Chicago" })),
+    ).toBe("America/Chicago");
     expect(DateTime.zoneToString(codexTimeZone({ TZ: "not/a-zone" }))).toBe(local);
     expect(DateTime.zoneToString(codexTimeZone({}))).toBe(local);
   });
