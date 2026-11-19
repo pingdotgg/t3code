@@ -17,7 +17,12 @@ import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
   PullRequestDetail,
-  "state" | "isDraft" | "mergeability" | "autoMergeEnabled" | "workflowApprovalsRequired"
+  | "state"
+  | "isDraft"
+  | "mergeability"
+  | "mergeBlocked"
+  | "autoMergeEnabled"
+  | "workflowApprovalsRequired"
 > & {
   readonly capabilities: Pick<
     PullRequestDetail["capabilities"],
@@ -159,7 +164,12 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
     case "draft":
       return !pr.isDraft;
     case "merge":
-      return !pr.isDraft && pr.mergeability !== "conflicting" && allowedMergeMethods(pr).length > 0;
+      return (
+        !pr.isDraft &&
+        pr.mergeability !== "conflicting" &&
+        pr.mergeBlocked !== true &&
+        allowedMergeMethods(pr).length > 0
+      );
     case "enable-auto-merge":
       return !pr.isDraft && pr.autoMergeEnabled === false && allowedMergeMethods(pr).length > 0;
     case "disable-auto-merge":
