@@ -1,0 +1,75 @@
+diff --git a/apps/mobile/app.config.ts b/apps/mobile/app.config.ts
+index 97fe5cf977..ac1662b297 100644
+--- a/apps/mobile/app.config.ts
++++ b/apps/mobile/app.config.ts
+@@ -17,6 +17,14 @@ const runtimeVersionPolicy =
+   (APP_VARIANT === "development" ? "appVersion" : "fingerprint");
+ 
+ const personalTeamBundleIdentifier = repoEnv.T3CODE_IOS_PERSONAL_TEAM_BUNDLE_ID?.trim();
++const forkIosBundleIdentifier = repoEnv.T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER?.trim();
++const easProjectId =
++  repoEnv.T3CODE_EAS_PROJECT_ID ??
++  (forkIosBundleIdentifier
++    ? "04e224f1-4ce4-47f6-bcf6-f5cbbc760bb4"
++    : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
++const updateChannel = repoEnv.T3CODE_MOBILE_UPDATE_CHANNEL?.trim();
++const updatesEnabled = repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0";
+ const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+ 
+ // Compiled into the native project. Without a relay, Observe's native side could dispatch to
+@@ -122,7 +130,19 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
+ const HOSTED_APP_HOST = "app.t3.codes";
+ const iosBundleIdentifier = isIosPersonalTeamBuild
+   ? personalTeamBundleIdentifier!
+-  : variant.iosBundleIdentifier;
++  : (forkIosBundleIdentifier ?? variant.iosBundleIdentifier);
++
++if (forkIosBundleIdentifier && !IOS_BUNDLE_IDENTIFIER_PATTERN.test(forkIosBundleIdentifier)) {
++  throw new Error(
++    "T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER must be a reverse-DNS identifier such as com.example.t3code.",
++  );
++}
++
++if (forkIosBundleIdentifier && updatesEnabled && !easProjectId) {
++  throw new Error(
++    "Set T3CODE_EAS_PROJECT_ID to the fork's Expo project or disable mobile updates before building.",
++  );
++}
+ 
+ const dmSansFonts = {
+   regular: "@expo-google-fonts/dm-sans/400Regular/DMSans_400Regular.ttf",
+@@ -246,8 +266,9 @@ const config: ExpoConfig = {
+   icon: variant.assets.appIcon,
+   userInterfaceStyle: "automatic",
+   updates: {
+-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
+-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
++    enabled: updatesEnabled,
++    url: easProjectId ? `https://u.expo.dev/${easProjectId}` : undefined,
++    ...(updateChannel ? { requestHeaders: { "expo-channel-name": updateChannel } } : {}),
+     checkAutomatically: "ON_LOAD",
+     fallbackToCacheTimeout: 0,
+   },
+@@ -264,7 +285,7 @@ const config: ExpoConfig = {
+       `applinks:${HOSTED_APP_HOST}`,
+     ],
+     entitlements: {
+-      "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
++      "keychain-access-groups": [`$(AppIdentifierPrefix)${iosBundleIdentifier}`],
+     },
+     infoPlist: {
+       UISupportedInterfaceOrientations: [
+@@ -486,11 +507,11 @@ const config: ExpoConfig = {
+       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
+     },
+     eas: {
+-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
++      ...(easProjectId ? { projectId: easProjectId } : {}),
+       observe: { endpointUrl: observeEndpointUrl },
+     },
+   },
+-  owner: "pingdotgg",
++  owner: repoEnv.T3CODE_EAS_OWNER ?? (forkIosBundleIdentifier ? "louisefindlay23" : "pingdotgg"),
+   experiments: {
+     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
+     reactCompiler: true,

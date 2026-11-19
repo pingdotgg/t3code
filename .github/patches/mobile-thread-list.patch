@@ -1,8 +1,8 @@
 diff --git a/apps/mobile/src/features/home/HomeScreen.tsx b/apps/mobile/src/features/home/HomeScreen.tsx
-index 3f6f5e8f87..9734c42b78 100644
+index f1b6469cd7..7c160bdf7a 100644
 --- a/apps/mobile/src/features/home/HomeScreen.tsx
 +++ b/apps/mobile/src/features/home/HomeScreen.tsx
-@@ -548,6 +548,9 @@ export function HomeScreen(props: HomeScreenProps) {
+@@ -545,6 +545,9 @@ export function HomeScreen(props: HomeScreenProps) {
          timeLabel={item.timeLabel}
          showTrailingDivider={item.showTrailingDivider}
          project={projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null}
@@ -13,10 +13,10 @@ index 3f6f5e8f87..9734c42b78 100644
          providers={providersByEnvironmentId.get(thread.environmentId)}
          environmentLabel={
 diff --git a/apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx b/apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx
-index 6de4c54d6d..3d330690e3 100644
+index f973d0c2fd..bbf0b8b3a9 100644
 --- a/apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx
 +++ b/apps/mobile/src/features/threads/ThreadNavigationSidebar.tsx
-@@ -423,6 +423,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
+@@ -429,6 +429,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
              snoozeWakeLabelText={item.snoozeWakeLabelText}
              timeLabel={item.timeLabel}
              project={projectByKey.get(scopeKey) ?? null}
@@ -25,10 +25,10 @@ index 6de4c54d6d..3d330690e3 100644
              providers={providersByEnvironmentId.get(thread.environmentId)}
              environmentLabel={
 diff --git a/apps/mobile/src/features/threads/thread-list-v2-items.tsx b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
-index d304bc87ed..b55c3701e4 100644
+index 7a18e14299..6f5dac6888 100644
 --- a/apps/mobile/src/features/threads/thread-list-v2-items.tsx
 +++ b/apps/mobile/src/features/threads/thread-list-v2-items.tsx
-@@ -661,6 +661,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -753,6 +753,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
    readonly timeLabel: string;
    readonly snoozePresetMinute: string;
    readonly project: EnvironmentProject | null;
@@ -36,7 +36,7 @@ index d304bc87ed..b55c3701e4 100644
    readonly providers: ReadonlyArray<ThreadListProvider> | undefined;
    readonly providerInstance: ThreadRowProviderInstance | null;
    readonly environmentLabel: string | null;
-@@ -711,12 +712,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -803,12 +804,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
    const metadataTypography = useScaledTextRole("label");
    const projectIconSize = titleTypography.fontSize * 1.25 * fontScale;
    const machineIconSize = metadataTypography.fontSize * fontScale;
@@ -47,28 +47,28 @@ index d304bc87ed..b55c3701e4 100644
 -  const titleLineHeight =
 -    Platform.OS === "android" ? androidTitleLineHeight : titleTypography.lineHeight * fontScale;
 +  const projectLineIconSize = metadataTypography.fontSize * 1.15 * fontScale;
+   const gt = useGT();
+   const m = useMessages();
    const {
-     thread,
-     variant,
-@@ -947,7 +943,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
-         supported: props.titleRegenerationSupported,
-         isRegenerating: isRegeneratingTitle,
-       }),
--      { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
+@@ -1074,7 +1070,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+         },
+         m,
+       ),
+-      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
        ...(canTurnIntoProject
          ? [
              {
-@@ -975,6 +970,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -1110,6 +1105,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
          : []),
-       { id: "copy-thread", title: "Copy thread", image: "text.bubble" },
-       { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
-+      { id: "mark-unread", title: "Mark unread", image: "envelope.badge" },
-     ];
-     if (snoozedRow) {
-       return layoutThreadListV2RowMenuActions({
-@@ -1183,46 +1179,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
-       ? `Opens the thread. Swipe left to ${primaryAction.label.toLowerCase()}.`
-       : `Opens the thread. Swipe left for ${primaryAction.label.toLowerCase()} and snooze actions.`;
+       { id: "copy-thread", title: gt("Copy thread"), image: "text.bubble" },
+       { id: "copy-thread-id", title: gt("Copy thread ID"), image: "doc.on.doc" },
++      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
+       ...(canShareWithGuest
+         ? [{ id: "share-guest", title: gt("Share with guest"), image: "person.badge.plus" }]
+         : []),
+@@ -1363,46 +1359,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+       ? primaryAction.swipeHint
+       : primaryAction.swipeSnoozeHint;
  
 -  const titleTextInset = props.project ? projectIconSize + 8 : 0;
 +  // Fork: rows keep the project name and branch on their own lines.
@@ -129,7 +129,7 @@ index d304bc87ed..b55c3701e4 100644
            {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
            {pinnedRow ? (
              <SymbolView
-@@ -1310,8 +1292,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -1490,8 +1472,21 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
            )}
          </View>
        </View>
@@ -152,7 +152,7 @@ index d304bc87ed..b55c3701e4 100644
            <ThreadSearchMatchExcerpt
              sidebar={sidebarPane}
              match={props.searchMatch}
-@@ -1320,7 +1315,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -1500,7 +1495,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
            />
          </View>
        ) : null}
@@ -161,7 +161,7 @@ index d304bc87ed..b55c3701e4 100644
          {(rawStatus === "failed" || rawStatus === "limited") && thread.runtime?.lastError ? (
            <Text
              className={cn(
-@@ -1335,9 +1330,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -1515,9 +1510,34 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
            >
              {thread.runtime.lastError}
            </Text>
@@ -198,7 +198,7 @@ index d304bc87ed..b55c3701e4 100644
                <EnvironmentMachineSymbol
                  kind={props.environmentMachine}
                  size={machineIconSize}
-@@ -1348,17 +1368,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+@@ -1528,17 +1548,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                  }
                />
              ) : null}
