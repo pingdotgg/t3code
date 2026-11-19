@@ -142,5 +142,11 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: failed })).toBe(published);
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
+
+    const publishedWithFp = { ...published, credentialFingerprint: "fp-a" };
+    const failedOtherFp = { ...failed, credentialFingerprint: "fp-b" };
+    expect(
+      resolveUsageLimitsAfterProbe({ published: publishedWithFp, probed: failedOtherFp }),
+    ).toBe(failedOtherFp);
   });
 });

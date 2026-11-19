@@ -199,10 +199,20 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           : state.enrichmentGeneration;
         // Failed reads retain limits only for the same account and original workspace.
         const previous = state.snapshot.auth;
+        const previousEmail = previous.email?.toLowerCase();
+        const probedEmail = probedSnapshot.auth.email?.toLowerCase();
+        const previousFingerprint = state.snapshot.usageLimits?.credentialFingerprint;
+        const probedFingerprint = probedSnapshot.usageLimits?.credentialFingerprint;
+        const sameFingerprint =
+          probedFingerprint !== undefined && probedFingerprint === previousFingerprint;
         const differs = (a: string | undefined, b: string | undefined) =>
           a !== undefined && b !== undefined && a !== b;
         const switchedAccount =
-          differs(probedSnapshot.auth.email?.toLowerCase(), previous.email?.toLowerCase()) ||
+          differs(probedEmail, previousEmail) ||
+          differs(probedFingerprint, previousFingerprint) ||
+          (!sameFingerprint &&
+            ((probedEmail !== undefined && probedEmail !== previousEmail) ||
+              (previousFingerprint !== undefined && probedEmail !== previousEmail))) ||
           (probedSnapshot.auth.workspaceId !== undefined &&
             probedSnapshot.auth.workspaceId !== previous.workspaceId);
         const usageLimits = switchedAccount

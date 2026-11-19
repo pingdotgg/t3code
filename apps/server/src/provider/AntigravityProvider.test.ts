@@ -859,31 +859,46 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         };
         const usage = yield* Ref.make<AntigravityUsageProbeResult>({
           limits: accountALimits,
-          email: "account-a@example.com",
+          email: "Account-A@example.com",
         });
         const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+        const emitted = yield* Ref.make<Array<ServerProvider>>([]);
+        yield* harness.provider.snapshot.streamChanges.pipe(
+          Stream.runForEach((snapshot) => Ref.update(emitted, (all) => [...all, snapshot])),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
         const initialPublish = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
         yield* harness.initialize;
         const first = yield* initialPublish;
-        expect(first?.auth.email).toBe("account-a@example.com");
+        expect(first?.auth.email).toBe("Account-A@example.com");
         expect(first?.usageLimits).toEqual(accountALimits);
 
         const waitForUsageRefresh = Effect.gen(function* () {
-          const checks = yield* Ref.make(0);
-          const applied = yield* Deferred.make<void>();
-          yield* Ref.set(
-            harness.probe,
-            Ref.updateAndGet(checks, (count) => count + 1).pipe(
-              Effect.tap((count) =>
-                count === 2 ? Deferred.succeed(applied, undefined) : Effect.void,
-              ),
-              Effect.as(initializeResult),
-            ),
+          const twoPublishes = yield* harness.provider.snapshot.streamChanges.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkChild,
           );
+          yield* Effect.yieldNow;
           yield* harness.provider.snapshot.refresh;
-          yield* Deferred.await(applied);
-          return yield* harness.provider.snapshot.getSnapshot;
+          const publishes = Array.from(yield* Fiber.join(twoPublishes));
+          return publishes.at(-1);
         });
+
+        // Case-only email difference on unchanged credential fingerprint retains limits on failure.
+        yield* Ref.set(usage, {
+          email: "account-a@example.com",
+          limits: {
+            checkedAt: "2026-10-09T12:00:30.000Z",
+            credentialFingerprint: "fingerprint-a",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          },
+        });
+        const afterCaseOnlyFailure = yield* waitForUsageRefresh;
+        expect(afterCaseOnlyFailure?.auth.email).toBe("account-a@example.com");
+        expect(afterCaseOnlyFailure?.usageLimits).toEqual(accountALimits);
 
         // Missing email on unchanged credential fingerprint retains the previous email.
         const updatedALimits: ServerProviderUsageLimits = {
@@ -893,8 +908,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         };
         yield* Ref.set(usage, { limits: updatedALimits });
         const sameAccountWithoutEmail = yield* waitForUsageRefresh;
-        expect(sameAccountWithoutEmail.auth.email).toBe("account-a@example.com");
-        expect(sameAccountWithoutEmail.usageLimits).toEqual(updatedALimits);
+        expect(sameAccountWithoutEmail?.auth.email).toBe("account-a@example.com");
+        expect(sameAccountWithoutEmail?.usageLimits).toEqual(updatedALimits);
 
         // Quota-read failure for a different account must not retain account A's limits.
         const failedAccountBLimits: ServerProviderUsageLimits = {
@@ -908,8 +923,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           email: "account-b@example.com",
         });
         const afterFailedSwitch = yield* waitForUsageRefresh;
-        expect(afterFailedSwitch.auth.email).toBe("account-b@example.com");
-        expect(afterFailedSwitch.usageLimits).toEqual(failedAccountBLimits);
+        expect(afterFailedSwitch?.auth.email).toBe("account-b@example.com");
+        expect(afterFailedSwitch?.usageLimits).toEqual(failedAccountBLimits);
 
         // Successful read for another credential without email must not keep account B's email.
         const accountCLimits: ServerProviderUsageLimits = {
@@ -926,8 +941,8 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         };
         yield* Ref.set(usage, { limits: accountCLimits });
         const afterMissingEmailSwitch = yield* waitForUsageRefresh;
-        expect(afterMissingEmailSwitch.auth.email).toBeUndefined();
-        expect(afterMissingEmailSwitch.usageLimits).toEqual(accountCLimits);
+        expect(afterMissingEmailSwitch?.auth.email).toBeUndefined();
+        expect(afterMissingEmailSwitch?.usageLimits).toEqual(accountCLimits);
 
         // Quota-read failure with a newly discovered email that was not verified for fingerprint-c
         // must not retain fingerprint-c's limits.
@@ -941,8 +956,134 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           email: "account-d@example.com",
         });
         const afterUnverifiedEmailFailure = yield* waitForUsageRefresh;
-        expect(afterUnverifiedEmailFailure.auth.email).toBe("account-d@example.com");
-        expect(afterUnverifiedEmailFailure.usageLimits).toEqual(unverifiedFailedLimits);
+        expect(afterUnverifiedEmailFailure?.auth.email).toBe("account-d@example.com");
+        expect(afterUnverifiedEmailFailure?.usageLimits).toEqual(unverifiedFailedLimits);
+
+        // Every published snapshot must keep email and fingerprint from the same account.
+        const snapshots = yield* Ref.get(emitted);
+        for (const snapshot of snapshots) {
+          const email = snapshot.auth.email?.toLowerCase();
+          const fp = snapshot.usageLimits?.credentialFingerprint;
+          if (email === "account-a@example.com") expect(fp).toBe("fingerprint-a");
+          if (email === "account-b@example.com") expect(fp).toBe("fingerprint-b");
+          if (email === "account-d@example.com") expect(fp).toBeUndefined();
+          if (fp === "fingerprint-c") expect(email).toBeUndefined();
+        }
       }),
+  );
+
+  it.effect("keeps published email and usage limits from the same account during enrichment", () =>
+    Effect.gen(function* () {
+      const accountALimits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:00:00.000Z",
+        credentialFingerprint: "fingerprint-a",
+        windows: [
+          {
+            id: "3p-weekly",
+            kind: "weekly",
+            label: "Claude & GPT (shared) · Weekly",
+            usedPercent: 75,
+          },
+        ],
+      };
+      const accountBLimits: ServerProviderUsageLimits = {
+        checkedAt: "2026-10-09T12:05:00.000Z",
+        credentialFingerprint: "fingerprint-b",
+        windows: [
+          {
+            id: "3p-weekly",
+            kind: "weekly",
+            label: "Claude & GPT (shared) · Weekly",
+            usedPercent: 10,
+          },
+        ],
+      };
+      const usage = yield* Ref.make<AntigravityUsageProbeResult>({
+        limits: accountALimits,
+        email: "account-a@example.com",
+      });
+      const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
+      const emitted = yield* Ref.make<Array<ServerProvider>>([]);
+      yield* harness.provider.snapshot.streamChanges.pipe(
+        Stream.runForEach((snapshot) => Ref.update(emitted, (all) => [...all, snapshot])),
+        Effect.forkScoped,
+      );
+      yield* Effect.yieldNow;
+
+      const awaitPublish = (predicate: (snapshot: ServerProvider) => boolean) =>
+        Effect.gen(function* () {
+          const fiber = yield* harness.provider.snapshot.streamChanges.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkChild,
+          );
+          yield* Effect.yieldNow;
+          return Fiber.join(fiber).pipe(Effect.map((snapshots) => Array.from(snapshots)[0]));
+        });
+
+      const initialPublish = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
+      yield* harness.initialize;
+      const first = yield* initialPublish;
+      expect(first?.auth.email).toBe("account-a@example.com");
+      expect(first?.usageLimits).toEqual(accountALimits);
+
+      // Hold the republish health check after account B's usage probe finishes so enrichment runs
+      // while account A's usageLimits are still the published snapshot.
+      const checks = yield* Ref.make(0);
+      const republishEntered = yield* Deferred.make<void>();
+      const releaseRepublish = yield* Deferred.make<void>();
+      yield* Ref.set(
+        harness.probe,
+        Ref.updateAndGet(checks, (count) => count + 1).pipe(
+          Effect.flatMap((count) =>
+            count === 2
+              ? Deferred.succeed(republishEntered, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseRepublish)),
+                  Effect.as(initializeResult),
+                )
+              : Effect.succeed(initializeResult),
+          ),
+        ),
+      );
+      yield* Ref.set(usage, {
+        limits: accountBLimits,
+        email: "account-b@example.com",
+      });
+      yield* harness.provider.snapshot.refresh;
+      yield* Deferred.await(republishEntered);
+
+      // Trigger an enrichment publish while account B is already in metadata.draft but republish
+      // has not replaced the published limits yet.
+      const enrichedCommand = yield* awaitPublish((snapshot) => snapshot.slashCommands.length > 0);
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      const duringEnrichment = yield* enrichedCommand;
+      expect(duringEnrichment?.auth.email).toBe("account-a@example.com");
+      expect(duringEnrichment?.usageLimits).toEqual(accountALimits);
+
+      const accountBPublished = yield* awaitPublish(
+        (snapshot) => snapshot.usageLimits?.credentialFingerprint === "fingerprint-b",
+      );
+      yield* Deferred.succeed(releaseRepublish, undefined);
+      const finalSnapshot = yield* accountBPublished;
+      expect(finalSnapshot?.auth.email).toBe("account-b@example.com");
+      expect(finalSnapshot?.usageLimits).toEqual(accountBLimits);
+
+      const snapshots = yield* Ref.get(emitted);
+      expect(
+        snapshots.some(
+          (snapshot) =>
+            snapshot.auth.email === "account-b@example.com" &&
+            snapshot.usageLimits?.credentialFingerprint === "fingerprint-a",
+        ),
+      ).toBe(false);
+      expect(
+        snapshots.some(
+          (snapshot) =>
+            snapshot.auth.email === "account-a@example.com" &&
+            snapshot.usageLimits?.credentialFingerprint === "fingerprint-b",
+        ),
+      ).toBe(false);
+    }),
   );
 });

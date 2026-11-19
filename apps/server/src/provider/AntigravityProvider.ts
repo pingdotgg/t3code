@@ -244,18 +244,20 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             const { email: previousEmail, ...auth } = state.draft.auth;
             const previousLimits = state.draft.usageLimits;
             const previousFingerprint = previousLimits?.credentialFingerprint;
+            const previousEmailKey = previousEmail?.toLowerCase();
             const probedEmail = probed.email?.trim() || undefined;
+            const probedEmailKey = probedEmail?.toLowerCase();
             const probedFingerprint = probed.limits.credentialFingerprint;
             const fingerprintConflict =
               (probedFingerprint !== undefined || !probed.limits.unavailable) &&
               probedFingerprint !== previousFingerprint;
             const emailConflict =
-              probedEmail !== undefined &&
-              previousEmail !== undefined &&
-              probedEmail !== previousEmail;
+              probedEmailKey !== undefined &&
+              previousEmailKey !== undefined &&
+              probedEmailKey !== previousEmailKey;
             const sameFingerprint =
               probedFingerprint !== undefined && probedFingerprint === previousFingerprint;
-            const sameEmail = probedEmail !== undefined && probedEmail === previousEmail;
+            const sameEmail = probedEmailKey !== undefined && probedEmailKey === previousEmailKey;
             const transientFailureWithoutIdentity =
               probed.limits.unavailable?.reason === "probeFailed" &&
               probedFingerprint === undefined &&
@@ -390,10 +392,25 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
     haveSettingsChanged: () => false,
     initialSnapshot: () => getSnapshot,
     checkProvider: checkProvider(),
-    enrichSnapshot: ({ publishSnapshot }) =>
+    enrichSnapshot: ({ getSnapshot: getPublished, publishSnapshot }) =>
       SubscriptionRef.changes(metadata).pipe(
         Stream.runForEach((state) =>
-          options.stampIdentity(state.draft).pipe(Effect.flatMap(publishSnapshot)),
+          Effect.gen(function* () {
+            const published = yield* getPublished;
+            // publishEnrichedSnapshot keeps the published usageLimits; align auth.email to that
+            // same snapshot so a different-account usage read never publishes a mixed identity.
+            const draft =
+              state.draft.auth.status === "unauthenticated"
+                ? state.draft
+                : (() => {
+                    const { email: _draftEmail, ...auth } = state.draft.auth;
+                    return {
+                      ...state.draft,
+                      auth: published.auth.email ? { ...auth, email: published.auth.email } : auth,
+                    };
+                  })();
+            yield* options.stampIdentity(draft).pipe(Effect.flatMap(publishSnapshot));
+          }),
         ),
       ),
   });

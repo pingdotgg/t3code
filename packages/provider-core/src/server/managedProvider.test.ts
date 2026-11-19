@@ -1029,4 +1029,92 @@ describe("makeManagedServerProvider", () => {
       }),
     ).pipe(Effect.provide(layerAlwaysRunTest)),
   );
+
+  it.effect(
+    "does not retain fingerprinted limits across a failed probe with a different fingerprint or unverified email",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const accountALimits = {
+            checkedAt: "2026-04-10T00:00:01.000Z",
+            credentialFingerprint: "fp-a",
+            windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 30 }],
+          } as const;
+          const probeSnapshot = yield* Ref.make<ServerProvider>({
+            ...refreshedSnapshot,
+            auth: { status: "authenticated" },
+            usageLimits: accountALimits,
+          });
+          const provider = yield* makeManagedServerProvider<TestSettings>({
+            resolveMaintenance: () => Effect.succeed(maintenanceCapabilities),
+            getSettings: Effect.succeed({ enabled: true }),
+            streamSettings: Stream.empty,
+            haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
+            checkProvider: Ref.get(probeSnapshot),
+            refreshOnInterval: false,
+          });
+          yield* Stream.take(provider.streamChanges, 1).pipe(Stream.runDrain);
+
+          // Same fingerprint with newly discovered email verifies identity and retains limits.
+          const sameFpFailed = {
+            checkedAt: "2026-04-10T00:00:02.000Z",
+            credentialFingerprint: "fp-a",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          } as const;
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated", email: "a@example.com" },
+            usageLimits: sameFpFailed,
+          });
+          const verified = yield* provider.refresh;
+          assert.strictEqual(verified.auth.email, "a@example.com");
+          assert.deepStrictEqual(verified.usageLimits, accountALimits);
+
+          // Different fingerprint without email must not retain account A's limits.
+          const otherFpFailed = {
+            checkedAt: "2026-04-10T00:00:03.000Z",
+            credentialFingerprint: "fp-b",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          } as const;
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated" },
+            usageLimits: otherFpFailed,
+          });
+          const switchedFp = yield* provider.refresh;
+          assert.strictEqual(switchedFp.auth.email, undefined);
+          assert.deepStrictEqual(switchedFp.usageLimits, otherFpFailed);
+
+          // Publish a fingerprinted account without email, then fail with an unverified email.
+          const accountCLimits = {
+            checkedAt: "2026-04-10T00:00:04.000Z",
+            credentialFingerprint: "fp-c",
+            windows: [{ id: "primary", kind: "session", label: "Session", usedPercent: 50 }],
+          } as const;
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated" },
+            usageLimits: accountCLimits,
+          });
+          assert.deepStrictEqual((yield* provider.refresh).usageLimits, accountCLimits);
+
+          const unverifiedFailed = {
+            checkedAt: "2026-04-10T00:00:05.000Z",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          } as const;
+          yield* Ref.set(probeSnapshot, {
+            ...refreshedSnapshot,
+            auth: { status: "authenticated", email: "d@example.com" },
+            usageLimits: unverifiedFailed,
+          });
+          const unverified = yield* provider.refresh;
+          assert.strictEqual(unverified.auth.email, "d@example.com");
+          assert.deepStrictEqual(unverified.usageLimits, unverifiedFailed);
+        }),
+      ).pipe(Effect.provide(layerAlwaysRunTest)),
+  );
 });
