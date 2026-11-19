@@ -73,6 +73,13 @@ export function resolveCloudPublicConfig(extra: ExpoExtra = Constants.expoConfig
   } satisfies CloudPublicConfig;
 }
 
+/** The build's hosted app: `null` when the build has none (`""`), undefined for the default. */
+export function resolveHostedAppUrl(
+  extra: { readonly hostedAppUrl?: unknown } | undefined = Constants.expoConfig?.extra,
+): string | null | undefined {
+  return extra?.hostedAppUrl === "" ? null : (normalizeSecureUrl(extra?.hostedAppUrl) ?? undefined);
+}
+
 export function hasCloudPublicConfig(): boolean {
   const config = resolveCloudPublicConfig();
   return Boolean(config.clerk.publishableKey && config.clerk.jwtTemplate && config.relay.url);

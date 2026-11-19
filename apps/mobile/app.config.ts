@@ -11,6 +11,14 @@ Object.assign(process.env, repoEnv);
 process.env.EXPO_NO_TYPESCRIPT_SETUP = "1";
 
 const APP_VARIANT = resolveAppVariant(repoEnv.APP_VARIANT);
+// Standalone builds use only the fork's own Expo project and hosted app; unset means none.
+const isStandaloneBuild = repoEnv.T3CODE_STANDALONE === "1";
+const easProjectId =
+  repoEnv.T3CODE_EAS_PROJECT_ID?.trim() ||
+  (isStandaloneBuild ? undefined : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
+const easOwner = repoEnv.T3CODE_EAS_OWNER?.trim() || (isStandaloneBuild ? undefined : "pingdotgg");
+const hostedAppUrl =
+  repoEnv.T3CODE_HOSTED_APP_URL?.trim() || (isStandaloneBuild ? undefined : "https://app.t3.codes");
 const isIosPersonalTeamBuild = repoEnv.T3CODE_IOS_PERSONAL_TEAM === "1";
 const runtimeVersionPolicy =
   process.env.MOBILE_VERSION_POLICY ??
@@ -118,8 +126,8 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
-// Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
+// Copied thread links open the app. The hosted app's /.well-known lists every variant's identifiers.
+const hostedAppHost = hostedAppUrl ? new URL(hostedAppUrl).host : undefined;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -246,8 +254,8 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
-    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
-    url: "https://u.expo.dev/d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+    enabled: repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0" && easProjectId !== undefined,
+    ...(easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : {}),
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -259,9 +267,11 @@ const config: ExpoConfig = {
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
     appleTeamId: "ARK85ZXQ4Z",
     associatedDomains: [
-      `applinks:${variant.relyingParty}`,
-      `webcredentials:${variant.relyingParty}`,
-      `applinks:${HOSTED_APP_HOST}`,
+      // T3's Clerk passkey domain; a standalone build has no relying party of its own yet.
+      ...(isStandaloneBuild
+        ? []
+        : [`applinks:${variant.relyingParty}`, `webcredentials:${variant.relyingParty}`]),
+      ...(hostedAppHost ? [`applinks:${hostedAppHost}`] : []),
     ],
     entitlements: {
       "keychain-access-groups": [`$(AppIdentifierPrefix)${variant.iosBundleIdentifier}`],
@@ -314,14 +324,16 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
+    intentFilters: hostedAppHost
+      ? [
+          {
+            action: "VIEW",
+            autoVerify: true,
+            data: [{ scheme: "https", host: hostedAppHost, pathPrefix: "/threads/" }],
+            category: ["BROWSABLE", "DEFAULT"],
+          },
+        ]
+      : [],
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -470,6 +482,9 @@ const config: ExpoConfig = {
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    standalone: isStandaloneBuild,
+    // Empty means no hosted app: the manifest turns null into {}.
+    hostedAppUrl: hostedAppUrl ?? "",
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },
@@ -488,11 +503,11 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
-      projectId: "d763fcb8-d37c-41ea-a773-b54a0ab4a454",
+      ...(easProjectId ? { projectId: easProjectId } : {}),
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
-  owner: "pingdotgg",
+  ...(easOwner ? { owner: easOwner } : {}),
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,

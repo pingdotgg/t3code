@@ -6,7 +6,16 @@ import assetLinks from "../web/public/.well-known/assetlinks.json";
 
 // Keep config parsing independent of local env files and build credentials.
 vi.mock("../../scripts/lib/public-config.ts", () => ({
-  loadRepoEnv: () => ({ APP_VARIANT: process.env.APP_VARIANT }),
+  // app.config copies these into process.env, so an unset key must stay absent, not "undefined".
+  loadRepoEnv: () =>
+    Object.fromEntries(
+      [
+        "APP_VARIANT",
+        "T3CODE_STANDALONE",
+        "T3CODE_EAS_PROJECT_ID",
+        "T3CODE_HOSTED_APP_URL",
+      ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, process.env[key]]])),
+    ),
 }));
 
 afterEach(() => {
@@ -44,4 +53,30 @@ it.each([
     { scheme: "https", host, pathPrefix: "/threads/" },
   ]);
   expect(assetLinks.map((link) => link.target.package_name)).toContain(identifier);
+});
+
+it("keeps T3's Expo project, owner, and hosted app out of a standalone build", async () => {
+  vi.stubEnv("T3CODE_STANDALONE", "1");
+  const config = await loadConfig("production");
+  expect(config.updates).toMatchObject({ enabled: false });
+  expect(config.updates?.url).toBeUndefined();
+  expect(config.owner).toBeUndefined();
+  expect(config.extra?.eas?.projectId).toBeUndefined();
+  expect(config.extra?.hostedAppUrl).toBe("");
+  expect(config.ios?.associatedDomains).toEqual([]);
+  expect(config.android?.intentFilters).toEqual([]);
+  expect(JSON.stringify(config)).not.toMatch(/t3\.codes|d763fcb8|pingdotgg/);
+});
+
+it("uses the fork's own Expo project and hosted app in a standalone build", async () => {
+  vi.stubEnv("T3CODE_STANDALONE", "1");
+  vi.stubEnv("T3CODE_EAS_PROJECT_ID", "fork-project");
+  vi.stubEnv("T3CODE_HOSTED_APP_URL", "https://app.fork.example");
+  const config = await loadConfig("production");
+  expect(config.updates).toMatchObject({ enabled: true, url: "https://u.expo.dev/fork-project" });
+  expect(config.extra?.eas?.projectId).toBe("fork-project");
+  expect(config.ios?.associatedDomains).toEqual(["applinks:app.fork.example"]);
+  expect(config.android?.intentFilters?.[0]?.data).toEqual([
+    { scheme: "https", host: "app.fork.example", pathPrefix: "/threads/" },
+  ]);
 });

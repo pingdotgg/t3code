@@ -1,30 +1,39 @@
+import Constants from "expo-constants";
+
 const DEFAULT_MARKETING_SITE_URL = "https://t3.codes";
 
-function resolveMarketingSiteUrl(override: string | undefined): URL {
+/** A standalone build shows legal documents only from its own site; T3's describe T3's services. */
+export function resolveMarketingSiteUrl(
+  override: string | undefined,
+  standalone: boolean,
+): URL | null {
+  const fallback = standalone ? null : new URL(DEFAULT_MARKETING_SITE_URL);
   try {
-    const url = new URL(override?.trim() || DEFAULT_MARKETING_SITE_URL);
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      return new URL(DEFAULT_MARKETING_SITE_URL);
-    }
+    const url = new URL(override?.trim() ?? "");
+    if (url.protocol !== "https:" && url.protocol !== "http:") return fallback;
 
     url.search = "";
     url.hash = "";
     url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
     return url;
   } catch {
-    return new URL(DEFAULT_MARKETING_SITE_URL);
+    return fallback;
   }
 }
 
-const MARKETING_SITE_URL = resolveMarketingSiteUrl(process.env.EXPO_PUBLIC_MARKETING_SITE_URL);
+const MARKETING_SITE_URL = resolveMarketingSiteUrl(
+  process.env.EXPO_PUBLIC_MARKETING_SITE_URL,
+  Constants.expoConfig?.extra?.standalone === true,
+);
 
-function marketingSiteDocumentUrl(path: string): string {
-  return new URL(path, MARKETING_SITE_URL).toString();
+function marketingSiteDocumentUrl(path: string): string | null {
+  return MARKETING_SITE_URL && new URL(path, MARKETING_SITE_URL).toString();
 }
 
 const PRIVACY_POLICY_URL = marketingSiteDocumentUrl("privacy-policy");
 const SECURITY_POLICY_URL = marketingSiteDocumentUrl("security-policy");
 const TERMS_OF_SERVICE_URL = marketingSiteDocumentUrl("terms-of-service");
+/** Null when this build has no legal documents to show. */
 export const LEGAL_URL = marketingSiteDocumentUrl("legal");
 
 const ALLOWED_LEGAL_DOCUMENT_URLS = [
@@ -47,7 +56,7 @@ function webDocumentIdentity(value: string): string | null {
 }
 
 const ALLOWED_LEGAL_DOCUMENT_IDENTITIES = new Set(
-  ALLOWED_LEGAL_DOCUMENT_URLS.map(webDocumentIdentity).filter(
+  ALLOWED_LEGAL_DOCUMENT_URLS.map((url) => url && webDocumentIdentity(url)).filter(
     (value): value is string => value !== null,
   ),
 );

@@ -15,6 +15,7 @@ export interface T3CodePublicConfig {
   readonly relayClientOtlpTracesUrl: string | undefined;
   readonly relayClientOtlpTracesDataset: string | undefined;
   readonly relayClientOtlpTracesToken: string | undefined;
+  readonly hostedAppUrl: string | undefined;
 }
 
 type Environment = Readonly<Record<string, string | undefined>>;
@@ -31,6 +32,10 @@ export function loadRepoEnv({
   const rootEnv = readEnvFile(NodePath.join(repoRoot, ".env"));
   const localEnv = readEnvFile(NodePath.join(repoRoot, ".env.local"));
   const config = resolvePublicConfig(baseEnv, localEnv, rootEnv);
+  const standalone = isStandaloneBuild(baseEnv, localEnv, rootEnv);
+  if (standalone) {
+    assertStandaloneConfig(config, baseEnv, localEnv, rootEnv);
+  }
 
   return {
     ...rootEnv,
@@ -98,7 +103,64 @@ export function loadRepoEnv({
           VITE_RELAY_OTLP_TRACES_TOKEN: config.relayClientOtlpTracesToken,
         }
       : {}),
+    ...(config.hostedAppUrl
+      ? { T3CODE_HOSTED_APP_URL: config.hostedAppUrl, VITE_HOSTED_APP_URL: config.hostedAppUrl }
+      : {}),
+    ...(standalone ? { T3CODE_STANDALONE: "1" } : {}),
   };
+}
+
+const UPSTREAM_EAS_PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
+const T3_OPERATED_DOMAINS = ["t3.codes", "t3.chat"];
+
+function isStandaloneBuild(...sources: readonly Environment[]) {
+  const value = firstNonEmpty(sources, "T3CODE_STANDALONE")?.toLowerCase();
+  return value === "1" || value === "true";
+}
+
+export function isT3OperatedUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return (
+      T3_OPERATED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`)) ||
+      (host === "u.expo.dev" && url.pathname.includes(UPSTREAM_EAS_PROJECT_ID))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** A standalone build must not bake in, or send users to, a service T3 operates. */
+function assertStandaloneConfig(config: T3CodePublicConfig, ...sources: readonly Environment[]) {
+  const urls: Record<string, string | undefined> = {
+    T3CODE_RELAY_URL: config.relayUrl,
+    T3CODE_MOBILE_OTLP_TRACES_URL: config.mobileOtlpTracesUrl,
+    T3CODE_RELAY_CLIENT_OTLP_TRACES_URL: config.relayClientOtlpTracesUrl,
+    T3CODE_HOSTED_APP_URL: config.hostedAppUrl,
+    EXPO_PUBLIC_MARKETING_SITE_URL: firstNonEmpty(sources, "EXPO_PUBLIC_MARKETING_SITE_URL"),
+  };
+  for (const [name, value] of Object.entries(urls)) {
+    if (value && isT3OperatedUrl(value)) {
+      throw new Error(`T3CODE_STANDALONE=1 does not allow ${name} to point at ${value}.`);
+    }
+  }
+  if (firstNonEmpty(sources, "T3CODE_EAS_PROJECT_ID") === UPSTREAM_EAS_PROJECT_ID) {
+    throw new Error("T3CODE_STANDALONE=1 needs your own T3CODE_EAS_PROJECT_ID, not T3's.");
+  }
+  const repository = firstNonEmpty(
+    sources,
+    "T3CODE_DESKTOP_UPDATE_REPOSITORY",
+    "GITHUB_REPOSITORY",
+  );
+  if (!repository || !/^[\w.-]+\/[\w.-]+$/.test(repository)) {
+    throw new Error(
+      "T3CODE_STANDALONE=1 needs T3CODE_DESKTOP_UPDATE_REPOSITORY (or GITHUB_REPOSITORY) set to your fork's owner/repo.",
+    );
+  }
+  if (repository.split("/")[0]!.toLowerCase() === "pingdotgg") {
+    throw new Error(`T3CODE_STANDALONE=1 does not allow the release repository ${repository}.`);
+  }
 }
 
 function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicConfig {
@@ -151,6 +213,7 @@ function resolvePublicConfig(...sources: readonly Environment[]): T3CodePublicCo
       "T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN",
       "VITE_RELAY_OTLP_TRACES_TOKEN",
     ),
+    hostedAppUrl: firstNonEmpty(sources, "T3CODE_HOSTED_APP_URL", "VITE_HOSTED_APP_URL"),
   };
 }
 

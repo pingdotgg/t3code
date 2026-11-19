@@ -8,6 +8,8 @@ import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import { standaloneBuildDefine } from "../../scripts/lib/standalone-build.ts";
 
 const repoEnv = loadRepoEnv();
+const releaseRepository =
+  repoEnv.T3CODE_DESKTOP_UPDATE_REPOSITORY?.trim() || repoEnv.GITHUB_REPOSITORY?.trim();
 const domTests = ["src/preview/PickPreload.test.ts"];
 
 // Install only bundle externals; the server bundle already carries its dependency tree.
@@ -25,7 +27,12 @@ const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
   ),
-  // SSH remote setup downloads the CLI from the release repository this sets.
+  // The repository whose releases feed updates; recovery links and SSH CLI downloads use it too.
+  // Omitted when unset so shared code falls back to the official repository instead of "".
+  ...(releaseRepository
+    ? { __T3CODE_BUILD_RELEASE_REPOSITORY__: JSON.stringify(releaseRepository) }
+    : {}),
+  // Standalone builds validate the fork repository and override the value above.
   ...standaloneBuildDefine(repoEnv),
 };
 

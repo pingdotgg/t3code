@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { resolveCloudPublicConfig } from "./publicConfig";
+import { resolveCloudPublicConfig, resolveHostedAppUrl } from "./publicConfig";
 
 vi.mock("expo-constants", () => ({
   default: {
@@ -31,5 +31,17 @@ describe("resolveCloudPublicConfig", () => {
         tracesToken: null,
       },
     });
+  });
+});
+
+describe("resolveHostedAppUrl", () => {
+  it.each([
+    [{ hostedAppUrl: "https://app.fork.example" }, "https://app.fork.example/"],
+    // A standalone build without a hosted app; the manifest cannot carry null.
+    [{ hostedAppUrl: "" }, null],
+    [{}, undefined],
+    [undefined, undefined],
+  ])("resolves %j to %j", (extra, expected) => {
+    expect(resolveHostedAppUrl(extra)).toBe(expected);
   });
 });
