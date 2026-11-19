@@ -41,6 +41,10 @@ import {
   LiveActivityEnvironmentUpdateError,
   setLiveActivityUpdatesEnabled,
 } from "../agent-awareness/liveActivityPreferences";
+import {
+  isDirectApnsRegistered,
+  subscribeDirectApnsRegistered,
+} from "../agent-awareness/directApnsRegistration";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
   agentAwarenessNotificationsReady,
@@ -182,6 +186,10 @@ function useNotificationsReady(): boolean {
   );
 }
 
+function useDirectPushRegistered(): boolean {
+  return useSyncExternalStore(subscribeDirectApnsRegistered, isDirectApnsRegistered, () => false);
+}
+
 export function SettingsNotificationsRouteScreen() {
   const gt = useGT();
   if (!hasCloudPublicConfig()) {
@@ -237,7 +245,10 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     setLiveActivityOverride({ status, basis: liveActivityBasis });
   const liveActivityWriteInFlight = useRef(false);
   const deviceRegistered = useDeviceRegistered();
-  const notificationsReady = useNotificationsReady();
+  const relayNotificationsReady = useNotificationsReady();
+  // Device notifications work through a T3 server alone, so a signed-out device counts.
+  const directPushRegistered = useDirectPushRegistered();
+  const notificationsReady = relayNotificationsReady || directPushRegistered;
   const liveActivitiesPreferenceEnabled = AsyncResult.isSuccess(preferencesResult)
     ? preferencesResult.value.liveActivitiesEnabled !== false
     : true;
@@ -272,11 +283,11 @@ function ConfiguredSettingsNotificationsRouteScreen() {
     }
     if (result.value.type === "granted") {
       setNotificationStatus("enabled");
-      if (!agentAwarenessNotificationsReady()) {
+      if (!agentAwarenessNotificationsReady() && !isDirectApnsRegistered()) {
         Dialog.alert(
           gt("Couldn't finish enabling notifications"),
           gt(
-            "Notification access was granted, but this device could not be registered with {product}. Notifications will start once registration succeeds.",
+            "Notification access was granted, but this device could not be registered with a connected server or {product}. Add an environment and notifications will start once registration succeeds.",
             { product: "T3 Connect" },
           ),
         );
@@ -444,10 +455,6 @@ function ConfiguredSettingsNotificationsRouteScreen() {
 
   const handleDeviceNotificationsChange = (enabled: boolean) => {
     if (enabled) {
-      if (!isSignedIn) {
-        promptSignIn();
-        return;
-      }
       void requestNotifications();
       return;
     }

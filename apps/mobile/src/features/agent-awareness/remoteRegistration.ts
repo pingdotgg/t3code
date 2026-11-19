@@ -51,6 +51,7 @@ import {
 } from "./agentLiveActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
+import { registerDirectApnsDevice } from "./directApnsRegistration";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
@@ -217,10 +218,6 @@ export function setAgentAwarenessRelayTokenProvider(
   relayTokenProviderIdentity = provider ? (identity ?? null) : null;
   if (!provider) {
     clearAndroidAgentNotifications();
-    pushTokenSubscription?.remove();
-    pushTokenSubscription = null;
-    appStateSubscription?.remove();
-    appStateSubscription = null;
     if (activeLiveActivityRegistrationRetry) {
       clearTimeout(activeLiveActivityRegistrationRetry);
       activeLiveActivityRegistrationRetry = null;
@@ -232,6 +229,11 @@ export function setAgentAwarenessRelayTokenProvider(
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
       logRegistrationError("clear registration record on sign-out failed", error);
     });
+    // Direct server push keeps working signed out: keep the token and foreground
+    // triggers, and register now.
+    ensurePushTokenListener();
+    ensureAppStateListener();
+    enqueueDeviceRegistration({}, "device registration after cloud sign-out failed");
     return;
   }
   ensurePushTokenListener();
@@ -732,31 +734,36 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     Platform.OS === "android"
       ? Constants.expoConfig?.android?.package?.trim()
       : Constants.expoConfig?.ios?.bundleIdentifier?.trim();
-  yield* registerDeviceWithRelay(
-    makeRelayDeviceRegistrationRequest({
-      deviceId,
-      label:
-        Constants.deviceName?.trim() ||
-        // oxlint-disable-next-line t3code/no-untranslated-copy -- device label stored on the relay and shown to every client
-        (Platform.OS === "android" ? "Android device" : "iOS device"),
-      ...(Platform.OS === "android"
-        ? {
-            platform: "android" as const,
-            androidApiLevel: Number(Platform.Version),
-            notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
-          }
-        : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
-      appVersion: Constants.expoConfig?.version,
-      ...(bundleId ? { bundleId } : {}),
-      ...(Platform.OS === "ios"
-        ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
-        : {}),
-      ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
-      notificationsEnabled: pushTokenRegistration.notificationsEnabled,
-      preferences,
-    }),
-    expectedGeneration,
-  );
+  const request = makeRelayDeviceRegistrationRequest({
+    deviceId,
+    label:
+      Constants.deviceName?.trim() ||
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- device label stored on the relay and shown to every client
+      (Platform.OS === "android" ? "Android device" : "iOS device"),
+    ...(Platform.OS === "android"
+      ? {
+          platform: "android" as const,
+          androidApiLevel: Number(Platform.Version),
+          notificationPermissionGranted: pushTokenRegistration.notificationPermissionGranted,
+        }
+      : { platform: "ios" as const, iosMajorVersion: iosMajorVersion() }),
+    appVersion: Constants.expoConfig?.version,
+    ...(bundleId ? { bundleId } : {}),
+    ...(Platform.OS === "ios"
+      ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
+      : {}),
+    ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
+    notificationsEnabled: pushTokenRegistration.notificationsEnabled,
+    preferences,
+  });
+  // Direct server push needs no T3 Connect sign-in. Each side's failure is
+  // contained: the direct one is logged, the relay one is rethrown after both ran.
+  const direct = registerDirectApnsDevice(request).catch((error: unknown) => {
+    logRegistrationError("direct push registration failed", error);
+  });
+  const relayExit = yield* Effect.exit(registerDeviceWithRelay(request, expectedGeneration));
+  yield* Effect.promise(() => direct);
+  return yield* relayExit;
 });
 
 function registerDeviceForCurrentUser(): Effect.Effect<
@@ -796,6 +803,7 @@ function ensureAppStateListener(): void {
       return;
     }
     enqueueDeviceRegistration({}, "device registration after app foreground failed");
+    if (!relayTokenProvider) return;
     runRegistrationInBackground(
       refreshActiveLiveActivityRemoteRegistration(),
       "active live activity reconciliation after app foreground failed",
@@ -842,6 +850,8 @@ export function refreshAgentAwarenessRegistration(): Effect.Effect<
   never,
   ManagedRelay.ManagedRelayClient
 > {
+  ensurePushTokenListener();
+  ensureAppStateListener();
   return registerDeviceForCurrentUser().pipe(
     Effect.catch((error) =>
       Effect.sync(() => {

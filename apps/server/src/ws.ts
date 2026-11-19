@@ -259,6 +259,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
 import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
+import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
 import * as TextGenerators from "./textGeneration/TextGenerators.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
@@ -1583,6 +1584,7 @@ export const layerWsRpc = (
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
       const secretCheck = yield* SecretCheck.SecretCheck;
       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
+      const directApnsDevices = yield* DirectApnsDevices.DirectApnsDevices;
       const textGenerators = yield* TextGenerators.TextGenerators;
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -2742,6 +2744,20 @@ export const layerWsRpc = (
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
+        [WS_METHODS.notificationsRegisterDevice]: (input) =>
+          directApnsDevices.register(input).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("push device registration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
+        [WS_METHODS.notificationsUnregisterDevice]: (input) =>
+          directApnsDevices.unregister(input.deviceId).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("push device unregistration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);
