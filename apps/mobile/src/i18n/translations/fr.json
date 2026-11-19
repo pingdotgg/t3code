@@ -3600,6 +3600,8 @@
   "006f2c2416a56768": "Navigateur d’aperçu",
   "19e1f74805f4a1fb": "Accès des agents au navigateur",
   "74d09db9719594eb": "Autorise les agents à utiliser le navigateur d’aperçu intégré.",
+  "5511e975ba69f726": "Ordinateur",
+  "53d1d96a2699764a": "Autorise les agents à utiliser les apps des ordinateurs des environnements sélectionnés via Cua Driver. Sous macOS, accordez l’Accessibilité et l’Enregistrement de l’écran sur chaque hôte.",
   "13087312bc6a0b45": "Pull requests",
   "efb65f53a2382026": "Retirer les crédits d’agent lors de la fusion",
   "88631d9ea293eccd": "Retire les crédits d’agent reconnus des messages de fusion et de squash sur les hébergeurs qui le permettent, en gardant les co-auteurs humains. Inclut la fusion automatique. Exclut les files de fusion, les fusions de pile et les commits existants.",

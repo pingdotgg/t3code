@@ -3606,6 +3606,8 @@
   "006f2c2416a56768": "Förhandsvisningswebbläsare",
   "19e1f74805f4a1fb": "Agenters webbläsaråtkomst",
   "74d09db9719594eb": "Låt agenter använda förhandsvisningswebbläsaren i appen.",
+  "5511e975ba69f726": "Dator",
+  "53d1d96a2699764a": "Låt agenter använda appar på de valda miljöernas datorer via Cua Driver. På macOS, ge Tillgänglighet och Skärminspelning på varje värd.",
   "13087312bc6a0b45": "Pull requests",
   "efb65f53a2382026": "Ta bort agentmedförfattare vid merge",
   "88631d9ea293eccd": "Ta bort igenkända agentmedförfattare från merge- och squash-meddelanden hos värdar som stöder det, och behåll mänskliga medförfattare. Gäller även automatisk merge. Gäller inte merge-köer, stack-merges och befintliga commits.",

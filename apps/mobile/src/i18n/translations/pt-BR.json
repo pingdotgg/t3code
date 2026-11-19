@@ -3600,6 +3600,8 @@
   "006f2c2416a56768": "Navegador de pré-visualização",
   "19e1f74805f4a1fb": "Acesso dos agentes ao navegador",
   "74d09db9719594eb": "Permite que os agentes usem o navegador de pré-visualização do app.",
+  "5511e975ba69f726": "Computador",
+  "53d1d96a2699764a": "Permite que agentes usem apps nos computadores dos ambientes selecionados pelo Cua Driver. No macOS, conceda Acessibilidade e Gravação de Tela em cada host.",
   "13087312bc6a0b45": "Pull requests",
   "efb65f53a2382026": "Remover créditos de agentes ao mesclar",
   "88631d9ea293eccd": "Remove os créditos de agentes reconhecidos das mensagens de merge e squash nos hosts que oferecem suporte, mantendo os coautores humanos. Inclui o auto-merge. Exclui merge queues, merges de stack e commits existentes.",

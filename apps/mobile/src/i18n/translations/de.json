@@ -3605,6 +3605,8 @@
   "006f2c2416a56768": "Vorschau-Browser",
   "19e1f74805f4a1fb": "Browserzugriff für Agenten",
   "74d09db9719594eb": "Agenten den In-App-Vorschau-Browser nutzen lassen.",
+  "5511e975ba69f726": "Computer",
+  "53d1d96a2699764a": "Agenten über Cua Driver Apps auf den Computern der ausgewählten Umgebungen nutzen lassen. Erteile unter macOS auf jedem Host Barrierefreiheit und Bildschirmaufnahme.",
   "13087312bc6a0b45": "Pull Requests",
   "efb65f53a2382026": "Agenten-Credits beim Mergen entfernen",
   "88631d9ea293eccd": "Erkannte Agenten-Credits aus Merge- und Squash-Nachrichten entfernen, sofern der Host das unterstützt; menschliche Co-Autoren bleiben erhalten. Gilt auch für Auto-Merge. Ausgenommen sind Merge-Queues, Stack-Merges und bestehende Commits.",

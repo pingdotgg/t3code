@@ -3600,6 +3600,8 @@
   "006f2c2416a56768": "Navegador de vista previa",
   "19e1f74805f4a1fb": "Acceso de agentes al navegador",
   "74d09db9719594eb": "Permite que los agentes usen el navegador de vista previa de la app.",
+  "5511e975ba69f726": "Ordenador",
+  "53d1d96a2699764a": "Permite que los agentes usen apps en los ordenadores de los entornos seleccionados mediante Cua Driver. En macOS, concede Accesibilidad y Grabación de pantalla en cada host.",
   "13087312bc6a0b45": "Pull requests",
   "efb65f53a2382026": "Quitar créditos de agentes al fusionar",
   "88631d9ea293eccd": "Quita los créditos de agentes reconocidos de los mensajes de fusión y squash en los hosts compatibles, manteniendo a los coautores humanos. Incluye la fusión automática. Excluye las colas de fusión, las fusiones de pilas y los commits existentes.",
