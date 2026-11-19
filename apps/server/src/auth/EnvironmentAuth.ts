@@ -560,10 +560,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly approveConnectDeviceByCode: (
       verificationCode: string,
     ) => Effect.Effect<boolean, ServerAuthInternalError>;
-    /** Revokes the one trusted device that shows this code; two that share it are ambiguous. */
-    readonly revokeConnectDeviceByCode: (
+    /** Trusted devices that show this code; more than one is ambiguous. */
+    readonly connectDevicesShowingCode: (
       verificationCode: string,
-    ) => Effect.Effect<"revoked" | "not-found" | "ambiguous", ServerAuthInternalError>;
+    ) => Effect.Effect<ReadonlyArray<AuthConnectDevice>, ServerAuthInternalError>;
     readonly listConnectDevices: () => Effect.Effect<
       ReadonlyArray<AuthConnectDevice>,
       ServerAuthInternalError
@@ -1315,16 +1315,12 @@ export const make = Effect.gen(function* () {
     }).pipe(connectTrustLock.withPermits(1));
   });
 
-  const revokeConnectDeviceByCode: EnvironmentAuth["Service"]["revokeConnectDeviceByCode"] =
-    Effect.fn("EnvironmentAuth.revokeConnectDeviceByCode")(function* (verificationCode) {
+  const connectDevicesShowingCode: EnvironmentAuth["Service"]["connectDevicesShowingCode"] =
+    Effect.fn("EnvironmentAuth.connectDevicesShowingCode")(function* (verificationCode) {
       const wanted = normalizeVerificationCode(verificationCode);
-      const matches = (yield* listConnectDevices()).filter(
+      return (yield* listConnectDevices()).filter(
         (device) => normalizeVerificationCode(device.verificationCode) === wanted,
       );
-      if (matches.length === 0) return "not-found" as const;
-      if (matches.length > 1) return "ambiguous" as const;
-      yield* revokeConnectDevice(matches[0]!.proofKeyThumbprint);
-      return "revoked" as const;
     });
 
   const issueSession: EnvironmentAuth["Service"]["issueSession"] = (input) =>
@@ -1658,7 +1654,7 @@ export const make = Effect.gen(function* () {
     approveConnectDeviceByCode,
     listConnectDevices,
     revokeConnectDevice,
-    revokeConnectDeviceByCode,
+    connectDevicesShowingCode,
     issuePairingCredential,
     issueStartupPairingCredential,
     listPairingLinks,

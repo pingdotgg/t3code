@@ -691,6 +691,61 @@ describe("t3 pair", () => {
   );
 });
 
+describe("auth session revoke", () => {
+  it.effect.each([
+    { server: "answers", label: "goes through a running server, which closes open connections" },
+    { server: "absent", label: "writes the database when no server runs" },
+    { server: "silent", label: "writes the database when the running server does not answer" },
+  ] as const)("$label", ({ server }) =>
+    provideCliTestLayers(
+      Effect.gen(function* () {
+        const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-cli-revoke-test-"));
+        const issued = JSON.parse(
+          yield* captureStdout(
+            runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
+          ),
+        ) as { readonly sessionId: string };
+        if (server !== "absent") {
+          yield* persistServerRuntimeState({
+            path: NodePath.join(baseDir, "userdata", "server-runtime.json"),
+            state: { ...baseState, pid: process.pid },
+          });
+        }
+        const requests: Array<{ readonly path: string; readonly body: unknown }> = [];
+        yield* runCli(["auth", "session", "revoke", "--base-dir", baseDir, issued.sessionId]).pipe(
+          Effect.provideService(FetchHttpClient.Fetch, async (input, init) => {
+            if (server === "silent") return new Response(null, { status: 502 });
+            requests.push({
+              path: new URL(String(input)).pathname,
+              body: JSON.parse(String(init?.body)),
+            });
+            return Response.json({ revoked: true });
+          }),
+        );
+        const listed = JSON.parse(
+          yield* captureStdout(
+            runCli(["auth", "session", "list", "--base-dir", baseDir, "--json"]),
+          ),
+        ) as ReadonlyArray<{ readonly sessionId: string }>;
+
+        if (server === "answers") {
+          assert.deepEqual(requests, [
+            { path: "/api/auth/clients/revoke", body: { sessionId: issued.sessionId } },
+          ]);
+          // The fake server revoked nothing; the CLI's own short-lived session is gone.
+          assert.deepEqual(
+            listed.map((session) => session.sessionId),
+            [issued.sessionId],
+          );
+        } else {
+          assert.deepEqual(requests, []);
+          assert.deepEqual(listed, []);
+        }
+      }),
+    ),
+  );
+});
+
 describe("auth scope options", () => {
   it.effect.each([
     { group: "pairing", action: "create" },
