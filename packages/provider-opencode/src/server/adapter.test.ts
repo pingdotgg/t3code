@@ -1126,14 +1126,47 @@ describe("OpenCodeAdapterV2", () => {
       );
       yield* Effect.promise(() => nativeEvents.push(status("busy")));
       yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: "root",
+            info: { id: "assistant", role: "assistant", time: { created: 1 }, parentID: promptId },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.part.updated",
+          properties: {
+            part: {
+              type: "step-finish",
+              id: "pre-compaction-step",
+              sessionID: "root",
+              messageID: "assistant",
+              reason: "stop",
+              cost: 0,
+              tokens: { input: 150_000, output: 40, reasoning: 0, cache: { read: 0, write: 0 } },
+            },
+          },
+        }),
+      );
+      yield* Effect.promise(() =>
         nativeEvents.push({ type: "session.compacted", properties: { sessionID: "root" } }),
       );
       yield* Effect.promise(() => nativeEvents.push(status("idle")));
 
-      const usage = Array.from(yield* Fiber.join(received)).flatMap((event) =>
+      const events = Array.from(yield* Fiber.join(received));
+      const usage = events.flatMap((event) =>
         event.type === "provider_thread.updated" ? [event.providerThread.contextUsage] : [],
       );
       assert.isNull(usage.at(-1));
+      const settled = events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+      );
+      assert.isUndefined(
+        settled?.type === "provider_turn.updated" ? settled.providerTurn.tokenUsage : "missing",
+      );
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, McpProviderSessions.layer))),
   );
 
