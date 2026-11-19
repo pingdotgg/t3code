@@ -218,6 +218,39 @@ describe("createMergedIssueListAtoms", () => {
     }
   });
 
+  it("retries only failed environments, leaving one still loading to finish", () => {
+    const registry = AtomRegistry.make();
+    const targets = ["slow", "flaky"].map((environmentId) => ({
+      environmentId: EnvironmentId.make(environmentId),
+      input: { state: "open" as const },
+    }));
+    const requests: string[] = [];
+    const lists = Atom.family((environmentId: string) =>
+      Atom.make(
+        Effect.suspend(() => {
+          requests.push(environmentId);
+          return environmentId === "flaky" ? Effect.fail("Tracker unavailable") : Effect.never;
+        }),
+      ),
+    );
+    const listings = createMergedIssueListAtoms(
+      (target) => lists(target.environmentId),
+      () => "Tracker unavailable",
+    );
+    const view = listings.atom(targets);
+    const unmount = registry.mount(view);
+    try {
+      expect(registry.get(view)).toMatchObject({ error: "Tracker unavailable", isPending: true });
+
+      listings.retry(registry, targets);
+
+      expect(requests).toEqual(["slow", "flaky", "flaky"]);
+    } finally {
+      unmount();
+      registry.dispose();
+    }
+  });
+
   it("releases historical search targets when the list closes", async () => {
     NodeV8.setFlagsFromString("--expose-gc");
     const gc = NodeVM.runInNewContext("gc") as () => void;
