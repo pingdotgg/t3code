@@ -31,6 +31,7 @@ import {
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
+  type PullRequestWatchUntil,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
@@ -4277,6 +4278,73 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.isUndefined(yield* watchOf);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(messages, []);
+    }),
+  );
+
+  it.effect("keeps how long a watch holds across reads until the agent changes it", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
+      const threadId = ThreadId.make("runtime-pull-request-watch-until-merged");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("pr-watch-until-create"),
+        threadId,
+        projectId: ProjectId.make("pr-watch-project"),
+        title: "Watch until merged",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      const watchOf = Effect.map(
+        orchestrator.getThreadShell(threadId),
+        (thread) => thread?.pullRequests?.[0]?.watch,
+      );
+      const watch = (id: string, until?: PullRequestWatchUntil) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(id),
+          threadId,
+          ...key,
+          watching: true,
+          link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+          ...(until !== undefined && { until }),
+        });
+
+      yield* watch("pr-watch-until-start");
+      assert.isUndefined((yield* watchOf)?.until);
+
+      yield* watch("pr-watch-until-on", "merged");
+      const started = yield* watchOf;
+      assert.equal(started?.until, "merged");
+      if (started === undefined) return;
+
+      // A read that began before the agent set it must not drop it.
+      const { until: _read, ...readBefore } = started;
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("pr-watch-until-record"),
+        threadId,
+        ...key,
+        startedAt: started.startedAt,
+        watch: { ...readBefore, headSha: "abc123", checksPending: false },
+      });
+      assert.equal((yield* watchOf)?.until, "merged");
+      assert.equal((yield* watchOf)?.headSha, "abc123");
+
+      yield* watch("pr-watch-until-again");
+      assert.equal((yield* watchOf)?.until, "merged");
+      assert.isTrue((yield* maintenance.rebuild).valid);
+      assert.equal((yield* watchOf)?.until, "merged");
+
+      yield* watch("pr-watch-until-off", "checks");
+      assert.isUndefined((yield* watchOf)?.until);
+      assert.equal((yield* watchOf)?.headSha, "abc123");
     }),
   );
 
