@@ -5134,6 +5134,90 @@ async fn a_fork_transcript_inherits_the_source_history_through_the_fork_run() {
     }
     assert_eq!(body(read("t2").await.unwrap())["items"], json!(expected));
     assert_eq!(body(read("t3").await.unwrap())["items"], json!([]));
+    // The thread view shows the same rows: the snapshot route, the projection read and the
+    // first item of `subscribeThread`, with or without compact turn items.
+    let view = |thread: &'static str, compact: bool| {
+        let engine = &engine;
+        async move {
+            let snapshot = engine
+                .thread_snapshot(thread.into())
+                .await
+                .unwrap()
+                .unwrap();
+            let projection = projection(engine, thread).await;
+            let mut stream = engine
+                .subscribe_thread(
+                    from_json(json!({"threadId": thread, "acceptCompactTurnItems": compact}))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let first = next(&mut stream).await;
+            assert_eq!(first["kind"], "snapshot");
+            let rows = snapshot["projection"]["visibleTurnItems"].clone();
+            assert_eq!(projection["visibleTurnItems"], rows, "{thread}");
+            assert_eq!(first["projection"]["visibleTurnItems"], rows, "{thread}");
+            rows
+        }
+    };
+    for compact in [false, true] {
+        assert_eq!(view("t2", compact).await, json!(expected));
+        assert_eq!(view("t3", compact).await, json!([]));
+    }
+
+    // A fork of the fork, after a turn of its own: the first fork's history, its marker and
+    // its own rows, all inherited, then the new marker.
+    dispatch(&engine, message("t2", "c4", "third")).await;
+    let mut fork_stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t2"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut fork_stream).await;
+    until_run_ends(&mut fork_stream).await;
+    let t2_rows = view("t2", false).await;
+    let t2_rows = t2_rows.as_array().unwrap();
+    assert_eq!(t2_rows[..expected.len()], expected[..]);
+    let own: Vec<&Value> = t2_rows[expected.len()..].iter().collect();
+    assert!(!own.is_empty());
+    assert!(own.iter().all(|row| row["visibility"] == "local"));
+    let fork_run = own
+        .iter()
+        .find_map(|row| row["item"]["runId"].as_str())
+        .unwrap()
+        .to_owned();
+    dispatch(
+        &engine,
+        json!({
+            "type": "thread.fork", "commandId": "f3", "sourceThreadId": "t2",
+            "targetThreadId": "t4", "sourcePoint": {"type": "run", "runId": fork_run},
+            "createdBy": "user", "creationSource": "web",
+        }),
+    )
+    .await;
+    let nested = view("t4", false).await;
+    let nested = nested.as_array().unwrap();
+    let outline: Vec<(String, String)> = nested
+        .iter()
+        .map(|row| {
+            (
+                row["visibility"].as_str().unwrap().to_owned(),
+                row["sourceThreadId"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let mut wanted: Vec<(String, String)> = vec![];
+    // The source's rows and the first fork's marker (which names its source, t1).
+    wanted.extend(expected.iter().map(|_| ("inherited".into(), "t1".into())));
+    wanted.extend(own.iter().map(|_| ("inherited".into(), "t2".into())));
+    wanted.push(("synthetic".into(), "t2".into()));
+    assert_eq!(outline, wanted);
+    assert!(
+        nested
+            .iter()
+            .enumerate()
+            .all(|(at, row)| row["position"] == at)
+    );
+    assert_eq!(nested.last().unwrap()["item"]["id"], "turn-item:fork:t4");
 
     // Deleting the source keeps the fork's inherited history, as in T3.
     dispatch(
@@ -5141,7 +5225,10 @@ async fn a_fork_transcript_inherits_the_source_history_through_the_fork_run() {
         json!({"type": "thread.delete", "commandId": "d1", "threadId": "t1"}),
     )
     .await;
-    assert_eq!(body(read("t2").await.unwrap())["items"], json!(expected));
+    assert_eq!(body(read("t3").await.unwrap())["items"], json!([]));
+    assert_eq!(view("t2", false).await, json!(t2_rows));
+    let t2_transcript = body(read("t2").await.unwrap())["items"].clone();
+    assert_eq!(t2_transcript, json!(t2_rows));
 
     // The inherited rows count against the limit too.
     assert_eq!(

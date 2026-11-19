@@ -21,6 +21,33 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## Forks show their inherited history (2026-11-19)
+
+- **Served:** a run fork that is not a side chat opens with the history it inherits, in every
+  thread view read: the thread snapshot route, `subscribeThread`'s snapshot (compact turn
+  items too), the managed ingress snapshot and the engine's projection (`t3_thread_read`).
+  As T3's `buildVisibleTurnItems`: the source's rows through the fork run as `inherited`
+  (forks of forks recursively, with each fork marker), then the `synthetic` fork marker, then
+  the fork's own `local` rows, numbered from 0. A deleted source keeps its rows in the fork;
+  a side chat shows only its own rows. The thread view and the transcript route share one
+  reader (`RowSink` in `conn-engine/src/transcript.rs`). `getTurnItem` stays a read of the
+  thread's own items, as in T3.
+- **Proof:** `idle-diff`'s `fork` scenario reads the fork's snapshot route and the first
+  `subscribeThread` item on both servers, before the fork's first message and after its source
+  is deleted. It fails on the snapshot status, a stream item the contract does not decode,
+  stream rows that differ from the route's, the row outline (position, visibility, type,
+  owner), the marker, and positions. Without the fix it fails ("Conn []", "no fork marker").
+  An engine test covers the snapshot, the projection, both stream forms, a side chat, a fork
+  of a fork after its own turn, and a deleted source. Live check (Conn dev desktop on mini,
+  scratch profile): "Fork from this response" opens the fork with the source's turns and the
+  "Forked from conversation" marker. A fork the client opened under an older Conn Server
+  keeps its cached empty view: the client resumes it from its last sequence, and no event
+  follows.
+- **Known differences:** the shell's `visibleItemCount` stays the thread's own item count
+  (T3 adds the inherited rows and the marker); clients only test it for zero. No bounded
+  snapshots or `/history` paging yet (listed below), so the fork's rows load whole, as every
+  thread view here does.
+
 ## Thread transcript route (2026-11-19)
 
 - **Served:** `GET /api/orchestration/threads/:threadId/transcript`, the composer's "import a
@@ -37,8 +64,7 @@ match T3 is open.
   sort, no scan of item bodies). A run fork that is not a side chat starts with the history it
   inherits, as T3's `buildVisibleTurnItems`: the source's rows through the fork run (forks of
   forks recursively), then the synthetic fork marker, all counted against the limit. A deleted
-  source keeps its rows in the fork, as in T3. The
-  thread snapshot does not carry inherited rows yet; that is an engine gap of the thread view. The limit and the
+  source keeps its rows in the fork, as in T3. The limit and the
   header text are generated (`tools/gen-upstream.mjs`). Not on the managed ingress: its
   reader profile has no composer.
 - **Proof:** `idle-diff` reads the route on both servers in six thread states (two completed
@@ -48,7 +74,7 @@ match T3 is open.
   snapshot cut down (T3's snapshot passed through `projectTurnItemForWire`). A `fork`
   scenario forks a completed run over `/ws` and compares the fork's transcript before its
   first message and again after its source is deleted: row outline (position, visibility,
-  type, owner) and the fork marker. 36 comparisons, no failure. An engine test proves the early stop: a row past the limit that the reader
+  type, owner) and the fork marker. 38 comparisons, no failure. An engine test proves the early stop: a row past the limit that the reader
   cannot parse fails a whole read but not a read that stops before it.
 - **Known differences (info):** the items differ where the two engines record a turn
   differently, as in the thread view: no "Workspace ready" item, no `providerThreadId` on the

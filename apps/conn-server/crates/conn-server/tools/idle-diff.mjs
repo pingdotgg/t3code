@@ -411,6 +411,47 @@ class Side {
     }
   }
 
+  /**
+   * The first item of `orchestration.subscribeThread` over `/ws`, as the client opens the thread
+   * view without bounded snapshots (the Conn Server does not offer them): the snapshot.
+   */
+  async threadStreamSnapshot(threadId) {
+    const ticket = await fetch(`${this.origin}/api/auth/websocket-ticket`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.bearer}` },
+    });
+    if (!ticket.ok) throw new Error(`${this.name}: no WebSocket ticket (HTTP ${ticket.status})`);
+    const url = `${this.origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=2&wsTicket=${encodeURIComponent((await ticket.json()).ticket)}`;
+    const socket = new WebSocket(url);
+    try {
+      await new Promise((resolve, reject) => {
+        socket.onopen = resolve;
+        socket.onerror = () => reject(new Error(`${this.name}: the stream socket failed`));
+      });
+      return await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${this.name}: subscribeThread sent nothing in 20 s`)), 20_000);
+        socket.onmessage = (event) => {
+          for (const line of String(event.data).split("\n").filter(Boolean)) {
+            const frame = JSON.parse(line);
+            if (frame._tag === "Ping") socket.send(JSON.stringify({ _tag: "Pong" }));
+            if (String(frame.requestId) !== "1") continue;
+            if (frame._tag === "Chunk" && Array.isArray(frame.values) && frame.values.length > 0) {
+              clearTimeout(timer);
+              resolve(frame.values[0]);
+            } else if (frame._tag === "Exit") {
+              clearTimeout(timer);
+              reject(new Error(`${this.name} subscribeThread: ${JSON.stringify(frame.exit).slice(0, 1000)}`));
+            }
+          }
+        };
+        const payload = { threadId, requestCompletionMarker: true, acceptDedupedBodies: true };
+        socket.send(JSON.stringify({ _tag: "Request", id: "1", tag: "orchestration.subscribeThread", payload, headers: [] }));
+      });
+    } finally {
+      socket.close();
+    }
+  }
+
   async get(path, headers) {
     const response = await fetch(`${this.origin}${path}`, {
       headers: headers ?? {
@@ -758,33 +799,81 @@ async function compareForkTranscript(pair, state) {
     const decoded = decodeTranscript(read.body);
     if (decoded !== undefined) lines.push(`FAIL ${side.name}: the contract does not decode it: ${decoded}`);
   }
-  const outline = (side, body) => {
-    const owner = (id) => (id === side.threadId ? "source" : id === side.forkId ? "fork" : String(id));
-    return (body?.items ?? [])
-      .filter((row) => !(row.item?.type === "command_execution" && row.item?.title === "Workspace ready"))
-      .map((row) => `${row.visibility} ${row.item?.type} of ${owner(row.sourceThreadId)}`);
-  };
-  for (const d of differences(outline(pair[0], ts.body), outline(pair[1], conn.body))) lines.push(`FAIL outline${d}`);
-  const marker = (body) => (body?.items ?? []).find((row) => row.visibility === "synthetic");
-  const markers = [marker(ts.body), marker(conn.body)];
-  if (markers.some((m) => m === undefined)) lines.push("FAIL a side sends no fork marker");
-  else for (const d of differences(normalize(markers[0]), normalize(markers[1]))) {
-    // Ids normalize in first-seen order, so the marker's own position differs with the rows before it.
-    if (!d.startsWith(".position")) lines.push(`FAIL marker${d}`);
-  }
-  const positions = (body) => (body?.items ?? []).every((row, i) => row.position === i);
-  for (const [side, read] of [[pair[0], ts], [pair[1], conn]]) {
-    if (!positions(read.body)) lines.push(`FAIL ${side.name}: positions are not 0, 1, 2, ...`);
-  }
+  lines.push(...forkRowDifferences(pair, ts.body?.items ?? [], conn.body?.items ?? []));
   const info = differences(normalize(ts.body), normalize(conn.body)).map((d) => `body${d}`);
   const items = Array.isArray(ts.body?.items) ? `, ${ts.body.items.length} items` : "";
   record(pair, { state: `transcript: ${state}`, lines, info, notes: [], summary: `http ${ts.status}${items}` });
 }
 
+/**
+ * The fork's thread view on both servers: `visibleTurnItems` of the thread snapshot route
+ * (`GET /api/orchestration/threads/:threadId`) and of the first `subscribeThread` item. T3's
+ * `buildVisibleTurnItems` puts the source's rows through the fork run first, then a synthetic
+ * fork marker, then the fork's own rows. Fails on the snapshot status, a stream item the
+ * contract does not decode, the row outline (position, visibility, item type, whose row), the
+ * marker, positions that are not 0, 1, 2, ..., and a stream whose rows differ from the route's.
+ */
+async function compareForkView(pair, state) {
+  const reads = await both(pair, async (side) => ({
+    snapshot: await side.get(`/api/orchestration/threads/${encodeURIComponent(side.forkId)}`),
+    stream: await side.threadStreamSnapshot(side.forkId),
+  }));
+  const lines = [];
+  const statuses = reads.map((read) => read.snapshot.status);
+  if (statuses[0] !== statuses[1]) lines.push(`FAIL snapshot http status: T3 ${statuses[0]} / Conn ${statuses[1]}`);
+  const { decodeStreamItem } = await transcriptSchema();
+  const rowsOf = {};
+  for (const [side, read] of [[pair[0], reads[0]], [pair[1], reads[1]]]) {
+    const decoded = decodeStreamItem(read.stream);
+    if (decoded !== undefined) lines.push(`FAIL ${side.name}: the contract does not decode its stream snapshot: ${decoded}`);
+    if (read.stream?.kind !== "snapshot") lines.push(`FAIL ${side.name}: the first stream item is ${read.stream?.kind}`);
+    const route = read.snapshot.body?.projection?.visibleTurnItems ?? [];
+    const stream = read.stream?.projection?.visibleTurnItems ?? [];
+    const key = (rows) => rows.map((row) => `${row.position} ${row.visibility} ${row.sourceThreadId} ${row.sourceItemId}`);
+    for (const d of differences(key(route), key(stream))) {
+      lines.push(`FAIL ${side.name}: the stream rows differ from the route's: ${d.replace("T3 ", "route ").replace("Conn ", "stream ")}`);
+    }
+    rowsOf[side.kind] = route;
+  }
+  lines.push(...forkRowDifferences(pair, rowsOf.ts, rowsOf.rust));
+  const info = differences(normalize(rowsOf.ts), normalize(rowsOf.rust)).map((d) => `rows${d}`);
+  record(pair, {
+    state: `thread view: ${state}`,
+    lines,
+    info,
+    notes: [],
+    summary: `http ${statuses[0]}, ${rowsOf.ts.length} rows`,
+  });
+}
+
+/** The fork checks shared by the transcript and the thread view, on two row lists. */
+function forkRowDifferences(pair, tsRows, connRows) {
+  const lines = [];
+  const outline = (side, rows) => {
+    const owner = (id) => (id === side.threadId ? "source" : id === side.forkId ? "fork" : String(id));
+    return rows
+      .filter((row) => !(row.item?.type === "command_execution" && row.item?.title === "Workspace ready"))
+      .map((row) => `${row.visibility} ${row.item?.type} of ${owner(row.sourceThreadId)}`);
+  };
+  for (const d of differences(outline(pair[0], tsRows), outline(pair[1], connRows))) lines.push(`FAIL outline${d}`);
+  const marker = (rows) => rows.find((row) => row.visibility === "synthetic");
+  const markers = [marker(tsRows), marker(connRows)];
+  if (markers.some((m) => m === undefined)) lines.push("FAIL a side sends no fork marker");
+  else for (const d of differences(normalize(markers[0]), normalize(markers[1]))) {
+    // Ids normalize in first-seen order, so the marker's own position differs with the rows before it.
+    if (!d.startsWith(".position")) lines.push(`FAIL marker${d}`);
+  }
+  const positions = (rows) => rows.every((row, i) => row.position === i);
+  for (const [side, rows] of [[pair[0], tsRows], [pair[1], connRows]]) {
+    if (!positions(rows)) lines.push(`FAIL ${side.name}: positions are not 0, 1, 2, ...`);
+  }
+  return lines;
+}
+
 let transcriptSchemaLoad;
 /**
- * The contract's `OrchestrationV2ThreadTranscript` JSON decoder (`undefined` when it decodes)
- * and T3's `projectTurnItemForWire`.
+ * The contract's `OrchestrationV2ThreadTranscript` and `OrchestrationV2ThreadStreamItem` JSON
+ * decoders (`undefined` when it decodes) and T3's `projectTurnItemForWire`.
  */
 function transcriptSchema() {
   transcriptSchemaLoad ??= (async () => {
@@ -792,11 +881,16 @@ function transcriptSchema() {
     const Schema = await packageImporter("packages/contracts")("effect/Schema");
     const Exit = await packageImporter("packages/contracts")("effect/Exit");
     const decode = Schema.decodeUnknownExit(Schema.toCodecJson(contracts.OrchestrationV2ThreadTranscript));
+    const decodeStream = Schema.decodeUnknownExit(Schema.toCodecJson(contracts.OrchestrationV2ThreadStreamItem));
     const wire = await importSource("apps/server/src/orchestration-v2/WireProjection.ts");
     return {
       projectForWire: wire.projectTurnItemForWire,
       decodeTranscript: (body) => {
         const exit = decode(body);
+        return Exit.isSuccess(exit) ? undefined : String(exit.cause).slice(0, 400);
+      },
+      decodeStreamItem: (item) => {
+        const exit = decodeStream(item);
         return Exit.isSuccess(exit) ? undefined : String(exit.cause).slice(0, 400);
       },
     };
@@ -1031,6 +1125,7 @@ const SCENARIOS = [
         });
       });
       await compareForkTranscript(pair, "a run fork before its first message");
+      await compareForkView(pair, "a run fork before its first message");
       await both(pair, (side) =>
         side.rpc("orchestration.dispatchCommand", {
           type: "thread.delete",
@@ -1039,6 +1134,7 @@ const SCENARIOS = [
         }),
       );
       await compareForkTranscript(pair, "the fork after its source was deleted");
+      await compareForkView(pair, "the fork after its source was deleted");
     },
   },
   {

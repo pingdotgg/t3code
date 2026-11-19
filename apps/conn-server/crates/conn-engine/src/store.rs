@@ -14,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use crate::shell;
+use crate::transcript::{ProjectedRows, RowSink};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS mcp_app_model_context (
@@ -557,20 +558,12 @@ impl Store {
         );
         let prefix = shown.iter().enumerate().all(|(at, shown)| at == *shown);
         let omitted = omit_local_items && prefix && !shown.is_empty();
-        let visible: Vec<Value> = shown
-            .iter()
-            .enumerate()
-            .filter_map(|(position, at)| {
-                let item = items.get(*at)?;
-                Some(json!({
-                    "position": position,
-                    "visibility": "local",
-                    "sourceThreadId": thread_id,
-                    "sourceItemId": item["id"].clone(),
-                    "item": item,
-                }))
-            })
-            .collect();
+        // A run fork shows the history it inherits first, then its own rows.
+        let mut visible = ProjectedRows::default();
+        self.inherited_rows(&projection["thread"], &mut visible)?;
+        for item in shown.iter().filter_map(|at| items.get(*at)) {
+            visible.push("local", json!(thread_id), item["id"].clone(), item.clone())?;
+        }
         if let Some(Value::Array(messages)) = projection.get_mut("messages") {
             sort_messages_by_turn_items(messages, &items);
         }
@@ -578,7 +571,7 @@ impl Store {
             items.drain(..shown.len());
         }
         projection.insert("turnItems".into(), Value::Array(items));
-        projection.insert("visibleTurnItems".into(), Value::Array(visible));
+        projection.insert("visibleTurnItems".into(), Value::Array(visible.0));
         projection.insert("updatedAt".into(), Value::String(activity_at));
         Ok(Some((Value::Object(projection), omitted)))
     }
@@ -610,17 +603,8 @@ impl Store {
         if !out.fits() {
             return Ok(ThreadTranscript::TooLarge);
         }
-        if let Some((source, run)) = inherited_run_fork(&thread) {
-            let created_at = thread["createdAt"].as_str().unwrap_or_default();
-            let mut seen = vec![thread_id.to_owned()];
-            if !self.transcript_inherited(&source, &run, created_at, &mut seen, &mut out)? {
-                return Ok(ThreadTranscript::TooLarge);
-            }
-            let marker = fork_marker(&thread, &source, &run);
-            let marker_id = marker["id"].clone();
-            if !out.push("synthetic", json!(source), marker_id, marker)? {
-                return Ok(ThreadTranscript::TooLarge);
-            }
+        if !self.inherited_rows(&thread, &mut out)? {
+            return Ok(ThreadTranscript::TooLarge);
         }
         let runs = entities(&self.conn, thread_id, "runs")?;
         let attempts = entities(&self.conn, thread_id, "attempts")?;
@@ -633,6 +617,25 @@ impl Store {
             title,
             &updated_at,
         )?))
+    }
+
+    /// The rows a run fork that is not a side chat shows before its own, as T3's
+    /// `buildVisibleTurnItems`: the source's rows through the fork run (recursively for a fork
+    /// of a fork), then the synthetic fork marker. Nothing for any other thread. `false` when
+    /// the sink is full.
+    fn inherited_rows(&self, thread: &Value, out: &mut impl RowSink) -> StoreResult<bool> {
+        let Some((source, run)) = inherited_run_fork(thread) else {
+            return Ok(true);
+        };
+        let thread_id = thread["id"].as_str().unwrap_or_default();
+        let created_at = thread["createdAt"].as_str().unwrap_or_default();
+        let mut seen = vec![thread_id.to_owned()];
+        if !self.transcript_inherited(&source, &run, created_at, &mut seen, out)? {
+            return Ok(false);
+        }
+        let marker = fork_marker(thread, &source, &run);
+        let marker_id = marker["id"].clone();
+        out.push("synthetic", json!(source), marker_id, marker)
     }
 
     /// The thread record and `activity_at` of a thread that is not deleted.
@@ -698,7 +701,7 @@ impl Store {
         &self,
         thread_id: &str,
         visibility: &str,
-        out: &mut crate::transcript::Rows,
+        out: &mut impl RowSink,
         keep: impl Fn(&Value) -> bool,
     ) -> StoreResult<bool> {
         let mut stmt = self.conn.prepare(TRANSCRIPT_ITEMS_SQL).map_err(err)?;
@@ -737,7 +740,7 @@ impl Store {
         run_id: &str,
         fork_created_at: &str,
         seen: &mut Vec<String>,
-        out: &mut crate::transcript::Rows,
+        out: &mut impl RowSink,
     ) -> StoreResult<bool> {
         // A deleted source keeps its rows, and T3 still shows them in the fork.
         let Some(source) = self.stored_thread(source_id)? else {
