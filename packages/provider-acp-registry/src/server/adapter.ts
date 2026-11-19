@@ -26,6 +26,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -120,19 +121,36 @@ export function registerMistralVibeAcpExtensions(context: AcpAdapterV2ExtensionC
   );
 }
 
+// claude-agent-acp (0.109.0, `turnErrorData`) fails a usage-limited turn with this error data.
+const isRateLimitErrorData = Schema.is(
+  Schema.Struct({
+    errorKind: Schema.Literal("rate_limit"),
+    rateLimit: Schema.optional(Schema.Unknown),
+  }),
+);
+// Only a rejected window's reset ends the limit, as for Claude Code's own rate_limit_info.
+const isRejectedRateLimit = Schema.is(
+  Schema.Struct({ status: Schema.Literal("rejected"), resetsAt: Schema.Finite }),
+);
+
+function rateLimitResetAt(rateLimit: unknown): string | null {
+  if (!isRejectedRateLimit(rateLimit)) return null;
+  const resetMs = rateLimit.resetsAt * 1000;
+  return resetMs > 0 && resetMs < 8.64e15 ? DateTime.formatIso(DateTime.makeUnsafe(resetMs)) : null;
+}
+
 export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
+  if (!isAcpRequestError(cause)) return makeProviderFailure({ cause, class: "provider_error" });
   return makeProviderFailure({
     cause,
-    ...(isAcpRequestError(cause)
-      ? {
-          message: cause.errorMessage,
-          code: String(cause.code),
-          class:
-            agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED
-              ? ("usage_limit" as const)
-              : ("provider_error" as const),
-        }
-      : { class: "provider_error" as const }),
+    message: cause.errorMessage,
+    code: String(cause.code),
+    class:
+      isRateLimitErrorData(cause.data) ||
+      (agentId === "mistral-vibe" && cause.code === MISTRAL_VIBE_RATE_LIMITED)
+        ? "usage_limit"
+        : "provider_error",
+    resetAt: isRateLimitErrorData(cause.data) ? rateLimitResetAt(cause.data.rateLimit) : null,
   });
 }
 
