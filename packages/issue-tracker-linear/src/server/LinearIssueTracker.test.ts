@@ -164,7 +164,11 @@ describe("LinearIssueTracker", () => {
   it.effect("lists a team's issues as summaries keyed by identifier", () =>
     Effect.gen(function* () {
       const { tracker, requests } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issues: (variables) => {
           expect(variables.filter).toMatchObject({
             team: { key: { eq: "ENG" } },
@@ -251,7 +255,11 @@ describe("LinearIssueTracker", () => {
       const created: Array<unknown> = [];
       const deleted: Array<unknown> = [];
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: (variables) => {
           // Linear refuses a page of zero comments, which fails the write that looked the issue up.
           expect(variables.comments).toBeGreaterThan(0);
@@ -292,7 +300,11 @@ describe("LinearIssueTracker", () => {
   it.effect("reads an issue with its comments, reactions, history and linked pull requests", () =>
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({ viewer: JULIUS, teams: { nodes: [] } }),
+        T3Viewer: () => ({
+          viewer: JULIUS,
+          organization: { urlKey: "acme" },
+          teams: { nodes: [] },
+        }),
         T3Issue: () => ({
           issue: issue("ENG-7", {
             comments: {
@@ -350,6 +362,7 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
+      expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([
         ["Todo", "open"],
