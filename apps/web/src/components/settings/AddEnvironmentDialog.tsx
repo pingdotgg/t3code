@@ -255,7 +255,7 @@ export function AddEnvironmentDialog({
           error instanceof Error
             ? (thrownErrorMessage(error, m) ?? error.message)
             : gt("Failed to add backend.");
-        onErrorChange(message);
+        if (session === savedBackendSessionRef.current) onErrorChange(message);
         toastManager.add(
           stackedThreadToast({
             type: "error",

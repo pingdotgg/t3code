@@ -1,3 +1,4 @@
+import { EnvironmentHttpApi } from "@t3tools/contracts";
 import { expect } from "e2e";
 
 import { startSecondServer } from "./second-server.ts";
@@ -13,7 +14,8 @@ test(
     const releasePairing = Promise.withResolvers<void>();
     try {
       const { host, token } = await server.ready;
-      await browser.route(`${host}/.well-known/t3/environment`, async (route) => {
+      const descriptorPath = EnvironmentHttpApi.groups.metadata.endpoints.descriptor.path;
+      await browser.route(`${host}${descriptorPath}`, async (route) => {
         pairingStarted.resolve();
         await releasePairing.promise;
         await route.continue();
@@ -34,13 +36,7 @@ test(
       await dialog.waitFor();
 
       releasePairing.resolve();
-      // Wait for real remote connection readiness, even when the reopened dialog is modal.
-      await browser
-        .locator("#remote-environments")
-        .getByText(/\bConnected\b/)
-        .waitFor({
-          timeout: 30_000,
-        });
+      await screen.getByText("Backend added", { exact: true }).waitFor({ timeout: 30_000 });
 
       await app.screenshot("after-first-pairing-finishes");
       await expect(dialog).toBeVisible();

@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render, stubGlobal } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { ToastProvider } from "../ui/toast";
 
 const mocks = vi.hoisted(() => ({
   connectPairing: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
@@ -186,5 +187,29 @@ describe("AddEnvironmentDialog", () => {
       .element(page.getByRole("dialog").getByRole("button", { name: "Add environment" }))
       .toBeEnabled();
     await expect.element(page.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("reports a dismissed pairing failure without showing it in the reopened dialog", async () => {
+    using _bridge = setup();
+    await using _screen = await render(
+      <ToastProvider>
+        <Owner />
+      </ToastProvider>,
+    );
+
+    const pairing = Promise.withResolvers<AtomCommandResult<void, Error>>();
+    mocks.connectPairing.mockReturnValueOnce(pairing.promise);
+    await userEvent.click(page.getByRole("button", { name: "Add environment" }));
+    const dialog = page.getByRole("dialog");
+    await userEvent.fill(dialog.getByPlaceholder("backend.example.com"), "devbox.example.com");
+    await userEvent.fill(dialog.getByPlaceholder("PAIRCODE"), "PAIRCODE");
+    await userEvent.click(dialog.getByRole("button", { name: "Add environment" }));
+    await userEvent.keyboard("{Escape}");
+    await expectDefaultModeAfterReopen();
+
+    const message = "dismissed pairing attempt";
+    pairing.resolve(AsyncResult.failure(Cause.fail(new Error(message))));
+    await expect.element(page.getByText("Could not add backend")).toBeInTheDocument();
+    await expect.element(dialog.getByText(message)).not.toBeInTheDocument();
   });
 });
