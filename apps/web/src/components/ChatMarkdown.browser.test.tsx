@@ -828,6 +828,33 @@ describe("ChatMarkdown copy", () => {
       ).toBe(text);
     },
   );
+
+  it.each([
+    { boundary: "end", from: "Configure", to: "Verify", text: "2. Configure\n3. Deploy" },
+    { boundary: "start", from: "Install", to: "Deploy", text: "2. Configure\n3. Deploy" },
+  ])(
+    "excludes the empty $boundary item when copying with the markers its list shows",
+    async ({ boundary, from, to, text }) => {
+      setup();
+      await using screen = await renderText("1. Install\n2. Configure\n3. Deploy\n4. Verify");
+      const items = [...screen.container.querySelectorAll("li")];
+      const start = items.find((item) => item.textContent === from)!.firstChild!;
+      const end = items.find((item) => item.textContent === to)!.firstChild!;
+      const range = document.createRange();
+      range.setStart(start, boundary === "start" ? from.length : 0);
+      range.setEnd(end, boundary === "end" ? 0 : to.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+      expect(
+        [...pasted.querySelectorAll('ol[start="2"] > li')].map((item) => item.textContent),
+      ).toEqual(["Configure", "Deploy"]);
+    },
+  );
 });
 
 describe("ChatMarkdown file chip tooltips", () => {

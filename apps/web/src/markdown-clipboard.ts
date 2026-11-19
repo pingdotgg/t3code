@@ -505,15 +505,48 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
-/**
- * Items copied within one list clone without it, so wrap them in it again. A list cloned
- * from a later item would renumber from its start; restart it at the shown number.
- */
-function keepStartListMarkers(range: Range, container: Element): void {
+// A boundary inside an item can clone its wrappers without selecting any of its content.
+function emptyBoundaryItem(
+  list: Element,
+  node: Node,
+  offset: number,
+  side: "start" | "end",
+): Element | null {
+  if (node === list) return null;
+  const next = (node: Node) => (side === "start" ? node.nextSibling : node.previousSibling);
+  if (node instanceof Text && offset !== (side === "start" ? node.length : 0)) return null;
+
+  let remaining = node.childNodes[side === "start" ? offset : offset - 1] ?? null;
+  while (node.parentNode) {
+    for (let sibling = remaining; sibling; sibling = next(sibling)) {
+      if (!(sibling instanceof Text) || sibling.data.trim()) return null;
+    }
+    if (node.parentNode === list) {
+      return node instanceof Element && node.tagName === "LI" ? node : null;
+    }
+    remaining = next(node);
+    node = node.parentNode;
+  }
+  return null;
+}
+
+/** Clones the selection and restores the markers shown for its copied list items. */
+function cloneWithListMarkers(range: Range, container: Element): void {
   const ancestor = range.commonAncestorContainer;
   const withinList =
     ancestor instanceof Element && (ancestor.tagName === "OL" || ancestor.tagName === "UL");
   if (withinList) {
+    const start = emptyBoundaryItem(ancestor, range.startContainer, range.startOffset, "start");
+    const end = emptyBoundaryItem(ancestor, range.endContainer, range.endOffset, "end");
+    if (start || end) {
+      range = range.cloneRange();
+      if (start) range.setStartAfter(start);
+      if (end) range.setEndBefore(end);
+    }
+  }
+  container.appendChild(range.cloneContents());
+  if (withinList) {
+    // Items copied within one list clone without the list around them.
     const list = ancestor.cloneNode(false) as Element;
     list.append(...container.childNodes);
     container.replaceChildren(list);
@@ -552,8 +585,7 @@ export function chatMarkdownClipboardPayload(
     const range = selection.getRangeAt(index);
     if (range.collapsed) continue;
     const container = document.createElement("div");
-    container.appendChild(range.cloneContents());
-    keepStartListMarkers(range, container);
+    cloneWithListMarkers(range, container);
     // The indentation typed at a line start only shows; pasted, it would turn lines into code.
     for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {
       indentation.remove();
