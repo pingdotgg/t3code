@@ -10,7 +10,7 @@ import type { ComposerHandleRef } from "../../composerHandleContext";
 import type { selectThreadTerminalUiState } from "../../terminalUiStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { useThreadTerminalActions } from "../terminal/useThreadTerminalActions";
-import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
+import { getTerminalLabel } from "@t3tools/shared/terminalLabelsCopy";
 import {
   AuthTerminalReadScope,
   AuthTerminalOperateScope,
@@ -394,7 +394,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const closePanelTerminalStable = useStableCallback(closePanelTerminal);
   const requestCloseTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
-    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
         closeTerminal(terminalId);
@@ -404,7 +404,7 @@ export function useChatTerminalActions(input: ChatTerminalActionsInput) {
   const requestCloseTerminalStable = useStableCallback(requestCloseTerminal);
   const requestClosePanelTerminal = (terminalId: string) => {
     if (!hasTerminalWriteAccess()) return;
-    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId);
+    const label = activeTerminalLabelsById.get(terminalId) ?? getTerminalLabel(terminalId, m);
     void confirmTerminalClose([label]).then((confirmed) => {
       if (confirmed && readEnvironmentScope(environmentId, AuthTerminalOperateScope)) {
         closePanelTerminal(terminalId);
