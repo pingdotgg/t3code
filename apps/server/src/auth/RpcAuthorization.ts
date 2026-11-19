@@ -286,7 +286,8 @@ const promptTextForRpcCall = (method: string, payload: unknown): string | undefi
     case "message.dispatch":
       return command.attachments.length === 0 ? command.text : undefined;
     case "queued-run.edit":
-      return command.text;
+      // Absent attachments keep the queued ones, which this check cannot see.
+      return (command.attachments?.length ?? 0) === 0 ? command.text : undefined;
     case "delegated_task.request":
       return command.task;
     default:

@@ -646,11 +646,20 @@ it.effect("requires provider management to send /logout through chat", () =>
     );
     yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("hello", "hello"));
     // With an attachment, `/logout` reaches the provider as a prompt, not a sign-out.
+    const attachments = [
+      { type: "image" as const, id: "shot", name: "shot.png", mimeType: "image/png", sizeBytes: 1 },
+    ];
     yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
       ...message("screenshot", "/logout"),
-      attachments: [
-        { type: "image", id: "shot", name: "shot.png", mimeType: "image/png", sizeBytes: 1 },
-      ],
+      attachments,
+    });
+    yield* operator[ORCHESTRATION_V2_WS_METHODS.dispatchCommand]({
+      type: "queued-run.edit",
+      commandId: CommandId.make("attached-edit"),
+      threadId: ThreadId.make("thread"),
+      runId: RunId.make("run"),
+      text: "/logout",
+      attachments,
     });
     for (const command of [
       message("logout", " /LOGOUT "),
@@ -675,6 +684,6 @@ it.effect("requires provider management to send /logout through chat", () =>
       ),
     );
     yield* manager[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](message("manager", "/logout"));
-    expect(handled).toEqual(["hello", "screenshot", "manager"]);
+    expect(handled).toEqual(["hello", "screenshot", "attached-edit", "manager"]);
   }).pipe(Effect.scoped),
 );
