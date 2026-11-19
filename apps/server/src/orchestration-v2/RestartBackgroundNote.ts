@@ -395,7 +395,10 @@ export function isRestartNoteContinuation(
   providerTurns: ReadonlyArray<Pick<ProviderTurnState, "runAttemptId" | "status">>,
   attempts: ReadonlyArray<Attempt>,
 ): boolean {
-  return isNoteContinuation(run, continuationLookup(runs, providerTurns, attempts));
+  return (
+    run.restartContinuationOfRunId !== undefined &&
+    isNoteContinuation(run, continuationLookup(runs, providerTurns, attempts))
+  );
 }
 
 function isNoteContinuation(
@@ -413,7 +416,8 @@ function isNoteContinuation(
 export function pendingRestartCancelledBackgroundWork(input: {
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly providerTurns: ReadonlyArray<ProviderTurnState>;
-  readonly compactionMessageIds: ReadonlySet<string>;
+  /** Called only when an earlier run on the provider thread carries restart-note work. */
+  readonly compactionMessageIds: () => ReadonlySet<string>;
   readonly run: Pick<
     OrchestrationV2Run,
     | "id"
@@ -427,14 +431,19 @@ export function pendingRestartCancelledBackgroundWork(input: {
 
   readonly attempts: ReadonlyArray<Attempt>;
 }): ReadonlyArray<Work> {
-  const isCompaction = (run: typeof input.run) => input.compactionMessageIds.has(run.userMessageId);
-  if (
-    input.run.providerThreadId === null ||
-    input.run.restartContinuationOfRunId !== undefined ||
-    isCompaction(input.run)
-  )
+  if (input.run.providerThreadId === null || input.run.restartContinuationOfRunId !== undefined)
     return [];
   const providerThreadId = input.run.providerThreadId;
+  const sameThread = input.runs.filter((run) => run.providerThreadId === providerThreadId);
+  const sources = sameThread.filter(
+    (source) =>
+      (source.restartCancelledBackgroundWork?.length ?? 0) > 0 && runRanAfter(input.run, source),
+  );
+  // Threads whose server never restarted carry no notes; skip every other lookup for them.
+  if (sources.length === 0) return [];
+  const compactionMessageIds = input.compactionMessageIds();
+  const isCompaction = (run: typeof input.run) => compactionMessageIds.has(run.userMessageId);
+  if (isCompaction(input.run)) return [];
   const deliveredAttemptIds = new Set(
     input.providerTurns
       .filter((turn) => turn.providerThreadId === providerThreadId && turn.status === "completed")
@@ -452,7 +461,6 @@ export function pendingRestartCancelledBackgroundWork(input: {
   for (const attempt of input.attempts)
     if (deliveredAttemptIds.has(attempt.id)) deliveredRunIds.add(attempt.runId);
   let lookup: ContinuationLookup | undefined;
-  const sameThread = input.runs.filter((run) => run.providerThreadId === providerThreadId);
   // runRanAfter is a total order, so a source precedes some prompted run iff it precedes the latest one.
   let latestPrompted: OrchestrationV2Run | undefined;
   for (const candidate of sameThread) {
@@ -471,13 +479,8 @@ export function pendingRestartCancelledBackgroundWork(input: {
     )
       latestPrompted = candidate;
   }
-  return sameThread
-    .filter(
-      (source) =>
-        runRanAfter(input.run, source) &&
-        (source.restartCancelledBackgroundWork?.length ?? 0) > 0 &&
-        (latestPrompted === undefined || !runRanAfter(latestPrompted, source)),
-    )
+  return sources
+    .filter((source) => latestPrompted === undefined || !runRanAfter(latestPrompted, source))
     .reduce<ReadonlyArray<Work>>(
       (work, source) =>
         mergeRestartCancelledBackgroundWork(work, source.restartCancelledBackgroundWork ?? []),

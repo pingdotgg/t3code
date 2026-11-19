@@ -990,15 +990,16 @@ export const layer: Layer.Layer<
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: new Set(
-          projection.messages
-            .filter(
-              (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
-            )
-            .map((candidate) => candidate.id),
-        ),
+        compactionMessageIds: () =>
+          new Set(
+            projection.messages
+              .filter(
+                (candidate) =>
+                  isCompactionCommandMessage(candidate) ||
+                  (goalDriver && parseGoalCommand(candidate) !== null),
+              )
+              .map((candidate) => candidate.id),
+          ),
         run,
         attempts: projection.attempts,
       });
