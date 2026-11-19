@@ -2432,6 +2432,27 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
         const resumed = yield* orchestrator.getThreadProjection(parentThreadId);
         assert.equal(resumed.subagents.find((row) => row.id === task.id)?.status, "running");
         assert.isNull(resumed.subagents.find((row) => row.id === task.id)?.result);
+
+        const started = (yield* orchestrator.getThreadProjection(child.childThreadId)).runs.find(
+          (run) => run.id === queued.id,
+        )!;
+        const waitingSequence = yield* eventSink.latestSequence();
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make("event:held-followup-waiting"),
+              type: "run.updated",
+              threadId: child.childThreadId,
+              runId: started.id,
+              occurredAt: now,
+              payload: { ...started, status: "waiting" },
+            },
+          ],
+        });
+        yield* waitForStatus(waitingSequence, "waiting");
+        const waiting = yield* orchestrator.getThreadProjection(parentThreadId);
+        assert.equal(waiting.subagents.find((row) => row.id === task.id)?.status, "waiting");
+        assert.equal(waiting.nodes.find((row) => row.id === task.id)?.status, "waiting");
       }),
     );
 

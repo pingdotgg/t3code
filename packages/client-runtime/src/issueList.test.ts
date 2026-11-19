@@ -6,10 +6,12 @@ import type {
   IssueTrackerSummary,
   ProjectId,
 } from "@t3tools/contracts";
+import type { EnvironmentProject } from "./state/models.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   continueIssuePage,
+  groupIssues,
   holdIssuePages,
   issueCursorsForHost,
   issueFilterScopes,
@@ -141,6 +143,46 @@ describe("issueFilterScopes", () => {
       [environmentId, hold(answer({ trackers: [tracker({})], entries: [], scopes: [scope] }))],
     ]);
     expect(issueFilterScopes(held, [])).toEqual([{ environmentId, input: scope }]);
+    const otherProjectId = "web" as ProjectId;
+    const projects = [api, otherProjectId].map((id) => ({
+      id,
+      environmentId,
+      repositoryIdentity: {
+        provider: "github",
+        canonicalKey: `github.com/acme/${id}`,
+        owner: "acme",
+        name: id,
+      },
+    })) as unknown as ReadonlyArray<EnvironmentProject>;
+    const withRepositories = new Map([
+      [
+        environmentId,
+        hold(
+          answer({
+            trackers: [
+              tracker({}),
+              tracker({ tracker: "github" as IssueTrackerKind, host: "github.com" }),
+            ],
+            scopes: [scope, { ...scope, projectId: otherProjectId, scope: "WEB" }],
+          }),
+        ),
+      ],
+    ]);
+    expect(
+      issueFilterScopes(withRepositories, projects, { environmentId, projectId: api }),
+    ).toEqual([
+      {
+        environmentId,
+        input: { projectId: api, tracker: "github", host: "github.com", scope: "acme/api" },
+      },
+      { environmentId, input: scope },
+    ]);
+    expect(
+      issueFilterScopes(withRepositories, projects, {
+        environmentId: "other" as EnvironmentId,
+        projectId: api,
+      }),
+    ).toEqual([]);
   });
 
   it("skips a tracker that cannot be read", () => {
@@ -151,5 +193,73 @@ describe("issueFilterScopes", () => {
       ],
     ]);
     expect(issueFilterScopes(held, [])).toEqual([]);
+  });
+});
+
+describe("groupIssues", () => {
+  it("lists an issue once when two environments hold the same repository", () => {
+    const github = {
+      tracker: "github",
+      host: "github.com",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const page = answer({
+      trackers: [github],
+      entries: [entry({ key: "1" }), entry({ key: "2" })],
+    });
+    const held = holdIssuePages(
+      [
+        [environmentId, page],
+        [
+          "env-2" as EnvironmentId,
+          answer({
+            ...page,
+            entries: page.entries.map((row) => ({ ...row, projectId: "other" as ProjectId })),
+          }),
+        ],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.displayKey)).toEqual(["#1", "#2"]);
+  });
+
+  it("keeps same-keyed issues from two Linear workspaces apart", () => {
+    const linear = {
+      tracker: "linear",
+      host: "linear.app",
+      projectCount: 1,
+      capabilities: { labels: true, assignees: true },
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const inWorkspace = (workspace: string) =>
+      answer({
+        trackers: [linear],
+        entries: [
+          entry({
+            tracker: "linear" as IssueTrackerKind,
+            host: "linear.app",
+            scope: "ENG",
+            key: "ENG-1",
+            url: `https://linear.app/${workspace}/issue/ENG-1`,
+          }),
+        ],
+      });
+    const held = holdIssuePages(
+      [
+        [environmentId, inWorkspace("acme")],
+        ["env-2" as EnvironmentId, inWorkspace("globex")],
+      ],
+      new Map(),
+    );
+    const [group] = groupIssues(held, "", []);
+    expect(group!.rows.map((row) => row.url)).toEqual([
+      "https://linear.app/acme/issue/ENG-1",
+      "https://linear.app/globex/issue/ENG-1",
+    ]);
   });
 });

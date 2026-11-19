@@ -429,8 +429,26 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, { environmentId, profileId }),
     clearCache: (environmentId, profileId) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, { environmentId, profileId }),
-    getPreviewConfig: (environmentId, profileId) =>
-      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, { environmentId, profileId }),
+    getPreviewConfig: (environmentId, profileId, tunnelLoopback) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, {
+        environmentId,
+        profileId,
+        tunnelLoopback,
+      }),
+    onTunnelAccessRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
+        if (typeof request !== "object" || request === null) return;
+        listener(request as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(
+          IpcChannels.PREVIEW_TUNNEL_ACCESS_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+    },
+    resolveTunnelAccess: (requestId, url) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL, { requestId, url }),
     setAnnotationTheme: (theme) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_SET_ANNOTATION_THEME_CHANNEL, { theme }),
     setAnnotationSendEnabled: (tabId, enabled) =>

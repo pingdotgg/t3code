@@ -11,7 +11,7 @@ vi.mock(
 );
 vi.mock(import("./state/primaryEnvironment"), async () => {
   const { Atom } = await import("effect/reactivity");
-  return { themeEnvironmentIdAtom: Atom.make(EnvironmentId.make("host")) } as never;
+  return { localEnvironmentIdAtom: Atom.make(EnvironmentId.make("host")) } as never;
 });
 vi.mock(import("./state/server"), async () => {
   const { Atom } = await import("effect/reactivity");
@@ -42,6 +42,7 @@ import {
   CUSTOM_THEMES_STORAGE_KEY,
   getThemeDefinition,
   invalidateCustomThemes,
+  THEME_PREVIEW_ID,
 } from "./themePalette";
 
 const BACKGROUND = "--theme-background-image";
@@ -127,6 +128,20 @@ describe("theme backgrounds", () => {
     t.browser.dispatchEvent(new Event("online"));
     await vi.advanceTimersByTimeAsync(30_000);
     expect(t.fetchBackground).toHaveBeenCalledTimes(6);
+  });
+
+  it("keeps the shown background under a draft preview when the browser comes back online", async () => {
+    using t = setup();
+    t.fetchBackground.mockImplementation(loaded);
+    applyThemeBackground("nightfall");
+    await vi.advanceTimersByTimeAsync(0);
+    const shown = t.properties.get(BACKGROUND);
+    expect(shown).toMatch(/^url\("blob:/);
+
+    document.documentElement.dataset.themeId = THEME_PREVIEW_ID;
+    t.browser.dispatchEvent(new Event("online"));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(t.properties.get(BACKGROUND)).toBe(shown);
   });
 
   it.each(["theme change", "disposal"])("stops retrying after %s", async (reason) => {

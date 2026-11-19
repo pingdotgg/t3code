@@ -22,6 +22,7 @@ import {
 } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { previewEnvironment } from "~/state/preview";
+import { readPreviewTunnelUrl } from "~/state/previewTunnel";
 import { useEnvironmentScope } from "~/state/session";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
@@ -121,6 +122,11 @@ export function startElectronBrowserHost(): () => void {
     }),
     // Open-link events reach every window; only the main window acts, so one link opens one tab.
     ...(popoutTabId ? [] : [preview.onOpenLink(openLinkInPreview)]),
+    preview.onTunnelAccessRequest(({ requestId, environmentId }) => {
+      void readPreviewTunnelUrl(environmentId).then((url) =>
+        preview.resolveTunnelAccess(requestId, url),
+      );
+    }),
   ];
   return () => {
     for (const dispose of disposers) dispose();

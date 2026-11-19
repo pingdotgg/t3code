@@ -5,6 +5,7 @@ import {
   type PreviewAnnotationPayload,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { msg } from "gt-react";
 import { useEffect } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
@@ -13,6 +14,7 @@ import { capturePreviewAnnotationScreenshot } from "~/lib/previewAnnotation";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { readThreadPreviewState } from "~/previewStateStore";
 import { readEnvironmentScope } from "~/state/session";
+import { m } from "~/i18n/messages";
 import { readComposerImageBytes } from "../chat/composerAttachmentFiles";
 
 const PoppedOutAnnotation = Schema.Struct({
@@ -43,8 +45,8 @@ export async function addPreviewAnnotationToDraft(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not capture the picked element",
-        description: "The annotation was kept without the screenshot.",
+        title: m(msg("Could not capture the picked element")),
+        description: m(msg("The annotation was kept without the screenshot.")),
       }),
     );
   }

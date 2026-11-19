@@ -8,6 +8,7 @@ import type {
   IssueScopeRef,
   IssueTrackerSummary,
   SourceControlProviderKind,
+  ProjectId,
 } from "@t3tools/contracts";
 
 import { mergeIssueListPage } from "./state/issues.ts";
@@ -115,6 +116,7 @@ export function groupIssues(
       more: EnvironmentId[];
     }
   >();
+  const listed = new Set<string>();
   const needle = query.toLowerCase();
   for (const [environmentId, page] of held) {
     for (const tracker of page.answer.trackers) {
@@ -137,6 +139,9 @@ export function groupIssues(
         !entry.displayKey.toLowerCase().includes(needle)
       )
         continue;
+      // Environments holding the same repository answer the same issue; the first one keeps it.
+      if (listed.has(entry.url)) continue;
+      listed.add(entry.url);
       group.rows.push({ ...entry, environmentId });
     }
     for (const error of page.errors) {
@@ -163,11 +168,14 @@ export function groupIssues(
 export function issueFilterScopes(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   projects: ReadonlyArray<EnvironmentProject>,
+  selectedProject?: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
 ) {
   const scopes: Array<{ readonly environmentId: EnvironmentId; readonly input: IssueScopeRef }> =
     [];
   for (const [environmentId, page] of held) {
+    if (selectedProject && selectedProject.environmentId !== environmentId) continue;
     for (const project of projects) {
+      if (selectedProject && selectedProject.projectId !== project.id) continue;
       if (project.environmentId !== environmentId) continue;
       const identity = project.repositoryIdentity;
       const kind = identity?.provider as SourceControlProviderKind | undefined;
@@ -200,6 +208,7 @@ export function issueFilterScopes(
         scope,
       }));
     for (const input of covered) {
+      if (selectedProject && selectedProject.projectId !== input.projectId) continue;
       const host = input.host?.toLowerCase();
       const tracker = page.answer.trackers.find(
         (t) => t.tracker === input.tracker && t.host.toLowerCase() === host,
