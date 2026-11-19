@@ -454,6 +454,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     stopPortForward: (environmentId, remotePort) =>
       ipcRenderer.invoke(IpcChannels.PORT_FORWARD_STOP_CHANNEL, { environmentId, remotePort }),
     listPortForwards: () => ipcRenderer.invoke(IpcChannels.PORT_FORWARD_LIST_CHANNEL),
+    sharesLoopback: (environmentId) =>
+      ipcRenderer.invoke(IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL, { environmentId }),
     onPortForwards: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, forwards: unknown) => {
         if (!Array.isArray(forwards)) return;

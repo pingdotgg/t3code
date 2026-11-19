@@ -11,6 +11,7 @@ import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
 
 import { tunnelsEnvironmentLoopback } from "../browser/browserTargetResolver";
 import { m } from "../i18n/messages";
+import { environmentAtomList } from "./environmentAtomList";
 
 const EMPTY_FORWARDS: ReadonlyArray<DesktopPortForward> = [];
 
@@ -45,9 +46,36 @@ export function usePortForwards(): ReadonlyArray<DesktopPortForward> {
   return AsyncResult.getOrElse(useAtomValue(portForwardsAtom), () => EMPTY_FORWARDS);
 }
 
-/** Only the desktop app forwards, and only from environments whose loopback isn't this machine's. */
+/** Only the desktop app forwards, and only from environments it reaches through the tunnel. */
 export const canForwardPorts = (target: ConnectionTarget | undefined): boolean =>
   previewBridge() !== undefined && tunnelsEnvironmentLoopback(target);
+
+// A saved route can still lead back to this computer (its own Tailscale address, a relay), where
+// a forward would only loop. Main probes it once a connection is up; hidden until it answers.
+const onOtherMachineAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make(
+    Effect.promise(async () => {
+      const bridge = previewBridge();
+      return bridge !== undefined && !(await bridge.sharesLoopback(environmentId));
+    }),
+  ).pipe(
+    Atom.map((result) => AsyncResult.getOrElse(result, () => false)),
+    Atom.setIdleTTL(10 * 60_000),
+    Atom.withLabel(`desktop:port-forward-other-machine:${environmentId}`),
+  ),
+);
+
+const NOT_FORWARDABLE = Atom.make(false).pipe(Atom.withLabel("desktop:port-forward-none"));
+
+/** Pass `null` until the environment is connected, so the probe has a tunnel to use. */
+export function useForwardsFrom(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(environmentId === null ? NOT_FORWARDABLE : onOtherMachineAtom(environmentId));
+}
+
+export const forwardSourcesAtom = environmentAtomList(
+  "desktop:port-forward-sources",
+  onOtherMachineAtom,
+);
 
 export const findPortForward = (
   forwards: ReadonlyArray<DesktopPortForward>,

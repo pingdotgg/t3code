@@ -276,6 +276,8 @@ export class LoopbackTunnel extends Context.Service<
       readonly remotePort: number;
     }) => Effect.Effect<void>;
     readonly forwards: Effect.Effect<ReadonlyArray<DesktopPortForward>>;
+    /** Whether the environment's loopback is this machine's, so forwarding would only loop. */
+    readonly sharesLoopback: (environmentId: EnvironmentId) => Effect.Effect<boolean>;
     readonly subscribeForwards: (
       listener: (forwards: ReadonlyArray<DesktopPortForward>) => Effect.Effect<void>,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -554,6 +556,7 @@ const make = Effect.gen(function* () {
     forward,
     stopForward,
     forwards: Effect.sync(currentForwards),
+    sharesLoopback,
     subscribeForwards,
   });
 });

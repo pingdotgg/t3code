@@ -25,6 +25,7 @@ import {
   DesktopPreviewTunnelAccessResolutionInputSchema,
   DesktopPortForwardInputSchema,
   DesktopPortForwardSchema,
+  DesktopSharesLoopbackInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
@@ -415,6 +416,16 @@ const listPortForwards = DesktopIpc.makeIpcMethod({
   }),
 });
 
+const sharesLoopback = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PORT_FORWARD_SHARES_LOOPBACK_CHANNEL,
+  payload: DesktopSharesLoopbackInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.preview.sharesLoopback")(function* ({ environmentId }) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    return yield* tunnel.sharesLoopback(environmentId);
+  }),
+});
+
 export const listBrowserImportSources = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_IMPORT_SOURCES_CHANNEL,
   payload: Schema.Void,
@@ -562,6 +573,7 @@ export const methods = [
   forwardPort,
   stopPortForward,
   listPortForwards,
+  sharesLoopback,
   setAnnotationTheme,
   setAnnotationSendEnabled,
   pickElement,

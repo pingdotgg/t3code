@@ -4,6 +4,7 @@ import {
   type EnvironmentId,
   type ThreadId,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
 import { CableIcon, ClipboardCopyIcon, ExternalLinkIcon, SquareIcon } from "lucide-react";
 
@@ -16,9 +17,11 @@ import {
   findPortForward,
   forwardedUrl,
   forwardPort,
+  forwardSourcesAtom,
   stopPortForward,
   usePortForwards,
 } from "../state/portForwards";
+import { environmentIdsKey } from "../state/environmentAtomList";
 import { useEnvironmentsWithScope } from "../state/session";
 import {
   ADDON_ICON_CLASS,
@@ -55,7 +58,11 @@ export function useCommandPalettePortForwardItem(input: {
       environment.connection.phase === "connected" && canForwardPorts(environment.entry.target),
   );
   const tunnelling = useEnvironmentsWithScope(reachable, AuthTerminalOperateScope);
-  const sources = reachable.filter((environment) => tunnelling.has(environment.environmentId));
+  const tunnelled = reachable.filter((environment) => tunnelling.has(environment.environmentId));
+  const onOtherMachine = useAtomValue(
+    forwardSourcesAtom(environmentIdsKey(tunnelled.map(({ environmentId }) => environmentId))),
+  );
+  const sources = tunnelled.filter((_, index) => onOtherMachine[index]);
   // Only a forwardable thread's servers are listed, so other clients never subscribe to them.
   const threadEnvironmentId = sources.some(
     (environment) => environment.environmentId === input.activeThread?.environmentId,

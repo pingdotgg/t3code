@@ -132,6 +132,7 @@ export const PORT_FORWARD_START_CHANNEL = "desktop:port-forward-start";
 export const PORT_FORWARD_STOP_CHANNEL = "desktop:port-forward-stop";
 export const PORT_FORWARD_LIST_CHANNEL = "desktop:port-forward-list";
 export const PORT_FORWARD_CHANGE_CHANNEL = "desktop:port-forward-change";
+export const PORT_FORWARD_SHARES_LOOPBACK_CHANNEL = "desktop:port-forward-shares-loopback";
 
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 

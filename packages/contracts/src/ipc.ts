@@ -1011,6 +1011,8 @@ export const DesktopPortForwardSchema = Schema.Struct({
 });
 export type DesktopPortForward = typeof DesktopPortForwardSchema.Type;
 
+export const DesktopSharesLoopbackInputSchema = Schema.Struct({ environmentId: EnvironmentId });
+
 export const DesktopPortForwardInputSchema = Schema.Struct({
   environmentId: EnvironmentId,
   remotePort: PortSchema,
@@ -1342,6 +1344,8 @@ export interface DesktopPreviewBridge {
   forwardPort: (environmentId: EnvironmentId, remotePort: number) => Promise<DesktopPortForward>;
   stopPortForward: (environmentId: EnvironmentId, remotePort: number) => Promise<void>;
   listPortForwards: () => Promise<ReadonlyArray<DesktopPortForward>>;
+  /** Whether the environment runs on this machine, where its ports need no forward. */
+  sharesLoopback: (environmentId: EnvironmentId) => Promise<boolean>;
   onPortForwards: (listener: (forwards: ReadonlyArray<DesktopPortForward>) => void) => () => void;
   listBrowserImportSources: () => Promise<ReadonlyArray<BrowserImportSource>>;
   importBrowserCookies: (input: {

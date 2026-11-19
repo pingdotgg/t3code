@@ -28,6 +28,7 @@ import {
   forwardedUrl,
   forwardPort,
   stopPortForward,
+  useForwardsFrom,
   usePortForwards,
 } from "../../state/portForwards";
 import { previewEnvironment } from "../../state/preview";
@@ -65,9 +66,11 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   const environment = useEnvironment(props.environmentId);
   const supportsStop = environment?.serverConfig?.environment.capabilities.localServerStop === true;
   const forwards = usePortForwards();
-  const canForward =
+  const forwardable =
     useEnvironmentScope(props.environmentId, AuthTerminalOperateScope) &&
-    canForwardPorts(environment?.entry.target);
+    environment?.connection.phase === "connected" &&
+    canForwardPorts(environment.entry.target);
+  const canForward = useForwardsFrom(forwardable ? props.environmentId : null);
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const stopServer = useAtomCommand(previewEnvironment.stopLocalServer, {
     label: "thread server stop",
