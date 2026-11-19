@@ -56,6 +56,16 @@ function isShareImportInFlight(phase: ShareImportPhase): boolean {
   return phase === "reserving" || phase === "attaching" || phase === "consuming";
 }
 
+export function isShareImportBlockingDraft(input: {
+  readonly phase: ShareImportPhase;
+  readonly hasShare: boolean;
+  readonly inFlight: boolean;
+}): boolean {
+  return (
+    input.inFlight || (input.hasShare && input.phase !== "idle" && input.phase !== "cancelled")
+  );
+}
+
 /**
  * One draft route importing one share into one draft. Plain data, compared
  * structurally, so the screen can build it on every render.

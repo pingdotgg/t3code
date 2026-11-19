@@ -93,7 +93,11 @@ import {
   resolveNewTaskWorkspaceLabel,
 } from "./new-task-context-presentation";
 import { incomingShareImports, useIncomingShare } from "../sharing/IncomingShareProvider";
-import { idleShareFlagAtom, idleShareImportPhaseAtom } from "./incomingShareImport";
+import {
+  idleShareFlagAtom,
+  idleShareImportPhaseAtom,
+  isShareImportBlockingDraft,
+} from "./incomingShareImport";
 import { newTaskFlowKey } from "./new-task-flow-state";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
@@ -355,9 +359,11 @@ export function NewTaskDraftScreen(props: {
   const isImportingShare = useAtomValue(
     flowKey === undefined ? idleShareFlagAtom : incomingShareImports.inFlightAtom(flowKey),
   );
-  const isIncomingShareTransferPending = Boolean(
-    incomingShare && shareImportPhase !== "cancelled" && !isIncomingShareAwaitingServerConfig,
-  );
+  const isIncomingShareTransferPending = isShareImportBlockingDraft({
+    phase: shareImportPhase,
+    hasShare: incomingShare !== null,
+    inFlight: isImportingShare,
+  });
   // A failed import waits in a modal alert, and a cancel finishes its undo even
   // after the route leaves, so neither holds the route: the cancel can leave as
   // soon as it is done.
