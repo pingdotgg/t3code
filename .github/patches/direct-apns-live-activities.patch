@@ -1,0 +1,1390 @@
+diff --git a/apps/mobile/src/features/agent-awareness/agentLiveActivity.ios.ts b/apps/mobile/src/features/agent-awareness/agentLiveActivity.ios.ts
+index 32141f2201..a1c34de84e 100644
+--- a/apps/mobile/src/features/agent-awareness/agentLiveActivity.ios.ts
++++ b/apps/mobile/src/features/agent-awareness/agentLiveActivity.ios.ts
+@@ -1,3 +1,4 @@
++import { addPushToStartTokenListener } from "expo-widgets";
+ import AgentActivity, { type AgentActivityProps } from "../../widgets/AgentActivity";
+ 
+ export function dismissEndedAgentLiveActivities() {
+@@ -11,3 +12,8 @@ export function getAgentLiveActivities() {
+ export function startAgentLiveActivity(props: AgentActivityProps, staleDate?: Date) {
+   return AgentActivity.start(props, undefined, staleDate);
+ }
++
++// Binaries built before expo-widgets exposed push-to-start throw here.
++export function observeAgentLiveActivityPushToStartToken(listener: (token: string) => void) {
++  return addPushToStartTokenListener((event) => listener(event.activityPushToStartToken));
++}
+diff --git a/apps/mobile/src/features/agent-awareness/agentLiveActivity.ts b/apps/mobile/src/features/agent-awareness/agentLiveActivity.ts
+index 684c57817e..12d05d3a99 100644
+--- a/apps/mobile/src/features/agent-awareness/agentLiveActivity.ts
++++ b/apps/mobile/src/features/agent-awareness/agentLiveActivity.ts
+@@ -1,6 +1,12 @@
+ import type { LiveActivity } from "expo-widgets";
+ import type { AgentActivityProps } from "../../widgets/AgentActivity";
+ 
++export function observeAgentLiveActivityPushToStartToken(_listener: (token: string) => void): {
++  remove: () => void;
++} {
++  return { remove: () => {} };
++}
++
+ export function dismissEndedAgentLiveActivities(): void {}
+ 
+ export function getAgentLiveActivities(): Array<LiveActivity<AgentActivityProps>> {
+diff --git a/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts b/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts
+index eb219834cb..48c785d32e 100644
+--- a/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts
++++ b/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts
+@@ -27,13 +27,18 @@ vi.mock("../../state/atom-registry", () => ({
+   },
+ }));
+ vi.mock("../../state/server", () => ({
+-  serverEnvironment: { registerPushDevice: { label: "register" } },
++  serverEnvironment: {
++    registerPushDevice: { label: "register" },
++    registerPushLiveActivity: { label: "register-live-activity" },
++    unregisterPushLiveActivity: { label: "unregister-live-activity" },
++  },
+ }));
+ 
+ import {
+   __resetDirectApnsRegistrationForTest,
+   isDirectApnsRegistered,
+   registerDirectApnsDevice,
++  setDirectLiveActivityTokens,
+   toPushDeviceRegistration,
+ } from "./directApnsRegistration";
+ 
+@@ -152,3 +157,51 @@ describe("registerDirectApnsDevice", () => {
+     expect(mocks.catalogListeners).toHaveLength(1);
+   });
+ });
++
++describe("live activity sync", () => {
++  const liveActivityCalls = () =>
++    mocks.runAtomCommand.mock.calls.filter(([, command]) => command.label !== "register");
++
++  it("sends the latest activity and push-to-start tokens once a device registration exists", async () => {
++    mocks.environmentIds = [ENV_A];
++    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
++    expect(liveActivityCalls()).toHaveLength(0);
++    await registerDirectApnsDevice(request());
++    setDirectLiveActivityTokens({ pushToStartToken: "22".repeat(32) });
++    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(2));
++    expect(liveActivityCalls().at(-1)?.[2].input).toEqual({
++      deviceId: "device-1",
++      apsEnvironment: "sandbox",
++      bundleId: "com.example.t3code",
++      activityPushToken: "11".repeat(32),
++      pushToStartToken: "22".repeat(32),
++    });
++    // Unchanged tokens are not resent on the next device registration.
++    await registerDirectApnsDevice(request({ label: "renamed" }));
++    expect(liveActivityCalls()).toHaveLength(2);
++  });
++
++  it("replaces a rotated activity token", async () => {
++    mocks.environmentIds = [ENV_A];
++    await registerDirectApnsDevice(request());
++    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
++    setDirectLiveActivityTokens({ activityPushToken: "33".repeat(32) });
++    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(2));
++    expect(liveActivityCalls().at(-1)?.[2].input.activityPushToken).toBe("33".repeat(32));
++  });
++
++  it("unregisters from servers once when the preference is turned off", async () => {
++    mocks.environmentIds = [ENV_A];
++    await registerDirectApnsDevice(request());
++    setDirectLiveActivityTokens({ activityPushToken: "11".repeat(32) });
++    await vi.waitFor(() => expect(liveActivityCalls()).toHaveLength(1));
++    const off = request({
++      preferences: { ...request().preferences, liveActivitiesEnabled: false },
++    });
++    await registerDirectApnsDevice(off);
++    await registerDirectApnsDevice(off);
++    expect(liveActivityCalls()).toHaveLength(2);
++    expect(liveActivityCalls().at(-1)?.[1].label).toBe("unregister-live-activity");
++    expect(liveActivityCalls().at(-1)?.[2].input).toEqual({ deviceId: "device-1" });
++  });
++});
+diff --git a/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts b/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts
+index a5e3b3f372..e2f2040164 100644
+--- a/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts
++++ b/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts
+@@ -1,4 +1,8 @@
+-import type { EnvironmentId, PushDeviceRegistration } from "@t3tools/contracts";
++import type {
++  EnvironmentId,
++  PushDeviceRegistration,
++  PushLiveActivityRegistration,
++} from "@t3tools/contracts";
+ import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
+ import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
+ import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+@@ -83,6 +87,56 @@ async function registerWithConnectedEnvironments(
+   );
+ }
+ 
++// Live Activity tokens belong to the activity, not the device, and arrive on
++// their own schedule: remember the latest of each and sync them with every
++// connected server whenever either side changes.
++const liveActivityTokens: { activityPushToken?: string; pushToStartToken?: string } = {};
++const liveActivitySignatures = new Map<EnvironmentId, string>();
++
++export function setDirectLiveActivityTokens(tokens: typeof liveActivityTokens): void {
++  Object.assign(liveActivityTokens, tokens);
++  if (lastRequest) void syncLiveActivities(lastRequest);
++}
++
++async function syncLiveActivities(request: RelayDeviceRegistrationRequest): Promise<void> {
++  const base = toPushDeviceRegistration(request);
++  if (base === null) return;
++  const enabled = request.preferences.liveActivitiesEnabled !== false;
++  const { activityPushToken, pushToStartToken } = liveActivityTokens;
++  const registration: PushLiveActivityRegistration = {
++    deviceId: base.deviceId,
++    apsEnvironment: base.apsEnvironment,
++    bundleId: base.bundleId,
++    ...(activityPushToken ? { activityPushToken } : {}),
++    ...(pushToStartToken ? { pushToStartToken } : {}),
++  };
++  // Turning the preference off must reach servers, or they keep updating a card the user dismissed.
++  const signature = enabled ? JSON.stringify(registration) : "disabled";
++  if (enabled && !activityPushToken && !pushToStartToken) return;
++  const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
++  await Promise.all(
++    [...enabledEnvironmentIds(catalog)].map(async (environmentId) => {
++      const known = liveActivitySignatures.get(environmentId);
++      if (known === signature || (!enabled && known === undefined)) return;
++      const options = { reportFailure: false, reportDefect: false };
++      const result = enabled
++        ? await runAtomCommand(
++            appAtomRegistry,
++            serverEnvironment.registerPushLiveActivity,
++            { environmentId, input: registration },
++            options,
++          )
++        : await runAtomCommand(
++            appAtomRegistry,
++            serverEnvironment.unregisterPushLiveActivity,
++            { environmentId, input: { deviceId: base.deviceId } },
++            options,
++          );
++      if (result._tag === "Success") liveActivitySignatures.set(environmentId, signature);
++    }),
++  );
++}
++
+ export async function registerDirectApnsDevice(
+   request: RelayDeviceRegistrationRequest,
+ ): Promise<void> {
+@@ -92,14 +146,20 @@ export async function registerDirectApnsDevice(
+   if (!watchingCatalog) {
+     watchingCatalog = true;
+     appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, () => {
+-      if (lastRequest) void registerWithConnectedEnvironments(lastRequest);
++      if (lastRequest) {
++        void registerWithConnectedEnvironments(lastRequest);
++        void syncLiveActivities(lastRequest);
++      }
+     });
+   }
+-  await registerWithConnectedEnvironments(request);
++  await Promise.all([registerWithConnectedEnvironments(request), syncLiveActivities(request)]);
+ }
+ 
+ export function __resetDirectApnsRegistrationForTest(): void {
+   registeredSignatures.clear();
++  liveActivitySignatures.clear();
++  delete liveActivityTokens.activityPushToken;
++  delete liveActivityTokens.pushToStartToken;
+   registeredListeners.clear();
+   lastRequest = null;
+   watchingCatalog = false;
+diff --git a/apps/mobile/src/features/agent-awareness/remoteRegistration.ts b/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
+index 2593d1be64..5116b6cf89 100644
+--- a/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
++++ b/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
+@@ -47,11 +47,12 @@ import { publishAgentActivityWidget } from "../../widgets/publishAgentActivityWi
+ import {
+   dismissEndedAgentLiveActivities,
+   getAgentLiveActivities,
++  observeAgentLiveActivityPushToStartToken,
+   startAgentLiveActivity,
+ } from "./agentLiveActivity";
+ import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+ import { supportsAgentAwarenessPush } from "./capabilities";
+-import { registerDirectApnsDevice } from "./directApnsRegistration";
++import { registerDirectApnsDevice, setDirectLiveActivityTokens } from "./directApnsRegistration";
+ import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+ 
+ const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
+@@ -214,6 +215,7 @@ export function setAgentAwarenessRelayTokenProvider(
+     pendingDeviceRegistration = null;
+     registeredActivityPushTokens.clear();
+   }
++  const hadProvider = relayTokenProvider !== null;
+   relayTokenProvider = provider;
+   relayTokenProviderIdentity = provider ? (identity ?? null) : null;
+   if (!provider) {
+@@ -222,8 +224,8 @@ export function setAgentAwarenessRelayTokenProvider(
+       clearTimeout(activeLiveActivityRegistrationRetry);
+       activeLiveActivityRegistrationRetry = null;
+     }
+-    // Signed-out activities would be orphaned because the relay can no longer update or end them.
+-    endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
++    // A signed-out cold start has no relay card to orphan; the direct one keeps running.
++    if (hadProvider) endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
+     publishWidget({ kind: "signed-out" });
+     setRegistrationStatus("unknown");
+     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
+@@ -499,7 +501,7 @@ export function armAgentAwarenessLiveActivityForLocalWork(input: {
+   readonly threadTitle: string;
+   readonly projectTitle: string;
+ }): void {
+-  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
++  if (!canRegisterRemoteLiveActivities()) {
+     return;
+   }
+   if (!environmentPublishesAgentActivity(input.environmentId)) {
+@@ -763,6 +765,10 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function*
+   });
+   const relayExit = yield* Effect.exit(registerDeviceWithRelay(request, expectedGeneration));
+   yield* Effect.promise(() => direct);
++  // A signed-in relay ends its own cards; signed out, nobody else will.
++  if (!relayTokenProvider && preferences.liveActivitiesEnabled === false) {
++    endLocalLiveActivities("live activity cleanup after turning the preference off failed");
++  }
+   return yield* relayExit;
+ });
+ 
+@@ -779,6 +785,15 @@ function ensurePushTokenListener(): void {
+     return;
+   }
+ 
++  if (Platform.OS === "ios") {
++    try {
++      observeAgentLiveActivityPushToStartToken((token) =>
++        setDirectLiveActivityTokens({ pushToStartToken: token }),
++      );
++    } catch (error) {
++      logRegistrationError("push-to-start token listener unavailable", error);
++    }
++  }
+   pushTokenSubscription = Notifications.addPushTokenListener((token) => {
+     if (
+       token.type === Platform.OS &&
+@@ -803,7 +818,6 @@ function ensureAppStateListener(): void {
+       return;
+     }
+     enqueueDeviceRegistration({}, "device registration after app foreground failed");
+-    if (!relayTokenProvider) return;
+     runRegistrationInBackground(
+       refreshActiveLiveActivityRemoteRegistration(),
+       "active live activity reconciliation after app foreground failed",
+@@ -983,6 +997,11 @@ const registerLiveActivityPushTokenValue = Effect.fn(
+ )(function* (input: {
+   readonly activityPushToken: string;
+ }): Effect.fn.Return<boolean, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
++  // Signed out, the relay cannot reach this device; connected T3 servers push to it directly.
++  if (!relayTokenProvider) {
++    setDirectLiveActivityTokens({ activityPushToken: input.activityPushToken });
++    return true;
++  }
+   const acceptedAt = registeredActivityPushTokens.get(input.activityPushToken);
+   if (
+     acceptedAt !== undefined &&
+@@ -1025,7 +1044,7 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
+ export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
+   "remoteRegistration.refreshActiveLiveActivityRemoteRegistration",
+ )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
+-  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
++  if (!canRegisterRemoteLiveActivities()) {
+     return;
+   }
+ 
+diff --git a/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx b/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
+index e28e601943..1d130406f2 100644
+--- a/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
++++ b/apps/mobile/src/features/settings/SettingsNotificationsRouteScreen.tsx
+@@ -161,9 +161,10 @@ function liveActivityStatusFrom(
+   isLoaded: boolean,
+   isSignedIn: boolean | undefined,
+   preferencesResult: AsyncResult.AsyncResult<{ readonly liveActivitiesEnabled?: boolean }, unknown>,
++  directLiveActivities: boolean,
+ ): LiveActivityStatus {
+   if (!isLoaded) return "checking";
+-  if (!isSignedIn) return "signed-out";
++  if (!isSignedIn && !directLiveActivities) return "signed-out";
+   if (AsyncResult.isFailure(preferencesResult)) return "enabled";
+   if (!AsyncResult.isSuccess(preferencesResult)) return "checking";
+   return preferencesResult.value.liveActivitiesEnabled === false ? "disabled" : "enabled";
+@@ -224,6 +225,8 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+   const insets = useSafeAreaInsets();
+   const navigation = useNavigation();
+   const { getToken, isLoaded, isSignedIn } = useAuth({ treatPendingAsSignedOut: false });
++  // iOS Live Activities can also be pushed by a connected T3 server, without T3 Connect.
++  const directLiveActivities = Platform.OS === "ios" && !isSignedIn;
+   const { savedConnectionsById } = useSavedRemoteConnections();
+   const notificationStatus = useAtomValue(notificationStatusAtom);
+   const setNotificationStatus = useAtomSet(notificationStatusAtom);
+@@ -240,7 +243,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+     liveActivityOverride.basis.isSignedIn === isSignedIn &&
+     liveActivityOverride.basis.preferencesResult === preferencesResult
+       ? liveActivityOverride.status
+-      : liveActivityStatusFrom(isLoaded, isSignedIn, preferencesResult);
++      : liveActivityStatusFrom(isLoaded, isSignedIn, preferencesResult, directLiveActivities);
+   const setLiveActivityStatus = (status: LiveActivityStatus) =>
+     setLiveActivityOverride({ status, basis: liveActivityBasis });
+   const liveActivityWriteInFlight = useRef(false);
+@@ -334,7 +337,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+   };
+ 
+   const linkEnvironments = async () => {
+-    if (!isSignedIn) {
++    if (!isSignedIn && !directLiveActivities) {
+       promptSignIn();
+       return;
+     }
+@@ -369,7 +372,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+       }
+       setNotificationStatus("enabled");
+     }
+-    const tokenResult = await settlePromise(() => getToken(resolveRelayClerkTokenOptions()));
++    const tokenResult = isSignedIn
++      ? await settlePromise(() => getToken(resolveRelayClerkTokenOptions()))
++      : ({ _tag: "Success", value: null } as const);
+     if (tokenResult._tag === "Failure") {
+       setLiveActivityStatus("disabled");
+       const error = squashAtomCommandFailure(tokenResult);
+@@ -383,7 +388,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+       );
+       return;
+     }
+-    if (!tokenResult.value) {
++    if (!tokenResult.value && !directLiveActivities) {
+       promptSignIn();
+       setLiveActivityStatus("signed-out");
+       return;
+@@ -433,7 +438,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+           "The device preference was saved. Update older environment servers to apply the setting there.",
+         ),
+       );
+-    } else if (getAgentAwarenessRegistrationStatus() === "registered") {
++    } else if (getAgentAwarenessRegistrationStatus() === "registered" || directLiveActivities) {
+       Dialog.alert(
+         Platform.OS === "android" ? gt("Ongoing activity enabled") : gt("Live Activities enabled"),
+         environmentCount > 0
+@@ -500,7 +505,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+       ),
+     );
+     if (updateResult._tag === "Failure") {
+-      setLiveActivityStatus(isSignedIn ? "enabled" : "signed-out");
++      setLiveActivityStatus(isSignedIn || directLiveActivities ? "enabled" : "signed-out");
+       if (!reportPartialEnvironmentUpdate(squashAtomCommandFailure(updateResult))) {
+         reportAtomCommandResult(updateResult, {
+           label: "live activity disable",
+@@ -544,7 +549,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+       return;
+     }
+ 
+-    if (!isSignedIn) {
++    if (!isSignedIn && !directLiveActivities) {
+       promptSignIn();
+       return;
+     }
+@@ -601,7 +606,7 @@ function ConfiguredSettingsNotificationsRouteScreen() {
+             value={
+               agentAwarenessPushAvailable &&
+               (liveActivityStatus === "enabled" || liveActivityStatus === "linking") &&
+-              deviceRegistered
++              (deviceRegistered || (directLiveActivities && directPushRegistered))
+             }
+             onValueChange={(enabled) => void handleLiveActivitiesChange(enabled)}
+           />
+diff --git a/apps/server/src/auth/RpcAuthorization.test.ts b/apps/server/src/auth/RpcAuthorization.test.ts
+index 72f5228cf7..7a2b4bf3d9 100644
+--- a/apps/server/src/auth/RpcAuthorization.test.ts
++++ b/apps/server/src/auth/RpcAuthorization.test.ts
+@@ -58,6 +58,8 @@ describe("RPC authorization scopes", () => {
+     for (const method of [
+       WS_METHODS.notificationsRegisterDevice,
+       WS_METHODS.notificationsUnregisterDevice,
++      WS_METHODS.notificationsRegisterLiveActivity,
++      WS_METHODS.notificationsUnregisterLiveActivity,
+     ]) {
+       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
+     }
+diff --git a/apps/server/src/observability/RpcInstrumentation.ts b/apps/server/src/observability/RpcInstrumentation.ts
+index 1e7a6c2abd..1756ea380a 100644
+--- a/apps/server/src/observability/RpcInstrumentation.ts
++++ b/apps/server/src/observability/RpcInstrumentation.ts
+@@ -99,6 +99,8 @@ const RPC_AGGREGATES = {
+   [WS_METHODS.serverReportClientActivity]: "server",
+   [WS_METHODS.notificationsRegisterDevice]: "server",
+   [WS_METHODS.notificationsUnregisterDevice]: "server",
++  [WS_METHODS.notificationsRegisterLiveActivity]: "server",
++  [WS_METHODS.notificationsUnregisterLiveActivity]: "server",
+   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
+   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
+   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
+diff --git a/apps/server/src/relay/DirectApnsClient.test.ts b/apps/server/src/relay/DirectApnsClient.test.ts
+index db8bd9e99b..c4e6ab670a 100644
+--- a/apps/server/src/relay/DirectApnsClient.test.ts
++++ b/apps/server/src/relay/DirectApnsClient.test.ts
+@@ -127,6 +127,58 @@ describe("DirectApnsClient", () => {
+     }).pipe(Effect.provide(harness.layer));
+   });
+ 
++  it.effect(
++    "posts a liveactivity push with the widget content state and event-specific dates",
++    () => {
++      const harness = makeHarness({});
++      const content = {
++        title: "T3 Code",
++        subtitle: "Agent work in progress",
++        activeCount: 1,
++        updatedAt: "2026-09-04T11:59:30.000Z",
++        activities: [],
++      };
++      return Effect.gen(function* () {
++        const client = yield* DirectApnsClient.DirectApnsClient;
++        const target = {
++          deviceId: "iphone",
++          apsEnvironment: "sandbox",
++          bundleId: "com.example.t3code",
++        } as const;
++        for (const event of ["update", "start", "end"] as const) {
++          const result = yield* client.sendLiveActivity({
++            target,
++            token: "cd".repeat(32),
++            event,
++            content,
++          });
++          assert.strictEqual(result.outcome, "sent");
++        }
++        const [update, start, end] = harness.requests.map((request) => ({
++          headers: request.headers,
++          aps: JSON.parse(request.body).aps as Record<string, unknown>,
++        }));
++        assert.strictEqual(update?.headers["apns-push-type"], "liveactivity");
++        assert.strictEqual(
++          update?.headers["apns-topic"],
++          "com.example.t3code.push-type.liveactivity",
++        );
++        assert.strictEqual(update?.headers["apns-priority"], "5");
++        assert.deepStrictEqual(update?.aps["content-state"], {
++          name: "AgentActivity",
++          props: JSON.stringify(content),
++        });
++        assert.strictEqual(update?.aps.event, "update");
++        assert.isDefined(update?.aps["stale-date"]);
++        assert.isUndefined(update?.aps["attributes-type"]);
++        assert.strictEqual(start?.aps["attributes-type"], "LiveActivityAttributes");
++        assert.strictEqual(start?.headers["apns-priority"], "10");
++        assert.isDefined(end?.aps["dismissal-date"]);
++        assert.isUndefined(end?.aps["stale-date"]);
++      }).pipe(Effect.provide(harness.layer));
++    },
++  );
++
+   it.effect("picks the APNs host per device token, not per server", () => {
+     const harness = makeHarness({});
+     return Effect.gen(function* () {
+diff --git a/apps/server/src/relay/DirectApnsClient.ts b/apps/server/src/relay/DirectApnsClient.ts
+index bf13f8932e..d23d7ef456 100644
+--- a/apps/server/src/relay/DirectApnsClient.ts
++++ b/apps/server/src/relay/DirectApnsClient.ts
+@@ -13,7 +13,7 @@ import * as Option from "effect/Option";
+ import * as Schema from "effect/Schema";
+ 
+ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+-import type { DirectApnsNotification } from "./directApnsPolicy.ts";
++import type { DirectApnsNotification, DirectLiveActivityContent } from "./directApnsPolicy.ts";
+ import type { StoredPushDevice } from "./DirectApnsDevices.ts";
+ 
+ const APNS_PRODUCTION_ORIGIN = "https://api.push.apple.com";
+@@ -77,6 +77,13 @@ export type DirectApnsSendResult =
+     }
+   | { readonly outcome: "error"; readonly removeToken: false };
+ 
++export type LiveActivityEvent = "start" | "update" | "end";
++
++// Seconds, matching the relay's STALE_AFTER_SECONDS: a card whose pushes stop
++// degrades to "out of date" instead of looking alive forever.
++const LIVE_ACTIVITY_STALE_AFTER_SECONDS = 10 * 60;
++const LIVE_ACTIVITY_DISMISS_AFTER_SECONDS = 2 * 60;
++
+ export class DirectApnsClient extends Context.Service<
+   DirectApnsClient,
+   {
+@@ -85,6 +92,16 @@ export class DirectApnsClient extends Context.Service<
+       readonly device: StoredPushDevice;
+       readonly notification: DirectApnsNotification;
+     }) => Effect.Effect<DirectApnsSendResult>;
++    readonly sendLiveActivity: (input: {
++      readonly target: {
++        readonly apsEnvironment: StoredPushDevice["apsEnvironment"];
++        readonly bundleId: string;
++        readonly deviceId: string;
++      };
++      readonly token: string;
++      readonly event: LiveActivityEvent;
++      readonly content: DirectLiveActivityContent;
++    }) => Effect.Effect<DirectApnsSendResult>;
+   }
+ >()("t3/relay/DirectApnsClient") {}
+ 
+@@ -213,19 +230,25 @@ const make = Effect.gen(function* () {
+     });
+   });
+ 
+-  const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
+-    device,
+-    notification,
+-  }) {
++  const deliver = Effect.fnUntraced(function* (input: {
++    readonly target: {
++      readonly apsEnvironment: StoredPushDevice["apsEnvironment"];
++      readonly deviceId: string;
++    };
++    readonly token: string;
++    readonly headers: Readonly<Record<string, string>>;
++    readonly body: unknown;
++    readonly nowSeconds: number;
++  }): Effect.fn.Return<DirectApnsSendResult, never, never> {
++    const { target } = input;
+     const credentials = yield* readCredentials;
+     if (Option.isNone(credentials)) {
+       yield* Effect.logDebug("direct APNs push skipped; credentials not configured");
+       return { outcome: "unconfigured" } as const;
+     }
+-    const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
+-    const jwt = yield* Effect.try(() => providerTokens.getJwt(credentials.value, nowSeconds)).pipe(
+-      Effect.option,
+-    );
++    const jwt = yield* Effect.try(() =>
++      providerTokens.getJwt(credentials.value, input.nowSeconds),
++    ).pipe(Effect.option);
+     if (Option.isNone(jwt)) {
+       yield* Effect.logWarning("direct APNs provider token could not be signed; check the .p8 key");
+       return { outcome: "error", removeToken: false } as const;
+@@ -235,38 +258,19 @@ const make = Effect.gen(function* () {
+         // The token's own environment decides the host: a dev build and a
+         // store build can both be registered with one server.
+         origin:
+-          device.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
+-        path: `/3/device/${device.apnsToken}`,
++          target.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
++        path: `/3/device/${input.token}`,
+         headers: {
+           authorization: `bearer ${jwt.value}`,
+-          "apns-push-type": "alert",
+-          "apns-topic": device.bundleId,
+-          "apns-priority": "10",
+           "content-type": "application/json",
++          ...input.headers,
+         },
+-        body: encodeJson({
+-          aps: {
+-            alert: { title: notification.title, body: notification.body },
+-            sound: "default",
+-            "thread-id":
+-              notification.threadId.length > 0
+-                ? `${notification.environmentId}/${notification.threadId}`
+-                : "t3-agent-alerts",
+-          },
+-          // Expo iOS exposes userInfo.body as notification.content.data.
+-          body: {
+-            environmentId: notification.environmentId,
+-            threadId: notification.threadId,
+-            deepLink: notification.deepLink,
+-            phase: notification.phase,
+-            updatedAt: notification.updatedAt,
+-          },
+-        }),
++        body: encodeJson(input.body),
+       })
+       .pipe(Effect.option);
+     if (Option.isNone(response)) {
+       yield* Effect.logWarning("direct APNs push failed in transport", {
+-        deviceId: device.deviceId,
++        deviceId: target.deviceId,
+       });
+       return { outcome: "error", removeToken: false } as const;
+     }
+@@ -274,7 +278,7 @@ const make = Effect.gen(function* () {
+     if (status >= 200 && status < 300) return { outcome: "sent" } as const;
+     const reason = reasonFromBody(body);
+     yield* Effect.logWarning("direct APNs push rejected", {
+-      deviceId: device.deviceId,
++      deviceId: target.deviceId,
+       status,
+       reason,
+     });
+@@ -288,9 +292,80 @@ const make = Effect.gen(function* () {
+     } as const;
+   });
+ 
++  const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
++    device,
++    notification,
++  }) {
++    return yield* deliver({
++      target: device,
++      token: device.apnsToken,
++      nowSeconds: Math.floor((yield* Clock.currentTimeMillis) / 1_000),
++      headers: {
++        "apns-push-type": "alert",
++        "apns-topic": device.bundleId,
++        "apns-priority": "10",
++      },
++      body: {
++        aps: {
++          alert: { title: notification.title, body: notification.body },
++          sound: "default",
++          "thread-id":
++            notification.threadId.length > 0
++              ? `${notification.environmentId}/${notification.threadId}`
++              : "t3-agent-alerts",
++        },
++        // Expo iOS exposes userInfo.body as notification.content.data.
++        body: {
++          environmentId: notification.environmentId,
++          threadId: notification.threadId,
++          deepLink: notification.deepLink,
++          phase: notification.phase,
++          updatedAt: notification.updatedAt,
++        },
++      },
++    });
++  });
++
++  const sendLiveActivity: DirectApnsClient["Service"]["sendLiveActivity"] = Effect.fn(
++    "DirectApnsClient.sendLiveActivity",
++  )(function* ({ target, token, event, content }) {
++    const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
++    const urgent =
++      event !== "update" ||
++      content.activities.some(
++        (row) => row.phase === "waiting_for_approval" || row.phase === "waiting_for_input",
++      );
++    return yield* deliver({
++      target,
++      token,
++      nowSeconds,
++      headers: {
++        "apns-push-type": "liveactivity",
++        "apns-topic": `${target.bundleId}.push-type.liveactivity`,
++        "apns-priority": urgent ? "10" : "5",
++      },
++      body: {
++        aps: {
++          timestamp: nowSeconds,
++          event,
++          // expo-widgets' ActivityKit ContentState: the widget name plus the
++          // layout props as a JSON string, exactly what LiveActivity.update writes.
++          "content-state": { name: "AgentActivity", props: encodeJson(content) },
++          ...(event === "end"
++            ? { "dismissal-date": nowSeconds + LIVE_ACTIVITY_DISMISS_AFTER_SECONDS }
++            : { "stale-date": nowSeconds + LIVE_ACTIVITY_STALE_AFTER_SECONDS }),
++          ...(event === "start"
++            ? { "attributes-type": "LiveActivityAttributes", attributes: {} }
++            : {}),
++        },
++      },
++    });
++  });
++
+   return DirectApnsClient.of({
+     isConfigured: readCredentials.pipe(Effect.map(Option.isSome)),
+     send,
++    sendLiveActivity,
+   });
+ });
+ 
+diff --git a/apps/server/src/relay/DirectApnsDevices.ts b/apps/server/src/relay/DirectApnsDevices.ts
+index f68cd90bc2..db2dca0c7f 100644
+--- a/apps/server/src/relay/DirectApnsDevices.ts
++++ b/apps/server/src/relay/DirectApnsDevices.ts
+@@ -1,4 +1,4 @@
+-import { PushDeviceRegistration } from "@t3tools/contracts";
++import { PushDeviceRegistration, PushLiveActivityRegistration } from "@t3tools/contracts";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+ import * as Layer from "effect/Layer";
+@@ -9,15 +9,13 @@ import * as Semaphore from "effect/Semaphore";
+ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+ 
+ export type StoredPushDevice = PushDeviceRegistration;
++export type StoredLiveActivity = PushLiveActivityRegistration;
+ 
+ // APNs device tokens are bearer-like identifiers for pushing to a phone, so
+ // they live in the secret store (mode-600 files in a mode-700 directory)
+ // rather than in settings.json or the database.
+ const DEVICES_SECRET = "direct-apns-devices";
+-
+-const DevicesJson = Schema.fromJsonString(Schema.Array(PushDeviceRegistration));
+-const decodeDevices = Schema.decodeUnknownEffect(DevicesJson);
+-const encodeDevices = Schema.encodeEffect(DevicesJson);
++const LIVE_ACTIVITIES_SECRET = "direct-apns-live-activities";
+ 
+ export class DirectApnsDevices extends Context.Service<
+   DirectApnsDevices,
+@@ -32,6 +30,21 @@ export class DirectApnsDevices extends Context.Service<
+       ReadonlyArray<StoredPushDevice>,
+       ServerSecretStore.SecretStoreError
+     >;
++    readonly registerLiveActivity: (
++      activity: PushLiveActivityRegistration,
++    ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
++    readonly unregisterLiveActivity: (
++      deviceId: string,
++    ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
++    readonly listLiveActivities: Effect.Effect<
++      ReadonlyArray<StoredLiveActivity>,
++      ServerSecretStore.SecretStoreError
++    >;
++    /** Drops a live activity token APNs rejected or that ended; a newer token for the device survives. */
++    readonly removeLiveActivityToken: (input: {
++      readonly deviceId: string;
++      readonly token: string;
++    }) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
+     /** Drops a token APNs rejected, unless the device has since registered a new one. */
+     readonly removeRejectedToken: (input: {
+       readonly deviceId: string;
+@@ -45,48 +58,85 @@ const make = Effect.gen(function* () {
+   // Registrations, unregistrations and APNs rejections all rewrite one file.
+   const lock = yield* Semaphore.make(1);
+ 
+-  const read = secrets.get(DEVICES_SECRET).pipe(
+-    Effect.flatMap(
+-      Option.match({
+-        onNone: () => Effect.succeed<ReadonlyArray<StoredPushDevice>>([]),
+-        onSome: (bytes) =>
+-          decodeDevices(new TextDecoder().decode(bytes)).pipe(
+-            // A corrupt file must not block registering a fresh token.
+-            Effect.catch(() => Effect.succeed<ReadonlyArray<StoredPushDevice>>([])),
+-          ),
+-      }),
+-    ),
+-  );
+-
+-  const modify = (
+-    change: (devices: ReadonlyArray<StoredPushDevice>) => ReadonlyArray<StoredPushDevice>,
+-  ) =>
+-    lock.withPermits(1)(
+-      Effect.gen(function* () {
+-        const current = yield* read;
+-        const next = change(current);
+-        if (next.length === current.length && next.every((device, i) => device === current[i])) {
+-          return;
+-        }
+-        const encoded = yield* encodeDevices(next).pipe(Effect.orDie);
+-        yield* secrets.set(DEVICES_SECRET, new TextEncoder().encode(encoded));
+-      }),
++  const makeStore = <A extends { readonly deviceId: string }, I>(
++    secretName: string,
++    item: Schema.Codec<A, I>,
++  ) => {
++    const json = Schema.fromJsonString(Schema.Array(item));
++    const decode = Schema.decodeUnknownEffect(json);
++    const encode = Schema.encodeEffect(json);
++    const read = secrets.get(secretName).pipe(
++      Effect.flatMap(
++        Option.match({
++          onNone: () => Effect.succeed<ReadonlyArray<A>>([]),
++          onSome: (bytes) =>
++            decode(new TextDecoder().decode(bytes)).pipe(
++              // A corrupt file must not block registering a fresh token.
++              Effect.catch(() => Effect.succeed<ReadonlyArray<A>>([])),
++            ),
++        }),
++      ),
+     );
++    const modify = (change: (items: ReadonlyArray<A>) => ReadonlyArray<A>) =>
++      lock.withPermits(1)(
++        Effect.gen(function* () {
++          const current = yield* read;
++          const next = change(current);
++          if (next.length === current.length && next.every((entry, i) => entry === current[i])) {
++            return;
++          }
++          const encoded = yield* encode(next).pipe(Effect.orDie);
++          yield* secrets.set(secretName, new TextEncoder().encode(encoded));
++        }),
++      );
++    return {
++      read,
++      modify,
++      upsert: (entry: A) =>
++        modify((items) => [...items.filter((e) => e.deviceId !== entry.deviceId), entry]),
++      remove: (deviceId: string) => modify((items) => items.filter((e) => e.deviceId !== deviceId)),
++    };
++  };
++
++  const devices = makeStore(DEVICES_SECRET, PushDeviceRegistration);
++  const liveActivities = makeStore(LIVE_ACTIVITIES_SECRET, PushLiveActivityRegistration);
+ 
+   return DirectApnsDevices.of({
+     register: Effect.fn("DirectApnsDevices.register")(function* (device) {
+-      yield* modify((devices) => [
+-        ...devices.filter((existing) => existing.deviceId !== device.deviceId),
+-        device,
+-      ]);
++      yield* devices.upsert(device);
+     }),
+     unregister: Effect.fn("DirectApnsDevices.unregister")(function* (deviceId) {
+-      yield* modify((devices) => devices.filter((device) => device.deviceId !== deviceId));
++      yield* devices.remove(deviceId);
+     }),
+-    list: lock.withPermits(1)(read),
++    list: lock.withPermits(1)(devices.read),
++    registerLiveActivity: Effect.fn("DirectApnsDevices.registerLiveActivity")(function* (entry) {
++      yield* liveActivities.upsert(entry);
++    }),
++    unregisterLiveActivity: Effect.fn("DirectApnsDevices.unregisterLiveActivity")(
++      function* (deviceId) {
++        yield* liveActivities.remove(deviceId);
++      },
++    ),
++    listLiveActivities: lock.withPermits(1)(liveActivities.read),
++    removeLiveActivityToken: Effect.fn("DirectApnsDevices.removeLiveActivityToken")(
++      function* (input) {
++        yield* liveActivities.modify((items) =>
++          items.flatMap((entry) => {
++            if (entry.deviceId !== input.deviceId) return [entry];
++            const { activityPushToken, pushToStartToken, ...rest } = entry;
++            const next = {
++              ...rest,
++              ...(activityPushToken !== input.token ? { activityPushToken } : {}),
++              ...(pushToStartToken !== input.token ? { pushToStartToken } : {}),
++            };
++            return next.activityPushToken || next.pushToStartToken ? [next] : [];
++          }),
++        );
++      },
++    ),
+     removeRejectedToken: Effect.fn("DirectApnsDevices.removeRejectedToken")(function* (input) {
+-      yield* modify((devices) =>
+-        devices.filter(
++      yield* devices.modify((items) =>
++        items.filter(
+           (device) => !(device.deviceId === input.deviceId && device.apnsToken === input.apnsToken),
+         ),
+       );
+diff --git a/apps/server/src/relay/DirectApnsNotifier.test.ts b/apps/server/src/relay/DirectApnsNotifier.test.ts
+index 331ffeb377..6a3e523de1 100644
+--- a/apps/server/src/relay/DirectApnsNotifier.test.ts
++++ b/apps/server/src/relay/DirectApnsNotifier.test.ts
+@@ -66,11 +66,14 @@ const makeHarness = Effect.fnUntraced(function* (options: {
+   readonly respond?: (
+     device: DirectApnsDevices.StoredPushDevice,
+   ) => DirectApnsClient.DirectApnsSendResult;
++  readonly respondLiveActivity?: (token: string) => DirectApnsClient.DirectApnsSendResult;
+ }) {
+   const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell({}));
+   const reads: ThreadId[] = [];
+   const firstRead = yield* Deferred.make<void>();
+   const sent: Array<{ deviceId: string; title: string; body: string; phase: string }> = [];
++  const liveSent: Array<{ token: string; event: string; activeCount: number; phases: string[] }> =
++    [];
+   const values = new Map<string, Uint8Array>();
+   const secrets = Layer.succeed(
+     ServerSecretStore.ServerSecretStore,
+@@ -100,6 +103,16 @@ const makeHarness = Effect.fnUntraced(function* (options: {
+               });
+               return options.respond?.(device) ?? { outcome: "sent" as const };
+             }),
++          sendLiveActivity: ({ token, event, content }) =>
++            Effect.sync(() => {
++              liveSent.push({
++                token,
++                event,
++                activeCount: content.activeCount,
++                phases: content.activities.map((row) => row.phase),
++              });
++              return options.respondLiveActivity?.(token) ?? { outcome: "sent" as const };
++            }),
+         }),
+       ),
+     ),
+@@ -135,7 +148,7 @@ const makeHarness = Effect.fnUntraced(function* (options: {
+       } as never),
+     ),
+   );
+-  return { layer, currentShell, sent, reads, firstRead };
++  return { layer, currentShell, sent, liveSent, reads, firstRead };
+ });
+ 
+ describe("DirectApnsNotifier", () => {
+@@ -251,6 +264,111 @@ describe("DirectApnsNotifier", () => {
+     }),
+   );
+ 
++  it.effect("updates a live activity on change, ends it on completion and drops its token", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({});
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.registerLiveActivity({
++          deviceId: "iphone",
++          apsEnvironment: "sandbox",
++          bundleId: "com.example.t3code",
++          activityPushToken: "c".repeat(64),
++        });
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        // Re-pushing identical content would burn APNs' update budget.
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(harness.liveSent, [
++          { token: "c".repeat(64), event: "update", activeCount: 1, phases: ["running"] },
++        ]);
++
++        yield* Ref.set(
++          harness.currentShell,
++          shell({ activityRunStatus: "completed", status: "completed" }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(harness.liveSent.at(-1), {
++          token: "c".repeat(64),
++          event: "end",
++          activeCount: 0,
++          phases: ["completed"],
++        });
++        assert.deepStrictEqual(yield* devices.listLiveActivities, []);
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("drops an activity token APNs rejects but keeps the push-to-start token", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({
++        respondLiveActivity: () => ({
++          outcome: "rejected",
++          status: 410,
++          reason: "Unregistered",
++          removeToken: true,
++        }),
++      });
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.registerLiveActivity({
++          deviceId: "iphone",
++          apsEnvironment: "sandbox",
++          bundleId: "com.example.t3code",
++          activityPushToken: "c".repeat(64),
++          pushToStartToken: "d".repeat(64),
++        });
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(yield* devices.listLiveActivities, [
++          {
++            deviceId: "iphone",
++            apsEnvironment: "sandbox",
++            bundleId: "com.example.t3code",
++            pushToStartToken: "d".repeat(64),
++          },
++        ]);
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("starts a live activity once per burst of work through the push-to-start token", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({});
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.registerLiveActivity({
++          deviceId: "iphone",
++          apsEnvironment: "sandbox",
++          bundleId: "com.example.t3code",
++          pushToStartToken: "d".repeat(64),
++        });
++        yield* notifier.observeThread(THREAD_ID);
++        yield* Ref.set(
++          harness.currentShell,
++          shell({
++            activityRunStatus: "waiting_for_approval",
++            pendingRuntimeRequest: { kind: "approval" },
++          }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(
++          harness.liveSent.map((push) => push.event),
++          ["start"],
++        );
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
+   it.effect("reads a thread only for events that can change its phase", () =>
+     Effect.gen(function* () {
+       const event = (type: string, threadId: ThreadId) =>
+diff --git a/apps/server/src/relay/DirectApnsNotifier.ts b/apps/server/src/relay/DirectApnsNotifier.ts
+index c90817d483..6a61e660fd 100644
+--- a/apps/server/src/relay/DirectApnsNotifier.ts
++++ b/apps/server/src/relay/DirectApnsNotifier.ts
+@@ -1,8 +1,9 @@
+ import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
+-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
++import { projectThreadAwarenessV2, type AgentAwarenessState } from "@t3tools/shared/agentAwareness";
+ import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+ import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+ import * as Cause from "effect/Cause";
++import * as DateTime from "effect/DateTime";
+ import * as Clock from "effect/Clock";
+ import * as Context from "effect/Context";
+ import * as Effect from "effect/Effect";
+@@ -17,7 +18,12 @@ import * as ProjectService from "../project/ProjectService.ts";
+ import { forkParked } from "../serverActivation.ts";
+ import * as DirectApnsClient from "./DirectApnsClient.ts";
+ import * as DirectApnsDevices from "./DirectApnsDevices.ts";
+-import { alertForTransition, makePhaseTracker, notificationForState } from "./directApnsPolicy.ts";
++import {
++  alertForTransition,
++  liveActivityContentForStates,
++  makePhaseTracker,
++  notificationForState,
++} from "./directApnsPolicy.ts";
+ 
+ const SEND_CONCURRENCY = 4;
+ 
+@@ -73,15 +79,91 @@ const make = Effect.gen(function* () {
+   const devices = yield* DirectApnsDevices.DirectApnsDevices;
+   const client = yield* DirectApnsClient.DirectApnsClient;
+   const tracker = makePhaseTracker();
++  // The live card summarizes every thread, so it needs the current state of
++  // all of them, not just the phase the tracker keeps for transitions.
++  const states = new Map<ThreadId, AgentAwarenessState>();
++  // Last payload sent per activity token, so unchanged state is not re-pushed
++  // against APNs' update budget.
++  const sentSignatures = new Map<string, string>();
++  // Push-to-start tokens already used for the current burst of work. The new
++  // activity's own token only reaches us when the app next runs, so without
++  // this every phase change would start another card.
++  const startedTokens = new Set<string>();
++
++  const publishLiveActivities = Effect.fn("DirectApnsNotifier.publishLiveActivities")(function* () {
++    const entries = yield* devices.listLiveActivities;
++    if (entries.length === 0) return;
++    const nowMs = yield* Clock.currentTimeMillis;
++    const content = liveActivityContentForStates(states.values(), nowMs);
++    const finished = content === null || content.activeCount === 0;
++    const endContent = content ?? {
++      title: "T3 Code",
++      subtitle: "Agent work finished",
++      activeCount: 0,
++      updatedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
++      activities: [],
++    };
++    if (finished) startedTokens.clear();
++    yield* Effect.forEach(
++      entries,
++      (entry) => {
++        const target = {
++          deviceId: entry.deviceId,
++          apsEnvironment: entry.apsEnvironment,
++          bundleId: entry.bundleId,
++        };
++        const push = (
++          token: string,
++          event: "start" | "update" | "end",
++          payload: typeof endContent,
++        ) =>
++          client.sendLiveActivity({ target, token, event, content: payload }).pipe(
++            Effect.flatMap((result) => {
++              if (result.outcome === "sent" && event === "update") {
++                sentSignatures.set(token, JSON.stringify(payload));
++              }
++              // An ended activity's token is dead; the app registers the next one.
++              const dead =
++                (result.outcome === "rejected" && result.removeToken) ||
++                (result.outcome === "sent" && event === "end");
++              if (!dead) return Effect.void;
++              sentSignatures.delete(token);
++              return devices.removeLiveActivityToken({ deviceId: entry.deviceId, token });
++            }),
++          );
++        const activityToken = entry.activityPushToken;
++        if (activityToken) {
++          if (finished) return push(activityToken, "end", endContent);
++          if (sentSignatures.get(activityToken) === JSON.stringify(content)) return Effect.void;
++          return push(activityToken, "update", content);
++        }
++        const startToken = entry.pushToStartToken;
++        if (startToken && !finished && !startedTokens.has(startToken)) {
++          startedTokens.add(startToken);
++          return push(startToken, "start", content);
++        }
++        return Effect.void;
++      },
++      { concurrency: SEND_CONCURRENCY, discard: true },
++    );
++  });
+ 
+   const process = Effect.fn("DirectApnsNotifier.process")(function* (threadId: ThreadId) {
+     if (!(yield* client.isConfigured)) {
+       yield* Effect.logDebug("direct APNs notifier idle; credentials not configured");
+       return;
+     }
++    yield* observeAndAlert(threadId);
++    yield* publishLiveActivities();
++  });
++
++  const observeAndAlert = Effect.fn("DirectApnsNotifier.observeAndAlert")(function* (
++    threadId: ThreadId,
++  ) {
+     const shell = yield* threads.getThreadShell(threadId);
+     if (shell === null || shell.archivedAt !== null) {
+       tracker.forget(threadId);
++      states.delete(threadId);
+       return;
+     }
+     const project = yield* projects.getById(shell.projectId);
+@@ -92,7 +174,11 @@ const make = Effect.gen(function* () {
+       thread: shell,
+     });
+     const { previous } = tracker.observe(threadId, state);
+-    if (state === null) return;
++    if (state === null) {
++      states.delete(threadId);
++      return;
++    }
++    states.set(threadId, state);
+     const nowMs = yield* Clock.currentTimeMillis;
+     const recipients = (yield* devices.list).filter((device) =>
+       alertForTransition({ previous, state, preferences: device, nowMs }),
+@@ -150,7 +236,9 @@ const make = Effect.gen(function* () {
+     for (const shell of shellSnapshot.threads) {
+       const project = projectById.get(shell.projectId);
+       if (!project || shell.archivedAt !== null) continue;
+-      tracker.seed(shell.id, projectThreadAwarenessV2({ environmentId, project, thread: shell }));
++      const state = projectThreadAwarenessV2({ environmentId, project, thread: shell });
++      tracker.seed(shell.id, state);
++      if (state !== null) states.set(shell.id, state);
+     }
+   });
+ 
+diff --git a/apps/server/src/relay/directApnsPolicy.ts b/apps/server/src/relay/directApnsPolicy.ts
+index 4d20f72ac9..540530088c 100644
+--- a/apps/server/src/relay/directApnsPolicy.ts
++++ b/apps/server/src/relay/directApnsPolicy.ts
+@@ -139,3 +139,65 @@ export function notificationForState(state: AgentAwarenessState): DirectApnsNoti
+     updatedAt: state.updatedAt,
+   };
+ }
++
++export interface DirectLiveActivityRow {
++  readonly environmentId: string;
++  readonly threadId: string;
++  readonly projectTitle: string;
++  readonly threadTitle: string;
++  readonly modelTitle: string;
++  readonly phase: string;
++  readonly status: string;
++  readonly updatedAt: string;
++  readonly deepLink: string;
++}
++
++// Mirrors the widget's AgentActivityProps in apps/mobile/src/widgets/AgentActivity.tsx.
++export interface DirectLiveActivityContent {
++  readonly title: string;
++  readonly subtitle: string;
++  readonly activeCount: number;
++  readonly updatedAt: string;
++  readonly activities: ReadonlyArray<DirectLiveActivityRow>;
++}
++
++const MAX_LIVE_ACTIVITY_ROWS = 5;
++
++/**
++ * The card shows this environment's in-flight threads plus anything that just
++ * finished, so a completion is visible for a moment. Null means nothing is
++ * worth showing and a running card should end.
++ */
++export function liveActivityContentForStates(
++  states: Iterable<AgentAwarenessState>,
++  nowMs: number,
++): DirectLiveActivityContent | null {
++  const shown = [...states]
++    .filter((state) => {
++      if (!isTerminalPhase(state.phase)) return true;
++      const updatedAtMs = Date.parse(state.updatedAt);
++      return (
++        Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= DIRECT_APNS_TERMINAL_FRESHNESS_MS
++      );
++    })
++    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
++  if (shown.length === 0) return null;
++  const activeCount = shown.filter((state) => !isTerminalPhase(state.phase)).length;
++  return {
++    title: "T3 Code",
++    subtitle: activeCount > 0 ? "Agent work in progress" : "Agent work finished",
++    activeCount,
++    updatedAt: shown[0]!.updatedAt,
++    activities: shown.slice(0, MAX_LIVE_ACTIVITY_ROWS).map((state) => ({
++      environmentId: state.environmentId,
++      threadId: state.threadId,
++      projectTitle: truncateText(state.projectTitle, MAX_TEXT_LENGTH),
++      threadTitle: truncateText(state.threadTitle, MAX_TEXT_LENGTH),
++      modelTitle: truncateText(state.modelTitle, MAX_TEXT_LENGTH),
++      phase: state.phase,
++      status: statusForPhase(state.phase),
++      updatedAt: state.updatedAt,
++      deepLink: sanitizeDeepLink(state.deepLink),
++    })),
++  };
++}
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index c85872d42c..3600ab8282 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -2759,6 +2759,20 @@ export const layerWsRpc = (
+             ),
+             Effect.orDie,
+           ),
++        [WS_METHODS.notificationsRegisterLiveActivity]: (input) =>
++          directApnsDevices.registerLiveActivity(input).pipe(
++            Effect.tapError((cause) =>
++              Effect.logWarning("live activity registration failed", { cause }),
++            ),
++            Effect.orDie,
++          ),
++        [WS_METHODS.notificationsUnregisterLiveActivity]: (input) =>
++          directApnsDevices.unregisterLiveActivity(input.deviceId).pipe(
++            Effect.tapError((cause) =>
++              Effect.logWarning("live activity unregistration failed", { cause }),
++            ),
++            Effect.orDie,
++          ),
+         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
+           Ref.update(rpcClientIds, (clientIds) => {
+             const next = new Set(clientIds);
+diff --git a/packages/client-runtime/src/state/commandPermissions.test.ts b/packages/client-runtime/src/state/commandPermissions.test.ts
+index e14493c405..2f6250afaa 100644
+--- a/packages/client-runtime/src/state/commandPermissions.test.ts
++++ b/packages/client-runtime/src/state/commandPermissions.test.ts
+@@ -104,6 +104,8 @@ describe("command permissions", () => {
+   it.effect.each([
+     WS_METHODS.notificationsRegisterDevice,
+     WS_METHODS.notificationsUnregisterDevice,
++    WS_METHODS.notificationsRegisterLiveActivity,
++    WS_METHODS.notificationsUnregisterLiveActivity,
+   ])("requires the destination thread-read grant for %s", (method) =>
+     Effect.scoped(
+       Effect.gen(function* () {
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index ed606054e0..5502069ffc 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -1904,6 +1904,14 @@ export function createServerEnvironmentAtoms<R, E>(
+       label: "environment-data:server:unregister-push-device",
+       tag: WS_METHODS.notificationsUnregisterDevice,
+     }),
++    registerPushLiveActivity: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:register-push-live-activity",
++      tag: WS_METHODS.notificationsRegisterLiveActivity,
++    }),
++    unregisterPushLiveActivity: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:unregister-push-live-activity",
++      tag: WS_METHODS.notificationsUnregisterLiveActivity,
++    }),
+     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
+       label: "environment-data:server:check-otlp-endpoint",
+       tag: WS_METHODS.serverCheckOtlpEndpoint,
+diff --git a/packages/contracts/src/clientRpcPermissions.ts b/packages/contracts/src/clientRpcPermissions.ts
+index f830aef406..aa5936c549 100644
+--- a/packages/contracts/src/clientRpcPermissions.ts
++++ b/packages/contracts/src/clientRpcPermissions.ts
+@@ -24,6 +24,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
+   // Registering a device only asks this server to alert it about threads its grant can already read.
+   [WS_METHODS.notificationsRegisterDevice]: AuthOrchestrationReadScope,
+   [WS_METHODS.notificationsUnregisterDevice]: AuthOrchestrationReadScope,
++  [WS_METHODS.notificationsRegisterLiveActivity]: AuthOrchestrationReadScope,
++  [WS_METHODS.notificationsUnregisterLiveActivity]: AuthOrchestrationReadScope,
+   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+   // Restarts the server, as an update does.
+   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
+diff --git a/packages/contracts/src/pushNotifications.ts b/packages/contracts/src/pushNotifications.ts
+index c8786b9dd9..e53f8c909d 100644
+--- a/packages/contracts/src/pushNotifications.ts
++++ b/packages/contracts/src/pushNotifications.ts
+@@ -26,3 +26,14 @@ export const PushDeviceUnregistration = Schema.Struct({
+   deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+ });
+ export type PushDeviceUnregistration = typeof PushDeviceUnregistration.Type;
++
++// Tokens for ActivityKit pushes. Activity tokens rotate and die with their activity;
++// the push-to-start token lets the server begin an activity while the app is closed.
++export const PushLiveActivityRegistration = Schema.Struct({
++  deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
++  apsEnvironment: PushApsEnvironment,
++  bundleId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
++  activityPushToken: Schema.optional(ApnsDeviceToken),
++  pushToStartToken: Schema.optional(ApnsDeviceToken),
++});
++export type PushLiveActivityRegistration = typeof PushLiveActivityRegistration.Type;
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 5d9e59712e..a98072469d 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -84,7 +84,11 @@ import {
+   AuthAccessStreamEvent,
+   EnvironmentAuthorizationError,
+ } from "./auth.ts";
+-import { PushDeviceRegistration, PushDeviceUnregistration } from "./pushNotifications.ts";
++import {
++  PushDeviceRegistration,
++  PushDeviceUnregistration,
++  PushLiveActivityRegistration,
++} from "./pushNotifications.ts";
+ import { ClientActivityReportInput } from "./background.ts";
+ import {
+   FilesystemGetMetadataInput,
+@@ -594,6 +598,8 @@ export const WS_METHODS = {
+ 
+   notificationsRegisterDevice: "notifications.registerDevice",
+   notificationsUnregisterDevice: "notifications.unregisterDevice",
++  notificationsRegisterLiveActivity: "notifications.registerLiveActivity",
++  notificationsUnregisterLiveActivity: "notifications.unregisterLiveActivity",
+ 
+   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
+   cloudInstallRelayClient: "cloud.installRelayClient",
+@@ -1111,6 +1117,16 @@ const WsNotificationsUnregisterDeviceRpc = Rpc.make(WS_METHODS.notificationsUnre
+   error: EnvironmentAuthorizationError,
+ });
+ 
++const WsNotificationsRegisterLiveActivityRpc = Rpc.make(
++  WS_METHODS.notificationsRegisterLiveActivity,
++  { payload: PushLiveActivityRegistration, error: EnvironmentAuthorizationError },
++);
++
++const WsNotificationsUnregisterLiveActivityRpc = Rpc.make(
++  WS_METHODS.notificationsUnregisterLiveActivity,
++  { payload: PushDeviceUnregistration, error: EnvironmentAuthorizationError },
++);
++
+ const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
+   payload: ClientActivityReportInput,
+   error: EnvironmentAuthorizationError,
+@@ -2362,6 +2378,8 @@ export const WsRpcGroup = RpcGroup.make(
+   WsScheduledTasksGetWebhookDeliveryRpc,
+   WsNotificationsRegisterDeviceRpc,
+   WsNotificationsUnregisterDeviceRpc,
++  WsNotificationsRegisterLiveActivityRpc,
++  WsNotificationsUnregisterLiveActivityRpc,
+   WsServerReportClientActivityRpc,
+   WsCloudGetRelayClientStatusRpc,
+   WsCloudInstallRelayClientRpc,
