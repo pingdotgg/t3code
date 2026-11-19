@@ -55,7 +55,7 @@ test(
         project,
         title: "Discover replay models",
         messages: ["Start"],
-        model: "default",
+        model: "showcase",
       });
       const thread = await t3.thread({
         project,
