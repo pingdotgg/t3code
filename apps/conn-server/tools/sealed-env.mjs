@@ -216,6 +216,8 @@ export const RUN_DROPPED = [
   "T3_ACP_MCP_AUTHORIZATION", "PROGRAMDATA", "HOSTNAME", "GIT_CONFIG_COUNT",
   // The Android SDK and emulator options of this machine (conn-devices, the local host).
   "ANDROID_HOME", "ANDROID_SDK_ROOT", "LOCALAPPDATA", "EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS",
+  // The machine's switch for the local server scan (`T3CODE_PORT_DISCOVERY=0`).
+  "T3CODE_PORT_DISCOVERY",
 ];
 
 /** The prefix of the cargo runner's temp folders: `conn-run-<runner pid>-XXXXXX`. */

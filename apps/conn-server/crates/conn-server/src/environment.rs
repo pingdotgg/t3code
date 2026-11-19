@@ -289,6 +289,10 @@ pub fn capabilities(server_restart: bool) -> ExecutionEnvironmentCapabilities {
     capabilities.mcp_mode_limit_header = Some(true);
     capabilities.link_fence = Some(true);
     capabilities.peer_link_pairing_codes = Some(true);
+    // `preview.stopLocalServer` (`crate::local_servers`), off on Windows as in T3.
+    if !cfg!(windows) {
+        capabilities.local_server_stop = Some(true);
+    }
     capabilities
 }
 
@@ -367,6 +371,7 @@ mod tests {
                 "ignoredFileSearch",
                 "linkFence",
                 "linkedThreadRefreshes",
+                "localServerStop",
                 "mcpModeLimitHeader",
                 "peerLinkPairingCodes",
                 "peerLinks",

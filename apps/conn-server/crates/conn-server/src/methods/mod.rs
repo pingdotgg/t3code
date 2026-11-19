@@ -13,6 +13,7 @@ pub(crate) mod devices;
 mod files;
 mod git;
 mod git_message;
+mod local_servers;
 mod mcp_apps;
 pub(crate) mod orchestration;
 mod panels;
@@ -86,6 +87,7 @@ pub fn register_all(table: &mut MethodTable, deps: &Deps) {
     orchestration::register(table, deps);
     projects::register(table, deps);
     preview::register(table, deps);
+    local_servers::register(table, deps);
     provider::register(table, deps);
     vcs::register(table, deps);
     git::register(table, deps);

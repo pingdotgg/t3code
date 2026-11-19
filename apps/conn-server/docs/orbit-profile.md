@@ -27,7 +27,7 @@ pinned pair.
 | (c) Full parity with the T3 server | **54**, including 1 unclassified method | **9** | **35** | Remaining work not re-estimated |
 
 The dated size basis is about 140 k lines of Rust [measured on 2026-11-14, `wc -l` over
-`crates/*/src`]. Current coverage is 183 of 237 methods, 78 of 87 tools and 22 of 57 HTTP
+`crates/*/src`]. Current coverage is 185 of 237 methods, 78 of 87 tools and 22 of 57 HTTP
 contract routes, plus eight endpoints outside that HTTP contract. The original size
 estimates are not estimates of the remaining work. Section 2 gives the current gaps;
 section 3 keeps the dated binary measurements.
@@ -290,9 +290,8 @@ in the `server` area.
 
 - **Container:** all 67 needed methods are served. One useful method is not:
   `provider.consumeResetCredit`.
-- **Host:** 152 are needed, and 1 of them is not served: `preview.stopLocalServer`. It stops
-  only a server that the port scan (`subscribeDiscoveredLocalServers`, useful, not served)
-  listed; it comes with that scan. `device.*` and `peerLinks.*` are served since 2026-11-19.
+- **Host:** all 152 needed methods are served; `preview.stopLocalServer` and its port scan
+  (`subscribeDiscoveredLocalServers`) since 2026-11-19. `device.*` and `peerLinks.*` are served since 2026-11-19.
 - **Not needed anywhere: 16 methods.** These are T3 Connect (`cloud.*`, `guestShare`), the
   ACP registry's download and install (9; Nick ruled out installs), the Electron tab relay
   (`preview.desktop*`, 3) and `server.commitDesktopUpdate`.
@@ -353,7 +352,6 @@ implemented areas have no remaining-size estimate.
 | Area | Remaining items in (b) | Estimate |
 | --- | --- | --- |
 | Review guide writing | `write_pull_request_guides` (and `pullRequests.generateReviewGuide` for real) | Not estimated: T3's guide generator, a temporary checkout and the guide normalization |
-| Agent browser and previews | `preview.stopLocalServer` | Not re-estimated; browser tools and eight preview methods are registered |
 | MCP OAuth for outside agents | 5 useful routes (the browser approval page and the `.well-known` metadata); peer links and linked environments are served (`docs/status.md`) | Not re-estimated |
 | Provider sign-in | 6 methods | 1.5 to 2.5 k |
 | The rest | useful features in appendices A to C | Not re-estimated |
@@ -1027,7 +1025,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `preview.reportProfiles` | yes | X | U |  |  |
 | `preview.reportStatus` | yes | X | N |  | agent browser and preview tabs; container previews go through the app Route |
 | `preview.resize` | yes | X | N |  | agent browser and preview tabs; container previews go through the app Route |
-| `preview.stopLocalServer` | no | X | N | L | stops a server that `subscribeDiscoveredLocalServers` found; unreachable without that port scan, which stays unregistered |
+| `preview.stopLocalServer` | yes | X | N | L | stops a listed, owned server (`local_servers`) |
 | `projectClone.cancel` | no | X | U | M | clone from the client; Orbit clones containers |
 | `projectClone.retry` | no | X | U | M | clone from the client; Orbit clones containers |
 | `projectClone.start` | no | X | U | M | clone from the client; Orbit clones containers |
@@ -1159,7 +1157,7 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `sourceControl.starred` | yes | X | U |  | stars |
 | `subscribeAuthAccess` | yes | N | N |  | connection streams |
 | `subscribeDeviceState` | yes | U | N |  | device panel state; real state since 2026-11-19 |
-| `subscribeDiscoveredLocalServers` | no | X | U | M | port scan for previews |
+| `subscribeDiscoveredLocalServers` | yes | X | U | M | port scan for previews (`local_servers`) |
 | `subscribePreviewEvents` | yes | X | N |  | preview tabs |
 | `subscribeProjectClones` | yes | X | U |  |  |
 | `subscribeResourceTelemetry` | no | X | U | M |  |

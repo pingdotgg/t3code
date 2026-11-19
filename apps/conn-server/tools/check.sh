@@ -215,6 +215,8 @@ run 3 240 "device conformance" \
   node crates/conn-devices/tools/conformance.mjs "$release/examples/replay_server"
 # Orbit's idle check: the shell route in 14 states on both servers, Codex on a stub (no model).
 run 4 180 "idle-diff" node crates/conn-server/tools/idle-diff.mjs "$release/conn-server"
+# Local servers for previews: both servers list and stop this check's own listeners.
+run 4 120 "local-servers-diff" node crates/conn-server/tools/local-servers-diff.mjs "$release/conn-server"
 # Provider sign-in: every provider.auth.* reply and the CLI runs on both servers (stub CLIs).
 run 4 180 "provider-auth-diff" node crates/conn-server/tools/provider-auth-diff.mjs "$release/conn-server"
 run 2 120 "codex instructions --check" \

@@ -223,11 +223,32 @@ Conn stops the app-server on close, so its handoff revokes; T3 keeps its shared 
   item, "Stopped by an agent." with a full stop. Without the protocol header T3 answers an
   empty 400; the client always sends it. Size near the limit: T3 counts its in-memory rows,
   this server the JSON it sends.
-- **`preview.stopLocalServer` stays unregistered.** Its one caller, the thread Servers panel,
-  lists only servers that `subscribeDiscoveredLocalServers` found and offers Stop only when the
-  environment advertises `localServerStop`. Neither is served or advertised, so no client can
-  reach it. Serving it means T3's port scan first (`PortScanner.ts`, about 1,240 lines:
-  socket owners, process groups, terminal and agent attribution); not small.
+- **`preview.stopLocalServer`** came later with the port scan (see "Local servers for
+  previews").
+
+## Local servers for previews (2026-11-19)
+
+The thread's Servers panel lists the servers a thread's terminal or agent started and can stop
+them, as with T3 (`PortScanner.ts`). Before, `subscribeDiscoveredLocalServers` and
+`preview.stopLocalServer` were unregistered and `localServerStop` was not advertised.
+
+- **Served** (`src/local_servers/`): the subscription (first list at once, then changes;
+  every 3 seconds while subscribed and a client is in the foreground) and the stop. Listeners
+  from `/proc/net/tcp{,6}` with a bounded fd walk on Linux, else `lsof`; owners from a
+  terminal's process tree (background jobs too), or `T3CODE_THREAD_ID` in the listener's
+  launch environment (agent CLIs themselves excluded); configured loopback URLs get one GET
+  (1 s, no redirects, 15-second cache) and are listed when they answer HTML. A stop takes only
+  a listed, owned server whose group holds neither this server, its ancestors nor a direct
+  child; SIGTERM, then SIGKILL after 3 s if a member is still in the group. T3's parsers,
+  limits and texts (`parse.rs`). Advertised: `localServerStop` (not on Windows).
+- **Proof:** `local-servers-diff` (new check, group 4): five listeners of its own (three with
+  an agent thread, an HTML page, a JSON server) on both servers: the first list with five
+  configured URLs, two refused stops (unowned, wrong port), one stop on each side, a terminal's
+  background server, and the list after; equal. Without the background-job fix it fails. Unit tests for the parsers and the stop guard.
+- **Known differences:** terminal ownership is read from the process table at the scan, where
+  T3 registers it from its terminal subprocess poll; listener environments are read whenever
+  a panel subscribes (T3 skips them while no agent ran); Codex is not told that a stopped
+  command was a user stop (`watchAgentCommandStops`); no Windows listener scan.
 
 ## PR watching and review guides (2026-11-19)
 

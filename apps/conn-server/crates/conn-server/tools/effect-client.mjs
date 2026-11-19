@@ -340,6 +340,8 @@ const decodeEach = (client) =>
     yield* call("preview.clearProfile", {profileId:"never-opened"});
     yield* call("preview.reportStatus", {threadId:none,tabId:"missing",navStatus:{_tag:"Idle"},canGoBack:false,canGoForward:false});
     yield* call("preview.open", {threadId:none,runtime:"server",url:"file:///refused"});
+    // No listener is ours at pid 1: the typed `not-found` refusal.
+    yield* call("preview.stopLocalServer", {pid:1,port:1});
     yield* call("subscribePreviewEvents", {});
     yield* call("git.resolvePullRequest", { cwd: repo, reference: "42" });
     yield* call("git.preparePullRequestThread", { cwd: repo, reference: "42", mode: "worktree" });
