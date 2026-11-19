@@ -207,7 +207,12 @@ final class T3TunnelWebView: ExpoView, WKNavigationDelegate {
       T3Loopback.standIn(url) != url
     else { return decisionHandler(.allow) }
     decisionHandler(.cancel)
-    navigate(url.absoluteString)
+    // The same request at the stand-in host, so a form keeps its method, headers and body.
+    var request = navigationAction.request
+    let target = T3Loopback.standIn(url)
+    request.url = target
+    requestedUrl = target
+    webView.load(request)
   }
 
   func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
