@@ -466,12 +466,16 @@ const make = Effect.gen(function* () {
             return yield* finish("skipped", "Automatic memory is off for this project.");
           let saved = 0;
           let duplicates = 0;
-          const discarded = { task: 0, code: 0, unsupported: 0 };
+          const discarded = { task: 0, code: 0 };
           for (const [index, { create, actor, userSupported }] of proposed.entries()) {
             if (yield* knowledge.hasAssistedRun(projectId, actor.runId)) continue;
             // Repetition and a text-only classifier cannot verify an agent's causal claim.
             const verdict = userSupported ? (checked.verdicts[index] ?? "task") : "task";
-            const result = yield* knowledge.saveAutomatic(create, actor, verdict).pipe(
+            if (verdict !== "standing") {
+              discarded[verdict] += 1;
+              continue;
+            }
+            const result = yield* knowledge.saveAutomatic(create, actor).pipe(
               Effect.catchTags({
                 ProjectKnowledgeError: (error) =>
                   error.reason === "storage" || error.reason === "missing_project"
@@ -479,9 +483,7 @@ const make = Effect.gen(function* () {
                     : Effect.succeed({ outcome: "dropped" as const }),
               }),
             );
-            if (result.outcome === "discarded")
-              discarded[verdict === "standing" ? "unsupported" : verdict] += 1;
-            else if (result.outcome === "saved") {
+            if (result.outcome === "saved") {
               saved += 1;
               savedByRun.set(actor.runId, (savedByRun.get(actor.runId) ?? 0) + 1);
             } else if (result.outcome === "duplicate") duplicates += 1;
@@ -489,16 +491,13 @@ const make = Effect.gen(function* () {
           }
           const plural = (count: number, noun: string) =>
             `${count} ${noun}${count === 1 ? "" : "s"}`;
-          const discardedTotal = discarded.task + discarded.code + discarded.unsupported;
+          const discardedTotal = discarded.task + discarded.code;
           const notes = [
             ...(discardedTotal > 0
               ? [
                   `${discardedTotal} discarded: ${[
                     ...(discarded.task > 0 ? [plural(discarded.task, "task note")] : []),
                     ...(discarded.code > 0 ? [plural(discarded.code, "code description")] : []),
-                    ...(discarded.unsupported > 0
-                      ? [plural(discarded.unsupported, "unsupported assertion")]
-                      : []),
                   ].join(", ")}.`,
                 ]
               : []),

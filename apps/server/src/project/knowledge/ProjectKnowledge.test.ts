@@ -3895,30 +3895,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       runOutcome: "completed" as const,
     };
     const candidate = { ...createFact(projectId, "automatic"), sources: [citation.source] };
-    assert.equal((yield* knowledge.saveAutomatic(candidate, actor, "task")).outcome, "discarded");
-    for (const verdict of ["task", "code"] as const) {
-      const factId = ProjectFactId.make(`automatic-${verdict}`);
-      assert.equal(
-        (yield* knowledge.saveAutomatic(
-          { ...candidate, factId, content: `The ${verdict} describes the current implementation.` },
-          actor,
-          verdict,
-        )).outcome,
-        "discarded",
-      );
-      assert.equal(
-        (yield* knowledge.readFact({ projectId, factId }).pipe(Effect.flip)).reason,
-        "missing_fact",
-      );
-    }
-    assert.deepEqual(
-      (yield* knowledge.readFact({ projectId, factId: original.id })).fact,
-      original,
-    );
-    assert.equal(
-      (yield* knowledge.saveAutomatic(candidate, actor, "standing")).outcome,
-      "duplicate",
-    );
+    assert.equal((yield* knowledge.saveAutomatic(candidate, actor)).outcome, "duplicate");
     const merged = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
     // A verdict is written once: a duplicate's check does not reclassify the fact it joins.
     assert.isUndefined(merged.verdict);
@@ -3929,7 +3906,6 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-repeat") },
       actor,
-      "standing",
     );
     assert.deepEqual((yield* knowledge.readFact({ projectId, factId: original.id })).fact, merged);
     const invalid = yield* knowledge
@@ -3940,7 +3916,6 @@ it.effect("automatic corroboration appends validated sources without rewriting c
           sources: [{ ...citation.source, runId: RunId.make("fabricated") }],
         },
         actor,
-        "standing",
       )
       .pipe(Effect.result);
     assert.equal(invalid._tag, "Failure");
@@ -3954,7 +3929,6 @@ it.effect("automatic corroboration appends validated sources without rewriting c
     yield* knowledge.saveAutomatic(
       { ...candidate, factId: ProjectFactId.make("automatic-cap"), sources: extraSources },
       actor,
-      "standing",
     );
     const capped = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
     assert.equal(capped.sources.length, 16);
@@ -3969,7 +3943,7 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       },
       { kind: "user" },
     );
-    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor, "standing");
+    yield* knowledge.saveAutomatic({ ...candidate, factId: original.id }, actor);
     assert.equal(
       (yield* knowledge.readFact({ projectId, factId: original.id })).fact.status,
       "forgotten",

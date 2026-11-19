@@ -728,7 +728,6 @@ it("restores a manually superseded fact using the inspected revision", async () 
         projectKnowledge: true,
         projectKnowledgeHistory: true,
         projectKnowledgeCuration: true,
-        projectKnowledgeStandingCheck: true,
       },
     },
   });
@@ -1224,7 +1223,6 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
         projectKnowledge: true,
         projectKnowledgeHistory: true,
         projectKnowledgeAssistedLearning: true,
-        projectKnowledgeStandingCheck: true,
         projectSettingsOverrides: true,
       },
     },

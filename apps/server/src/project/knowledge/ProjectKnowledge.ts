@@ -26,7 +26,6 @@ import {
   ProjectKnowledgeMutation,
   ProjectKnowledgeSearchInput,
   ProjectFactId,
-  type ProjectFactVerdict,
   type ProjectKnowledgePreparedContext,
   type ProjectKnowledgeReadSourceInput,
   type ProjectKnowledgeSearchResult,
@@ -249,15 +248,14 @@ export class ProjectKnowledge extends Context.Service<
       readonly afterId?: string | undefined;
     }) => Effect.Effect<string | null, ProjectKnowledgeError>;
     /**
-     * Saves standing automatic facts and discards other verdicts. An exact duplicate adds only new
-     * validated citations and keeps the existing fact's verdict; similarities never replace a fact.
+     * Saves a standing automatic fact. An exact duplicate adds only new validated citations and
+     * keeps the existing fact's verdict; similarities never replace a fact.
      */
     readonly saveAutomatic: (
       input: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>,
       actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>,
-      verdict: ProjectFactVerdict,
     ) => Effect.Effect<
-      { readonly outcome: "saved" | "duplicate" | "existing" | "discarded" },
+      { readonly outcome: "saved" | "duplicate" | "existing" },
       ProjectKnowledgeError
     >;
     readonly hasAssistedRun: (
@@ -1886,8 +1884,7 @@ const make = Effect.gen(function* () {
   });
   const saveAutomatic: ProjectKnowledge["Service"]["saveAutomatic"] = Effect.fn(
     "ProjectKnowledge.saveAutomatic",
-  )(function* (input, actor, verdict) {
-    if (verdict !== "standing") return { outcome: "discarded" as const };
+  )(function* (input, actor) {
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
@@ -1955,7 +1952,7 @@ const make = Effect.gen(function* () {
             return { outcome: "duplicate" as const };
           }
           const saved = yield* mutate(input, actor);
-          yield* store.writeCheckVerdict(input.projectId, saved.id, verdict, saved.createdAt);
+          yield* store.writeCheckVerdict(input.projectId, saved.id, "standing", saved.createdAt);
           return { outcome: "saved" as const };
         }),
       )
