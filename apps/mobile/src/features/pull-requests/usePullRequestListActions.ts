@@ -1,11 +1,8 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import {
-  executeAtomQuery,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../../state/atom-interop";
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useGT, useMessages } from "gt-react-native";

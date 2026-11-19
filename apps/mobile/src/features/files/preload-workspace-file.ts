@@ -1,6 +1,6 @@
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../../state/atom-interop";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   isWorkspaceBrowserPreviewPath,

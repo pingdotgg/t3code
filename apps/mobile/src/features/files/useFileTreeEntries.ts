@@ -1,6 +1,6 @@
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../../state/atom-interop";
 import { ProjectListEntriesError, type EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
@@ -151,20 +152,22 @@ export function useUsage(
 
   const refresh = useCallback(
     (nextInput?: UsageSummaryInput) =>
-      refreshUsage({
-        registry: appAtomRegistry,
-        server: serverEnvironment,
-        presentations: environmentPresentations,
+      Effect.runPromise(
+        refreshUsage({
+          registry: appAtomRegistry,
+          server: serverEnvironment,
+          presentations: environmentPresentations,
 
-        environmentIds: selectedEnvironments
-          .filter(
-            (environment) =>
-              environment.canReadDiagnostics &&
-              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
-          )
-          .map(({ environmentId }) => environmentId),
-        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-      }),
+          environmentIds: selectedEnvironments
+            .filter(
+              (environment) =>
+                environment.canReadDiagnostics &&
+                readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+            )
+            .map(({ environmentId }) => environmentId),
+          input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+        }),
+      ),
     [selectedEnvironments, windowKey],
   );
 

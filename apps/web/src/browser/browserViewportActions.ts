@@ -1,5 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../state/atom-interop";
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";

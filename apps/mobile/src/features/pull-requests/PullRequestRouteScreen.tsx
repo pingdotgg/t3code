@@ -1,3 +1,4 @@
+import { runAtomCommand } from "../../state/atom-interop";
 import {
   isFileDiffCollapsed,
   withFileDiffFold,
@@ -564,12 +565,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const refresh = () =>
     pullRefresh.onRefresh(async (signal) => {
       const target = requestTarget(params);
-      await composerPullRequests.invalidate
-        .run(registry, {
-          environmentId: target.environmentId,
-          input: { reference: target.input },
-        })
-        .catch(() => undefined);
+      await runAtomCommand(registry, composerPullRequests.invalidate, {
+        environmentId: target.environmentId,
+        input: { reference: target.input },
+      }).catch(() => undefined);
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
       stack.refresh();

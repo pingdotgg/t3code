@@ -164,8 +164,8 @@ vi.mock("../features/threads/ThreadMarkdownVideo", async (importOriginal) => {
   };
 });
 
-vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+vi.mock("../state/atom-interop", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../state/atom-interop")>()),
   executeAtomQuery: (...args: unknown[]) => audio.query(...args),
 }));
 vi.mock("../state/projects", () => ({

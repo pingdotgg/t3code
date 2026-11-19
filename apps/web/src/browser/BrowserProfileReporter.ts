@@ -1,5 +1,5 @@
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../state/atom-interop";
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { Atom } from "effect/reactivity";

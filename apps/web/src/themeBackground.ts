@@ -1,5 +1,5 @@
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "./state/atom-interop";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";

@@ -1,6 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
@@ -16,7 +16,11 @@ vi.mock("../../state/server", () => ({
     refreshProviders: {
       label: "refresh providers",
       run: (_registry: unknown, input: { readonly environmentId: string }) =>
-        state.refresh(input.environmentId),
+        Effect.promise(() => state.refresh(input.environmentId)).pipe(
+          Effect.flatMap((result) =>
+            result._tag === "Failure" ? Effect.failCause(result.cause) : Effect.void,
+          ),
+        ),
     },
   },
 }));
@@ -73,16 +77,14 @@ it("does not let an older refresh clear a newer failure for the same environment
         : Promise.resolve(failure),
   );
   failures([a, b]);
-  const older = Promise.all([
-    refreshEnvironmentLimits(registry, a, { automatic: true }),
-    refreshEnvironmentLimits(registry, b, { automatic: true }),
-  ]);
+  const olderA = refreshEnvironmentLimits(registry, a, { automatic: true });
+  const olderB = refreshEnvironmentLimits(registry, b, { automatic: true });
   aFirst.resolve(success);
-  await refreshUsageLimits(a, () => aFirst.promise);
+  await olderA;
   await refreshEnvironmentLimits(registry, a);
   expect(failures([a])).toEqual([a]);
   bFirst.resolve(success);
-  await older;
+  await olderB;
   expect(failures([a, b])).toEqual([a]);
 });
 

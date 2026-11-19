@@ -54,8 +54,8 @@ vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
 }));
-vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+vi.mock("./atom-interop", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./atom-interop")>()),
   executeAtomQuery: state.executeQuery,
 }));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));

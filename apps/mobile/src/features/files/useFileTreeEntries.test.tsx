@@ -62,7 +62,7 @@ const mocks = vi.hoisted(() => {
   return { createState, state: createState() };
 });
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("../../state/atom-interop", () => ({
   executeAtomQuery: (_registry: unknown, query: Query, options: { signal?: AbortSignal }) =>
     new Promise<Result>((resolve) =>
       mocks.state.requests.push({ query, signal: options.signal, resolve }),

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 const query = vi.hoisted(() => vi.fn());
 vi.mock(
-  import("@t3tools/client-runtime/state/runtime"),
+  import("./state/atom-interop"),
   () =>
     ({
       executeAtomQuery: query,

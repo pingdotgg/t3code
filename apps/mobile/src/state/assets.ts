@@ -9,7 +9,8 @@ import {
   EMPTY_ASSET_URL_ATOM,
   makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
-import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "./atom-interop";
 import { msg, useMessages } from "gt-react-native";
 import { m } from "../i18n/messages";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";

@@ -316,17 +316,22 @@ function showWhileInFlight<Target extends { readonly environmentId: EnvironmentI
 ): C {
   return {
     ...command,
-    run: async (registry, target) => {
-      const edit = editOf(registry, target);
-      if (edit === null) return command.run(registry, target);
-      const edits = pullRequestPendingEditsAtom(target.environmentId);
-      registry.update(edits, (current) => [...current, edit]);
-      try {
-        return await command.run(registry, target);
-      } finally {
-        registry.update(edits, (current) => current.filter((entry) => entry !== edit));
-      }
-    },
+    run: (registry, target) =>
+      Effect.suspend(() => {
+        const edit = editOf(registry, target);
+        if (edit === null) return command.run(registry, target);
+        const edits = pullRequestPendingEditsAtom(target.environmentId);
+        registry.update(edits, (current) => [...current, edit]);
+        return command
+          .run(registry, target)
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() =>
+                registry.update(edits, (current) => current.filter((entry) => entry !== edit)),
+              ),
+            ),
+          );
+      }),
   } satisfies AtomCommand<Target, A, E>;
 }
 

@@ -48,11 +48,23 @@ const state = vi.hoisted(() => ({
   },
 }));
 vi.mock("react-native", () => ({ Alert: { alert: vi.fn() } }));
-vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
-  runAtomCommand: (_registry: unknown, command: (input: unknown) => unknown, input: unknown) =>
-    command(input),
-}));
+function asCommand(run: (input: unknown) => unknown) {
+  return {
+    run: (_registry: unknown, input: unknown) =>
+      Effect.promise(
+        async () => (await run(input)) as AsyncResult.AsyncResult<unknown, Error>,
+      ).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.value)
+            : result._tag === "Failure"
+              ? Effect.failCause(result.cause)
+              : Effect.die("Expected a settled command"),
+        ),
+      ),
+  };
+}
+
 vi.mock("./session", async () => {
   const { Atom } = await import("effect/reactivity");
   const { appAtomRegistry } = await import("./atom-registry");
@@ -91,10 +103,10 @@ vi.mock("./threads", async () => {
   state.threadShells = Atom.make<ReadonlyArray<unknown>>([state.thread]).pipe(Atom.keepAlive);
   return {
     threadEnvironment: {
-      startTurn: state.start,
-      updateMetadata: state.metadata,
-      setRuntimeMode: state.runtime,
-      setInteractionMode: state.interaction,
+      startTurn: asCommand(state.start),
+      updateMetadata: asCommand(state.metadata),
+      setRuntimeMode: asCommand(state.runtime),
+      setInteractionMode: asCommand(state.interaction),
     },
     environmentThreadShells: { threadShellsAtom: state.threadShells },
     threadFamilies: {
@@ -105,7 +117,9 @@ vi.mock("./threads", async () => {
     environmentThreadDetails: { stateAtom: () => Atom.make(null) },
   };
 });
-vi.mock("./git", () => ({ gitEnvironment: { preparePullRequestThread: state.checkout } }));
+vi.mock("./git", () => ({
+  gitEnvironment: { preparePullRequestThread: asCommand(state.checkout) },
+}));
 vi.mock("../lib/modelOptions", () => ({ isModelSelectionUnavailable: state.modelUnavailable }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "abcd" }));
 vi.mock("../lib/attachmentUpload", () => ({ prepareTurnAttachments: state.prepare }));

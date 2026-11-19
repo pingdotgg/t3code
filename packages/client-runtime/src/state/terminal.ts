@@ -19,8 +19,8 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentSubscriptionAtomFamily,
+  observeAtomCommand,
   isAtomCommandInterrupted,
-  runAtomCommand,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { subscribe, subscribeDynamic, type EnvironmentRpcInput } from "../rpc/client.ts";
@@ -273,45 +273,52 @@ export function createTerminalSession(
   let loggedFirstOutput = false;
   let commandRegistry: AtomRegistry.AtomRegistry | null = null;
   // Only a successful resize of the current measured grid may release initial input.
-  let shellResized: ReturnType<typeof runAtomCommand> | null = null;
+  let resizeGeneration = 0;
 
   const sendResize = (retry = false) => {
     const registry = commandRegistry;
     if (generation === null || registry === null || !options.canOperate()) return;
-    const resized = runAtomCommand(registry, atoms.resize, {
-      environmentId,
-      input: { threadId, terminalId, cols: gridSize.cols, rows: gridSize.rows },
-    });
-    shellResized = resized;
-    void resized.then((result) => {
-      // Only a new grid or generation sends again, so retry a failure once, unless a newer
-      // resize already replaced this one.
-      if (
-        !retry &&
-        resized === shellResized &&
-        result._tag === "Failure" &&
-        !isAtomCommandInterrupted(result)
-      ) {
-        sendResize(true);
-        return;
-      }
-      const data = options.initialInput;
-      if (
-        result._tag !== "Success" ||
-        resized !== shellResized ||
-        !gridMeasured ||
-        generation === null ||
-        !initialInputPending ||
-        !data ||
-        !options.canOperate()
-      )
-        return;
-      initialInputPending = false;
-      void runAtomCommand(registry, atoms.write, {
+    const resized = ++resizeGeneration;
+    Effect.runFork(
+      observeAtomCommand(registry, atoms.resize, {
         environmentId,
-        input: { threadId, terminalId, data },
-      });
-    });
+        input: { threadId, terminalId, cols: gridSize.cols, rows: gridSize.rows },
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            // Only a new grid or generation sends again, so retry a failure once, unless a newer
+            // resize already replaced this one.
+            if (
+              !retry &&
+              resized === resizeGeneration &&
+              result._tag === "Failure" &&
+              !isAtomCommandInterrupted(result)
+            ) {
+              sendResize(true);
+              return;
+            }
+            const data = options.initialInput;
+            if (
+              result._tag !== "Success" ||
+              resized !== resizeGeneration ||
+              !gridMeasured ||
+              generation === null ||
+              !initialInputPending ||
+              !data ||
+              !options.canOperate()
+            )
+              return;
+            initialInputPending = false;
+            Effect.runFork(
+              observeAtomCommand(registry, atoms.write, {
+                environmentId,
+                input: { threadId, terminalId, data },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
   };
 
   const setLive = (next: number | null) => {
@@ -329,17 +336,22 @@ export function createTerminalSession(
     lifecycle = step.state;
     if (step.command === "exit") {
       if (!options.canOperate()) return;
-      void runAtomCommand(registry, atoms.close, {
-        environmentId,
-        input: { threadId, terminalId },
-      });
+      Effect.runFork(
+        observeAtomCommand(registry, atoms.close, {
+          environmentId,
+          input: { threadId, terminalId },
+        }),
+      );
       options.onExit();
       return;
     }
     if (step.command !== "reopen") return;
-    const reopen = async () => {
-      if (input.cwd === undefined || !options.canOperate()) return false;
-      const result = await runAtomCommand(registry, atoms.open, {
+    if (input.cwd === undefined || !options.canOperate()) {
+      lifecycle = transitionTerminalLifecycle(lifecycle, { type: "reopen-failed" }).state;
+      return;
+    }
+    Effect.runFork(
+      observeAtomCommand(registry, atoms.open, {
         environmentId,
         input: {
           threadId,
@@ -350,13 +362,16 @@ export function createTerminalSession(
           rows: input.rows,
           ...(input.env ? { env: input.env } : {}),
         },
-      });
-      return result._tag === "Success";
-    };
-    void reopen().then((succeeded) => {
-      if (!succeeded)
-        lifecycle = transitionTerminalLifecycle(lifecycle, { type: "reopen-failed" }).state;
-    });
+      }).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (result._tag !== "Success") {
+              lifecycle = transitionTerminalLifecycle(lifecycle, { type: "reopen-failed" }).state;
+            }
+          }),
+        ),
+      ),
+    );
   };
 
   const onAttachment = (
@@ -395,7 +410,7 @@ export function createTerminalSession(
       buffer.version > 0 && status === "running" ? buffer.output.generation : null;
     if (nextGeneration !== generation) {
       generation = nextGeneration;
-      shellResized = null;
+      resizeGeneration++;
       sendResize();
     }
 
@@ -422,7 +437,7 @@ export function createTerminalSession(
       const registry = get.registry;
       get.addFinalizer(() => {
         generation = null;
-        shellResized = null;
+        resizeGeneration++;
         lastStatus = null;
         setLive(null);
         lifecycle = transitionTerminalLifecycle(lifecycle, {

@@ -5,9 +5,9 @@ import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
 import {
   isAtomCommandInterrupted,
-  executeAtomQuery,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../state/atom-interop";
 import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,

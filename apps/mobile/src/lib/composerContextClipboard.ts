@@ -19,7 +19,8 @@ import {
   threadContextsOutsideEnvironment,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../state/atom-interop";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../state/atom-registry";

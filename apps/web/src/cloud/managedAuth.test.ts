@@ -31,7 +31,7 @@ vi.mock("../connection/catalog", () => ({
   environmentCatalog: {
     removeRelayEnvironments: {
       label: "remove relay environments",
-      run: () => Promise.reject(new Error("Persistence removal failed.")),
+      run: () => Effect.die(new Error("Persistence removal failed.")),
     },
   },
 }));

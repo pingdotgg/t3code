@@ -134,12 +134,14 @@ function stampDraftFileUpload(job: DraftFileOwner, attachmentId: string): void {
 
 function deletePendingUpload(environmentId: EnvironmentId, attachmentId: string): void {
   if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
-  deletePendingAttachmentUpload({
-    registry: appAtomRegistry,
-    remove: attachmentEnvironment.remove,
-    environmentId,
-    attachmentId,
-  });
+  Effect.runFork(
+    deletePendingAttachmentUpload({
+      registry: appAtomRegistry,
+      remove: attachmentEnvironment.remove,
+      environmentId,
+      attachmentId,
+    }),
+  );
 }
 
 function uploadBytes(input: {

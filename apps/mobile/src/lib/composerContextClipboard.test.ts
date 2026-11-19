@@ -50,8 +50,10 @@ vi.mock("../state/use-composer-drafts", () => ({
   findLocalComposerClipboardAttachment: mocks.local,
 }));
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  executeAtomQuery: mocks.execute,
   squashAtomCommandFailure: () => new Error("offline"),
+}));
+vi.mock("../state/atom-interop", () => ({
+  executeAtomQuery: mocks.execute,
 }));
 vi.mock("./attachmentDownload", () => ({ downloadAttachmentForPreview: mocks.download }));
 vi.mock("./localAttachmentPreview", () => ({ loadLocalAttachmentPreview: mocks.preview }));

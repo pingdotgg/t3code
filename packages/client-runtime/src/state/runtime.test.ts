@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
@@ -66,10 +67,9 @@ import {
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   environmentSessionGenerationAtom,
-  scheduleAtomCommandEffect,
-  executeAtomQuery,
   type QueryAnswerHandler,
 } from "./runtime.ts";
+import { executeAtomQuery } from "./atom-test-interop.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("query-environment"),
@@ -1523,7 +1523,7 @@ describe("runtime command runner", () => {
     });
     const registry = AtomRegistry.make();
 
-    const result = await command.run(registry, undefined);
+    const result = await runAtomCommand(registry, command, undefined);
     expect(result._tag).toBe("Failure");
     if (result._tag === "Failure") {
       expect(Cause.hasDies(result.cause)).toBe(true);
@@ -1532,7 +1532,7 @@ describe("runtime command runner", () => {
     registry.dispose();
   });
 
-  it.effect("stops a caller's own run when its signal aborts", () =>
+  it.effect("stops a caller's own run when its fiber is interrupted", () =>
     Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       const stopped = yield* Deferred.make<void>();
@@ -1546,9 +1546,7 @@ describe("runtime command runner", () => {
       });
       const registry = AtomRegistry.make();
 
-      const caller = yield* Effect.forkChild(
-        Effect.promise((signal) => command.run(registry, undefined, { signal })),
-      );
+      const caller = yield* Effect.forkChild(command.run(registry, undefined));
       yield* Deferred.await(started);
       yield* Fiber.interrupt(caller);
 
@@ -1576,11 +1574,11 @@ describe("runtime command runner", () => {
     });
     const registry = AtomRegistry.make();
 
-    const first = command.run(registry, 1);
+    const first = runAtomCommand(registry, command, 1);
     await firstStarted;
 
     const controller = new AbortController();
-    const second = command.run(registry, 2, { signal: controller.signal });
+    const second = runAtomCommand(registry, command, 2, { signal: controller.signal });
     controller.abort();
 
     const secondResult = await second;
@@ -1617,8 +1615,8 @@ describe("runtime command runner", () => {
     });
     const registry = AtomRegistry.make();
 
-    const first = firstCommand.run(registry, undefined);
-    const second = secondCommand.run(registry, undefined);
+    const first = runAtomCommand(registry, firstCommand, undefined);
+    const second = runAtomCommand(registry, secondCommand, undefined);
     await Promise.resolve();
     expect(events).toEqual(["first:start"]);
 
@@ -1639,15 +1637,16 @@ describe("runtime command runner", () => {
       const updateCommand = createRuntimeCommand(runtime, {
         label: "test.update",
         execute: (_input: void, registry) =>
-          scheduleAtomCommandEffect(
-            registry,
-            scheduler,
-            concurrency,
-            undefined,
-            Effect.sync(() => handoffStarted.openUnsafe()).pipe(
-              Effect.andThen(handoffComplete.await),
-            ),
-          ).pipe(Effect.andThen(resumeComplete.await)),
+          scheduler
+            .schedule(
+              registry,
+              concurrency,
+              undefined,
+              Effect.sync(() => handoffStarted.openUnsafe()).pipe(
+                Effect.andThen(handoffComplete.await),
+              ),
+            )
+            .pipe(Effect.andThen(resumeComplete.await)),
       });
       const configCommand = createRuntimeCommand(runtime, {
         label: "test.config",
@@ -1657,9 +1656,9 @@ describe("runtime command runner", () => {
       });
       const registry = AtomRegistry.make();
 
-      const update = updateCommand.run(registry, undefined);
+      const update = runAtomCommand(registry, updateCommand, undefined);
       yield* handoffStarted.await;
-      const config = configCommand.run(registry, undefined);
+      const config = runAtomCommand(registry, configCommand, undefined);
       handoffComplete.openUnsafe();
 
       expect(yield* Effect.promise(() => config)).toMatchObject({
@@ -1702,9 +1701,8 @@ describe("runtime command runner", () => {
               Effect.andThen(Deferred.succeed(reconnected, undefined)),
               Effect.forkChild,
             );
-            yield* scheduleAtomCommandEffect(
+            yield* scheduler.schedule(
               registry,
-              scheduler,
               concurrency,
               undefined,
               Deferred.succeed(commitStarting, undefined).pipe(
@@ -1718,34 +1716,46 @@ describe("runtime command runner", () => {
       });
       const registry = AtomRegistry.make();
 
-      expect(yield* Effect.promise(() => command.run(registry, undefined))).toMatchObject({
+      expect(
+        yield* Effect.promise(() => runAtomCommand(registry, command, undefined)),
+      ).toMatchObject({
         _tag: "Success",
       });
       registry.dispose();
     }),
   );
 
-  it("deduplicates single-flight commands by key", async () => {
-    const latch = Latch.makeUnsafe();
-    let executions = 0;
-    const runtime = Atom.runtime(Layer.empty);
-    const command = createRuntimeCommand(runtime, {
-      label: "test.single-flight",
-      concurrency: { mode: "singleFlight", key: (key: string) => key },
-      execute: () =>
-        Effect.sync(() => executions++).pipe(Effect.andThen(latch.await), Effect.as("done")),
-    });
-    const registry = AtomRegistry.make();
+  it.effect("shares single-flight work when the first caller stops waiting", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      let executions = 0;
+      const runtime = Atom.runtime(Layer.empty);
+      const command = createRuntimeCommand(runtime, {
+        label: "test.single-flight",
+        concurrency: { mode: "singleFlight", key: (key: string) => key },
+        execute: () =>
+          Effect.sync(() => executions++).pipe(
+            Effect.andThen(Deferred.succeed(started, undefined)),
+            Effect.andThen(Deferred.await(finish)),
+            Effect.as("done"),
+          ),
+      });
+      const registry = AtomRegistry.make();
 
-    const first = command.run(registry, "same");
-    const second = command.run(registry, "same");
-    latch.openUnsafe();
+      const first = yield* Effect.forkChild(command.run(registry, "same"));
+      yield* Deferred.await(started);
+      const second = yield* Effect.forkChild(command.run(registry, "same"), {
+        startImmediately: true,
+      });
+      yield* Fiber.interrupt(first);
+      yield* Deferred.succeed(finish, undefined);
 
-    expect(await first).toMatchObject({ _tag: "Success", value: "done", waiting: false });
-    expect(await second).toMatchObject({ _tag: "Success", value: "done", waiting: false });
-    expect(executions).toBe(1);
-    registry.dispose();
-  });
+      expect(yield* Fiber.join(second)).toBe("done");
+      expect(executions).toBe(1);
+      registry.dispose();
+    }),
+  );
 
   it("coalesces pending latest-value commands without interrupting the active call", async () => {
     const firstLatch = Latch.makeUnsafe();
@@ -1762,10 +1772,10 @@ describe("runtime command runner", () => {
     });
     const registry = AtomRegistry.make();
 
-    const first = command.run(registry, 1);
+    const first = runAtomCommand(registry, command, 1);
     await Promise.resolve();
-    const second = command.run(registry, 2);
-    const third = command.run(registry, 3);
+    const second = runAtomCommand(registry, command, 2);
+    const third = runAtomCommand(registry, command, 3);
     firstLatch.openUnsafe();
 
     expect(await first).toMatchObject({ _tag: "Success", value: 1, waiting: false });

@@ -55,7 +55,7 @@ vi.mock("../state/server", () => ({
   serverEnvironment: { refreshProviders: { label: "Refresh providers" } },
 }));
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("../state/atom-interop", () => ({
   runAtomCommand: (
     _registry: unknown,
     _command: unknown,

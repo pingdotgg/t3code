@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -427,7 +428,7 @@ describe("cached VCS refs", () => {
       );
 
       const result = yield* Effect.promise(() =>
-        atoms.pull.run(registry, {
+        runAtomCommand(registry, atoms.pull, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo" },
         }),
@@ -438,7 +439,7 @@ describe("cached VCS refs", () => {
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
 
       const refreshResult = yield* Effect.promise(() =>
-        atoms.refreshStatus.run(registry, {
+        runAtomCommand(registry, atoms.refreshStatus, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo" },
         }),
@@ -448,14 +449,14 @@ describe("cached VCS refs", () => {
       expect(yield* Ref.get(clears)).toBe(2);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
 
-      const prepareResult = yield* Effect.promise(() =>
+      const prepareResult = yield* Effect.exit(
         createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo", reference: "42", mode: "local" },
         }),
       );
 
-      expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
+      expect(prepareResult._tag).toBe("Success");
       expect(yield* Ref.get(clears)).toBe(3);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
     }),
@@ -502,13 +503,13 @@ describe("cached VCS refs", () => {
       );
       const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
 
-      const refresh = atoms.refreshLocalStatusForPicker.run(registry, {
+      const refresh = runAtomCommand(registry, atoms.refreshLocalStatusForPicker, {
         ...target,
         input: { cwd: "/repo", localOnly: true },
       });
       yield* Deferred.await(refreshStarted);
       const checkout = yield* Effect.promise(() =>
-        atoms.switchRef.run(registry, {
+        runAtomCommand(registry, atoms.switchRef, {
           ...target,
           input: { cwd: "/repo", refName: "feature" },
         }),

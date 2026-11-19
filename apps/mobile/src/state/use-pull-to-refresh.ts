@@ -1,5 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
-import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "./atom-interop";
 import { type AsyncResult, type Atom } from "effect/reactivity";
 import { use, useEffect, useRef, useState } from "react";
 

@@ -14,8 +14,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  runAtomCommand: mocks.runAtomCommand,
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
+}));
+vi.mock("../state/atom-interop", () => ({
+  runAtomCommand: mocks.runAtomCommand,
 }));
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { resize: mocks.resize } }));

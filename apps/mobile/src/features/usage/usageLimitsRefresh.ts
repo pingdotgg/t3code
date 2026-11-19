@@ -1,5 +1,6 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
@@ -20,16 +21,17 @@ export async function refreshEnvironmentLimits(
 ): Promise<void> {
   // One refresh runs per environment at a time, so results land in the order
   // they were started and the newest outcome always wins.
-  const result = await refreshUsageLimits(
-    environmentId,
-    () =>
-      runAtomCommand(
+  const result = await Effect.runPromise(
+    refreshUsageLimits(
+      environmentId,
+      observeAtomCommand(
         registry,
         serverEnvironment.refreshProviders,
         { environmentId, input: {} },
         { reportFailure: false },
       ),
-    options.automatic,
+      options.automatic,
+    ),
   );
   if (result === undefined) return;
   registry.set(limitsRefreshFailedAtom(environmentId), result._tag === "Failure");

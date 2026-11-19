@@ -23,9 +23,9 @@ import {
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
-  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../state/atom-interop";
 import {
   filterSharedServerPatch,
   splitSharedServerPatch,

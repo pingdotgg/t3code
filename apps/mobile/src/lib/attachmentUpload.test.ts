@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
   readBase64: vi.fn(),
 }));
 
-vi.mock("@t3tools/client-runtime/state/runtime", async () => {
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => {
   const Effect = await import("effect/Effect");
   const Cause = await import("effect/Cause");
   return {
@@ -41,11 +41,17 @@ vi.mock("@t3tools/client-runtime/state/runtime", async () => {
         ),
       ),
     createEnvironmentRpcCommand: () => Symbol("rpc-command"),
-    executeAtomQuery: mocks.executeAtomQuery,
-    runAtomCommand: mocks.runAtomCommand,
-    squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
+    reportAtomCommandResult: () => {},
+    observeAtomCommand: (await original<typeof import("@t3tools/client-runtime/state/runtime")>())
+      .observeAtomCommand,
+    squashAtomCommandFailure: (result: { readonly cause: import("effect/Cause").Cause<unknown> }) =>
+      Cause.squash(result.cause),
   };
 });
+vi.mock("../state/atom-interop", () => ({
+  executeAtomQuery: mocks.executeAtomQuery,
+  runAtomCommand: mocks.runAtomCommand,
+}));
 
 vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: { get: mocks.readAtom },
@@ -59,12 +65,39 @@ vi.mock("../state/assets", () => ({
   assetEnvironment: { createUrl: mocks.createAssetUrl },
 }));
 
-vi.mock("../state/attachments", () => ({
-  attachmentEnvironment: {
-    createUploadUrl: mocks.createUploadUrl,
-    remove: mocks.removeUpload,
-  },
-}));
+vi.mock("../state/attachments", async () => {
+  const Effect = await import("effect/Effect");
+  const asCommand = (identity: symbol, reportFailure: boolean) => ({
+    label: identity.description!,
+    run: (registry: unknown, input: unknown) =>
+      Effect.promise(
+        () =>
+          mocks.runAtomCommand(registry, identity, input, {
+            reportFailure: false,
+            ...(reportFailure ? {} : { reportDefect: false }),
+          }) as Promise<{
+            readonly _tag: string;
+            readonly value?: unknown;
+            readonly cause?: import("effect/Cause").Cause<Error>;
+            readonly error?: Error;
+          }>,
+      ).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.value)
+            : result.cause
+              ? Effect.failCause(result.cause)
+              : Effect.die(result.error ?? new Error("Command failed")),
+        ),
+      ),
+  });
+  return {
+    attachmentEnvironment: {
+      createUploadUrl: asCommand(mocks.createUploadUrl, true),
+      remove: asCommand(mocks.removeUpload, false),
+    },
+  };
+});
 
 vi.mock("../state/session", () => ({
   readEnvironmentScope: () => mocks.canOperate,

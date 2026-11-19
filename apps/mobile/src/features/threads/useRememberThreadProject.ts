@@ -1,6 +1,6 @@
 import { useFocusEffect } from "@react-navigation/native";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../../state/atom-interop";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";

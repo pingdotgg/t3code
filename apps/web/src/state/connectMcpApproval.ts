@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-interop";
 import {
   type ConnectMcpApprovalCall,
   createConnectMcpApprovalCommand,
@@ -16,7 +17,7 @@ export async function runConnectMcpApproval(
   environmentId: EnvironmentId,
   call: ConnectMcpApprovalCall,
 ) {
-  const result = await connectMcpApproval.run(appAtomRegistry, { environmentId, call });
+  const result = await runAtomCommand(appAtomRegistry, connectMcpApproval, { environmentId, call });
   return result._tag === "Success"
     ? Result.succeed(result.value)
     : Result.fail(squashAtomCommandFailure(result));

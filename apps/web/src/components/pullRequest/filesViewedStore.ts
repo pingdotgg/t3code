@@ -1,8 +1,8 @@
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
-  runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../../state/atom-interop";
 import type {
   EnvironmentId,
   PullRequestFilesViewedResult,

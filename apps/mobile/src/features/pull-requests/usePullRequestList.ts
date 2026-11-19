@@ -1,3 +1,4 @@
+import { runAtomCommand } from "../../state/atom-interop";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   editHeldPullRequestListEntries,
@@ -5,7 +6,8 @@ import {
   pullRequestPendingEditsFor,
 } from "@t3tools/client-runtime/state/pull-requests";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
-import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../../state/atom-interop";
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -130,7 +132,7 @@ async function refreshHeads(
 ) {
   const responses = await Promise.allSettled(
     targets.map(async (target) => {
-      await composerPullRequests.invalidate.run(registry, {
+      await runAtomCommand(registry, composerPullRequests.invalidate, {
         environmentId: target.environmentId,
         input: {},
       });

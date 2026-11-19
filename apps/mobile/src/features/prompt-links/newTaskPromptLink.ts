@@ -13,11 +13,10 @@ import {
   resolvePromptLinkModelSelection,
 } from "@t3tools/client-runtime/prompt-links";
 import {
-  executeAtomQuery,
   isAtomCommandInterrupted,
-  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, runAtomCommand } from "../../state/atom-interop";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type {

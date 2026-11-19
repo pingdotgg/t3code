@@ -1,4 +1,4 @@
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "./state/atom-interop";
 import { readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { msg } from "gt-react";
 

@@ -7,9 +7,9 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import {
+  observeAtomCommand,
   type AtomCommand,
   type AtomCommandResult,
-  runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import { threadFamilyRead, type ThreadFamilyRead } from "@t3tools/client-runtime/state/threads";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
@@ -708,7 +708,7 @@ const deliveryCommand = <W, A, E>(
   command: AtomCommand<W, A, E>,
   input: W,
 ): Effect.Effect<AtomCommandResult<A, E>> =>
-  Effect.promise(() => runAtomCommand(appAtomRegistry, command, input, { reportFailure: false }));
+  observeAtomCommand(appAtomRegistry, command, input, { reportFailure: false });
 
 function reportCommandFailure(
   queuedMessage: QueuedThreadMessage,

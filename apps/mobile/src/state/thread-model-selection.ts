@@ -1,4 +1,5 @@
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "./atom-interop";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,

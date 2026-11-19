@@ -63,7 +63,7 @@ vi.mock("../../state/pull-requests", async () => {
       list: (target: unknown) => list(JSON.stringify(target)),
       listStats: Atom.family(() => Atom.make(AsyncResult.success({ stats: [] }))),
       invalidate: {
-        run: async () => AsyncResult.success({}),
+        run: () => Effect.succeed({}),
       },
     },
   };

@@ -16,8 +16,7 @@ import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   createEnvironmentRpcCommand,
   awaitAtomResult,
-  runAtomCommand,
-  squashAtomCommandFailure,
+  observeAtomCommand,
   type AtomCommand,
 } from "./runtime.ts";
 
@@ -108,13 +107,13 @@ export function deletePendingAttachmentUpload<E>(input: {
   readonly remove: AttachmentRemoveCommand<E>;
   readonly environmentId: EnvironmentId;
   readonly attachmentId: string;
-}): void {
-  void runAtomCommand(
-    input.registry,
-    input.remove,
-    { environmentId: input.environmentId, input: { attachmentId: input.attachmentId } },
-    { reportFailure: false, reportDefect: false },
-  );
+}) {
+  return Effect.suspend(() =>
+    input.remove.run(input.registry, {
+      environmentId: input.environmentId,
+      input: { attachmentId: input.attachmentId },
+    }),
+  ).pipe(Effect.ignoreCause);
 }
 
 export type AttachmentUploadCycleResult =
@@ -143,20 +142,18 @@ export function runAttachmentUploadCycle<E, RE, TE>(input: {
 }): Effect.Effect<AttachmentUploadCycleResult> {
   return Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
-      const minted = yield* Effect.promise(() =>
-        runAtomCommand(
-          input.registry,
-          input.createUploadUrl,
-          { environmentId: input.environmentId, input: input.upload },
-          { reportFailure: false },
-        ),
+      const minted = yield* observeAtomCommand(
+        input.registry,
+        input.createUploadUrl,
+        { environmentId: input.environmentId, input: input.upload },
+        { reportFailure: false },
       );
       if (minted._tag !== "Success") {
         return {
           status: "failed",
           step: "mint",
           attachmentId: null,
-          error: squashAtomCommandFailure(minted),
+          error: Cause.squash(minted.cause),
         } as const;
       }
       const attachmentId = minted.value.attachmentId;
@@ -185,13 +182,9 @@ export function runAttachmentUploadCycle<E, RE, TE>(input: {
         }),
       ).pipe(
         Effect.onInterrupt(() =>
-          Effect.sync(() =>
-            deletePendingAttachmentUpload({
-              registry: input.registry,
-              remove: input.remove,
-              environmentId: input.environmentId,
-              attachmentId,
-            }),
+          deletePendingAttachmentUpload({ ...input, attachmentId }).pipe(
+            Effect.forkDetach({ startImmediately: true }),
+            Effect.asVoid,
           ),
         ),
       );

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import {
   EnvironmentId,
   ThreadId,
@@ -17,7 +18,7 @@ import {
   type TerminalLifecycleEvent,
   type TerminalSessionMode,
 } from "./terminal.ts";
-import { runAtomCommand } from "./runtime.ts";
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { EMPTY_TERMINAL_BUFFER_STATE, type TerminalBufferState } from "./terminalSession.ts";
 
 function run(events: ReadonlyArray<TerminalLifecycleEvent>) {
@@ -103,17 +104,22 @@ function setup(
   const pending: Promise<unknown>[] = [];
   const command = (name: string) => ({
     label: name,
-    run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: CommandInput }) => {
-      const result = (async () => {
-        calls.push({ command: name, input: value.input });
-        if (options.beforeCommand) await options.beforeCommand(name, value.input);
-        return name === "resize" && options.resizeFailure?.()
-          ? AsyncResult.failure(Cause.fail("resize rejected"))
-          : AsyncResult.success(undefined);
-      })();
-      pending.push(result);
-      return result;
-    },
+    run: (_registry: AtomRegistry.AtomRegistry, value: { readonly input: CommandInput }) =>
+      Effect.suspend(() => {
+        const result = (async () => {
+          calls.push({ command: name, input: value.input });
+          if (options.beforeCommand) await options.beforeCommand(name, value.input);
+          return name === "resize" && options.resizeFailure?.()
+            ? AsyncResult.failure(Cause.fail("resize rejected"))
+            : AsyncResult.success(undefined);
+        })();
+        pending.push(result);
+        return Effect.promise(() => result).pipe(
+          Effect.flatMap((exit) =>
+            exit._tag === "Success" ? Effect.succeed(exit.value) : Effect.failCause(exit.cause),
+          ),
+        );
+      }),
   });
   const write = command("write");
   // Await command completion, then a normal input receipt through the same command runner.

@@ -2,7 +2,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 
-import { type AtomCommand, type AtomCommandResult, runAtomCommand } from "./runtime.ts";
+import { observeAtomCommand, type AtomCommand, type AtomCommandResult } from "./runtime.ts";
+import * as Effect from "effect/Effect";
 
 export interface VcsStatusRevalidationTarget {
   readonly environmentId: EnvironmentId;
@@ -29,15 +30,15 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
     const { environmentId, cwd } = target;
     const key = `${environmentId}:${cwd}`;
 
-    const refresh = async (registry: AtomRegistry.AtomRegistry) => {
-      const result = await runAtomCommand(
-        registry,
-        input.refreshStatus,
-        { environmentId, input: { cwd } },
-        { reportFailure: false },
+    const refresh = (registry: AtomRegistry.AtomRegistry) =>
+      Effect.runFork(
+        observeAtomCommand(
+          registry,
+          input.refreshStatus,
+          { environmentId, input: { cwd } },
+          { reportFailure: false },
+        ).pipe(Effect.tap((result) => Effect.sync(() => input.onRefreshed?.(result)))),
       );
-      input.onRefreshed?.(result);
-    };
 
     const wakeAtom = Atom.make((get) => {
       const subscribeWake = input.subscribeWake;
@@ -48,7 +49,7 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
         if (timer !== undefined) clearTimeout(timer);
         timer = setTimeout(() => {
           timer = undefined;
-          void refresh(registry);
+          refresh(registry);
         }, input.wakeDebounceMs ?? 0);
       });
       get.addFinalizer(() => {
@@ -62,7 +63,7 @@ export function createVcsStatusRevalidationAtomFamily<R>(input: {
       const connected = input.connected;
       // Rebuilds only when the connection flag flips, so each reconnect refreshes once.
       if (connected !== undefined && get(connected(environmentId))) {
-        void refresh(get.registry);
+        refresh(get.registry);
       }
     }).pipe(Atom.withLabel(`vcs-status-revalidation:${key}`));
   });

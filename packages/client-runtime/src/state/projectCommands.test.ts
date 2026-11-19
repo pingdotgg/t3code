@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   AuthFilesystemWriteScope,
@@ -141,7 +142,7 @@ const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
     }),
   );
   const openScratch = Effect.promise(() =>
-    commands.openScratch.run(registry, { environmentId: ENVIRONMENT_ID, input: {} }),
+    runAtomCommand(registry, commands.openScratch, { environmentId: ENVIRONMENT_ID, input: {} }),
   );
   return { registry, storedProject, openScratch, commands, metadataRequests, readResponse };
 });
@@ -308,7 +309,7 @@ describe("writeFile metadata", () => {
       ).pipe(Effect.forkChild);
       yield* Deferred.await(started);
       const write = yield* Effect.promise(() =>
-        h.commands.writeFile.run(h.registry, {
+        runAtomCommand(h.registry, h.commands.writeFile, {
           environmentId: ENVIRONMENT_ID,
           input: { cwd: "/repo", relativePath: "foo", contents: "new" },
         }),
@@ -343,7 +344,7 @@ describe("writeFile metadata", () => {
         { kind: "file", byteLength: 5 },
       ]);
       const result = yield* Effect.promise(() =>
-        h.commands.writeFile.run(h.registry, {
+        runAtomCommand(h.registry, h.commands.writeFile, {
           environmentId: ENVIRONMENT_ID,
           input: { cwd: "/repo", relativePath: "./foo", contents: "new" },
         }),

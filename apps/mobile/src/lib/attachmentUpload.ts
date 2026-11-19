@@ -1,10 +1,10 @@
+import * as Cause from "effect/Cause";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   isAssetAttachmentNotFoundFailure,
   runAttachmentUploadCycle,
   verifyPersistedAttachmentUpload,
 } from "@t3tools/client-runtime/state/attachments";
-import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 import type {
@@ -70,48 +70,50 @@ export function withUploadedMobileAttachmentReferences(input: {
   });
 }
 
-export async function releasePendingAttachmentUploads(
+const releasePendingUploads = Effect.fn("Attachments.releasePendingUploads")(function* (
   environmentId: EnvironmentId,
   attachmentIds: ReadonlyArray<string>,
-): Promise<void> {
-  const deleteOnce = async (attachmentId: string): Promise<boolean> => {
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
-      throw new Error("This connection cannot delete pending attachments.");
-    }
-    const result = await runAtomCommand(
-      appAtomRegistry,
-      attachmentEnvironment.remove,
-      { environmentId, input: { attachmentId } },
-      { reportFailure: false, reportDefect: false },
-    );
-    return (
-      result._tag === "Success" ||
-      isAssetAttachmentNotFoundFailure(squashAtomCommandFailure(result))
-    );
-  };
+) {
+  const deleteOnce = (attachmentId: string) =>
+    Effect.suspend(() => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        return Effect.fail(
+          attachmentUploadError(new Error("This connection cannot delete pending attachments.")),
+        );
+      }
+      return attachmentEnvironment.remove
+        .run(appAtomRegistry, {
+          environmentId,
+          input: { attachmentId },
+        })
+        .pipe(
+          Effect.matchCause({
+            onSuccess: () => true,
+            onFailure: (cause) => isAssetAttachmentNotFoundFailure(Cause.squash(cause)),
+          }),
+        );
+    });
 
   const failedAttachmentIds: string[] = [];
   for (const attachmentId of attachmentIds) {
-    if (!(await deleteOnce(attachmentId)) && !(await deleteOnce(attachmentId))) {
+    if (!(yield* deleteOnce(attachmentId)) && !(yield* deleteOnce(attachmentId))) {
       failedAttachmentIds.push(attachmentId);
     }
   }
   if (failedAttachmentIds.length > 0) {
-    throw new Error(
-      `Could not delete ${failedAttachmentIds.length} pending attachment upload(s): ${failedAttachmentIds.join(", ")}.`,
+    return yield* attachmentUploadError(
+      new Error(
+        `Could not delete ${failedAttachmentIds.length} pending attachment upload(s): ${failedAttachmentIds.join(", ")}.`,
+      ),
     );
   }
-}
+});
 
-async function releaseCreatedUploadsQuietly(
+export function releasePendingAttachmentUploads(
   environmentId: EnvironmentId,
   attachmentIds: ReadonlyArray<string>,
 ): Promise<void> {
-  try {
-    await releasePendingAttachmentUploads(environmentId, attachmentIds);
-  } catch (error) {
-    console.warn("[attachments] could not delete abandoned pending uploads", error);
-  }
+  return Effect.runPromise(releasePendingUploads(environmentId, attachmentIds));
 }
 
 export interface PreparedTurnAttachments {
@@ -334,8 +336,10 @@ export const uploadComposerAttachment = Effect.fn("uploadComposerAttachment")(fu
   });
   if (result.status === "uploaded") return result.attachmentId;
   if (result.attachmentId !== null) {
-    yield* Effect.promise(() =>
-      releaseCreatedUploadsQuietly(environmentId, [result.attachmentId!]),
+    yield* releasePendingUploads(environmentId, [result.attachmentId]).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("[attachments] could not delete abandoned pending uploads", error),
+      ),
     );
   }
   return yield* attachmentUploadError(

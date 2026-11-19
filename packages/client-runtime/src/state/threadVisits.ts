@@ -3,7 +3,8 @@ import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contract
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { parseThreadKey, threadKey } from "./entities.ts";
-import { type AtomCommand, runAtomCommand } from "./runtime.ts";
+import { observeAtomCommand, type AtomCommand } from "./runtime.ts";
+import * as Effect from "effect/Effect";
 import { claimThreadOpen } from "./threadSearch.ts";
 import type { VisitThreadInput } from "../operations/commands.ts";
 
@@ -95,35 +96,41 @@ export function createThreadVisitTracker(options: ThreadVisitTrackerOptions) {
         lastDispatchedUpdatedAt = visitedAt;
         lastDispatchAt = Date.now();
         lastDispatchGeneration = registry.get(sessionGenerationAtom);
-        void runAtomCommand(
-          registry,
-          options.visit,
-          {
-            environmentId: shell.environmentId,
-            input: {
-              threadId: shell.id,
-              visitedAt,
-              ...(opened ? { opened: true } : {}),
+        Effect.runFork(
+          observeAtomCommand(
+            registry,
+            options.visit,
+            {
+              environmentId: shell.environmentId,
+              input: {
+                threadId: shell.id,
+                visitedAt,
+                ...(opened ? { opened: true } : {}),
+              },
             },
-          },
-          { reportFailure: false },
-        ).then((result) => {
-          if (!active) return;
-          if (!AsyncResult.isFailure(result)) {
-            accept(visitedAt);
-            return;
-          }
-          // Keep acceptance across a subsequent mark-unread, even if the ack was lost.
-          if (
-            lastAcceptedUpdatedAt !== null &&
-            Date.parse(lastAcceptedUpdatedAt) >= Date.parse(visitedAt)
-          )
-            return;
-          if (lastDispatchedUpdatedAt !== visitedAt) return;
-          if (opened) openPending = true;
-          retryPending = true;
-          onShell(registry.get(options.threadShellAtom(ref)));
-        });
+            { reportFailure: false },
+          ).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                if (!active) return;
+                if (!AsyncResult.isFailure(result)) {
+                  accept(visitedAt);
+                  return;
+                }
+                // Keep acceptance across a subsequent mark-unread, even if the ack was lost.
+                if (
+                  lastAcceptedUpdatedAt !== null &&
+                  Date.parse(lastAcceptedUpdatedAt) >= Date.parse(visitedAt)
+                )
+                  return;
+                if (lastDispatchedUpdatedAt !== visitedAt) return;
+                if (opened) openPending = true;
+                retryPending = true;
+                onShell(registry.get(options.threadShellAtom(ref)));
+              }),
+            ),
+          ),
+        );
       };
 
       const onShell = (shell: VisitedShell | null) => {

@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -521,7 +522,7 @@ describe("vcsActionState", () => {
       const threadId = ThreadId.make("thread-stacked-action");
       const projectId = ProjectId.make("project-stacked-action");
       const successfulResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
+        runAtomCommand(registry, manager.runStackedAction(targetKey), {
           actionId: successfulActionId,
           action,
           threadId,
@@ -538,7 +539,7 @@ describe("vcsActionState", () => {
       ]);
 
       const failedResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
+        runAtomCommand(registry, manager.runStackedAction(targetKey), {
           actionId: failedActionId,
           action,
         }),
@@ -555,7 +556,7 @@ describe("vcsActionState", () => {
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
       const interruptedResult = yield* Effect.promise(() =>
-        manager.runStackedAction(targetKey).run(registry, {
+        runAtomCommand(registry, manager.runStackedAction(targetKey), {
           actionId: interruptedActionId,
           action,
         }),

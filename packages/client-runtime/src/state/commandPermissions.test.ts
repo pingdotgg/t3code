@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -290,9 +291,9 @@ describe("command permissions", () => {
     });
     const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
     try {
-      const first = command.run(registry, target);
+      const first = runAtomCommand(registry, command, target);
       await entered;
-      const second = command.run(registry, target);
+      const second = runAtomCommand(registry, command, target);
       registry.set(sessions(env), AsyncResult.success(grant(false)));
       release();
       expect((await first)._tag).toBe("Success");
@@ -469,10 +470,10 @@ it.effect(
       expect(yield* readLinks).toEqual({ links: [] });
       const linkInput = { url: peer.urls[0]!, pairingCode: "test-code", access: peer.access };
       const link = Effect.promise(() =>
-        peerLinks.link.run(registry, { environmentId: env, input: linkInput }),
+        runAtomCommand(registry, peerLinks.link, { environmentId: env, input: linkInput }),
       );
       const unlink = Effect.promise(() =>
-        peerLinks.unlink.run(registry, {
+        runAtomCommand(registry, peerLinks.unlink, {
           environmentId: env,
           input: { environmentId: peer.environmentId },
         }),

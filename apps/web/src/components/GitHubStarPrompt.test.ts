@@ -19,7 +19,7 @@ vi.mock("./ui/toast", () => ({ toastManager: { add, update, close: vi.fn() } }))
 vi.mock("../localApi", () => ({ readLocalApi: () => ({ shell: { openExternal } }) }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: commands }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("../state/atom-interop", () => ({
   runAtomCommand: async (_registry: unknown, command: unknown) => {
     if (command === commands.star) return { _tag: "Success", value: starred.starWorks };
     starred.duringCheck();

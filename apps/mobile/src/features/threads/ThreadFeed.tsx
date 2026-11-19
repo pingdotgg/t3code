@@ -99,11 +99,11 @@ import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArt
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import {
-  executeAtomQuery,
   isAtomCommandInterrupted,
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery } from "../../state/atom-interop";
 import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,

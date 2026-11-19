@@ -1,3 +1,4 @@
+import { runAtomCommand } from "../state/atom-test-interop.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import type {
   RelayClientEnvironmentRecord,
@@ -200,14 +201,14 @@ describe("RelayEnvironmentDiscovery", () => {
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
 
-        const refresh = atoms.refresh.run(registry, undefined);
+        const refresh = runAtomCommand(registry, atoms.refresh, undefined);
         yield* SubscriptionRef.changes(discovery.state).pipe(
           Stream.filter((state) => state.environments.size === environments.length),
           Stream.runHead,
         );
-        const coalescedRefresh = atoms.refresh.run(registry, undefined);
+        const coalescedRefresh = runAtomCommand(registry, atoms.refresh, undefined);
         yield* Ref.set(harness.listedEnvironments, [environments[1]!]);
-        const mutationRefresh = atoms.refreshAfterMutation.run(registry, undefined);
+        const mutationRefresh = runAtomCommand(registry, atoms.refreshAfterMutation, undefined);
 
         const requests = yield* Ref.get(harness.statusRequests);
         for (const environment of environments) {

@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-interop";
 import {
   AuthOrchestrationOperateScope,
   EnvironmentAuthorizationError,
@@ -5,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { runAttachmentUploadCycle } from "@t3tools/client-runtime/state/attachments";
 import * as Cause from "effect/Cause";
-import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { AtomRegistry } from "effect/reactivity";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -35,14 +36,14 @@ const environmentId = EnvironmentId.make("secondary");
 const registry = AtomRegistry.make();
 beforeEach(() => {
   state.grantedEnvironments = new Set(["primary"]);
-  state.create.mockReset().mockResolvedValue(
-    AsyncResult.success({
+  state.create.mockReset().mockReturnValue(
+    Effect.succeed({
       attachmentId: "pending",
       relativeUrl: "/upload",
       expiresAt: 1,
     }),
   );
-  state.remove.mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  state.remove.mockReset().mockReturnValue(Effect.void);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -50,11 +51,11 @@ afterEach(() => {
 
 describe("attachment mutation grants", () => {
   it("uses the attachment environment for both mint and deletion", async () => {
-    const mintResult = await attachmentEnvironment.createUploadUrl.run(registry, {
+    const mintResult = await runAtomCommand(registry, attachmentEnvironment.createUploadUrl, {
       environmentId,
       input: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
     });
-    const removeResult = await attachmentEnvironment.remove.run(registry, {
+    const removeResult = await runAtomCommand(registry, attachmentEnvironment.remove, {
       environmentId,
       input: { attachmentId: "pending" },
     });
@@ -70,7 +71,7 @@ describe("attachment mutation grants", () => {
     state.grantedEnvironments.add("secondary");
     expect(
       (
-        await attachmentEnvironment.remove.run(registry, {
+        await runAtomCommand(registry, attachmentEnvironment.remove, {
           environmentId,
           input: { attachmentId: "pending" },
         })

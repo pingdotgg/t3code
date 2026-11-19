@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthDiagnosticsReadScope,
@@ -185,19 +186,21 @@ export function useUsage(
   const { selectedEnvironments, merged } = current;
 
   const refresh = (nextInput?: UsageSummaryInput) =>
-    refreshUsage({
-      registry: appAtomRegistry,
-      server: serverEnvironment,
-      presentations: environmentPresentations,
-      environmentIds: selectedEnvironments
-        .filter(
-          (environment) =>
-            environment.canReadDiagnostics &&
-            readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
-        )
-        .map(({ environmentId }) => environmentId),
-      input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
-    });
+    Effect.runPromise(
+      refreshUsage({
+        registry: appAtomRegistry,
+        server: serverEnvironment,
+        presentations: environmentPresentations,
+        environmentIds: selectedEnvironments
+          .filter(
+            (environment) =>
+              environment.canReadDiagnostics &&
+              readEnvironmentScope(environment.environmentId, AuthDiagnosticsReadScope),
+          )
+          .map(({ environmentId }) => environmentId),
+        input: nextInput ?? (JSON.parse(windowKey) as UsageSummaryInput),
+      }),
+    );
 
   const answeredCount = selectedEnvironments.filter(
     (environment) => environment.summary !== null,

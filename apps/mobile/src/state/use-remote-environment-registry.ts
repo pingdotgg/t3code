@@ -7,7 +7,7 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { msg } from "gt-react-native";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "./atom-interop";
 
 import { hasCloudPublicConfig } from "../features/cloud/publicConfig";
 import { m } from "../i18n/messages";

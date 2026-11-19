@@ -21,9 +21,9 @@ import { findErrorTraceId } from "@t3tools/client-runtime/errors";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import {
   isAtomCommandInterrupted,
-  settleAsyncResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { settleAsyncResult } from "../../state/atom-interop";
 
 import { m } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";

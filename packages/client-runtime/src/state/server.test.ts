@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -350,7 +351,7 @@ describe("accepted server update recovery", () => {
       const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
         Effect.sync(() => value.dispose()),
       );
-      const pending = atoms.updateServer.run(registry, {
+      const pending = runAtomCommand(registry, atoms.updateServer, {
         environmentId: TARGET.environmentId,
         input: { targetVersion: "0.0.31" },
       });
@@ -1585,7 +1586,7 @@ describe("launcher update resume", () => {
     yield* AtomRegistry.mount(registry, updateStateAtom);
 
     yield* Effect.promise(() =>
-      atoms.updateServer.run(registry, {
+      runAtomCommand(registry, atoms.updateServer, {
         environmentId: TARGET.environmentId,
         input: { targetVersion: "0.0.31" },
       }),
@@ -1743,7 +1744,7 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
       const install = (instanceId: string) =>
-        atoms.startProviderInstall.run(registry, {
+        runAtomCommand(registry, atoms.startProviderInstall, {
           environmentId: TARGET.environmentId,
           input: { instanceId: ProviderInstanceId.make(instanceId) },
         });
@@ -1811,12 +1812,12 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
 
-      void atoms.updateProvider.run(registry, {
+      void runAtomCommand(registry, atoms.updateProvider, {
         environmentId: TARGET.environmentId,
         input: { provider: ProviderDriverKind.make("opencode") },
       });
       yield* Deferred.await(updateStarted);
-      void atoms.mutateProviderInstance.run(registry, {
+      void runAtomCommand(registry, atoms.mutateProviderInstance, {
         environmentId: TARGET.environmentId,
         input: {
           patch: {},

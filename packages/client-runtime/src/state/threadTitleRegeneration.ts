@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import type {
   CommandId,
   OrchestrationV2ShellSnapshot,
@@ -40,8 +41,8 @@ export function waitForTitleRegenerationOutcome(
   registry: AtomRegistry.AtomRegistry,
   sources: TitleRegenerationSources,
   request: TitleRegenerationRequest,
-): Promise<ThreadTitleRegenerationOutcome | null> {
-  return new Promise((resolve) => {
+): Effect.Effect<ThreadTitleRegenerationOutcome | null> {
+  return Effect.callback((resume) => {
     let settled = false;
     let unsubscribes: ReadonlyArray<() => void> = [];
     const release = () => {
@@ -54,7 +55,7 @@ export function waitForTitleRegenerationOutcome(
       if (outcome === undefined) return;
       settled = true;
       release();
-      resolve(outcome);
+      resume(Effect.succeed(outcome));
     };
     unsubscribes = [
       registry.subscribe(sources.snapshot, check),
@@ -62,5 +63,8 @@ export function waitForTitleRegenerationOutcome(
     ];
     if (settled) release();
     else check();
+    return Effect.sync(() => {
+      if (!settled) release();
+    });
   });
 }

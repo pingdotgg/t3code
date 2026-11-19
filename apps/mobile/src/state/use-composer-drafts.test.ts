@@ -151,7 +151,7 @@ vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" })
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+vi.mock("./atom-interop", () => ({
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
   executeAtomQuery: () => {
     throw new Error("Unexpected network query in the inline read test");

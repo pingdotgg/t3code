@@ -1,5 +1,5 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../state/atom-interop";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -13,7 +13,7 @@ const state = vi.hoisted(() => ({
   localVisits: {} as Record<string, string>,
 }));
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({ runAtomCommand: vi.fn() }));
+vi.mock("../state/atom-interop", () => ({ runAtomCommand: vi.fn() }));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: { getState: () => ({ threadLastVisitedAtById: state.localVisits }) },
 }));

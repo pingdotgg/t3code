@@ -3,8 +3,8 @@ import {
   type AtomCommand,
   type AtomCommandOptions,
   type AtomCommandResult,
-  runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "./atom-interop";
 import { useContext } from "react";
 
 export function useAtomCommand<A, E, W>(

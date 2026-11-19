@@ -4,10 +4,8 @@ import {
   type DeviceHubAccess,
   resolveDeviceHubAccess,
 } from "@t3tools/client-runtime/state/deviceHubAccess";
-import {
-  createEnvironmentRpcQueryAtomFamily,
-  runAtomCommand,
-} from "@t3tools/client-runtime/state/runtime";
+import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
+import { captureAtomResult } from "@t3tools/client-runtime/state/runtime";
 import {
   type DeviceDetail,
   type DeviceServiceState,
@@ -130,13 +128,11 @@ export const deviceDetailAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
   Atom.make((get) =>
-    Effect.promise((signal) =>
-      runAtomCommand(
-        get.registry,
-        deviceEnvironment.detail,
-        { environmentId: key.environmentId, input: { hostId: key.hostId, deviceId: key.deviceId } },
-        { reportFailure: false, signal },
-      ),
+    captureAtomResult(
+      deviceEnvironment.detail.run(get.registry, {
+        environmentId: key.environmentId,
+        input: { hostId: key.hostId, deviceId: key.deviceId },
+      }),
     ).pipe(
       Effect.map((result) =>
         get.set(
@@ -156,14 +152,7 @@ export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceHostProbeAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
-    Effect.promise((signal) =>
-      runAtomCommand(
-        get.registry,
-        deviceEnvironment.list,
-        { environmentId, input: {} },
-        { reportFailure: false, signal },
-      ),
-    ).pipe(Effect.asVoid),
+    deviceEnvironment.list.run(get.registry, { environmentId, input: {} }).pipe(Effect.ignoreCause),
   ).pipe(Atom.withLabel(`device-host-probe:${environmentId}`)),
 );
 

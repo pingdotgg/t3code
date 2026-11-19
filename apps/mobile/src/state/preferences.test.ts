@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-interop";
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -78,7 +79,7 @@ describe("mobile preferences state", () => {
       const registry = AtomRegistry.make();
       const unmountPreferences = registry.mount(state.preferencesAtom);
 
-      const save = state.savePreferences.run(registry, {
+      const save = runAtomCommand(registry, state.savePreferences, {
         collapsedProjectGroups: ["project:new"],
       });
       pendingLoad.resolve({
@@ -238,8 +239,10 @@ describe("mobile preferences state", () => {
       const registry = AtomRegistry.make();
       const unmount = registry.mount(state.preferencesAtom);
 
-      const failing = state.savePreferences.run(registry, { baseFontSize: 18 });
-      const succeeding = state.savePreferences.run(registry, { crashReportsEnabled: false });
+      const failing = runAtomCommand(registry, state.savePreferences, { baseFontSize: 18 });
+      const succeeding = runAtomCommand(registry, state.savePreferences, {
+        crashReportsEnabled: false,
+      });
       slowSave.resolve();
 
       expect((yield* Effect.promise(() => succeeding))._tag).toBe("Success");

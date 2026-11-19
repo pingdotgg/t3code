@@ -13,9 +13,9 @@ import { View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
-  runAtomCommand,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "../../state/atom-interop";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { AppText as Text } from "../../components/ui/AppText";
 import { m } from "../../i18n/messages";

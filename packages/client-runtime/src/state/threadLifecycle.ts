@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import type {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
@@ -71,38 +72,40 @@ export function createOptimisticThreadLifecycle(
   ): typeof command {
     return {
       label: command.label,
-      run: async (registry, target) => {
-        const now = DateTime.nowUnsafe();
-        const pending = pendingAtom(target.environmentId);
-        const source = sourceSnapshotAtom(target.environmentId);
-        const update: PendingThreadUpdate = {
-          threadId: target.input.threadId,
-          apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
-        };
-        const remove = () =>
-          registry.update(pending, (current) => current.filter((item) => item !== update));
-        registry.update(pending, (current) => [...current, update]);
-        let confirmed = false;
-        try {
-          const result = await command.run(registry, target);
-          if (result._tag === "Success") {
-            update.sequence = result.value.sequence;
-            registry.update(pending, (current) => [...current]);
-            const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
-              if (snapshot === null || snapshot.snapshotSequence >= result.value.sequence) {
-                remove();
-                unsubscribe();
-              }
-            };
-            const unsubscribe = registry.subscribe(source, reconcile);
-            reconcile(registry.get(source));
-            confirmed = true;
-          }
-          return result;
-        } finally {
-          if (!confirmed) remove();
-        }
-      },
+      run: (registry, target) =>
+        Effect.suspend(() => {
+          const now = DateTime.nowUnsafe();
+          const pending = pendingAtom(target.environmentId);
+          const source = sourceSnapshotAtom(target.environmentId);
+          const update: PendingThreadUpdate = {
+            threadId: target.input.threadId,
+            apply: (thread) => apply(thread, target.input, now, update.sequence !== undefined),
+          };
+          const remove = () =>
+            registry.update(pending, (current) => current.filter((item) => item !== update));
+          registry.update(pending, (current) => [...current, update]);
+          return command.run(registry, target).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (exit._tag === "Failure") {
+                  remove();
+                  return;
+                }
+                const { sequence } = exit.value;
+                update.sequence = sequence;
+                registry.update(pending, (current) => [...current]);
+                const reconcile = (snapshot: OrchestrationV2ShellSnapshot | null) => {
+                  if (snapshot === null || snapshot.snapshotSequence >= sequence) {
+                    remove();
+                    unsubscribe();
+                  }
+                };
+                const unsubscribe = registry.subscribe(source, reconcile);
+                reconcile(registry.get(source));
+              }),
+            ),
+          );
+        }),
     };
   }
 

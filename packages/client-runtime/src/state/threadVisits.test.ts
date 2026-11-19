@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -43,15 +44,19 @@ function setup(threadName: string, initial: Omit<Shell, "environmentId" | "id"> 
     sessionGenerationAtom: () => sessionGenerationAtom,
     visit: {
       label: "test-visit",
-      run: async (_registry, value) => {
-        attempts.push(value.input);
-        const pending = pendingResult;
-        pendingResult = undefined;
-        if (online) visits.push(value.input);
-        if (pending) return pending;
-        if (!online) return AsyncResult.failure(Cause.fail("disconnected"));
-        return AsyncResult.success(undefined);
-      },
+      run: (_registry, value) =>
+        Effect.gen(function* () {
+          attempts.push(value.input);
+          const pending = pendingResult;
+          pendingResult = undefined;
+          if (online) visits.push(value.input);
+          if (pending) {
+            const result = yield* Effect.promise(() => pending);
+            if (result._tag === "Failure") return yield* Effect.failCause(result.cause);
+            return;
+          }
+          if (!online) return yield* Effect.fail("disconnected");
+        }),
     },
     markLocalVisit: (_ref, visitedAt) => localVisits.push(visitedAt),
   });

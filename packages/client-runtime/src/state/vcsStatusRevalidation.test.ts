@@ -1,5 +1,6 @@
+import * as Effect from "effect/Effect";
 import { EnvironmentId } from "@t3tools/contracts";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { createVcsStatusRevalidationAtomFamily } from "./vcsStatusRevalidation.ts";
@@ -9,7 +10,7 @@ const environmentId = EnvironmentId.make("environment-1");
 function setup(options: { readonly connected?: boolean; readonly wake?: boolean }) {
   const connectedAtom = Atom.make(options.connected ?? false);
   const wakes = new Set<() => void>();
-  const run = vi.fn(async () => AsyncResult.success(null));
+  const run = vi.fn(() => Effect.succeed(null));
   const family = createVcsStatusRevalidationAtomFamily({
     refreshStatus: { label: "refresh-status", run },
     ...(options.connected === undefined ? {} : { connected: () => connectedAtom }),

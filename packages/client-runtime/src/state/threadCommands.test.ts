@@ -1,3 +1,4 @@
+import { runAtomCommand } from "./atom-test-interop.ts";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -188,12 +189,12 @@ describe("history loading", () => {
           ),
       });
       yield* Effect.addFinalizer(() => Deferred.succeed(historyReply, { _tag: "loaded" }));
-      const history = h.commands.loadEarlierHistory.run(h.registry, {
+      const history = runAtomCommand(h.registry, h.commands.loadEarlierHistory, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID },
       });
       yield* Deferred.await(historyStarted);
-      const send = h.commands.startTurn.run(h.registry, {
+      const send = runAtomCommand(h.registry, h.commands.startTurn, {
         environmentId: ENVIRONMENT_ID,
         input: {
           threadId: THREAD_ID,
@@ -210,7 +211,7 @@ describe("history loading", () => {
       });
       // Dispatched after Send on another thread, so it arrives first only if Send is queued.
       const controlThreadId = ThreadId.make("control-thread");
-      const control = h.commands.interruptTurn.run(h.registry, {
+      const control = runAtomCommand(h.registry, h.commands.interruptTurn, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: controlThreadId, runId: RunId.make("control-run") },
       });
@@ -233,7 +234,7 @@ describe("interrupt turn", () => {
   it.effect("reconciles pending work when the server rejects the interrupt", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      const result = h.commands.interruptTurn.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.interruptTurn, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID, runId: RunId.make("finished-run") },
       });
@@ -257,7 +258,7 @@ describe("interrupt turn", () => {
           Effect.flatMap(Fiber.join),
         ),
     });
-    const result = h.commands.interruptTurn.run(h.registry, {
+    const result = runAtomCommand(h.registry, h.commands.interruptTurn, {
       environmentId: ENVIRONMENT_ID,
       input: { threadId: THREAD_ID, runId: RunId.make("running-run") },
     });
@@ -298,7 +299,7 @@ describe("title regeneration", () => {
       };
 
       h.registry.set(source, null);
-      const result = h.commands.regenerateTitle.run(h.registry, target);
+      const result = runAtomCommand(h.registry, h.commands.regenerateTitle, target);
       const request = yield* Queue.take(h.requests);
       const requestId = request.command.commandId;
       yield* Deferred.succeed(request.reply, { sequence: 2 });
@@ -338,7 +339,7 @@ describe("title regeneration", () => {
         value: { status: "failed", message: "model unavailable" },
       });
 
-      const superseded = h.commands.regenerateTitle.run(h.registry, target);
+      const superseded = runAtomCommand(h.registry, h.commands.regenerateTitle, target);
       const second = yield* Queue.take(h.requests);
       h.registry.set(source, {
         ...SNAPSHOT,
@@ -356,7 +357,7 @@ describe("title regeneration", () => {
   it.effect("settles without an outcome when the environment disconnects while waiting", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      const result = h.commands.regenerateTitle.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.regenerateTitle, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID },
       });
@@ -408,18 +409,25 @@ describe("remote thread lifecycle commands", () => {
           ],
         };
         h.registry.set(source, initial);
-        const result = h.commands[action].run(h.registry, {
-          environmentId: ENVIRONMENT_ID,
-          input: {
-            threadId: THREAD_ID,
-            commandId: CommandId.make(action),
-            reason: "user",
-            enabled: false,
-            orderKey: "a",
-            snoozedUntil: "2099-01-01T00:00:00.000Z",
-            ...input,
+        const result = runAtomCommand(
+          h.registry,
+          {
+            label: h.commands[action].label,
+            run: (registry, target: never) => h.commands[action].run(registry, target),
           },
-        });
+          {
+            environmentId: ENVIRONMENT_ID,
+            input: {
+              threadId: THREAD_ID,
+              commandId: CommandId.make(action),
+              reason: "user",
+              enabled: false,
+              orderKey: "a",
+              snoozedUntil: "2099-01-01T00:00:00.000Z",
+              ...input,
+            },
+          } as never,
+        );
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(expected);
         const request = yield* Queue.take(h.requests);
         expect(h.registry.get(source)).toBe(initial);
@@ -437,7 +445,7 @@ describe("remote thread lifecycle commands", () => {
         ...SNAPSHOT,
         threads: [{ ...SNAPSHOT.threads[0]!, snoozedUntil: FUTURE, snoozedAt: earlierSnoozedAt }],
       });
-      const result = h.commands.snooze.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.snooze, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID, snoozedUntil: DateTime.formatIso(FUTURE) },
       });
@@ -454,7 +462,7 @@ describe("remote thread lifecycle commands", () => {
   it.effect("keeps the preview after acknowledgement until the matching shell update arrives", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();
-      const result = h.commands.settle.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.settle, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID },
       });
@@ -494,12 +502,12 @@ describe("remote thread lifecycle commands", () => {
     () =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        const settle = h.commands.settle.run(h.registry, {
+        const settle = runAtomCommand(h.registry, h.commands.settle, {
           environmentId: ENVIRONMENT_ID,
           input: { threadId: THREAD_ID },
         });
         const first = yield* Queue.take(h.requests);
-        const unsettle = h.commands.unsettle.run(h.registry, {
+        const unsettle = runAtomCommand(h.registry, h.commands.unsettle, {
           environmentId: ENVIRONMENT_ID,
           input: { threadId: THREAD_ID, reason: "user" },
         });
@@ -525,7 +533,7 @@ describe("remote thread lifecycle commands", () => {
     Effect.gen(function* () {
       const h = yield* makeHarness();
       const otherEnvironment = EnvironmentId.make("other-remote");
-      const result = h.commands.settle.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.settle, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID },
       });
@@ -550,15 +558,19 @@ describe("remote thread lifecycle commands", () => {
       const parked =
         action === "settle" ? { settledOverride: "settled" as const } : { snoozedUntil: FUTURE };
       const awake = action === "settle" ? { settledOverride: "active" } : { snoozedUntil: null };
-      const result = h.commands[action].run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands[action], {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
       });
       const first = yield* Queue.take(h.requests);
-      const undo = h.commands[action === "settle" ? "unsettle" : "unsnooze"].run(h.registry, {
-        environmentId: ENVIRONMENT_ID,
-        input: { threadId: THREAD_ID, reason: "user" },
-      });
+      const undo = runAtomCommand(
+        h.registry,
+        h.commands[action === "settle" ? "unsettle" : "unsnooze"],
+        {
+          environmentId: ENVIRONMENT_ID,
+          input: { threadId: THREAD_ID, reason: "user" },
+        },
+      );
       expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(awake);
       yield* Deferred.succeed(first.reply, { sequence: 2 });
       expect((yield* Effect.promise(() => result))._tag).toBe("Success");
@@ -583,7 +595,7 @@ describe("remote thread lifecycle commands", () => {
     (action) =>
       Effect.gen(function* () {
         const h = yield* makeHarness();
-        const result = h.commands[action].run(h.registry, {
+        const result = runAtomCommand(h.registry, h.commands[action], {
           environmentId: ENVIRONMENT_ID,
           input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
         });
@@ -611,7 +623,7 @@ describe("remote thread lifecycle commands", () => {
           threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: USER_INPUT }],
         };
         h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), stale);
-        const result = h.commands[action].run(h.registry, {
+        const result = runAtomCommand(h.registry, h.commands[action], {
           environmentId: ENVIRONMENT_ID,
           input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
         });
@@ -650,7 +662,7 @@ describe("remote thread lifecycle commands", () => {
         ],
       };
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), initial);
-      const result = h.commands.snooze.run(h.registry, {
+      const result = runAtomCommand(h.registry, h.commands.snooze, {
         environmentId: ENVIRONMENT_ID,
         input: { threadId: THREAD_ID, snoozedUntil: "2099-01-01T00:00:00.000Z" },
       });

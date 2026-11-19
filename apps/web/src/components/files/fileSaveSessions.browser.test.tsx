@@ -8,10 +8,7 @@ const { runAtomCommand, getUnsavedFile } = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   getUnsavedFile: vi.fn(),
 }));
-vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => ({
-  ...(await original()),
-  runAtomCommand: runAtomCommand as never,
-}));
+vi.mock(import("../../state/atom-interop"), () => ({ runAtomCommand }));
 // The real session atom boots the connection runtime, whose endless discovery poll
 // would keep vi.runAllTimersAsync from ever draining once its timers are faked.
 vi.mock(import("~/state/session"), async (original) => {

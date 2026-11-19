@@ -5,7 +5,8 @@ import * as Scope from "effect/Scope";
 import { HttpClient } from "effect/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
-import { settleAsyncResult, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { settleAsyncResult } from "../state/atom-interop";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";

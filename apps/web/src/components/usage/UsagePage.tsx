@@ -1,7 +1,7 @@
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import {
   USAGE_CONTRACT_VERSION,
@@ -11,10 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { CircleAlertIcon, ChevronDownIcon, InfoIcon, SlidersHorizontalIcon } from "lucide-react";
 import { T, useGT, useLocale, useMessages, Var } from "gt-react";
-import { useEffect, useEffectEvent, useRef, useState } from "react";
-import { settlePromise } from "@t3tools/client-runtime/state/runtime";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
-import * as Cause from "effect/Cause";
+import { useContext, useEffect, useEffectEvent, useRef, useState } from "react";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import {
   updatingProvidersLabel,
@@ -40,7 +39,6 @@ import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
-import { useAtomCommand } from "../../state/use-atom-command";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -223,13 +221,11 @@ export function UsagePage() {
   const shownHourly = shownWindow.resolution === "hour";
   const refreshingUsage = isRefreshing && !showingLimits;
   const showingKept = shown !== null && shown.window !== window;
+  const registry = useContext(RegistryContext);
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
   const presentationsWithProviders = useAtomValue(
     environmentPresentations.presentationsWithProvidersAtom,
   );
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
-  });
 
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -253,24 +249,30 @@ export function UsagePage() {
     updatePreferences({ metric: nextMetric });
   };
   const refreshLimits = (automatic = false) =>
-    // Settled so the timestamp still advances when a refresh throws.
-    settlePromise(() =>
-      Promise.all(
-        Array.from(presentations, ([environmentId, presentation]) => {
-          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
-          if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshUsageLimits(
-              environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
-              automatic,
-            );
+    Effect.runPromise(
+      Effect.forEach(
+        presentations,
+        ([environmentId, presentation]) => {
+          if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) {
+            return Effect.void;
           }
-        }),
+          if (presentation.connection.phase !== "connected" || presentation.serverConfig === null) {
+            return Effect.void;
+          }
+          return refreshUsageLimits(
+            environmentId,
+            observeAtomCommand(
+              registry,
+              serverEnvironment.refreshProviders,
+              { environmentId, input: {} },
+              { reportFailure: false },
+            ),
+            automatic,
+          );
+        },
+        { concurrency: "unbounded", discard: true },
       ),
-    ).then((result) => {
-      setLimitsNow(Date.now());
-      if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
-    });
+    ).finally(() => setLimitsNow(Date.now()));
   const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.defaultPrevented ||

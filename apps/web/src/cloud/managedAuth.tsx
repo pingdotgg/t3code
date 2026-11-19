@@ -6,10 +6,9 @@ import {
 } from "@t3tools/client-runtime/relay";
 import {
   reportAtomCommandResult,
-  runAtomCommand,
-  settleAsyncResult,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand, settleAsyncResult } from "../state/atom-interop";
 import * as Effect from "effect/Effect";
 import { useEffect, type ReactNode } from "react";
 

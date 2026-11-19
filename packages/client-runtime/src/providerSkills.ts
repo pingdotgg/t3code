@@ -11,7 +11,9 @@ import {
 import { Atom } from "effect/reactivity";
 
 import { deadlineStore } from "./clock.ts";
-import { type AtomCommand, runAtomCommand } from "./state/runtime.ts";
+import { observeAtomCommand, type AtomCommand } from "./state/runtime.ts";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
 
 export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
 
@@ -345,30 +347,36 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
           );
         };
         const retryLater = () => retry();
-        void runAtomCommand(
-          registry,
-          input.refreshProviders,
-          { environmentId, input: { instanceId, cwd } },
-          { reportFailure: false },
-        ).then((result) => {
-          const refreshedProvider =
-            result._tag === "Success" ? findProvider(result.value.providers) : undefined;
-          const snapshot =
-            refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
-          // A new server timestamp proves progress even when the client clock is ahead.
-          // @effect-diagnostics-next-line globalDate:off
-          const completedAt = Date.now();
-          const refreshed =
-            hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
-            (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
-              snapshot?.checkedAt !==
-                (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
-          if (!refreshed) return retryLater();
-          // A reply is dropped when the provider changed while it was in flight, such as a
-          // SessionStart rescan; ask again at once for the snapshot that change produced.
-          const held = findProvider(registry.get(input.providers(environmentId)));
-          if (!hasCompleteProviderWorkspaceSnapshot(held, cwd)) retry(0);
-        }, retryLater);
+        Effect.runFork(
+          observeAtomCommand(
+            registry,
+            input.refreshProviders,
+            { environmentId, input: { instanceId, cwd } },
+            { reportFailure: false },
+          ).pipe(
+            Effect.tap((result) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.map((completedAt) => {
+                  const refreshedProvider =
+                    result._tag === "Success" ? findProvider(result.value.providers) : undefined;
+                  const snapshot =
+                    refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
+                  // A new server timestamp proves progress even when the client clock is ahead.
+                  const refreshed =
+                    hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
+                    (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
+                      snapshot?.checkedAt !==
+                        (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
+                  if (!refreshed) return retryLater();
+                  // A reply is dropped when the provider changed while it was in flight, such as a
+                  // SessionStart rescan; ask again at once for the snapshot that change produced.
+                  const held = findProvider(registry.get(input.providers(environmentId)));
+                  if (!hasCompleteProviderWorkspaceSnapshot(held, cwd)) retry(0);
+                }),
+              ),
+            ),
+          ),
+        );
         return plan.state;
       },
       (ctx, update: Update) => {

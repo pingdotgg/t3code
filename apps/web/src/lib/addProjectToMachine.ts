@@ -1,9 +1,6 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import {
-  executeAtomQuery,
-  runAtomCommand,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, runAtomCommand } from "../state/atom-interop";
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,

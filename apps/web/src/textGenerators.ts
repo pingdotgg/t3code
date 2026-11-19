@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import { runAtomCommand } from "./state/atom-interop";
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -135,20 +135,12 @@ const textGeneratorModelsAtom = Atom.family((key: string) => {
   return Atom.make((get) => {
     // Read again after a refresh; the server's cache already holds the new list by then.
     get(refreshCountAtom(`${environmentId}:${id}`));
-    return Effect.promise(() =>
-      runAtomCommand(
-        get.registry,
-        serverEnvironment.listTextGeneratorModels,
-        { environmentId, input: { id } },
-        { reportFailure: false },
-      ),
-    ).pipe(
-      Effect.flatMap((result) =>
-        result._tag === "Success"
-          ? Effect.succeed(result.value.models)
-          : Effect.fail(formatEnvironmentQueryError(result.cause)),
-      ),
-    );
+    return serverEnvironment.listTextGeneratorModels
+      .run(get.registry, { environmentId, input: { id } })
+      .pipe(
+        Effect.map((result) => result.models),
+        Effect.catchCause((cause) => Effect.fail(formatEnvironmentQueryError(cause))),
+      );
   }).pipe(Atom.setIdleTTL(5 * 60_000), Atom.withLabel(`text-generator-models:${key}`));
 });
 
