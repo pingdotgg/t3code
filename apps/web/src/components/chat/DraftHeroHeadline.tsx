@@ -43,6 +43,7 @@ import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { DraftProjectName } from "./DraftProjectName";
+import { moveDraftHeroRowFocus } from "./draftHeroTabOrder";
 import { TriageDraftHero } from "./TriageDraftHero";
 
 interface DraftHeroHeadlineProps {
@@ -393,7 +394,11 @@ export function DraftHeroHeadline({
       <div
         role="list"
         aria-label={gt("Projects")}
+        data-draft-hero-projects=""
         className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
+        onKeyDown={(event) => {
+          if (moveDraftHeroRowFocus(event.nativeEvent, event.currentTarget)) event.preventDefault();
+        }}
       >
         <ProjectPickerRows
           model={model}
