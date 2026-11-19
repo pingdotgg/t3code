@@ -405,7 +405,8 @@ describe("LinearIssueTracker", () => {
     Effect.gen(function* () {
       const asset = "https://uploads.linear.app/workspace/file/image.png";
       const stable = `![Screenshot](${asset})`;
-      const signed = `![Screenshot](${asset}?signature=temporary)`;
+      const signedAsset = `${asset}?signature=eyJhbGciOiJIUzI1NiJ9.e30.sig-nat_ure`;
+      const signed = `![Screenshot](${signedAsset})`;
       const comment = (body: string) => ({
         id: "cmt_image",
         body,
@@ -431,7 +432,9 @@ describe("LinearIssueTracker", () => {
           issue: { comments: comments(Number(fileUrlLifetime) > 0 ? signed : stable) },
         }),
         T3IssueUpdate: (variables) => {
-          expect(variables.input).toEqual({ description: `${stable}\n\n${unrelated}` });
+          expect(variables.input).toEqual({
+            description: `${stable}\n\nSee \`${asset}\`.\n\n${unrelated}`,
+          });
           return { issueUpdate: { success: true } };
         },
       });
@@ -444,7 +447,10 @@ describe("LinearIssueTracker", () => {
         signed,
         signed,
       ]);
-      yield* api.update({ ...issueTarget, body: `${detail.body}\n\n${unrelated}` });
+      yield* api.update({
+        ...issueTarget,
+        body: `${detail.body}\n\nSee \`${signedAsset}\`.\n\n${unrelated}`,
+      });
     }),
   );
 
