@@ -123,7 +123,9 @@ function LinkedIssueRow({
         </TooltipPopup>
       </Tooltip>
       <div className="flex h-5 min-w-0 items-center gap-1.5 ps-9 pe-2.5 text-xs text-muted-foreground">
-        <span className="shrink-0 tabular-nums">{link.displayKey}</span>
+        <span aria-hidden className="shrink-0 tabular-nums">
+          {link.displayKey}
+        </span>
         {trackerIcon}
         {comments}
       </div>
