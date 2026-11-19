@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveLinuxPasswordStoreSwitch } from "./linuxSecretStorage.ts";
+import {
+  parseDbusSendStrings,
+  resolveLinuxPasswordStoreSwitch,
+  type LinuxSessionBus,
+} from "./linuxSecretStorage.ts";
 
-const autoSwitch = (env: NodeJS.ProcessEnv) =>
-  resolveLinuxPasswordStoreSwitch({ preference: "auto", env });
+const emptyBus: LinuxSessionBus = { listNames: () => [], getNameOwner: () => null };
+
+const autoSwitch = (env: NodeJS.ProcessEnv, sessionBus = emptyBus) =>
+  resolveLinuxPasswordStoreSwitch({ preference: "auto", env, sessionBus });
+
+const busWith = (
+  owners: Record<string, string>,
+  activatable: ReadonlyArray<string> = [],
+): LinuxSessionBus => ({
+  listNames: () => [...Object.keys(owners), ...activatable],
+  getNameOwner: (name) => owners[name] ?? null,
+});
 
 describe("linuxSecretStorage", () => {
   it("leaves canonical KDE sessions to Electron's own wallet selection", () => {
@@ -29,6 +43,50 @@ describe("linuxSecretStorage", () => {
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:GNOME" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:KDE" })).toBe("gnome-libsecret");
     expect(autoSwitch({ XDG_CURRENT_DESKTOP: "LXQt:plasma" })).toBe("gnome-libsecret");
+  });
+
+  it("forces KWallet when it is the only keyring on the session bus", () => {
+    const lxqt = { XDG_CURRENT_DESKTOP: "LXQt" };
+    expect(autoSwitch(lxqt, busWith({}, ["org.kde.kwalletd6"]))).toBe("kwallet6");
+    expect(autoSwitch(lxqt, busWith({ "org.kde.kwalletd5": ":1.4" }))).toBe("kwallet5");
+    expect(
+      autoSwitch(
+        { XDG_CURRENT_DESKTOP: "niri" },
+        busWith({ "org.kde.kwalletd6": ":1.4", "org.freedesktop.secrets": ":1.4" }),
+      ),
+    ).toBe("kwallet6");
+    expect(
+      autoSwitch(
+        { XDG_CURRENT_DESKTOP: "GNOME" },
+        busWith({ "org.kde.kwalletd6": ":1.4", "org.freedesktop.secrets": ":1.4" }),
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps gnome-libsecret when another keyring may serve the Secret Service", () => {
+    const lxqt = { XDG_CURRENT_DESKTOP: "LXQt" };
+    expect(
+      autoSwitch(lxqt, busWith({ "org.kde.kwalletd5": ":1.4", "org.freedesktop.secrets": ":1.7" })),
+    ).toBe("gnome-libsecret");
+    expect(autoSwitch(lxqt, busWith({}, ["org.kde.kwalletd6", "org.freedesktop.secrets"]))).toBe(
+      "gnome-libsecret",
+    );
+    expect(
+      autoSwitch(lxqt, {
+        listNames: () => {
+          throw new Error("no session bus");
+        },
+        getNameOwner: () => null,
+      }),
+    ).toBe("gnome-libsecret");
+  });
+
+  it("reads strings from dbus-send replies", () => {
+    expect(
+      parseDbusSendStrings(
+        'method return time=1 sender=org.freedesktop.DBus\n   array [\n      string "org.freedesktop.DBus"\n      string ":1.4"\n   ]\n',
+      ),
+    ).toEqual(["org.freedesktop.DBus", ":1.4"]);
   });
 
   it("does not treat lowercase desktop names as ones Electron recognizes", () => {

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - pre-ready Electron setup reads settings, prepares the Linux desktop entry, and asks Hyprland for its version synchronously before app services are available.
+// @effect-diagnostics nodeBuiltinImport:off - pre-ready Electron setup reads settings, prepares the Linux desktop entry, and asks Hyprland and D-Bus synchronously before app services are available.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
@@ -19,6 +19,7 @@ import {
   replacedVersionedAppImagePath,
 } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import { parseDbusSendStrings } from "../linuxSecretStorage.ts";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -45,7 +46,34 @@ export const resolveEarlyLinuxElectronOptionsFromProcess = (
     homeDirectory,
     joinPath: NodePath.posix.join,
     readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+    sessionBus: {
+      listNames: () =>
+        ["ListNames", "ListActivatableNames"].flatMap((method) =>
+          parseDbusSendStrings(callSessionBus(method)),
+        ),
+      getNameOwner: (name) => {
+        try {
+          return parseDbusSendStrings(callSessionBus("GetNameOwner", `string:${name}`))[0] ?? null;
+        } catch {
+          return null;
+        }
+      },
+    },
   });
+
+const callSessionBus = (method: string, ...args: ReadonlyArray<string>): string =>
+  NodeChildProcess.execFileSync(
+    "dbus-send",
+    [
+      "--session",
+      "--print-reply",
+      "--dest=org.freedesktop.DBus",
+      "/org/freedesktop/DBus",
+      `org.freedesktop.DBus.${method}`,
+      ...args,
+    ],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1000, maxBuffer: 256 * 1024 },
+  );
 
 export class DesktopPreReadyElectronOptions extends Context.Service<
   DesktopPreReadyElectronOptions,
