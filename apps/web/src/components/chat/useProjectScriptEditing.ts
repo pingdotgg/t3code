@@ -19,6 +19,7 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import { AsyncResult } from "effect/reactivity";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
@@ -195,26 +196,28 @@ export function useProjectScriptEditing(input: {
       return AsyncResult.success(undefined);
     }
     const ref = scopeProjectRef(environmentId, project.id);
-    return projectScriptEdits.schedule(
-      appAtomRegistry,
-      { mode: "serial", key: scopedProjectKey },
-      ref,
-      async () => {
-        // The config stream can still be behind the previous edit's acknowledged write.
-        const result = await readSettings({ environmentId, input: {} });
-        if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
-        const currentProject = readProject(ref);
-        if (!currentProject) {
-          return AsyncResult.failure(
-            Cause.fail(new Error(m(msg("This project is no longer available.")))),
+    return Effect.runPromise(
+      projectScriptEdits.schedule(
+        appAtomRegistry,
+        { mode: "serial", key: scopedProjectKey },
+        ref,
+        Effect.promise(async () => {
+          // The config stream can still be behind the previous edit's acknowledged write.
+          const result = await readSettings({ environmentId, input: {} });
+          if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
+          const currentProject = readProject(ref);
+          if (!currentProject) {
+            return AsyncResult.failure(
+              Cause.fail(new Error(m(msg("This project is no longer available.")))),
+            );
+          }
+          return edit(
+            ref.projectId,
+            result.value,
+            resolveProjectScripts(result.value, currentProject),
           );
-        }
-        return edit(
-          ref.projectId,
-          result.value,
-          resolveProjectScripts(result.value, currentProject),
-        );
-      },
+        }),
+      ),
     );
   };
 
