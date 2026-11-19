@@ -42,7 +42,7 @@ export const ja: Messages = {
       "T3 Code はトークンの上乗せ販売を行いません。すでにお持ちの認証情報で、Claude Code、Codex、Antigravity、OpenCode、Cursor、Grok をつなぐだけ。T3 Code は制御プレーンのみを提供。プランは今のままで。",
     googleSignIn: "Google でサインイン",
     harnessPoints: [
-      "上乗せ料金なし。使用量の上限なし。",
+      "キーの再販なし。使用量の上限なし。",
       "スレッドの途中でモデルを切り替え。",
       "対応エージェントは毎週追加。",
     ],
