@@ -20,7 +20,7 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
-import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
+import type { AppBarMenu, AppBarMenuItem, AppBarProps } from "./AppBar.types";
 import type { AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
@@ -111,7 +111,41 @@ export function AppBar(props: AppBarProps) {
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
     usesNativeMailSearchToolbar;
-  const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
+  const trailingMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
+  // The Duo's vertical bar never overflows: items that don't fit slide under the workspace tabs,
+  // and a Live Activity pushes them down further. More than one tool shares one menu there.
+  const groupTrailing =
+    usesNativeWorkspaceColumns &&
+    isDuoDevice(deviceType) &&
+    props.onClose === undefined &&
+    (props.actions?.length ?? 0) + trailingMenus.length > 1;
+  const actions = groupTrailing ? [] : (props.actions ?? []);
+  const visibleMenus: ReadonlyArray<AppBarMenu> = groupTrailing
+    ? [
+        {
+          title: gt("More actions"),
+          icon: "ellipsis",
+          items: [
+            ...(props.actions ?? []).map((action) => ({
+              id: action.accessibilityLabel,
+              title: action.accessibilityLabel,
+              icon: iosIcon(action.icon),
+              subtitle: action.subtitle,
+              disabled: action.disabled || action.loading,
+              selected: action.selected,
+              destructive: action.destructive,
+              onPress: action.onPress,
+            })),
+            ...trailingMenus.map((menu) => ({
+              id: menu.title,
+              title: menu.title,
+              icon: iosIcon(menu.icon),
+              items: menu.items,
+            })),
+          ],
+        },
+      ]
+    : trailingMenus;
   // Where the mail toolbar isn't used, the Duo keeps search at the bottom of the pane like its
   // workspace lists; elsewhere inline search is a button in the bar.
   const duoBottomSearch =
@@ -221,13 +255,13 @@ export function AppBar(props: AppBarProps) {
           ) : null}
         </Toolbar>
       ) : null}
-      {props.actions?.length ||
+      {actions.length ||
       visibleMenus.length ||
       props.trailing ||
       props.confirm ||
       closeInspector ? (
         <Toolbar placement="right">
-          {props.actions?.map(({ loading, ...action }) =>
+          {actions.map(({ loading, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>
                 <View

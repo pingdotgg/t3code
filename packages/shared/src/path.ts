@@ -67,7 +67,7 @@ const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/;
 const LATIN_FOLDS: Record<string, string> = {
   Ŀ: "L",
   ŀ: "l",
-  ŉ: "'n",
+  ŉ: "n",
   Đ: "D",
   đ: "d",
   Ð: "D",
