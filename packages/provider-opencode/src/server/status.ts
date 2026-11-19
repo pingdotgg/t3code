@@ -300,9 +300,9 @@ function markOpenCodeLegacy(
     readonly release: OpenCodeRelease;
   }>,
 ): Array<ServerProviderModel> {
-  // A `-latest` alias's release date is the alias's creation date, not its target's.
+  // An OpenRouter `~` alias's release date is the alias's creation date, not its target's.
   const familyKey = ({ providerID, id, family }: OpenCodeRelease) =>
-    family && !id.endsWith("-latest") ? `${providerID}/${family}` : undefined;
+    family && !id.startsWith("~") ? `${providerID}/${family}` : undefined;
   const newest = new Map<string, number>();
   for (const { release } of entries) {
     const key = familyKey(release);
