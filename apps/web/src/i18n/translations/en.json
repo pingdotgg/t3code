@@ -2999,6 +2999,7 @@
   "9c5a2e144cefdf2f": "Read only",
   "12d03e02951725b0": "Read projects and threads. Cannot start, message or change anything.",
   "b6c9bd4137eca7b1": "The environment returned an address this page will not open.",
+  "91aaab8390655d18": "This app did not ask for this access.",
   "8ec8255ffc9fe8e9": "The sign-in could not continue.",
   "04358a5e0d679d69": "Checking the sign-in request",
   "5decc5fd8dc3f6a7": "One moment while this environment verifies the agent's request.",

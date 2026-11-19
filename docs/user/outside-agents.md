@@ -80,6 +80,11 @@ policy. Approving without a code starts at **Read only**:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+An agent can ask for less. One that asks only for `orchestration:read` gets
+**Read only**, and one that asks for `orchestration:read` and
+`orchestration:operate` gets at most **Auto**, whatever you pick or code you
+enter. **Full access** also needs `settings:write` and `source-control:write`.
+
 ## What outside agents can call
 
 Some tools only work for an agent running inside a T3 thread, because they act
