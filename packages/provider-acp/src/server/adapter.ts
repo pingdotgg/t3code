@@ -1263,24 +1263,36 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
         .join("\n");
 }
 
-function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+function resolvedPathInfo(
+  toolCall: AcpToolCallState,
+): { path: string; isFallback: boolean } | undefined {
   const locations = toolCall.data.locations;
   if (Array.isArray(locations)) {
     for (const location of locations) {
       const path = unknownRecord(location)?.path;
       if (typeof path === "string" && path.trim().length > 0) {
-        return path.trim();
+        return { path: path.trim(), isFallback: false };
       }
     }
   }
   const rawInput = unknownRecord(toolCall.data.rawInput);
-  for (const key of ["path", "filePath", "file_path", "url", "query", "pattern"]) {
+  for (const key of ["path", "filePath", "file_path", "url"]) {
     const candidate = rawInput?.[key];
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
+      return { path: candidate.trim(), isFallback: false };
+    }
+  }
+  for (const key of ["query", "pattern"]) {
+    const candidate = rawInput?.[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return { path: candidate.trim(), isFallback: true };
     }
   }
   return undefined;
+}
+
+function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+  return resolvedPathInfo(toolCall)?.path;
 }
 
 function acpBackendWebSearch(
@@ -1338,15 +1350,23 @@ function acpBackendWebSearch(
     const url = unknownRecord(source)?.url;
     if (typeof url === "string" && url.trim().length > 0) urls.add(url.trim());
   }
-  const outputText =
-    typeof rawOutput === "string"
-      ? rawOutput
-      : typeof rawOutputRecord?.output === "string"
-        ? rawOutputRecord.output
-        : undefined;
+  const outputText = textFromUnknown(rawOutput);
   if (urls.size === 0 && outputText !== undefined) {
-    for (const match of outputText.matchAll(/https?:\/\/[^\s)\]>]+/gu)) {
-      const url = match[0].replace(/[.,;:]+$/u, "");
+    for (const match of outputText.matchAll(/https?:\/\/[^\s<>"]+/gu)) {
+      let url = match[0].replace(/[.,;:>]+$/u, "");
+      while (
+        url.endsWith(")") &&
+        (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length
+      ) {
+        url = url.slice(0, -1);
+      }
+      while (
+        url.endsWith("]") &&
+        (url.match(/\[/g) || []).length < (url.match(/\]/g) || []).length
+      ) {
+        url = url.slice(0, -1);
+      }
+      url = url.replace(/[.,;:>]+$/u, "");
       if (url.length > 0) urls.add(url);
     }
   }
@@ -4390,8 +4410,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   typeof rawInputRecord?.pattern === "string"
                     ? rawInputRecord.pattern.trim()
                     : undefined;
+                const pathInfo = resolvedPathInfo(toolCall);
+                const isExplicitPath =
+                  changes.length > 0 || (pathInfo !== undefined && !pathInfo.isFallback);
                 const isPathFromQueryOrPattern =
-                  path !== undefined && (trimmedQuery === path || trimmedPattern === path);
+                  !isExplicitPath &&
+                  path !== undefined &&
+                  (trimmedQuery === path || trimmedPattern === path);
                 turnItem = {
                   ...base,
                   title:

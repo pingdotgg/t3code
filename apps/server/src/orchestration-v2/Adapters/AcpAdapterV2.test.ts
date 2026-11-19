@@ -4129,6 +4129,17 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const explicitLocationSearch = items.find(
+        (item) =>
+          item.type === "file_search" &&
+          item.nativeItemRef?.nativeId?.endsWith("structured-search-explicit-location") === true,
+      );
+      assert.deepEqual(
+        explicitLocationSearch?.type === "file_search"
+          ? { pattern: explicitLocationSearch.pattern, results: explicitLocationSearch.results }
+          : null,
+        { pattern: "README.md", results: [{ fileName: "README.md", preview: "# Title" }] },
+      );
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>
@@ -4163,6 +4174,11 @@ describe("AcpAdapterV2", () => {
             url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
           },
         ],
+      });
+      assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
+        title: "Web search: streamed citations",
+        patterns: ["streamed citations"],
+        results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
