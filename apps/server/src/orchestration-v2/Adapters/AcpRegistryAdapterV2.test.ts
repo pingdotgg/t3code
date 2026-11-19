@@ -654,6 +654,43 @@ describe("AcpRegistryAdapterV2", () => {
       retryable: null,
     });
     assert.equal(acpRegistryPromptFailure("other-agent", limit).class, "provider_error");
+    // claude-agent-acp 0.109.0 fails a usage-limited turn with this data (turnErrorData).
+    const claudeLimit = (data: unknown) =>
+      acpRegistryPromptFailure(
+        "claude-acp",
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "You've hit your 5-hour limit",
+          data,
+        }),
+      );
+    assert.deepEqual(
+      claudeLimit({
+        errorKind: "rate_limit",
+        rateLimit: { status: "rejected", rateLimitType: "five_hour", resetsAt: 1_795_000_000 },
+      }),
+      {
+        class: "usage_limit",
+        message: "You've hit your 5-hour limit",
+        code: "-32603",
+        retryable: null,
+        resetAt: "2026-11-18T11:06:40.000Z",
+      },
+    );
+    assert.deepEqual(claudeLimit({ errorKind: "rate_limit" }), {
+      class: "usage_limit",
+      message: "You've hit your 5-hour limit",
+      code: "-32603",
+      retryable: null,
+    });
+    assert.notProperty(
+      claudeLimit({
+        errorKind: "rate_limit",
+        rateLimit: { status: "allowed_warning", resetsAt: 1_795_000_000 },
+      }),
+      "resetAt",
+    );
+    assert.equal(claudeLimit({ errorKind: "server_error" }).class, "provider_error");
     assert.equal(
       acpRegistryPromptFailure("mistral-vibe", new Error("private defect")).message,
       "Provider turn failed.",
