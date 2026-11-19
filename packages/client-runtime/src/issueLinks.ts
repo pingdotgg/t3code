@@ -30,6 +30,24 @@ function linkAuthority(url: string): string | null {
   }
 }
 
+/** A host whose hostname does not name it, such as GitHub Enterprise Server, is vouched for by a project on it. */
+function parseIssueLink(
+  url: string,
+  authority: string | null,
+  projects: ReadonlyArray<LinkProject>,
+) {
+  const parsed = sourceControlClients.parseIssueUrl(url);
+  if (parsed !== null || authority === null) return parsed;
+  const hostname = new URL(url).hostname.toLowerCase();
+  for (const project of projects) {
+    const binding = projectIssueBinding(project);
+    if (binding === null || (binding.host !== hostname && binding.host !== authority)) continue;
+    const known = sourceControlClients.parseIssueUrl(url, project.repositoryIdentity?.provider);
+    if (known !== null) return known;
+  }
+  return null;
+}
+
 /**
  * The reference an issue link resolves to, and the project it is read through: the project whose
  * tracker binding is that host and scope, else any project on the same tracker and host lending
@@ -42,11 +60,11 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   readonly projects: ReadonlyArray<Project>;
   readonly preferredProjectId?: string | undefined;
 }): { readonly project: Project; readonly ref: IssueRef } | null {
-  const parsed = sourceControlClients.parseIssueUrl(input.url);
-  if (parsed === null) return null;
-  const { definition, link } = parsed;
   // A link names its server's port; a binding does only when its remote or web URL did.
   const authority = linkAuthority(input.url);
+  const parsed = parseIssueLink(input.url, authority, input.projects);
+  if (parsed === null) return null;
+  const { definition, link } = parsed;
   const onHost = input.projects.flatMap((project) => {
     const binding = projectIssueBinding(project);
     return binding === null ||
@@ -60,7 +78,9 @@ export function resolveIssueLinkTarget<Project extends LinkProject>(input: {
   const preferFirst = (candidates: typeof bound) =>
     candidates.find((candidate) => candidate.project.id === input.preferredProjectId) ??
     candidates[0];
-  const own = preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope));
+  const own =
+    preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scope)) ??
+    preferFirst(bound.filter((candidate) => candidate.binding.scope === link.scopeAlias));
   const lender = own ?? preferFirst(bound);
   if (lender === undefined) return null;
   return {
