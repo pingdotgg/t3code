@@ -18,17 +18,14 @@ import {
   PULL_REQUEST_ROW_NUMBER_CLASS,
   PullRequestRowLines,
 } from "../pullRequest/PullRequestListRow";
-import { PAGE_ROW_HOVER_CLASS, PAGE_ROW_PRESS_CLASS } from "../pullRequest/PullRequestRow";
+import {
+  PAGE_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+} from "../pullRequest/PullRequestRow";
 import { PullRequestActorLabel } from "../pullRequest/pullRequestPresentation";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-
-const LINKED_ISSUE_ROW_CLASS = cn(
-  PULL_REQUEST_ROW_CLASS,
-  PAGE_ROW_HOVER_CLASS,
-  PAGE_ROW_PRESS_CLASS,
-  "px-2",
-);
 
 function LinkedIssueRow({
   link,
@@ -115,9 +112,7 @@ function LinkedIssueRow({
   return compact ? (
     <div className="pb-1.5">
       <Tooltip>
-        <TooltipTrigger
-          render={<ThreadDetailsControl multiline render={<a {...anchorProps} />} />}
-        >
+        <TooltipTrigger render={<ThreadDetailsControl multiline render={<a {...anchorProps} />} />}>
           {glyph}
           <span className="min-w-0 flex-1 line-clamp-2 whitespace-normal leading-4.5">{title}</span>
         </TooltipTrigger>
@@ -139,7 +134,12 @@ function LinkedIssueRow({
   ) : (
     <a
       {...anchorProps}
-      className={LINKED_ISSUE_ROW_CLASS}
+      className={cn(
+        PULL_REQUEST_ROW_CLASS,
+        PAGE_ROW_CLASS,
+        PAGE_ROW_HOVER_CLASS,
+        PAGE_ROW_PRESS_CLASS,
+      )}
     >
       {lines}
     </a>
