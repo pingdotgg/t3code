@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   FolderGit2Icon,
+  FolderIcon,
   LayersIcon,
   ListFilterIcon,
   TagIcon,
@@ -127,7 +128,7 @@ export function IssueFiltersMenu(props: {
         {props.projects.length > 1 || props.project ? (
           <PullRequestFilterRadioSubmenu
             label={gt("Project")}
-            icon={FolderGit2Icon}
+            icon={FolderIcon}
             value={projectValue}
             options={projectOptions}
             onChange={(next) => {
