@@ -85,6 +85,9 @@ function acceptAttachmentUploads(): Disposable {
   };
 }
 
+// One input event, where typing a key at a time takes seconds on a loaded CI runner.
+const insertText = (text: string) => cdp().send("Input.insertText", { text });
+
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
 function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   let release = () => {};
@@ -818,7 +821,8 @@ it("/side sends the draft's attachments and context, and keeps them when it does
         new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
       );
     await expect.element(image).toBeVisible();
-    await userEvent.keyboard("/side what is this?{Enter}");
+    await insertText("/side what is this?");
+    await userEvent.keyboard("{Enter}");
     await expect.element(image).not.toBeInTheDocument();
   };
   const sentMessage = (fields: Record<string, unknown>) =>
@@ -841,7 +845,8 @@ it("/side sends the draft's attachments and context, and keeps them when it does
   // A reply alone is enough to send.
   await page.getByRole("button", { name: "Reply to this response" }).first().click();
   await userEvent.click(editor);
-  await userEvent.keyboard("/side {Enter}");
+  await insertText("/side ");
+  await userEvent.keyboard("{Enter}");
   await sentMessage({
     context: expect.objectContaining({ records: [expect.objectContaining({ kind: "response" })] }),
   });
@@ -849,7 +854,7 @@ it("/side sends the draft's attachments and context, and keeps them when it does
   // A failed start puts the message back after the draft typed meanwhile.
   holdFork = true;
   await sendImageToSideChat();
-  await userEvent.keyboard("next draft");
+  await insertText("next draft");
   await vi.waitFor(() =>
     expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
       3,
