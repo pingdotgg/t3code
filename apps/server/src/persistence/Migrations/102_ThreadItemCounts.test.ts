@@ -7,11 +7,11 @@ import { runMigrations } from "../Migrations.ts";
 
 const layer = it.layer(NodeSqliteClient.layer({ filename: ":memory:" }));
 
-layer("101_ThreadItemCounts", (it) => {
+layer("102_ThreadItemCounts", (it) => {
   it.effect("matches a recount of items without a run or with an existing run", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 100 });
+      yield* runMigrations({ toMigrationInclusive: 101 });
       const upsertItem = (id: string, threadId: string, runId: string | null) => sql`
         INSERT INTO orchestration_v2_projection_turn_items (
           turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json
