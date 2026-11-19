@@ -160,6 +160,10 @@ choose **Attach** to include the selected evidence in your draft. Archived conve
 you include them. A fact whose cited message was edited, deleted, or archived is
 flagged in the list.
 
+Thread agents can read and change memory only within their own project and
+environment. Threads in that project share its memory; another project's facts
+do not appear in their recall, searches, or memory tools.
+
 To search the current project's facts, conversations, and code symbols at once,
 choose **Search facts, conversations, and symbols** in the command palette or
 press `mod+alt+f`. Each kind of result is listed separately; if one is
@@ -178,7 +182,7 @@ When knowledge changes, **Supersede** the old fact instead of forgetting it. The
 replacement is linked to the old fact, which keeps its content but no longer comes
 up in recall unless you show superseded facts. After you save, T3 points out
 existing facts that look like duplicates or possible contradictions so you can
-compare them; it never merges or replaces them on its own.
+compare them before making a replacement.
 
 When **Save facts from finished runs** is on, T3 reviews new runs from a thread
 and its child threads together. A batch is eligible after eight completed runs or
@@ -192,8 +196,9 @@ shows the last outcome and the **Automatic** filter lists automatically saved fa
 A second call reads the proposed facts without the conversation and asks whether
 a new agent on unrelated work would need each one.
 A fact that only applies to one task, or that describes how code behaves, is
-saved as set aside: it is never recalled, but search finds it and the **Set
-aside** filter lists it. The fact's details say what the check decided. When
+saved as set aside: ordinary recall, search, and browsing leave it out. Use the
+**Set aside** filter to inspect it, or search while that filter is selected.
+The fact's details say what the check decided. When
 you edit a fact's text, that decision is cleared and the fact can be recalled
 again; an agent's edit or replacement keeps it. If the check fails, T3 saves nothing and
 tries the batch again later. Some providers, such as Grok, cannot run the check; with one of
@@ -203,6 +208,20 @@ An exact repeat can add new citations to a saved fact. You decide when similar
 or conflicting facts should supersede one another. Trust, age and retrieval
 history affect recall. Forgetting a fact removes its content, and a later run
 can supply new evidence for it.
+
+**Curate project memories** is on by default in **Settings → Labs → Zack** and
+can be overridden per project. Your text generation model periodically reviews
+small batches of that project's agent-written memories. It can set aside task
+notes and code descriptions, or link an outdated or duplicate fact to an existing
+replacement. It needs evidence for a replacement; a fact's age alone is not a
+reason to retire it. Facts you wrote or explicitly restored are protected from
+automatic review.
+
+The curator keeps the original content and records its reason in the fact's
+history. **Memory health** shows the last review's outcome. To reverse a review,
+find the fact under **Set aside** or enable **Show superseded**, then choose
+**Restore to recall**. Restoration is a user action, and the curator leaves
+restored facts alone. Forgetting remains permanent.
 
 You don't need to pick facts by hand. When you send a message, T3 sends up to two
 saved facts related to it along with your message, as **Recalled project memory**.

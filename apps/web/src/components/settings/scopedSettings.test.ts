@@ -38,6 +38,7 @@ function environment(
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
     assistedLearning?: boolean | undefined;
+    memoryCuration?: boolean | undefined;
   } = {},
 ) {
   return {
@@ -56,6 +57,7 @@ function environment(
                 projectSettingsOverrides: options.projectOverrides !== false,
                 projectKnowledge: true,
                 projectKnowledgeAssistedLearning: options.assistedLearning,
+                projectKnowledgeCuration: options.memoryCuration,
               },
             },
           },
@@ -156,6 +158,27 @@ describe("scoped settings targets", () => {
 });
 
 describe("scoped settings writes", () => {
+  it("scopes curation overrides to the chosen checkout and refuses unsupported targets", () => {
+    const older = environment("Laptop");
+    const supported = environment("Server", { memoryCuration: true });
+    expect(
+      planScopedSettingsPatch(checkout, [older, supported], { enableMemoryCuration: false }),
+    ).toMatchObject({
+      serverWrites: [
+        {
+          environmentId: supported.environmentId,
+          patch: { projectSettingsOverrides: { [projectId]: { enableMemoryCuration: false } } },
+        },
+      ],
+      unavailableReason: null,
+    });
+    expect(
+      planScopedSettingsPatch(all, [older, supported], { enableMemoryCuration: true }),
+    ).toMatchObject({
+      serverWrites: [],
+      unavailableReason: "Memory curation needs a newer T3 Code server on Laptop.",
+    });
+  });
   it.each([undefined, false])(
     "blocks assisted learning when the targeted server capability is %s",
     (assistedLearning) => {

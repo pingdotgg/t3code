@@ -8,6 +8,7 @@ import {
   type ProjectFactHistoryEntry,
   type ProjectFactVerdictRecord,
   type ProjectKnowledgeDeliveries,
+  type ProjectKnowledgeStatus,
 } from "@t3tools/contracts";
 export { projectKnowledgeContextRecord } from "@t3tools/shared/composerContextReferences";
 import type { Atom } from "effect/reactivity";
@@ -157,6 +158,8 @@ export function knowledgeOriginLabel(origin: KnowledgeOrigin): string {
       return origin.runOutcome === "completed"
         ? "Learned from a finished run"
         : `Learned from a run that ${origin.runOutcome === "failed" ? "failed" : "was interrupted"}`;
+    case "curator":
+      return "Memory curator";
     case "unknown":
       return "Origin not recognized by this version";
   }
@@ -197,7 +200,48 @@ export function isSupersededFact(fact: ProjectFact): boolean {
   return fact.supersededBy != null;
 }
 
+export function canRestoreFactToRecall(fact: ProjectFact): boolean {
+  return (
+    fact.status === "saved" &&
+    (isSupersededFact(fact) || fact.verdict?.value === "task" || fact.verdict?.value === "code")
+  );
+}
+
+export function memoryCurationRunLabel(
+  run: NonNullable<ProjectKnowledgeStatus["curation"]>,
+): string {
+  const explanation =
+    run.reason === "disabled"
+      ? "Memory curation is turned off for this project."
+      : run.reason === "provider_unsupported"
+        ? "The selected model does not support memory curation."
+        : run.reason === "project_unavailable"
+          ? "The project is archived or unavailable."
+          : run.reason === "nothing_to_review"
+            ? "No eligible memories to review."
+            : run.reason === "invalid_output"
+              ? "The model returned an unusable review."
+              : run.reason === "interrupted"
+                ? "The review was interrupted."
+                : "";
+  switch (run.status) {
+    case "running":
+      return "Reviewing project memory…";
+    case "ran":
+      return `Last review: ${run.reviewed} reviewed, ${run.changed} changed.`;
+    case "skipped":
+      return `Last review skipped. ${explanation}`.trim();
+    case "failed":
+      return `Last review could not finish. ${explanation}`.trim();
+  }
+}
+
 export function projectFactHistoryLabel(entry: ProjectFactHistoryEntry): string {
+  if (entry.memoryAction === "curated")
+    return entry.relatedFactId === null
+      ? "Set aside by the memory curator"
+      : "Superseded by the memory curator";
+  if (entry.memoryAction === "restored") return "Restored to recall";
   switch (entry.event) {
     case "baseline":
       return `History begins at revision ${entry.revision}`;

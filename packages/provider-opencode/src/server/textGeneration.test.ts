@@ -670,56 +670,79 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
-  it.effect.each(["answer", "tool activity"] as const)(
-    "runs the standing check blind, without the selected agent (%s)",
-    (reply) =>
-      withOpenCodeTextGeneration(
-        DEFAULT_OPENCODE_SETTINGS,
-        (textGeneration) =>
-          Effect.gen(function* () {
-            const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
-            runtimeMock.state.promptResult = {
-              data: {
-                info: { providerID: "openai", modelID: "gpt-5" },
-                parts: [
-                  ...(reply === "tool activity"
-                    ? [{ type: "tool", tool: "read", state: { status: "completed" } }]
-                    : []),
-                  { type: "text", text: JSON.stringify(answer) },
-                ],
-              },
-            };
-            const result = yield* textGeneration
-              .checkFactStanding({
-                cwd: process.cwd(),
-                modelSelection: {
-                  ...DEFAULT_TEST_MODEL_SELECTION,
-                  options: [{ id: "agent", value: "reviewer" }],
-                },
-                statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
-              })
-              .pipe(Effect.exit);
-            if (reply === "tool activity")
-              expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
-                "tool activity",
-              );
-            else
-              expect(Exit.isSuccess(result) ? result.value : result).toEqual({
-                verdicts: ["standing"],
-              });
-            expect(runtimeMock.state.promptInputs[0]?.agent).toBeUndefined();
-            expect(runtimeMock.state.sessionCreateInputs[0]?.permission).toEqual([
-              { permission: "*", pattern: "*", action: "deny" },
-            ]);
-            const environment = runtimeMock.state.startEnvironments[0];
-            expect(environment?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
-            expect(JSON.parse(environment?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({});
-          }),
-        {
-          XDG_CONFIG_HOME: "/nonexistent/t3-opencode-config",
-          OPENCODE_CONFIG_CONTENT: '{"instructions":["/checkout/AGENTS.md"]}',
-        },
-      ),
+  it.effect.each([
+    ["checkFactStanding", "answer"],
+    ["checkFactStanding", "tool activity"],
+    ["curateProjectMemory", "answer"],
+    ["curateProjectMemory", "tool activity"],
+  ] as const)("runs %s on an isolated deny-all server (%s)", (operation, reply) =>
+    withOpenCodeTextGeneration(
+      DEFAULT_OPENCODE_SETTINGS,
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const answer =
+            operation === "checkFactStanding"
+              ? { results: [{ ref: 1, verdict: "standing", selfContained: true }] }
+              : { decisions: [] };
+          runtimeMock.state.promptResult = {
+            data: {
+              info: { providerID: "openai", modelID: "gpt-5" },
+              parts: [
+                ...(reply === "tool activity"
+                  ? [{ type: "tool", tool: "read", state: { status: "completed" } }]
+                  : []),
+                { type: "text", text: JSON.stringify(answer) },
+              ],
+            },
+          };
+          const request =
+            operation === "checkFactStanding"
+              ? textGeneration.checkFactStanding({
+                  cwd: process.cwd(),
+                  modelSelection: {
+                    ...DEFAULT_TEST_MODEL_SELECTION,
+                    options: [{ id: "agent", value: "reviewer" }],
+                  },
+                  statements: [
+                    { kind: "convention", content: "Acme uses the shared test runner." },
+                  ],
+                })
+              : textGeneration.curateProjectMemory({
+                  cwd: process.cwd(),
+                  modelSelection: { ...DEFAULT_TEST_MODEL_SELECTION, options: [] },
+                  facts: [
+                    {
+                      id: "fact",
+                      revision: 1,
+                      kind: "convention",
+                      content: "Acme uses pnpm.",
+                      sources: [],
+                      protected: false,
+                    },
+                  ],
+                });
+          const result = yield* request.pipe(Effect.exit);
+          if (reply === "tool activity")
+            expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
+              "tool activity",
+            );
+          else
+            expect(Exit.isSuccess(result) ? result.value : result).toEqual(
+              operation === "checkFactStanding" ? { verdicts: ["standing"] } : { decisions: [] },
+            );
+          expect(runtimeMock.state.promptInputs[0]?.agent).toBeUndefined();
+          expect(runtimeMock.state.sessionCreateInputs[0]?.permission).toEqual([
+            { permission: "*", pattern: "*", action: "deny" },
+          ]);
+          const environment = runtimeMock.state.startEnvironments[0];
+          expect(environment?.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
+          expect(JSON.parse(environment?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({});
+        }),
+      {
+        XDG_CONFIG_HOME: "/nonexistent/t3-opencode-config",
+        OPENCODE_CONFIG_CONTENT: '{"instructions":["/checkout/AGENTS.md"]}',
+      },
+    ),
   );
 
   it.effect("gives up and aborts the session when a prompt never settles", () =>
@@ -961,6 +984,7 @@ it.layer(layerOpenCodeTextGenerationExistingServerTest)(
       withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.sync(() => {
           expect(textGeneration.supportedOperations).not.toContain("checkFactStanding");
+          expect(textGeneration.supportedOperations).not.toContain("curateProjectMemory");
           expect(textGeneration.supportedOperations).toContain("generateKnowledgeCandidates");
         }),
       ),

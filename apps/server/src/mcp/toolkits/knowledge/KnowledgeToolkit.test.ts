@@ -2,6 +2,8 @@ import { expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  MessageId,
+  OrchestratorMcpFailure,
   ProjectId,
   ProjectFactId,
   ProjectKnowledgeError,
@@ -17,6 +19,7 @@ import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectKnowledge from "../../../project/knowledge/ProjectKnowledge.ts";
+import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -103,7 +106,11 @@ it.effect("registers knowledge tools and attributes writes and reads to the call
       Layer.provide(
         Layer.mock(ThreadManagement.ThreadManagementService)({
           getThreadShell: (id) =>
-            Effect.succeed(id === threadId ? McpToolAccessTestkit.liveThreadShell(id) : null),
+            Effect.succeed(
+              id === threadId
+                ? { ...McpToolAccessTestkit.liveThreadShell(id), projectId: mutation.projectId }
+                : null,
+            ),
         }),
       ),
       Layer.provide(knowledge),
@@ -150,5 +157,132 @@ it.effect("registers knowledge tools and attributes writes and reads to the call
         providerInstanceId: ProviderInstanceId.make("codex"),
       },
     });
+  }),
+);
+
+it.effect("isolates every knowledge tool to the calling project and rejects linked callers", () =>
+  Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<ProjectId>>([]);
+    const forwarded = yield* Ref.make(0);
+    const record = (input: { readonly projectId: ProjectId }) =>
+      Ref.update(calls, (all) => [...all, input.projectId]).pipe(
+        Effect.andThen(
+          Effect.fail(
+            new ProjectKnowledgeError({ reason: "missing_project", projectId: input.projectId }),
+          ),
+        ),
+      );
+    const serverLayer = McpHttpServer.toolkitRegistration(
+      KnowledgeToolkit,
+      KnowledgeHandlers.layer,
+    ).pipe(
+      Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+      Layer.provide(NodeCrypto.layer),
+      Layer.provide(
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: (id) =>
+            Effect.succeed({
+              ...McpToolAccessTestkit.liveThreadShell(id),
+              projectId: mutation.projectId,
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProjectKnowledge.ProjectKnowledge)({
+          search: record,
+          list: record,
+          readFact: record,
+          status: record,
+          readSource: record,
+          prepareContext: record,
+          mutateWithHints: record,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PeerForwarding.PeerForwarding)({
+          call: () =>
+            Ref.update(forwarded, (count) => count + 1).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new OrchestratorMcpFailure({
+                    code: "invalid_request",
+                    message: "The request reached another environment.",
+                  }),
+                ),
+              ),
+            ),
+        }),
+      ),
+    );
+    const call = (
+      invocation: McpInvocationContext.McpInvocationScope,
+      name: string,
+      args: Record<string, unknown>,
+    ) =>
+      McpServer.McpServer.pipe(
+        Effect.flatMap((server) => server.callTool({ name, arguments: args })),
+        Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+        Effect.provideService(McpSchema.McpServerClient, client),
+        Effect.provide(serverLayer),
+      );
+    const inputs = (projectId: ProjectId) =>
+      [
+        ["t3_knowledge_search", { projectId, query: "schema", requestId: "knowledge-search" }],
+        ["t3_knowledge_list", { projectId }],
+        ["t3_knowledge_read_fact", { projectId, factId: mutation.factId }],
+        ["t3_knowledge_status", { projectId }],
+        [
+          "t3_knowledge_read_source",
+          { projectId, threadId, messageId: MessageId.make("knowledge-message") },
+        ],
+        [
+          "t3_knowledge_prepare_context",
+          {
+            projectId,
+            selections: [{ kind: "fact", factId: mutation.factId, revision: 1 }],
+            maxBytes: 4096,
+          },
+        ],
+        ["t3_knowledge_mutate", { mutation: { ...mutation, projectId } }],
+      ] as const;
+    const otherProjectId = ProjectId.make("another-project");
+    const outsideClient: McpInvocationContext.McpInvocationScope = {
+      ...scope,
+      thread: undefined,
+      client: { sessionId: "knowledge-client", label: "Knowledge client", access: "full-access" },
+    };
+    const linked: McpInvocationContext.McpInvocationScope = {
+      ...outsideClient,
+      client: { ...outsideClient.client!, linked: true },
+    };
+    for (const [invocation, projectId] of [
+      [scope, otherProjectId],
+      [linked, mutation.projectId],
+    ] as const)
+      for (const [name, args] of inputs(projectId)) {
+        const denied = yield* call(invocation, name, args);
+        expect(declaredFailure(denied), name).toMatchObject({ code: "capability_denied" });
+      }
+    expect(yield* Ref.get(calls)).toEqual([]);
+    for (const [name, args] of inputs(mutation.projectId)) {
+      const denied = yield* call(scope, name, {
+        ...args,
+        environmentId: EnvironmentId.make("other-environment"),
+      });
+      expect(declaredFailure(denied), name).toMatchObject({ code: "capability_denied" });
+    }
+    expect(yield* Ref.get(forwarded)).toBe(0);
+    for (const [invocation, projectId] of [
+      [scope, mutation.projectId],
+      [outsideClient, otherProjectId],
+    ] as const)
+      for (const [name, args] of inputs(projectId)) {
+        const accepted = yield* call(invocation, name, args);
+        expect(declaredFailure(accepted), name).toMatchObject({ code: "invalid_request" });
+      }
+    expect(yield* Ref.get(calls)).toEqual([
+      ...Array.from({ length: 7 }, () => mutation.projectId),
+      ...Array.from({ length: 7 }, () => otherProjectId),
+    ]);
   }),
 );

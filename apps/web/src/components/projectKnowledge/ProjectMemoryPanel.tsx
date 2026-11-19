@@ -106,6 +106,11 @@ function useProjectMemoryStandingCheckAvailable(environmentId: EnvironmentId): b
   return config?.environment.capabilities.projectKnowledgeStandingCheck === true;
 }
 
+function useProjectMemoryCurationAvailable(environmentId: EnvironmentId): boolean {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  return config?.environment.capabilities.projectKnowledgeCuration === true;
+}
+
 function useProjectMemoryAssistedAvailable(environmentId: EnvironmentId): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   return config?.environment.capabilities.projectKnowledgeAssistedLearning === true;
@@ -261,6 +266,7 @@ function MemoryContents(
   const showSuperseded = historyAvailable && includeSuperseded;
   const assistedAvailable = useProjectMemoryAssistedAvailable(props.environmentId);
   const standingCheckAvailable = useProjectMemoryStandingCheckAvailable(props.environmentId);
+  const curationAvailable = useProjectMemoryCurationAvailable(props.environmentId);
   const list = useEnvironmentQuery(
     projectKnowledge.list({
       environmentId: props.environmentId,
@@ -370,6 +376,7 @@ function MemoryContents(
             query: current.query,
             includeArchived: current.includeArchived ?? false,
             ...(superseded ? { includeSuperseded: true } : {}),
+            ...(current.includeSetAside ? { includeSetAside: true } : {}),
             requestId: CommandId.make(randomUUID()),
           },
     );
@@ -421,7 +428,11 @@ function MemoryContents(
     }
     refresh([input.factId, ...(result._tag === "Success" ? [result.value.id] : [])]);
   };
-  const revise = async (fact: ProjectFact, action: "forget" | "feedback", helpful = true) => {
+  const revise = async (
+    fact: ProjectFact,
+    action: "forget" | "feedback" | "restore",
+    helpful = true,
+  ) => {
     if (action === "forget") {
       const message = `Forget this fact permanently?\n${FORGET_CONFIRM_DETAIL}`;
       const confirmed =
@@ -469,6 +480,7 @@ function MemoryContents(
             query: query.trim(),
             includeArchived,
             ...(showSuperseded ? { includeSuperseded: true } : {}),
+            ...(curationAvailable && filter === "set_aside" ? { includeSetAside: true } : {}),
             requestId: CommandId.make(randomUUID()),
           },
     );
@@ -792,6 +804,7 @@ function MemoryContents(
                   score={inspectedScore}
                   unavailableReason={unavailableReasons.get(inspection.factId)}
                   historyAvailable={historyAvailable}
+                  curationAvailable={curationAvailable}
                   canMutate={canMutate}
                   busy={busy}
                   onEdit={(fact: EditableFact, supersede) =>

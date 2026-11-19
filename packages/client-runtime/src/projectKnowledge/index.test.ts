@@ -134,3 +134,22 @@ it("traces trust from before the first recorded event through each feedback", ()
     "Marked unhelpful",
   ]);
 });
+
+it("labels memory actions carried by legacy-compatible history events", () => {
+  const edited = historyEntry(2, "edited", null, 0.5);
+  expect(projectFactHistoryLabel(edited)).toBe("Edited to revision 2");
+  expect(projectFactHistoryLabel({ ...edited, memoryAction: "curated" })).toBe(
+    "Set aside by the memory curator",
+  );
+  expect(
+    projectFactHistoryLabel({
+      ...edited,
+      event: "superseded",
+      memoryAction: "curated",
+      relatedFactId: ProjectFactId.make("replacement"),
+    }),
+  ).toBe("Superseded by the memory curator");
+  expect(projectFactHistoryLabel({ ...edited, memoryAction: "restored" })).toBe(
+    "Restored to recall",
+  );
+});

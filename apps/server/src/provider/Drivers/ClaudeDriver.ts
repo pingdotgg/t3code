@@ -442,6 +442,8 @@ export const ClaudeDriver: ProviderDriver<
             ),
           checkFactStanding: (input) =>
             protect("checkFactStanding", nativeGeneration.checkFactStanding(input)),
+          curateProjectMemory: (input) =>
+            protect("curateProjectMemory", nativeGeneration.curateProjectMemory(input)),
         }
       : nativeGeneration;
 

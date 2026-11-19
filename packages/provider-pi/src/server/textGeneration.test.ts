@@ -219,34 +219,56 @@ it.effect(
         );
         assert.notInclude(custom.supportedOperations, "generateModelEvaluation");
         assert.notInclude(custom.supportedOperations, "checkFactStanding");
+        assert.notInclude(custom.supportedOperations, "curateProjectMemory");
         const error = yield* custom.generateModelEvaluation(input).pipe(Effect.flip);
         assert.include(error.detail, "cannot isolate");
       }
       assert.equal(pi.launchArguments.length, 1);
 
-      // The standing check is just as blind.
-      const checking = yield* makeFakePi(
-        JSON.stringify({ results: [{ ref: 1, verdict: "standing", selfContained: true }] }),
-      );
-      const checker = yield* makePiTextGeneration(settings, {}).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, checking.spawner),
-      );
-      assert.include(checker.supportedOperations, "checkFactStanding");
-      yield* checker.checkFactStanding({
-        cwd: "/empty-check-directory",
-        modelSelection: input.modelSelection,
-        statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
-      });
-      for (const flag of [
-        "--no-tools",
-        "--no-extensions",
-        "--no-context-files",
-        "--no-skills",
-        "--no-prompt-templates",
-        "--system-prompt",
-        "--append-system-prompt",
-      ])
-        assert.include(checking.launchArguments[0]!, flag);
+      for (const operation of ["checkFactStanding", "curateProjectMemory"] as const) {
+        const checking = yield* makeFakePi(
+          JSON.stringify(
+            operation === "checkFactStanding"
+              ? { results: [{ ref: 1, verdict: "standing", selfContained: true }] }
+              : { decisions: [] },
+          ),
+        );
+        const checker = yield* makePiTextGeneration(settings, {}).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, checking.spawner),
+        );
+        assert.include(checker.supportedOperations, operation);
+        if (operation === "checkFactStanding")
+          yield* checker.checkFactStanding({
+            cwd: "/empty-check-directory",
+            modelSelection: input.modelSelection,
+            statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+          });
+        else
+          yield* checker.curateProjectMemory({
+            cwd: "/empty-check-directory",
+            modelSelection: input.modelSelection,
+            facts: [
+              {
+                id: "fact",
+                revision: 1,
+                kind: "convention",
+                content: "Acme uses pnpm.",
+                sources: [],
+                protected: false,
+              },
+            ],
+          });
+        for (const flag of [
+          "--no-tools",
+          "--no-extensions",
+          "--no-context-files",
+          "--no-skills",
+          "--no-prompt-templates",
+          "--system-prompt",
+          "--append-system-prompt",
+        ])
+          assert.include(checking.launchArguments[0]!, flag);
+      }
 
       const rejected = yield* makeFakePi("", {
         set_thinking_level: "Unsupported thinking level for this model",

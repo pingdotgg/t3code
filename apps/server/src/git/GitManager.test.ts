@@ -315,6 +315,7 @@ function createTextGeneration(
     generateKnowledgeCandidates: () => Effect.succeed({ candidates: [] }),
     generateConversationSummary: () => Effect.succeed({ statements: [] }),
     checkFactStanding: () => Effect.succeed({ verdicts: [] }),
+    curateProjectMemory: () => Effect.succeed({ decisions: [] }),
     supportsOperation: () => Effect.succeed(true),
     generateModelEvaluation: () => Effect.die("Unused evaluation fixture"),
     generateThreadTitle: () =>
@@ -377,6 +378,7 @@ function createTextGeneration(
     generateConversationSummary: (input) => implementation.generateConversationSummary(input),
     generateModelEvaluation: (input) => implementation.generateModelEvaluation(input),
     checkFactStanding: (input) => implementation.checkFactStanding(input),
+    curateProjectMemory: (input) => implementation.curateProjectMemory(input),
     supportsOperation: (operation, instanceId) =>
       implementation.supportsOperation(operation, instanceId),
     generateTranscriptionPostProcessing: (input) =>

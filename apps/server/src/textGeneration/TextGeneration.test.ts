@@ -37,7 +37,7 @@ const providerSnapshot = decodeProvider({
   models: [],
   slashCommands: [],
   skills: [],
-  textGenerationOperations: ["generateModelEvaluation"],
+  textGenerationOperations: ["generateModelEvaluation", "curateProjectMemory"],
 });
 const input = {
   cwd: "/project",
@@ -212,6 +212,7 @@ it.effect.each([
 ] as const)("does not invoke a selected evaluator that is %s", (state) =>
   Effect.gen(function* () {
     const generateModelEvaluation = vi.fn(() => Effect.succeed(evaluationVerdict));
+    const curateProjectMemory = vi.fn(() => Effect.succeed({ decisions: [] }));
     const snapshot: ServerProvider = {
       ...providerSnapshot,
       ...(state === "disabled-snapshot" ? { enabled: false } : {}),
@@ -224,8 +225,9 @@ it.effect.each([
     const test = make(
       {
         ...fromRunner("Fixture", () => Effect.die("Unexpected generation operation")),
-        supportedOperations: ["generateModelEvaluation"],
+        supportedOperations: ["generateModelEvaluation", "curateProjectMemory"],
         generateModelEvaluation,
+        curateProjectMemory,
       },
       snapshot,
       state !== "disabled-instance",
@@ -235,8 +237,91 @@ it.effect.each([
     expect(failure.operation).toBe("generateModelEvaluation");
     expect(failure.detail).toContain("selected evaluator is unavailable");
     expect(generateModelEvaluation).not.toHaveBeenCalled();
-    expect(test.getInstance.mock.calls).toEqual([[selected]]);
+    const curationFailure = yield* service
+      .curateProjectMemory({
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        facts: [],
+      })
+      .pipe(Effect.flip);
+    expect(curationFailure.operation).toBe("curateProjectMemory");
+    expect(curationFailure.detail).toContain("selected memory model is unavailable");
+    expect(curateProjectMemory).not.toHaveBeenCalled();
+    expect(test.getInstance.mock.calls).toEqual([[selected], [selected]]);
   }),
+);
+
+it.effect.each(["valid decision", "extra decision field", "turned off"] as const)(
+  "curates through the selected stateless model API without fallback (%s)",
+  (state) =>
+    Effect.gen(function* () {
+      const modelSelection = {
+        instanceId: ProviderInstanceId.make("textgen-curator"),
+        model: "chosen-api-model",
+      };
+      const fact = {
+        id: "fact",
+        revision: 1,
+        kind: "convention" as const,
+        content: "Acme uses pnpm.",
+        sources: [],
+        protected: false,
+      };
+      const result = {
+        decisions: [
+          {
+            action: "keep" as const,
+            factId: fact.id,
+            expectedRevision: 1,
+            reason: "A durable project rule.",
+            confidence: 0.9,
+          },
+        ],
+      };
+      let enabled = true;
+      const test = make(
+        fromRunner("Fixture", () => Effect.die("An API selection must not start an agent.")),
+        providerSnapshot,
+        true,
+        (instanceId) =>
+          Effect.succeed(
+            instanceId !== modelSelection.instanceId
+              ? undefined
+              : (request) => {
+                  expect(request.modelSelection).toEqual(modelSelection);
+                  expect(request.prompt).toContain(fact.content);
+                  expect(request.investigate).toBeUndefined();
+                  if (!enabled)
+                    return Effect.fail(
+                      new TextGenerationError({
+                        operation: request.operation,
+                        detail: "Model API is off.",
+                      }),
+                    );
+                  return decodeJsonReply(
+                    request,
+                    "Model API",
+                    JSON.stringify(
+                      state === "extra decision field"
+                        ? { decisions: [{ ...result.decisions[0], rewriteContent: "Invented" }] }
+                        : result,
+                    ),
+                  );
+                },
+          ),
+      );
+      const service = yield* test.service;
+      expect(
+        yield* service.supportsOperation("curateProjectMemory", modelSelection.instanceId),
+      ).toBe(true);
+      enabled = state !== "turned off";
+      const response = yield* service
+        .curateProjectMemory({ cwd: "/isolated", modelSelection, facts: [fact] })
+        .pipe(Effect.result);
+      if (state === "valid decision") expect(response).toEqual(Result.succeed(result));
+      else expect(response._tag).toBe("Failure");
+      expect(test.getInstance).not.toHaveBeenCalled();
+    }),
 );
 
 it.effect(
@@ -261,11 +346,13 @@ it.effect.each([undefined, "2999-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z
   (reset) =>
     Effect.gen(function* () {
       const generateKnowledgeCandidates = vi.fn(() => Effect.succeed({ candidates: [] }));
+      const curateProjectMemory = vi.fn(() => Effect.succeed({ decisions: [] }));
       const test = make(
         {
           ...fromRunner("Fixture", () => Effect.die("Unexpected generation operation")),
-          supportedOperations: ["generateKnowledgeCandidates"],
+          supportedOperations: ["generateKnowledgeCandidates", "curateProjectMemory"],
           generateKnowledgeCandidates,
+          curateProjectMemory,
         },
         {
           ...providerSnapshot,
@@ -284,14 +371,24 @@ it.effect.each([undefined, "2999-01-01T00:00:00.000Z", "1970-01-01T00:00:00.000Z
         },
       );
       const service = yield* test.service;
-      const result = yield* service
+      const extraction = yield* service
         .generateKnowledgeCandidates({ ...input, runOutcome: "completed" })
+        .pipe(Effect.result);
+      const curation = yield* service
+        .curateProjectMemory({
+          cwd: input.cwd,
+          modelSelection: input.modelSelection,
+          facts: [],
+        })
         .pipe(Effect.result);
       if (reset === "1970-01-01T00:00:00.000Z") {
         expect(generateKnowledgeCandidates).toHaveBeenCalledOnce();
+        expect(curateProjectMemory).toHaveBeenCalledOnce();
       } else {
-        expect(result._tag).toBe("Failure");
+        expect(extraction._tag).toBe("Failure");
+        expect(curation._tag).toBe("Failure");
         expect(generateKnowledgeCandidates).not.toHaveBeenCalled();
+        expect(curateProjectMemory).not.toHaveBeenCalled();
       }
     }),
 );

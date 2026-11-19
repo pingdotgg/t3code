@@ -3,6 +3,7 @@ import {
   type OrchestrationV2LinkOrigin,
   OrchestratorMcpEnvironmentTarget,
   OrchestratorMcpFailure,
+  type ProjectId,
   type ProviderInteractionMode,
   type RuntimeMode,
   type ThreadId,
@@ -306,6 +307,36 @@ export const either = <P, A, E, R, A2, E2, R2>(
           message: "This action acts as the calling thread, which is here. Omit environmentId.",
         }),
       ),
+  );
+};
+
+export const withinProject = <P, A, E, R>(
+  projectId: (params: P) => ProjectId,
+  declaration: Declaration<(params: P) => Effect.Effect<A, E, R>>,
+) => {
+  const check = (params: P, remote: boolean) =>
+    readCaller().pipe(
+      Effect.flatMap(({ scope, caller }) =>
+        scope.client?.linked === true ||
+        (caller !== undefined && (remote || caller.projectId !== projectId(params)))
+          ? Effect.fail(
+              new OrchestratorMcpFailure({
+                code: "capability_denied",
+                message:
+                  "Project memory is limited to the calling thread's project and environment. Open a thread in the target project or use a directly connected client.",
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+  const remote = remoteCheckOf(declaration) as RemoteCheck<P> | undefined;
+  return declare(
+    (params: P) =>
+      check(params, false).pipe(Effect.flatMap(() => checkedHandler(declaration)(params))),
+    remote === undefined
+      ? undefined
+      : (params: P) => check(params, true).pipe(Effect.flatMap(() => remote(params))),
+    remoteHandlerOf(declaration),
   );
 };
 

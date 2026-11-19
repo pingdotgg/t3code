@@ -78,7 +78,12 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
     "branchNameInstructions",
   ],
   maintenance: ["continueThreadsAfterServerUpdate"],
-  zack: ["enableAssistedLearning", "enableConversationSummaries", "contextRestartAboveTokens"],
+  zack: [
+    "enableAssistedLearning",
+    "enableMemoryCuration",
+    "enableConversationSummaries",
+    "contextRestartAboveTokens",
+  ],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -221,6 +226,10 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         ? `Automatic memory is supported on only some selected environments. Update T3 Code on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}, or select a supported environment.`
         : `Automatic memory is not supported on ${unsupportedAssistedLearning.map((target) => target.environment.label).join(", ")}. Update T3 Code on ${unsupportedAssistedLearning.length === 1 ? "that environment" : "those environments"}.`;
   const [pendingWrites, setPendingWrites] = useState(0);
+  const memoryCurationUnavailable = targets.some(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.projectKnowledgeCuration !== true,
+  );
   const writeInFlight = useRef(false);
   // Closing views can save after controls disable; queue those patches behind the pending write.
   const queuedPatch = useRef<{ key: string; patch: ServerSettingsPatch } | null>(null);
@@ -246,6 +255,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
   const write = (patch: ServerSettingsPatch) => {
     if (patch.enableAssistedLearning !== undefined && assistedLearningUnavailableReason !== null)
       return;
+    if (patch.enableMemoryCuration !== undefined && memoryCurationUnavailable) return;
     if (writeInFlight.current) {
       const queued = queuedPatch.current;
       queuedPatch.current = {
@@ -475,6 +485,18 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       assistedLearningUnavailableReason !== null
                     }
                     onValueChange={(value) => write({ enableAssistedLearning: value })}
+                  />
+                  <SettingsSwitchRow
+                    icon="brain"
+                    label="Curate project memories"
+                    subtitle={
+                      memoryCurationUnavailable
+                        ? "Update the selected T3 Code servers to use memory curation."
+                        : "Review agent memories within each project. Set aside task notes and link duplicates or replaced decisions, keeping the content and review reasons available to inspect or restore. Uses your text generation model."
+                    }
+                    value={uniform("enableMemoryCuration")}
+                    disabled={disabledFor("enableMemoryCuration") || memoryCurationUnavailable}
+                    onValueChange={(value) => write({ enableMemoryCuration: value })}
                   />
                 </SettingsSection>
                 <SettingsSection title="LCM: conversation summaries">

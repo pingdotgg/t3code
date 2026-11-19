@@ -65,6 +65,7 @@ const dependencies = Layer.mergeAll(
       generateKnowledgeCandidates: () => Effect.die("not used"),
       generateConversationSummary: () => Effect.die("not used"),
       checkFactStanding: () => Effect.die("not used"),
+      curateProjectMemory: () => Effect.die("not used"),
       supportsOperation: () => Effect.die("not used"),
       generateModelEvaluation: () => Effect.die("not used"),
     }),

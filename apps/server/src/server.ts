@@ -5,6 +5,7 @@ import * as PstackPack from "./pstack/PstackPack.ts";
 import * as HolographicMemory from "./project/knowledge/HolographicMemory.ts";
 import * as ProjectKnowledge from "./project/knowledge/ProjectKnowledge.ts";
 import * as AssistedLearning from "./project/knowledge/AssistedLearning.ts";
+import * as MemoryCuration from "./project/knowledge/MemoryCuration.ts";
 import * as ConversationSummaries from "./project/conversationSummaries/ConversationSummaries.ts";
 import * as ModelEvaluationSubagentRefresh from "./modelEvaluations/ModelEvaluationSubagentRefresh.ts";
 import * as ModelEvaluations from "./modelEvaluations/ModelEvaluations.ts";
@@ -651,6 +652,7 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
       Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, TextGeneration.layer)),
     ),
   ),
+  Layer.provide(MemoryCuration.layerWorker.pipe(Layer.provide(TextGeneration.layer))),
   Layer.provide(ConversationSummaries.layerRuntime),
   Layer.provide(ProjectKnowledge.layerDeliveryScrubber),
 );

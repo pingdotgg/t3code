@@ -715,6 +715,59 @@ it("shows real score components and sends the viewed revision for feedback", asy
   });
 });
 
+it("restores a set-aside fact using the inspected revision", async () => {
+  const registry = await setup();
+  const reviewed: ProjectFact = {
+    ...fact,
+    revision: 3,
+    verdict: { value: "task", by: "agent", at: fact.updatedAt },
+  };
+  state.config = Atom.make({
+    environment: {
+      capabilities: {
+        projectKnowledge: true,
+        projectKnowledgeHistory: true,
+        projectKnowledgeCuration: true,
+        projectKnowledgeStandingCheck: true,
+      },
+    },
+  });
+  state.detail = Atom.make(AsyncResult.success(factDetail(reviewed)));
+  state.mutate.mockImplementation(async () => {
+    const restored: ProjectFact = {
+      ...reviewed,
+      revision: 4,
+      verdict: { value: "standing", by: "person", at: fact.updatedAt },
+    };
+    registry.set(state.detail as Atom.Writable<unknown>, AsyncResult.success(factDetail(restored)));
+    return { _tag: "Success", value: restored };
+  });
+  await using screen = await mount(registry);
+  await openMemory(screen);
+  await page.getByRole("button", { name: "Set aside", exact: true }).click();
+  await page.getByRole("searchbox", { name: "Search project knowledge" }).fill("tenant cache");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  expect(state.searchRequest).toHaveBeenLastCalledWith({
+    environmentId: scope.environmentId,
+    input: expect.objectContaining({ includeSetAside: true, recordRetrieval: false }),
+  });
+  await factRow(fact.content!).click();
+  await inspector().getByRole("button", { name: "Restore to recall", exact: true }).click();
+  expect(state.mutate).toHaveBeenCalledWith({
+    environmentId: scope.environmentId,
+    input: {
+      action: "restore",
+      commandId: expect.any(String),
+      projectId: scope.projectId,
+      factId: fact.id,
+      expectedRevision: 3,
+    },
+  });
+  await expect
+    .element(inspector().getByRole("button", { name: "Restore to recall", exact: true }))
+    .not.toBeInTheDocument();
+});
+
 it("forgets a fact only after the permanent-erase warning is confirmed", async () => {
   const registry = await setup();
   await using screen = await mount(registry);

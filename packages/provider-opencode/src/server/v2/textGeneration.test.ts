@@ -316,6 +316,7 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
       const textGeneration = yield* make(undefined, "https://remote.example.com");
       expect(textGeneration.supportedOperations).not.toContain("generateModelEvaluation");
       expect(textGeneration.supportedOperations).not.toContain("checkFactStanding");
+      expect(textGeneration.supportedOperations).not.toContain("curateProjectMemory");
       const error = yield* textGeneration
         .generateModelEvaluation(evaluationInput)
         .pipe(Effect.flip);
@@ -324,53 +325,72 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect.each(["answer", "tool activity"] as const)(
-    "runs the standing check on an owned deny-all server (%s)",
-    (reply) =>
-      Effect.gen(function* () {
-        const answer = { results: [{ ref: 1, verdict: "standing", selfContained: true }] };
-        state.events[1] = {
-          type: "session.text.ended",
+  it.effect.each([
+    ["checkFactStanding", "answer"],
+    ["checkFactStanding", "tool activity"],
+    ["curateProjectMemory", "answer"],
+    ["curateProjectMemory", "tool activity"],
+  ] as const)("runs %s on an isolated deny-all server (%s)", (operation, reply) =>
+    Effect.gen(function* () {
+      const answer =
+        operation === "checkFactStanding"
+          ? { results: [{ ref: 1, verdict: "standing", selfContained: true }] }
+          : { decisions: [] };
+      state.events[1] = {
+        type: "session.text.ended",
+        data: {
+          sessionID: SESSION_ID,
+          assistantMessageID: "msg_blind_evaluation",
+          ordinal: 0,
+          text: JSON.stringify(answer),
+        },
+      } as OpenCode2Client.OpenCode2StreamEvent;
+      if (reply === "tool activity")
+        state.events.splice(1, 0, {
+          type: "session.tool.called",
           data: {
             sessionID: SESSION_ID,
+            id: "tool_read",
             assistantMessageID: "msg_blind_evaluation",
-            ordinal: 0,
-            text: JSON.stringify(answer),
+            input: { filePath: "/secret" },
+            executed: true,
           },
-        } as OpenCode2Client.OpenCode2StreamEvent;
-        if (reply === "tool activity")
-          state.events.splice(1, 0, {
-            type: "session.tool.called",
-            data: {
-              sessionID: SESSION_ID,
-              id: "tool_read",
-              assistantMessageID: "msg_blind_evaluation",
-              input: { filePath: "/secret" },
-              executed: true,
-            },
-          } as unknown as OpenCode2Client.OpenCode2StreamEvent);
-        const textGeneration = yield* make();
-        const result = yield* textGeneration
-          .checkFactStanding({
-            cwd: "/empty-check-directory",
-            modelSelection: { ...evaluationInput.modelSelection, options: [] },
-            statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
-          })
-          .pipe(Effect.exit);
-        if (reply === "tool activity")
-          expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
-            "tool activity",
-          );
-        else
-          expect(Exit.isSuccess(result) ? result.value : result).toEqual({
-            verdicts: ["standing"],
-          });
-        expect(state.connectUrls).toEqual([OWNED_SERVER_URL]);
-        expect(state.sessionInputs[0]).toMatchObject({
-          permissions: [{ action: "*", resource: "*", effect: "deny" }],
-        });
-        expect(state.startEnvironments[0]?.OPENCODE_CONFIG_CONTENT).not.toContain("instructions");
-      }).pipe(Effect.scoped),
+        } as unknown as OpenCode2Client.OpenCode2StreamEvent);
+      const textGeneration = yield* make();
+      const request =
+        operation === "checkFactStanding"
+          ? textGeneration.checkFactStanding({
+              cwd: "/empty-check-directory",
+              modelSelection: { ...evaluationInput.modelSelection, options: [] },
+              statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+            })
+          : textGeneration.curateProjectMemory({
+              cwd: "/empty-check-directory",
+              modelSelection: { ...evaluationInput.modelSelection, options: [] },
+              facts: [
+                {
+                  id: "fact",
+                  revision: 1,
+                  kind: "convention",
+                  content: "Acme uses pnpm.",
+                  sources: [],
+                  protected: false,
+                },
+              ],
+            });
+      const result = yield* request.pipe(Effect.exit);
+      if (reply === "tool activity")
+        expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain("tool activity");
+      else
+        expect(Exit.isSuccess(result) ? result.value : result).toEqual(
+          operation === "checkFactStanding" ? { verdicts: ["standing"] } : { decisions: [] },
+        );
+      expect(state.connectUrls).toEqual([OWNED_SERVER_URL]);
+      expect(state.sessionInputs[0]).toMatchObject({
+        permissions: [{ action: "*", resource: "*", effect: "deny" }],
+      });
+      expect(state.startEnvironments[0]?.OPENCODE_CONFIG_CONTENT).not.toContain("instructions");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("fails when execution reports a different model", () =>

@@ -250,6 +250,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateTranscriptionPostProcessing(input),
         v2: v2.generateTranscriptionPostProcessing(input),
       }),
+    curateProjectMemory: (input) =>
+      byOpenCodeRuntime(resolve, {
+        v1: v1.curateProjectMemory(input),
+        v2: v2.curateProjectMemory(input),
+      }),
     checkFactStanding: (input) =>
       byOpenCodeRuntime(resolve, {
         v1: v1.checkFactStanding(input),

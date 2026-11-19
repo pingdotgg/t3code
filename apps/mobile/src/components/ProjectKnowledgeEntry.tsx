@@ -135,6 +135,7 @@ export function ProjectKnowledgeEntry(props: Scope) {
       history={config.environment.capabilities.projectKnowledgeHistory === true}
       assisted={config.environment.capabilities.projectKnowledgeAssistedLearning === true}
       standingCheck={config.environment.capabilities.projectKnowledgeStandingCheck === true}
+      curation={config.environment.capabilities.projectKnowledgeCuration === true}
       seedMessage={open.seed}
       onClose={() => setOpen(null)}
     />
@@ -146,6 +147,7 @@ function ProjectKnowledgeSheet(
     readonly history: boolean;
     readonly assisted: boolean;
     readonly standingCheck: boolean;
+    readonly curation: boolean;
     readonly seedMessage: MessageCitation | null;
     readonly onClose: () => void;
   },
@@ -218,6 +220,7 @@ function ProjectKnowledgeSheet(
     environmentId: props.environmentId,
     projectId: props.projectId,
     history: props.history,
+    curation: props.curation,
     onArchivedChange: () => {
       selectionVersion.current += 1;
       detachDraftReference();
@@ -485,6 +488,7 @@ function ProjectKnowledgeSheet(
                 detail={detailData}
                 detailError={detail.error}
                 history={props.history}
+                curation={props.curation}
                 sourceUnavailable={
                   detailData?.sourceUnavailable ??
                   browse.unavailableReasons.get(inspectedFact.id) ??
@@ -517,6 +521,7 @@ function ProjectKnowledgeSheet(
                       void apply({ action: "forget", ...factMutation(inspectedFact) }),
                   })
                 }
+                onRestore={() => void apply({ action: "restore", ...factMutation(inspectedFact) })}
                 onFeedback={(helpful) =>
                   void apply({ action: "feedback", helpful, ...factMutation(inspectedFact) })
                 }

@@ -644,6 +644,65 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     );
   });
 
+  it.effect.each(["file login", "keyring login", "tool activity"] as const)(
+    "isolates memory curation from home instructions and tools (%s)",
+    (state) => {
+      const answer = { decisions: [] };
+      return withFakeCodexEnv(
+        {
+          output: JSON.stringify(answer),
+          configToml: `${state === "keyring login" ? 'cli_auth_credentials_store = "keyring"\n' : ""}model_provider = "private"\ndeveloper_instructions = "Do not inherit"\n[model_providers.private]\nbase_url = "http://127.0.0.1:1/v1"\nwire_api = "responses"\n`,
+          requireIsolatedHome: state !== "keyring login",
+          requireArg: "--config project_doc_max_bytes=0",
+          disabledFeatures: [
+            "plugins",
+            "apps",
+            "shell_tool",
+            "unified_exec",
+            "hooks",
+            "view_image",
+          ],
+          events: [
+            {
+              type: "item.completed",
+              item:
+                state === "tool activity"
+                  ? { type: "command_execution", command: "cat /secret" }
+                  : { type: "agent_message", text: JSON.stringify(answer) },
+            },
+          ],
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .curateProjectMemory({
+                cwd: process.cwd(),
+                modelSelection: createModelSelection(
+                  ProviderInstanceId.make("codex"),
+                  "gpt-6-luna",
+                ),
+                facts: [
+                  {
+                    id: "fact",
+                    revision: 1,
+                    kind: "convention",
+                    content: "Acme uses pnpm.",
+                    sources: [],
+                    protected: false,
+                  },
+                ],
+              })
+              .pipe(Effect.exit);
+            if (state !== "file login")
+              expect(Exit.isFailure(result) ? Cause.pretty(result.cause) : "").toContain(
+                state === "keyring login" ? "Keyring login cannot be isolated" : "tool activity",
+              );
+            else expect(Exit.isSuccess(result) ? result.value : result).toEqual(answer);
+          }),
+      );
+    },
+  );
+
   it.effect.each(["file login", "keyring login"] as const)(
     "isolates conversation summaries without changing their model (%s)",
     (login) => {

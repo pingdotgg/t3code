@@ -38,7 +38,10 @@ const runOnServer = Effect.fn("Opencode2TextGeneration.runOnServer")(function* (
   const fileSystem = yield* FileSystem.FileSystem;
   const blindEvaluation = input.operation === "generateModelEvaluation";
   // The standing check gets the evaluator's isolation, without its exact-model checks.
-  const blind = blindEvaluation || input.operation === "checkFactStanding";
+  const blind =
+    blindEvaluation ||
+    input.operation === "checkFactStanding" ||
+    input.operation === "curateProjectMemory";
   const { client } = connection;
   const parsed = OpenCodeRuntime.parseOpenCodeModelSlug(input.modelSelection.model);
   if (parsed === null) {

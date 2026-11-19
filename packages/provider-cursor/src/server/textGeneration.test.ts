@@ -218,35 +218,54 @@ describe("CursorTextGeneration", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("runs the standing check without tools and rejects tool activity", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.messages = [
-        {
-          type: "tool_call",
-          agent_id: "a",
-          run_id: "r",
-          name: "read",
-          call_id: "t",
-          status: "running",
-        },
-      ];
-      const generation = yield* makeCursorTextGeneration(cursorSettings, { CURSOR_API_KEY: "key" });
-      const error = yield* generation
-        .checkFactStanding({
-          cwd: "/empty-check-directory",
-          modelSelection: evaluationInput.modelSelection,
-          statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
-        })
-        .pipe(Effect.flip);
-      expect(error.detail).toContain("tool");
-      expect(cursorSdkMock.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tools: [],
-          local: expect.objectContaining({ settingSources: [] }),
-        }),
-      );
-      expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
-    }).pipe(Effect.provide(layerTest)),
+  it.effect.each(["checkFactStanding", "curateProjectMemory"] as const)(
+    "runs %s without tools and rejects tool activity",
+    (operation) =>
+      Effect.gen(function* () {
+        cursorSdkMock.messages = [
+          {
+            type: "tool_call",
+            agent_id: "a",
+            run_id: "r",
+            name: "read",
+            call_id: "t",
+            status: "running",
+          },
+        ];
+        const generation = yield* makeCursorTextGeneration(cursorSettings, {
+          CURSOR_API_KEY: "key",
+        });
+        const request =
+          operation === "checkFactStanding"
+            ? generation.checkFactStanding({
+                cwd: "/empty-check-directory",
+                modelSelection: evaluationInput.modelSelection,
+                statements: [{ kind: "convention", content: "Acme uses the shared test runner." }],
+              })
+            : generation.curateProjectMemory({
+                cwd: "/empty-check-directory",
+                modelSelection: evaluationInput.modelSelection,
+                facts: [
+                  {
+                    id: "fact",
+                    revision: 1,
+                    kind: "convention",
+                    content: "Acme uses pnpm.",
+                    sources: [],
+                    protected: false,
+                  },
+                ],
+              });
+        const error = yield* request.pipe(Effect.flip);
+        expect(error.detail).toContain("tool");
+        expect(cursorSdkMock.create).toHaveBeenCalledWith(
+          expect.objectContaining({
+            tools: [],
+            local: expect.objectContaining({ settingSources: [] }),
+          }),
+        );
+        expect(cursorSdkMock.prompt).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("does not retry a judge without sandboxing", () =>

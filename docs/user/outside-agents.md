@@ -143,6 +143,12 @@ With permission to make changes, they can record observations for later work.
 An observation is saved immediately and keeps the agent's identity. Use **Project
 memory** in T3 Code to inspect, edit, or forget these facts.
 
+A directly connected outside client explicitly selects the project whose memory
+it needs. Agents running in a T3 thread are restricted to that thread's project
+and environment, including through linked environments. To use another
+project's memory, open a thread in that project or connect a client directly to
+its environment.
+
 Agents can also query symbols, callers, references, dependencies, and likely
 change impact in a registered project's codebase. Selecting a thread uses that
 thread's worktree. The environment reads the files on its own machine, so the

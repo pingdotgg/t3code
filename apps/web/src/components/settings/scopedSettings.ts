@@ -40,6 +40,7 @@ interface ScopedSettingsEnvironment {
       readonly capabilities: {
         readonly projectSettingsOverrides?: boolean | undefined;
         readonly projectKnowledgeAssistedLearning?: boolean | undefined;
+        readonly projectKnowledgeCuration?: boolean | undefined;
       };
     };
   } | null;
@@ -223,6 +224,18 @@ export function scopedAssistedLearningUnavailableReason(
     : `Automatic memory is not supported on ${labels}. Update T3 Code on ${unsupported.length === 1 ? "that environment" : "those environments"}.`;
 }
 
+export function scopedMemoryCurationUnavailableReason(
+  environments: readonly Pick<ScopedSettingsEnvironment, "label" | "serverConfig">[],
+): string | null {
+  const unsupported = environments.filter(
+    (environment) =>
+      environment.serverConfig?.environment?.capabilities.projectKnowledgeCuration !== true,
+  );
+  return unsupported.length === 0
+    ? null
+    : `Memory curation needs a newer T3 Code server on ${unsupported.map((environment) => environment.label).join(", ")}.`;
+}
+
 /**
  * Servers store the idle compaction mode differently by version, so selected
  * environments are compared by the mode each resolves to, and "Never" is offered
@@ -328,15 +341,25 @@ export function planScopedSettingsPatch(
   const clientPatch = Object.fromEntries(
     refusesClientKeys ? [] : Object.entries(patch).filter(([key]) => clientKeys.includes(key)),
   ) as ClientSettingsPatch;
-  if (serverPatch.enableAssistedLearning !== undefined) {
+  if (
+    serverPatch.enableAssistedLearning !== undefined ||
+    serverPatch.enableMemoryCuration !== undefined
+  ) {
     const targetIds = new Set(
       resolveScopedSettingsTargets(scope, connectedEnvironments).map(
         (target) => target.environmentId,
       ),
     );
-    const unavailableReason = scopedAssistedLearningUnavailableReason(
-      connectedEnvironments.filter((environment) => targetIds.has(environment.environmentId)),
+    const selected = connectedEnvironments.filter((environment) =>
+      targetIds.has(environment.environmentId),
     );
+    const unavailableReason =
+      (serverPatch.enableAssistedLearning !== undefined
+        ? scopedAssistedLearningUnavailableReason(selected)
+        : null) ??
+      (serverPatch.enableMemoryCuration !== undefined
+        ? scopedMemoryCurationUnavailableReason(selected)
+        : null);
     if (unavailableReason !== null) {
       return {
         clientPatch,

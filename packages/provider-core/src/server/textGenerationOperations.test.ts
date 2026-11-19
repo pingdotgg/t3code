@@ -7,6 +7,7 @@ import {
 import * as Effect from "effect/Effect";
 
 import { decodeJsonReply, fromRunner, type Operation } from "./textGenerationOperations.ts";
+import type { ProjectMemoryCurationFact } from "./textGenerationCuration.ts";
 
 const modelSelection = { instanceId: ProviderInstanceId.make("writer"), model: "chosen" };
 
@@ -226,5 +227,114 @@ it.effect("sets aside every statement the standing check does not clearly keep",
     assert.deepStrictEqual(partlyMalformed.verdicts, ["standing", "task", "task", "task", "task"]);
     const noResults = yield* check('{"verdicts":["standing"]}').pipe(Effect.flip);
     assert.strictEqual(noResults.operation, "checkFactStanding");
+  }),
+);
+
+it.effect("accepts only bounded curation actions against the reviewed project snapshots", () =>
+  Effect.gen(function* () {
+    const facts: ReadonlyArray<ProjectMemoryCurationFact> = [
+      {
+        id: "old",
+        revision: 2,
+        kind: "convention",
+        content: "Use pnpm.",
+        sources: [],
+        protected: false,
+      },
+      {
+        id: "current",
+        revision: 3,
+        kind: "convention",
+        content: "Use pnpm for every package.",
+        sources: [],
+        protected: false,
+      },
+      {
+        id: "owner",
+        revision: 1,
+        kind: "constraint",
+        content: "Do not modify production data.",
+        sources: [],
+        protected: true,
+      },
+    ];
+    const supersede = {
+      action: "supersede" as const,
+      factId: "old",
+      expectedRevision: 2,
+      replacementFactId: "current",
+      replacementRevision: 3,
+      reason: "The other entry states the same convention with its full scope.",
+      confidence: 0.95,
+    };
+    const keep = {
+      action: "keep" as const,
+      factId: "current",
+      expectedRevision: 3,
+      reason: "A durable package management convention.",
+      confidence: 0.95,
+    };
+    const review = (decisions: ReadonlyArray<unknown>) =>
+      fromRunner(
+        "Curator",
+        (request) => decodeJsonReply(request, "Curator", JSON.stringify({ decisions })),
+        { supportsInvestigation: false, supportsBlindEvaluation: true },
+      ).curateProjectMemory({ cwd: "/isolated", modelSelection, facts });
+    assert.deepStrictEqual(yield* review([supersede, keep]), { decisions: [supersede, keep] });
+    for (const decisions of [
+      [{ ...supersede, factId: "another-project" }],
+      [{ ...supersede, expectedRevision: 1 }],
+      [{ ...supersede, replacementFactId: "another-project" }],
+      [{ ...supersede, replacementRevision: 2 }],
+      [{ ...supersede, replacementFactId: "old", replacementRevision: 2 }],
+      [supersede, supersede],
+      [{ ...supersede, factId: "owner", expectedRevision: 1 }],
+      [{ ...supersede, confidence: 0.5 }],
+      [supersede, { ...keep, action: "set_aside", verdict: "task" }],
+      [{ ...keep, action: "delete" }],
+      [{ ...keep, inventedEvidence: true }],
+      [{ ...keep, confidence: 2 }],
+      [{ ...keep, reason: "" }],
+      [{ ...keep, action: "set_aside" }],
+    ]) {
+      const error = yield* review(decisions).pipe(Effect.flip);
+      assert.strictEqual(error.operation, "curateProjectMemory");
+      assert.strictEqual(error.kind, "invalid-output");
+    }
+  }),
+);
+
+it.effect("does not invoke a curator without isolation or beyond its input budget", () =>
+  Effect.gen(function* () {
+    const run = () => Effect.die("An unsafe curator must not start a provider.");
+    const input = { cwd: "/isolated", modelSelection, facts: [] };
+    const unisolated = fromRunner("Unisolated", run);
+    assert.notInclude(unisolated.supportedOperations, "curateProjectMemory");
+    assert.strictEqual(
+      (yield* unisolated.curateProjectMemory(input).pipe(Effect.flip)).operation,
+      "curateProjectMemory",
+    );
+    const isolated = fromRunner("Isolated", run, {
+      supportsInvestigation: false,
+      supportsBlindEvaluation: true,
+    });
+    const fact = {
+      id: "one",
+      revision: 1,
+      kind: "note" as const,
+      content: "Task note",
+      sources: [],
+      protected: false,
+    };
+    for (const facts of [
+      [fact, fact],
+      Array.from({ length: 25 }, (_, index) => ({ ...fact, id: String(index) })),
+    ]) {
+      assert.strictEqual(
+        (yield* isolated.curateProjectMemory({ ...input, facts }).pipe(Effect.flip)).operation,
+        "curateProjectMemory",
+      );
+    }
+    assert.deepStrictEqual(yield* isolated.curateProjectMemory(input), { decisions: [] });
   }),
 );

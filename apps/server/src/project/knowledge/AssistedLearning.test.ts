@@ -62,6 +62,7 @@ const makeLayer = (
       Layer.mock(TextGeneration.TextGeneration)({
         generateKnowledgeCandidates: generate,
         checkFactStanding: check,
+        curateProjectMemory: () => Effect.die("unused"),
         supportsOperation: (operation) =>
           Effect.succeed(operation !== "checkFactStanding" || canCheck),
       }),

@@ -42,6 +42,7 @@ export function useProjectKnowledgeBrowse(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly history: boolean;
+  readonly curation: boolean;
   readonly onArchivedChange: () => void;
 }) {
   const [status, setStatus] = useState<StatusFilter>("saved");
@@ -94,6 +95,7 @@ export function useProjectKnowledgeBrowse(props: {
             includeArchived: current.includeArchived ?? false,
             requestId: CommandId.make(uuidv4()),
             ...(current.includeSuperseded ? { includeSuperseded: true } : {}),
+            ...(current.includeSetAside ? { includeSetAside: true } : {}),
           },
     );
   const showList = (change: () => void) => {
@@ -161,6 +163,7 @@ export function useProjectKnowledgeBrowse(props: {
               includeArchived,
               requestId: CommandId.make(uuidv4()),
               ...(props.history && showSuperseded ? { includeSuperseded: true } : {}),
+              ...(props.curation && status === "set_aside" ? { includeSetAside: true } : {}),
             },
       );
     },

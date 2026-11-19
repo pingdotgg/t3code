@@ -13,7 +13,10 @@ import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { ModelEvaluationSettings } from "./ModelEvaluationSettings";
 import { ScopedSwitch } from "./ScopedSwitch";
-import { scopedAssistedLearningUnavailableReason } from "./scopedSettings";
+import {
+  scopedAssistedLearningUnavailableReason,
+  scopedMemoryCurationUnavailableReason,
+} from "./scopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingResetButton, SettingsRow, SettingsSection } from "./settingsLayout";
 import { hasInferenceProxyEnvironment, searchableSetting } from "./settingsSearch";
@@ -31,6 +34,7 @@ export function ZackSettings() {
       <div className="space-y-6">
         <SettingsSection title="Holographic memory">
           <AssistedLearningRow />
+          <MemoryCurationRow />
         </SettingsSection>
         <SettingsSection title="LCM (lossless context management)">
           <ConversationSummariesRow />
@@ -103,6 +107,46 @@ function AssistedLearningRow() {
           mixed={mixed}
           checked={mixed ? false : settings.enableAssistedLearning}
           onCheckedChange={(enabled) => updateSettings({ enableAssistedLearning: enabled })}
+        />
+      }
+    />
+  );
+}
+
+function MemoryCurationRow() {
+  const { targets, connectedEnvironments } = useSettingsScope();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const unavailableReason = scopedMemoryCurationUnavailableReason(
+    connectedEnvironments.filter((environment) =>
+      targets.some((target) => target.environmentId === environment.environmentId),
+    ),
+  );
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["enableMemoryCuration"]}
+      {...searchableSetting("memory-curation")}
+      description={
+        unavailableReason ??
+        "Review saved agent memories within each project. Background batches set aside task notes and link duplicates or replaced decisions. Original content and review reasons remain available, and you can restore a memory. Uses your text generation model."
+      }
+      resetAction={
+        unavailableReason === null && !settings.enableMemoryCuration ? (
+          <SettingResetButton
+            label="memory curation"
+            tooltip="Reset memory curation to on"
+            onClick={() => updateSettings({ enableMemoryCuration: true })}
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["enableMemoryCuration"]}
+          aria-label="Curate project memories"
+          disabled={unavailableReason !== null}
+          checked={settings.enableMemoryCuration}
+          onCheckedChange={(enabled) => updateSettings({ enableMemoryCuration: enabled })}
         />
       }
     />

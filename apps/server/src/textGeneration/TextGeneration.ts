@@ -28,6 +28,10 @@ import * as TextGenerators from "./TextGenerators.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
 
 export type {
+  ProjectMemoryCurationFact,
+  ProjectMemoryCurationDecision,
+  ProjectMemoryCurationInput,
+  ProjectMemoryCurationResult,
   ConversationSummaryGenerationInput,
   ConversationSummaryGenerationResult,
   KnowledgeCandidatesGenerationInput,
@@ -82,7 +86,11 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
           : `Provider '${instanceId}' does not support this text generation operation. Choose a model from a provider that supports it.`,
     });
   }
-  if (operation === "generateKnowledgeCandidates" || operation === "checkFactStanding") {
+  if (
+    operation === "generateKnowledgeCandidates" ||
+    operation === "checkFactStanding" ||
+    operation === "curateProjectMemory"
+  ) {
     const snapshot = yield* instance.snapshot.getSnapshot;
     if (exhaustedUsageWindow(snapshot, DateTime.toEpochMillis(yield* DateTime.now), model)) {
       return yield* new TextGenerationError({
@@ -92,7 +100,7 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
       });
     }
   }
-  if (operation === "generateModelEvaluation") {
+  if (operation === "generateModelEvaluation" || operation === "curateProjectMemory") {
     const snapshot = yield* instance.snapshot.getSnapshot;
     if (
       !instance.enabled ||
@@ -105,7 +113,9 @@ const resolveInstance = Effect.fn("TextGeneration.resolveInstance")(function* (
       return yield* new TextGenerationError({
         operation,
         detail:
-          "The selected evaluator is unavailable. Choose an enabled, installed, authenticated provider that supports blind evaluation.",
+          operation === "curateProjectMemory"
+            ? "The selected memory model is unavailable. Choose an enabled, installed, authenticated provider that supports isolated memory curation."
+            : "The selected evaluator is unavailable. Choose an enabled, installed, authenticated provider that supports blind evaluation.",
       });
     }
   }
@@ -207,6 +217,11 @@ export const make = Effect.gen(function* () {
   return TextGeneration.of({
     supportsOperation: Effect.fn("TextGeneration.supportsOperation")(
       function* (operation, instanceId) {
+        if (
+          operation === "curateProjectMemory" &&
+          (yield* textGenerators.runner(instanceId)) !== undefined
+        )
+          return true;
         const instance = yield* registry.getInstance(instanceId);
         return instance !== undefined && supports(instance, operation);
       },
@@ -277,6 +292,22 @@ export const make = Effect.gen(function* () {
         input.modelSelection.instanceId,
         input.modelSelection.model,
       ).pipe(Effect.flatMap((textGeneration) => textGeneration.checkFactStanding(input)));
+    }),
+    curateProjectMemory: Effect.fn("TextGeneration.curateProjectMemory")(function* (input) {
+      const textGenerator = yield* textGenerators.runner(input.modelSelection.instanceId);
+      const curator =
+        textGenerator === undefined
+          ? yield* resolveInstance(
+              registry,
+              "curateProjectMemory",
+              input.modelSelection.instanceId,
+              input.modelSelection.model,
+            )
+          : TextGenerationOperations.fromRunner("TextGenerator", textGenerator, {
+              supportsInvestigation: false,
+              supportsBlindEvaluation: true,
+            });
+      return yield* curator.curateProjectMemory(input);
     }),
     generateConversationSummary: Effect.fn("TextGeneration.generateConversationSummary")(
       function (input) {
