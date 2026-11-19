@@ -383,7 +383,10 @@ it("keeps a linked test file expanded when a refresh changes the rest of the dif
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   await using screen = await render(tab(0), { container });
-  await screen.getByRole("button", { name: "Hide test files" }).click();
+  // The redesign's toolbar is a container query; in this flex harness it takes the overflow menu.
+  await screen.getByRole("button", { name: "More diff actions" }).click();
+  await page.getByRole("menuitemcheckbox", { name: "Hide test files" }).click();
+  await userEvent.keyboard("{Escape}");
 
   const path = "early-1.test.ts";
   const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode(path)))}`;
@@ -423,30 +426,42 @@ async function renderShortPages(stack: AsyncDisposableStack) {
   const container = document.createElement("div");
   container.className = "flex h-[1000px] w-[900px]";
   const screen = stack.use(await render(tab(0), { container }));
+  // The redesign's toolbar is a container query; in this flex harness it takes the overflow menu.
+  const diffAction = async (name: string) => {
+    await screen.getByRole("button", { name: "More diff actions" }).click();
+    await page.getByRole("menu").getByText(name, { exact: true }).click();
+    if (page.getByRole("menu").query() !== null) await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByRole("menu")).not.toBeInTheDocument();
+  };
   const loadNextPage = async () => {
-    await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
+    await diffAction("File tree");
     const loadMore = screen.getByRole("button", { name: "Load more files", exact: true });
     await loadMore.click();
     await expect.element(loadMore).not.toBeInTheDocument();
-    await screen.getByRole("button", { name: "Hide file tree", exact: true }).click();
+    await diffAction("File tree");
   };
   // The later page sits at the bottom of the list, which grows as expanded files render.
   const diffToggle = async (path: string) => {
     const scroller = container.querySelector(".diff-render-surface")!;
     const header = await vi.waitFor(() => {
       scroller.scrollTop = scroller.scrollHeight;
-      return screen.getByText(path, { exact: true }).element();
+      const inDiff = screen
+        .getByText(path, { exact: true })
+        .elements()
+        .find((element) => element.getRootNode() instanceof ShadowRoot);
+      if (!inDiff) throw new Error(`No diff header for ${path}`);
+      return inDiff;
     });
     const { host } = header.getRootNode() as ShadowRoot;
     return page.elementLocator(host).getByRole("button", { name: /^(Expand|Collapse) diff$/ });
   };
-  const filter = screen.getByRole("button", { name: "Hide test files" });
-  return { screen, loadNextPage, diffToggle, filter };
+  const filter = { click: () => diffAction("Hide test files") };
+  return { screen, loadNextPage, diffToggle, filter, diffAction };
 }
 
 it("keeps a later test file folded by hand through a refresh and bulk toggles while hidden", async () => {
   await using stack = new AsyncDisposableStack();
-  const { screen, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
+  const { screen, loadNextPage, diffToggle, filter, diffAction } = await renderShortPages(stack);
   await loadNextPage();
   const lateTest = await diffToggle("late.test.ts");
   await lateTest.click();
@@ -456,8 +471,8 @@ it("keeps a later test file folded by hand through a refresh and bulk toggles wh
   // A refresh drops the loaded later page, so the bulk toggles below run without it.
   await screen.rerender(tab(1));
   await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
-  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
-  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
+  await diffAction("Collapse all files");
+  await diffAction("Expand all files");
   await loadNextPage();
   await filter.click();
 
