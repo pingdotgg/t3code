@@ -38,7 +38,6 @@ import type { ChildStatusCounts } from "@t3tools/client-runtime/state/child-stat
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
-import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
@@ -998,7 +997,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRename = useCallback(() => onRenameThread(thread), [onRenameThread, thread]);
   const canOperateThread = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
-  const navigation = useNavigation();
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1335,8 +1333,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       gt,
       m,
       onNewThreadOnBranch,
+      onRemoveThreadFromParent,
       thread,
-      navigation,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
