@@ -10,7 +10,20 @@ import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 describe("EnvironmentLinks", () => {
   it.effect("carries the webhook-hold opt-in over only from links with the same key", () => {
     const inserted: Array<Record<string, unknown>> = [];
+    const revoked: Array<{ values: Record<string, unknown>; condition: unknown }> = [];
     const fakeDb = {
+      $client: {
+        withTransaction: (effect: Effect.Effect<unknown>) => effect,
+      },
+      execute: () => Effect.void,
+      update: () => ({
+        set: (values: Record<string, unknown>) => ({
+          where: (condition: unknown) =>
+            Effect.sync(() => {
+              revoked.push({ values, condition });
+            }),
+        }),
+      }),
       insert: () => ({
         values: (values: Record<string, unknown>) => {
           inserted.push(values);
@@ -38,6 +51,12 @@ describe("EnvironmentLinks", () => {
       const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
       expect(query.sql).toContain("environment_public_key");
       expect(query.params).toEqual(["env-1", "public-key-1"]);
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]?.values.revokedAt).toEqual(inserted[0]?.updatedAt);
+      const priorLinks = new PgDialect().sqlToQuery(revoked[0]?.condition as never);
+      expect(priorLinks.sql).toContain('"user_id" <>');
+      expect(priorLinks.sql).toContain('"revoked_at" is null');
+      expect(priorLinks.params).toEqual(["env-1", "public-key-1", "user-1"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),

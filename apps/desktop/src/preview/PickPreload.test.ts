@@ -124,6 +124,7 @@ it.each([
       .spyOn(card, "getBoundingClientRect")
       .mockImplementation(() => (card.isConnected ? pickedRect : new DOMRect()));
     document.elementsFromPoint = () => [card];
+    using listeners = vi.spyOn(HTMLButtonElement.prototype, "addEventListener");
     const shadowRoot = startAnnotation();
 
     card.dispatchEvent(
@@ -137,6 +138,15 @@ it.each([
     );
     if (!attach) throw new Error("Attach button not found");
     attach.click();
+    expect(attach.disabled).toBe(false);
+    expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(false);
+    const listenerIndex = listeners.mock.contexts.findIndex(
+      (target, index) => target === attach && listeners.mock.calls[index]?.[0] === "click",
+    );
+    const listener = listeners.mock.calls[listenerIndex]?.[1];
+    if (typeof listener !== "function") throw new Error("Attach click listener not found");
+    // The DOM test environment has no native input source.
+    listener.call(attach, { isTrusted: true } as MouseEvent);
 
     await vi.waitFor(() =>
       expect(ipcSend.calls.some(([channel]) => channel === ELEMENT_PICKED_CHANNEL)).toBe(true),
