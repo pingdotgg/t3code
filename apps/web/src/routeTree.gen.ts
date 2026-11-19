@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as PairRouteImport } from './routes/pair'
 import { Route as GuestRouteImport } from './routes/guest'
+import { Route as DesignSystemRouteImport } from './routes/design-system'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ApproveAgentRouteImport } from './routes/approve-agent'
@@ -67,6 +68,11 @@ const PairRoute = PairRouteImport.update({
 const GuestRoute = GuestRouteImport.update({
   id: '/guest',
   path: '/guest',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignSystemRoute = DesignSystemRouteImport.update({
+  id: '/design-system',
+  path: '/design-system',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectAgentRoute = ConnectAgentRouteImport.update({
@@ -285,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design-system': typeof DesignSystemRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -329,6 +336,7 @@ export interface FileRoutesByTo {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design-system': typeof DesignSystemRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -376,6 +384,7 @@ export interface FileRoutesById {
   '/approve-agent': typeof ApproveAgentRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design-system': typeof DesignSystemRoute
   '/guest': typeof GuestRoute
   '/pair': typeof PairRoute
   '/welcome': typeof WelcomeRoute
@@ -424,6 +433,7 @@ export interface FileRouteTypes {
     | '/approve-agent'
     | '/connect'
     | '/connect-agent'
+    | '/design-system'
     | '/guest'
     | '/pair'
     | '/welcome'
@@ -468,6 +478,7 @@ export interface FileRouteTypes {
     | '/approve-agent'
     | '/connect'
     | '/connect-agent'
+    | '/design-system'
     | '/guest'
     | '/pair'
     | '/welcome'
@@ -514,6 +525,7 @@ export interface FileRouteTypes {
     | '/approve-agent'
     | '/connect'
     | '/connect-agent'
+    | '/design-system'
     | '/guest'
     | '/pair'
     | '/welcome'
@@ -561,6 +573,7 @@ export interface RootRouteChildren {
   ApproveAgentRoute: typeof ApproveAgentRoute
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
+  DesignSystemRoute: typeof DesignSystemRoute
   GuestRoute: typeof GuestRoute
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
@@ -589,6 +602,13 @@ declare module '@tanstack/react-router' {
       path: '/guest'
       fullPath: '/guest'
       preLoaderRoute: typeof GuestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design-system': {
+      id: '/design-system'
+      path: '/design-system'
+      fullPath: '/design-system'
+      preLoaderRoute: typeof DesignSystemRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect-agent': {
@@ -974,6 +994,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApproveAgentRoute: ApproveAgentRoute,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
+  DesignSystemRoute: DesignSystemRoute,
   GuestRoute: GuestRoute,
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,

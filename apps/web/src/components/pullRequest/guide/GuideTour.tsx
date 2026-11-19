@@ -115,14 +115,14 @@ export function GuideTour({
         <main className="flex min-w-0 flex-col gap-4">
           {banner}
           {diff.error !== null ? (
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               <T>
                 The diff could not be loaded, so excerpts are missing: <Var>{diff.error}</Var>
               </T>
             </p>
           ) : null}
           {stop === null ? (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-body text-muted-foreground">
               <T>This change has no files to tour.</T>
             </p>
           ) : (

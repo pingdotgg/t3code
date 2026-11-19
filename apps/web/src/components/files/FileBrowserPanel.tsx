@@ -72,14 +72,14 @@ function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }
         render={
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="icon-xs"
             aria-label={gt("Refresh workspace files")}
             onClick={props.onRefresh}
           />
         }
       >
-        <RefreshIcon refreshing={props.isPending} />
+        <RefreshIcon refreshing={props.isPending} tone="muted" />
       </TooltipTrigger>
       <TooltipPopup>{props.isPending ? gt("Refreshing…") : gt("Refresh files")}</TooltipPopup>
     </Tooltip>
@@ -99,7 +99,7 @@ function FileSearchField({
 }) {
   const gt = useGT();
   return (
-    <InputGroup variant="ghost" className="h-7 min-w-0 flex-1">
+    <InputGroup variant="default" className="h-7 min-w-0 flex-1">
       <InputGroupInput
         ref={ref}
         type="search"
@@ -547,7 +547,7 @@ export default function FileBrowserPanel({
       }}
     >
       <div
-        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
+        className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border bg-background px-2 in-data-[preview-panel-mode=inline]:mb-1 in-data-[preview-panel-mode=inline]:h-9 in-data-[preview-panel-mode=inline]:min-h-9 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
@@ -594,7 +594,7 @@ export default function FileBrowserPanel({
         <button
           type="button"
           onClick={handleRefresh}
-          className="p-4 text-left text-xs leading-relaxed text-destructive"
+          className="p-4 text-left text-xs leading-relaxed text-error-foreground"
         >
           {gt("{error} Click to retry.", { error: error ?? pathSearch.error })}
         </button>
@@ -618,7 +618,7 @@ export default function FileBrowserPanel({
       )}
       {hasNoSearchMatches ? (
         ready && !isPending && !pathSearch.isPending && !error && !pathSearch.error ? (
-          <div role="status" className="px-3 py-4 text-xs text-muted-foreground">
+          <div role="status" className="px-3 py-4 text-meta text-muted-foreground">
             <T>No matching files.</T>
           </div>
         ) : null

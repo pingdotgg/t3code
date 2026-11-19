@@ -7,6 +7,7 @@ import { observeVisibleAnimation } from "~/lib/visibleAnimation";
 // No default size: inside a Button the parent's svg rule sizes the glyph.
 const refreshIconVariants = cva("", {
   variants: {
+    tone: { muted: "text-muted-foreground" },
     size: {
       xs: "size-3",
       sm: "size-3.5",
@@ -20,6 +21,7 @@ export function RefreshIcon({
   refreshing = false,
   className,
   size,
+  tone,
   ...props
 }: React.ComponentPropsWithoutRef<typeof RefreshCwIcon> &
   VariantProps<typeof refreshIconVariants> & { refreshing?: boolean }) {
@@ -28,7 +30,7 @@ export function RefreshIcon({
       aria-hidden
       ref={refreshing ? observeVisibleAnimation : undefined}
       className={cn(
-        refreshIconVariants({ size }),
+        refreshIconVariants({ size, tone }),
         refreshing && "motion-safe:visible-animate-spin",
         className,
       )}

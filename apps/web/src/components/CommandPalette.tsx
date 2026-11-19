@@ -81,6 +81,7 @@ import {
   PinOffIcon,
   PlugIcon,
   SquarePenIcon,
+  SwatchBookIcon,
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
@@ -220,7 +221,6 @@ import {
   getCommandPaletteInputPlaceholder,
   getCommandPaletteMode,
   ITEM_ICON_CLASS,
-  RECENT_THREAD_LIMIT,
   createCommandPaletteSearchState,
   type CommandPaletteGroup,
   resolveAddProjectEntry,
@@ -280,11 +280,19 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { buildSidebarProjectPickerEntries } from "../sidebarProjectGrouping";
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
-import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
 import { IssueGlyph } from "~/components/issue/issuePresentation";
+import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { threadRecentUse } from "@t3tools/shared/paletteSearch";
+
+// Root actions listed under Settings, after Actions.
+const SETTINGS_ACTION_VALUES: ReadonlySet<string> = new Set([
+  "action:change-theme",
+  "action:change-appearance",
+  "action:theme-editor",
+  "action:settings",
+  "action:project-settings",
+]);
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
@@ -373,6 +381,8 @@ function CommandPaletteDialog(props: {
 
   return (
     <CommandDialogPopup
+      surface={props.mode === "content" ? "dialog" : "palette"}
+      size={props.mode === "content" ? "content" : "default"}
       aria-label={
         props.mode === "files"
           ? gt("File picker")
@@ -384,6 +394,7 @@ function CommandPaletteDialog(props: {
       data-command-palette="true"
       data-palette-mode={props.mode}
       data-testid="command-palette"
+      // Focus goes to the composer, or back to what opened the palette (Settings' Add project) when there is none.
       finalFocus={() => {
         if (restoreWorkspaceFocusFromPalette()) return false;
         const returnFocus = getCommandPaletteReturnFocus();
@@ -892,6 +903,10 @@ function OpenCommandPaletteDialog(props: {
         locationByEnvironmentId: projectEnvironmentLocationById,
         pin: projectPin,
         runProject: async (project) => {
+          if (props.openIntent?.kind === "new-thread-in" && props.openIntent.onSelectProject) {
+            props.openIntent.onSelectProject(project);
+            return;
+          }
           const group = projectGroupByTargetKey.get(`${project.environmentId}:${project.id}`);
           const contextualRefBelongsToGroup =
             contextualProjectRef !== null &&
@@ -948,25 +963,12 @@ function OpenCommandPaletteDialog(props: {
 
   const {
     threadItems: allThreadItems,
+    recentThreadItems,
     threadMessageItems,
     now: searchNow,
     isSearchPending: isThreadSearchPending,
     isSearchFailed: isThreadSearchFailed,
   } = useCommandPaletteThreadItems({ activeThread: activeThread ?? null, threadSearchQuery });
-  // Recent means used recently: written in or opened, whichever is later. The
-  // open thread would always lead that list, so it is left out.
-  const activeThreadValue = activeThread
-    ? `thread:${activeThread.environmentId}:${activeThread.id}`
-    : null;
-  const recentThreadItems = allThreadItems
-    .filter((item) => item.value !== activeThreadValue)
-    .toSorted(
-      (left, right) =>
-        (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
-        (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
-    )
-    .slice(0, RECENT_THREAD_LIMIT);
-
   const pushPaletteView = useStableCallback((view: CommandPaletteView): void => {
     browseNavigation.invalidate();
     dispatchSearch({ type: "push", view });
@@ -1774,6 +1776,20 @@ function OpenCommandPaletteDialog(props: {
     },
   });
 
+  // The design system catalog only exists in dev builds; see routes/design-system.tsx.
+  if (import.meta.env.DEV) {
+    actionItems.push({
+      kind: "action",
+      value: "action:design-system",
+      searchTerms: ["design system", "ds", "primitives", "components", "catalog", "ui"],
+      title: gt("Open design system"),
+      icon: <SwatchBookIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await navigate({ to: "/design-system" });
+      },
+    });
+  }
+
   // Every group, so an archived project's thread still opens its own settings.
   const currentProjectGroup =
     (contextualProjectRef
@@ -1830,9 +1846,15 @@ function OpenCommandPaletteDialog(props: {
     });
   }
 
-  const rootGroups = buildRootGroups({ actionItems, recentThreadItems }, messages);
-  // Every setting goes to the palette's own matcher, so settings get the same
-  // word starts and typo tolerance as threads.
+  const rootGroups = buildRootGroups(
+    {
+      actionItems: actionItems.filter((item) => !SETTINGS_ACTION_VALUES.has(item.value)),
+      recentThreadItems,
+      settingsItems: actionItems.filter((item) => SETTINGS_ACTION_VALUES.has(item.value)),
+    },
+    messages,
+  );
+  // Settings use the same matcher as threads, including word starts and typo tolerance.
   const settingsSearchItems: CommandPaletteActionItem[] = settingsForThisPlatform(
     availableSettingsSearchItems,
   ).map((item) => ({
@@ -1845,9 +1867,7 @@ function OpenCommandPaletteDialog(props: {
       ...(item.searchTerms ?? []),
     ].flatMap((term) => [messages(term), decodeMsg(term)]),
     title: messages(item.title),
-    description: gt("Settings · {section}", {
-      section: messages(SETTINGS_SECTION_LABELS[item.to]),
-    }),
+    description: messages(SETTINGS_SECTION_LABELS[item.to]),
     ...(item.secondary ? { secondary: true } : {}),
     icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
@@ -3051,7 +3071,7 @@ function OpenCommandPaletteDialog(props: {
   ) : isThreadSearchPending && !isLinkedThreadSearch && !isBrowsing ? (
     // In the footer, so the list keeps its height while message results may
     // still arrive below it.
-    <span className="text-muted-foreground text-xs">
+    <span className="text-muted-foreground text-meta">
       <T>Searching messages…</T>
     </span>
   ) : null;
@@ -3134,11 +3154,11 @@ function OpenCommandPaletteDialog(props: {
         />
       ) : null}
       {browseAccessError ? (
-        <div role="alert" className="px-4 py-3 text-sm text-muted-foreground">
+        <div role="alert" className="px-4 py-3 text-body text-muted-foreground">
           {browseAccessError}
         </div>
       ) : isBrowsePending && browseResult === null ? (
-        <div role="status" className="px-4 py-3 text-sm text-muted-foreground">
+        <div role="status" className="px-4 py-3 text-body text-muted-foreground">
           <T>Loading folders...</T>
         </div>
       ) : null}

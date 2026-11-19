@@ -90,13 +90,13 @@ export function IssueFiltersMenu(props: {
   const scopes = open ? props.scopes : [];
   return (
     <Menu onOpenChange={setOpen}>
-      <MenuTrigger render={<Button variant="outline" />}>
+      <MenuTrigger render={<Button variant="secondary" />}>
         <ListFilterIcon className="size-4" />
         <span>
           <T>Filters</T>
         </span>
         {count > 0 ? (
-          <span className="rounded-full bg-muted px-1.5 text-xs text-muted-foreground tabular-nums">
+          <span className="rounded-full bg-muted px-1.5 text-meta text-muted-foreground tabular-nums">
             {count}
           </span>
         ) : null}
@@ -136,7 +136,7 @@ export function IssueFiltersMenu(props: {
             <span className="flex-1">
               <T>Labels</T>
             </span>
-            <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+            <span className="min-w-0 max-w-32 truncate text-meta text-muted-foreground">
               {props.labels.length === 0
                 ? gt("Any", { $context: "no label filter" })
                 : props.labels.length === 1
@@ -156,7 +156,7 @@ export function IssueFiltersMenu(props: {
             <span className="flex-1">
               <T>Assignee</T>
             </span>
-            <span className="min-w-0 max-w-32 truncate text-xs text-muted-foreground">
+            <span className="min-w-0 max-w-32 truncate text-meta text-muted-foreground">
               {props.assignee ?? gt("Anyone", { $context: "no assignee filter" })}
             </span>
           </MenuSubTrigger>
@@ -273,9 +273,11 @@ function AssigneeChoices(props: {
         </MenuRadioItem>
         {visible.map((actor) => (
           <MenuRadioItem key={actor.login} value={actor.login}>
-            <span className="min-w-0 flex-1 truncate">
-              {actor.login}
-              {actor.name ? <span className="text-muted-foreground"> · {actor.name}</span> : null}
+            <span className="flex min-w-0 flex-1 items-center gap-2">
+              <span className="truncate">{actor.login}</span>
+              {actor.name ? (
+                <span className="min-w-0 truncate text-muted-foreground">{actor.name}</span>
+              ) : null}
             </span>
           </MenuRadioItem>
         ))}

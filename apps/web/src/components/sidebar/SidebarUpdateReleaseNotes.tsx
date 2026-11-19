@@ -8,6 +8,7 @@ import {
 } from "../desktopUpdate.logic";
 import type { MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
+import { useNowMinute } from "../../hooks/useNowMinute";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 
 type DesktopUpdateShell = Pick<DesktopBridge, "openExternal">;
@@ -22,10 +23,10 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
 }
 
 /** Feed times read "3h ago"; build days from a prerelease version read "today" or "2d ago". */
-function formatReleaseAge(releasedAt: string, resolve: MessageResolver): string {
+function formatReleaseAge(releasedAt: string, nowMs: number, resolve: MessageResolver): string {
   const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releasedAt);
-  if (!day) return formatRelativeTimeLabel(releasedAt, undefined, resolve);
-  const now = new Date();
+  if (!day) return formatRelativeTimeLabel(releasedAt, nowMs, resolve);
+  const now = new Date(nowMs);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round(
     (today - Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]))) / 86_400_000,
@@ -68,6 +69,8 @@ export function SidebarUpdateReleaseNotes({
 }) {
   const gt = useGT();
   const m = useMessages();
+  const nowMinute = useNowMinute();
+  const now = Date.parse(`${nowMinute}:00Z`);
   if (state.releaseNotes.length === 0) {
     return <>{tooltip}</>;
   }
@@ -85,9 +88,10 @@ export function SidebarUpdateReleaseNotes({
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
-                {releasedAt
-                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt, m)}`
-                  : state.availableVersion}
+                <span className="flex flex-col items-start gap-0.5">
+                  <span>{state.availableVersion}</span>
+                  {releasedAt ? <span>{formatReleaseAge(releasedAt, now, m)}</span> : null}
+                </span>
               </div>
             ) : null}
           </div>
@@ -113,14 +117,17 @@ export function SidebarUpdateReleaseNotes({
             <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
               {generated ? (
                 releaseNote.version !== state.availableVersion && (
-                  <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
-                    {releaseNote.releasedAt
-                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt, m)}`
-                      : releaseNote.version}
+                  <h3 className="mb-1 text-meta text-muted-foreground">
+                    <span className="flex flex-col items-start gap-0.5">
+                      <span>{releaseNote.version}</span>
+                      {releaseNote.releasedAt ? (
+                        <span>{formatReleaseAge(releaseNote.releasedAt, now, m)}</span>
+                      ) : null}
+                    </span>
                   </h3>
                 )
               ) : (
-                <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
+                <h3 className="mb-2 text-meta text-strong-foreground">
                   {index === 0 ? (
                     <T>What's changed</T>
                   ) : (
@@ -131,11 +138,9 @@ export function SidebarUpdateReleaseNotes({
                 </h3>
               )}
               {releaseNote.intro ? (
-                <p className="break-words text-xs leading-5 text-popover-foreground">
-                  {releaseNote.intro}
-                </p>
+                <p className="break-words text-meta text-popover-foreground">{releaseNote.intro}</p>
               ) : releaseNote.items.length > 0 ? (
-                <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                <ul className="space-y-1.5 pl-4 text-meta text-foreground">
                   {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
                     const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
                     return (
@@ -153,7 +158,9 @@ export function SidebarUpdateReleaseNotes({
                 </ul>
               ) : null}
               {releaseNote.footer && (
-                <p className="mt-2 text-xs leading-5 font-semibold">{releaseNote.footer}</p>
+                <p className="mt-2 text-meta text-strong-foreground">
+                  <strong>{releaseNote.footer}</strong>
+                </p>
               )}
               {releaseUrl && (
                 <ReleaseLink releaseUrl={releaseUrl} shell={shell}>

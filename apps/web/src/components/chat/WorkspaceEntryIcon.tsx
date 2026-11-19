@@ -32,10 +32,10 @@ export function WorkspaceEntryTooltip(props: {
   const messages = useMessages();
   return (
     <>
-      {props.label ?? props.path}
-      {metadata?.byteLength === undefined
-        ? null
-        : ` · ${formatAttachmentSize(metadata.byteLength, messages)}`}
+      <span className="block">{props.label ?? props.path}</span>
+      {metadata?.byteLength === undefined ? null : (
+        <span className="block">{formatAttachmentSize(metadata.byteLength, messages)}</span>
+      )}
     </>
   );
 }

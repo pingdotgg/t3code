@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import { ANOTHER_ADDRESS, linkRequestFailureMessage } from "@t3tools/client-runtime/link-request";
 import {
@@ -89,7 +90,12 @@ export function LinkedEnvironmentsSettings({
   return (
     <SettingsSection
       {...(isSearchTarget ? { id: search.id } : {})}
-      title={environmentLabel === null ? search.title : `${search.title} · ${environmentLabel}`}
+      title={search.title}
+      titleAction={
+        environmentLabel === null ? null : (
+          <span className="text-meta text-muted-foreground">{environmentLabel}</span>
+        )
+      }
       headerAction={canLink ? <LinkEnvironmentAction environmentId={environmentId} /> : null}
     >
       {links.error ? (
@@ -133,7 +139,7 @@ function LinkedEnvironmentRow({
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
       gt(
-        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+        "Forget {label}? Agents here stop working there. Revoke the T3 Code connection in {label}''s Sharing & access to end the session there too.",
         { label: link.label },
       ),
       { variant: "destructive" },
@@ -177,12 +183,15 @@ function LinkedEnvironmentRow({
               }
               pingClassName={null}
             />
-            <h3 className="text-sm font-medium text-foreground">{link.label}</h3>
+            <h3 className="text-label text-foreground">{link.label}</h3>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {m(accessConfig[link.access].label)} · {status}
-          </p>
-          <p className="truncate text-xs text-muted-foreground/80">{link.urls.join(", ")}</p>
+          <Tooltip>
+            <TooltipTrigger render={<p tabIndex={0} className="text-meta text-muted-foreground" />}>
+              {status}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{m(accessConfig[link.access].label)}</TooltipPopup>
+          </Tooltip>
+          <p className="truncate text-meta text-muted-foreground/80">{link.urls.join(", ")}</p>
         </div>
         {canUnlink ? (
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
@@ -342,13 +351,13 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
               />
             ) : null}
             {machine?.linked ? (
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 <T>Already linked. Linking again renews it with the access you pick.</T>
               </p>
             ) : null}
             {needsAddress ? (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">
+                <span className="block text-caption text-foreground">
                   <T>Address</T>
                 </span>
                 <Input
@@ -365,7 +374,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     <T>
                       This app has no address for <Var>{machine.label}</Var> that another machine
                       can reach. Enter its https or Tailscale address.
@@ -377,7 +386,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
             {needsAddress && address.trim() ? <LinkAddressWarning address={address} /> : null}
             {selected === null || canMint ? null : (
               <label className="block space-y-1.5">
-                <span className="block text-xs font-medium text-foreground">
+                <span className="block text-caption text-foreground">
                   <T>Pairing code</T>
                 </span>
                 <Input
@@ -394,7 +403,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
                   spellCheck={false}
                 />
                 {machine !== null ? (
-                  <span className="block text-xs text-muted-foreground">
+                  <span className="block text-meta text-muted-foreground">
                     <T>
                       Create a link on <Var>{machine.label}</Var>: Settings → Sharing & access →
                       Authorized clients → Create link, then paste its code here.
@@ -407,7 +416,7 @@ function LinkEnvironmentAction({ environmentId }: { readonly environmentId: Envi
           </form>
         </DialogPanel>
         <DialogFooter variant="bare">
-          <DialogClose disabled={busy} render={<Button variant="outline" type="button" />}>
+          <DialogClose disabled={busy} render={<Button variant="secondary" type="button" />}>
             <T>Cancel</T>
           </DialogClose>
           <Button form={formId} type="submit" disabled={busy || !ready}>

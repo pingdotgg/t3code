@@ -7,10 +7,10 @@ import {
   useCommandPaletteStore,
 } from "../commandPaletteStore";
 import { overlayModeForCommand } from "../components/CommandPalette.logic";
-import { APPEARANCE_OPTIONS, notifyThemeSaveFailure } from "../components/CommandPaletteThemeItems";
+import { notifyThemeSaveFailure } from "../components/CommandPaletteThemeItems";
 import { toggleThemeEditorForTheme } from "../components/settings/themeEditorStore";
 import { toastManager } from "../components/ui/toast";
-import { getThemeSnapshot, setAppearanceMode } from "../hooks/useTheme";
+import { APPEARANCE_CHOICES, getThemeSnapshot, setAppearanceChoice } from "../hooks/useTheme";
 import { m } from "../i18n/messages";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
@@ -66,10 +66,14 @@ export function installCommandPaletteCommands(
       "appearance.cycle": (event) => {
         consume(event);
         if (event.repeat) return;
-        const { appearanceMode } = getThemeSnapshot();
-        const index = APPEARANCE_OPTIONS.findIndex((option) => option.mode === appearanceMode);
-        const nextMode = APPEARANCE_OPTIONS[(index + 1) % APPEARANCE_OPTIONS.length]!.mode;
-        if (!setAppearanceMode(nextMode)) {
+        const { appearanceMode, blackChrome } = getThemeSnapshot();
+        const appearanceChoice =
+          appearanceMode === "light" && blackChrome ? "black-chrome" : appearanceMode;
+        const currentIndex = APPEARANCE_CHOICES.findIndex(
+          (option) => option.choice === appearanceChoice,
+        );
+        const next = APPEARANCE_CHOICES[(currentIndex + 1) % APPEARANCE_CHOICES.length]!;
+        if (!setAppearanceChoice(next.choice)) {
           notifyThemeSaveFailure();
           return;
         }
@@ -77,9 +81,9 @@ export function installCommandPaletteCommands(
           id: "appearance-cycle",
           title: m(
             msg(
-              "{mode, select, system {Appearance: System} light {Appearance: Light} other {Appearance: Dark}}",
+              "{mode, select, system {Appearance: System} light {Appearance: Light} blackChrome {Appearance: Black chrome} other {Appearance: Dark}}",
             ),
-            { mode: nextMode },
+            { mode: next.choice === "black-chrome" ? "blackChrome" : next.choice },
           ),
           timeout: 1500,
         });

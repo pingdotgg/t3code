@@ -8,7 +8,7 @@ import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
+import { CheckIcon, ChevronRightIcon, ChevronUpIcon, GaugeIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
@@ -23,10 +23,10 @@ import {
 } from "../ui/menu";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import type { ComposerControlSize } from "./ComposerControl";
+import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
 import { composerFloatingLayerProps, focusCheckedPermission } from "./composerEventScope";
-import { EffortGlyph, FastBolt, resolveEffortGlyph } from "./EffortGlyph";
+import { EffortGlyph, resolveEffortGlyph } from "./EffortGlyph";
 import { DockedPickerContext } from "./ProviderModelPicker";
 import {
   getTraitsSectionVisibility,
@@ -78,11 +78,7 @@ function columnControls(
   return { effort, others: controls.filter((control) => control !== effort) };
 }
 
-/**
- * What the model trigger shows after the model name: the effort word (or bars, per the
- * Appearance setting), a bolt for Fast, a workflow icon for Ultracode, and other traits such as a
- * context window.
- */
+/** The reasoning chip keeps the effort display preference, spells out Fast, and marks Ultracode. */
 export function describeComposerEffort(
   traits: TraitsSelectionInput | null,
   effortDisplay: EffortDisplay,
@@ -96,22 +92,28 @@ export function describeComposerEffort(
     traits.instanceId && traits.model
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
-  const primary = visibility.primarySelectDescriptor;
+  const reasoning =
+    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
+      ?.descriptor ?? null;
+  const descriptors = visibility.descriptors.filter(
+    (descriptor) =>
+      isReasoningControl(descriptor) ||
+      descriptor.id === "serviceTier" ||
+      descriptor.id === "fastMode",
+  );
+  if (descriptors.length === 0) return { suffix: null, detail: null };
   const display = buildTraitsTriggerDisplay(
     {
-      descriptors: visibility.descriptors,
-      primarySelectDescriptorId: primary?.id ?? null,
+      descriptors,
+      primarySelectDescriptorId: reasoning?.type === "select" ? reasoning.id : null,
       ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
       modelSelection,
       reportedModelSelection: traits.reportedModelSelection,
     },
     resolve,
   );
-  // The same reasoning control the column lists, wherever the agent put it among its options.
-  const reasoning =
-    columnControls(visibility.selectDescriptors, visibility.booleanDescriptors).effort
-      ?.descriptor ?? null;
-  const ultrathink = visibility.ultrathinkPromptControlled && reasoning === primary;
+  const ultrathink =
+    visibility.ultrathinkPromptControlled && reasoning === visibility.primarySelectDescriptor;
   const glyph =
     reasoning?.type === "select"
       ? resolveEffortGlyph(
@@ -138,55 +140,34 @@ export function describeComposerEffort(
               traits.reportedModelSelection,
             ) ?? (reasoning.id === "thinking" ? reasoning.label : null));
   const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
-  // Agent options such as modes live in the picker; the trigger adds only the context window.
-  const contextWindow =
-    visibility.contextWindowDescriptor &&
-    getProviderOptionCurrentLabel(
-      visibility.contextWindowDescriptor,
-      modelSelection,
-      traits.reportedModelSelection,
-    );
-  if (!word && !glyph && !fast && !display.ultracode && !contextWindow)
-    return { suffix: null, detail: display.label };
   return {
-    detail: display.label,
+    detail: display.label || resolve(msg("Fast mode")),
     suffix: (
-      <span
-        className={cn(
-          "flex shrink-0 items-center gap-1.5 text-muted-foreground group-hover/model-trigger:text-foreground group-data-pressed/model-trigger:text-foreground group-data-popup-open/model-trigger:text-foreground",
-          // A word space after the model name: the regular trigger's gap is wider than one.
-          size === "sm" && "-ms-0.5",
-        )}
-      >
-        {word ? (
-          <span data-composer-control-label className="max-w-24 truncate">
-            {word}
-          </span>
+      <>
+        {word || !glyph ? (
+          <>
+            <GaugeIcon aria-hidden="true" className="size-3" />
+            <span data-composer-control-label className="max-w-24 truncate">
+              {word ?? (fast ? display.speedLabel : resolve(msg("Fast mode")))}
+            </span>
+          </>
         ) : glyph ? (
           <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
-        {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
+        {fast && (word || glyph) ? (
+          <span data-composer-control-label>{display.speedLabel}</span>
+        ) : null}
         {display.ultracode ? (
           <WorkflowIcon aria-hidden="true" data-composer-control-icon className="size-3" />
         ) : null}
-        {contextWindow ? (
-          <span
-            // A label, so icon-only footers drop it; compacted rows drop it before the model.
-            data-composer-control-label
-            data-composer-secondary-trait
-            className="max-w-24 truncate text-xs"
-          >
-            {contextWindow}
-          </span>
-        ) : null}
-      </span>
+      </>
     ),
   };
 }
 
 const COLUMN_ROW =
-  "flex h-8 w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-sm text-foreground outline-none hover:bg-foreground/[0.09] focus-visible:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-64";
-const COLUMN_LABEL = "px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs";
+  "flex h-8 w-full shrink-0 cursor-pointer items-center gap-2 rounded-sm px-2 text-left text-label text-foreground outline-none hover:bg-foreground/[0.09] focus-visible:bg-foreground/[0.09] disabled:cursor-not-allowed disabled:opacity-64";
+const COLUMN_LABEL = "px-2 pt-1.5 pb-1 text-muted-foreground text-meta";
 
 function ColumnRow(props: {
   label: string;
@@ -226,7 +207,7 @@ function ColumnRow(props: {
           <CheckIcon aria-hidden="true" className="size-3.5" />
         </>
       ) : props.isDefault ? (
-        <span className="text-muted-foreground/70 text-xs">
+        <span className="text-muted-foreground/70 text-meta">
           {gt("Default", { $context: "marks the default option" })}
         </span>
       ) : null}
@@ -260,21 +241,31 @@ function moveBetweenRows(event: KeyboardEvent<HTMLElement>) {
   next.scrollIntoView({ block: "nearest" });
 }
 
-function EffortLevels(props: { traits: TraitsSelectionInput }) {
+function EffortLevels(props: { traits: TraitsSelectionInput; optionsOnly?: boolean }) {
   const traits = useTraitsSelection(props.traits);
-  const { effort, others } = columnControls(traits.selectDescriptors, traits.booleanDescriptors);
+  const { effort: reasoning, others } = columnControls(
+    traits.selectDescriptors,
+    traits.booleanDescriptors,
+  );
+  const effort = props.optionsOnly ? null : reasoning;
   if (traits.modelIsUnavailable) {
     return (
       <>
-        {traits.descriptors.map((descriptor) => {
-          const value = traits.currentLabel(descriptor);
-          return value ? (
-            <div key={descriptor.id}>
-              <div className={COLUMN_LABEL}>{descriptor.label}</div>
-              <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">{value}</div>
-            </div>
-          ) : null;
-        })}
+        {traits.descriptors
+          .filter(
+            (descriptor) =>
+              !props.optionsOnly ||
+              others.some((control) => control.descriptor.id === descriptor.id),
+          )
+          .map((descriptor) => {
+            const value = traits.currentLabel(descriptor);
+            return value ? (
+              <div key={descriptor.id}>
+                <div className={COLUMN_LABEL}>{descriptor.label}</div>
+                <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">{value}</div>
+              </div>
+            ) : null;
+          })}
       </>
     );
   }
@@ -346,7 +337,7 @@ function EffortRows(props: { control: ColumnControl; traits: TraitsSelection; lo
   return (
     <div role="radiogroup" aria-label={descriptor.label} className="flex flex-col gap-0.5">
       {locked ? (
-        <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
+        <div className="px-2 pb-1.5 text-muted-foreground/80 text-meta">
           {messages(ULTRATHINK_IN_BODY_NOTE)}
         </div>
       ) : null}
@@ -372,7 +363,7 @@ const OPTION_ROW = cn(COLUMN_ROW, "h-auto py-1");
 function OptionRowText(props: { label: string; value: string }) {
   return (
     <span className="flex min-w-0 flex-1 flex-col">
-      <span className="truncate text-muted-foreground text-xs">{props.label}</span>
+      <span className="truncate text-muted-foreground text-meta">{props.label}</span>
       <span className="truncate">{props.value}</span>
     </span>
   );
@@ -413,12 +404,16 @@ function OptionMenuRow(props: {
       {/* No hover opening: an opened menu takes focus, which would steal typing from search. */}
       <MenuTrigger
         render={
-          <button
+          <ComposerControl
+            size="xs"
             type="button"
             data-effort-row
             tabIndex={props.tabStop ? 0 : -1}
             aria-label={`${descriptor.label}: ${current}`}
-            className={cn(OPTION_ROW, "data-popup-open:bg-foreground/[0.09]")}
+            className={cn(
+              OPTION_ROW,
+              "justify-start whitespace-normal sm:h-auto data-popup-open:bg-foreground/[0.09]",
+            )}
             onKeyDown={(event) => {
               if (event.key !== "ArrowRight") return;
               event.preventDefault();
@@ -464,13 +459,13 @@ function OptionMenuRow(props: {
                 <span className="flex min-w-0 flex-1 flex-col">
                   <span className="truncate">{choice.label}</span>
                   {choice.description ? (
-                    <span className="line-clamp-2 text-muted-foreground text-xs">
+                    <span className="line-clamp-2 text-muted-foreground text-meta">
                       {choice.description}
                     </span>
                   ) : null}
                 </span>
                 {choice.isDefault ? (
-                  <span className="text-muted-foreground/70 text-xs">
+                  <span className="text-muted-foreground/70 text-meta">
                     {gt("Default", { $context: "marks the default option" })}
                   </span>
                 ) : null}
@@ -515,14 +510,17 @@ function OptionSwitchRow(props: {
 
 function NoEffortRow() {
   return (
-    <div className="flex h-8 items-center px-2 text-muted-foreground text-sm">
+    <div className="flex h-8 items-center px-2 text-muted-foreground text-label">
       <T>No effort levels</T>
     </div>
   );
 }
 
 /** The model picker's effort column: the selected model's levels and its other options. */
-export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | null }) {
+export function ComposerEffortColumn(props: {
+  traits: TraitsSelectionInput | null;
+  optionsOnly?: boolean;
+}) {
   const gt = useGT();
   const messages = useMessages();
   const picker = use(DockedPickerContext);
@@ -537,14 +535,16 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
     <>
       {/* Matches the search row's box, so one rule runs across the top of the popup. */}
       <div className="shrink-0 px-3 pt-2.5">
-        <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-sm">
+        <div className="flex h-8.25 -translate-y-px items-center gap-2 border-b border-border/70 pb-1.5 text-label">
           <span className="text-muted-foreground">
-            {controls?.effort?.descriptor.label ??
-              (controls?.others.length
-                ? gt("Options", { $context: "heading for model options" })
-                : gt("Effort", { $context: "heading for reasoning effort levels" }))}
+            {props.optionsOnly
+              ? gt("Options", { $context: "heading for model options" })
+              : (controls?.effort?.descriptor.label ??
+                (controls?.others.length
+                  ? gt("Options", { $context: "heading for model options" })
+                  : gt("Effort", { $context: "heading for reasoning effort levels" })))}
           </span>
-          <span className="ms-auto min-w-0 truncate text-muted-foreground text-xs">
+          <span className="ms-auto min-w-0 truncate text-muted-foreground text-meta">
             {picker.modelLabel}
           </span>
         </div>
@@ -555,24 +555,25 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
         // Capture, so Up and Down on an option row move rows instead of opening its menu.
         onKeyDownCapture={moveBetweenRows}
       >
-        {props.traits ? <EffortLevels traits={props.traits} /> : <NoEffortRow />}
+        {props.traits ? (
+          <EffortLevels traits={props.traits} optionsOnly={props.optionsOnly === true} />
+        ) : (
+          <NoEffortRow />
+        )}
       </div>
     </>
   );
 }
 
 const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
+  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-meta outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
 function SpeedSegment(props: {
   checked: boolean;
   label: string;
-  /** The untranslated speed name that picks the bolt, when `label` is translated. */
-  speed?: string;
   description?: string | undefined;
   onPick: () => void;
 }) {
-  const speed = props.speed ?? props.label;
   const buttonProps = {
     type: "button",
     role: "radio",
@@ -581,14 +582,7 @@ function SpeedSegment(props: {
     className: FOOTER_SEGMENT,
     onClick: props.onPick,
   } as const;
-  const content = (
-    <>
-      {speed === "Fast" || speed === "Ultrafast" ? (
-        <FastBolt ultra={speed === "Ultrafast"} />
-      ) : null}
-      {props.label}
-    </>
-  );
+  const content = props.label;
   if (!props.description) return <button {...buttonProps}>{content}</button>;
   return (
     <Tooltip>
@@ -627,7 +621,6 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
               <SpeedSegment
                 key={String(value)}
                 checked={(fastToggle.currentValue === true) === value}
-                speed={value ? "Fast" : "Standard"}
                 label={
                   value
                     ? gt("Fast", { $context: "response speed" })
@@ -681,12 +674,13 @@ function PermissionsMenu(props: {
     >
       <MenuTrigger
         render={
-          <button
+          <ComposerControl
+            size="xs"
             ref={triggerRef}
             type="button"
             data-composer-permissions-trigger
             aria-label={gt("Permissions: {mode}", { mode: current.label })}
-            className="ms-auto flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
+            className="ms-auto"
           />
         }
       >

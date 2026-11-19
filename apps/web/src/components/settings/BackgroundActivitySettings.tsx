@@ -130,9 +130,9 @@ function BackgroundActivityAdvancedDialog({
         <DialogPanel>
           <fieldset
             disabled={!canWriteSettings}
-            className="min-w-0 overflow-hidden rounded-xl border bg-card text-card-foreground"
+            className="min-w-0 overflow-hidden rounded-card border border-transparent surface-card-settings text-foreground"
           >
-            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-border/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">
                   <T>Shared policy</T>
@@ -176,7 +176,7 @@ function BackgroundActivityAdvancedDialog({
               </Select>
             </div>
 
-            <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-border/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">
                   {searchableSetting("git-fetch-interval").title}
@@ -251,7 +251,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-t border-border/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">
                   <T>Host power monitor</T>
@@ -287,7 +287,7 @@ function BackgroundActivityAdvancedDialog({
               </div>
             </div>
 
-            <div className="flex flex-col gap-3 border-t px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-t border-border/50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <div className="text-sm font-medium">
                   <T>Idle host monitor</T>
@@ -323,11 +323,11 @@ function BackgroundActivityAdvancedDialog({
               </div>
             </div>
 
-            <div className="grid gap-0 border-t sm:grid-cols-2">
+            <div className="grid gap-0 border-t border-border/50 sm:grid-cols-2">
               {BACKGROUND_ACTIVITY_BOOLEAN_OVERRIDES.map(({ key, label }) => (
                 <label
                   key={key}
-                  className="flex items-center justify-between gap-3 border-b px-4 py-3 last:border-b-0 sm:border-r sm:even:border-r-0"
+                  className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-b-0 sm:border-r sm:even:border-r-0"
                 >
                   <span className="text-sm font-medium">{m(label)}</span>
                   <Switch
@@ -352,7 +352,7 @@ function BackgroundActivityAdvancedDialog({
         </DialogPanel>
         <DialogFooter>
           <Button
-            variant="outline"
+            variant="secondary"
             disabled={!canWriteSettings}
             onClick={() => updateSettings(resetBackgroundActivitySettings())}
           >
@@ -466,7 +466,7 @@ export function BackgroundActivitySettingsRow() {
                 render={
                   <Button
                     size="icon-sm"
-                    variant="outline"
+                    variant="secondary"
                     aria-label={gt("Configure advanced background activity")}
                     onClick={() => setBackgroundActivityDialogOpen(true)}
                   >

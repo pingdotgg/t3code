@@ -89,20 +89,23 @@ function LicenseNoticeRow({
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <article>
-        <div className="flex min-h-10 items-center hover:bg-muted/35 sm:min-h-9">
+        <div className="flex min-h-10 items-center hover:surface-ghost-hover sm:min-h-9">
           <CollapsibleTrigger className="group flex min-h-10 min-w-0 flex-1 items-center gap-2.5 px-3 text-left sm:min-h-9 sm:px-4">
             <ChevronRightIcon
               aria-hidden
-              className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-panel-open:rotate-90"
+              className="size-3.5 shrink-0 text-dim-foreground transition-transform duration-200 group-data-panel-open:rotate-90"
             />
             <span className="flex min-w-0 flex-1 items-baseline gap-2">
               <span className="truncate font-medium text-foreground">{entry.name}</span>
               {entry.version ? (
-                <code className="shrink-0 text-xs text-muted-foreground">{entry.version}</code>
+                <span className="shrink-0 text-xs text-dim-foreground">{entry.version}</span>
               ) : null}
             </span>
-            <span className="max-w-[42%] shrink-0 truncate text-xs text-muted-foreground">
-              {entry.license} · {formatLicenseBundles(entry.bundles, messages)}
+            <span className="max-w-[42%] shrink-0 truncate rounded-row bg-badge-neutral text-xs font-medium text-muted-foreground">
+              <Tooltip>
+                <TooltipTrigger render={<span tabIndex={0} />}>{entry.license}</TooltipTrigger>
+                <TooltipPopup>{formatLicenseBundles(entry.bundles, messages)}</TooltipPopup>
+              </Tooltip>
             </span>
           </CollapsibleTrigger>
           {entry.sourceUrl ? (
@@ -121,7 +124,7 @@ function LicenseNoticeRow({
         <CollapsiblePanel>
           {open ? (
             <div className="px-9 pt-1 pb-4 sm:px-10">
-              <pre className="max-w-[76ch] whitespace-pre-wrap break-words font-mono text-xs/5 text-foreground/80">
+              <pre className="max-w-[76ch] whitespace-pre-wrap break-words font-mono text-xs/5 text-foreground">
                 {entry.noticeText}
               </pre>
             </div>
@@ -235,11 +238,11 @@ function LicenseManifestError({ message, onRetry }: { message: string; onRetry: 
         <h3 className="text-sm font-medium text-foreground">
           <T>Open-source notices are unavailable</T>
         </h3>
-        <p className="max-w-[70ch] text-pretty text-xs leading-normal text-muted-foreground/80">
+        <p className="max-w-[70ch] text-pretty text-xs leading-normal text-muted-foreground">
           {message}
         </p>
       </div>
-      <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+      <Button type="button" size="xs" variant="secondary" onClick={onRetry}>
         <T>Try again</T>
       </Button>
     </div>
@@ -282,7 +285,7 @@ export function OpenSourceLicensesPanel() {
         }
       >
         {manifest ? (
-          <div className="text-base sm:text-sm">
+          <div className="divide-y divide-divider text-base sm:text-sm">
             {filteredEntries.length > 0 ? (
               filteredEntries.map((entry) => {
                 const entryKey = thirdPartyLicenseEntryKey(entry);

@@ -1,3 +1,4 @@
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -19,7 +20,7 @@ import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useDeadlinePassed } from "../../hooks/useDeadline";
 import { useNowSecond } from "../../hooks/useNowSecond";
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
 /**
@@ -99,25 +100,20 @@ export function ConnectionDiagnosisSummary({
   readonly onToggle: () => void;
 }) {
   return (
-    <div className="text-xs">
-      <p className="text-destructive">{diagnosis.headline}</p>
-      <p className="flex flex-wrap items-center gap-1 text-muted-foreground">
-        {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : null}
-        {retryAt !== null && attempt > 0 ? <span aria-hidden>·</span> : null}
-        {attempt > 0 ? (
-          <span>
+    <div className="text-meta">
+      <p className="text-destructive-foreground">{diagnosis.headline}</p>
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+        <Tooltip>
+          <TooltipTrigger render={<span tabIndex={0} />}>
+            {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : <T>Retry paused</T>}
+          </TooltipTrigger>
+          <TooltipPopup side="top">
             <T>
-              attempt <Var>{attempt}</Var>
+              Attempt <Var>{attempt}</Var>
             </T>
-          </span>
-        ) : null}
-        {retryAt !== null || attempt > 0 ? <span aria-hidden>·</span> : null}
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={onToggle}
-          className="inline-flex items-center gap-0.5 rounded-sm outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-        >
+          </TooltipPopup>
+        </Tooltip>
+        <InlineButton tone="muted" type="button" aria-expanded={expanded} onClick={onToggle}>
           <T>Details</T>
           <ChevronRightIcon
             aria-hidden
@@ -126,7 +122,7 @@ export function ConnectionDiagnosisSummary({
               expanded && "rotate-90",
             )}
           />
-        </button>
+        </InlineButton>
       </p>
     </div>
   );
@@ -162,14 +158,14 @@ export function ConnectionDiagnosisPanel({
       ),
   });
   return (
-    <div className="mt-2 grid gap-3 border-t border-border/50 pt-2 text-xs">
+    <div className="mt-2 grid gap-3 border-t border-border/50 pt-2 text-meta">
       <ol className="grid gap-0.5">
         {diagnosis.hops.map((hop) => (
           <li
             key={hop.hop}
             className={cn(
               "flex gap-2",
-              hop.result === "failed" ? "text-destructive" : "text-muted-foreground",
+              hop.result === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
             )}
           >
             <span aria-hidden className="w-3 text-center">
@@ -181,7 +177,7 @@ export function ConnectionDiagnosisPanel({
         ))}
       </ol>
       <div>
-        <p className="font-medium text-foreground">
+        <p className="text-meta text-foreground">
           <T>What to try</T>
         </p>
         <ol className="list-decimal pl-4 text-muted-foreground">
@@ -190,14 +186,12 @@ export function ConnectionDiagnosisPanel({
           ))}
         </ol>
         {diagnosis.moreInfoUrl ? (
-          <a
-            href={diagnosis.moreInfoUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          <InlineButton
+            tone="muted"
+            render={<a href={diagnosis.moreInfoUrl} target="_blank" rel="noreferrer" />}
           >
             <T>More info</T>
-          </a>
+          </InlineButton>
         ) : null}
       </div>
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 font-mono text-muted-foreground">
@@ -209,13 +203,13 @@ export function ConnectionDiagnosisPanel({
         ))}
       </dl>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" size="xs" variant="outline" onClick={onRetry}>
+        <Button type="button" size="xs" variant="secondary" onClick={onRetry}>
           <T>Retry now</T>
         </Button>
         <Button
           type="button"
           size="xs"
-          variant="outline"
+          variant="secondary"
           onClick={() => {
             const text = connectionDiagnosisText(hostLabel, diagnosis);
             copyToClipboard(text, undefined);
@@ -224,7 +218,7 @@ export function ConnectionDiagnosisPanel({
           <T>Copy diagnostics</T>
         </Button>
         {onAddRoute ? (
-          <Button type="button" size="xs" variant="outline" onClick={onAddRoute}>
+          <Button type="button" size="xs" variant="secondary" onClick={onAddRoute}>
             <T>Add direct route</T>
           </Button>
         ) : null}

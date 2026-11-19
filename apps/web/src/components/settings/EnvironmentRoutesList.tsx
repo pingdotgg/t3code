@@ -178,41 +178,48 @@ function SortableRouteRow({
       )}
     >
       <div className="min-w-0 flex-1">
-        <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <p className="flex items-center gap-1.5 text-meta text-foreground">
           {label}
           {inUse ? (
-            <span className="rounded-sm bg-success/12 px-1 text-2xs font-normal text-success-foreground">
+            <span className="rounded-sm bg-success/12 px-1 text-caption text-success-foreground">
               <T>In use</T>
             </span>
           ) : null}
           {refused ? (
-            <span className="rounded-sm bg-destructive/8 px-1 text-2xs font-normal text-destructive-foreground">
+            <span className="rounded-sm bg-destructive/8 px-1 text-caption text-destructive-foreground">
               <T>Sign-in refused</T>
             </span>
           ) : null}
         </p>
         {address !== null ? (
-          <p className="truncate text-2xs text-muted-foreground">
-            {address}
-            {isLearned(route) ? ` · ${gt("found automatically")}` : ""}
-          </p>
+          <Tooltip>
+            <TooltipTrigger
+              render={<p tabIndex={0} className="truncate text-meta text-muted-foreground" />}
+            >
+              {address}
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {isLearned(route) ? gt("Found automatically") : address}
+            </TooltipPopup>
+          </Tooltip>
         ) : null}
         {refused && address !== null ? (
-          <p className="text-2xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             <T>The host refused this device's sign-in. Pair this address again with Add route.</T>
           </p>
         ) : null}
       </div>
-      <button
-        type="button"
+      <Button
+        size="icon-xs"
+        variant="ghost-muted"
         ref={setActivatorNodeRef}
         {...attributes}
         {...listeners}
         aria-label={gt("Reorder {route}, position {position}", { route: label, position })}
-        className="flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded text-muted-foreground/70 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring active:cursor-grabbing"
+        className="cursor-grab touch-none active:cursor-grabbing"
       >
         <GripVerticalIcon className="size-3.5" />
-      </button>
+      </Button>
       {removable ? (
         <Tooltip>
           <TooltipTrigger

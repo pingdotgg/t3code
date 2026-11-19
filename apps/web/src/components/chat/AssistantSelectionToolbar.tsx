@@ -195,7 +195,7 @@ export function AssistantSelectionToolbar({
       ref={toolbarRef}
       type="button"
       size="xs"
-      variant="glass"
+      variant="floating"
       disabled={tooLong}
       aria-label={tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")}
       className="fixed z-50 max-w-[calc(100vw-1rem)]"

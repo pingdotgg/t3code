@@ -164,7 +164,7 @@ function LinkPullRequestDialog({
         <DialogFooter>
           <Button
             type="button"
-            variant="outline"
+            variant="secondary"
             size="sm"
             onClick={() => onOpenChange(false)}
             disabled={pending}

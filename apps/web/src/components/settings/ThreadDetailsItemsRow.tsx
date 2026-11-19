@@ -38,9 +38,9 @@ export function ThreadDetailsItemsRow() {
           <MenuTrigger
             render={
               <Button
-                variant="outline"
+                variant="secondary"
                 size="sm"
-                className="w-full justify-between sm:w-40"
+                className="w-full sm:w-40"
                 aria-label={gt("Thread details: {enabled} of {total} on", {
                   enabled,
                   total: THREAD_DETAILS_ITEMS.length,
@@ -48,9 +48,11 @@ export function ThreadDetailsItemsRow() {
               />
             }
           >
-            <T>
-              <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
-            </T>
+            <span className="flex-1 text-start">
+              <T>
+                <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
+              </T>
+            </span>
             <ChevronDownIcon aria-hidden />
           </MenuTrigger>
           <MenuPopup align="end">

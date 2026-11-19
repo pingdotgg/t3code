@@ -14,8 +14,8 @@ import {
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
 import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
+import { CalendarRangeIcon, GaugeIcon, Minimize2Icon, TimerIcon } from "lucide-react";
 import type { ReactNode } from "react";
-
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
@@ -23,6 +23,7 @@ import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { formatContextWindowCompactionMessage } from "./compaction.logic";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 
@@ -31,17 +32,15 @@ const PACE_LABEL: Record<LimitPace, string> = {
   on: msg("On pace"),
   under: msg("Under pace"),
 };
-
 export interface ThreadDetailsUsageInput {
   readonly providerInstanceId: ProviderInstanceId | null;
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
 }
-
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
+/** Provider limits share the canvas's icon, label, meter, percentage and reset columns; each row opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -55,101 +54,113 @@ export function ThreadDetailsUsage({
     providerInstanceId !== null
       ? collectProviderUsageLimits(providerInstanceId, providers, sources, now)
       : null;
-  // Only this instance's data: the report keeps one instance per login, and any other entry may be
-  // a different login or workspace, so fall back to the instance's own snapshot.
   const limits =
     report?.accounts.find((entry) => entry.instanceId === providerInstanceId)?.limits ??
     providers.find((provider) => provider.instanceId === providerInstanceId)?.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits, m);
-
+  const notice = limits
+    ? limitsNotice(limits, m)
+    : gt("This provider has not reported usage limits.");
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-usage-heading"
-      title={gt("Usage limits")}
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        {notice ? (
-          <UsageRow
-            label={gt("Limits", { $context: "usage limits row label" })}
-            fill={null}
-            tone={null}
-            value={gt("Unavailable")}
-            tooltip={<span className="text-foreground">{notice}</span>}
-            opensUsage
-          />
-        ) : (
-          limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
-        )}
-      </div>
+    <ThreadDetailsSection title={gt("Usage limits")} variant="usage">
+      {notice || !limits?.windows.length ? (
+        <UsageRow
+          label={gt("Limits", { $context: "usage limits row label" })}
+          icon={<TimerIcon />}
+          fill={null}
+          tone={null}
+          value={gt("Unavailable")}
+          tooltip={notice ?? gt("No usage windows reported.")}
+          opensUsage
+        />
+      ) : (
+        limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
+      )}
     </ThreadDetailsSection>
   );
 }
 
-/** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
-export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
-  const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
+/** Context fills as tokens are used. Compact follows the composer's real provider command. */
+export function ThreadDetailsContext({
+  usage,
+  onCompact,
+  compactDisabled,
+  compactDisabledReason,
+}: {
+  readonly usage: ContextWindowSnapshot | null;
+  readonly onCompact?: (() => void) | undefined;
+  readonly compactDisabled?: boolean | undefined;
+  readonly compactDisabledReason?: string | null | undefined;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const locale = useLocale();
+  const maxTokens = usage?.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
-    maxTokens !== null && usage.usedPercentage !== null
+    maxTokens !== null && usage?.usedPercentage != null
       ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
       : null;
-  const threshold = usage.autoCompactThreshold ?? null;
+  const threshold = usage?.autoCompactThreshold ?? null;
   const tick =
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
       ? (threshold / maxTokens) * 100
       : null;
-  const gt = useGT();
-  const m = useMessages();
-  const locale = useLocale();
-  const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const usedTokens = usage ? formatContextWindowTokens(usage.usedTokens) : null;
   return (
-    <ThreadDetailsSection
-      headingId="thread-details-context-heading"
-      title={gt("Context window")}
-      showHeading={false}
-    >
-      <div className="grid grid-cols-[auto_minmax(3rem,1fr)_auto] gap-x-3 text-xs">
-        <UsageRow
-          label={gt("Context", { $context: "context window row label" })}
-          fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
-          tick={tick}
-          muted
-          value={
-            maxTokens !== null
-              ? `${usedTokens} / ${formatContextWindowTokens(maxTokens)}`
-              : usedTokens
-          }
-          ariaValue={
-            used !== null
-              ? gt("{used}% used", { used })
-              : gt("{usedTokens} tokens used", { usedTokens })
-          }
-          tooltip={
-            <>
-              <span className="text-foreground">
-                {used !== null
-                  ? gt("Context: {used}% used", { used })
-                  : gt("Context: {usedTokens} tokens used", { usedTokens })}
+    <ThreadDetailsSection title={gt("Context window")} variant="usage">
+      <UsageRow
+        label={gt("Context", { $context: "context window row label" })}
+        icon={<GaugeIcon />}
+        fill={used}
+        tick={tick}
+        tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
+        value={
+          used !== null
+            ? `${used}%`
+            : (usedTokens ?? gt("N/A", { $context: "context usage not reported" }))
+        }
+        ariaValue={
+          used !== null
+            ? gt("{used}% used", { used })
+            : usedTokens
+              ? gt("{usedTokens} tokens used", { usedTokens })
+              : gt("Not reported", { $context: "context usage" })
+        }
+        trailing={
+          onCompact && usage ? (
+            <ThreadDetailsControl
+              part="icon"
+              aria-label={gt("Compact context")}
+              disabled={compactDisabled}
+              onClick={onCompact}
+            >
+              <Minimize2Icon className="size-3.5" />
+            </ThreadDetailsControl>
+          ) : undefined
+        }
+        tooltip={
+          <>
+            <span className="text-foreground">
+              {used !== null
+                ? gt("Context: {used}% used", { used })
+                : usedTokens
+                  ? gt("Context: {usedTokens} tokens used", { usedTokens })
+                  : gt("The provider has not reported context usage.")}
+            </span>
+            {usage && maxTokens !== null ? (
+              <span>
+                {gt("{used} of {max} tokens", {
+                  used: usage.usedTokens.toLocaleString(locale),
+                  max: maxTokens.toLocaleString(locale),
+                })}
               </span>
-              {maxTokens !== null ? (
-                <span className="text-muted-foreground">
-                  {gt("{used} of {max} tokens", {
-                    used: usage.usedTokens.toLocaleString(locale),
-                    max: maxTokens.toLocaleString(locale),
-                  })}
-                </span>
-              ) : null}
-              {threshold !== null && threshold > 0 ? (
-                <span className="text-muted-foreground">
-                  {formatContextWindowCompactionMessage(threshold, m)}
-                </span>
-              ) : null}
-            </>
-          }
-        />
-      </div>
+            ) : null}
+            {threshold !== null && threshold > 0 ? (
+              <span>{formatContextWindowCompactionMessage(threshold, m)}</span>
+            ) : null}
+            {compactDisabled && compactDisabledReason ? <span>{compactDisabledReason}</span> : null}
+          </>
+        }
+      />
     </ThreadDetailsSection>
   );
 }
@@ -168,31 +179,48 @@ function LimitRow({
   const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
+  const remainingMs = resetsAt - now;
+  const weekly = (window.windowDurationMins ?? 0) >= 24 * 60 || /week/i.test(window.label);
+  const reset =
+    remainingMs > 0
+      ? weekly
+        ? new Intl.DateTimeFormat(undefined, { weekday: "short" }).format(resetsAt)
+        : formatDuration(remainingMs, m)
+      : null;
   return (
     <UsageRow
       label={window.label}
+      icon={weekly ? <CalendarRangeIcon /> : <TimerIcon />}
       fill={left}
-      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       tick={timeLeft}
+      tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
       opensUsage
+      trailing={
+        reset ? (
+          <span className="truncate text-caption text-dim-foreground">{reset}</span>
+        ) : undefined
+      }
       tooltip={
         <>
           <span className="text-foreground">
             {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
           {pace && timeLeft !== null ? (
-            <span className="text-muted-foreground">
-              {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
+            <span>
+              <span className="block">{m(PACE_LABEL[pace])}</span>
+              <span className="block">{gt("{timeLeft}% of the window left", { timeLeft })}</span>
             </span>
           ) : null}
-          {window.resetsAt && resetsAt > now ? (
-            <span className="text-muted-foreground">
-              {gt("Resets in {duration} · {time}", {
-                duration: formatDuration(resetsAt - now, m),
-                time: formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m),
-              })}
+          {window.resetsAt && remainingMs > 0 ? (
+            <span>
+              <span className="block">
+                {gt("Resets in {duration}", { duration: formatDuration(remainingMs, m) })}
+              </span>
+              <span className="block">
+                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+              </span>
             </span>
           ) : null}
         </>
@@ -201,98 +229,91 @@ function LimitRow({
   );
 }
 
-/** One label, hairline, and value row; the whole row opens the details tooltip. With `opensUsage` it links to the usage page. */
+/** With `opensUsage` the row links to the usage page. */
 function UsageRow({
   label,
+  icon,
   fill,
   tone,
   tick = null,
   value,
   ariaValue = value,
   tooltip,
-  muted = false,
+  trailing,
   opensUsage = false,
 }: {
   readonly label: string;
-  /** Bar fill from 0 to 100. Null hides the bar. */
+  readonly icon: ReactNode;
   readonly fill: number | null;
   readonly tone: UsageTone;
-  /** A marker on the bar, from 0 to 100. */
   readonly tick?: number | null;
   readonly value: string;
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
-  readonly muted?: boolean;
+  readonly trailing?: ReactNode;
   readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
   const rowProps = {
     "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
     className: cn(
-      "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-black/[0.035] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-black/[0.035] dark:hover:bg-white/[0.08] dark:data-popup-open:bg-white/[0.08]",
-      opensUsage
-        ? "group cursor-pointer active:bg-black/[0.06] dark:active:bg-white/[0.12]"
-        : "cursor-default",
+      "flex min-w-0 flex-1 items-center gap-2 rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+      opensUsage ? "cursor-pointer" : "cursor-default",
     ),
   };
   return (
     <Tooltip>
-      <TooltipTrigger
-        render={
-          opensUsage ? <Link to="/usage" {...rowProps} /> : <div tabIndex={0} {...rowProps} />
-        }
-      >
-        <span className="max-w-28 truncate text-muted-foreground group-hover:text-foreground">
-          {label}
-        </span>
-        {fill !== null ? (
-          <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
-            {fill > 0 ? (
-              <span
-                className={cn(
-                  "absolute inset-y-0 left-0 rounded-full",
-                  tone === "error"
-                    ? "bg-error"
-                    : tone === "warning"
-                      ? "bg-warning"
-                      : muted
-                        ? "bg-muted-foreground"
-                        : "bg-foreground/80",
-                )}
-                style={{ width: `max(${fill}%, 6px)` }}
-              />
-            ) : null}
-            {tick !== null ? (
-              <span
-                aria-hidden
-                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/75"
-                style={{ left: `clamp(0.5px, ${tick}%, calc(100% - 0.5px))` }}
-              />
-            ) : null}
-          </span>
-        ) : null}
-        <span
-          className={cn(
-            // Text-only rows span the bar column so they never widen the shared value column.
-            "text-end font-medium tabular-nums",
-            fill === null && "col-span-2",
-            tone === "error"
-              ? "text-error-foreground"
-              : tone === "warning"
-                ? "text-warning-foreground"
-                : fill === null
-                  ? "text-muted-foreground"
-                  : "text-foreground/80",
-          )}
+      <div className="flex h-8 items-center gap-2 ps-3 pe-2 text-meta">
+        <TooltipTrigger
+          render={
+            opensUsage ? <Link to="/usage" {...rowProps} /> : <div tabIndex={0} {...rowProps} />
+          }
         >
-          {value}
-        </span>
-      </TooltipTrigger>
-      {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
+          <span className="shrink-0 text-muted-foreground [&>svg]:size-4">{icon}</span>
+          <span className="w-14.5 shrink-0 truncate">{label}</span>
+          {fill !== null ? (
+            <span className="relative h-1 min-w-0 flex-1 rounded-full bg-muted-foreground/20">
+              {fill > 0 ? (
+                <span
+                  className={cn(
+                    "absolute inset-y-0 left-0 rounded-full",
+                    tone === "error"
+                      ? "bg-error"
+                      : tone === "warning"
+                        ? "bg-warning"
+                        : "bg-foreground/80",
+                  )}
+                  style={{ width: `max(${fill}%, 2px)` }}
+                />
+              ) : null}
+              {tick !== null ? (
+                <span
+                  aria-hidden
+                  className="absolute -top-[3px] h-2.5 w-0.5 rounded-sm bg-muted-foreground"
+                  style={{ left: `${tick}%` }}
+                />
+              ) : null}
+            </span>
+          ) : (
+            <span className="flex-1" />
+          )}
+          <span
+            className={cn(
+              "w-7.5 shrink-0 text-end tabular-nums text-muted-foreground",
+              fill === null && "w-auto",
+              tone === "error" && "text-error-foreground",
+              tone === "warning" && "text-warning-foreground",
+            )}
+          >
+            {value}
+          </span>
+        </TooltipTrigger>
+        <span className="flex w-11 shrink-0 justify-end">{trailing}</span>
+      </div>
       <TooltipPopup side="left" sideOffset={16}>
-        <div className="flex flex-col gap-0.5">
+        <div className="flex flex-col gap-0.5 text-muted-foreground">
           {tooltip}
-          {opensUsage ? <span className="text-muted-foreground">{gt("Open usage")}</span> : null}
+          {opensUsage ? <span>{gt("Open usage")}</span> : null}
         </div>
       </TooltipPopup>
     </Tooltip>

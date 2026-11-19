@@ -31,12 +31,23 @@ function DynamicProjectIconFallback() {
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
->;
-export function ProjectFavicon(input: {
+> & {
+  readonly memberProjects?: ReadonlyArray<ProjectFaviconProject>;
+};
+type ProjectFaviconProps = {
   project: ProjectFaviconProject;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
-}) {
+};
+export function ProjectFavicon(input: ProjectFaviconProps) {
+  const members = input.project.memberProjects;
+  if (members && members.length > 1) {
+    return <ProjectGroupFavicon {...input} members={members} index={0} />;
+  }
+  return <CheckoutFavicon {...input} />;
+}
+
+function CheckoutFavicon(input: ProjectFaviconProps) {
   const { project } = input;
   if (project.projectIcon?.kind === "monogram") {
     return (
@@ -77,7 +88,39 @@ export function ProjectFavicon(input: {
   return <AutomaticProjectFavicon {...input} />;
 }
 
-function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
+type ProjectGroupFaviconProps = ProjectFaviconProps & {
+  members: ReadonlyArray<ProjectFaviconProject>;
+  index: number;
+};
+
+function ProjectGroupFavicon(input: ProjectGroupFaviconProps) {
+  const { members, index, ...props } = input;
+  const member = members[index];
+  if (!member) return <CheckoutFavicon {...props} />;
+  if (member.projectIcon || member.faviconPath) {
+    return <CheckoutFavicon {...props} project={member} />;
+  }
+  return <ProjectGroupAutomaticFavicon {...input} member={member} />;
+}
+
+function ProjectGroupAutomaticFavicon(
+  input: ProjectGroupFaviconProps & { member: ProjectFaviconProject },
+) {
+  const { members, index, member, ...props } = input;
+  const src = useAtomValue(
+    projectFaviconUrlAtom({
+      environmentId: member.environmentId,
+      cwd: member.workspaceRoot,
+      faviconPath: member.faviconPath,
+    }),
+  );
+  if (src && !isProjectFaviconFallbackUrl(src)) {
+    return <AutomaticProjectFavicon {...props} project={member} />;
+  }
+  return <ProjectGroupFavicon {...props} members={members} index={index + 1} />;
+}
+
+function AutomaticProjectFavicon(input: ProjectFaviconProps) {
   const { project } = input;
   const src = useAtomValue(
     projectFaviconUrlAtom({
@@ -182,7 +225,10 @@ function ProjectFaviconImage({
         <img
           src={displayedSrc}
           alt=""
-          className={cn("size-3.5 shrink-0 rounded-[25%] object-contain", className)}
+          className={cn(
+            "size-3.5 shrink-0 rounded-[25%] object-contain outline -outline-offset-1 outline-(--project-icon-rim)",
+            className,
+          )}
           onError={() => handleLoadError(displayedSrc)}
         />
       ) : null}

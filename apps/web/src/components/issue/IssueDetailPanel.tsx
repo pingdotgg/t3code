@@ -50,6 +50,12 @@ import { Button, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { cn } from "~/lib/utils";
+import { PULL_REQUEST_ROW_CLASS } from "../pullRequest/PullRequestListRow";
+import {
+  PAGE_ROW_CLASS,
+  PAGE_ROW_HOVER_CLASS,
+  PAGE_ROW_PRESS_CLASS,
+} from "../pullRequest/PullRequestRow";
 import { PullRequestMetaRow, PullRequestSection } from "../pullRequest/PullRequestSummaryTab";
 import { toastManager } from "../ui/toast";
 import { PullRequestCandidatePicker } from "../pullRequest/PullRequestCandidatePicker";
@@ -63,7 +69,6 @@ import { pullRequestLabelColor } from "../pullRequest/pullRequestList.logic";
 import {
   PullRequestActorLabel,
   PullRequestLabelChip,
-  PullRequestMetaLine,
   PullRequestStateGlyph,
 } from "../pullRequest/pullRequestPresentation";
 import { IssueCommentComposer } from "./IssueCommentComposer";
@@ -205,10 +210,12 @@ function IssueLabelPicker({
               className="size-2 shrink-0 rounded-full bg-muted-foreground"
               {...(dot ? { style: { backgroundColor: dot } } : {})}
             />
-            <span className="min-w-0 flex-1 truncate">
-              {candidate.name}
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{candidate.name}</span>
               {candidate.description ? (
-                <span className="text-muted-foreground"> · {candidate.description}</span>
+                <span className="block truncate text-muted-foreground">
+                  {candidate.description}
+                </span>
               ) : null}
             </span>
             {isSelected(draft, candidate.name, applied.has(candidate.name)) ? (
@@ -349,8 +356,8 @@ function LinkedPullRequestRow({
   const body = (
     <>
       <PullRequestStateGlyph state={link.state} isDraft={link.isDraft} />
-      <span className="min-w-0 flex-1 truncate text-sm">{link.title}</span>
-      <PullRequestMetaLine className="shrink-0 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 truncate text-body">{link.title}</span>
+      <span className="flex min-w-0 items-center gap-x-2.5 shrink-0 text-meta text-muted-foreground">
         {link.closesIssue ? (
           <span>
             <T>Closes this issue</T>
@@ -360,11 +367,15 @@ function LinkedPullRequestRow({
           {link.repository.toLowerCase() === scope.toLowerCase() ? "" : link.repository}#
           {link.number}
         </span>
-      </PullRequestMetaLine>
+      </span>
     </>
   );
-  const className =
-    "flex w-full cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-accent";
+  const className = cn(
+    PULL_REQUEST_ROW_CLASS,
+    PAGE_ROW_CLASS,
+    PAGE_ROW_HOVER_CLASS,
+    PAGE_ROW_PRESS_CLASS,
+  );
   return onSelect ? (
     <button type="button" className={className} onClick={onSelect}>
       {body}
@@ -505,7 +516,7 @@ export function IssueDetailPanel({
           render={
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               aria-label={gt("Issue state, {state}", { state: currentState.label })}
               disabled={changingState}
             />
@@ -531,7 +542,7 @@ export function IssueDetailPanel({
         </MenuPopup>
       </Menu>
     ) : (
-      <span className="flex shrink-0 items-center gap-1 font-medium">
+      <span className="flex shrink-0 items-center gap-1 text-meta">
         {currentStateIcon}
         {currentState.label}
       </span>
@@ -548,12 +559,10 @@ export function IssueDetailPanel({
         data-pull-request-summary-scroll
       >
         <div className="px-4 pb-1">
-          <PullRequestDetailTitleRow className="h-7 gap-1 text-sm sm:text-xs">
-            <span className="min-w-0 truncate font-medium text-muted-foreground">
-              {detail.scope}
-            </span>
+          <PullRequestDetailTitleRow className="h-7 gap-1 text-body sm:text-meta">
+            <span className="min-w-0 truncate text-muted-foreground">{detail.scope}</span>
             <InlineButton
-              className={cn("shrink-0 font-medium", currentState.toneClassName)}
+              className={cn("shrink-0", currentState.toneClassName)}
               aria-label={gt("Open {issue} on {provider}", {
                 issue: detail.displayKey,
                 provider: tracker.providerName,
@@ -618,7 +627,7 @@ export function IssueDetailPanel({
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={saving}
                 onClick={() => setEditing(null)}
               >
@@ -627,7 +636,7 @@ export function IssueDetailPanel({
             </form>
           ) : (
             <PullRequestDetailTitleRow className="group mt-1 gap-1">
-              <h2 className="min-w-0 flex-1 text-base font-semibold leading-snug">
+              <h2 className="min-w-0 flex-1 text-title leading-(--pr-title-leading) [--pr-title-leading:1.3] [--type-title:1rem]">
                 {detail.title}
               </h2>
               {canEdit ? (
@@ -642,7 +651,7 @@ export function IssueDetailPanel({
             </PullRequestDetailTitleRow>
           )}
 
-          <PullRequestMetaLine className="mt-2 min-h-5 text-xs text-muted-foreground">
+          <span className="flex min-w-0 items-center gap-x-2.5 mt-2 min-h-5 text-meta text-muted-foreground">
             <PullRequestActorLabel actor={detail.author} />
             <span>
               <T>
@@ -661,7 +670,7 @@ export function IssueDetailPanel({
                 <T>Read-only</T>
               </span>
             )}
-          </PullRequestMetaLine>
+          </span>
 
           <div className="mt-4 space-y-2">
             <PullRequestMetaRow icon={<TagIcon className="size-3.5" />} label={gt("Labels")}>
@@ -805,7 +814,7 @@ export function IssueDetailPanel({
             {nextCursor !== null ? (
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 className="self-start"
                 disabled={!canLoadOlder}
                 onClick={() => void loadOlder()}
@@ -814,7 +823,7 @@ export function IssueDetailPanel({
               </Button>
             ) : null}
             {timeline.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-body text-muted-foreground">
                 <T>Nothing has happened here yet.</T>
               </p>
             ) : null}
@@ -824,7 +833,7 @@ export function IssueDetailPanel({
                   key={`c:${item.comment.id}`}
                   className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
                 >
-                  <PullRequestMetaLine className="text-xs text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-x-2.5 text-meta text-muted-foreground">
                     <PullRequestActorLabel actor={item.comment.author} />
                     {item.comment.url ? (
                       <InlineButton
@@ -840,7 +849,7 @@ export function IssueDetailPanel({
                         {formatRelativeTimeLabel(item.comment.createdAt, undefined, messages)}
                       </span>
                     )}
-                  </PullRequestMetaLine>
+                  </span>
                   <PullRequestCommentBody
                     text={item.comment.body}
                     cwd={cwd}
@@ -858,14 +867,14 @@ export function IssueDetailPanel({
                   ) : null}
                 </article>
               ) : (
-                <PullRequestMetaLine
+                <span
                   key={`e:${item.event.id}`}
-                  className="px-1 text-xs text-muted-foreground"
+                  className="flex min-w-0 items-center gap-x-2.5 px-1 text-meta text-muted-foreground"
                 >
                   <PullRequestActorLabel actor={item.event.actor} />
                   <span>{issueEventSentence(item.event, messages)}</span>
                   <span>{formatRelativeTimeLabel(item.event.createdAt, undefined, messages)}</span>
-                </PullRequestMetaLine>
+                </span>
               ),
             )}
           </div>

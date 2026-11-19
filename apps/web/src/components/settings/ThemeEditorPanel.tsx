@@ -925,7 +925,7 @@ export function ThemeEditorPanel({
 
   const renderNameField = () => (
     <label className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">
+      <span className="text-sm font-medium text-strong-foreground">
         <T>Theme name</T>
       </span>
       <Input
@@ -960,7 +960,7 @@ export function ThemeEditorPanel({
 
   const renderAppearanceButtons = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-center gap-3">
-      <span className="text-sm font-medium">
+      <span className="text-sm font-medium text-strong-foreground">
         <T>Appearance</T>
       </span>
       <ToggleGroup
@@ -986,7 +986,7 @@ export function ThemeEditorPanel({
   const renderColorsHeader = () => (
     <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] items-start gap-3">
       <div>
-        <h3 className="text-sm font-medium">
+        <h3 className="text-sm font-medium text-strong-foreground">
           <T>Colors</T>
         </h3>
         {isAdvanced ? null : (
@@ -1006,7 +1006,7 @@ export function ThemeEditorPanel({
             value={roleQuery}
           />
         ) : null}
-        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium">
+        <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-2 pt-0.5 text-sm font-medium text-strong-foreground">
           <span>
             <T>Advanced</T>
           </span>
@@ -1059,7 +1059,7 @@ export function ThemeEditorPanel({
       <div className="space-y-5">
         {groups.map((group) => (
           <section className="space-y-2" key={group.id}>
-            <h4 className="text-sm font-medium text-foreground">{messages(group.title)}</h4>
+            <h4 className="text-sm font-medium text-strong-foreground">{messages(group.title)}</h4>
             {renderRoleFields(group.families, "grid gap-1")}
           </section>
         ))}
@@ -1172,7 +1172,7 @@ export function ThemeEditorPanel({
     <div
       aria-label={isEditing ? gt("Edit theme") : gt("Create theme")}
       className={cn(
-        "dialog-glass fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-xl border text-popover-foreground",
+        "surface-dialog fixed z-[110] flex max-h-[min(42rem,calc(100dvh-6rem))] w-[min(26rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-card border text-popover-foreground",
         position === null && "bottom-4 right-4",
         isMinimized && "max-h-none",
       )}
@@ -1195,28 +1195,43 @@ export function ThemeEditorPanel({
       }}
     >
       <div
-        className="flex cursor-grab touch-none select-none items-center gap-1 border-b border-border/70 px-3 py-2 active:cursor-grabbing"
+        className="flex cursor-grab touch-none select-none items-center gap-1 border-b border-border/50 px-3 py-2 active:cursor-grabbing"
         onPointerCancel={endDrag}
         onPointerDown={handleDragPointerDown}
         onPointerMove={handleDragPointerMove}
         onPointerUp={endDrag}
       >
         <div className="flex min-w-0 flex-1 items-baseline gap-2">
-          <h2 className="shrink-0 truncate text-sm font-medium">
+          <h2 className="shrink-0 truncate text-sm font-medium text-strong-foreground">
             {isEditing ? gt("Edit theme") : gt("Create theme")}
           </h2>
           {isMinimized ? null : (
             <p className="truncate text-xs text-muted-foreground">
-              {isInspecting
-                ? gt("Select an element · Esc to cancel")
-                : selectedRole
-                  ? gt("{label} · {count, plural, one {{count} use} other {{count} uses}}", {
-                      label: isAdvanced
-                        ? themeEditorRoleLabel(selectedRole, messages)
-                        : getThemeRoleLabel(selectedRole, messages),
+              {isInspecting ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    {gt("Select an element")}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    <T>Esc to cancel</T>
+                  </TooltipPopup>
+                </Tooltip>
+              ) : selectedRole ? (
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    {isAdvanced
+                      ? themeEditorRoleLabel(selectedRole, messages)
+                      : getThemeRoleLabel(selectedRole, messages)}
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {gt("{count, plural, one {{count} use} other {{count} uses}}", {
                       count: usageCount ?? 0,
-                    })
-                  : gt("Select a color below")}
+                    })}
+                  </TooltipPopup>
+                </Tooltip>
+              ) : (
+                gt("Select a color below")
+              )}
             </p>
           )}
         </div>
@@ -1291,7 +1306,7 @@ export function ThemeEditorPanel({
               </Button>
               {cssOpen ? (
                 <>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-meta text-muted-foreground">
                     <T>
                       Saved with this theme and included when you export it. Web and desktop only.
                       Rules that load remote files are ignored.
@@ -1302,7 +1317,7 @@ export function ThemeEditorPanel({
               ) : null}
             </div>
           </div>
-          <div className="flex items-center justify-end gap-2 border-t border-border/70 px-3 py-2">
+          <div className="flex items-center justify-end gap-2 border-t border-border/50 px-3 py-2">
             <Button size="sm" variant="ghost" onClick={() => onOpenChange(false)}>
               <T>Cancel</T>
             </Button>
@@ -1328,7 +1343,7 @@ export function ThemeEditorPanel({
           </div>
           <div
             aria-hidden
-            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-muted-foreground/70"
+            className="absolute bottom-0 right-0 z-10 flex size-5 cursor-se-resize touch-none select-none items-end justify-end p-1 text-dim-foreground"
             onPointerCancel={endResize}
             onPointerDown={handleResizePointerDown}
             onPointerMove={handleResizePointerMove}

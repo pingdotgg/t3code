@@ -14,7 +14,7 @@ import { InstallT3Commands } from "./InstallT3Commands";
 import { retryClerkLoad, useClerkLoadFailed } from "./clerk/clerkLoadFailure";
 import { useT3ConnectAuthPrompt } from "./clerk/useT3ConnectAuthPrompt";
 import { CloudEnvironmentConnectRows } from "./cloud/CloudEnvironmentConnectList";
-import { Button } from "./ui/button";
+import { Button, InlineButton } from "./ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from "./ui/empty";
 import { SidebarInset } from "./ui/sidebar";
 import { WorkspacePageHeader } from "./WorkspacePageHeader";
@@ -29,7 +29,7 @@ export function HostedEmptyState() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <WorkspacePageHeader electron={isElectron} className="border-b border-border">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
+            <span className="text-label text-foreground md:text-muted-foreground/60">
               {APP_DISPLAY_NAME}
             </span>
           </div>
@@ -116,7 +116,7 @@ function T3ConnectSteps() {
                   }),
               }}
               empty={
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   <T>Waiting for your computer…</T>
                 </p>
               }
@@ -165,14 +165,14 @@ function RunOnComputer({ command }: { readonly command: string }) {
         <T>Run on your computer:</T>
       </p>
       <InstallT3Commands command={command} className="mt-2" />
-      <a
-        className="mt-2 inline-block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-        href={DESKTOP_DOWNLOAD_URL}
-        target="_blank"
-        rel="noreferrer noopener"
-      >
-        <T>Or download the desktop app</T>
-      </a>
+      <div className="mt-2 text-meta">
+        <InlineButton
+          tone="muted"
+          render={<a href={DESKTOP_DOWNLOAD_URL} target="_blank" rel="noreferrer noopener" />}
+        >
+          <T>Or download the desktop app</T>
+        </InlineButton>
+      </div>
     </>
   );
 }

@@ -200,8 +200,12 @@ function SegmentPopover({
         <Row label={gt("Left", { $context: "remaining usage" })}>{remaining}%</Row>
         {window.resetsAt ? (
           <Row label={gt("Resets", { $context: "when the usage window resets" })}>
-            {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
-            {resetsIn ? ` · ${resetsIn}` : ""}
+            <span className="flex flex-col items-end">
+              {resetsIn ? <span>{resetsIn}</span> : null}
+              <span>
+                {formatUpcomingTimestamp(window.resetsAt, timestampFormat, now, undefined, m)}
+              </span>
+            </span>
           </Row>
         ) : null}
         {timeLeft !== null ? (
@@ -221,7 +225,7 @@ function SegmentPopover({
               {choice.availableCount > 0 ? (
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant="secondary"
                   disabled={redeem.busy || !redeem.canManageProviders}
                   className="ms-auto"
                   onClick={() => onRedeem(choice)}
@@ -458,11 +462,6 @@ function SegmentTriggers({
               {refillIn ?? ""}
               {credits ? (
                 <>
-                  {resetsIn ? (
-                    <span aria-hidden className="text-muted-foreground">
-                      ·
-                    </span>
-                  ) : null}
                   <span aria-hidden className="inline-flex items-center gap-0.5 font-semibold">
                     <TicketIcon className="size-3" aria-hidden />
                     {credits}
@@ -519,7 +518,6 @@ function LegendRow({
         {resetsIn ?? ""}
         {credits ? (
           <>
-            {resetsIn ? <span aria-hidden>·</span> : null}
             <span
               aria-hidden
               className="inline-flex items-center gap-0.5 font-semibold text-foreground"
@@ -725,11 +723,11 @@ export function UsageLimitsPooled({
                 {link.accounts.join(", ")}
               </p>
               {link.url === CHATGPT_USAGE_URL ? (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   <T>View usage in ChatGPT with your connected account.</T>
                 </p>
               ) : link.message ? (
-                <p className="max-w-xl text-xs text-muted-foreground">{link.message}</p>
+                <p className="max-w-xl text-meta text-muted-foreground">{link.message}</p>
               ) : null}
             </div>
           </div>

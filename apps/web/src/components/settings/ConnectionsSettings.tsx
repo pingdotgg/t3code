@@ -989,7 +989,7 @@ function ConnectionsSettingsContent({
             control={
               <Button
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 onClick={loadWslState}
                 disabled={isLoadingWslState}
               >
@@ -1019,7 +1019,7 @@ function ConnectionsSettingsContent({
           control={
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={isUpdatingWslBackend}
               onClick={() => handleSelectWslMode(BACKEND_VALUE_WSL_OFF)}
             >
@@ -1312,12 +1312,14 @@ function ConnectionsSettingsContent({
                   primaryServerUpdateState.status !== "idle" ? (
                     <ServerUpdateProgress state={primaryServerUpdateState} />
                   ) : (
-                    [
-                      primaryServerConfig?.environment.serverVersion ?? null,
-                      primaryEnvironment?.displayUrl ?? null,
-                    ]
-                      .filter((value): value is string => value !== null)
-                      .join(" · ") || gt("Loading…")
+                    <Tooltip>
+                      <TooltipTrigger render={<span tabIndex={0} />}>
+                        {primaryServerConfig?.environment.serverVersion ?? gt("Loading…")}
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {primaryEnvironment?.displayUrl ?? gt("Loading…")}
+                      </TooltipPopup>
+                    </Tooltip>
                   )
                 }
                 control={
@@ -1379,11 +1381,13 @@ function ConnectionsSettingsContent({
             ) : null}
             {accessEnvironment ? (
               <details className="group px-3 sm:px-4">
-                <summary className="flex min-h-11 cursor-pointer list-none items-center gap-2 rounded-md text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                  <T>Permissions</T>
+                <summary className="flex min-h-11 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden">
+                  <span className="text-label">
+                    <T>Permissions</T>
+                  </span>
                   <ChevronRightIcon
                     aria-hidden
-                    className="size-3 text-muted-foreground group-open:rotate-90"
+                    className="ms-2 size-3 text-muted-foreground group-open:rotate-90"
                   />
                 </summary>
                 <SessionPermissions
@@ -1403,11 +1407,11 @@ function ConnectionsSettingsContent({
                   ? renderPairingClientsList([newestPairingLink], [])
                   : undefined
               }
-              summary={summarizeAuthorizedClients(
-                desktopClientSessions,
-                visibleDesktopPairingLinks,
-                m,
-              )}
+              summary={
+                <span className="whitespace-pre-line">
+                  {summarizeAuthorizedClients(desktopClientSessions, visibleDesktopPairingLinks, m)}
+                </span>
+              }
               control={
                 canWriteAccess ? (
                   <AuthorizedClientsHeaderAction
@@ -1488,7 +1492,7 @@ function ConnectionsSettingsContent({
               <AlertDialogFooter>
                 <AlertDialogClose
                   disabled={isUpdatingDesktopServerExposure}
-                  render={<Button variant="outline" disabled={isUpdatingDesktopServerExposure} />}
+                  render={<Button variant="secondary" disabled={isUpdatingDesktopServerExposure} />}
                 >
                   <span className="[text-box:trim-both_cap_alphabetic]">
                     <T>Cancel</T>
@@ -1566,14 +1570,14 @@ function ConnectionsSettingsContent({
               <AlertDialogFooter>
                 <AlertDialogClose
                   disabled={isUpdatingWslBackend}
-                  render={<Button variant="outline" disabled={isUpdatingWslBackend} />}
+                  render={<Button variant="secondary" disabled={isUpdatingWslBackend} />}
                 >
                   <T>Cancel</T>
                 </AlertDialogClose>
                 {pendingWslChange?.kind === "enable" ? (
                   <>
                     <Button
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => handleConfirmEnableWsl("wsl-only")}
                       disabled={isUpdatingWslBackend || !canManageLocalBackend}
                     >
@@ -1654,7 +1658,7 @@ function ConnectionsSettingsContent({
               <AlertDialogFooter>
                 <AlertDialogClose
                   disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
+                  render={<Button variant="secondary" disabled={isUpdatingTailscaleServe} />}
                 >
                   <T>Cancel</T>
                 </AlertDialogClose>
@@ -1696,7 +1700,7 @@ function ConnectionsSettingsContent({
               </DialogHeader>
               <DialogPanel>
                 <label className="block">
-                  <span className="text-sm font-medium text-foreground">
+                  <span className="text-sm font-medium text-strong-foreground">
                     <T>HTTPS port</T>
                   </span>
                   <Input
@@ -1716,14 +1720,14 @@ function ConnectionsSettingsContent({
                     <T>Enter a port from 1 to 65535.</T>
                   </p>
                 ) : null}
-                <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2">
-                  <p className="text-xs font-medium text-muted-foreground">
+                <div className="rounded-control surface-well px-3 py-2">
+                  <p className="text-meta text-muted-foreground">
                     <T>HTTPS endpoint</T>
                   </p>
                   <Tooltip>
                     <TooltipTrigger
                       render={
-                        <p className="mt-1 truncate text-sm text-foreground">
+                        <p className="mt-1 truncate text-body text-foreground">
                           {pendingTailscaleServeBaseUrl ?? gt("Pending MagicDNS endpoint")}
                         </p>
                       }
@@ -1737,7 +1741,7 @@ function ConnectionsSettingsContent({
               <DialogFooter>
                 <DialogClose
                   disabled={isUpdatingTailscaleServe}
-                  render={<Button variant="outline" disabled={isUpdatingTailscaleServe} />}
+                  render={<Button variant="secondary" disabled={isUpdatingTailscaleServe} />}
                 >
                   <T>Cancel</T>
                 </DialogClose>

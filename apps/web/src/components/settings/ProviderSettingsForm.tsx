@@ -413,7 +413,7 @@ function ProviderCommandArguments({
         <Button
           type="button"
           size="sm"
-          variant="outline"
+          variant="secondary"
           onClick={() => updateArguments([...rows, makeCommandArgumentDraftRow("")])}
         >
           <PlusIcon />
@@ -425,7 +425,7 @@ function ProviderCommandArguments({
         <div className="mt-3 min-w-0 space-y-2 pb-2">
           {rows.map((argument, index) =>
             managedReason !== undefined ? (
-              <code key={argument.id} className="block min-w-0 truncate text-xs">
+              <code key={argument.id} className="block min-w-0 truncate text-meta">
                 {argument.value}
               </code>
             ) : (
@@ -654,7 +654,7 @@ function ProviderSettingsTextInput({
         spellCheck={false}
       />
       {rejected !== null ? (
-        <p className="text-2xs text-destructive">
+        <p className="text-caption text-destructive">
           <T>Enter a valid value. It was not saved.</T>
         </p>
       ) : null}

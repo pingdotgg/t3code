@@ -221,7 +221,7 @@ export function buildThreadActionMenuItems(
             id: "filter-by-project" as const,
             label: state.projectFilter.isActive
               ? resolve(msg("Show all projects"))
-              : resolve(msg("Filter by {project}", { project: state.projectFilter.label })),
+              : resolve(msg("Show only this project")),
             icon: "folder-tree",
           },
         ]

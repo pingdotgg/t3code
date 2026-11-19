@@ -320,7 +320,7 @@ export function SecretSourceInput({
           ) : null}
         </div>
         {rejectedReference !== null ? (
-          <p className="text-2xs text-destructive">
+          <p className="text-caption text-destructive-foreground">
             {definition
               ? invalidSecretReferenceText(definition.invalidReferenceMessage, messages)
               : gt("Enter a valid secret reference.")}

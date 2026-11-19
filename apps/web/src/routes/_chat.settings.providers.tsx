@@ -11,7 +11,7 @@ function SettingsProvidersRoute() {
   const gt = useGT();
   if (!environment) {
     return (
-      <p className="p-8 text-sm text-muted-foreground">
+      <p className="p-8 text-body text-muted-foreground">
         {scope.kind === "environment"
           ? gt("Reconnect {label} to set up its providers.", { label: scope.label })
           : gt("Connect an environment to set up its providers.")}

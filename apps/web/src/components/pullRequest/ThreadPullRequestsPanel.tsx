@@ -145,7 +145,8 @@ function LinkRowImpl({
     actionEntry !== null && pullRequestQuickActions(actionEntry, linkHostActions).length > 0;
   return (
     <div
-      className={cn(PULL_REQUEST_ROW_CLASS, "relative hover:bg-accent/60")}
+      // Content on the panel's 16px lines: the 6px list inset plus 10px of row padding a side.
+      className={cn(PULL_REQUEST_ROW_CLASS, "relative pr-2.5 hover:surface-ghost-hover")}
       onPointerEnter={() => onIntent(link)}
       onPointerLeave={(event) => {
         if (!event.currentTarget.contains(document.activeElement)) onIntent(null);
@@ -160,9 +161,9 @@ function LinkRowImpl({
         setMenuPosition({ x: event.clientX, y: event.clientY });
         setMenuOpen(true);
       }}
-      style={{ paddingLeft: `${0.5 + Math.min(depth, 3) * 1.25}rem` }}
+      style={{ paddingLeft: `${0.625 + Math.min(depth, 3) * 1.25}rem` }}
     >
-      {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border/70" /> : null}
+      {depth > 0 ? <span aria-hidden className="-ml-2 h-6 w-px shrink-0 bg-border" /> : null}
       {snapshot === null ? (
         <PullRequestGlyph.pullRequest
           aria-label={gt("Waiting for host state")}
@@ -206,7 +207,12 @@ function LinkRowImpl({
                 #{link.number}
               </TooltipTrigger>
               <TooltipPopup>
-                {resolve(SOURCE_LABELS[link.source])} · <RelativeTime timestamp={link.linkedAt} />
+                <span className="grid gap-1">
+                  <span>{resolve(SOURCE_LABELS[link.source])}</span>
+                  <span>
+                    <RelativeTime timestamp={link.linkedAt} />
+                  </span>
+                </span>
               </TooltipPopup>
             </Tooltip>
           }
@@ -330,7 +336,7 @@ function LinkRowImpl({
           speedMode && hasQuickActions && "hidden",
         )}
       >
-        <span aria-hidden className="absolute inset-0 bg-accent/60" />
+        <span aria-hidden className="absolute inset-0 surface-ghost-hover" />
         <Menu
           open={menuOpen}
           onOpenChange={(open) => {
@@ -523,7 +529,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
             or a number.
           </T>
         </p>
-        <Button size="sm" variant="outline" onClick={openLinkDialog}>
+        <Button size="sm" variant="secondary" onClick={openLinkDialog}>
           <PlusIcon className="size-3.5" />
           <T>Link pull request</T>
         </Button>
@@ -555,7 +561,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
                   />
                 </section>
                 {linkCount > 0 ? (
-                  <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-xs font-medium text-muted-foreground">
+                  <h2 className="mt-2 border-t border-border/60 px-3 pt-2 pb-1 text-meta text-muted-foreground">
                     <T>Pull requests</T>
                   </h2>
                 ) : null}
@@ -584,26 +590,38 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
           drawDistance={440}
           className="min-h-0 flex-1 overscroll-contain p-1.5"
         />
-        <footer className="flex items-center justify-between border-t border-border/60 px-2 py-1.5 text-2xs text-muted-foreground">
-          <span>
-            {linkCount > 0
-              ? gt(
-                  "{openCount, plural, one {{openCount} open} other {{openCount} open}} · {linkCount, plural, one {{linkCount} linked} other {{linkCount} linked}}",
-                  { openCount, linkCount },
-                )
-              : null}
-            {lastSynced ? (
-              <>
-                {" · "}
-                <T context="followed by a relative time such as 5m ago or just now">
-                  synced{" "}
-                  <Var>
-                    <RelativeTime timestamp={lastSynced} />
-                  </Var>
-                </T>
-              </>
-            ) : null}
-          </span>
+        <footer className="flex items-center justify-between border-t border-border py-1.5 ps-4 pe-2.25 text-meta text-muted-foreground">
+          <Tooltip>
+            <TooltipTrigger render={<span />}>
+              {linkCount > 0
+                ? gt("{count, plural, one {{count} linked} other {{count} linked}}", {
+                    count: linkCount,
+                  })
+                : null}
+            </TooltipTrigger>
+            <TooltipPopup>
+              <span className="flex flex-col gap-0.5">
+                {linkCount > 0 ? (
+                  <span>
+                    {gt("{count, plural, one {{count} open} other {{count} open}}", {
+                      count: openCount,
+                    })}
+                  </span>
+                ) : null}
+                {lastSynced ? (
+                  <span>
+                    <T context="followed by a relative time such as 5m ago or just now">
+                      synced{" "}
+                      <Var>
+                        <RelativeTime timestamp={lastSynced} />
+                      </Var>
+                    </T>
+                  </span>
+                ) : null}
+              </span>
+            </TooltipPopup>
+          </Tooltip>
+          {/* Borderless: the footer's 9px end padding puts its ink, 7px inside, on the 16px line. */}
           <Button size="xs" variant="ghost" onClick={openLinkDialog}>
             <PlusIcon className="size-3.5" />
             <T context="verb, button">Link pull request</T>

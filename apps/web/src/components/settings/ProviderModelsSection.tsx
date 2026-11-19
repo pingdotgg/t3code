@@ -330,7 +330,7 @@ export function ProviderModelsSection({
   };
 
   const groupLabel = (label: string, isFirst: boolean) => (
-    <div className={cn("px-2 pb-1.5 text-2xs text-muted-foreground", isFirst ? "pt-1" : "pt-5")}>
+    <div className={cn("px-2 pb-1.5 text-2xs text-dim-foreground", isFirst ? "pt-1" : "pt-5")}>
       {label}
     </div>
   );
@@ -366,17 +366,25 @@ export function ProviderModelsSection({
             </Button>
           ) : null}
           <span className="text-xs text-muted-foreground">
-            {gt("{count, plural, one {{count} model} other {{count} models}}", {
-              count: models.length,
-            })}
-            {favoriteCount > 0
-              ? ` · ${gt("{count, plural, one {{count} favorite} other {{count} favorites}}", {
-                  count: favoriteCount,
-                })}`
-              : ""}
-            {hiddenCount > 0
-              ? ` · ${gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}`
-              : ""}
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {gt("{count, plural, one {{count} model} other {{count} models}}", {
+                  count: models.length,
+                })}
+              </TooltipTrigger>
+              <TooltipPopup>
+                <span className="grid gap-1">
+                  <span>
+                    {gt("{count, plural, one {{count} favorite} other {{count} favorites}}", {
+                      count: favoriteCount,
+                    })}
+                  </span>
+                  <span>
+                    {gt("{count, plural, other {{count} hidden}}", { count: hiddenCount })}
+                  </span>
+                </span>
+              </TooltipPopup>
+            </Tooltip>
           </span>
         </div>
         {driverKind !== "antigravity" && !isAdding ? (
@@ -470,7 +478,7 @@ export function ProviderModelsSection({
             spellCheck={false}
           />
           <div className="flex shrink-0 gap-2">
-            <Button size="sm" variant="outline" disabled={isSaving} onClick={handleAdd}>
+            <Button size="sm" variant="secondary" disabled={isSaving} onClick={handleAdd}>
               {gt("Add", { $context: "verb, adds a custom model" })}
             </Button>
             <Button size="sm" variant="ghost" onClick={cancelAdd}>
@@ -521,7 +529,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
   const gt = useGT();
   const m = useMessages();
   const capLabels = describeModelCapabilities(model, flagMissingReasoning, m);
-  const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground/90");
+  const nameClassName = cn("text-xs", isHidden ? "text-muted-foreground" : "text-foreground");
   const pickerTooltip = model.isCustom
     ? gt("Custom models are always shown in the picker")
     : isHidden
@@ -532,7 +540,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
     <div
       data-model-slug={model.slug}
       className={cn(
-        "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-md px-2 transition-colors hover:bg-muted/30",
+        "grid h-7 grid-cols-[1.5rem_minmax(0,1fr)_auto_minmax(5.5rem,auto)_auto] items-center gap-2 rounded-row px-2 transition-colors hover:surface-ghost-hover",
         isHidden && "opacity-50",
       )}
     >
@@ -552,7 +560,9 @@ const ProviderModelRow = memo(function ProviderModelRow({
             />
           }
         >
-          <StarIcon className={cn("size-3", isFavorite && "fill-current text-warning")} />
+          <StarIcon
+            className={cn("size-3", isFavorite && "fill-current text-warning-foreground")}
+          />
         </TooltipTrigger>
         <TooltipPopup side="top">
           {isFavorite ? gt("Remove from favorites") : gt("Add to favorites")}
@@ -567,27 +577,36 @@ const ProviderModelRow = memo(function ProviderModelRow({
           >
             <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
             {model.name !== model.slug ? (
-              <code className="truncate font-mono text-2xs text-muted-foreground/70">
-                {model.slug}
-              </code>
+              <code className="truncate font-mono text-2xs text-dim-foreground">{model.slug}</code>
             ) : null}
           </TooltipTrigger>
           <TooltipPopup side="top" align="start">
             <div>{model.name}</div>
             {model.name !== model.slug ? (
-              <code className="font-mono text-2xs text-muted-foreground">{model.slug}</code>
+              <code className="text-micro font-mono text-dim-foreground">{model.slug}</code>
             ) : null}
           </TooltipPopup>
         </Tooltip>
         {model.isCustom ? (
-          <span className="shrink-0 text-2xs text-muted-foreground/70">
+          <span className="shrink-0 text-2xs text-dim-foreground">
             {gt("custom", { $context: "badge, user-added model" })}
           </span>
         ) : null}
       </span>
-      <span className="text-2xs text-muted-foreground/70">
+      <span className="text-2xs text-dim-foreground">
         {capLabels.length > 0 ? (
-          <span className="hidden sm:inline">{capLabels.join(" · ")}</span>
+          <span className="hidden sm:inline">
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>{capLabels[0]}</TooltipTrigger>
+              <TooltipPopup>
+                <span className="grid gap-1">
+                  {capLabels.map((label) => (
+                    <span key={label}>{label}</span>
+                  ))}
+                </span>
+              </TooltipPopup>
+            </Tooltip>
+          </span>
         ) : null}
       </span>
       <span className="flex shrink-0 items-center justify-end gap-0.5">

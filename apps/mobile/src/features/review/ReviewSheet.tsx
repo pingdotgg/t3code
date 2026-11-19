@@ -154,7 +154,7 @@ const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 const ReviewNotice = function ReviewNotice(props: { readonly notice: string }) {
   return (
     <ContentBand tone="warning">
-      <Text className="text-xs font-t3-bold uppercase text-warning-foreground">
+      <Text className="text-xs font-t3-bold text-warning-foreground">
         <T>Partial diff</T>
       </Text>
       <Text className="text-xs leading-normal text-warning-foreground">{props.notice}</Text>

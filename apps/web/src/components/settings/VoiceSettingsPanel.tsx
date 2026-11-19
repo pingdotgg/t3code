@@ -335,7 +335,7 @@ function ModelCard(props: ModelCardProps) {
           {downloading ? (
             <Button
               size="icon-sm"
-              variant="outline"
+              variant="secondary"
               aria-label={gt("Cancel {name} download", { name: model.name })}
               disabled={!props.canCancel}
               onClick={props.onCancel}
@@ -343,7 +343,7 @@ function ModelCard(props: ModelCardProps) {
               <XIcon className="size-3.5" />
             </Button>
           ) : model.state === "downloadable" ? (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onDownload}>
+            <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
               <DownloadIcon />
               <T>Download</T>
             </Button>
@@ -353,14 +353,14 @@ function ModelCard(props: ModelCardProps) {
               <T>Selected</T>
             </Button>
           ) : (
-            <Button size="sm" variant="outline" disabled={props.busy} onClick={props.onSelect}>
+            <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onSelect}>
               <T>Use model</T>
             </Button>
           )}
           {model.state === "installed" ? (
             <Button
               size="icon-sm"
-              variant="outline"
+              variant="secondary"
               disabled={props.busy}
               aria-label={
                 model.linkedFrom
@@ -444,7 +444,7 @@ function DictionaryEditor(props: {
             }}
           />
         </div>
-        <Button type="button" variant="outline" disabled={!canAddTerm} onClick={addTerm}>
+        <Button type="button" variant="secondary" disabled={!canAddTerm} onClick={addTerm}>
           <PlusIcon />
           <T>Add</T>
         </Button>
@@ -1001,7 +1001,7 @@ function SpeechModelBrowser(props: {
         </InputGroup>
         <Menu>
           <MenuTrigger
-            render={<Button variant="outline" className="max-w-56" />}
+            render={<Button variant="secondary" className="max-w-56" />}
             aria-label={gt("Filter by language: {languagesLabel}", { languagesLabel })}
           >
             <LanguagesIcon />
@@ -1055,7 +1055,7 @@ function SpeechModelBrowser(props: {
         </Menu>
         <Menu>
           <MenuTrigger
-            render={<Button variant="outline" />}
+            render={<Button variant="secondary" />}
             aria-label={
               downloadedOnly
                 ? gt("Sort and filter models: {sort}, downloaded only", { sort: sortLabels[sort] })
@@ -1173,7 +1173,7 @@ function SpeechModelBrowser(props: {
           <Button
             type="submit"
             size="sm"
-            variant="outline"
+            variant="secondary"
             disabled={controlsDisabled || !existingPath.trim()}
           >
             <T>Use existing</T>
@@ -1233,7 +1233,7 @@ function TranscriptionTest(props: {
               speech.state.phase === "idle" ? (
                 <Button
                   size="sm"
-                  variant="outline"
+                  variant="secondary"
                   onClick={() => {
                     setShowTranscript(true);
                     void speech.start();
@@ -1426,7 +1426,7 @@ export function VoiceSettingsPanel() {
                 render={
                   <Button
                     type="button"
-                    variant="outline"
+                    variant="secondary"
                     size="icon-sm"
                     aria-label={gt("Refresh microphones")}
                     onClick={() => void refreshMicrophones()}

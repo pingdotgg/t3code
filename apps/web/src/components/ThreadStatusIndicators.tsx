@@ -1,4 +1,3 @@
-import { pipe } from "effect/Function";
 import { changeRequestTermKind, type ChangeRequestTermKind } from "./pullRequest/changeRequestTerm";
 import {
   scopeProjectRef,
@@ -18,7 +17,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -54,6 +53,7 @@ import {
 
 import type { SidebarThreadSummary } from "../types";
 import { formatWorktreePathForDisplay } from "../worktreeCleanup";
+import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -200,7 +200,11 @@ export interface ThreadPullRequestBadgePresentation {
   readonly toneClassName: string;
   readonly label: string;
   readonly text: string | number;
+  /** Links folded into the badge beyond the one it names: stack layers or unrelated links. */
+  readonly more: number;
 }
+
+export type ThreadPullRequestBadgeAppearance = "glyph" | "number";
 
 type PullRequestBadgeState = ThreadPullRequestBadge["state"];
 
@@ -365,6 +369,7 @@ function resolveThreadPullRequestBadgePresentation(
         resolve,
       ),
       text: badge.layers,
+      more: badge.layers - 1,
     };
   }
   if (number === undefined || url === undefined) return null;
@@ -384,6 +389,7 @@ function resolveThreadPullRequestBadgePresentation(
       toneClassName: aggregate.toneClassName,
       label: moreLinkedBadgeLabel(badge.state, tooltip, badge.others, resolve),
       text: `+${badge.others + 1}`,
+      more: badge.others,
     };
   }
   return {
@@ -391,6 +397,7 @@ function resolveThreadPullRequestBadgePresentation(
     toneClassName: status?.colorClass ?? "text-muted-foreground",
     label: tooltip,
     text: number,
+    more: 0,
   };
 }
 
@@ -403,6 +410,7 @@ export function ThreadPullRequestBadgeControl({
   status,
   onOpenList,
   onOpenPullRequest,
+  appearance = "glyph",
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   badge: ThreadPullRequestBadge | null;
@@ -412,6 +420,7 @@ export function ThreadPullRequestBadgeControl({
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  appearance?: ThreadPullRequestBadgeAppearance;
 }) {
   const m = useMessages();
   const presentation = resolveThreadPullRequestBadgePresentation({ badge, number, url, status }, m);
@@ -419,6 +428,7 @@ export function ThreadPullRequestBadgeControl({
   return (
     <PullRequestBadge
       render={render}
+      appearance={appearance}
       presentation={presentation}
       opensList={badge !== null && (badge.kind === "stack" || badge.others > 0)}
       url={url}
@@ -433,6 +443,7 @@ export function ThreadPullRequestBadgeControl({
 
 function PullRequestBadge({
   render,
+  appearance,
   presentation,
   opensList,
   url,
@@ -443,6 +454,7 @@ function PullRequestBadge({
   onOpenPullRequest,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
+  appearance: ThreadPullRequestBadgeAppearance;
   presentation: NonNullable<ReturnType<typeof resolveThreadPullRequestBadgePresentation>>;
   opensList: boolean;
   url: string | undefined;
@@ -477,16 +489,22 @@ function PullRequestBadge({
     <Tooltip key={opensList ? "list" : "link"}>
       <TooltipTrigger render={control}>
         <span
-          className={cn("contents font-normal text-xs tabular-nums", presentation.toneClassName)}
+          className={cn(
+            "contents tabular-nums",
+            appearance === "number" ? "text-meta" : "font-normal text-xs",
+            presentation.toneClassName,
+          )}
         >
           <presentation.Icon aria-hidden className="size-3 shrink-0" />
-          <span className="text-secondary-label">{presentation.text}</span>
+          <span className={appearance === "number" ? "text-secondary-label" : undefined}>
+            {presentation.text}
+          </span>
         </span>
       </TooltipTrigger>
       <TooltipPopup
         side="top"
         sideOffset={0}
-        variant="glass"
+        variant="popover"
         className="pointer-events-auto w-80 max-w-[calc(100vw-2rem)] text-left whitespace-normal"
       >
         <div className="-mx-1 max-h-[calc(var(--available-height)-0.5rem-2px)] overflow-y-auto overscroll-contain">
@@ -512,6 +530,8 @@ function PullRequestBadge({
   );
 }
 
+const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
+
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
@@ -519,14 +539,15 @@ export function ThreadPullRequestsMiniList({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
 }) {
-  const lines = pipe(
-    visibleThreadPullRequests(pullRequests),
-    resolveThreadPullRequestChains,
-    pullRequestListLines,
-  );
+  const gt = useGT();
+  const chains = resolveThreadPullRequestChains(pullRequests);
+  const lines = pullRequestListLines(chains, THREAD_PULL_REQUEST_PREVIEW_LIMIT);
+  const hiddenCount =
+    chains.reduce((count, chain) => count + chain.layers.length, 0) - lines.length;
   if (lines.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-1">
+    // Interactive rows carry their own hover padding; static rows need the wider gap.
+    <ul className={cn("flex flex-col", onOpenPullRequest ? "gap-1" : "gap-1.5")}>
       {lines.map((line) => {
         const snapshot = line.link.snapshot;
         const presentation =
@@ -544,23 +565,21 @@ export function ThreadPullRequestsMiniList({
             onOpenPullRequest={onOpenPullRequest}
           >
             {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-3xs">
-                {line.stack.kind === "native" ? (
-                  <T context="a native stack of pull requests">stack</T>
-                ) : (
-                  <T context="a chain of pull requests based on each other">chain</T>
-                )}{" "}
-                · {line.stack.size}
-              </span>
+              <span className="ml-auto shrink-0 pl-1 text-3xs">{line.stack.size}</span>
             ) : null}
           </ThreadPullRequestMiniListItem>
         );
       })}
+      {hiddenCount > 0 ? (
+        <li className="text-muted-foreground">
+          {gt("{count, plural, one {{count} more} other {{count} more}}", { count: hiddenCount })}
+        </li>
+      ) : null}
     </ul>
   );
 }
 
-function ThreadPullRequestMiniListItem({
+export function ThreadPullRequestMiniListItem({
   number,
   url,
   title,
@@ -584,8 +603,8 @@ function ThreadPullRequestMiniListItem({
         aria-hidden
         className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
       />
-      <span className="shrink-0 font-mono tabular-nums">#{number}</span>
-      <span className="min-w-0 truncate text-foreground/75">{title}</span>
+      <span className="shrink-0 font-mono tabular-nums text-foreground">#{number}</span>
+      <span className="min-w-0 truncate text-muted-foreground">{title}</span>
       {children}
     </>
   );
@@ -596,7 +615,7 @@ function ThreadPullRequestMiniListItem({
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:bg-accent focus-visible:bg-accent focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
+          className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:surface-ghost-hover focus-visible:surface-ghost-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => onOpenPullRequest(event, url)}
         >
@@ -704,7 +723,7 @@ export function terminalStatusFromRunningIds(
   }
   return {
     label: resolve(msg("Terminal process running")),
-    colorClass: "text-teal-600 dark:text-teal-300/90",
+    colorClass: "text-success-foreground",
     pulse: true,
   };
 }
@@ -741,14 +760,11 @@ export function ThreadTerminalStatusButton({
     <Tooltip>
       <TooltipTrigger
         render={
-          <button
-            type="button"
+          <Button
+            variant="ghost"
+            size="icon-micro"
             aria-label={label}
             data-testid={`sidebar-terminal-status-${threadRef.threadId}`}
-            className={cn(
-              "inline-flex shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-              status?.colorClass,
-            )}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
             onClick={(event) => {
@@ -761,7 +777,7 @@ export function ThreadTerminalStatusButton({
         }
       >
         <TerminalIcon
-          className="size-3.5 motion-safe:animate-status-pulse"
+          className={cn("size-3.5 motion-safe:animate-status-pulse", status?.colorClass)}
           onAnimationStart={synchronizeTerminalPulse}
         />
       </TooltipTrigger>
@@ -844,7 +860,7 @@ function ThreadStatusLabel({
           <span
             role="img"
             aria-label={label}
-            className={`inline-flex items-center gap-1 text-3xs ${status.colorClass}`}
+            className={`inline-flex items-center gap-1 text-micro ${status.colorClass}`}
           />
         }
       >
@@ -1018,10 +1034,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <EnvironmentMachineIcon
-              kind={remoteMachine}
-              className="size-3 text-muted-foreground/60"
-            />
+            <EnvironmentMachineIcon kind={remoteMachine} className="size-3 text-dim-foreground" />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>
@@ -1033,13 +1046,13 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
 function settledPrHoverColorClass(state: ThreadPullRequestBadge["state"]): string {
   switch (state) {
     case "draft":
-      return "group-hover/sidebar-row:text-zinc-500 dark:group-hover/sidebar-row:text-zinc-400/80";
+      return "group-hover/sidebar-row:text-dim-foreground";
     case "open":
-      return "group-hover/sidebar-row:text-emerald-600 dark:group-hover/sidebar-row:text-emerald-300/90";
+      return "group-hover/sidebar-row:text-success-foreground";
     case "merged":
-      return "group-hover/sidebar-row:text-violet-600 dark:group-hover/sidebar-row:text-violet-300/90";
+      return "group-hover/sidebar-row:text-merged-foreground";
     case "closed":
-      return "group-hover/sidebar-row:text-red-600 dark:group-hover/sidebar-row:text-red-300/90";
+      return "group-hover/sidebar-row:text-error-foreground";
   }
 }
 
@@ -1102,15 +1115,23 @@ export function ThreadSearchPullRequestNumber({
     <span
       aria-label={presentation.label}
       className={cn(
-        "inline-flex shrink-0 items-center gap-0.5 text-xs tabular-nums",
+        "inline-flex shrink-0 items-center gap-0.5 text-meta tabular-nums",
         settled
           ? cn("text-secondary-label transition-colors", state && settledPrHoverColorClass(state))
           : presentation.toneClassName,
       )}
     >
-      {/* text-current opts out of the command palette's muted icon color. */}
-      <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
-      <span>{presentation.text}</span>
+      {pr?.number !== undefined || stored?.number !== undefined ? (
+        <>
+          <span className="font-mono">#{pr?.number ?? stored?.number}</span>
+          {presentation.more > 0 ? <span className="opacity-60">+{presentation.more}</span> : null}
+        </>
+      ) : (
+        <>
+          <presentation.Icon aria-hidden className="size-3 shrink-0 text-current" />
+          <span>{presentation.text}</span>
+        </>
+      )}
     </span>
   );
 }

@@ -80,8 +80,8 @@ function project(id: string): Project {
 
 describe("sidebar header new thread", () => {
   it.each([
-    { mode: "normal", count: 2, shift: false, picker: true },
-    { mode: "boring", count: 2, shift: false, picker: true },
+    { mode: "normal", count: 2, shift: false, picker: false },
+    { mode: "boring", count: 2, shift: false, picker: false },
     { mode: "boring", count: 2, shift: true, picker: false },
     { mode: "boring", count: 1, shift: false, picker: false },
   ] as const)("$mode sidebar, $count projects, shift=$shift: picker=$picker", async (scenario) => {
@@ -380,6 +380,7 @@ describe("sidebar settled pagination", () => {
     const viewport = moreButton.closest<HTMLElement>('[data-slot="scroll-area-viewport"]')!;
     viewport.style.height = "300px";
     viewport.style.maxHeight = "300px";
+    await userEvent.wheel(viewport, { delta: { y: 300 } });
     moreButton.scrollIntoView({ block: "nearest" });
     const before = viewport.scrollTop;
     expect(before).toBeGreaterThan(0);

@@ -251,12 +251,11 @@ export function useComposerAttachmentIntake(input: {
           type: "info",
           title: m(msg("Large paste attached as {name}", { name: attached.name })),
           description: m(
-            msg("{size} · Use {shortcut} to keep a large paste inline.", {
-              size: formatAttachmentSize(attached.sizeBytes, m),
+            msg("Use {shortcut} to keep a large paste inline.", {
               shortcut: isMacPlatform(navigator.platform) ? "⌘⇧V" : "Ctrl+Shift+V",
             }),
           ),
-          data: { hideCopyButton: true },
+          data: { hideCopyButton: true, body: formatAttachmentSize(attached.sizeBytes, m) },
         });
       }
     }

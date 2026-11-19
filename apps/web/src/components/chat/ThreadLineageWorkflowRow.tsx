@@ -18,10 +18,7 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Spinner } from "../ui/spinner";
-import {
-  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
-} from "./threadDetailsPanelStyles";
+import { THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS } from "./threadDetailsPanelStyles";
 
 function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
   const instants = (key: "startedAt" | "completedAt") =>
@@ -101,7 +98,7 @@ function WorkflowMemberRow({
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
-            <span className="shrink-0 text-2xs font-normal tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-caption tabular-nums text-muted-foreground">
               <AgentElapsed agent={member} />
             </span>
           ) : null}
@@ -160,10 +157,10 @@ export function ThreadLineageWorkflowRow({
   const phases = group.phases.filter((phase) => phase.members.length > 0);
   return (
     <li className="group" data-workflow-expanded={expanded ? "" : undefined}>
-      <div className={cn("relative", THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS)}>
+      <div className={cn("relative", THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS)}>
         {header}
         {onStop ? (
-          <div className="pointer-events-none absolute right-9 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
+          <div className="pointer-events-none absolute right-6 top-1/2 -translate-y-1/2 opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100 [@media(hover:none)]:pointer-events-auto [@media(hover:none)]:opacity-100">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -190,11 +187,10 @@ export function ThreadLineageWorkflowRow({
             </Tooltip>
           </div>
         ) : null}
-        <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
         <ThreadDetailsControl
           size="sm"
           variant="ghost"
-          part="secondary"
+          part="icon"
           aria-expanded={expanded}
           aria-label={
             expanded ? gt("Collapse {label}", { label }) : gt("Expand {label}", { label })
@@ -240,13 +236,13 @@ export function ThreadLineageWorkflowRow({
                           <T context="workflow phase status">Failed</T>
                         </SectionHeaderStatus>
                       ) : null}
-                      <span className="shrink-0 text-2xs font-normal tabular-nums">
+                      <span className="shrink-0 text-caption tabular-nums">
                         {gt(
                           "{count, plural, one {{settled}/{count} agent} other {{settled}/{count} agents}}",
                           { count: phase.members.length, settled: phase.settledCount },
                         )}
                       </span>
-                      <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
+                      <span className="shrink-0 text-caption tabular-nums empty:hidden">
                         <AgentElapsed agent={phaseElapsed(phase)} />
                       </span>
                     </>
@@ -286,7 +282,7 @@ export function ThreadLineageWorkflowRow({
             />
           ))}
           {phases.length === 0 && group.unphasedMembers.length === 0 ? (
-            <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">
+            <li className="px-2.5 py-1.5 text-caption text-muted-foreground/70">
               <T>No agents yet</T>
             </li>
           ) : null}

@@ -1,9 +1,9 @@
+import { formatModelSlugName } from "@t3tools/shared/model";
 import { useAtomValue } from "@effect/atom-react";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
-import { SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -45,13 +45,13 @@ import { groupBy } from "effect/Array";
 import * as DateTime from "effect/DateTime";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import {
-  ArrowRightIcon,
   BotIcon,
-  ChevronDownIcon,
+  EllipsisIcon,
   CornerLeftUpIcon,
   GitForkIcon,
   MessagesSquareIcon,
-  MoreHorizontalIcon,
+  HistoryIcon,
+  MessageSquareIcon,
   PlusIcon,
   SquareIcon,
   UnplugIcon,
@@ -76,6 +76,7 @@ import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
   hasInstanceBadge,
+  shouldShowInstanceBadge,
 } from "../../providerInstances";
 import { threadEnvironment } from "../../state/threads";
 import { orchestrationEnvironment, threadTitlesRead } from "../../state/orchestration";
@@ -86,20 +87,18 @@ import { ThreadRelationshipIcon, threadRelationshipStatusLabel } from "./ThreadR
 import { ThreadLineageWorkflowRow } from "./ThreadLineageWorkflowRow";
 import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { Spinner } from "../ui/spinner";
-import { cn } from "~/lib/utils";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
-  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-  THREAD_DETAILS_PANEL_ICON_CLASS,
-  THREAD_DETAILS_PANEL_LABEL_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
-  THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS,
-  THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
+  THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS,
+  THREAD_DETAILS_PANEL_META_CLASS,
 } from "./threadDetailsPanelStyles";
 
+// Page both inline relationships and the previous-agent menu so long histories
+// stay bounded inside the card and popup.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
 
@@ -114,6 +113,7 @@ function resolveThreadLineageWindow<Row>(
 function ThreadLineageRowList(props: {
   readonly hiddenCount: number;
   readonly onShowMore: () => void;
+  readonly menu?: boolean;
   readonly children: ReactNode;
 }) {
   const gt = useGT();
@@ -127,16 +127,16 @@ function ThreadLineageRowList(props: {
         {props.children}
       </ul>
       {props.hiddenCount > 0 ? (
-        <button
-          type="button"
+        <ThreadDetailsControl
           onClick={props.onShowMore}
-          className={`flex h-8 w-full cursor-pointer items-center rounded-lg ${THREAD_DETAILS_PANEL_ROW_CONTENT_CLASS} text-sm font-medium text-muted-foreground/70 hover:bg-black/[0.055] hover:text-foreground/80 dark:hover:bg-white/[0.075]`}
+          tone="muted"
+          render={props.menu ? <MenuItem closeOnClick={false} /> : undefined}
         >
           <PlusIcon aria-hidden className="size-4 shrink-0" />
           <T>
             Show <Var>{Math.min(props.hiddenCount, THREAD_LINEAGE_PAGE_COUNT)}</Var> more
           </T>
-        </button>
+        </ThreadDetailsControl>
       ) : null}
     </>
   );
@@ -161,6 +161,7 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
   readonly expanded: boolean;
   readonly children: (rows: ReadonlyArray<Row>) => ReactNode;
 }) {
+  const gt = useGT();
   const [expanded, setExpanded] = useState(props.expanded);
   const [visibleCount, setVisibleCount] = useState(THREAD_LINEAGE_INITIAL_COUNT);
   const { visibleRows, hiddenCount } = resolveThreadLineageWindow(props.rows, visibleCount);
@@ -169,46 +170,59 @@ function ThreadLineageGroup<Row extends LineageRow>(props: {
     return status === "failed" || status === "error";
   }).length;
   if (props.rows.length === 0) return null;
+  const rows = (
+    <ThreadLineageRowList
+      menu={props.label !== null}
+      hiddenCount={hiddenCount}
+      onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
+    >
+      {props.children(visibleRows)}
+    </ThreadLineageRowList>
+  );
+  if (!props.label) return rows;
   return (
-    <div>
-      {props.label ? (
-        <ThreadDetailsControl aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
-          <BotIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-          <span className={cn(THREAD_DETAILS_PANEL_LABEL_CLASS, "min-w-0 flex-1 truncate")}>
-            {props.label}
-          </span>
+    <Menu open={expanded} onOpenChange={setExpanded}>
+      <MenuTrigger
+        render={<ThreadDetailsControl part="choice" aria-label={gt("Previous agents")} />}
+      >
+        <HistoryIcon />
+        <MenuItemLabel className="min-w-0 flex-1">{props.label}</MenuItemLabel>
+        <span className={`${THREAD_DETAILS_PANEL_META_CLASS} inline-flex flex-col items-end`}>
           {failedCount > 0 ? (
-            <SectionHeaderStatus>
+            <span className="text-destructive-foreground">
               <T>
                 <Var>{failedCount}</Var> failed
               </T>
-            </SectionHeaderStatus>
-          ) : null}
-          {expanded ? null : (
-            <span className="shrink-0 text-xs font-normal tabular-nums text-muted-foreground">
-              {props.rows.length}
             </span>
-          )}
-          <ChevronDownIcon
-            aria-hidden
-            className={cn(
-              THREAD_DETAILS_PANEL_CHEVRON_CLASS,
-              "transition-transform",
-              !expanded && "-rotate-90",
-            )}
-          />
-        </ThreadDetailsControl>
-      ) : null}
-      {expanded ? (
-        <ThreadLineageRowList
-          hiddenCount={hiddenCount}
-          onShowMore={() => setVisibleCount((count) => count + THREAD_LINEAGE_PAGE_COUNT)}
-        >
-          {props.children(visibleRows)}
-        </ThreadLineageRowList>
-      ) : null}
-    </div>
+          ) : null}
+          <span>
+            <T>
+              <Var>{props.rows.length}</Var> total
+            </T>
+          </span>
+        </span>
+      </MenuTrigger>
+      <MenuPopup side="right" align="start" className="w-75">
+        {rows}
+      </MenuPopup>
+    </Menu>
   );
+}
+
+function relationshipLabel(
+  edge: ThreadRelationshipEdge,
+  currentThreadId: ThreadId,
+  resolve: MessageResolver,
+) {
+  if (edge.kind === "transfer") return resolve(msg("Context transfer"));
+  if (edge.kind === "subagent") {
+    return edge.sourceThreadId === currentThreadId
+      ? resolve(msg("Subagent"))
+      : resolve(msg("Parent agent"));
+  }
+  return edge.sourceThreadId === currentThreadId
+    ? resolve(msg("Fork", { $context: "noun, a forked thread" }))
+    : resolve(msg("Parent thread"));
 }
 
 function relationshipHint(
@@ -241,7 +255,7 @@ function relationshipThreadTitle(input: {
 function LineageTooltipContent(props: { readonly title: string; readonly hint: string }) {
   return (
     <>
-      <span className="block font-medium">{props.title}</span>
+      <span className="block text-meta">{props.title}</span>
       <span className="block text-muted-foreground">{props.hint}</span>
     </>
   );
@@ -299,7 +313,7 @@ function RemoteSubagentRow(props: {
     isSubagent: true,
   });
   return (
-    <li className="group relative flex h-8 items-center rounded-lg">
+    <li className="group relative flex items-center">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -330,19 +344,21 @@ function RemoteSubagentRow(props: {
             status={status}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+            <span className="block truncate text-left text-label text-strong-foreground">
               {title}
             </span>
           </span>
           <span
-            className={`flex max-w-1/2 shrink-0 gap-1 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"}`}
+            className={`flex max-w-1/2 shrink-0 gap-1 text-caption ${failed ? "text-destructive-foreground" : "text-dim-foreground"}`}
           >
-            <span className="truncate">
-              <T>
-                on <Var>{remoteChild.label}</Var>
-              </T>
+            <span className="inline-flex min-w-0 flex-col">
+              <span className="truncate">
+                <T>
+                  on <Var>{remoteChild.label}</Var>
+                </T>
+              </span>
+              <span>{threadRelationshipStatusLabel(status, m)}</span>
             </span>
-            <span className="shrink-0">· {threadRelationshipStatusLabel(status, m)}</span>
           </span>
         </TooltipTrigger>
         <TooltipPopup side="left">
@@ -411,7 +427,7 @@ function DelegatedFromRow(props: {
     });
   };
   return (
-    <li className="group relative flex h-8 items-center rounded-lg">
+    <li className="group relative flex items-center">
       <Tooltip>
         <TooltipTrigger
           delay={200}
@@ -434,12 +450,12 @@ function DelegatedFromRow(props: {
             status={null}
           />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
+            <span className="block truncate text-left text-label text-strong-foreground">
               {title}
             </span>
           </span>
           {label ? (
-            <span className="max-w-1/2 shrink-0 truncate text-2xs text-muted-foreground">
+            <span className="max-w-1/2 shrink-0 truncate text-caption text-dim-foreground">
               <T>
                 on <Var>{label}</Var>
               </T>
@@ -650,10 +666,13 @@ export function ThreadRelationshipsPanel(props: {
       expanded: false,
     },
   ];
-  const runningCount =
-    (projection?.subagents.filter(
-      (agent) => agent.childThreadId === null && agent.status === "running",
-    ).length ?? 0) + active.filter(({ edge }) => edge.status === "running").length;
+  const unlinkedRunningCount =
+    projection?.subagents.filter(
+      (agent) =>
+        agent.remoteChild === undefined &&
+        agent.childThreadId === null &&
+        agent.status === "running",
+    ).length ?? 0;
 
   // A linked environment's agent may have delegated this thread from there.
   const delegatedFrom = currentThread?.delegatedFrom;
@@ -663,7 +682,7 @@ export function ThreadRelationshipsPanel(props: {
     (related.length > 0 ||
       active.length > 0 ||
       previous.length > 0 ||
-      runningCount > 0 ||
+      unlinkedRunningCount > 0 ||
       remoteActive.length > 0 ||
       remotePrevious.length > 0 ||
       delegatedFrom !== undefined ||
@@ -821,6 +840,10 @@ export function ThreadRelationshipsPanel(props: {
         entry.instanceId === (agent?.providerInstanceId ?? node?.thread?.providerInstanceId),
     );
     const providerDriver = agent?.driver ?? provider?.driver;
+    const providerEntry = providerEntries.find(
+      (entry) =>
+        entry.instanceId === (agent?.providerInstanceId ?? node?.thread?.providerInstanceId),
+    );
     const canStopWorkflow =
       canOperateWorkflow &&
       workflowGroup?.workflow.status === "running" &&
@@ -830,6 +853,10 @@ export function ThreadRelationshipsPanel(props: {
       ? "group-hover:opacity-0 group-focus-within:opacity-0 pointer-coarse:opacity-0 [@media(hover:none)]:opacity-0"
       : "";
     const project = projects.find((project) => project.id === node?.thread?.projectId);
+    const relationship =
+      node?.thread?.lineage.sideChat === true && !isParent
+        ? gt("Side chat")
+        : relationshipLabel(edge, props.threadId, m);
     const hint = relationshipHint(
       edge,
       props.threadId,
@@ -861,40 +888,65 @@ export function ThreadRelationshipsPanel(props: {
     );
     const relationshipContent = (
       <>
-        <ThreadRelationshipIcon
-          driver={isSubagent && !isParent ? providerDriver : undefined}
-          provider={provider}
-          providerEntries={providerEntries}
-          fallbackIcon={RelationshipIcon}
-          status={rowStatus}
-        />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-left text-sm font-medium leading-4 text-foreground/85">
-            {threadTitle}
+        {providerDriver ? (
+          <ProviderInstanceIcon
+            driverKind={providerDriver}
+            displayName={providerEntry?.displayName ?? provider?.displayName ?? providerDriver}
+            accentColor={providerEntry?.accentColor}
+            acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl ?? provider?.iconUrl}
+            showBadge={
+              providerEntry !== undefined && shouldShowInstanceBadge(providerEntry, providerEntries)
+            }
+            size="compact"
+            iconClassName="size-4"
+            className="z-auto"
+          />
+        ) : (
+          <RelationshipIcon className="size-4 text-muted-foreground" />
+        )}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-meta">{threadTitle}</span>
+          <span className="flex min-w-0 flex-col text-caption text-muted-foreground">
+            <span>{relationship}</span>
+            {node?.thread?.modelSelection.model ? (
+              <span>{formatModelSlugName(node.thread.modelSelection.model)}</span>
+            ) : null}
           </span>
         </span>
-        {agent ? null : (
-          <ArrowRightIcon className="size-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
-        )}
-        {agent && !failed && (deriveSubagentElapsedMs(agent, 0) !== null || canStopWorkflow) ? (
-          <span
-            className={`shrink-0 text-2xs font-normal tabular-nums text-muted-foreground ${canStopWorkflow ? "min-w-6 text-end" : ""} ${trailingVisibilityClass}`}
-          >
-            <AgentElapsed agent={agent} compact />
-          </span>
-        ) : !isMergeTarget ? (
-          <span
-            className={
-              workflowGroup
-                ? "sr-only"
-                : `shrink-0 text-2xs ${failed ? "text-destructive" : "text-muted-foreground"} ${trailingVisibilityClass}`
-            }
-          >
-            {threadRelationshipStatusLabel(rowStatus, m)}
-          </span>
-        ) : null}
+        <span className={`${THREAD_DETAILS_PANEL_META_CLASS} ${trailingVisibilityClass}`}>
+          {isParent ? (
+            gt("Parent", { $context: "noun, the parent thread" })
+          ) : !isSubagent ? (
+            edge.kind === "transfer" ? (
+              relationship
+            ) : (
+              gt("Fork", { $context: "noun, a forked thread" })
+            )
+          ) : failed ? (
+            <span className="text-destructive-foreground">
+              <T context="agent status">Failed</T>
+            </span>
+          ) : (
+            <>
+              {agent && deriveSubagentElapsedMs(agent, 0) !== null ? (
+                <AgentElapsed agent={agent} compact />
+              ) : (
+                threadRelationshipStatusLabel(rowStatus, m)
+              )}
+              {rowStatus === "running" || rowStatus === "in_progress" ? (
+                <Spinner
+                  size="xs"
+                  tone="muted"
+                  aria-label={gt("Running", { $context: "agent status" })}
+                />
+              ) : null}
+            </>
+          )}
+        </span>
       </>
     );
+    // A workflow pairs its menu row with a disclosure; other rows render directly.
     const relationshipLink = (
       <Tooltip>
         <TooltipTrigger
@@ -903,7 +955,10 @@ export function ThreadRelationshipsPanel(props: {
             <ThreadDetailsControl
               size="sm"
               variant="ghost"
-              part={workflowGroup ? "primary" : "row"}
+              part="row"
+              multiline
+              className={workflowGroup ? "flex-1" : undefined}
+              render={previous.some((row) => row.threadId === threadId) ? <MenuItem /> : undefined}
               onClick={() => openThread(threadId)}
             />
           }
@@ -932,9 +987,9 @@ export function ThreadRelationshipsPanel(props: {
       );
     }
     return (
-      <li key={threadId} className="group relative flex h-8 items-center rounded-lg">
+      <li key={threadId} className="group relative flex items-center">
         {isMergeTarget ? (
-          <div className={THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS}>
+          <div className={THREAD_DETAILS_PANEL_ACTION_GROUP_CLASS}>
             <Tooltip>
               <TooltipTrigger
                 delay={200}
@@ -942,7 +997,7 @@ export function ThreadRelationshipsPanel(props: {
                   <ThreadDetailsControl
                     size="sm"
                     variant="ghost"
-                    part="primary"
+                    className="flex-1"
                     aria-label={`${threadTitle} ${threadRelationshipStatusLabel(rowStatus, m)}`}
                     onClick={() => openThread(threadId)}
                   />
@@ -952,14 +1007,13 @@ export function ThreadRelationshipsPanel(props: {
               </TooltipTrigger>
               <RelationshipPopup side="left">{relationshipTooltip}</RelationshipPopup>
             </Tooltip>
-            <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
             <Tooltip>
               <TooltipTrigger
                 render={
                   <ThreadDetailsControl
                     size="sm"
                     variant="ghost"
-                    part="secondary"
+                    part="icon"
                     aria-label={
                       parentTitle
                         ? gt("Merge back to {parentTitle}", { parentTitle })
@@ -984,7 +1038,7 @@ export function ThreadRelationshipsPanel(props: {
                     : gt("Merge this conversation back into its source")}
               </TooltipPopup>
             </Tooltip>
-            <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-2xs font-medium text-muted-foreground">
+            <span className="shrink-0 border border-transparent ps-1 pe-2.5 text-caption text-muted-foreground">
               {threadRelationshipStatusLabel(rowStatus, m)}
             </span>
           </div>
@@ -1022,52 +1076,58 @@ export function ThreadRelationshipsPanel(props: {
       </li>
     );
   };
+  const renderLineageRow = (row: LineageRow) =>
+    "remote" in row ? (
+      <RemoteSubagentRow
+        key={row.remote.id}
+        agent={row.remote}
+        // Its provider instance belongs to the environment it runs in.
+        provider={providersByEnvironment
+          .get(row.remote.remoteChild.environmentId)
+          ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
+        anyInstanceBadge={hasInstanceBadge(providerEntries)}
+      />
+    ) : (
+      renderRelationshipRow(row)
+    );
 
   return (
     <>
       {lineageVisible ? (
         <ThreadDetailsSection
-          headingId="thread-details-lineage-heading"
-          title={
-            runningCount > 0
-              ? gt("Lineage · {runningCount} running", { runningCount })
-              : gt("Lineage", { $context: "thread details section: parent and child agents" })
+          title={gt("Lineage", { $context: "thread details section: parent and child agents" })}
+          summary={
+            unlinkedRunningCount +
+              (groups.find((group) => group.id === "active")?.rows.length ?? 0) >
+            0
+              ? gt("{count} running", {
+                  count:
+                    unlinkedRunningCount +
+                    (groups.find((group) => group.id === "active")?.rows.length ?? 0),
+                  $context: "running agents",
+                })
+              : undefined
           }
-          // A lone "Previous agents" row names itself; the heading returns for status or actions.
-          showHeading={
-            runningCount > 0 ||
-            canDetach ||
-            related.length > 0 ||
-            active.length > 0 ||
-            remoteActive.length > 0 ||
-            delegatedFrom !== undefined
-          }
-          data-thread-relationships-panel
-          actions={
+          action={
             canDetach ? (
               <Menu>
                 <MenuTrigger
-                  render={
-                    <ThreadDetailsControl
-                      size="icon-xs"
-                      variant="ghost"
-                      part="icon"
-                      aria-label={gt("More thread actions")}
-                      disabled={busyAction !== null}
-                    />
-                  }
+                  render={<ThreadDetailsControl part="icon" aria-label={gt("Lineage actions")} />}
                 >
-                  <MoreHorizontalIcon className="size-3.5" />
+                  <EllipsisIcon />
                 </MenuTrigger>
-                <MenuPopup align="end" className="min-w-60 max-w-(--available-width)">
-                  <MenuItem onClick={() => void detach()}>
-                    <UnplugIcon className="size-3.5" />
-                    <T>Disconnect agent session</T>
+                <MenuPopup align="end">
+                  <MenuItem disabled={busyAction !== null} onClick={() => void detach()}>
+                    <UnplugIcon />
+                    <MenuItemLabel>
+                      <T>Disconnect agent session</T>
+                    </MenuItemLabel>
                   </MenuItem>
                 </MenuPopup>
               </Menu>
-            ) : null
+            ) : undefined
           }
+          data-thread-relationships-panel
         >
           {delegatedFrom === undefined ? null : (
             <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
@@ -1078,36 +1138,52 @@ export function ThreadRelationshipsPanel(props: {
               />
             </ThreadLineageRowList>
           )}
-          {groups.map((group) => (
-            <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-              {(visibleRows) =>
-                visibleRows.map((row) =>
-                  "remote" in row ? (
-                    <RemoteSubagentRow
-                      key={row.remote.id}
-                      agent={row.remote}
-                      // Its provider instance belongs to the environment it runs in.
-                      provider={providersByEnvironment
-                        .get(row.remote.remoteChild.environmentId)
-                        ?.find((entry) => entry.instanceId === row.remote.providerInstanceId)}
-                      anyInstanceBadge={hasInstanceBadge(providerEntries)}
-                    />
-                  ) : (
-                    renderRelationshipRow(row)
-                  ),
-                )
-              }
-            </ThreadLineageGroup>
-          ))}
+          {groups
+            .filter((group) => group.id !== "previous")
+            .map((group) => (
+              <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+                {(visibleRows) => visibleRows.map(renderLineageRow)}
+              </ThreadLineageGroup>
+            ))}
+          {currentThread ? (
+            <div
+              className="mx-0.5 flex min-h-9 items-center gap-2.5 rounded-lg bg-foreground/4 ps-2.5 pe-1"
+              aria-current="true"
+            >
+              <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-meta">{currentThread.title}</span>
+                <span className="truncate text-caption text-muted-foreground">
+                  {formatModelSlugName(currentThread.modelSelection.model)}
+                </span>
+              </span>
+            </div>
+          ) : null}
+          {groups
+            .filter((group) => group.id === "previous")
+            .map((group) => (
+              <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+                {(visibleRows) => visibleRows.map(renderLineageRow)}
+              </ThreadLineageGroup>
+            ))}
+          {unlinkedRunningCount > 0 ? (
+            <div className="flex items-center gap-2 px-2 py-1 text-caption text-dim-foreground">
+              <Spinner size="xs" tone="muted" />
+              {gt(
+                "{count, plural, one {{count} running agent preparing threads} other {{count} running agents preparing threads}}",
+                { count: unlinkedRunningCount },
+              )}
+            </div>
+          ) : null}
         </ThreadDetailsSection>
       ) : null}
       {sideChatsVisible ? (
         <ThreadDetailsSection
-          headingId="thread-details-side-chats-heading"
-          title={
+          title={gt("Side chats")}
+          summary={
             runningSideChats > 0
-              ? gt("Side chats · {runningSideChats} running", { runningSideChats })
-              : gt("Side chats")
+              ? gt("{count} running", { count: runningSideChats, $context: "running side chats" })
+              : undefined
           }
           data-thread-side-chats-panel
         >

@@ -94,14 +94,14 @@ export function SourceControlTokenSettings({
     >
       {/* Locked while saving: a successful save clears the draft, which would drop edits made mid-request. */}
       <fieldset disabled={saving} className="contents">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        <p className="max-w-2xl text-meta leading-relaxed text-muted-foreground">
           <T>
             A token saved here is used before{" "}
-            <code className="rounded bg-muted px-1 py-px text-2xs">
+            <code className="rounded bg-muted px-1 py-px text-caption">
               <Var>{credentials.tokenEnvVar}</Var>
             </code>{" "}
             and the{" "}
-            <code className="rounded bg-muted px-1 py-px text-2xs">
+            <code className="rounded bg-muted px-1 py-px text-caption">
               <Var>{credentials.cliName}</Var>
             </code>{" "}
             login, so <Var>{definition.label}</Var> works without the{" "}
@@ -154,7 +154,7 @@ export function SourceControlTokenSettings({
           </div>
         </div>
         <div className="flex items-center justify-between gap-3">
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {savedHosts.length === 0
               ? gt("No token saved; the server uses {envVar} or the {cliName} login.", {
                   envVar: credentials.tokenEnvVar,
@@ -166,7 +166,7 @@ export function SourceControlTokenSettings({
             {isSaved ? (
               <Button
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 disabled={saving}
                 onClick={() => void save(normalizedHost, "")}
               >

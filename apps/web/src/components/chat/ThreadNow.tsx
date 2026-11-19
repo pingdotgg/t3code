@@ -16,7 +16,7 @@ export interface ThreadNowItem {
 
 /** Matches ThreadStatusLine, so every line at the end of the timeline reads as one family. */
 const lineClassName = cn(
-  "mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-1 pb-2 text-xs text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0",
+  "mx-auto flex w-full min-w-0 max-w-(--chat-content-max-width) items-center gap-1.5 px-1 pb-2 text-meta text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0",
   // Inline actions keep their text size but get a finger-sized hit area on touch.
   "pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5",
   "transition-opacity duration-150 ease-out starting:opacity-0 motion-reduce:transition-none",

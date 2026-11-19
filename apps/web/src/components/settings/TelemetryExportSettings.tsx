@@ -73,20 +73,21 @@ function endpointStatus(
       dot: "bg-muted-foreground/40",
     };
   }
-  if (check?.url !== url) {
+  if (check?.url !== url)
     return { label: resolve(msg("Not checked")), dot: "bg-muted-foreground/40" };
-  }
   const { result } = check;
   if (result === null) return { label: resolve(msg("Checking…")), dot: "bg-warning" };
   switch (result._tag) {
     case "Accepted":
       return {
-        label: resolve(msg("Connected · {ms} ms", { ms: Math.round(result.latencyMs) })),
+        label: resolve(msg("Connected")),
+        detail: resolve(msg("{ms} ms", { ms: Math.round(result.latencyMs) })),
         dot: "bg-success",
       };
     case "Rejected":
       return {
-        label: resolve(msg("Rejected · HTTP {status}", { status: result.status })),
+        label: resolve(msg("Rejected")),
+        detail: resolve(msg("HTTP {status}", { status: result.status })),
         dot: "bg-destructive",
       };
     case "Unreachable":
@@ -197,14 +198,14 @@ function TelemetryExportForm() {
           }
         }}
       >
-        <p className="text-xs text-muted-foreground">
+        <p className="text-meta text-muted-foreground">
           <T>
             Send traces, metrics, and logs to an OTLP HTTP receiver. Restart the server to apply.
             Environment variables override these settings.
           </T>
         </p>
         {!canEdit && (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             {environment
               ? gt("This connection lacks permission to change settings on {environment}.", {
                   environment: environment.label,
@@ -221,7 +222,7 @@ function TelemetryExportForm() {
           const check = canCheck ? endpointStatus(url, checks[key], messages) : null;
           const status = override
             ? {
-                label: check ? `${override.label} · ${check.label}` : override.label,
+                label: check?.label ?? override.label,
                 dot: check?.dot ?? "bg-muted-foreground/40",
               }
             : check;
@@ -232,7 +233,11 @@ function TelemetryExportForm() {
                   {status && <ConnectionStatusDot dotClassName={status.dot} />}
                   <Label htmlFor={key}>{messages(label)}</Label>
                 </div>
-                {status && <span className="text-xs text-muted-foreground">{status.label}</span>}
+                <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
+                  {override && check ? <span>{override.label}</span> : null}
+                  {status ? <span>{status.label}</span> : null}
+                  {check && "detail" in check ? <span>{check.detail}</span> : null}
+                </span>
               </div>
               <div className="flex gap-2">
                 <Input
@@ -259,7 +264,7 @@ function TelemetryExportForm() {
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
+                    variant="secondary"
                     disabled={!isHttpUrl(url) || checks[key]?.result === null}
                     onClick={() => void checkEndpoint(key, signal, url)}
                   >
@@ -268,7 +273,7 @@ function TelemetryExportForm() {
                 )}
               </div>
               {(saved[key] !== (running?.[key] ?? "") || override?.variable) && (
-                <p className="break-all text-xs text-muted-foreground">
+                <p className="break-all text-meta text-muted-foreground">
                   {override?.variable ? (
                     running?.[key] ? (
                       <T>
@@ -296,14 +301,14 @@ function TelemetryExportForm() {
           );
         })}
         <div className="flex items-center justify-between gap-3">
-          <p role="status" className="text-xs text-muted-foreground">
+          <p role="status" className="text-meta text-muted-foreground">
             {message}
           </p>
           <div className="flex shrink-0 gap-2">
             <Button
               type="button"
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={!changed || saving || !canEdit}
               onClick={() => {
                 setDraft({});

@@ -24,7 +24,7 @@ import { RelativeTime } from "~/components/RelativeTime";
 import { cn } from "~/lib/utils";
 import { SpeechTextField, TextFieldSpeechControls } from "~/speech/useTextFieldSpeech";
 
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestEditButton } from "./PullRequestEditButton";
 import { isCommentSubmitShortcut } from "../diffs/commentSubmitShortcut";
@@ -43,8 +43,7 @@ import {
   type PullRequestCompletionScope,
 } from "./PullRequestMarkdownTextarea";
 
-const CARD_CLASS =
-  "mx-3 my-2 rounded-xl border border-border/70 bg-background p-3 text-sm shadow-sm";
+const CARD_CLASS = "mx-3 my-2 rounded-card border border-border surface-card p-3 text-sm";
 
 function submitKeys(input: {
   readonly value: string;
@@ -315,24 +314,31 @@ export function ReviewThreadCard({
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         {thread.isResolved ? (
-          <CircleCheckIcon className="size-3.5 text-success-foreground" />
+          <CircleCheckIcon
+            className={cn("size-3.5", thread.isResolved && "text-success-foreground")}
+          />
         ) : (
-          <CircleIcon className="size-3.5" />
+          <CircleIcon className={cn("size-3.5", thread.isResolved && "text-success-foreground")} />
         )}
-        <button
-          type="button"
-          className="hover:text-foreground"
+        <InlineButton
+          tone="muted"
           aria-expanded={expanded}
+          aria-label={
+            thread.isResolved
+              ? gt(
+                  "{count, plural, one {Resolved, {count} comment} other {Resolved, {count} comments}}",
+                  { count: commentCount },
+                )
+              : gt("{count, plural, one {Open, {count} comment} other {Open, {count} comments}}", {
+                  count: commentCount,
+                })
+          }
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved
-            ? gt("Resolved", { $context: "review thread state" })
-            : gt("Open", { $context: "review thread state" })}{" "}
-          ·{" "}
           {gt("{count, plural, one {{count} comment} other {{count} comments}}", {
             count: commentCount,
           })}
-        </button>
+        </InlineButton>
         {thread.isOutdated ? <span>outdated</span> : null}
         {onFix ? (
           <Button

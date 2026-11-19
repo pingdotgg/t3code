@@ -9,6 +9,7 @@ import {
   endThreadContextDrag,
   moveThreadContextDrag as moveThreadContextDragGhost,
 } from "./chat/threadContextDrag";
+import { appearanceFontStack } from "../appearanceFonts";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { useAtomValue } from "@effect/atom-react";
@@ -30,6 +31,7 @@ import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-
 import {
   canSnooze,
   effectiveSnoozed,
+  snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
@@ -68,14 +70,7 @@ import {
   type OlderSettledScope,
 } from "@t3tools/client-runtime/state/threads";
 
-import {
-  CheckIcon,
-  ChevronDownIcon,
-  FolderIcon,
-  ListFilterIcon,
-  PlusIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { CheckIcon, FolderIcon, SettingsIcon } from "lucide-react";
 import {
   useEffect,
   useLayoutEffect,
@@ -104,6 +99,7 @@ import {
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
 import { isModelPickerOpen } from "../modelPickerVisibility";
+import { observeResize } from "~/lib/observeResize";
 import { isMacPlatform } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -150,6 +146,7 @@ import {
   readThreadShell,
   useAllEnvironmentProjectSnapshotsReady,
   useDelegatedUnderParent,
+  useAllEnvironmentShellsBootstrapped,
   useProjects,
   useServerConfigs,
   useQuietThreadShells,
@@ -202,7 +199,6 @@ import {
   resolveSidebarThreadSection,
   resolveSidebarReorderableThreadKeys,
   searchSidebarThreads,
-  shouldCreateNewThreadInCurrentProject,
   shouldNavigateAfterThreadPark,
   sidebarListItemId,
   sidebarThreadKeyAtY,
@@ -224,12 +220,7 @@ import {
 import { SidebarPointerSensor } from "./Sidebar.pointer";
 import { createSidebarListMotion } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
-import {
-  pickSnoozePreset,
-  resolveSnoozePresets,
-  snoozeWakeLabel,
-  type SnoozePreset,
-} from "./Sidebar.snooze";
+import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { deriveProviderEntriesByEnvironment } from "../providerInstances";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -271,7 +262,7 @@ import {
   type SidebarProviderEntry,
   type SidebarSweepAction,
 } from "./sidebar/SidebarThreadRow";
-import { SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
+import { readDraftRow, SidebarDraftBlock } from "./sidebar/SidebarDraftBlock";
 import {
   SidebarProjectFolderHeader,
   sidebarFolderRowId,
@@ -906,6 +897,49 @@ function readRouteThreadKey(router: AnyRouter): string | null {
   return ref === null ? null : scopedThreadKey(ref);
 }
 
+// Matches the list's --fade-size: rows inside the fade read as cut off.
+const SIDEBAR_LIST_FADE_PX = 12;
+
+// Scrolls the thread list just enough to show the open thread's row whole and
+// clear of the edge fades. The far edge lands on a row boundary (the next row
+// in the direction of travel, or the list's end) so no neighbor shows sliced
+// through its text, unless the viewport is too short to fit both.
+function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
+  const item = row.closest("li") ?? row;
+  const list = item.parentElement;
+  if (!list) return;
+  // Layout offsets, not rects: rows can be mid-glide (list motion transforms)
+  // when this runs, and a rect would report where the glide started.
+  const listTop =
+    list.getBoundingClientRect().top - viewport.getBoundingClientRect().top + viewport.scrollTop;
+  const top = (element: HTMLElement) => listTop + element.offsetTop;
+  const bottom = (element: HTMLElement) => top(element) + element.offsetHeight;
+  const sibling = (direction: "next" | "previous") => {
+    let candidate = direction === "next" ? item.nextElementSibling : item.previousElementSibling;
+    while (candidate instanceof HTMLElement && candidate.offsetHeight === 0) {
+      candidate =
+        direction === "next" ? candidate.nextElementSibling : candidate.previousElementSibling;
+    }
+    return candidate instanceof HTMLElement ? candidate : null;
+  };
+  const { scrollTop, clientHeight } = viewport;
+  const maxScroll = viewport.scrollHeight - clientHeight;
+  let target = scrollTop;
+  if (bottom(item) > scrollTop + clientHeight - SIDEBAR_LIST_FADE_PX) {
+    const next = sibling("next");
+    const withNext = next ? bottom(next) - clientHeight : maxScroll;
+    target = top(item) >= withNext + SIDEBAR_LIST_FADE_PX ? withNext : bottom(item) - clientHeight;
+    // A sliver left below would only fade the last row; finish the scroll.
+    if (maxScroll - target < SIDEBAR_LIST_FADE_PX) target = maxScroll;
+  } else if (top(item) < scrollTop + SIDEBAR_LIST_FADE_PX) {
+    const previous = sibling("previous");
+    const withPrevious = previous ? top(previous) : 0;
+    target =
+      bottom(item) <= withPrevious + clientHeight - SIDEBAR_LIST_FADE_PX ? withPrevious : top(item);
+  }
+  if (target !== scrollTop) viewport.scrollTop = Math.min(maxScroll, Math.max(0, target));
+}
+
 export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReveal }) {
   const gt = useGT();
   const messages = useMessages();
@@ -924,6 +958,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const sidebarFontFamily = useClientSettings((s) => s.fontFamilySans);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
@@ -1158,7 +1193,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     clearSelection();
     setPersistedProjectScopeKeys([]);
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
-  const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, routeKeyInPlace);
+  const revealActiveRow = useActiveRowReveal(
+    routeReveal,
+    routeRowThreadKey,
+    routeKeyInPlace,
+    (row) => {
+      const viewport = row.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+      if (viewport) revealSidebarRow(viewport, row);
+    },
+  );
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
   const scratchMachineLabelFor = (
     thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
@@ -1200,20 +1243,38 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       ? {}
       : { projectIds: scopedProjectRefs.map((projectRef) => projectRef.projectId) },
   );
+  // Until every environment has answered, an empty list means "loading", not "empty".
+  const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const routeDraftIdForRows = routeTarget?.kind === "draft" ? routeTarget.draftId : null;
+  // Capture the open draft during the route change so its row stays visible without repainting while typing.
+  // Fresh typing sessions have no prior snapshot and show no row.
+  const [routeDraftSnapshot, setRouteDraftSnapshot] = useState(() => ({
+    draftId: routeDraftIdForRows,
+    row: readDraftRow(routeDraftIdForRows),
+  }));
+  let routeDraftRow = routeDraftSnapshot.row;
+  if (routeDraftSnapshot.draftId !== routeDraftIdForRows) {
+    routeDraftRow = readDraftRow(routeDraftIdForRows);
+    setRouteDraftSnapshot({ draftId: routeDraftIdForRows, row: routeDraftRow });
+  }
+  // re-rendering the whole sidebar. Mirrors the block's row filter.
   const visibleDraftSessionCount = useComposerDraftStore((store) => {
     let count = 0;
     for (const [draftKey, session] of Object.entries(store.draftThreadsByThreadKey)) {
       if (session.promotedTo != null) {
         continue;
       }
-      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
-        continue;
-      }
       if (
         scopedProjectKeys !== null &&
         !scopedProjectKeys.has(`${session.environmentId}:${session.projectId}`)
       ) {
+        continue;
+      }
+      if (draftKey === routeDraftIdForRows) {
+        if (routeDraftRow !== null) count += 1;
+        continue;
+      }
+      if (!composerDraftHasUserContent(store.draftsByThreadKey[draftKey])) {
         continue;
       }
       count += 1;
@@ -2067,6 +2128,41 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     routeThreadKey: routeRowThreadKey,
     snoozedThreadCount: snoozedThreads.length,
   });
+  // The open thread's row stays in view when it renders, on every navigation and when it
+  // changes section. Rows above can still grow after the first paint, so the list re-reveals
+  // on resize until the user touches it; after that their scroll position is left alone.
+  const routeRowSection =
+    sidebarListItems.flatMap((item) =>
+      item.kind === "thread" && item.key === routeRowThreadKey ? [item.section] : [],
+    )[0] ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Keep the active row visible as layout changes until the user scrolls.
+  useEffect(() => {
+    if (routeRowThreadKey === null || routeRowSection === null || isSearchingThreads) return;
+    const list = threadListRef.current;
+    const viewport = list?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!list || !viewport) return;
+    const navigationParent =
+      list.querySelector<HTMLElement>('[aria-current="page"]')?.dataset.sidebarParent;
+    let frame = 0;
+    const reveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const row = list.querySelector<HTMLElement>('[aria-current="page"]');
+        if (row && row.dataset.sidebarParent === navigationParent) revealSidebarRow(viewport, row);
+      });
+    };
+    const release = observeResize(list, reveal);
+    reveal();
+    const userInput = ["wheel", "touchstart", "pointerdown", "keydown"] as const;
+    for (const type of userInput) {
+      viewport.addEventListener(type, release, { passive: true });
+    }
+    return () => {
+      cancelAnimationFrame(frame);
+      release();
+      for (const type of userInput) viewport.removeEventListener(type, release);
+    };
+  }, [isSearchingThreads, routeRowSection, routeRowThreadKey]);
   const draggedThreadKey = dragState?.activeKey;
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
@@ -2945,36 +3041,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const showJumpHints = useThreadJumpHintsVisible(keybindings, routeThreadRef);
 
-  const handleNewThreadClick = (event?: ReactMouseEvent) => {
-    if (
-      shouldCreateNewThreadInCurrentProject(
-        event?.shiftKey ?? false,
-        scopeGroups.length,
-        projectGroups.length,
-      )
-    ) {
-      if (isMobile) setOpenMobile(false);
-      // With no current or open project, such as when every project is archived, pick one.
-      void startNewThreadFromContext({
-        activeDraftThread: newThreadContext.activeDraftThread,
-        activeThread: newThreadContext.activeThread ?? undefined,
-        defaultProjectRef: newThreadContext.defaultProjectRef,
-        handleNewThread,
-      }).then((started) => {
-        if (!started) openCommandPalette({ open: "new-thread-in" });
-      });
-      return;
-    }
+  const handleNewThreadClick = () => {
     if (isMobile) setOpenMobile(false);
-    openCommandPalette({ open: "new-thread-in" });
+    // With no current or open project, such as when every project is archived, pick one.
+    void startNewThreadFromContext({
+      activeDraftThread: newThreadContext.activeDraftThread,
+      activeThread: newThreadContext.activeThread ?? undefined,
+      defaultProjectRef: newThreadContext.defaultProjectRef,
+      handleNewThread,
+    }).then((started) => {
+      if (!started) openCommandPalette({ open: "new-thread-in" });
+    });
   };
 
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.new") ??
-    (shouldCreateNewThreadInCurrentProject(false, scopeGroups.length, projectGroups.length)
-      ? shortcutLabelForCommand(keybindings, "chat.newLocal")
-      : undefined);
-  const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+    shortcutLabelForCommand(keybindings, "chat.newLocal");
   return (
     <SidebarFolderDrop>
       <SidebarChromeHeader isElectron={isElectron} />
@@ -3057,7 +3139,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         <ProjectFavicon project={scopedProjectGroups[0]} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-4" />
+                      <FolderIcon className="size-3.5" />
                     )}
                   </ComboboxTrigger>
                   {/* Refocusing the trigger after a pointer close shows its focus ring and opens its tooltip. */}
@@ -3198,14 +3280,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
               newThreadShortcutLabel={newThreadShortcutLabel}
-              newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
-              showNewThreadInProjectHint={
-                !shouldCreateNewThreadInCurrentProject(
-                  false,
-                  scopeGroups.length,
-                  projectGroups.length,
-                )
-              }
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
               onSearchQueryChange={(value) => {
@@ -3294,7 +3368,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             ) : (
               <p
                 role="status"
-                className="px-2 py-6 text-center text-xs text-sidebar-muted-foreground"
+                className="px-2 py-6 text-center text-meta text-sidebar-muted-foreground"
               >
                 {threadSearch.isPending
                   ? gt("Searching thread messages…")
@@ -3305,7 +3379,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             )
           ) : null}
           {/* A scope can hide every active thread; say so even when its project still has settled ones. */}
-          {!isSearchingThreads &&
+          {shellsBootstrapped &&
+          !isSearchingThreads &&
           !hasProjectFolders &&
           visibleDraftSessionCount === 0 &&
           pinnedThreads.length +
@@ -3314,25 +3389,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             snoozedThreads.length ===
             0 &&
           (settledCount === 0 || scopedProjectGroups.length > 0) ? (
-            <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
-                <>
-                  <span>
-                    <T>No projects yet</T>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={openAddProjectCommandPalette}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <PlusIcon className="-mx-0.5 size-3" />
-                    <T>Add project</T>
-                  </button>
-                </>
-              ) : scopedProjectGroups.length > 0 ? (
-                <>
-                  <span>
-                    {settledCount > 0
+            <div className="flex flex-col items-start gap-1 p-2 text-xs">
+              <span className="text-muted-foreground">
+                {projects.length === 0
+                  ? gt("No projects yet")
+                  : scopedProjectGroups.length > 0
+                    ? settledCount > 0
                       ? scopedProjectGroups.length > 1
                         ? gt("No active threads in these projects")
                         : gt("No active threads in {project}", {
@@ -3342,19 +3404,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         ? gt("No threads in these projects yet")
                         : gt("No threads in {project} yet", {
                             project: scopedProjectGroups[0]!.displayName,
-                          })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setProjectScopeKeys([])}
-                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
-                  >
-                    <T>Show all projects</T>
-                  </button>
-                </>
-              ) : (
-                <T>No threads yet</T>
-              )}
+                          })
+                    : gt("No threads yet")}
+              </span>
+              {projects.length === 0 ? (
+                <span className="text-dim-foreground">
+                  <T>Add one to see its threads here.</T>
+                </span>
+              ) : scopedProjectGroups.length > 0 ? (
+                <Button variant="secondary" size="xs" onClick={() => setProjectScopeKeys([])}>
+                  <T>Show all projects</T>
+                </Button>
+              ) : null}
             </div>
           ) : null}
           {!isSearchingThreads ? (
@@ -3375,6 +3436,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               >
                 <SortableContext items={sortableIds} strategy={sidebarSortingStrategy}>
                   <ul
+                    style={{
+                      fontFamily: appearanceFontStack(
+                        sidebarFontFamily,
+                        '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif',
+                      ),
+                    }}
                     ref={attachTreeRef}
                     // Presentation flattens VoiceOver's list interaction boundary while preserving descendant
                     // controls.
@@ -3505,6 +3572,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             onUnsettle={attemptUnsettle}
                             onSnooze={attemptSnooze}
                             onUnsnooze={attemptUnsnooze}
+                            onPin={attemptPin}
                             onUnpin={attemptUnpin}
                             onAcknowledgeWoke={acknowledgeWoke}
                             onFileDropThreads={handleThreadFileDrop}
@@ -3519,6 +3587,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
                           routeDraftId={routeDraftIdForRows}
+                          routeDraftRow={routeDraftRow}
                           onNavigateToDraft={navigateToDraft}
                           onDraftContextMenu={handleDraftContextMenu}
                         />,
@@ -3631,11 +3700,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               <SidebarSectionHeader
                                 key="settled-shelf-header"
                                 marker="settled-header"
+                                // The first shelf docks above the footer when
+                                // the list is shorter than the sidebar. An
+                                // empty shelf only shows while a drag can drop
+                                // into it.
                                 className={cn(
                                   workingThreads.length + snoozedThreads.length === 0 && "mt-auto",
+                                  settledCount === 0 && from === null && "invisible",
                                 )}
                                 label={gt("Settled", { $context: "sidebar section" })}
                                 count={settledCount}
+                                concealed={settledCount === 0 && from === null}
                                 dragging={from !== null}
                                 isDropTarget={dragTargetSection === "settled"}
                                 toggle={{
@@ -3679,10 +3754,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             olderSettledShelf.retry();
                             showMoreSettled();
                           }}
-                          className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
+                          className="mx-0.5 flex h-5.5 w-[calc(100%-0.25rem)] cursor-pointer items-center rounded-row px-2 text-left text-sm font-medium text-dim-foreground outline-none hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-default"
                         >
-                          {/* Plus means "add", so revealing more uses a chevron. */}
-                          <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
                           {olderSettledShelf.loading
                             ? gt("Loading")
                             : olderSettledShelf.failed

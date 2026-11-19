@@ -36,7 +36,7 @@ const isMonogramText = Schema.is(ProjectMonogramText);
 
 function PickerIcon({ name }: { name: string }) {
   const icon = lucideIconByName(name);
-  return icon ? createElement(icon, { className: "size-5" }) : null;
+  return icon ? createElement(icon, { className: "size-4.5" }) : null;
 }
 
 function iconLabel(name: string): string {
@@ -163,7 +163,7 @@ function ProjectIconPickerBody({
                   aria-pressed={color === option.value}
                   className={cn(
                     "flex size-6 items-center justify-center rounded-full border border-transparent outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                    color === option.value && "border-foreground/64",
+                    color === option.value && "shadow-project-icon-selected",
                   )}
                   onClick={() => setColor(option.value)}
                 >
@@ -192,9 +192,11 @@ function ProjectIconPickerBody({
                     aria-label={iconLabel(name)}
                     aria-pressed={iconName === name}
                     className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      iconName === name && "border-border bg-accent",
-                      selectedColorClassName,
+                      "flex aspect-square items-center justify-center rounded-project-icon border border-transparent outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      iconName === name
+                        ? "surface-raised [--surface-rim:linear-gradient(180deg,color-mix(in_srgb,currentColor_60%,transparent),color-mix(in_srgb,currentColor_20%,transparent))]"
+                        : "bg-settings-icon-fill text-muted-foreground",
+                      iconName === name && selectedColorClassName,
                     )}
                     onClick={() => setIconName(name)}
                   >
@@ -244,8 +246,8 @@ function ProjectIconPickerBody({
                     aria-label={m(option.label)}
                     aria-pressed={emoji === option.emoji}
                     className={cn(
-                      "flex aspect-square items-center justify-center rounded-md border border-transparent text-xl outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      emoji === option.emoji && "border-border bg-accent",
+                      "flex aspect-square items-center justify-center rounded-item border border-transparent text-xl outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      emoji === option.emoji && "border-border surface-selected-soft",
                     )}
                     onClick={() => setEmoji(option.emoji)}
                   >
@@ -255,7 +257,7 @@ function ProjectIconPickerBody({
               </div>
             </ScrollArea>
             <div>
-              <div className="mb-2 text-xs font-medium text-muted-foreground">
+              <div className="mb-2 text-xs font-medium text-dim-foreground">
                 <T>Or paste any emoji</T>
               </div>
               <Input
@@ -274,7 +276,7 @@ function ProjectIconPickerBody({
         )}
       </DialogPanel>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>
+        <Button variant="secondary" onClick={onClose}>
           <T>Cancel</T>
         </Button>
         <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>

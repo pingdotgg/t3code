@@ -255,7 +255,7 @@ export function VoiceInputSetup(props: {
               </Button>
             ) : null}
             {props.downloading ? (
-              <Button variant="outline" disabled={!canManage} onClick={props.onCancelDownload}>
+              <Button variant="secondary" disabled={!canManage} onClick={props.onCancelDownload}>
                 <T>Cancel download</T>
               </Button>
             ) : null}

@@ -421,7 +421,7 @@ export function QueuedRunsControl({
         })}
       </ol>
       {collapsible ? (
-        <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+        <div className="self-end pe-1 text-meta pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
           <InlineButton
             tone="muted"
             aria-expanded={showAll}
@@ -503,17 +503,17 @@ function QueuedMessage(props: {
   return (
     <>
       {attribution === "t3code" ? (
-        <p className="me-1 text-2xs text-muted-foreground/70">
+        <p className="me-1 text-micro text-dim-foreground">
           <T>Sent by T3 Code</T>
         </p>
       ) : null}
       {presentation?.guestName === undefined ? null : (
         <GuestMessageName name={presentation.guestName} />
       )}
-      {/* Dashed and unfilled: a turn that has not been sent yet. */}
+      {/* Dashed: a turn that has not been sent yet. */}
       <div
         className={cn(
-          "flex min-w-0 max-w-[80%] flex-col rounded-2xl border border-dashed text-sm",
+          "flex min-w-0 max-w-[80%] flex-col rounded-card border border-dashed text-body surface-card",
           props.isEditing
             ? "border-primary/60 text-foreground"
             : attribution === "guest"
@@ -548,22 +548,24 @@ function QueuedMessage(props: {
                     type="button"
                     aria-label={gt("Preview {name}", { name: thumbnail.name })}
                     disabled={!thumbnail.previewUrl}
-                    className="size-8 overflow-hidden rounded-md border border-border/70 bg-background enabled:cursor-zoom-in"
+                    className="size-8 enabled:cursor-zoom-in"
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => {
                       const preview = buildExpandedImagePreview(props.thumbnails, thumbnail.id);
                       if (preview) props.onImageExpand(preview);
                     }}
                   >
-                    {thumbnail.previewUrl ? (
-                      <img
-                        src={thumbnail.previewUrl}
-                        alt={thumbnail.name}
-                        className="size-full object-cover"
-                      />
-                    ) : (
-                      <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
-                    )}
+                    <span className="block size-full overflow-hidden rounded-md border border-border/70 bg-background">
+                      {thumbnail.previewUrl ? (
+                        <img
+                          src={thumbnail.previewUrl}
+                          alt={thumbnail.name}
+                          className="size-full object-cover"
+                        />
+                      ) : (
+                        <span aria-label={thumbnail.name} className="block size-full bg-muted/60" />
+                      )}
+                    </span>
                   </button>
                 ))}
               </span>
@@ -575,7 +577,7 @@ function QueuedMessage(props: {
           </div>
         ) : null}
       </div>
-      <div className="flex items-center gap-0.5 pe-1 text-xs text-muted-foreground">
+      <div className="flex items-center gap-0.5 pe-1 text-meta text-muted-foreground">
         {props.message ? (
           <span className="me-1 flex items-center gap-2 px-1 opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/queued:opacity-100">
             {attribution === "agent" &&

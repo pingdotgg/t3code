@@ -27,9 +27,9 @@ function RedactedLogin(props: {
 }) {
   const gt = useGT();
   return props.revealed ? (
-    <span className="min-w-0 truncate font-mono text-2xs">{props.account}</span>
+    <span className="min-w-0 truncate font-mono text-caption">{props.account}</span>
   ) : (
-    <span className="min-w-0 truncate font-mono text-2xs">
+    <span className="min-w-0 truncate font-mono text-caption">
       <span className="select-none blur-xs" aria-hidden>
         {redactedPlaceholder(props.account)}
       </span>
@@ -85,10 +85,10 @@ export function SourceControlAccountSettings({
 
   if (groups.length === 0) {
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-meta text-muted-foreground">
         <T>
           Sign in with{" "}
-          <code className="rounded bg-muted px-1 py-px text-2xs">
+          <code className="rounded bg-muted px-1 py-px text-caption">
             <Var>{credentials.loginCommand}</Var>
           </code>{" "}
           on the server host, then rescan to choose accounts here.
@@ -100,10 +100,10 @@ export function SourceControlAccountSettings({
   return (
     <div className="grid gap-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+        <p className="max-w-2xl text-meta leading-relaxed text-muted-foreground">
           <T>
             Choose which{" "}
-            <code className="rounded bg-muted px-1 py-px text-2xs">
+            <code className="rounded bg-muted px-1 py-px text-caption">
               <Var>{cliName}</Var>
             </code>{" "}
             login each <Var>{label}</Var> host uses, or turn a host off.
@@ -133,9 +133,9 @@ export function SourceControlAccountSettings({
           <div key={group.host} className="grid gap-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 space-y-0.5">
-                <span className="text-xs font-medium text-foreground">{group.host}</span>
+                <span className="text-meta text-foreground">{group.host}</span>
                 {group.selectable.length === 1 && group.selectable[0] !== undefined ? (
-                  <p className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                  <p className="flex min-w-0 items-center gap-1 text-meta text-muted-foreground">
                     <span>
                       <T>Signed in as</T>
                     </span>
@@ -152,7 +152,7 @@ export function SourceControlAccountSettings({
             </div>
             {group.selectable.length > 1 ? (
               <div className="flex items-center justify-between gap-3">
-                <span className="text-xs text-muted-foreground">
+                <span className="text-meta text-muted-foreground">
                   <T>Account</T>
                 </span>
                 <div className="w-64 max-w-full">
@@ -226,7 +226,7 @@ export function SourceControlAccountSettings({
             ) : null}
             {stalePin ? (
               <div className="flex items-center justify-between gap-3">
-                <p className="text-xs text-warning">
+                <p className="text-meta text-warning">
                   <T>
                     The chosen login is no longer signed in, so the active <Var>{cliName}</Var>{" "}
                     login is used.
@@ -234,7 +234,7 @@ export function SourceControlAccountSettings({
                 </p>
                 <Button
                   size="xs"
-                  variant="outline"
+                  variant="secondary"
                   disabled={saving}
                   onClick={() => void save(group.host, { account: null })}
                 >
@@ -245,7 +245,7 @@ export function SourceControlAccountSettings({
             {group.broken.map((entry) => (
               <p
                 key={entry.account}
-                className="flex min-w-0 flex-wrap items-center gap-1 text-xs text-muted-foreground/70"
+                className="flex min-w-0 flex-wrap items-center gap-1 text-meta text-muted-foreground/70"
               >
                 {entry.error ? (
                   <T>
@@ -265,7 +265,7 @@ export function SourceControlAccountSettings({
               </p>
             ))}
             {group.environmentVariable ? (
-              <p className="text-xs text-warning">
+              <p className="text-meta text-warning">
                 <T>
                   <Var>{group.environmentVariable}</Var> is set on the server, so it overrides the
                   account chosen here until it is unset.

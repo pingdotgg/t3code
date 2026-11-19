@@ -90,9 +90,9 @@ export function ReactionBar({
                 className={cn(
                   PILL_CLASS,
                   reaction.viewerHasReacted
-                    ? "border-primary/60 bg-primary/10 text-foreground"
-                    : "border-border/70 bg-muted/40 text-muted-foreground",
-                  canReact ? "hover:border-primary/60" : "cursor-default",
+                    ? "border-border surface-selected text-strong-foreground"
+                    : "border-border surface-pill text-muted-foreground",
+                  canReact ? "hover:surface-ghost-hover" : "cursor-default",
                 )}
                 onClick={() => void toggle(reaction.content, !reaction.viewerHasReacted)}
               />
@@ -116,7 +116,7 @@ export function ReactionBar({
                 aria-label={gt("Add a reaction")}
                 className={cn(
                   PILL_CLASS,
-                  "border-border/70 px-1.5 text-muted-foreground hover:border-primary/60 hover:text-foreground",
+                  "border-border surface-pill px-1.5 text-muted-foreground hover:surface-ghost-hover hover:text-foreground",
                 )}
               />
             }
@@ -135,8 +135,8 @@ export function ReactionBar({
                     aria-pressed={reacted}
                     aria-label={pullRequestReactionName(content, messages)}
                     className={cn(
-                      "flex size-7 items-center justify-center rounded-md text-base outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
-                      reacted && "bg-primary/10",
+                      "flex size-7 items-center justify-center rounded-row text-base outline-none hover:surface-ghost-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                      reacted && "surface-selected",
                     )}
                     onClick={() => {
                       setPickerOpen(false);

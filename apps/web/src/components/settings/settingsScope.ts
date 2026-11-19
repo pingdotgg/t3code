@@ -120,17 +120,12 @@ export function resolveSettingsScope(
           resolve(msg("This checkout's environment is no longer available.")),
         );
       }
-      const sharesEnvironment = group.memberProjects.some(
-        (member) =>
-          member.environmentId === checkout.environmentId &&
-          member.physicalProjectKey !== checkout.physicalProjectKey,
-      );
       return {
         kind: "checkout",
         group,
         checkout,
         environmentId: checkout.environmentId,
-        label: `${group.displayName} / ${checkoutEnvironment.label}${sharesEnvironment ? ` · ${checkout.workspaceRoot}` : ""}`,
+        label: group.displayName,
         members,
         environmentIds: [checkout.environmentId],
       };

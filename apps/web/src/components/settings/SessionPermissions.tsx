@@ -19,7 +19,7 @@ export function SessionPermissions({
   const messages = useMessages();
   const session = useEnvironmentSessionState(environmentId);
   return connected && !session.hasError && !session.isPending && session.data?.authenticated ? (
-    <div className="space-y-3 py-3 text-xs">
+    <div className="space-y-3 py-3 text-meta">
       <p className="text-muted-foreground">
         {routeContext ? (
           <T>
@@ -44,7 +44,7 @@ export function SessionPermissions({
       </ul>
     </div>
   ) : (
-    <p className="py-3 text-xs text-muted-foreground">
+    <p className="py-3 text-meta text-muted-foreground">
       {sessionPermissionsUnavailableMessage(
         {
           connected,

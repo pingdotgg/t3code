@@ -1233,7 +1233,7 @@ export function PullRequestsPage() {
   const openPanelControls = (
     <div
       className={cn(
-        "absolute top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "absolute top-[var(--workspace-pane-local-controls-top)] right-[var(--workspace-pane-local-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls
@@ -1311,9 +1311,9 @@ export function PullRequestsPage() {
       )}
 
       {listError && shownCount > 0 ? (
-        <div className="flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
+        <div className="flex items-center justify-between gap-3 rounded-control border border-warning/30 bg-warning-surface px-3 py-2 text-xs">
           <span>{gt("{error} Showing the last pull requests loaded.", { error: listError })}</span>
-          <Button size="xs" variant="outline" onClick={() => listQuery.refresh()}>
+          <Button size="xs" variant="secondary" onClick={() => listQuery.refresh()}>
             <T>Retry</T>
           </Button>
         </div>
@@ -1328,7 +1328,7 @@ export function PullRequestsPage() {
           ) : canContinue || pageSize < MAX_PAGE_SIZE ? (
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               onClick={loadMore}
               disabled={listQuery.isPending || showingCarried}
             >
@@ -1371,7 +1371,6 @@ export function PullRequestsPage() {
       label={gt("Sort pull requests")}
       triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
       triggerLabel={gt("Sort", { $context: "verb, sort a list" })}
-      outlined
       value={sort}
       options={resolveFilterOptions(SORT_OPTIONS, resolve)}
       onChange={(next) => updateListScope({ sort: next })}

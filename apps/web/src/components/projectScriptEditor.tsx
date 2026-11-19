@@ -227,7 +227,7 @@ export function ProjectScriptEditorDialog({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>
+            <AlertDialogClose render={<Button variant="secondary" />}>
               <T>Cancel</T>
             </AlertDialogClose>
             <Button
@@ -436,7 +436,7 @@ function ProjectScriptEditorForm({
                     render={
                       <Button
                         type="button"
-                        variant="outline"
+                        variant="secondary"
                         className="size-9 shrink-0"
                         aria-label={gt("Choose icon")}
                       />
@@ -452,10 +452,10 @@ function ProjectScriptEditorForm({
                           <button
                             key={entry.id}
                             type="button"
-                            className={`relative flex flex-col items-center gap-2 rounded-md border px-2 py-2 text-xs dark:border-transparent ${
+                            className={`relative flex flex-col items-center gap-2 rounded-item border px-2 py-2 text-xs ${
                               isSelected
-                                ? "border-primary/70 bg-primary/10 ring-inset dark:ring-1 dark:ring-primary/30"
-                                : "border-border/70 hover:bg-accent/60 dark:bg-white/[0.035]"
+                                ? "border-border surface-selected-soft text-strong-foreground"
+                                : "border-border/70 surface-card-settings hover:surface-ghost-hover"
                             }`}
                             onClick={() => {
                               setIcon(entry.id);
@@ -566,7 +566,7 @@ function ProjectScriptEditorForm({
               />
             </label>
             <label
-              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm dark:border-transparent dark:bg-white/[0.035] ${
+              className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-body dark:border-transparent dark:bg-white/[0.035] ${
                 previewUrl.trim().length === 0 ? "opacity-60" : ""
               }`}
             >
@@ -579,7 +579,7 @@ function ProjectScriptEditorForm({
                 onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
               />
             </label>
-            {validationError && <p className="text-sm text-destructive">{validationError}</p>}
+            {validationError && <p className="text-body text-destructive">{validationError}</p>}
           </fieldset>
         </form>
       </DialogPanel>
@@ -595,7 +595,7 @@ function ProjectScriptEditorForm({
             <T context="verb, delete the action">Delete</T>
           </Button>
         )}
-        <Button type="button" variant="outline" onClick={close}>
+        <Button type="button" variant="secondary" onClick={close}>
           <T>Cancel</T>
         </Button>
         <Button form={formId} type="submit" disabled={isSaving || !canEditActions}>

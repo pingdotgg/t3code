@@ -64,7 +64,7 @@ export function ProviderSubagentBar(props: {
             live,
           )}
           aria-hidden
-          className="min-w-0 max-w-full truncate text-muted-foreground tabular-nums @max-[560px]/composer-surface:text-xs"
+          className="min-w-0 max-w-full truncate text-muted-foreground tabular-nums @max-[560px]/composer-surface:text-meta"
         />
       </div>
       <span role="status" className="sr-only">

@@ -75,7 +75,7 @@ function PullRequestBaseFreshnessWarning({
               <Button
                 key={method}
                 size="xs"
-                variant="outline"
+                variant="secondary"
                 disabled={pending}
                 onClick={() => onUpdate(method)}
               >

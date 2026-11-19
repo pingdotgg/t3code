@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon, PackagePlusIcon, PaletteIcon, SearchIcon } from "lucide-react";
@@ -65,7 +66,7 @@ function ThemeExtensionIcon({ extension }: { extension: OpenVsxThemeExtension })
   const [failed, setFailed] = useState(false);
 
   return (
-    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
+    <div className="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-control bg-muted text-dim-foreground">
       {extension.iconUrl && !failed ? (
         <img
           alt=""
@@ -310,7 +311,7 @@ export function ThemeSearchSection({
   return (
     <section className="space-y-3" aria-labelledby="theme-search-heading">
       <div>
-        <h3 className="text-sm font-medium" id="theme-search-heading">
+        <h3 className="text-sm font-medium text-strong-foreground" id="theme-search-heading">
           <T>Search community themes</T>
         </h3>
         <p className="mt-0.5 text-muted-foreground text-xs">
@@ -340,7 +341,7 @@ export function ThemeSearchSection({
       {!isSearching || results !== null ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            <p className="text-muted-foreground text-xs">
+            <p className="text-dim-foreground text-xs">
               <T>Popular</T>
             </p>
             {SUGGESTED_SEARCHES.map((suggestion) => (
@@ -363,7 +364,7 @@ export function ThemeSearchSection({
           </div>
           {results && results.length > 0 ? (
             <div className="flex shrink-0 items-center justify-end gap-2">
-              <p className="text-muted-foreground text-xs">
+              <p className="text-dim-foreground text-xs">
                 <T>Sort</T>
               </p>
               <Select
@@ -414,8 +415,8 @@ export function ThemeSearchSection({
 
       {results ? (
         results.length === 0 ? (
-          <div className="flex min-h-40 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-            <p className="text-sm font-medium">
+          <div className="flex min-h-40 flex-col items-center justify-center rounded-card border border-dashed text-center">
+            <p className="text-sm font-medium text-strong-foreground">
               <T>No supported open-source themes found</T>
             </p>
             <p className="mt-1 text-muted-foreground text-xs">
@@ -432,17 +433,29 @@ export function ThemeSearchSection({
               const action = isInstalled ? gt("Update") : gt("Install");
               return (
                 <article
-                  className="group flex min-w-0 flex-col gap-3 rounded-xl border border-border/70 bg-card/60 p-3 transition-colors hover:bg-accent/20"
+                  className="group flex min-w-0 flex-col gap-3 rounded-card border border-border/70 surface-card-settings p-3 transition-colors hover:surface-ghost-hover"
                   key={extension.id}
                 >
                   <div className="flex min-w-0 gap-3">
                     <ThemeExtensionIcon key={extension.iconUrl} extension={extension} />
                     <div className="min-w-0 flex-1">
-                      <h4 className="truncate text-sm font-medium">{extension.name}</h4>
-                      <p className="truncate text-muted-foreground text-xs">
-                        {extension.publisher} · {DOWNLOAD_FORMAT.format(extension.downloadCount)}{" "}
-                        downloads
-                      </p>
+                      <h4 className="truncate text-sm font-medium text-strong-foreground">
+                        {extension.name}
+                      </h4>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <p tabIndex={0} className="truncate text-meta text-muted-foreground" />
+                          }
+                        >
+                          {extension.publisher}
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">
+                          <T>
+                            <Var>{DOWNLOAD_FORMAT.format(extension.downloadCount)}</Var> downloads
+                          </T>
+                        </TooltipPopup>
+                      </Tooltip>
                     </div>
                   </div>
                   <p className="line-clamp-2 min-h-8 text-muted-foreground text-xs leading-4">
@@ -473,7 +486,7 @@ export function ThemeSearchSection({
                       }
                       disabled={installingId !== null}
                       size="xs"
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => void handleInstall(extension, false)}
                     >
                       {isInstalling ? (
@@ -518,7 +531,7 @@ export function ThemeSearchSection({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>
+            <AlertDialogClose render={<Button variant="secondary" />}>
               <T>Cancel</T>
             </AlertDialogClose>
             <Button

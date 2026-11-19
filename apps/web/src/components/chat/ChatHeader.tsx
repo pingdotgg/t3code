@@ -11,10 +11,9 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, Var } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
+import { PlusIcon, SquarePenIcon } from "lucide-react";
 import {
   memo,
-  useEffect,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -22,7 +21,6 @@ import {
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Badge } from "../ui/badge";
-import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -33,16 +31,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { ProjectFavicon } from "../ProjectFavicon";
-import {
-  WorkspaceBreadcrumb,
-  WorkspaceBreadcrumbItem,
-  WorkspaceBreadcrumbSeparator,
-  WorkspaceBreadcrumbText,
-} from "../WorkspaceBreadcrumb";
-import { observeResize } from "~/lib/observeResize";
+import { PANE_TAB_CLASS, PaneNotch, PaneTabButton } from "../PaneNotch";
+import { Button } from "../ui/button";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
-import { useClientSettings } from "../../hooks/useSettings";
 import { GuestShareIndicator } from "./GuestShareControls";
 
 interface ChatHeaderProps {
@@ -87,9 +79,6 @@ export const ChatHeader = memo(function ChatHeader({
   const gt = useGT();
   const activeProjectName = activeProject?.isScratch ? gt("No project") : activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
-  const interfaceFont = useClientSettings((settings) => settings.fontFamilySans);
-  const breadcrumbContainerRef = useRef<HTMLDivElement>(null);
-  const [collapseParentTitle, setCollapseParentTitle] = useState(false);
   const activeThreadRef = scopeThreadRef(activeThreadEnvironmentId, activeThreadId);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
@@ -118,47 +107,6 @@ export const ChatHeader = memo(function ChatHeader({
     renaming.environmentId === activeThreadEnvironmentId
       ? renaming.title
       : null;
-  const isRenamingTitle = renamingTitle !== null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the breadcrumb list DOM via ResizeObserver, a frame and font loads to collapse the parent title
-  useEffect(() => {
-    const list = breadcrumbContainerRef.current?.querySelector("ol");
-    if (!list || !parentThreadLink) return;
-    const measure = () => {
-      const gap = Number.parseFloat(getComputedStyle(list).columnGap) || 0;
-      const width = Array.from(list.children).reduce(
-        (total, item) => {
-          const label = item.querySelector('[data-slot="workspace-breadcrumb-text"]');
-          const ellipsis = item.querySelector("[data-parent-breadcrumb-ellipsis]");
-          return (
-            total +
-            (item.firstElementChild?.getBoundingClientRect().width ?? 0) +
-            (label && getComputedStyle(label).maxWidth === "none"
-              ? label.scrollWidth - label.clientWidth
-              : 0) -
-            (ellipsis?.getBoundingClientRect().width ?? 0)
-          );
-        },
-        gap * (list.children.length - 1),
-      );
-      setCollapseParentTitle(width > list.clientWidth);
-    };
-    measure();
-    const frame = requestAnimationFrame(measure);
-    document.fonts.addEventListener("loadingdone", measure);
-    const stopObserving = observeResize(list, measure);
-    return () => {
-      cancelAnimationFrame(frame);
-      document.fonts.removeEventListener("loadingdone", measure);
-      stopObserving();
-    };
-  }, [
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Title, font and rename changes resize the breadcrumb text without resizing the list, so it re-measures.
-    activeProjectName,
-    activeThreadTitle,
-    parentThreadLink,
-    interfaceFont,
-    isRenamingTitle,
-  ]);
   const renameCommittedRef = useRef(false);
   const startRename = () => {
     if (
@@ -248,96 +196,43 @@ export const ChatHeader = memo(function ChatHeader({
       setRenaming(null);
     }
   };
+  const tabIcon = isServerThread ? (
+    activeProject ? (
+      <ProjectFavicon project={activeProject} className="size-3.5" />
+    ) : null
+  ) : (
+    <SquarePenIcon aria-hidden className="size-3.5 shrink-0 text-foreground" />
+  );
+  // The project name left the header with the breadcrumb; the tab's tooltip
+  // keeps it, in the breadcrumb's old order.
+  const tabTooltip = activeProjectName
+    ? `${activeProjectName} / ${activeThreadTitle}`
+    : activeThreadTitle;
   return (
     <div
-      ref={breadcrumbContainerRef}
       className={cn(
-        "flex min-w-0 flex-1 items-center gap-2 sm:gap-3",
+        "flex min-w-0 flex-1 items-center self-stretch",
         rightPanelOpen ? "pr-10" : "pr-24",
       )}
       onContextMenu={handleHeaderContextMenu}
     >
-      <WorkspaceBreadcrumb
-        ariaLabel={gt("Thread breadcrumb")}
-        className="flex-1 overflow-clip [overflow-clip-margin:2px]"
-      >
-        {activeProject ? (
-          <>
-            <WorkspaceBreadcrumbItem className="shrink">
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("New thread in {project}", { project: activeProjectName })}
-                      onClick={onNewThreadInProject}
-                      className="inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1.5 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  <ProjectFavicon project={activeProject} className="size-3.5" />
-                  <MiddleTruncate
-                    data-slot="workspace-breadcrumb-text"
-                    value={activeProjectName ?? ""}
-                    showTitle={false}
-                    variant="cap-aligned"
-                  />
-                </TooltipTrigger>
-                <TooltipPopup side="top">
-                  <T>
-                    New thread in <Var>{activeProjectName}</Var>
-                  </T>
-                </TooltipPopup>
-              </Tooltip>
-            </WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator>
-              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
-            </WorkspaceBreadcrumbSeparator>
-          </>
-        ) : null}
+      <PaneNotch>
         {parentThreadLink ? (
-          <>
-            <WorkspaceBreadcrumbItem>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={gt("Open parent thread: {title}", {
-                        title: parentThreadLink.title,
-                      })}
-                      onClick={() => onOpenThread(parentThreadLink.threadId)}
-                      className="inline-flex min-w-0 max-w-full cursor-pointer items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                    />
-                  }
-                >
-                  <WorkspaceBreadcrumbText
-                    aria-hidden
-                    className={collapseParentTitle ? "w-0" : undefined}
-                  >
-                    {parentThreadLink.title}
-                  </WorkspaceBreadcrumbText>
-                  {collapseParentTitle ? (
-                    <span aria-hidden data-parent-breadcrumb-ellipsis>
-                      ...
-                    </span>
-                  ) : null}
-                </TooltipTrigger>
-                <TooltipPopup side="top">{parentThreadLink.title}</TooltipPopup>
-              </Tooltip>
-            </WorkspaceBreadcrumbItem>
-            <WorkspaceBreadcrumbSeparator>
-              <WorkspaceBreadcrumbText>/</WorkspaceBreadcrumbText>
-            </WorkspaceBreadcrumbSeparator>
-          </>
+          <ParentThreadTab link={parentThreadLink} onOpenThread={onOpenThread} />
         ) : null}
-        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
-          {renamingTitle !== null ? (
+        {renamingTitle !== null ? (
+          <div
+            className={cn(
+              PANE_TAB_CLASS,
+              "inset-ring inset-ring-ring/50 focus-within:inset-ring-ring",
+            )}
+          >
+            {tabIcon}
             <input
               autoFocus
               dir="auto"
               aria-label={gt("Thread title")}
-              className="min-w-0 flex-1 rounded-sm bg-transparent text-sm font-medium text-foreground outline-none ring-1 ring-inset ring-ring/50 focus:ring-ring"
+              className="min-w-24 max-w-full bg-transparent outline-none [field-sizing:content]"
               defaultValue={renamingTitle}
               onBlur={(event) => {
                 if (renameCommittedRef.current) return;
@@ -353,65 +248,103 @@ export const ChatHeader = memo(function ChatHeader({
               onFocus={(event) => event.currentTarget.select()}
               onKeyDown={handleRenameKeyDown}
             />
-          ) : isServerThread ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
+          </div>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                isServerThread ? (
+                  <PaneTabButton
                     type="button"
                     aria-label={gt("Thread actions for {title}", { title: activeThreadTitle })}
                     aria-haspopup="menu"
                     onClick={openMenuFromTitle}
                     onDoubleClick={canOperateThread ? handleTitleDoubleClick : undefined}
-                    className="group/thread-title inline-flex min-w-0 max-w-full cursor-pointer items-center gap-1 rounded-sm text-left focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   />
-                }
-              >
-                <h2 className="min-w-0" dir={textDirection(activeThreadTitle)}>
-                  <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
-                </h2>
-                <ChevronDownIcon
-                  aria-hidden
-                  data-thread-title-chevron
-                  className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/thread-title:opacity-100 group-focus-visible/thread-title:opacity-100"
+                ) : (
+                  <div className={PANE_TAB_CLASS} />
+                )
+              }
+            >
+              {tabIcon}
+              <h2 className="min-w-0 truncate" dir={textDirection(activeThreadTitle)}>
+                {activeThreadTitle}
+              </h2>
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{tabTooltip}</TooltipPopup>
+          </Tooltip>
+        )}
+        {activeProject ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="bare"
+                  size="icon-xs"
+                  data-pane-notch-add=""
+                  aria-label={gt("New thread in {project}", { project: activeProjectName })}
+                  onClick={onNewThreadInProject}
                 />
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
-            </Tooltip>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <h2
-                    aria-label={activeThreadTitle}
-                    className="min-w-0 flex-1"
-                    dir={textDirection(activeThreadTitle)}
-                  />
-                }
-              >
-                <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
-              </TooltipTrigger>
-              <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
-            </Tooltip>
-          )}
-          {renamingTitle === null && activeThreadLinkOrigin ? (
-            <Tooltip>
-              <TooltipTrigger render={<Badge variant="info" size="sm" />}>
-                <T>
-                  From <Var>{activeThreadLinkOrigin}</Var>
-                </T>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                <T>
-                  Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
-                  environment.
-                </T>
-              </TooltipPopup>
-            </Tooltip>
-          ) : null}
-        </WorkspaceBreadcrumbItem>
-      </WorkspaceBreadcrumb>
+              }
+            >
+              <PlusIcon />
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">
+              <T>
+                New thread in <Var>{activeProjectName}</Var>
+              </T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+        {renamingTitle === null && activeThreadLinkOrigin ? (
+          <Tooltip>
+            <TooltipTrigger render={<Badge variant="info" size="sm" />}>
+              <T>
+                From <Var>{activeThreadLinkOrigin}</Var>
+              </T>
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              <T>
+                Started by an agent on <Var>{activeThreadLinkOrigin}</Var> through a linked
+                environment.
+              </T>
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
+      </PaneNotch>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
     </div>
   );
 });
+
+/**
+ * A subagent thread's way back to its parent: a muted notch control ahead of
+ * the thread's own tab.
+ */
+function ParentThreadTab({
+  link,
+  onOpenThread,
+}: {
+  readonly link: { threadId: ThreadId; title: string };
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
+  const gt = useGT();
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost-muted"
+            size="sm"
+            aria-label={gt("Open parent thread: {title}", { title: link.title })}
+            onClick={() => onOpenThread(link.threadId)}
+            className="min-w-0 max-w-40 shrink [-webkit-app-region:no-drag]"
+          />
+        }
+      >
+        <span className="min-w-0 truncate">{link.title}</span>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{link.title}</TooltipPopup>
+    </Tooltip>
+  );
+}

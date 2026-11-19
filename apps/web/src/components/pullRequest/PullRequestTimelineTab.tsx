@@ -143,7 +143,7 @@ function TimelineMarker({
 function IconMarker({ icon, className }: { icon: ReactNode; className?: string | undefined }) {
   return (
     <TimelineMarker className={className}>
-      <span className="flex size-7 items-center justify-center bg-background text-muted-foreground">
+      <span className="flex size-7 items-center justify-center bg-background text-dim-foreground">
         {icon}
       </span>
     </TimelineMarker>
@@ -439,11 +439,17 @@ function ConversationGroup({
                 })}
               </span>
               <span className="block truncate text-3xs text-muted-foreground">
-                {gt("{count, plural, one {{formatted} author} other {{formatted} authors}}", {
-                  count: actors.length,
-                  formatted: actors.length.toLocaleString(),
-                })}{" "}
-                · <RelativeTime timestamp={first.at} />
+                <Tooltip>
+                  <TooltipTrigger render={<span tabIndex={0} />}>
+                    <RelativeTime timestamp={first.at} />
+                  </TooltipTrigger>
+                  <TooltipPopup>
+                    {gt("{count, plural, one {{formatted} author} other {{formatted} authors}}", {
+                      count: actors.length,
+                      formatted: actors.length.toLocaleString(),
+                    })}
+                  </TooltipPopup>
+                </Tooltip>
               </span>
             </span>
             <ChevronDownIcon
@@ -516,60 +522,64 @@ function ReviewThreadEvent({
         fallback={<MessageSquareIcon className="size-3.5" />}
         muted={!expanded}
       />
-      <button
-        type="button"
-        className="flex w-full min-w-0 items-center gap-2 px-2 py-2 text-left text-2xs text-muted-foreground hover:text-foreground"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((current) => !current)}
-      >
-        {thread.path === null ? (
-          <span className="min-w-0 truncate">
-            <T context="review thread without a file">Overview</T>
-          </span>
-        ) : (
-          <>
-            <FileCode2Icon aria-hidden className="size-3 shrink-0" />
-            <span className="min-w-0 truncate font-mono">
-              {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
+      <div className="flex min-w-0 items-center gap-1">
+        <Button
+          variant="ghost-muted"
+          size="xs"
+          className="min-w-0 flex-1"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {thread.path === null ? (
+            <span className="min-w-0 truncate">
+              <T context="review thread without a file">Overview</T>
             </span>
-          </>
-        )}
-        {thread.isResolved ? (
-          <span className="inline-flex shrink-0 items-center gap-1 font-medium text-success-foreground">
-            <CircleCheckIcon aria-hidden className="size-3" />
-            <T context="review thread state">Resolved</T>
-          </span>
-        ) : null}
-        {dismissed ? (
-          <span className="shrink-0 font-medium">
-            <T>Review dismissed</T>
-          </span>
-        ) : null}
-        {thread.isOutdated ? (
-          <span className="shrink-0 font-medium">
-            <T context="review thread state">Outdated</T>
-          </span>
-        ) : null}
-        {expanded ? null : (
-          <span className="shrink-0">
-            · {event.actor?.login ?? "ghost"}
-            {replyCount > 0 ? (
-              <>
-                {" "}
-                ·{" "}
-                {gt("{count, plural, one {{formatted} reply} other {{formatted} replies}}", {
-                  count: replyCount,
-                  formatted: replyCount.toLocaleString(),
-                })}
-              </>
-            ) : null}
-          </span>
-        )}
-        <ChevronDownIcon
-          aria-hidden
-          className={cn("ml-auto size-3.5 shrink-0 transition-transform", expanded && "rotate-180")}
-        />
-      </button>
+          ) : (
+            <>
+              <FileCode2Icon aria-hidden className="size-3 shrink-0" />
+              <span className="min-w-0 truncate font-mono">
+                {thread.line === null ? thread.path : `${thread.path}:${thread.line}`}
+              </span>
+            </>
+          )}
+          {thread.isResolved ? (
+            <span className="inline-flex shrink-0 items-center gap-1 text-caption text-success-foreground">
+              <CircleCheckIcon aria-hidden className="size-3" />
+              <T context="review thread state">Resolved</T>
+            </span>
+          ) : null}
+          {dismissed ? (
+            <span className="shrink-0 text-caption">
+              <T>Review dismissed</T>
+            </span>
+          ) : null}
+          {thread.isOutdated ? (
+            <span className="shrink-0 text-caption">
+              <T context="review thread state">Outdated</T>
+            </span>
+          ) : null}
+          {expanded ? null : (
+            <Tooltip>
+              <TooltipTrigger render={<span tabIndex={0} />}>
+                {replyCount > 0
+                  ? gt("{count, plural, one {{formatted} reply} other {{formatted} replies}}", {
+                      count: replyCount,
+                      formatted: replyCount.toLocaleString(),
+                    })
+                  : (event.actor?.login ?? "ghost")}
+              </TooltipTrigger>
+              <TooltipPopup>{event.actor?.login ?? "ghost"}</TooltipPopup>
+            </Tooltip>
+          )}
+          <ChevronDownIcon
+            aria-hidden
+            className={cn(
+              "ml-auto size-3.5 shrink-0 transition-transform",
+              expanded && "rotate-180",
+            )}
+          />
+        </Button>
+      </div>
       {expanded ? (
         <>
           <ConversationCard
@@ -996,10 +1006,10 @@ export function PullRequestTimelineTab({
       renderItem={renderRow}
       estimatedItemSize={140}
       className="scrollbar-gutter-both h-full px-4"
-      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border/45"
+      contentContainerClassName="relative mx-auto w-full max-w-3xl before:absolute before:bottom-10 before:left-[15px] before:top-6 before:w-px before:bg-border"
       ListHeaderComponent={
         anchor !== null && targetIndex < 0 && revealUrl === undefined ? (
-          <p role="status" className="py-4 text-xs text-muted-foreground">
+          <p role="status" className="py-4 text-meta text-muted-foreground">
             <T>The linked item is not in the loaded activity.</T>
           </p>
         ) : (

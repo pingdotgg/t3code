@@ -3,6 +3,7 @@ import { T, Var } from "gt-react";
 import { BuildingIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
+import { InlineButton } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /**
@@ -42,7 +43,7 @@ export function ManagedControl({
 /** One line of policy text with the building mark, for places a whole feature is managed. */
 export function ManagedNotice({ children }: { children: ReactNode }) {
   return (
-    <p className="flex items-start gap-2 text-muted-foreground text-xs leading-relaxed">
+    <p className="flex items-start gap-2 text-muted-foreground text-meta leading-relaxed">
       <BuildingIcon aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
       <span>{children}</span>
     </p>
@@ -59,14 +60,9 @@ export function ManagedByOrganization({ policy }: { policy: ManagedPolicySummary
       {policy.supportUrl ? (
         <>
           {" "}
-          <a
-            href={policy.supportUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="text-foreground underline underline-offset-2"
-          >
+          <InlineButton render={<a href={policy.supportUrl} target="_blank" rel="noreferrer" />}>
             <T>Get help</T>
-          </a>
+          </InlineButton>
         </>
       ) : null}
     </ManagedNotice>

@@ -202,7 +202,7 @@ function DeviceHostEditorForm({
         <Collapsible
           open={checksOpen}
           onOpenChange={(open) => setExpandedChecks({ key: connectionKey, open })}
-          render={<div className="rounded-lg border border-border/60" />}
+          render={<div className="rounded-card border border-transparent surface-card-settings" />}
         >
           <div className="flex items-center justify-between gap-3 px-3 py-2.5">
             {targets.length === 1 ? (
@@ -230,7 +230,7 @@ function DeviceHostEditorForm({
             <Button
               type="button"
               size="sm"
-              variant="outline"
+              variant="secondary"
               disabled={busy || checking || !valid}
               onClick={() => {
                 if (Option.isSome(input)) void testConnection(input.value);
@@ -241,7 +241,7 @@ function DeviceHostEditorForm({
           </div>
           {results ? (
             <CollapsiblePanel
-              render={<ul className="border-t border-border/60 divide-y divide-border/40" />}
+              render={<ul className="border-t border-border divide-y divide-border" />}
             >
               {targets.map((target) => {
                 const result = results[target.environmentId];
@@ -249,7 +249,9 @@ function DeviceHostEditorForm({
                 return (
                   <li key={target.environmentId} className="px-3 py-2.5 text-xs">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="truncate font-medium">{target.label}</span>
+                      <span className="truncate text-meta text-strong-foreground">
+                        {target.label}
+                      </span>
                       <span
                         className={`flex shrink-0 items-center gap-1.5 ${result.status === "failed" ? "text-destructive" : "text-muted-foreground"}`}
                       >

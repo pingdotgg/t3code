@@ -149,7 +149,7 @@ export function EasDeviceHostEditor(props: {
     label: string,
     max: number,
   ) => (
-    <label className="block space-y-1.5">
+    <label className="block space-y-1.5 text-label">
       <span>{label}</span>
       <Input
         type="number"
@@ -190,7 +190,7 @@ export function EasDeviceHostEditor(props: {
             </DialogDescription>
           </DialogHeader>
           <DialogPanel>
-            <label className="block space-y-1.5 text-sm">
+            <label className="block space-y-1.5 text-label">
               <span>
                 <T>Name</T>
               </span>
@@ -205,8 +205,8 @@ export function EasDeviceHostEditor(props: {
                 }}
               />
             </label>
-            <div className="space-y-1.5 text-sm">
-              <label htmlFor={tokenId} className="block">
+            <div className="space-y-1.5 text-body">
+              <label htmlFor={tokenId} className="block text-label">
                 <T>Expo access token</T>
               </label>
               <div className="flex items-center gap-2">
@@ -267,8 +267,8 @@ export function EasDeviceHostEditor(props: {
                 ) : null}
               </div>
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 px-3 py-2.5">
-              <p role="status" className="min-w-0 text-xs text-muted-foreground">
+            <div className="flex items-center justify-between gap-3 rounded-card border border-transparent surface-card-settings px-3 py-2.5">
+              <p role="status" className="min-w-0 text-meta text-muted-foreground">
                 {account.status === "signed-in"
                   ? m(SIGNED_IN_MESSAGES[account.account.credentialSource], {
                       account: account.account.signedInAs,
@@ -282,15 +282,15 @@ export function EasDeviceHostEditor(props: {
               <Button
                 type="button"
                 size="sm"
-                variant="outline"
+                variant="secondary"
                 disabled={props.busy || !tokenValid || account.status === "checking"}
                 onClick={() => void checkAccount()}
               >
                 {account.status === "checking" ? <Spinner size="xs" /> : null} <T>Check account</T>
               </Button>
             </div>
-            <div className="space-y-1.5 text-sm">
-              <span>
+            <div className="space-y-1.5 text-body">
+              <span className="text-label">
                 <T>Expo project</T>
               </span>
               <Select
@@ -327,19 +327,19 @@ export function EasDeviceHostEditor(props: {
                   ))}
                 </SelectPopup>
               </Select>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-meta text-muted-foreground">
                 <T>
                   Sessions bill the project's Expo account. "From the thread's project" reads
                   extra.eas.projectId from the project's app config.
                 </T>
               </p>
             </div>
-            <div className="grid grid-cols-3 gap-3 text-sm">
+            <div className="grid grid-cols-3 gap-3 text-body">
               {limit("maxConcurrentSessions", gt("Sessions at once"), 20)}
               {limit("maxSessionMinutes", gt("Session minutes"), 115)}
               {limit("idleMinutes", gt("Idle minutes"), 60)}
             </div>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-meta text-muted-foreground">
               <T>
                 Expo Simulators needs a paid Expo account. A session runs for up to 115 minutes and
                 stops early when it is idle for the idle minutes, so idle minutes must be less than
@@ -353,7 +353,7 @@ export function EasDeviceHostEditor(props: {
               )}
             </p>
             {problem === null ? null : (
-              <p className="text-xs text-destructive" role="alert">
+              <p className="text-meta text-destructive-foreground" role="alert">
                 {problem}
               </p>
             )}

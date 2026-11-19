@@ -84,9 +84,15 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
 function KeybindingPill({ value }: { value: string }) {
-  // Keys dedupe repeated parts; a literal "+" in a shortcut splits into empty strings.
+  // A literal "+" key ends the value ("mod++") and splits into trailing empty strings,
+  // read back as one "+" key the way parseKeybindingShortcut does.
+  const tokens = value.split("+");
+  const endsWithPlusKey = tokens.at(-1) === "";
+  while (tokens.at(-1) === "") tokens.pop();
+  if (endsWithPlusKey) tokens.push("+");
+  // React keys stay unique when a part repeats.
   const seenParts = new Map<string, number>();
-  const parts = value.split("+").map((part) => {
+  const parts = tokens.map((part) => {
     const seen = seenParts.get(part) ?? 0;
     seenParts.set(part, seen + 1);
     return { part, key: seen === 0 ? part : `${part}-${seen}` };
@@ -234,7 +240,7 @@ function WarningTooltipIcon({
             tabIndex={focusable ? 0 : undefined}
             aria-label={label}
             className={cn(
-              "inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
+              "inline-flex size-5 shrink-0 items-center justify-center rounded-kbd text-warning-foreground outline-none transition-colors hover:bg-warning/10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-warning/25",
               className,
             )}
           />
@@ -377,7 +383,7 @@ function WhenExpressionNodeEditor({
       : [condition.identifier];
 
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border/70 bg-background/60 px-2 py-2">
+      <div className="flex items-center gap-2 rounded-row surface-well px-2 py-2">
         <Toggle
           pressed={condition.negated}
           onPressedChange={(pressed) => onChange(setConditionNegated(node, pressed))}
@@ -408,8 +414,8 @@ function WhenExpressionNodeEditor({
     return (
       <div
         className={cn(
-          "space-y-2 rounded-lg border border-border/70 bg-muted/20 p-2",
-          depth > 0 && "border-border/50 bg-background/50",
+          "space-y-2 rounded-control border border-border/50 surface-card-settings p-2",
+          depth > 0 && "surface-well",
         )}
       >
         <div className="flex items-center gap-2">
@@ -510,8 +516,8 @@ function WhenExpressionNodeEditor({
   return (
     <div
       className={cn(
-        "space-y-2 rounded-lg border border-border/60 bg-muted/10 p-2",
-        depth > 0 && "border-border/70 bg-background/55",
+        "space-y-2 rounded-control border border-border/50 surface-card-settings p-2",
+        depth > 0 && "surface-well",
       )}
     >
       <div className="flex flex-wrap items-center gap-2">
@@ -528,11 +534,11 @@ function WhenExpressionNodeEditor({
             </SelectItem>
           </SelectContent>
         </Select>
-        <Button type="button" variant="outline" size="compact" onClick={addCondition}>
+        <Button type="button" variant="secondary" size="compact" onClick={addCondition}>
           <PlusIcon className="size-3.5" />
           {gt("Condition", { $context: "button, adds a when-clause condition" })}
         </Button>
-        <Button type="button" variant="outline" size="compact" onClick={addGroup}>
+        <Button type="button" variant="secondary" size="compact" onClick={addGroup}>
           <PlusIcon className="size-3.5" />
           {gt("Group", { $context: "button, adds a group of when-clause conditions" })}
         </Button>
@@ -630,16 +636,16 @@ function WhenExpressionBuilder({
     <div className="w-[min(34rem,calc(100vw-2rem))] space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium text-foreground">
+          <div className="text-sm font-medium text-strong-foreground">
             {gt("When", { $context: "heading for keybinding conditions" })}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <Button type="button" variant="outline" size="compact" onClick={addRootCondition}>
+          <Button type="button" variant="secondary" size="compact" onClick={addRootCondition}>
             <PlusIcon className="size-3.5" />
             {gt("Condition", { $context: "button, adds a when-clause condition" })}
           </Button>
-          <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
+          <Button type="button" variant="secondary" size="compact" onClick={addRootGroup}>
             <PlusIcon className="size-3.5" />
             {gt("Group", { $context: "button, adds a group of when-clause conditions" })}
           </Button>
@@ -680,13 +686,13 @@ function WhenExpressionBuilder({
             onRemove={() => updateExpressionValue(undefined)}
           />
         ) : (
-          <div className="rounded-md border border-dashed border-border/80 bg-muted/15 p-3">
+          <div className="rounded-row border border-dashed border-border/50 surface-card-settings p-3">
             <div className="flex flex-wrap gap-2">
               <Button type="button" size="compact" onClick={addRootCondition}>
                 <PlusIcon className="size-3.5" />
                 {gt("Condition", { $context: "button, adds a when-clause condition" })}
               </Button>
-              <Button type="button" variant="outline" size="compact" onClick={addRootGroup}>
+              <Button type="button" variant="secondary" size="compact" onClick={addRootGroup}>
                 <PlusIcon className="size-3.5" />
                 {gt("Group", { $context: "button, adds a group of when-clause conditions" })}
               </Button>
@@ -889,7 +895,7 @@ function KeybindingKeyControl({
               : formatShortcutLabel(row.binding.shortcut),
           })}
           className={cn(
-            "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:bg-accent focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/24",
+            "inline-flex h-8 cursor-pointer items-center rounded-md border border-transparent px-1.5 sm:h-7 outline-none transition-colors hover:border-border/70 hover:surface-ghost-hover focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/24",
             pillClassName,
           )}
         >
@@ -954,7 +960,14 @@ function WhenClauseControl({
         }
         aria-label={editLabel}
       >
-        <span className="truncate font-mono">{expression || gt("Always")}</span>
+        <span
+          className={cn(
+            "truncate font-mono font-normal",
+            expression ? "text-muted-foreground" : "text-dim-foreground",
+          )}
+        >
+          {expression || gt("Always")}
+        </span>
         <ChevronDownIcon className="size-3.5 shrink-0 opacity-60" />
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={6}>
@@ -1029,7 +1042,7 @@ function KeybindingSourceBadge({ source }: { source: KeybindingRow["source"] }) 
   const gt = useGT();
   if (source === "Default") return null;
   return (
-    <Badge variant="outline" size="sm">
+    <Badge variant="secondary" size="sm">
       {source === "Custom"
         ? gt("Custom", { $context: "keybinding source badge" })
         : gt("Project", { $context: "keybinding source badge" })}
@@ -1041,7 +1054,7 @@ function KeybindingRowTitle({ row }: { row: KeybindingRow }) {
   const m = useMessages();
   return (
     <Tooltip>
-      <TooltipTrigger render={<span className="flex items-center gap-2" />}>
+      <TooltipTrigger render={<span className="flex items-center gap-2 font-normal" />}>
         {commandLabel(row.command, m)}
         <KeybindingSourceBadge source={row.source} />
       </TooltipTrigger>
@@ -1063,7 +1076,7 @@ function KeybindingRowWhen({
   const m = useMessages();
   return (
     <span className="flex h-6 items-center gap-1.5">
-      <span className="text-xs leading-none text-muted-foreground/70">
+      <span className="text-xs leading-none text-dim-foreground">
         {gt("When", { $context: "heading for keybinding conditions" })}
       </span>
       <WhenClauseControl
@@ -1338,11 +1351,11 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
   return (
     <SettingsRow
-      className="bg-muted/15"
+      className="surface-selected-soft"
       title={gt("New keybinding")}
       description={
         <span className="flex h-6 items-center gap-1.5">
-          <span className="text-xs leading-none text-muted-foreground/70">
+          <span className="text-xs leading-none text-dim-foreground">
             {gt("When", { $context: "heading for keybinding conditions" })}
           </span>
           <NewKeybindingWhen draft={draft} variables={variables} />
@@ -1402,7 +1415,7 @@ function BrowserKeybindingNotice() {
         delay={200}
         render={
           <Button size="icon-micro" variant="ghost-muted" aria-label={message}>
-            <TriangleAlertIcon className="size-3.5 text-warning" />
+            <TriangleAlertIcon className="size-3.5 text-warning-foreground" />
           </Button>
         }
       />
@@ -1621,7 +1634,7 @@ export function KeybindingsSettingsPanel() {
           <KeybindingsSearchInput query={query} onChange={setQuery} inputRef={searchInputRef} />
           <Button
             type="button"
-            variant="outline"
+            variant="secondary"
             disabled={isAddingBinding || !canWriteSettings}
             onClick={() => setIsAddingBinding(true)}
           >
@@ -1633,7 +1646,7 @@ export function KeybindingsSettingsPanel() {
               render={
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="secondary"
                   size="icon"
                   disabled={!keybindingsConfigPath || !canOpenKeybindingsFile}
                   onClick={openKeybindingsFile}

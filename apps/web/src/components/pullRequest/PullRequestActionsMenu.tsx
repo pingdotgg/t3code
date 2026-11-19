@@ -264,7 +264,7 @@ export function PullRequestActionsMenu({
           <T context="verb, menu item">Refresh</T>
         </MenuItem>
         <MenuItem disabled={handoff !== null} onClick={askAboutPullRequest}>
-          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <MessageCircleQuestionIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>{handoff === "ask" ? gt("Opening...") : gt("Ask a question")}</span>
             <span className="text-xs text-muted-foreground">
@@ -283,7 +283,7 @@ export function PullRequestActionsMenu({
           </span>
         </MenuItem>
         <MenuItem disabled={handoff !== null} onClick={explainPullRequest}>
-          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start" />
+          <BookOpenIcon className="mt-1 size-3.5 shrink-0 self-start sm:mt-0.5" />
           <span className="flex min-w-0 flex-col">
             <span>
               {handoff === "explain"
@@ -335,14 +335,14 @@ export function PullRequestActionsMenu({
                 <span>
                   <T>Allow edits from maintainers</T>
                 </span>
-                <span id={maintainerEditsHintId} className="text-xs text-muted-foreground">
+                <span id={maintainerEditsHintId} className="text-meta text-muted-foreground">
                   <T>
                     Maintainers can push to this branch. If your fork has workflows, this can also
                     give access to its secrets.
                   </T>
                 </span>
                 {maintainerEditsSaving ? (
-                  <span role="status" className="text-xs text-muted-foreground">
+                  <span role="status" className="text-meta text-muted-foreground">
                     <T>Saving…</T>
                   </span>
                 ) : null}
@@ -556,7 +556,7 @@ export function PullRequestActionsMenu({
                     ? gt("Deleting branch...")
                     : gt("Delete branch")}
                 </span>
-                <span className="truncate text-xs text-muted-foreground">
+                <span className="truncate text-caption text-muted-foreground">
                   {environmentConnected ? detail.headBranch : gt("Reconnect to delete this branch")}
                 </span>
               </span>

@@ -1,5 +1,5 @@
 import { EnvironmentId, ProviderDriverKind, type AcpRegistrySearchAgent } from "@t3tools/contracts";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -218,7 +218,13 @@ describe("AddProviderInstanceDialog environment routing", () => {
     await click("Show more");
     await click("Use Kilo Code");
 
-    expect(document.body.textContent).toContain("v4.2.0 · binary");
+    expect(document.body.textContent).toContain("v4.2.0");
+    const version = [...document.querySelectorAll("[tabindex]")].find(
+      (element) => element.textContent === "v4.2.0",
+    );
+    if (!version) throw new Error("Prepared ACP version is missing");
+    await userEvent.hover(version);
+    await expect.element(page.getByText("binary", { exact: true })).toBeVisible();
     await click("Continue to sign-in");
     expect(settingsHooks.mutate).toHaveBeenCalledWith({
       operation: "create",

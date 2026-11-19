@@ -16,7 +16,7 @@ export default function MermaidViewer(props: { readonly text: string }) {
     )
   )
     return (
-      <div role="alert" className="p-6 text-xs text-muted-foreground">
+      <div role="alert" className="p-6 text-meta text-muted-foreground">
         <T>
           This diagram contains resource URLs, markup, node metadata, or custom configuration. Show
           Mermaid source to inspect it safely.

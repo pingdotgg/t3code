@@ -78,7 +78,7 @@ function DeviceHostDiagnostics(props: {
   const diagnostics = deviceHostDiagnostics(props.hosts, props.hostStatuses);
   if (diagnostics.length === 0) return null;
   return (
-    <div role="status" className={cn("space-y-1 text-xs text-muted-foreground", props.className)}>
+    <div role="status" className={cn("space-y-1 text-meta text-muted-foreground", props.className)}>
       {diagnostics.map(({ hostId, label, detail }) => (
         <p key={hostId} className="whitespace-pre-line break-words">
           <T>
@@ -299,7 +299,7 @@ export function DeviceSetup(props: {
           </section>
         ) : null}
         {props.state.hostStatus === "failed" && props.state.hostStatusDetail ? (
-          <p role="alert" className="mt-3 text-xs text-destructive">
+          <p role="alert" className="mt-3 text-xs text-error-foreground">
             {props.state.hostStatusDetail}
           </p>
         ) : null}
@@ -307,12 +307,12 @@ export function DeviceSetup(props: {
 
       <WizardFooter>
         {step === 0 ? (
-          <DialogClose render={<Button variant="outline" />}>
+          <DialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </DialogClose>
         ) : (
           <Button
-            variant="outline"
+            variant="secondary"
             disabled={busy || pending !== null}
             onClick={() => setStep(step - 1)}
           >
@@ -349,7 +349,7 @@ export function DeviceHubSetupStatus({
   if (!pending && !deviceHubReadiness(state).ready) return null;
   return (
     <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success" />}
+      {pending ? <Spinner size="xs" /> : <Check className="size-3 text-success-foreground" />}
       {pending
         ? state.hostStatus === "installing"
           ? compact
@@ -383,7 +383,7 @@ function DevicePlatformSetup(props: {
       <p className="text-xs text-muted-foreground">
         <T>You can use either platform. Fixing a missing platform does not block the other one.</T>
       </p>
-      <Button size="compact" variant="outline" disabled={props.disabled} onClick={props.onCheck}>
+      <Button size="compact" variant="secondary" disabled={props.disabled} onClick={props.onCheck}>
         {props.checking ? <Spinner size="xs" /> : null}
         {props.checking ? gt("Checking…") : gt("Check again")}
       </Button>
@@ -424,7 +424,7 @@ export function AgentDeviceSetupStatus(props: {
   ) {
     return (
       <p role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Check className="size-3 text-success" />
+        <Check className="size-3 text-success-foreground" />
         <T>Agent tools are ready.</T>
       </p>
     );
@@ -439,13 +439,21 @@ function PlatformStatus(props: {
 }) {
   const gt = useGT();
   return (
-    <div
-      className={cn("flex gap-2", !props.compact && "rounded-md border border-border/60 px-3 py-2")}
-    >
+    <div className={cn("flex gap-2", !props.compact && "rounded-card surface-panel px-3 py-2")}>
       {props.status.ready ? (
-        <Check className="mt-0.5 size-4 shrink-0 text-success" />
+        <Check
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            props.status.ready ? "text-success-foreground" : "text-muted-foreground",
+          )}
+        />
       ) : (
-        <CircleAlert className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <CircleAlert
+          className={cn(
+            "mt-0.5 size-4 shrink-0",
+            props.status.ready ? "text-success-foreground" : "text-muted-foreground",
+          )}
+        />
       )}
       <div className={cn(props.compact && props.status.ready && "flex items-center gap-2")}>
         <p className="font-medium">{props.platform}</p>

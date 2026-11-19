@@ -66,7 +66,7 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
           title={gt("Could not load issue trackers")}
           description={query.error}
           control={
-            <Button size="xs" variant="outline" onClick={query.refresh}>
+            <Button size="xs" variant="secondary" onClick={query.refresh}>
               <T>Retry</T>
             </Button>
           }
@@ -142,16 +142,14 @@ function TrackerRow({
                 )}
               />
             </span>
-            <span className="truncate text-sm font-medium text-foreground">
-              {tracker.displayName}
-            </span>
+            <span className="truncate text-label text-foreground">{tracker.displayName}</span>
             {tracker.connected && tracker.account === null ? (
-              <Badge variant="destructive" size="sm">
+              <Badge variant="error" size="sm">
                 <T>Credential rejected</T>
               </Badge>
             ) : null}
           </div>
-          <p className="text-xs leading-normal text-muted-foreground/80">{summary}</p>
+          <p className="text-meta text-muted-foreground/80">{summary}</p>
         </div>
         <Button
           size="icon-xs"

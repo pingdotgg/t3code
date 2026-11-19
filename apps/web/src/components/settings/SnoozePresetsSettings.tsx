@@ -304,7 +304,7 @@ function SnoozePresetList(props: {
             className="flex flex-wrap items-center gap-2"
           >
             <SnoozePresetFields preset={preset} onChange={(next) => props.onChange(index, next)} />
-            <div className="ml-auto flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+            <div className="ml-auto flex min-w-0 items-center gap-2 text-meta text-muted-foreground">
               {preview.tone === "menu" ? (
                 <span className="truncate">
                   <span className="text-foreground">{preview.label}</span>
@@ -325,11 +325,22 @@ function SnoozePresetList(props: {
           </div>
         );
       })}
-      <p className="text-xs text-muted-foreground">
-        {menuOrder.length === 0
-          ? gt("Menus offer only Custom…")
-          : gt("Menu now: {options}", { options: menuOrder.join(" · ") })}
-      </p>
+      <div className="text-meta text-muted-foreground">
+        {menuOrder.length === 0 ? (
+          gt("Menus offer only Custom…")
+        ) : (
+          <>
+            <p>
+              <T>Menu now</T>
+            </p>
+            <ol className="mt-1 grid gap-1">
+              {menuOrder.map((label) => (
+                <li key={label}>{label}</li>
+              ))}
+            </ol>
+          </>
+        )}
+      </div>
       <div>
         <Button
           variant="ghost-muted"
@@ -341,7 +352,7 @@ function SnoozePresetList(props: {
           <T>Add option</T>
         </Button>
         {props.presets.length >= MAX_SNOOZE_PRESETS ? (
-          <span className="ps-2 text-xs text-muted-foreground">
+          <span className="ps-2 text-meta text-muted-foreground">
             <T>
               Up to <Var>{MAX_SNOOZE_PRESETS}</Var> options
             </T>
@@ -400,7 +411,7 @@ function SnoozePresetFields(props: {
         />
       ) : (
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="text-xs text-muted-foreground">
+          <span className="text-meta text-muted-foreground">
             {gt("at", { $context: "before a time of day, as in: Monday at 09:00" })}
           </span>
           <Input

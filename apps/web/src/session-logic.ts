@@ -499,13 +499,8 @@ function projectedWorkEntry(
         item.steps.find((step) => step.status === "pending");
       return {
         ...common,
-        label: current
-          ? resolve(msg("Tasks {done}/{total} · {current}"), {
-              done,
-              total: item.steps.length,
-              current: current.text,
-            })
-          : resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
+        label: resolve(msg("Tasks {done}/{total}"), { done, total: item.steps.length }),
+        ...(current ? { detail: current.text } : {}),
       };
     }
     case "approval_request":

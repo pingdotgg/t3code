@@ -189,8 +189,8 @@ function ThemeColorPickerPanel({
         />
         <div className="grid grid-cols-[1fr_1.2fr] gap-2">
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
-              HEX
+            <span className="px-1 text-3xs font-semibold text-muted-foreground">
+              {gt("Hex", { $context: "hexadecimal color value" })}
             </span>
             <span className="flex min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <span
@@ -215,9 +215,7 @@ function ThemeColorPickerPanel({
             </span>
           </label>
           <label className="grid min-w-0 gap-1">
-            <span className="px-1 text-3xs font-semibold uppercase tracking-widest text-muted-foreground">
-              RGB
-            </span>
+            <span className="px-1 text-3xs font-semibold text-muted-foreground">RGB</span>
             <span className="flex min-w-0 items-center rounded-lg border border-input bg-background px-2 focus-within:border-ring">
               <input
                 aria-label={gt("{label} picker RGB value", { label })}

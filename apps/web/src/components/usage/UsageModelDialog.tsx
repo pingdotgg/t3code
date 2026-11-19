@@ -87,10 +87,12 @@ export function UsageModelDialog({
             <DialogTitle>{model.model}</DialogTitle>
           </div>
           <DialogDescription>
-            {presentation.label}
-            {costUnknown
-              ? ""
-              : ` · ${gt("{share} of cost", { share: formatPercent(model.costShare) })}`}
+            <span className="block">{presentation.label}</span>
+            {costUnknown ? null : (
+              <span className="block">
+                {gt("{share} of cost", { share: formatPercent(model.costShare) })}
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -98,8 +100,8 @@ export function UsageModelDialog({
             <dl className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-4">
               {stats.map((stat) => (
                 <div key={stat.label} className="flex min-w-0 flex-col gap-0.5">
-                  <dt className="text-xs text-muted-foreground">{stat.label}</dt>
-                  <dd className="text-2xl font-semibold text-foreground">{stat.value}</dd>
+                  <dt className="text-caption text-muted-foreground">{stat.label}</dt>
+                  <dd className="text-title text-foreground">{stat.value}</dd>
                 </div>
               ))}
             </dl>
@@ -144,7 +146,7 @@ export function UsageModelDialog({
         </DialogPanel>
         {model.unpricedTokens > 0 ? (
           <DialogFooter variant="bare" className="items-center sm:justify-between">
-            <span className="text-xs text-muted-foreground">
+            <span className="text-caption text-muted-foreground">
               {gt("{tokens} tokens have no known price", {
                 tokens: formatTokens(model.unpricedTokens),
               })}
@@ -162,7 +164,7 @@ export function UsageModelDialog({
 export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
   const locale = useLocale();
   return (
-    <span className="text-xs text-muted-foreground">
+    <span className="text-caption text-muted-foreground">
       <T>
         Premium{" "}
         <span className="text-foreground tabular-nums">

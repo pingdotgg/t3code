@@ -63,7 +63,12 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
   );
 }
 
-const PAGE_ROW_CLASS = "px-3 py-2.5";
+export const PAGE_ROW_CLASS = "px-3 py-2.5";
+
+/** How a page row answers the pointer and the keyboard. */
+export const PAGE_ROW_HOVER_CLASS = "hover:surface-ghost-hover";
+export const PAGE_ROW_PRESS_CLASS =
+  "cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring";
 
 export type PullRequestRowTarget = Pick<
   EnvironmentPullRequestEntry,
@@ -110,15 +115,17 @@ function PullRequestRowImpl({
     <div
       ref={statsRef}
       data-pull-request-stats-key={statsKey}
+      style={{ borderRadius: 10 }}
       data-pull-request-key={statsKey}
       className={cn(
-        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
-        selected ? "bg-accent" : "hover:bg-accent/60",
+        "flex items-center [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        selected ? "bg-selection-subtle" : PAGE_ROW_HOVER_CLASS,
       )}
     >
       <button
         type="button"
         aria-current={selected ? "true" : undefined}
+        style={{ borderRadius: 10 }}
         onClick={() => onSelect(entry)}
         onPointerEnter={() => onIntent?.(entry)}
         onPointerLeave={(event) => {
@@ -131,7 +138,8 @@ function PullRequestRowImpl({
         className={cn(
           PULL_REQUEST_ROW_CLASS,
           PAGE_ROW_CLASS,
-          "min-w-0 flex-1 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          PAGE_ROW_PRESS_CLASS,
+          "min-w-0 flex-1",
         )}
       >
         <PullRequestRowGlyph

@@ -2,7 +2,7 @@ import DOMPurify from "dompurify";
 import { MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import { FileSurfaceAction } from "./fileSurfaceChrome";
 import { useGT } from "gt-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useTheme } from "~/hooks/useTheme";
 import { observeResize } from "~/lib/observeResize";
 
@@ -75,7 +75,7 @@ export default function DocumentPages(props: {
   readonly html: string;
   readonly name: string;
   readonly output?: boolean;
-  readonly details?: string;
+  readonly details?: ReactNode;
 }) {
   const gt = useGT();
   const { theme, resolvedTheme, themeHalves } = useTheme();
@@ -97,7 +97,7 @@ export default function DocumentPages(props: {
   return (
     <>
       {!props.output ? (
-        <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-xs text-muted-foreground">
+        <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-1 border-b border-border/60 px-3 py-1 text-meta text-muted-foreground">
           <span className="min-w-0 flex-1 text-muted-foreground tabular-nums" role="status">
             {props.details}
           </span>

@@ -38,6 +38,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Text } from "../ui/text";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { formatResetsIn, resetCreditChoices } from "@t3tools/shared/usageLimitsCopy";
@@ -134,6 +135,7 @@ function WindowBar({
   const gt = useGT();
   const m = useMessages();
   const remaining = remainingPercent(window);
+  const pace = paceOf(window, now);
   const timeLeft = paceRemainingPercent(window, now);
   const [barRef, paceMark] = usePaceMark(timeLeft);
   const resetsIn = formatResetsIn(window, now, m);
@@ -192,23 +194,20 @@ function WindowBar({
       </TooltipTrigger>
       <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
-          <span className="text-foreground">
-            {timeLeft !== null
-              ? gt("{remaining}% left · {timeLeft}% of the window left", { remaining, timeLeft })
-              : gt("{remaining}% left", { remaining })}
-          </span>
+          <span className="text-foreground">{gt("{remaining}% left", { remaining })}</span>
+          {timeLeft !== null ? (
+            <span>{gt("{timeLeft}% of the window left", { timeLeft })}</span>
+          ) : null}
           {timeLeft !== null ? (
             <span className="text-muted-foreground">
               <T>The line is where even spending would be.</T>
             </span>
           ) : null}
+          {pace ? <Text variant="meta">{m(PACE[pace].label)}</Text> : null}
           {resetsAt ? (
-            <span className="text-muted-foreground">
-              {resetsIn
-                ? gt("Resets {resetsAt} · {resetsIn}", { resetsAt, resetsIn })
-                : gt("Resets {resetsAt}", { resetsAt })}
-            </span>
+            <span className="text-muted-foreground">{gt("Resets {resetsAt}", { resetsAt })}</span>
           ) : null}
+          {resetsIn ? <span className="text-muted-foreground">{resetsIn}</span> : null}
         </div>
       </TooltipPopup>
     </Tooltip>
@@ -230,31 +229,32 @@ export function LimitWindows({
 }) {
   const color = normalizeProviderAccentColor(accentColor) ?? barColor(driver);
   const gt = useGT();
-  const m = useMessages();
   return (
     <div
       className={
         compact
-          ? "grid grid-cols-[minmax(0,9rem)_minmax(3rem,1fr)_auto] gap-x-3 gap-y-0.5"
-          : "grid grid-cols-[11rem_minmax(0,1fr)_7rem] gap-x-4 gap-y-1"
+          ? "grid grid-cols-[minmax(0,1fr)_minmax(3rem,1fr)_auto] items-center gap-x-3 gap-y-0.5"
+          : "grid grid-cols-[minmax(0,11rem)_minmax(3rem,1fr)_auto] items-center gap-x-4 gap-y-1"
       }
     >
       {windows.map((window) => {
-        const pace = paceOf(window, now);
-        const resetsIn = formatResetsIn(window, now, m);
+        const [period, ...model] = window.label.split(/\s*\u00b7\s*/);
         return (
           <Fragment key={window.id}>
-            <span className="flex min-w-0 items-center gap-2 text-xs">
-              <span className="truncate text-muted-foreground">{window.label}</span>
-              <span className="ms-auto shrink-0 font-medium text-foreground tabular-nums">
-                {gt("{remaining}% left", { remaining: remainingPercent(window) })}
-              </span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 wrap-anywhere">
+              <Text variant="meta" tone="muted">
+                {period}
+              </Text>
+              {model.map((name) => (
+                <Text key={name} variant="meta">
+                  {name}
+                </Text>
+              ))}
             </span>
             <WindowBar color={color} window={window} now={now} />
-            <span className="flex items-center gap-2 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
-              {pace ? <PaceIcon pace={pace} /> : null}
-              <span className="ms-auto shrink-0">{resetsIn ?? ""}</span>
-            </span>
+            <Text variant="meta" numeric>
+              {gt("{remaining}% left", { remaining: remainingPercent(window) })}
+            </Text>
           </Fragment>
         );
       })}
@@ -331,7 +331,7 @@ export function ResetCreditDialog({
           <AlertDialogDescription>{choice?.confirmDescription}</AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
+          <AlertDialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </AlertDialogClose>
           <Button disabled={disabled} onClick={onConfirm}>
@@ -360,14 +360,14 @@ export function ResetCredits({
   const m = useMessages();
   if (credits.availableCount === 0 && status === null) return null;
   return (
-    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+    <div className="flex flex-col gap-1 text-meta text-muted-foreground">
       {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <div key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="tabular-nums">{choice.summary}</span>
           {choice.availableCount > 0 ? (
             <Button
               size="xs"
-              variant="outline"
+              variant="secondary"
               disabled={busy || !canManageProviders}
               onClick={() => confirm(choice)}
             >

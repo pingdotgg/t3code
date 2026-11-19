@@ -101,13 +101,13 @@ export function CliCommandSettingsRow() {
       control={
         <div className="flex gap-2">
           {state.pathSetup && !state.pathSetup.added ? (
-            <Button size="sm" variant="outline" disabled={busy} onClick={() => run("addToPath")}>
+            <Button size="sm" variant="secondary" disabled={busy} onClick={() => run("addToPath")}>
               <T>Add to PATH</T>
             </Button>
           ) : null}
           <Button
             size="sm"
-            variant="outline"
+            variant="secondary"
             disabled={busy || (!installed && Boolean(state.shadowedBy))}
             onClick={() => run(installed ? "uninstall" : "install")}
           >

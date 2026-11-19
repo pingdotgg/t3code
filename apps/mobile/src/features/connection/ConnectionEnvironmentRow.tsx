@@ -309,7 +309,7 @@ export function ConnectionEnvironmentRow(props: {
                     tintColorClassName="accent-primary-foreground"
                     type="monochrome"
                   />
-                  <Text className="text-xs font-t3-bold tracking-[0.8px] uppercase text-primary-foreground">
+                  <Text className="text-xs font-t3-bold text-primary-foreground">
                     <T>Save</T>
                   </Text>
                 </Pressable>

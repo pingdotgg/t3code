@@ -39,8 +39,8 @@ describe("issueFilterProjects", () => {
       new Map([[environmentId, "laptop"]]),
     );
     expect(choices.map((choice) => [choice.id, choice.title])).toEqual([
-      ["main", "t3code · laptop · /work/main"],
-      ["worktree", "t3code · laptop · /work/worktree"],
+      ["main", "t3code (laptop, /work/main)"],
+      ["worktree", "t3code (laptop, /work/worktree)"],
     ]);
   });
 });

@@ -167,7 +167,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   };
 
   return (
-    <div className="rounded-2xl border border-border/80 bg-card/70 p-4 sm:p-5">
+    <div className="rounded-card surface-panel p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <Badge variant="secondary">{gt("Plan", { $context: "badge, noun" })}</Badge>
@@ -178,7 +178,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         </div>
         <Menu>
           <MenuTrigger
-            render={<Button aria-label={gt("Plan actions")} size="icon-xs" variant="outline" />}
+            render={<Button aria-label={gt("Plan actions")} size="icon-xs" variant="secondary" />}
           >
             <EllipsisIcon aria-hidden="true" className="size-4" />
           </MenuTrigger>
@@ -225,14 +225,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
             />
           )}
           {isCollapsed ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card-bottom/95 via-card-bottom/80 to-transparent" />
           ) : null}
         </div>
         {canCollapse ? (
           <div className="mt-4 flex justify-center">
             <Button
               size="sm"
-              variant="outline"
+              variant="secondary"
               data-scroll-anchor-ignore
               onClick={() => setExpanded((value) => !value)}
             >
@@ -324,7 +324,7 @@ function SavePlanToWorkspaceForm({
         </label>
       </DialogPanel>
       <DialogFooter>
-        <Button variant="outline" size="sm" onClick={onCancel} disabled={saving}>
+        <Button variant="secondary" size="sm" onClick={onCancel} disabled={saving}>
           <T>Cancel</T>
         </Button>
         <Button size="sm" onClick={() => onSave(savePath)} disabled={!canWriteFiles || saving}>

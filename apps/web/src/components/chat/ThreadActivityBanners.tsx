@@ -44,6 +44,7 @@ export function extensionStatusBannerItem(
     id: "pi-extension-status",
     variant: "default",
     icon: <span>▸</span>,
+    // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's Pi extension status line; the redesign restyles it later.
     title: <output>{`Pi · ${statuses.map((status) => status.text).join(" · ")}`}</output>,
   };
 }
@@ -110,8 +111,10 @@ export function goalNowItem(
     title: (
       <Popover>
         <PopoverTrigger openOnHover render={<InlineButton />}>
-          {presentation.title}
-          {presentation.usage === null ? null : ` · ${presentation.usage}`}
+          <span className="inline-flex flex-col">
+            <span>{presentation.title}</span>
+            {presentation.usage === null ? null : <span>{presentation.usage}</span>}
+          </span>
         </PopoverTrigger>
         <PopoverPopup
           side="top"
@@ -119,7 +122,7 @@ export function goalNowItem(
           padding="compact"
           aria-label={resolve(msg("Goal objective"))}
         >
-          <p className="whitespace-pre-wrap wrap-anywhere text-sm">{presentation.objective}</p>
+          <p className="whitespace-pre-wrap wrap-anywhere text-body">{presentation.objective}</p>
         </PopoverPopup>
       </Popover>
     ),
@@ -136,7 +139,6 @@ export function goalNowItem(
             >
               <T context="verb, resumes the goal">Resume</T>
             </InlineButton>
-            <span aria-hidden>·</span>
           </>
         ) : null}
         <InlineButton
@@ -248,15 +250,14 @@ export function backgroundWorkNowItem(
     title:
       only && typeof only.label !== "string" && only.task.label !== only.task.kind ? (
         <>
-          {presentation.waiting ? (
-            <T>
-              Waiting · <Var>{only.label}</Var>
-            </T>
-          ) : (
-            <T>
-              Running · <Var>{only.label}</Var>
-            </T>
-          )}
+          <span className="inline-flex flex-col">
+            <span>
+              {presentation.waiting
+                ? resolve(msg("Waiting", { $context: "status of background work" }))
+                : resolve(msg("Running", { $context: "status of background work" }))}
+            </span>
+            <span>{only.label}</span>
+          </span>
         </>
       ) : (
         presentation.title

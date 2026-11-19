@@ -194,7 +194,7 @@ export function AcpRegistrySearchStep({
           onClick={onManualConfiguration}
           size="sm"
           type="button"
-          variant="ghost-muted"
+          variant="secondary"
         >
           <T>Enter manually</T>
         </Button>
@@ -204,7 +204,7 @@ export function AcpRegistrySearchStep({
             onClick={onLocalConfiguration}
             size="sm"
             type="button"
-            variant="outline"
+            variant="secondary"
           >
             <T>Local ACP command</T>
           </Button>
@@ -238,7 +238,7 @@ export function AcpRegistrySearchStep({
 
       {results ? (
         results.length === 0 ? (
-          <div className="flex min-h-28 flex-col items-center justify-center rounded-2xl border border-dashed px-4 text-center">
+          <div className="flex min-h-28 flex-col items-center justify-center rounded-card border border-dashed border-border surface-card-settings px-4 text-center">
             <p className="text-sm font-medium">
               <T>No compatible agents found</T>
             </p>
@@ -296,7 +296,9 @@ function AcpRegistryAgentRow({
           />
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-baseline gap-2">
-              <h4 className="min-w-0 truncate text-sm font-medium text-foreground">{agent.name}</h4>
+              <h4 className="min-w-0 truncate text-sm font-medium text-strong-foreground">
+                {agent.name}
+              </h4>
             </div>
             {agent.description ? (
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{agent.description}</p>
@@ -310,7 +312,7 @@ function AcpRegistryAgentRow({
                 render={
                   <Button
                     size="icon-xs"
-                    variant="ghost-muted"
+                    variant="secondary"
                     aria-label={gt("About {name}", { name: agent.name })}
                     render={<a href={aboutUrl} target="_blank" rel="noreferrer" />}
                   >
@@ -338,7 +340,7 @@ function AcpRegistryAgentRow({
             disabled={!canAdd || alreadyAdded}
             onClick={() => onAdd(agent)}
             size="xs"
-            variant={isPreparing ? "secondary" : "outline"}
+            variant={isPreparing ? "secondary" : "secondary"}
           >
             {alreadyAdded
               ? gt("Added")

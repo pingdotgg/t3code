@@ -54,6 +54,7 @@ import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
 import {
   buildFileDiffEntries,
+  getDiffCollapseIconClassName,
   getDiffLineStat,
   getRenderablePatch,
   resolveDiffThemeName,
@@ -78,7 +79,7 @@ import { DiffFileTree } from "./diffs/DiffFileTree";
 import { FileExplorerPane } from "./files/FileExplorerPane";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { getDiffHeaderClickAction } from "./diffs/diffHeaderClick";
-import { Button } from "./ui/button";
+import { Button, InlineButton } from "./ui/button";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
 import {
@@ -96,6 +97,7 @@ import {
   DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
@@ -117,6 +119,7 @@ import { DiffFileStatus } from "./diffs/DiffFileStatus";
 import { useThreadRouteRef } from "../hooks/useThreadRouteTarget";
 import { projectCommitUrl } from "@t3tools/client-runtime/change-request-links";
 import { useOpenLink } from "../browser/useOpenLink";
+import { Text } from "./ui/text";
 
 type DiffThemeType = "light" | "dark";
 const AUTOMATIC_BASE_REF = "__automatic_base_ref__";
@@ -128,6 +131,7 @@ function DiffFileCollapseToggle({
   filePath,
   fileKey,
   collapsed,
+  iconClassName,
   onToggle,
   load,
 }: {
@@ -135,6 +139,7 @@ function DiffFileCollapseToggle({
   fileKey: string;
   collapsed: boolean;
   load?: () => void;
+  iconClassName: string;
   onToggle: (fileKey: string) => void;
 }) {
   const gt = useGT();
@@ -171,9 +176,9 @@ function DiffFileCollapseToggle({
         }
       >
         {collapsed ? (
-          <ChevronRightIcon className="size-4 text-muted-foreground/80" />
+          <ChevronRightIcon className={cn("size-4", iconClassName)} />
         ) : (
-          <ChevronDownIcon className="size-4 text-muted-foreground/80" />
+          <ChevronDownIcon className={cn("size-4", iconClassName)} />
         )}
       </TooltipTrigger>
       <TooltipPopup side="top">{collapsed ? gt("Expand diff") : gt("Collapse diff")}</TooltipPopup>
@@ -859,23 +864,26 @@ export default function DiffPanel({
             data-workspace-focus-default
           >
             <span className="truncate">{selectedScopeLabel}</span>
-            <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
           </DropdownMenuTrigger>
           {headerCommitSha !== null ? (
             selectedCommitUrl ? (
               <Tooltip>
                 <TooltipTrigger
                   render={
-                    <a
-                      href={selectedCommitUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="shrink-0 font-mono text-xs text-muted-foreground underline underline-offset-4"
+                    <InlineButton
+                      tone="muted"
+                      className="shrink-0"
+                      render={
+                        <a href={selectedCommitUrl} target="_blank" rel="noopener noreferrer" />
+                      }
                       onClick={(event) => openCommitUrl(event, selectedCommitUrl)}
                     />
                   }
                 >
-                  {headerCommitSha.slice(0, 7)}
+                  <Text variant="meta" mono>
+                    {headerCommitSha.slice(0, 7)}
+                  </Text>
                 </TooltipTrigger>
                 <TooltipPopup side="top">{selectedCommitUrl}</TooltipPopup>
               </Tooltip>
@@ -903,6 +911,7 @@ export default function DiffPanel({
                 </span>
               </DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
+            <DropdownMenuSeparator />
             <DropdownMenuSub>
               <DropdownMenuSubTrigger>
                 <T context="agent turn">Turn</T>
@@ -1091,8 +1100,8 @@ export default function DiffPanel({
                   base: comparisonBaseRef,
                 })}
               >
-                <span className="min-w-0 truncate">{comparisonBaseRef}</span>
-                <ChevronDownIcon className="size-3.5 shrink-0 opacity-70" />
+                <span className="min-w-0 truncate font-normal">{comparisonBaseRef}</span>
+                <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
               </ComboboxTrigger>
               <ComboboxPopup
                 align="start"
@@ -1103,7 +1112,7 @@ export default function DiffPanel({
                   value={baseRefQuery}
                   onChange={(event) => setBaseRefQuery(event.target.value)}
                 />
-                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border/70 ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-3xs text-muted-foreground uppercase tracking-wide">
+                <div className="grid shrink-0 grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 border-b border-border ps-3 pe-6.5 pt-2 pb-1.5 font-medium text-3xs text-muted-foreground">
                   <span aria-hidden="true" />
                   <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_2rem] items-center">
                     <span>
@@ -1194,6 +1203,7 @@ export default function DiffPanel({
       >
         {codeViewFiles.length > 0 || (isGitSelection && selectedGitSource?.files?.length) ? (
           <DiffStatLabel
+            font="mono"
             additions={diffLineStat.additions}
             deletions={diffLineStat.deletions}
             className="mr-1 text-2xs"
@@ -1249,7 +1259,7 @@ export default function DiffPanel({
         <ToggleGroup
           aria-label={gt("Diff layout")}
           className="shrink-0"
-          variant="segmented"
+          variant="segmented-flat"
           value={[diffLayout]}
           onValueChange={(value) => {
             const next = value[0];
@@ -1363,22 +1373,22 @@ export default function DiffPanel({
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
           <T>Select a thread to inspect turn diffs.</T>
         </div>
       ) : !isGitRepo && !toolCallSelection ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
           <T>Turn diffs are unavailable because this project is not a git repository.</T>
         </div>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-dim-foreground">
           <T>No completed turns yet.</T>
         </div>
       ) : isGitSelection && !canReadFiles ? (
         fileAccess.isPending ? (
           <DiffPanelLoadingState label={gt("Checking file access...")} />
         ) : (
-          <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          <div className="flex flex-1 items-center justify-center px-5 text-center text-meta text-dim-foreground">
             {fileAccess.error ?? gt("This connection cannot read local diffs.")}
           </div>
         )
@@ -1395,7 +1405,7 @@ export default function DiffPanel({
               </p>
             )}
             {isSelectedPatchTruncated && !lazySource && (
-              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+              <p className="shrink-0 border-b border-border surface-card px-3 py-1.5 text-caption text-muted-foreground">
                 {isGitSelection && selectedGitSource?.files && !preview?.incomplete
                   ? gt(
                       "This preview exceeds the size limit. Changes shown are incomplete. Totals include all changes.",
@@ -1404,7 +1414,7 @@ export default function DiffPanel({
               </p>
             )}
             {omittedToolCallFiles > 0 && (
-              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+              <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-caption text-muted-foreground">
                 {gt(
                   "This tool call changed {recorded} files. The recorded patch omits {omitted} of them.",
                   {
@@ -1416,11 +1426,11 @@ export default function DiffPanel({
             )}
             {selectedPatchError && !renderablePatch && (
               <div className="px-3">
-                <p className="mb-2 text-2xs text-error/80">{selectedPatchError}</p>
+                <p className="mb-2 text-caption text-error-foreground">{selectedPatchError}</p>
               </div>
             )}
             {!renderablePatch && toolCallPreview && toolCallPreview.content.length > 0 ? (
-              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-xs">
+              <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3 text-meta">
                 <p className="text-muted-foreground">
                   <T>The provider recorded file content without a diff.</T>
                 </p>
@@ -1429,7 +1439,7 @@ export default function DiffPanel({
                     <p className="text-muted-foreground">{label}</p>
                     <pre
                       className={cn(
-                        "overflow-auto font-mono text-2xs",
+                        "overflow-auto font-mono text-caption",
                         wordWrap && "whitespace-pre-wrap wrap-break-word",
                       )}
                     >
@@ -1454,7 +1464,7 @@ export default function DiffPanel({
                   }
                 />
               ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                <div className="flex h-full items-center justify-center px-3 py-2 text-meta text-dim-foreground">
                   <p>
                     {hasNoNetChanges
                       ? gt("No net changes in this selection.")
@@ -1527,6 +1537,7 @@ export default function DiffPanel({
                             const stat = fileStats.get(resolveFileDiffPath(fileDiff));
                             return stat ? (
                               <DiffStatLabel
+                                font="mono"
                                 additions={stat.additions}
                                 deletions={stat.deletions}
                               />
@@ -1541,6 +1552,7 @@ export default function DiffPanel({
                           filePath={resolveFileDiffPath(fileDiff)}
                           fileKey={fileKey}
                           collapsed={collapsed}
+                          iconClassName={getDiffCollapseIconClassName(fileDiff)}
                           onToggle={toggleDiffFileCollapsed}
                           {...(fileDiff.cacheKey?.endsWith(":pending") &&
                           !collapsedDiffFileKeys.has(fileKey)
@@ -1584,12 +1596,12 @@ export default function DiffPanel({
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">
                 <div className="space-y-2">
-                  <p className="text-2xs text-muted-foreground/75">
+                  <p className="text-caption text-dim-foreground">
                     {renderablePatch?.kind === "raw" ? renderablePatch.reason : null}
                   </p>
                   <pre
                     className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-2xs leading-relaxed text-muted-foreground/90",
+                      "max-h-[72vh] rounded-control surface-well p-3 font-mono text-caption leading-relaxed text-muted-foreground",
                       wordWrap
                         ? "overflow-auto whitespace-pre-wrap wrap-break-word"
                         : "overflow-auto",

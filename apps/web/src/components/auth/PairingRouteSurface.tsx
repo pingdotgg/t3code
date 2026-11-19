@@ -101,6 +101,7 @@ export function PairingRouteSurface({
           </label>
           <Input
             id="pairing-token"
+            font="mono"
             autoCapitalize="none"
             autoComplete="off"
             autoCorrect="off"
@@ -127,14 +128,14 @@ export function PairingRouteSurface({
             disabled={isSubmitting}
             onClick={() => window.location.reload()}
             size="sm"
-            variant="outline"
+            variant="secondary"
           >
             <T>Reload app</T>
           </Button>
         </div>
       </form>
 
-      <div className="mt-6 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+      <div className="mt-6 py-3 text-xs leading-relaxed text-dim-foreground">
         {describeSupportedMethods(auth.bootstrapMethods, messages)}
       </div>
     </StandalonePage>
@@ -235,10 +236,10 @@ export function HostedPairingRouteSurface() {
       />
 
       {request ? (
-        <div className="mt-5 rounded-lg border border-border/70 bg-background/55 px-3 py-3 text-xs leading-relaxed text-muted-foreground">
+        <div className="mt-5 rounded-control surface-well px-3 py-3 text-xs leading-relaxed text-muted-foreground">
           <T>
             Host:{" "}
-            <span className="font-mono text-foreground/80">
+            <span className="font-mono text-foreground">
               <Var>{request.host}</Var>
             </span>
           </T>
@@ -267,7 +268,7 @@ export function HostedPairingRouteSurface() {
           </Button>
         ) : null}
         {status === "paired" ? (
-          <Button size="sm" variant="outline" onClick={() => (window.location.href = "/")}>
+          <Button size="sm" variant="secondary" onClick={() => (window.location.href = "/")}>
             <T>Open app</T>
           </Button>
         ) : null}

@@ -327,16 +327,16 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "color-scheme",
-    title: msg("Color scheme"),
+    title: msg("Appearance mode"),
     to: "/settings/appearance",
-    searchTerms: [msg("appearance light dark system mode")],
+    searchTerms: [msg("color scheme light dark system black chrome")],
     targetId: "appearance",
   },
   {
     id: "theme",
     title: msg("Themes"),
     to: "/settings/appearance",
-    searchTerms: [msg("appearance colors palette custom import")],
+    searchTerms: [msg("appearance colors palette custom import export download")],
     targetId: "appearance",
   },
   {
@@ -345,13 +345,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Contrast"),
     to: "/settings/appearance",
     searchTerms: [msg("colors borders interface")],
-  },
-  {
-    // Prefixed because the slider control already owns the `glass-opacity` id.
-    id: "setting-glass-opacity",
-    title: msg("Glass opacity"),
-    to: "/settings/appearance",
-    searchTerms: [msg("transparent transparency solid menus dialogs composer")],
   },
   {
     id: "diff-color-scheme",
@@ -390,6 +383,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("latex tex katex equations formulas markdown")],
   },
   {
+    id: "surface-style",
+    title: msg("Style"),
+    to: "/settings/appearance",
+    searchTerms: [msg("surface buttons composer toned aqua gradient rim flat soft gloss blue")],
+  },
+  {
     id: "panel-animations",
     title: msg("Panel animations"),
     to: "/settings/appearance",
@@ -400,6 +399,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
     searchTerms: [msg("dev nightly latest channel artwork pill label hide none")],
     targetId: "appearance-interface",
+  },
+  {
+    id: "hide-window-controls",
+    title: msg("Hide window controls when the sidebar is collapsed"),
+    to: "/settings/appearance",
+    searchTerms: [msg("traffic lights close minimize zoom buttons titlebar")],
+    desktopOnly: true,
+    macOnly: true,
   },
   {
     id: "interface-font",
@@ -443,11 +450,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Word wrap"),
     to: "/settings/appearance",
     searchTerms: [msg("long lines code blocks diffs file previews")],
-  },
-  {
-    id: "composer-context",
-    title: msg("Composer context"),
-    to: "/settings/appearance",
   },
   {
     id: "project-grouping",
@@ -900,7 +902,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "terminal-close-confirmation",
     title: msg("Terminal close confirmation"),
     to: "/settings/general",
-    searchTerms: ["ask before delete stop process shell console history"],
+    searchTerms: [msg("ask before delete stop process shell console history")],
   },
   {
     id: "quit-confirmation",
