@@ -623,6 +623,7 @@ function surfaceTitle(
       return "Agent Eyes";
     case "iwe":
     case "forge":
+    case "entertainment":
       return continuumSurface(surface.kind).title;
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
@@ -692,7 +693,8 @@ function SurfaceIcon({
     case "agent-eyes":
       return <Eye className="size-3 shrink-0" />;
     case "iwe":
-    case "forge": {
+    case "forge":
+    case "entertainment": {
       const Icon = continuumSurface(surface.kind).icon;
       return <Icon className="size-3 shrink-0" />;
     }

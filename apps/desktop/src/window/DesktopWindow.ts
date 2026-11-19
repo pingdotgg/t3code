@@ -1,4 +1,5 @@
 import * as Clock from "effect/Clock";
+import { configureContentBlocking } from "../preview/ContentBlocking.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -483,13 +484,16 @@ export const make = Effect.gen(function* () {
         : yield* logWindowWarning("failed to read connected displays; using defaults", {
             cause: displayBoundsResult.cause,
           }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
-    const savedWindowOpacity = Option.match(
-      yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>())),
-      {
-        onNone: () => DEFAULT_CLIENT_SETTINGS.windowOpacity,
-        onSome: (settings) => settings.windowOpacity,
-      },
+    const savedClientSettings = yield* clientSettings.get.pipe(
+      Effect.orElseSucceed(() => Option.none<ClientSettings>()),
     );
+    const savedWindowOpacity = Option.match(savedClientSettings, {
+      onNone: () => DEFAULT_CLIENT_SETTINGS.windowOpacity,
+      onSome: (settings) => settings.windowOpacity,
+    });
+    if (Option.isSome(savedClientSettings)) {
+      configureContentBlocking(savedClientSettings.value.entertainmentBlocking);
+    }
     const createTransparent = shouldCreateTransparentWindow(environment.platform);
     const initialBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
     const restoredPersistedBounds = persistedBounds !== null && initialBounds === persistedBounds;

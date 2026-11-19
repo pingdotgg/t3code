@@ -113,6 +113,25 @@ export const SpeechSettings = Schema.Struct({
 });
 export type SpeechSettings = typeof SpeechSettings.Type;
 
+/** The browser profile Entertainment opens sites in, apart from development browsing. */
+export const ENTERTAINMENT_BROWSER_PROFILE_ID = "entertainment";
+
+/**
+ * Request blocking for the Entertainment browser profile, applied by the desktop app. Lists are
+ * ids from `@t3tools/shared/contentBlocking`.
+ */
+export const EntertainmentBlockingSettings = Schema.Struct({
+  enabled: withDefault(Schema.Boolean, true),
+  lists: withDefault(Schema.Array(Schema.String), ["trackers", "ads"]),
+  customHosts: withDefault(Schema.Array(Schema.String), []),
+  allowlist: withDefault(Schema.Array(Schema.String), []),
+});
+export type EntertainmentBlockingSettings = typeof EntertainmentBlockingSettings.Type;
+
+export const entertainmentBlockingField = EntertainmentBlockingSettings.pipe(
+  Schema.withDecodingDefault(Effect.succeed({})),
+);
+
 export const notificationSoundsField = NotificationSoundSettings.pipe(
   Schema.withDecodingDefault(Effect.succeed({})),
 );

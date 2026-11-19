@@ -1,4 +1,6 @@
 import {
+  EntertainmentBlockingSettings,
+  entertainmentBlockingField,
   NotificationSoundSettings,
   notificationSoundsField,
   SpeechSettings,
@@ -535,6 +537,7 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   notificationSounds: notificationSoundsField,
   speech: speechField,
+  entertainmentBlocking: entertainmentBlockingField,
   fontSizeInterface: InterfaceFontSize.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_INTERFACE_FONT_SIZE)),
   ),
@@ -2129,6 +2132,7 @@ export const ClientSettingsPatch = Schema.Struct({
   agentEyesDetail: Schema.optionalKey(AgentEyesDetail),
   notificationSounds: Schema.optionalKey(NotificationSoundSettings),
   speech: Schema.optionalKey(SpeechSettings),
+  entertainmentBlocking: Schema.optionalKey(EntertainmentBlockingSettings),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
   fontSizeInterface: Schema.optionalKey(InterfaceFontSize),
   fontSizePrompt: Schema.optionalKey(PromptFontSize),

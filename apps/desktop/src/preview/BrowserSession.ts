@@ -1,4 +1,5 @@
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { installContentBlocking, isEntertainmentScope } from "./ContentBlocking.ts";
 import type { Certificate, Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
 import * as Context from "effect/Context";
@@ -658,6 +659,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               });
             },
           );
+          if (namespace === "profile" && isEntertainmentScope(scope)) {
+            installContentBlocking(browserSession);
+          }
           return browserSession;
         },
         catch: (cause) =>

@@ -14,6 +14,7 @@ import SideChatPane from "./SideChatPane";
 import { AgentEyesPanel } from "../agentEyes/AgentEyesPanel";
 import { IweNotesPanel } from "../iwe/IweNotesPanel";
 import { ForgePanel } from "../forge/ForgePanel";
+import { EntertainmentPanel } from "../entertainment/EntertainmentPanel";
 import type { ComposerImageAttachment, DraftId } from "../../composerDraftStore";
 import type { ShortcutMatchContext } from "../../keybindings";
 import type { SideChatParentPanel } from "../../lib/sideChatPane";
@@ -181,6 +182,8 @@ export function RightPanelSurfaceContent(props: {
       return <AgentEyesPanel threadRef={threadRef} visible={visible} />;
     case "iwe":
       return <IweNotesPanel threadRef={threadRef} />;
+    case "entertainment":
+      return <EntertainmentPanel threadRef={threadRef} visible={visible} />;
     case "forge":
       return (
         <ForgePanel

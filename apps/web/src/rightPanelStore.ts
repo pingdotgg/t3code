@@ -25,6 +25,7 @@ const RIGHT_PANEL_KINDS = [
   "agent-eyes",
   "iwe",
   "forge",
+  "entertainment",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -53,6 +54,7 @@ export type RightPanelSurface =
   | { id: "agent-eyes"; kind: "agent-eyes" }
   | { id: "iwe"; kind: "iwe" }
   | { id: "forge"; kind: "forge" }
+  | { id: "entertainment"; kind: "entertainment" }
   | {
       id: "files";
       kind: "files";
@@ -237,6 +239,8 @@ const singletonSurface = (
       return { id: "iwe", kind };
     case "forge":
       return { id: "forge", kind };
+    case "entertainment":
+      return { id: "entertainment", kind };
   }
 };
 

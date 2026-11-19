@@ -610,6 +610,10 @@
     "./continuumCommands": {
       "types": "./src/continuumCommands.ts",
       "import": "./src/continuumCommands.ts"
+    },
+    "./contentBlocking": {
+      "types": "./src/contentBlocking.ts",
+      "import": "./src/contentBlocking.ts"
     }
   },
   "scripts": {

@@ -172,6 +172,17 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
    the variables and Settings -> Appearance can override them at runtime. The
    default stacks are mirrored in `appearanceFonts.ts`. */
 @theme {
+  /* Entertainment Center: a fixed arcade palette that does not follow the app theme. */
+  --color-arcade-highlight: #7dd3fc;
+  --color-arcade-gold: #fcd34d;
+  --color-arcade-amber: #f59e0b;
+  --color-arcade-ember: #78350f;
+  --color-arcade-danger: #fb7185;
+  --color-arcade-mine: #e11d48;
+  --color-arcade-mine-dark: #4c0519;
+  --color-arcade-tile: #475569;
+  --color-arcade-tile-hover: #64748b;
+  --color-arcade-safe: #6ee7b7;
   --font-sans:
     -apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono:
@@ -2649,4 +2660,21 @@ code {
 
 .messages-timeline-scroll:focus-visible {
   outline: none;
+}
+
+/* Entertainment Center: one short entrance when a view opens; nothing repaints afterwards. */
+@media (prefers-reduced-motion: no-preference) {
+  .entertainment-enter {
+    animation: entertainment-enter 220ms ease-out;
+  }
+}
+@keyframes entertainment-enter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

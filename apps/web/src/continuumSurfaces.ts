@@ -1,11 +1,11 @@
 import type { LucideIcon } from "lucide-react";
-import { GamepadIcon, NotebookPen } from "lucide-react";
+import { GamepadIcon, NotebookPen, TvIcon } from "lucide-react";
 
 import type { RightPanelKind } from "./rightPanelStore";
 
 /** Continuum's own right-panel surfaces, offered from the panel launcher and the command palette. */
 export interface ContinuumSurface {
-  readonly kind: Extract<RightPanelKind, "iwe" | "forge">;
+  readonly kind: Extract<RightPanelKind, "iwe" | "forge" | "entertainment">;
   readonly label: string;
   readonly title: string;
   readonly description: string;
@@ -30,6 +30,14 @@ export const CONTINUUM_SURFACES: ReadonlyArray<ContinuumSurface> = [
     description: "Game engines, Blender, assets, and game checkpoints for this project.",
     icon: GamepadIcon,
     shortcut: "G",
+  },
+  {
+    kind: "entertainment",
+    label: "Entertainment",
+    title: "Entertainment",
+    description: "Games, videos, and streaming in a resizable panel, apart from your work.",
+    icon: TvIcon,
+    shortcut: "E",
   },
 ];
 
