@@ -88,6 +88,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly cliModes?: boolean;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -111,6 +112,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.cliModes ? ["export T3_ACP_ANTIGRAVITY_CLI_MODES=1"] : []),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -414,12 +416,19 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
+        // The agy CLI rejects `yolo` and `auto_edit`. Full access runs in its native `auto`, because
+        // detached subagents never forward permission requests to T3.
         h.controls.selected = {
-          ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
+          ...(yield* h.makeExecutable("runtime cli", {
+            initialMode: "accept-edits",
+            cliModes: true,
+          })),
           harnessPath: null,
         };
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        for (const [runtimeMode, expectedMode] of [
+          ["full-access", "auto"],
+          ["auto-accept-edits", "default"],
+        ] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -454,7 +463,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
                   request.params?.configId === "mode",
               )
               .map((request) => request.params?.value),
-          ).toEqual(["default"]);
+          ).toEqual([expectedMode]);
         }
       }),
   );

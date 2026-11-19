@@ -8239,10 +8239,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           } else {
             const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
+            // The policy may have dropped while in Plan; never restore a mode above it.
+            const abovePolicy = (modeId: string) => {
+              const granted = flavor.runtimeModeForSessionMode?.(modeId);
+              return (
+                granted !== undefined && isRuntimeModeAbove(granted, runtimePolicy.runtimeMode)
+              );
+            };
             if (nativeBuild !== undefined) {
               if (
                 !modeLocked &&
                 nativeBuild.modeId !== undefined &&
+                !abovePolicy(nativeBuild.modeId) &&
                 effectiveModeState?.currentModeId !== nativeBuild.modeId &&
                 effectiveModeState?.availableModes.some(
                   (mode) => mode.id === nativeBuild.modeId,
@@ -8257,7 +8265,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (
                   option === undefined ||
                   option.type !== "select" ||
-                  (modeLocked && option.category === "mode")
+                  (option.category === "mode" && (modeLocked || abovePolicy(saved.value)))
                 )
                   continue;
                 const choices = option.options.flatMap((entry) =>

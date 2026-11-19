@@ -294,7 +294,19 @@ export const AntigravityDriver: ProviderDriver<
       return {
         ...runtime,
         ...(executable.harnessPath === null
-          ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
+          ? {
+              setMode: (modeId: string) =>
+                runtime.getModeState.pipe(
+                  Effect.flatMap((modeState) =>
+                    runtime.setMode(
+                      antigravityCliSessionMode(
+                        modeId,
+                        modeState?.availableModes.map((mode) => mode.id) ?? [],
+                      ),
+                    ),
+                  ),
+                ),
+            }
           : {}),
         start: () =>
           runtime
