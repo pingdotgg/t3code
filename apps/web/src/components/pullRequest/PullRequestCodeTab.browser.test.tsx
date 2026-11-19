@@ -1,3 +1,5 @@
+import { RegistryContext } from "@effect/atom-react";
+import { AtomRegistry } from "effect/reactivity";
 import { sha256 } from "@noble/hashes/sha2";
 import { bytesToHex } from "@noble/hashes/utils";
 import {
@@ -48,6 +50,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
       nextCursor: "page-2",
     },
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
+    short: { patch: filePatch("early.ts"), truncated: false, nextCursor: "page-2" },
     refreshed: { patch: filePatch("pushed.ts"), truncated: false, nextCursor: null },
   };
   return {
@@ -57,7 +60,9 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() =>
         AsyncResult.success(
-          cursor === "first" ? { ...pages.first!, revision: mocks.diffRevision } : pages[cursor]!,
+          cursor === "first" || cursor === "short"
+            ? { ...pages[cursor]!, revision: mocks.diffRevision }
+            : pages[cursor]!,
         ),
       ),
     ),
@@ -67,6 +72,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
 const mocks = vi.hoisted(() => ({
   paged: false,
   diffRevision: "before-push",
+  shortDiff: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -119,7 +125,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
         input: { cursor?: string; commit?: string; cacheRevision?: string };
       }) => {
         mocks.diffCommits.push(input.commit);
-        const page = input.cacheRevision === "after-push" ? "refreshed" : (input.cursor ?? "first");
+        const page =
+          input.cacheRevision === "after-push"
+            ? "refreshed"
+            : (input.cursor ?? (mocks.shortDiff ? "short" : "first"));
         return mocks.paged ? pagedDiffAtom(page) : diffAtom;
       }) as never,
     },
@@ -186,6 +195,7 @@ function setup({ paged }: { paged: boolean }) {
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
   mocks.diffRevision = "before-push";
+  mocks.shortDiff = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -360,24 +370,23 @@ it.each(["manual", "background"] as const)(
   "reads the new continuation after a %s refresh of an unchanged first page",
   async (refresh) => {
     setup({ paged: true });
-    const container = pagedContainer();
-    await using screen = await render(tab(0, { path: "late.test.ts", nonce: 1 }), { container });
-    await expectFileHeaderShown(screen, container, "late.test.ts");
+    mocks.shortDiff = true;
+    const registry = AtomRegistry.make();
+    using _registry = { [Symbol.dispose]: () => registry.dispose() };
+    const renderTab = (manual: number, background: number) => (
+      <RegistryContext.Provider value={registry}>
+        {tab(manual, null, undefined, undefined, background)}
+      </RegistryContext.Provider>
+    );
+    await using screen = await render(renderTab(0, 0), { container: pagedContainer() });
+    await expect.element(screen.getByText("late.test.ts", { exact: true }).first()).toBeVisible();
 
     mocks.diffRevision = "after-push";
     await screen.rerender(
-      tab(
-        refresh === "manual" ? 1 : 0,
-        { path: "pushed.ts", nonce: 2 },
-        undefined,
-        undefined,
-        refresh === "background" ? 1 : 0,
-      ),
+      renderTab(refresh === "manual" ? 1 : 0, refresh === "background" ? 1 : 0),
     );
 
-    await expect
-      .element(screen.getByText("pushed.ts", { exact: true }).first())
-      .toBeInTheDocument();
+    await expect.element(screen.getByText("pushed.ts", { exact: true }).first()).toBeVisible();
     await expect.element(screen.getByText("late.test.ts", { exact: true })).not.toBeInTheDocument();
   },
 );
