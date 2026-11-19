@@ -2714,6 +2714,23 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         assert.isFalse(afterStart.unattached);
         assert.deepEqual(afterStart.storedEvents, []);
         assert.deepEqual((yield* readStored).pendingBackgroundTasks ?? [], []);
+
+        // A third run claims the thread; only the run that last started on it may still report.
+        const third: OrchestrationV2Run = {
+          ...claimant,
+          id: RunId.make(`run:${key}:3`),
+          ordinal: 3,
+          userMessageId: MessageId.make(`message:${key}:3`),
+          activeAttemptId: RunAttemptId.make(`attempt:${key}:3`),
+        };
+        yield* eventSink.write({
+          events: [
+            { ...runEvent(third, later), type: "run.created" as const },
+            providerThreadEvent({ ...(yield* readStored), lastRunOrdinal: 3 }, later),
+          ],
+        });
+        assert.isFalse((yield* report(previous, [helper])).unattached);
+        assert.isTrue((yield* report(claimant, [helper])).unattached);
       }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 

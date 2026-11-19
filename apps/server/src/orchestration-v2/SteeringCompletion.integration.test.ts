@@ -2215,8 +2215,15 @@ it.effect("completes a delegated task whose background work ends before a follow
         (run) => run.userMessageId === messageId,
       )!;
       assert.equal(followUp.status, "starting");
+      const cleared = yield* watch(
+        (event) =>
+          event.type === "provider-thread.updated" &&
+          event.threadId === childThreadId &&
+          event.payload.pendingBackgroundTasks?.length === 0,
+      );
       yield* roster("helper:b");
       yield* roster();
+      yield* Fiber.join(cleared);
       const followUpRunning = yield* watch(
         (event) =>
           event.type === "provider-turn.updated" &&

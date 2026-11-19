@@ -1839,10 +1839,16 @@ export const layer: Layer.Layer<
         activeAttemptId: attempt.id,
         expectedStatus: "starting",
         // Until this write, the previous run may still report its background work on the row.
-        rosterAsRead: {
-          providerThreadId: providerThread.id,
-          pendingBackgroundTasks: providerThread.pendingBackgroundTasks ?? [],
-        },
+        // A replacement native conversation owns none of that work.
+        ...(runningProviderThread.nativeThreadRef?.nativeId != null &&
+        runningProviderThread.nativeThreadRef.nativeId === providerThread.nativeThreadRef?.nativeId
+          ? {
+              rosterAsRead: {
+                providerThreadId: providerThread.id,
+                pendingBackgroundTasks: providerThread.pendingBackgroundTasks ?? [],
+              },
+            }
+          : {}),
         events,
       });
       if (!runningWrite.committed) {

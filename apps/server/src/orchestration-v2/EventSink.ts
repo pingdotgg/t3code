@@ -769,6 +769,16 @@ const layerBase: Layer.Layer<
               AND json_extract(reporter.payload_json, '$.activeAttemptId') = ${input.activeAttemptId}
               AND claimant.ordinal > reporter.ordinal
               AND claimant.status IN ('preparing', 'queued', 'starting')
+              -- A run that started on this provider thread since makes the reporter's roster stale.
+              AND NOT EXISTS (
+                SELECT 1
+                FROM orchestration_v2_projection_runs since
+                WHERE since.thread_id = p.thread_id
+                  AND since.ordinal > reporter.ordinal
+                  AND since.ordinal < claimant.ordinal
+                  AND json_extract(since.payload_json, '$.providerThreadId') = p.provider_thread_id
+                  AND json_extract(since.payload_json, '$.startedAt') IS NOT NULL
+              )
             LIMIT 1
           `;
           const none = {
