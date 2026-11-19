@@ -90,6 +90,9 @@ class T3ComposerEditorModule : Module() {
       Prop("fontFamily") { view: T3ComposerEditorView, fontFamily: String ->
         view.setFontFamily(fontFamily)
       }
+      Prop("writingDirection") { view: T3ComposerEditorView, direction: String ->
+        view.setWritingDirection(direction)
+      }
       Prop("fontSize") { view: T3ComposerEditorView, fontSize: Double ->
         view.setFontSize(fontSize.toFloat())
       }

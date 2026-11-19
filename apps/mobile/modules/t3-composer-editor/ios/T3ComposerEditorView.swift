@@ -481,6 +481,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   private var fontFamily = "DMSans-Regular"
   private var fontSize: CGFloat = 14
   private var lineHeight: CGFloat = 20
+  private var writingDirection: NSWritingDirection = .natural
   private var contentInsetVertical: CGFloat = 0
   private var shouldAutoFocus = false
   private var didAutoFocus = false
@@ -762,6 +763,41 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     placeholderLabel.text = placeholder
     textView.accessibilityLabel = placeholder
     setNeedsLayout()
+  }
+
+  // JS picks the direction by word majority. TextKit's natural direction follows the first
+  // letter, so an Arabic line that opens with an English word would lay out left to right.
+  func setWritingDirection(_ direction: String) {
+    let next: NSWritingDirection = direction == "rtl" ? .rightToLeft : direction == "ltr" ? .leftToRight : .natural
+    guard next != writingDirection else {
+      return
+    }
+    writingDirection = next
+    restoreBaseTypingAttributes()
+    // Attribute changes keep the selection, unlike re-applying the controlled document.
+    let storage = textView.textStorage
+    guard textView.markedTextRange == nil, storage.length > 0 else {
+      return
+    }
+    storage.beginEditing()
+    storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+      guard let current = value as? NSParagraphStyle else {
+        return
+      }
+      let paragraph = current.mutableCopy() as! NSMutableParagraphStyle
+      applyWritingDirection(to: paragraph)
+      storage.addAttribute(.paragraphStyle, value: paragraph, range: range)
+    }
+    storage.endEditing()
+  }
+
+  private func applyWritingDirection(to paragraph: NSMutableParagraphStyle) {
+    paragraph.baseWritingDirection = writingDirection
+    switch writingDirection {
+    case .rightToLeft: paragraph.alignment = .right
+    case .leftToRight: paragraph.alignment = .left
+    default: paragraph.alignment = .natural
+    }
   }
 
   func setFontFamily(_ fontFamily: String) {
@@ -1167,6 +1203,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     let paragraph = NSMutableParagraphStyle()
     paragraph.minimumLineHeight = lineHeight
     paragraph.maximumLineHeight = lineHeight
+    applyWritingDirection(to: paragraph)
     return [
       .font: font,
       .foregroundColor: UIColor(composerHex: theme.text) ?? .label,

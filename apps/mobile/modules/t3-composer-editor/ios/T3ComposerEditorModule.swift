@@ -64,6 +64,9 @@ public class T3ComposerEditorModule: Module {
       Prop("placeholder") { (view: T3ComposerEditorView, placeholder: String) in
         view.setPlaceholder(placeholder)
       }
+      Prop("writingDirection") { (view: T3ComposerEditorView, direction: String) in
+        view.setWritingDirection(direction)
+      }
       Prop("fontFamily") { (view: T3ComposerEditorView, fontFamily: String) in
         view.setFontFamily(fontFamily)
       }
