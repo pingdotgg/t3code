@@ -84,6 +84,8 @@ export type ServerUpdateState =
       readonly stage: ServerUpdateStage;
       readonly fromVersion: string;
       readonly targetVersion: string;
+      /** The service launcher's id for an accepted update, used to find its outcome later. */
+      readonly updateId?: string;
     }
   | {
       readonly status: "failed";
@@ -356,6 +358,9 @@ export function serverUpdateStateForProgressEvent(
           : "resuming",
     fromVersion,
     targetVersion,
+    ...(event.type === "complete" && event.result.updateId !== undefined
+      ? { updateId: event.result.updateId }
+      : {}),
   };
 }
 
@@ -1218,6 +1223,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
+              ...(updateResult.updateId === undefined ? {} : { updateId: updateResult.updateId }),
             });
             return updateResult;
           }),
@@ -1637,6 +1643,18 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     configProjection,
     welcome,
+    updateOutcome: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:update-outcome",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" && event.payload.updateOutcome !== undefined
+              ? Result.succeed(event.payload.updateOutcome)
+              : Result.failVoid,
+          ),
+        ),
+    }),
     legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:legacy-thread-migration",
       tag: WS_METHODS.subscribeServerLifecycle,
