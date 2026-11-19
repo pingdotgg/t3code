@@ -95,7 +95,6 @@ export function AppSignInRow(props: {
     const started = await start({ environmentId, input });
     if (attempt.current !== current) return;
     if (started._tag !== "Success") {
-      attempt.current = null;
       setPending(null);
       Dialog.alert(gt("Could not start the sign-in"), failureMessage(started.cause));
       return;
