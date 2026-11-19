@@ -5186,6 +5186,8 @@
   "8ea7a295f2739627": "Guardado para {hosts}.",
   "526307cb5a8424a7": "Crear un token",
   "c65001930bafa424": "Quitar",
+  "f5ea5597259324a6": "Servidor predeterminado",
+  "29283141bc890650": "El inicio de sesión de fj o tea que se usa cuando un proyecto no tiene un remoto de Forgejo, como al publicar. El remoto de un proyecto siempre usa su propio inicio de sesión.",
   "1386dab454716962": "Quitar",
   "7e93efc9d1b78549": "Introduce este código en {host} y aprueba {app}. Ya está copiado. El servidor termina de iniciar sesión aunque salgas de la app.",
   "aafa642d6a47837d": "No se pudo iniciar el inicio de sesión",

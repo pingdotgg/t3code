@@ -9083,6 +9083,8 @@
   "70752f3aba4894ff": "Avec un jeton d’API au lieu d’un jeton d’accès.",
   "417f9edb887598bd": "Accède à tous les dépôts accessibles à votre compte Atlassian. Accordez-lui l’accès en lecture et en écriture aux dépôts et aux pull requests, ainsi que read:user:bitbucket et read:workspace:bitbucket.",
   "3516b19bb6089d21": "Un jeton git.cafe, utilisé avant CAFE_TOKEN et la connexion cafe, pour que GitCafe fonctionne sans connexion à la CLI.",
+  "f5ea5597259324a6": "Serveur par défaut",
+  "29283141bc890650": "La connexion fj ou tea utilisée quand un projet n'a pas de remote Forgejo, par exemple lors de la publication. Le remote d'un projet utilise toujours sa propre connexion.",
   "bc63ccd46ca25a3a": "p. ex. --chrome",
   "5cd396217a43a9b3": "p. ex. 300000",
   "9da1db099d0ad2c8": "Facultatif",

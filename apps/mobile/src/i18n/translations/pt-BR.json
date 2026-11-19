@@ -5186,6 +5186,8 @@
   "8ea7a295f2739627": "Salvo para {hosts}.",
   "526307cb5a8424a7": "Criar um token",
   "c65001930bafa424": "Remover",
+  "f5ea5597259324a6": "Servidor padrão",
+  "29283141bc890650": "O login do fj ou tea usado quando um projeto não tem remote do Forgejo, como ao publicar. O remote de um projeto sempre usa o próprio login.",
   "1386dab454716962": "Remover",
   "7e93efc9d1b78549": "Digite este código em {host} e aprove o {app}. Ele já foi copiado. O servidor conclui o login mesmo se você sair do app.",
   "aafa642d6a47837d": "Não foi possível iniciar o login",

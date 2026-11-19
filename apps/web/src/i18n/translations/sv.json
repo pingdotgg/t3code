@@ -9089,6 +9089,8 @@
   "70752f3aba4894ff": "Med en API-token i stället för en åtkomsttoken.",
   "417f9edb887598bd": "Når alla repon som ditt Atlassian-konto kan nå. Ge den läs- och skrivåtkomst till repon och pull requests, plus read:user:bitbucket och read:workspace:bitbucket.",
   "3516b19bb6089d21": "En git.cafe-token som används före CAFE_TOKEN och cafe-inloggningen, så att GitCafe fungerar utan att CLI:t är inloggat.",
+  "f5ea5597259324a6": "Standardserver",
+  "29283141bc890650": "fj- eller tea-inloggningen som används när ett projekt saknar en Forgejo-fjärr, till exempel vid publicering. Ett projekts fjärr använder alltid sin egen inloggning.",
   "bc63ccd46ca25a3a": "t.ex. --chrome",
   "5cd396217a43a9b3": "t.ex. 300000",
   "9da1db099d0ad2c8": "Valfritt",

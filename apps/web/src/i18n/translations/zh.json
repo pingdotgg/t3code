@@ -9099,6 +9099,8 @@
   "70752f3aba4894ff": "使用 API token 而不是访问 token。",
   "417f9edb887598bd": "可访问你的 Atlassian 账户能访问的所有仓库。请授予其仓库和 pull request 的读写权限，以及 read:user:bitbucket 和 read:workspace:bitbucket。",
   "3516b19bb6089d21": "git.cafe token，优先于 CAFE_TOKEN 和 cafe 登录使用，因此无需登录 CLI 即可使用 GitCafe。",
+  "f5ea5597259324a6": "默认服务器",
+  "29283141bc890650": "项目没有 Forgejo 远程仓库时（例如发布时）使用的 fj 或 tea 登录。项目的远程仓库始终使用自己的登录。",
   "bc63ccd46ca25a3a": "例如：--chrome",
   "5cd396217a43a9b3": "例如：300000",
   "9da1db099d0ad2c8": "可选",
