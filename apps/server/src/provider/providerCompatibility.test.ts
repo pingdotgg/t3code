@@ -114,7 +114,15 @@ describe("provider compatibility", () => {
   it("marks Antigravity below 1.5 broken and recommends 1.5.12 in the bundled manifest", () => {
     const policies = decodeCompatibilityPolicies(bundledManifest.compatibility);
     const antigravity = ProviderDriverKind.make("antigravity");
-    for (const version of ["1.1.1", "1.3.0", "1.4.1", "1.4.5", "1.4.9", "agy_acp_server_1.4.5"]) {
+    for (const version of [
+      "1.1.1",
+      "1.3.0",
+      "1.4.1",
+      "1.4.5",
+      "1.4.9",
+      "agy_acp_server_1.4.5",
+      "1.4.5-beta",
+    ]) {
       const advisory = resolveProviderCompatibility(policies, antigravity, version);
       assert.strictEqual(advisory?.status, "broken", version);
     }
