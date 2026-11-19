@@ -80,6 +80,7 @@ export function useComposerMenuItems({
   selectedProviderSkills,
   selectedProviderSlashCommands,
   showSkillsInSlashMenu,
+  hideSettledThreadMentions,
   workspaceSkillsScanning,
   questionAttachmentTarget,
   modelMentions,
@@ -100,6 +101,7 @@ export function useComposerMenuItems({
   readonly selectedProviderSkills: ServerProvider["skills"];
   readonly selectedProviderSlashCommands: ServerProvider["slashCommands"];
   readonly showSkillsInSlashMenu: boolean;
+  readonly hideSettledThreadMentions: boolean;
   readonly workspaceSkillsScanning: boolean;
   readonly questionAttachmentTarget: DraftId | null;
   readonly modelMentions: {
@@ -129,7 +131,9 @@ export function useComposerMenuItems({
   // Mounts older settled threads matching the mention, here and on linked machines, which shells
   // may leave out.
   useThreadSearch(
-    isPathTrigger ? [environmentId, ...linkedEnvironments.keys()] : [],
+    isPathTrigger && !hideSettledThreadMentions
+      ? [environmentId, ...linkedEnvironments.keys()]
+      : [],
     pathTriggerQuery,
     { titlesOnly: true },
   );
@@ -218,6 +222,7 @@ export function useComposerMenuItems({
             environmentId,
             linkedEnvironments,
             excludeThreadId: activeThreadId,
+            hideSettled: hideSettledThreadMentions,
             query: composerTrigger.query,
             now,
           },

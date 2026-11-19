@@ -525,6 +525,7 @@ export function useComposerCommandMenu({
               environmentId,
               linkedEnvironments,
               excludeThreadId: currentThreadId,
+              hideSettled: false,
               query: trigger.query,
               now,
             },

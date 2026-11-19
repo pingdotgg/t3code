@@ -788,6 +788,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("command menu dollar $ slash /")],
   },
   {
+    id: "hide-settled-thread-mentions",
+    title: msg("Hide settled threads from @ mentions"),
+    to: "/settings/chat",
+    searchTerms: [msg("composer autocomplete suggestions settled threads mention @")],
+  },
+  {
     id: "composer-rich-text",
     title: msg("Rich text composer"),
     to: "/settings/chat",

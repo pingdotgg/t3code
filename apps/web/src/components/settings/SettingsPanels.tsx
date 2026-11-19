@@ -570,6 +570,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]
       : []),
+    ...(settings.hideSettledThreadMentions !== DEFAULT_UNIFIED_SETTINGS.hideSettledThreadMentions
+      ? [gt("Hide settled threads from @ mentions")]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
       : []),
@@ -707,6 +710,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      hideSettledThreadMentions: DEFAULT_UNIFIED_SETTINGS.hideSettledThreadMentions,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1329,6 +1333,32 @@ export function ChatSettingsPanel() {
             }
           />
         </AdvancedSettings>
+        <SettingsRow
+          {...setting("hide-settled-thread-mentions")}
+          description={gt("Only suggest active threads when you type @ in the composer.")}
+          resetAction={
+            settings.hideSettledThreadMentions !==
+            DEFAULT_UNIFIED_SETTINGS.hideSettledThreadMentions ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset settled thread mentions to default")}
+                onClick={() =>
+                  updateSettings({
+                    hideSettledThreadMentions: DEFAULT_UNIFIED_SETTINGS.hideSettledThreadMentions,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.hideSettledThreadMentions}
+              onCheckedChange={(checked) =>
+                updateSettings({ hideSettledThreadMentions: Boolean(checked) })
+              }
+              aria-label={gt("Hide settled threads from @ mentions")}
+            />
+          }
+        />
       </SettingsSection>
 
       <SettingsSection id="follow-ups" title={gt("Follow-ups")}>
