@@ -293,6 +293,26 @@ describe("GitCafeIssueTracker", () => {
     }),
   );
 
+  it.effect("reports incomplete label lookup when pagination loops or reaches its limit", () =>
+    Effect.gen(function* () {
+      for (const nextCursor of [
+        () => "repeated",
+        (query: URLSearchParams) => String(Number(query.get("after") ?? 0) + 1),
+      ]) {
+        const { tracker } = fakeGitCafe({
+          "/repos/acme/web/labels": (query: URLSearchParams) => ({
+            items: [{ id: "label_other", name: "other", color: null }],
+            next: nextCursor(query),
+          }),
+        });
+        const api = yield* tracker;
+        const error = yield* api.listIssues({ ...listInput, labels: ["bug"] }).pipe(Effect.flip);
+        assert.strictEqual(error.reason, "failed");
+        assert.strictEqual(error.detail, "Could not finish looking up GitCafe issue labels.");
+      }
+    }),
+  );
+
   it.effect("reads an issue with its newest comments and pages back to older ones", () =>
     Effect.gen(function* () {
       // GitCafe hands comments out oldest first and only pages forward.

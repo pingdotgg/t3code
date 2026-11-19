@@ -187,7 +187,7 @@ export const ReadIssueResult = Schema.Struct({
       createdAt: Schema.String,
     }),
   ),
-  /** Older comments exist beyond the page returned. */
+  /** True when older comments remain or comments could not be read. */
   commentsTruncated: Schema.Boolean,
   linkedPullRequests: Schema.Array(
     Schema.Struct({

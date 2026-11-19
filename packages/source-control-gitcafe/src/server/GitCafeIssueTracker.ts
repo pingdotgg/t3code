@@ -280,7 +280,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitCafeApi.GitCafeApi> 
       return { comments: newest.comments, count, commentsCursor: back };
     });
 
-    /** The id of every label named, or none when the repository lacks one of them. */
+    /** Only an exhausted listing can establish that a requested label is absent. */
     const labelIds = Effect.fn("GitCafeIssueTracker.labelIds")(function* (
       target: IssueScopeTarget,
       base: string,
@@ -301,12 +301,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitCafeApi.GitCafeApi> 
           const name = names.find((wanted) => sameName(wanted, label.name));
           if (name !== undefined) ids.set(name.toLowerCase(), label.id);
         }
-        if (labels.next === null || labels.next === after || ids.size === names.length) break;
+        if (names.every((name) => ids.has(name.toLowerCase()))) {
+          return Option.some(names.map((name) => ids.get(name.toLowerCase())!));
+        }
+        if (labels.next === null) return Option.none();
+        if (labels.next === after) break;
         after = labels.next;
       }
-      return names.every((name) => ids.has(name.toLowerCase()))
-        ? Option.some(names.map((name) => ids.get(name.toLowerCase())!))
-        : Option.none();
+      return yield* failure(
+        "listIssues",
+        "failed",
+        "Could not finish looking up GitCafe issue labels.",
+      );
     });
 
     return {
