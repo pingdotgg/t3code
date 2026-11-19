@@ -425,6 +425,16 @@ describe("Antigravity stderr compatibility", () => {
     }),
   );
 
+  it.effect("rejects the Gemini Enterprise license picker during normal work", () =>
+    Effect.gen(function* () {
+      const handleStderr = makeAntigravityStderrHandler();
+      const error = yield* handleStderr(
+        "Open the following link to choose your Gemini Enterprise license: http://127.0.0.1:51234/\n",
+      ).pipe(Effect.flip);
+      expect(isAntigravitySignInRequiredError(error)).toBe(true);
+    }),
+  );
+
   it.effect("forwards an accepted browser-helper URL larger than 8 KiB", () =>
     Effect.gen(function* () {
       const urls: string[] = [];

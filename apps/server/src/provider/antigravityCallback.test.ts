@@ -1,9 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - the fixture is the runtime's loopback callback server.
+import * as NodeHttp from "node:http";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { validateAntigravityCallbackUrl } from "./antigravityCallback.ts";
+import {
+  forwardAntigravityCallback,
+  validateAntigravityCallbackUrl,
+} from "./antigravityCallback.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-callback-test");
 const pending = { redirectUri: "http://127.0.0.1:51234/", state: "owned-state" };
@@ -45,4 +50,26 @@ it.effect("rejects different targets, credentials, fragments, and duplicate OAut
       assert.isTrue(Exit.isFailure(result), callback);
     }
   }),
+);
+
+it.live("delivers a callback the runtime answers with a redirect to its license picker", () =>
+  Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server>((resume) => {
+      const server = NodeHttp.createServer((_request, response) => {
+        response.writeHead(302, { Location: "/license" }).end();
+      });
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) => Effect.callback<void>((resume) => void server.close(() => resume(Effect.void))),
+  ).pipe(
+    Effect.flatMap((server) => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      return forwardAntigravityCallback(
+        instanceId,
+        new URL(`http://127.0.0.1:${port}/?state=owned-state&code=example-code`),
+      );
+    }),
+    Effect.scoped,
+  ),
 );
