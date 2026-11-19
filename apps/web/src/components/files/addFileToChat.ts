@@ -1,7 +1,9 @@
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { msg } from "gt-react";
 
 import { toastManager } from "~/components/ui/toast";
 import type { ComposerHandleRef } from "~/composerHandleContext";
+import { m } from "~/i18n/messages";
 
 /**
  * Appends a file mention to the open chat composer, the "Add to chat" action
@@ -15,8 +17,8 @@ export function addFileMentionToChat(
   if (!composer) {
     toastManager.add({
       type: "error",
-      title: "Unable to add to chat",
-      description: "Open a chat for this project and try again.",
+      title: m(msg("Unable to add to chat")),
+      description: m(msg("Open a chat for this project and try again.")),
     });
     return;
   }
@@ -26,8 +28,8 @@ export function addFileMentionToChat(
   if (!inserted) {
     toastManager.add({
       type: "error",
-      title: "Unable to add to chat",
-      description: "The chat isn't ready to accept input right now.",
+      title: m(msg("Unable to add to chat")),
+      description: m(msg("The chat isn't ready to accept input right now.")),
     });
   }
 }

@@ -1,4 +1,7 @@
-export const DEFAULT_COMPOSER_PLACEHOLDER = "Ask anything. @ files, $ skills, / commands";
+import { msg } from "gt-react";
 
-export const DISCONNECTED_COMPOSER_PLACEHOLDER =
-  "Ask for changes, send follow-ups, or attach images";
+export const DEFAULT_COMPOSER_PLACEHOLDER = msg("Ask anything. @ files, $ skills, / commands");
+
+export const DISCONNECTED_COMPOSER_PLACEHOLDER = msg(
+  "Ask for changes, send follow-ups, or attach images",
+);

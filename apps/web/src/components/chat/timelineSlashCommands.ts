@@ -14,6 +14,9 @@ import {
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "~/i18n/messages";
 
 /** What the thread's provider answers to under `/`: its listed commands and its skills. */
 export interface SlashCommandCatalog {
@@ -57,49 +60,152 @@ const present = (icon: LucideIcon, running: string, done: string, failed: string
 const COMMANDS = new Map<string, Presentation>([
   [
     "compact",
-    present(Minimize2Icon, "Compacting the conversation", "Compacted", "Couldn't compact"),
+    present(
+      Minimize2Icon,
+      msg("Compacting the conversation"),
+      msg("Compacted", { $context: "slash command row, the conversation was compacted" }),
+      msg("Couldn't compact"),
+    ),
   ],
   [
     "clear",
     present(
       EraserIcon,
-      "Clearing the context",
-      "Cleared the context",
-      "Couldn't clear the context",
+      msg("Clearing the context"),
+      msg("Cleared the context"),
+      msg("Couldn't clear the context"),
     ),
   ],
-  ["goal", present(TargetIcon, "Setting the goal", "Goal set", "Couldn't set the goal")],
-  ["feedback", present(SendIcon, "Sending feedback", "Sent feedback", "Couldn't send feedback")],
+  [
+    "goal",
+    present(
+      TargetIcon,
+      msg("Setting the goal"),
+      msg("Goal set", { $context: "slash command row" }),
+      msg("Couldn't set the goal"),
+    ),
+  ],
+  [
+    "feedback",
+    present(SendIcon, msg("Sending feedback"), msg("Sent feedback"), msg("Couldn't send feedback")),
+  ],
   [
     "init",
     present(
       FilePlusIcon,
-      "Writing instructions",
-      "Wrote instructions",
-      "Couldn't write instructions",
+      msg("Writing instructions"),
+      msg("Wrote instructions"),
+      msg("Couldn't write instructions"),
     ),
   ],
-  ["review", present(ScanSearchIcon, "Reviewing", "Review", "Couldn't review")],
-  ["code-review", present(ScanSearchIcon, "Reviewing code", "Code review", "Couldn't review")],
+  [
+    "review",
+    present(
+      ScanSearchIcon,
+      msg("Reviewing", { $context: "slash command row, a review is running" }),
+      msg("Review", { $context: "slash command row, a finished review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
+  ],
+  [
+    "code-review",
+    present(
+      ScanSearchIcon,
+      msg("Reviewing code"),
+      msg("Code review", { $context: "slash command row, a finished code review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
+  ],
   [
     "security-review",
-    present(ShieldCheckIcon, "Reviewing security", "Security review", "Couldn't review"),
+    present(
+      ShieldCheckIcon,
+      msg("Reviewing security"),
+      msg("Security review", { $context: "slash command row, a finished security review" }),
+      msg("Couldn't review", { $context: "slash command row, a review failed" }),
+    ),
   ],
-  ["context", present(GaugeIcon, "Checking context", "Context", "Couldn't check context")],
-  ["usage", present(ChartColumnIcon, "Checking usage", "Usage", "Couldn't check usage")],
-  ["mcp", present(PlugIcon, "Checking MCP servers", "MCP servers", "Couldn't check MCP servers")],
+  [
+    "context",
+    present(
+      GaugeIcon,
+      msg("Checking context"),
+      msg("Context", { $context: "slash command row, the context window report" }),
+      msg("Couldn't check context"),
+    ),
+  ],
+  [
+    "usage",
+    present(
+      ChartColumnIcon,
+      msg("Checking usage"),
+      msg("Usage", { $context: "slash command row, the usage report" }),
+      msg("Couldn't check usage"),
+    ),
+  ],
+  [
+    "mcp",
+    present(
+      PlugIcon,
+      msg("Checking MCP servers"),
+      msg("MCP servers", { $context: "slash command row, the MCP server report" }),
+      msg("Couldn't check MCP servers"),
+    ),
+  ],
 ]);
 
 /** `/goal` with one of these words controls the goal instead of setting it. */
 const GOAL_CONTROLS = new Map<string, Presentation>([
-  ["", present(TargetIcon, "Checking the goal", "Checked the goal", "Couldn't check the goal")],
-  ["pause", present(CirclePauseIcon, "Pausing the goal", "Goal paused", "Couldn't pause the goal")],
-  ["resume", present(TargetIcon, "Resuming the goal", "Goal resumed", "Couldn't resume the goal")],
-  ["clear", present(TargetIcon, "Clearing the goal", "Goal cleared", "Couldn't clear the goal")],
+  [
+    "",
+    present(
+      TargetIcon,
+      msg("Checking the goal"),
+      msg("Checked the goal"),
+      msg("Couldn't check the goal"),
+    ),
+  ],
+  [
+    "pause",
+    present(
+      CirclePauseIcon,
+      msg("Pausing the goal"),
+      msg("Goal paused"),
+      msg("Couldn't pause the goal"),
+    ),
+  ],
+  [
+    "resume",
+    present(
+      TargetIcon,
+      msg("Resuming the goal"),
+      msg("Goal resumed"),
+      msg("Couldn't resume the goal"),
+    ),
+  ],
+  [
+    "clear",
+    present(
+      TargetIcon,
+      msg("Clearing the goal"),
+      msg("Goal cleared"),
+      msg("Couldn't clear the goal"),
+    ),
+  ],
 ]);
 
-const SKILL = present(BoxIcon, "Using skill", "Used skill", "Couldn't use skill");
-const FALLBACK = present(TerminalIcon, "Running", "Ran", "Couldn't run");
+const SKILL = present(
+  BoxIcon,
+  msg("Using skill", { $context: "slash command row, a skill is running" }),
+  msg("Used skill", { $context: "slash command row, a skill finished" }),
+  msg("Couldn't use skill"),
+);
+const FALLBACK = present(
+  TerminalIcon,
+  msg("Running", { $context: "slash command row, a command is running" }),
+  msg("Ran", { $context: "slash command row, a command finished" }),
+  msg("Couldn't run", { $context: "slash command row, a command failed" }),
+);
 
 // The name stops at `/`, so a path such as `/usr/bin/foo` never matches.
 const COMMAND_MESSAGE = /^([/$])([a-zA-Z0-9][a-zA-Z0-9:_-]*)(?:\s+([\s\S]*))?$/;
@@ -129,13 +235,18 @@ export function presentSlashCommand(
   command: Pick<SlashCommandMessage, "name" | "args" | "skill">,
   state: SlashCommandState,
   result: string | null,
+  resolve: MessageResolver = m,
 ): { icon: LucideIcon; verb: string; target: string | null } {
   const control =
     !command.skill && command.name === "goal" ? GOAL_CONTROLS.get(command.args) : undefined;
   const presentation = command.skill ? SKILL : (control ?? COMMANDS.get(command.name) ?? FALLBACK);
   return {
     icon: presentation.icon,
-    verb: state === "stopped" ? "Stopped" : presentation[state === "done" ? "done" : state],
+    verb: resolve(
+      state === "stopped"
+        ? msg("Stopped", { $context: "slash command row, the user stopped the command" })
+        : presentation[state === "done" ? "done" : state],
+    ),
     target: result ?? (control || !command.args ? null : command.args),
   };
 }

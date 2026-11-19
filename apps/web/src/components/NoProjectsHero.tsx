@@ -1,5 +1,6 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT } from "gt-react";
 import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
 
 import { openCommandPalette } from "../commandPaletteBus";
@@ -17,7 +18,8 @@ import { WorkspacePageHeader } from "./WorkspacePageHeader";
  * hero's place list with nothing in it but the ways to get a project.
  */
 export function NoProjectsHero() {
-  const contentArea = workspaceAreaProps("home", 1, "Home");
+  const gt = useGT();
+  const contentArea = workspaceAreaProps("home", 1, gt("Home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { scratchEnvironmentId, startScratchThread } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
@@ -35,13 +37,15 @@ export function NoProjectsHero() {
         {isElectron ? <WorkspacePageHeader electron /> : null}
         <div className="scrollbar-gutter-both flex min-h-0 flex-1 items-center overflow-y-auto px-4 py-4">
           <div className="mx-auto flex w-full max-w-110 flex-col">
-            <h1 className="sr-only">Add a project to start</h1>
-            <div role="list" aria-label="Projects" className="flex flex-col gap-0.5">
-              <DraftProjectGroupLabel>No projects yet</DraftProjectGroupLabel>
+            <h1 className="sr-only">
+              <T>Add a project to start</T>
+            </h1>
+            <div role="list" aria-label={gt("Projects")} className="flex flex-col gap-0.5">
+              <DraftProjectGroupLabel>{gt("No projects yet")}</DraftProjectGroupLabel>
               <DraftProjectRow
                 icon={<FolderPlusIcon className="size-4 shrink-0 text-foreground" />}
-                label="Add project…"
-                detail="Open a folder or clone a repository"
+                label={gt("Add project…")}
+                detail={gt("Open a folder or clone a repository")}
                 onSelect={openAddProject}
               />
               {scratchTargetEnvironmentId === null ? null : (
@@ -51,8 +55,8 @@ export function NoProjectsHero() {
                     icon={
                       <MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />
                     }
-                    label="No project"
-                    detail="Its own folder, no git"
+                    label={gt("No project")}
+                    detail={gt("Its own folder, no git")}
                     shortcut={shortcutLabelForCommand(keybindings, "chat.newWithoutProject")}
                     onSelect={() => void startScratchThread(scratchTargetEnvironmentId)}
                   />

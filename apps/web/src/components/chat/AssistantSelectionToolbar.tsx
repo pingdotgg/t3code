@@ -5,6 +5,8 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import { CopyIcon, TextQuoteIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -55,6 +57,7 @@ export function AssistantSelectionToolbar({
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const actionsRef = useRef<ReturnType<typeof observeSelectionActions> | null>(null);
+  const gt = useGT();
 
   const attachToolbar = (toolbar: HTMLDivElement | null) => {
     toolbarRef.current = toolbar;
@@ -223,18 +226,22 @@ export function AssistantSelectionToolbar({
       }
     })();
     const done = () => {
-      toastManager.add({ type: "success", title: "Copied to clipboard" });
+      toastManager.add({ type: "success", title: m(msg("Copied to clipboard")) });
       dismiss();
     };
     if (copied) {
       done();
       return;
     }
-    void writeTextToClipboard(text, "selection").then(done, (error: unknown) => {
+    void writeTextToClipboard(text, {
+      target: "selection",
+      unavailableMessage: msg("Clipboard API is unavailable while copying text."),
+      failureMessage: msg("Failed to copy text to the clipboard."),
+    }).then(done, (error: unknown) => {
       toastManager.add({
         type: "error",
-        title: "Could not copy selection",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("Could not copy selection"),
+        description: error instanceof Error ? error.message : gt("An error occurred."),
       });
     });
   };
@@ -245,7 +252,7 @@ export function AssistantSelectionToolbar({
     <div
       ref={attachToolbar}
       role="toolbar"
-      aria-label="Selection actions"
+      aria-label={gt("Selection actions")}
       className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75"
       style={{ left: selection.anchor.centerX, top: selection.anchor.top }}
       onPointerDown={(event) => event.preventDefault()}
@@ -263,19 +270,21 @@ export function AssistantSelectionToolbar({
           variant="ghost"
           size="xs"
           disabled={tooLong}
-          aria-label={tooLong ? "Selection is too long to cite" : "Cite selection in composer"}
+          aria-label={
+            tooLong ? gt("Selection is too long to cite") : gt("Cite selection in composer")
+          }
           aria-keyshortcuts={citeShortcut ?? undefined}
           onClick={cite}
         >
           <TextQuoteIcon aria-hidden="true" />
-          {tooLong ? "Shorten selection" : "Cite in composer"}
+          {tooLong ? gt("Shorten selection") : gt("Cite in composer")}
           {!tooLong && citeShortcut ? <Kbd>{citeShortcut}</Kbd> : null}
         </Button>
       </span>
       <span aria-hidden="true" className="h-4 w-px shrink-0 bg-divider" />
       <Button variant="ghost" size="xs" onClick={copy}>
         <CopyIcon aria-hidden="true" />
-        Copy
+        {gt("Copy", { $context: "verb, copies text to the clipboard" })}
       </Button>
     </div>,
     document.body,

@@ -1,4 +1,5 @@
 import type { PullRequestListState } from "@t3tools/contracts";
+import { T, useGT, useMessages } from "gt-react";
 import { ChevronRightIcon, SearchIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 
@@ -17,7 +18,7 @@ import { workspaceAreaProps } from "../../lib/workspaceFocus";
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestCompactFilterMenu } from "./PullRequestCompactFilterMenu";
 import type { PullRequestFilterOption } from "./PullRequestListFilters";
-import { STATE_TABS } from "./pullRequestListOptions";
+import { resolveFilterOptions, STATE_TABS } from "./pullRequestListOptions";
 
 function ExpandableSearch({
   searchInput,
@@ -36,6 +37,7 @@ function ExpandableSearch({
    */
   onFocusWithin?: (focused: boolean) => void;
 }) {
+  const gt = useGT();
   const containerRef = useRef<HTMLDivElement | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- focuses the search input DOM node when the topbar search opens
   useEffect(() => {
@@ -61,7 +63,7 @@ function ExpandableSearch({
     <Button
       size="icon-sm"
       variant="ghost"
-      aria-label="Search pull requests"
+      aria-label={gt("Search pull requests")}
       onClick={() => onOpenChange(true)}
     >
       <SearchIcon className="size-4" />
@@ -87,6 +89,7 @@ export function PullRequestsColumn({
   searchInput,
   sortMenu,
   filtersMenu,
+  savedViewsMenu,
   rightPanelControl,
   titlebarControls,
   rightPanelOpen,
@@ -105,6 +108,7 @@ export function PullRequestsColumn({
   searchInput: ReactNode;
   sortMenu: ReactNode;
   filtersMenu: ReactNode;
+  savedViewsMenu: ReactNode;
   rightPanelControl: ReactNode;
   titlebarControls: ReactNode;
   rightPanelOpen: boolean;
@@ -112,7 +116,9 @@ export function PullRequestsColumn({
   listBody: ReactNode;
   scrollRef: RefObject<HTMLDivElement | null>;
 }) {
-  const contentArea = workspaceAreaProps("pull-requests", 1, "Pull requests");
+  const gt = useGT();
+  const resolve = useMessages();
+  const contentArea = workspaceAreaProps("pull-requests", 1, gt("Pull requests"));
   const [searchOpen, setSearchOpen] = useState(false);
   const topbarSearchRef = useRef<HTMLDivElement | null>(null);
   // shortcut would otherwise do nothing. It unfolds the header search and selects the query
@@ -150,7 +156,7 @@ export function PullRequestsColumn({
         className="relative bg-background"
       >
         {titlebarControls}
-        <WorkspaceBreadcrumb ariaLabel="Pull request scope" className="overflow-hidden">
+        <WorkspaceBreadcrumb ariaLabel={gt("Pull request scope")} className="overflow-hidden">
           {/* An expanded search owns the scarce horizontal space in a narrow column. The page
               title stays available to readers either way. */}
           <WorkspaceBreadcrumbItem
@@ -158,7 +164,9 @@ export function PullRequestsColumn({
             className={cn("gap-1.5", searchExpanded && "sr-only @3xl/pr-list:not-sr-only")}
           >
             <PullRequestGlyph.pullRequest aria-hidden className="size-3.5 shrink-0" />
-            <h1 className="truncate">Pull requests</h1>
+            <h1 className="truncate">
+              <T>Pull requests</T>
+            </h1>
           </WorkspaceBreadcrumbItem>
           <WorkspaceBreadcrumbSeparator
             className={cn(searchExpanded && "hidden @3xl/pr-list:flex")}
@@ -167,7 +175,7 @@ export function PullRequestsColumn({
           </WorkspaceBreadcrumbSeparator>
           <WorkspaceBreadcrumbItem className="shrink">
             <PullRequestCompactFilterMenu
-              label="Filter by provider"
+              label={gt("Filter by provider")}
               value={host ?? ""}
               options={hostMenuOptions}
               onChange={(next) => onHost(next === "" ? undefined : next)}
@@ -177,15 +185,16 @@ export function PullRequestsColumn({
         <div className="min-w-0 flex-1" />
         <div ref={topbarSearchRef} className="flex shrink items-center gap-0.5">
           <PullRequestCompactFilterMenu
-            label="Filter by state"
+            label={gt("Filter by state")}
             value={state}
-            options={STATE_TABS}
+            options={resolveFilterOptions(STATE_TABS, resolve)}
             onChange={onState}
             className="shrink-0"
             labelClassName="hidden @3xl/pr-list:inline"
           />
           {sortMenu}
           {filtersMenu}
+          {savedViewsMenu}
           <ExpandableSearch
             searchInput={searchInput}
             searchValue={searchValue}
@@ -215,11 +224,12 @@ function PullRequestRefreshControl({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const gt = useGT();
   return (
     <Button
       size={compact ? "icon-sm" : "icon"}
       variant="ghost-muted"
-      aria-label="Refresh pull requests"
+      aria-label={gt("Refresh pull requests")}
       onClick={onRefresh}
       disabled={refreshing}
     >

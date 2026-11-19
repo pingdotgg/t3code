@@ -1,6 +1,7 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 /** Every variant wears the same small notice the design gives a list filtered to nothing:
  * one glyph, a title, a sentence and the buttons that change the answer. */
+import { T, useGT, Var } from "gt-react";
 import { FolderPlusIcon, PlusIcon, SearchIcon } from "lucide-react";
 import type { ElementType, ReactNode } from "react";
 
@@ -41,10 +42,11 @@ function CheckAgainButton({
   refreshing: boolean;
   onRefresh: () => void;
 }) {
+  const gt = useGT();
   return (
     <Button size="sm" variant="secondary" disabled={refreshing} onClick={onRefresh}>
       <RefreshIcon size="sm" refreshing={refreshing} />
-      {refreshing ? "Checking..." : "Check again"}
+      {refreshing ? gt("Checking...") : gt("Check again")}
     </Button>
   );
 }
@@ -89,12 +91,14 @@ export function PullRequestListEmptyState({
   onLoadMore: () => void;
   onRefresh: () => void;
 }) {
+  const gt = useGT();
+  const shownQuery = query.length > 48 ? `${query.slice(0, 48)}…` : query;
   if (!hasProjects) {
     return (
       <PullRequestListNotice
         icon={FolderPlusIcon}
-        title="No projects in this workspace"
-        description="Add a project, and the pull requests from its repository appear here."
+        title={<T>No projects in this workspace</T>}
+        description={<T>Add a project, and the pull requests from its repository appear here.</T>}
       >
         <Button
           size="sm"
@@ -102,7 +106,7 @@ export function PullRequestListEmptyState({
           onClick={() => openCommandPalette({ open: "add-project" })}
         >
           <PlusIcon className="size-3.5" />
-          Add project
+          <T>Add project</T>
         </Button>
       </PullRequestListNotice>
     );
@@ -113,10 +117,13 @@ export function PullRequestListEmptyState({
     return (
       <PullRequestListNotice
         icon={signIn.Icon}
-        title={`Sign in to ${signIn.hostLabel}`}
+        title={gt("Sign in to {host}", { host: signIn.hostLabel })}
         description={
           signIn.detail ??
-          `Sign in to ${signIn.hostLabel} on this server to see ${signIn.changeRequestPlural}.`
+          gt("Sign in to {host} on this server to see {changeRequests}.", {
+            host: signIn.hostLabel,
+            changeRequests: signIn.changeRequestPlural,
+          })
         }
       >
         <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
@@ -128,7 +135,7 @@ export function PullRequestListEmptyState({
     return (
       <PullRequestListGhost
         rows={5}
-        caption={`Searching every host for “${query.length > 48 ? `${query.slice(0, 48)}…` : query}”`}
+        caption={gt("Searching every host for “{query}”", { query: shownQuery })}
       />
     );
   }
@@ -137,11 +144,19 @@ export function PullRequestListEmptyState({
     return (
       <PullRequestListNotice
         icon={SearchIcon}
-        title={`Nothing matches “${query.length > 48 ? `${query.slice(0, 48)}…` : query}”`}
-        description="The hosts were searched for it. Try fewer words, or search by number, author or branch."
+        title={
+          <T>
+            Nothing matches “<Var>{shownQuery}</Var>”
+          </T>
+        }
+        description={
+          <T>
+            The hosts were searched for it. Try fewer words, or search by number, author or branch.
+          </T>
+        }
       >
         <Button size="sm" variant="secondary" onClick={onClearQuery}>
-          Clear search
+          <T>Clear search</T>
         </Button>
         {}
         <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />
@@ -153,16 +168,16 @@ export function PullRequestListEmptyState({
     return (
       <PullRequestListNotice
         icon={PullRequestGlyph.closed}
-        title="No pull requests match"
-        description={filterSummary ?? "Widen the filters to see more."}
+        title={<T>No pull requests match</T>}
+        description={filterSummary ?? <T>Widen the filters to see more.</T>}
       >
         <Button size="sm" variant="secondary" onClick={onClearFilters}>
-          Clear filters
+          <T>Clear filters</T>
         </Button>
         {/* The filters were only applied to the pages read so far. */}
         {canLoadMore ? (
           <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
-            {loadingMore ? "Loading..." : "Load more pull requests"}
+            {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
           </Button>
         ) : null}
       </PullRequestListNotice>
@@ -172,12 +187,12 @@ export function PullRequestListEmptyState({
   return (
     <PullRequestListNotice
       icon={PullRequestGlyph.pullRequest}
-      title="No open pull requests"
-      description="Open pull requests from every project in this workspace appear here."
+      title={<T>No open pull requests</T>}
+      description={<T>Open pull requests from every project in this workspace appear here.</T>}
     >
       {canLoadMore ? (
         <Button size="sm" variant="secondary" disabled={loadingMore} onClick={onLoadMore}>
-          {loadingMore ? "Loading..." : "Load more pull requests"}
+          {loadingMore ? gt("Loading...") : gt("Load more pull requests")}
         </Button>
       ) : null}
       <CheckAgainButton refreshing={refreshing} onRefresh={onRefresh} />

@@ -1,4 +1,5 @@
 import type { AnyRouter } from "@tanstack/react-router";
+import { msg } from "gt-react";
 
 import {
   dispatchCommandPalette,
@@ -10,6 +11,7 @@ import { notifyThemeSaveFailure } from "../components/CommandPaletteThemeItems";
 import { toggleThemeEditorForTheme } from "../components/settings/themeEditorStore";
 import { toastManager } from "../components/ui/toast";
 import { APPEARANCE_CHOICES, getThemeSnapshot, setAppearanceChoice } from "../hooks/useTheme";
+import { m } from "../i18n/messages";
 import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
 import { type CommandHandler, type CommandScopeOptions, registerCommands } from "./dispatcher";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -77,7 +79,12 @@ export function installCommandPaletteCommands(
         }
         toastManager.add({
           id: "appearance-cycle",
-          title: `Appearance: ${next.label}`,
+          title: m(
+            msg(
+              "{mode, select, system {Appearance: System} light {Appearance: Light} blackChrome {Appearance: Black chrome} other {Appearance: Dark}}",
+            ),
+            { mode: next.choice === "black-chrome" ? "blackChrome" : next.choice },
+          ),
           timeout: 1500,
         });
       },

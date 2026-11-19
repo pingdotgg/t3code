@@ -1,11 +1,15 @@
-import { injectHtmlRenderBootstrap } from "@t3tools/shared/htmlRender";
+import {
+  FILE_PREVIEW_SCROLL_SCRIPT,
+  injectHtmlRenderBootstrap,
+  readFilePreviewScroll,
+} from "@t3tools/shared/htmlRender";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { render } from "../../../test/render";
 
-import { HtmlRenderDocument } from "./BrowserDocumentFrame";
+import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
 
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
@@ -219,4 +223,99 @@ it("keeps the first and last selected card rings inside the fitted renderer fram
     expect(bounds.bottom).toBeLessThanOrEqual(bounds.viewportHeight);
     expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.viewportWidth);
   }
+});
+
+describe("BrowserDocumentFrame", () => {
+  it("keeps a page on screen until its next revision has loaded", async () => {
+    using pages = (() => {
+      const urls = ["first", "second", "third"].map((name) =>
+        URL.createObjectURL(new Blob([`<p>${name}</p>`], { type: "text/html" })),
+      );
+      return { urls, [Symbol.dispose]: () => urls.forEach((url) => URL.revokeObjectURL(url)) };
+    })();
+    const [first, second, third] = pages.urls as [string, string, string];
+    const frame = (revision: string, src: string) => (
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame
+          src={src}
+          title="Report"
+          pdf={false}
+          documentKey={`report:${revision}`}
+          documentId="report"
+        />
+      </div>
+    );
+    await using screen = await render(frame("1", first));
+    const srcs = () => Array.from(screen.container.querySelectorAll("iframe"), (f) => f.src);
+    const onScreen = () => {
+      const box = screen.container.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 10);
+      return hit instanceof HTMLIFrameElement ? hit.src : null;
+    };
+    await vi.waitFor(() => expect(onScreen()).toBe(first));
+
+    // The incoming frame cannot have loaded when it is inserted, so the current page must cover it.
+    const atInsertion = new Promise<string | null>((resolve) => {
+      const observer = new MutationObserver(() => {
+        if (!srcs().includes(second)) return;
+        observer.disconnect();
+        resolve(onScreen());
+      });
+      observer.observe(screen.container, { childList: true, subtree: true });
+    });
+    await screen.rerender(frame("2", second));
+    expect(await atInsertion).toBe(first);
+    await vi.waitFor(() => expect(srcs()).toEqual([second]));
+    expect(onScreen()).toBe(second);
+
+    await screen.rerender(frame("3", third));
+    await screen.rerender(frame("2", second));
+    expect(srcs(), "returning to the shown revision kept the pending frame").toEqual([second]);
+    await screen.rerender(frame("3", third));
+    await vi.waitFor(() => expect(onScreen()).toBe(third));
+  });
+
+  it("opens the next revision where the reader left the page", async () => {
+    // The first page scrolls itself, as a reader would; the second is served without scrolling.
+    const tall = '<div style="height:5000px">report</div>';
+    using pages = (() => {
+      const urls = [
+        `${tall}<script>addEventListener("load",()=>scrollTo(0,1200))</script>`,
+        tall,
+      ].map((body) =>
+        URL.createObjectURL(new Blob([body + FILE_PREVIEW_SCROLL_SCRIPT], { type: "text/html" })),
+      );
+      return { urls, [Symbol.dispose]: () => urls.forEach((url) => URL.revokeObjectURL(url)) };
+    })();
+    const [first, second] = pages.urls as [string, string];
+    const reports: Array<{ source: MessageEventSource | null; y: number }> = [];
+    const onMessage = (event: MessageEvent) => {
+      const scroll = readFilePreviewScroll(event.data);
+      if (scroll !== undefined) reports.push({ source: event.source, y: scroll.y });
+    };
+    window.addEventListener("message", onMessage);
+    using _listener = { [Symbol.dispose]: () => window.removeEventListener("message", onMessage) };
+    const frame = (revision: string, src: string) => (
+      <div className="flex h-75 w-100 flex-col">
+        <BrowserDocumentFrame
+          src={src}
+          title="Report"
+          pdf={false}
+          documentKey={`report:${revision}`}
+          documentId="report"
+        />
+      </div>
+    );
+    await using screen = await render(frame("1", first));
+    const iframes = () => Array.from(screen.container.querySelectorAll("iframe"));
+    await vi.waitFor(() => expect(reports.map((report) => report.y)).toContain(1200));
+
+    await screen.rerender(frame("2", second));
+    await vi.waitFor(() => expect(iframes().map((element) => element.src)).toEqual([second]));
+    const shown = iframes()[0]!.contentWindow;
+    expect(
+      reports.filter((report) => report.source === shown).map((report) => report.y),
+      "the next revision was uncovered before it took the reader's position",
+    ).toContain(1200);
+  });
 });

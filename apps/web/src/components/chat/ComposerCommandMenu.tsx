@@ -25,6 +25,7 @@ import {
   TerminalIcon,
   type LucideIcon,
 } from "lucide-react";
+import { msg, useGT, useMessages } from "gt-react";
 import {
   Children,
   memo,
@@ -37,6 +38,7 @@ import {
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
 import { cn } from "~/lib/utils";
+import { m as resolveMessage, type MessageResolver } from "~/i18n/messages";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandGroupLabel, CommandItem, CommandList } from "../ui/command";
 import { Kbd } from "../ui/kbd";
@@ -125,40 +127,49 @@ export interface ComposerCommandGroup {
   readonly items: ComposerCommandItem[];
 }
 
-function providerLabel(provider: ProviderDriverKind): string {
-  return PROVIDER_DISPLAY_NAMES[provider] ?? "Provider";
+function providerLabel(provider: ProviderDriverKind, resolve: MessageResolver): string {
+  return PROVIDER_DISPLAY_NAMES[provider] ?? resolve(msg("Provider"));
 }
 
 function composerCommandItemGroup(
   item: ComposerCommandItem,
   triggerKind: ComposerTriggerKind | null,
+  resolve: MessageResolver,
 ): { key: string; label: string } {
   switch (item.type) {
     case "slash-command":
       return { key: "t3code", label: "T3 Code" };
     case "provider-slash-command":
-      return { key: `provider:${item.provider}`, label: providerLabel(item.provider) };
+      return { key: `provider:${item.provider}`, label: providerLabel(item.provider, resolve) };
     case "skill": {
-      if (triggerKind === "slash-command") return { key: "skills", label: "Skills" };
+      if (triggerKind === "slash-command") return { key: "skills", label: resolve(msg("Skills")) };
       // `$` groups skills by where they come from, which replaces the per-row source badge.
       const source = resolveProviderSkillSourceKind(item.skill);
-      if (source === "personal") return { key: "skills:personal", label: "Personal" };
-      if (source === "repo" || source === "project") {
-        return { key: "skills:project", label: "Project" };
+      if (source === "personal") {
+        return {
+          key: "skills:personal",
+          label: resolve(msg("Personal", { $context: "skill source group" })),
+        };
       }
-      if (source === "app") return { key: "skills:app", label: "Plugins" };
-      return { key: `skills:${item.provider}`, label: providerLabel(item.provider) };
+      if (source === "repo" || source === "project") {
+        return {
+          key: "skills:project",
+          label: resolve(msg("Project", { $context: "skill source group" })),
+        };
+      }
+      if (source === "app") return { key: "skills:app", label: resolve(msg("Plugins")) };
+      return { key: `skills:${item.provider}`, label: providerLabel(item.provider, resolve) };
     }
     case "path":
-      return { key: "paths", label: "Files and folders" };
+      return { key: "paths", label: resolve(msg("Files and folders")) };
     case "pull-request":
-      return { key: "pull-requests", label: "Pull requests" };
+      return { key: "pull-requests", label: resolve(msg("Pull requests")) };
     case "thread":
-      return { key: "threads", label: "Threads" };
+      return { key: "threads", label: resolve(msg("Threads")) };
     case "environment":
-      return { key: "environments", label: "Machines" };
+      return { key: "environments", label: resolve(msg("Machines")) };
     case "model":
-      return { key: "models", label: "Models" };
+      return { key: "models", label: resolve(msg("Models")) };
   }
 }
 
@@ -170,10 +181,11 @@ function composerCommandItemGroup(
 export function groupComposerCommandItems(
   items: ReadonlyArray<ComposerCommandItem>,
   triggerKind: ComposerTriggerKind | null,
+  resolve: MessageResolver = resolveMessage,
 ): ComposerCommandGroup[] {
   const groups = new Map<string, { key: string; label: string; items: ComposerCommandItem[] }>();
   for (const item of items) {
-    const group = composerCommandItemGroup(item, triggerKind);
+    const group = composerCommandItemGroup(item, triggerKind, resolve);
     const existing = groups.get(group.key);
     if (existing) {
       existing.items.push(item);
@@ -202,8 +214,10 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
   onHighlightedItemChange: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const listRef = useRef<HTMLDivElement>(null);
-  const groups = groupComposerCommandItems(props.items, props.triggerKind);
+  const groups = groupComposerCommandItems(props.items, props.triggerKind, m);
   // `#` lists threads right away, but pull requests come from the git host and can take
   // seconds. Hold their group open with a loading row so they don't silently pop in later.
   const pullRequestsPending =
@@ -241,18 +255,20 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
         {props.items.length > 0 ? (
           <CommandList
             id={props.listId}
-            aria-label={props.triggerKind ? LISTBOX_LABEL_BY_TRIGGER[props.triggerKind] : undefined}
+            aria-label={
+              props.triggerKind ? m(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]) : undefined
+            }
             className="max-h-112 min-h-0"
           >
             {pullRequestsPending ? (
               <CommandGroup>
-                <CommandGroupLabel>Pull requests</CommandGroupLabel>
+                <CommandGroupLabel>{gt("Pull requests")}</CommandGroupLabel>
                 <div
                   role="status"
                   className="flex min-h-8 items-center gap-2 px-2 text-meta text-dim-foreground"
                 >
                   <Spinner aria-hidden className="size-[15px] shrink-0" />
-                  <span className="min-w-0 truncate">Loading pull requests...</span>
+                  <span className="min-w-0 truncate">{gt("Loading pull requests...")}</span>
                 </div>
               </CommandGroup>
             ) : null}
@@ -280,7 +296,7 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
           <div className="p-2">
             {props.triggerKind ? (
               <div className="px-2 py-1.5 text-meta text-dim-foreground">
-                {LISTBOX_LABEL_BY_TRIGGER[props.triggerKind]}
+                {m(LISTBOX_LABEL_BY_TRIGGER[props.triggerKind])}
               </div>
             ) : null}
             <div
@@ -296,16 +312,16 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
               <span className="min-w-0 truncate">
                 {props.isLoading
                   ? props.triggerKind === "skill" || props.triggerKind === "slash-command"
-                    ? "Searching workspace skills..."
+                    ? gt("Searching workspace skills...")
                     : props.triggerKind === "pull-request"
-                      ? "Finding pull request..."
-                      : "Searching workspace files..."
+                      ? gt("Finding pull request...")
+                      : gt("Searching workspace files...")
                   : (props.emptyStateText ??
                     (props.triggerKind === "skill"
-                      ? "No skills found. Try / to browse provider commands."
+                      ? gt("No skills found. Try / to browse provider commands.")
                       : props.triggerKind === "path"
-                        ? "No matching files or folders."
-                        : "No matching command."))}
+                        ? gt("No matching files or folders.")
+                        : gt("No matching command.")))}
               </span>
             </div>
           </div>
@@ -321,15 +337,18 @@ export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
                         <ArrowDownIcon />
                       </>,
                     ],
-                    label: "Navigate",
+                    label: gt("Navigate"),
                   },
                   {
                     keys: [<CornerDownLeftIcon key="enter" />],
-                    label: props.triggerKind === "slash-command" ? "Run" : "Insert",
+                    label:
+                      props.triggerKind === "slash-command"
+                        ? gt("Run", { $context: "verb, runs the highlighted command" })
+                        : gt("Insert", { $context: "verb, inserts the highlighted item" }),
                   },
-                  { keys: ["esc"], label: "Close" },
+                  { keys: ["esc"], label: gt("Close") },
                 ]
-              : [{ keys: ["esc"], label: "Close" }]
+              : [{ keys: ["esc"], label: gt("Close") }]
           }
         />
       </ComposerMenuSurface>
@@ -440,10 +459,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onHighlight: (itemId: string | null) => void;
   onSelect: (item: ComposerCommandItem) => void;
 }) {
+  const m = useMessages();
   const isSlashSkill =
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
-    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+    props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest, m) : null;
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const [descriptionTruncated, setDescriptionTruncated] = useState(false);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- measures the rendered description so only cut-off text gets a tooltip
@@ -541,8 +561,8 @@ export function composerSuggestionOptionId(listId: string, itemId: string): stri
 }
 
 const LISTBOX_LABEL_BY_TRIGGER: Record<ComposerTriggerKind, string> = {
-  path: "Files and folders",
-  "pull-request": "Pull requests and threads",
-  "slash-command": "Commands",
-  skill: "Skills",
+  path: msg("Files and folders"),
+  "pull-request": msg("Pull requests and threads"),
+  "slash-command": msg("Commands"),
+  skill: msg("Skills"),
 };
