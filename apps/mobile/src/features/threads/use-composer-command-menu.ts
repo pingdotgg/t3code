@@ -553,7 +553,7 @@ export function useComposerCommandMenu({
               id: `path:${entry.path}`,
               type: "path" as const,
               path: entry.path,
-              kind: entry.kind,
+              pathKind: entry.kind,
               label: parts[parts.length - 1] ?? entry.path,
               description: parts.length > 1 ? parts.slice(0, -1).join("/") : "",
             };

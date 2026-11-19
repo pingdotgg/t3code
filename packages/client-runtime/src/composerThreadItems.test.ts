@@ -136,10 +136,12 @@ describe("matchComposerEnvironmentItems", () => {
 describe("rankComposerMentionItems", () => {
   const thread = (label: string) => ({ type: "thread", label });
   const machine = (label: string) => ({ type: "environment", label });
-  const file = (label: string) => ({ type: "path", label });
+  const file = (label: string) => ({ type: "path", label, pathKind: "file" });
+  const directory = (label: string) => ({ type: "path", label, pathKind: "directory" });
   const model = (label: string) => ({ type: "model", label });
 
   it.each([
+    ["dev", [directory("dev"), machine("Dev box")], ["Dev box", "dev"]],
     [
       "he",
       [
