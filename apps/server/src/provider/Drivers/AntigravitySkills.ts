@@ -259,7 +259,6 @@ const PluginPreferences = Schema.fromJsonString(
 
 const decodePluginManifest = Schema.decodeEffect(PluginManifest);
 const decodePluginPreferences = Schema.decodeEffect(PluginPreferences);
-const encodeString = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(function* (
   userHome: string,
@@ -295,7 +294,7 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
           }),
         );
   if (preferences === undefined) return [];
-  const plugins = [];
+  const roots: Array<SkillRoot> = [];
   for (const entry of entries.toSorted()) {
     const pluginDirectory = path.join(directory, entry);
     if (
@@ -318,28 +317,9 @@ const discoverAntigravityPlugins = Effect.fn("discoverAntigravityPlugins")(funct
     );
     if (manifest === undefined) continue;
     if (manifest.disabled && enabled !== true) continue;
-    const skills = yield* scanSkillDirectories(
-      [{ directory: path.join(pluginDirectory, "skills"), scope: "user" }],
-      budget,
-    );
-    if (skills.length === 0) continue;
-    plugins.push({
-      directory: pluginDirectory,
-      skills: skills.map((skill) => ({
-        ...skill,
-        name: `plugin:${[entry, skill.name]
-          .map((part) =>
-            part.replace(
-              /[^a-z0-9-]/gu,
-              (character) => `_${Buffer.from(character).toString("hex")}_`,
-            ),
-          )
-          .join(":")}`,
-        displayName: `${entry}:${skill.name}`,
-      })),
-    });
+    roots.push({ directory: path.join(pluginDirectory, "skills"), scope: "user" });
   }
-  return plugins;
+  return yield* scanSkillDirectories(roots, budget);
 });
 
 /** Keep read errors typed so workspace snapshots cannot cache partial results. */
@@ -366,35 +346,17 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     ],
     { remainingBytes: MAX_SCAN_BYTES, remainingEntries: MAX_SCAN_ENTRIES },
   );
-  const plugins = yield* discoverAntigravityPlugins(input.userHome);
-  return [...skills, ...plugins.flatMap((plugin) => plugin.skills)].sort((left, right) =>
-    left.name.localeCompare(right.name),
+  const pluginSkills = yield* discoverAntigravityPlugins(input.userHome).pipe(
+    Effect.catchTags({
+      AntigravitySkillsProbeError: (cause) =>
+        Effect.logWarning("Antigravity plugin skills are unavailable.", {
+          reason: cause.reason,
+        }).pipe(Effect.as([])),
+    }),
+  );
+  // agy lists plugin skills under their own names, so the picker keeps one entry per name.
+  const names = new Set(skills.map((skill) => skill.name));
+  return [...skills, ...pluginSkills.filter((skill) => !names.has(skill.name))].sort(
+    (left, right) => left.name.localeCompare(right.name),
   );
 });
-
-// ACP accepts standalone skills, so plugin entries use a process-owned native catalog.
-export const prepareAntigravityPluginSkills = Effect.fn("prepareAntigravityPluginSkills")(
-  function* (input: { readonly userHome: string; readonly runtimeTempDirectory: string }) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const plugins = yield* discoverAntigravityPlugins(input.userHome);
-    if (plugins.length === 0) return [];
-    const directory = path.join(input.runtimeTempDirectory, "plugin-skills");
-    yield* Effect.forEach(
-      plugins.flatMap((plugin) =>
-        plugin.skills.map((skill) => ({ pluginDirectory: plugin.directory, skill })),
-      ),
-      ({ pluginDirectory, skill }, index) =>
-        Effect.gen(function* () {
-          const skillDirectory = path.join(directory, ".agents", "skills", String(index));
-          yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
-          yield* fileSystem.writeFileString(
-            path.join(skillDirectory, "SKILL.md"),
-            `---\nname: ${encodeString(skill.name)}\ndescription: ${encodeString(skill.description ?? "")}\n---\n\nRead and follow the skill at ${encodeString(skill.path)}. Resolve its relative paths from ${encodeString(path.dirname(skill.path))}. The plugin root is ${encodeString(pluginDirectory)}.\n`,
-          );
-        }),
-      { concurrency: 8, discard: true },
-    );
-    return [directory, ...plugins.map((plugin) => plugin.directory)];
-  },
-);

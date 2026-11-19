@@ -75,11 +75,7 @@ import {
 } from "@t3tools/provider-core/server/driver";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { withInstanceIdentity } from "@t3tools/provider-core/server/instanceIdentity";
-import {
-  discoverAntigravitySkills,
-  prepareAntigravityPluginSkills,
-  resolveAntigravityUserHome,
-} from "./AntigravitySkills.ts";
+import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./AntigravitySkills.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
@@ -207,9 +203,7 @@ export const AntigravityDriver: ProviderDriver<
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
       input: AntigravityAdapterV2RuntimeInput,
     ): Effect.fn.Return<
-      AcpSessionRuntime.AcpSessionRuntime["Service"] & {
-        readonly clientFileRoots: ReadonlyArray<string>;
-      },
+      AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
       Scope.Scope
     > {
@@ -276,18 +270,6 @@ export const AntigravityDriver: ProviderDriver<
               ),
             ),
       );
-      const pluginDirectories = yield* prepareAntigravityPluginSkills({
-        userHome,
-        runtimeTempDirectory,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.catch((cause) =>
-          Effect.logWarning("Antigravity plugin skills are unavailable.", {
-            errorTag: cause._tag,
-          }).pipe(Effect.as([])),
-        ),
-      );
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
       const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
@@ -297,10 +279,6 @@ export const AntigravityDriver: ProviderDriver<
           : { ...processEnvironment, ...threadEnvironment };
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
-        additionalDirectories: [
-          ...(runtimeInput.additionalDirectories ?? []),
-          ...pluginDirectories,
-        ],
         runtimeVersion: executable.version,
         authMethod: auth.authMethod,
         childProcessSpawner: spawner,
@@ -315,7 +293,6 @@ export const AntigravityDriver: ProviderDriver<
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
         ...runtime,
-        clientFileRoots: pluginDirectories,
         ...(executable.harnessPath === null
           ? { setMode: (modeId: string) => runtime.setMode(antigravityCliSessionMode(modeId)) }
           : {}),
