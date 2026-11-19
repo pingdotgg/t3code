@@ -5,7 +5,6 @@ import { createRoot } from "react-dom/client";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import * as navigationRow from "../../components/ui/NavigationRow";
 import { retargetSavedNewTaskDraft } from "../../state/use-composer-drafts";
 
 const environmentId = EnvironmentId.make("env-1");
@@ -75,7 +74,13 @@ vi.mock("@react-navigation/native", () => ({
   useIsFocused: () => true,
   useNavigation: () => harness.navigation,
 }));
-vi.mock("../../components/ui/NavigationRow", () => ({ NavigationRow: () => null }));
+vi.mock("../../components/ui/NavigationRow", () => ({
+  NavigationRow: (props: { title: string; disabled?: boolean; onPress?: () => void }) => (
+    <button aria-label={props.title} disabled={props.disabled === true} onClick={props.onPress}>
+      {props.title}
+    </button>
+  ),
+}));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("../../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../../components/ui/AppBar", () => ({ AppBar: () => null }));
@@ -133,12 +138,6 @@ vi.mock("./new-task-flow-provider", () => ({
 
 import { NewTaskRouteScreen } from "./NewTaskRouteScreen";
 
-vi.spyOn(navigationRow, "NavigationRow").mockImplementation(({ title, disabled, onPress }) => (
-  <button aria-label={title} disabled={disabled === true} onClick={() => onPress?.({} as never)}>
-    {title}
-  </button>
-));
-
 it("keeps the project picked while No project was still opening", async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const opening = Promise.withResolvers<unknown>();
@@ -158,56 +157,68 @@ it("keeps the project picked while No project was still opening", async () => {
   expect(harness.navigation.goBack).toHaveBeenCalledTimes(1);
 });
 
-it.each(["backing out and reopening", "waiting for the saved draft to load"])(
-  "keeps the picked project after %s while No project is pending",
-  async (scenario) => {
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    const opening = Promise.withResolvers<unknown>();
-    const retargeting = Promise.withResolvers<boolean>();
-    harness.openScratch.mockReturnValue(opening.promise);
-    vi.mocked(retargetSavedNewTaskDraft)
-      .mockReset()
-      .mockImplementation((_draftId, target) =>
-        target.projectId === scratch.id ? retargeting.promise : Promise.resolve(true),
-      );
-    harness.selectDetail.mockClear();
+function renderWithSavedDraft() {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const opening = Promise.withResolvers<unknown>();
+  const retargeting = Promise.withResolvers<boolean>();
+  harness.openScratch.mockReturnValue(opening.promise);
+  vi.mocked(retargetSavedNewTaskDraft)
+    .mockReset()
+    .mockImplementation((_draftId, target) =>
+      target.projectId === scratch.id ? retargeting.promise : Promise.resolve(true),
+    );
+  harness.selectDetail.mockClear();
 
-    const container = document.createElement("div");
-    const root = createRoot(container);
-    using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
-    const route = { params: { draftId: "existing-draft" } } as never;
-    const row = (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!;
-    act(() => root.render(<NewTaskRouteScreen key="first" route={route} />));
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const route = { params: { draftId: "existing-draft" } } as never;
+  act(() => root.render(<NewTaskRouteScreen key="first" route={route} />));
+  return {
+    opening,
+    retargeting,
+    root,
+    route,
+    row: (label: string) => container.querySelector<HTMLElement>(`[aria-label="${label}"]`)!,
+    [Symbol.dispose]: () => act(() => root.unmount()),
+  };
+}
 
-    act(() => row("No project").click());
-    if (scenario === "backing out and reopening") {
-      act(() => root.render(null));
-      act(() => root.render(<NewTaskRouteScreen key="second" route={route} />));
-    } else {
-      await act(async () => opening.resolve({ _tag: "Success", value: scratch }));
-    }
-    const scratchSignal = vi
-      .mocked(retargetSavedNewTaskDraft)
-      .mock.calls.find(([, target]) => target.projectId === scratch.id)?.[2];
-    if (scenario === "waiting for the saved draft to load") {
-      expect(scratchSignal?.aborted).toBe(false);
-    }
-    await act(async () => row("app").click());
-    if (scenario === "waiting for the saved draft to load") {
-      expect(scratchSignal?.aborted).toBe(true);
-    }
-    await act(async () => {
-      opening.resolve({ _tag: "Success", value: scratch });
-      retargeting.resolve(true);
-    });
+const appDraftSelection = [
+  [
+    {
+      name: "Thread",
+      params: { draft: { environmentId, projectId: regular.id, draftId: "existing-draft" } },
+    },
+  ],
+];
 
-    expect(harness.selectDetail.mock.calls).toEqual([
-      [
-        {
-          name: "Thread",
-          params: { draft: { environmentId, projectId: regular.id, draftId: "existing-draft" } },
-        },
-      ],
-    ]);
-  },
-);
+it("keeps the picked project after backing out and reopening while No project is pending", async () => {
+  using screen = renderWithSavedDraft();
+
+  act(() => screen.row("No project").click());
+  act(() => screen.root.render(null));
+  act(() => screen.root.render(<NewTaskRouteScreen key="second" route={screen.route} />));
+  await act(async () => screen.row("app").click());
+  await act(async () => {
+    screen.opening.resolve({ _tag: "Success", value: scratch });
+    screen.retargeting.resolve(true);
+  });
+
+  expect(harness.selectDetail.mock.calls).toEqual(appDraftSelection);
+});
+
+it("cancels the No project draft retarget when another project is picked", async () => {
+  using screen = renderWithSavedDraft();
+
+  act(() => screen.row("No project").click());
+  await act(async () => screen.opening.resolve({ _tag: "Success", value: scratch }));
+  const scratchSignal = vi
+    .mocked(retargetSavedNewTaskDraft)
+    .mock.calls.find(([, target]) => target.projectId === scratch.id)?.[2];
+  expect(scratchSignal?.aborted).toBe(false);
+  await act(async () => screen.row("app").click());
+  expect(scratchSignal?.aborted).toBe(true);
+  await act(async () => screen.retargeting.resolve(true));
+
+  expect(harness.selectDetail.mock.calls).toEqual(appDraftSelection);
+});
