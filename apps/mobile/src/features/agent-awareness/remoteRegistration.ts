@@ -40,11 +40,12 @@ import type { AgentActivityProps } from "../../widgets/AgentActivity";
 import {
   dismissEndedAgentLiveActivities,
   getAgentLiveActivities,
+  observeAgentLiveActivityPushToStartToken,
   startAgentLiveActivity,
 } from "./agentLiveActivity";
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
-import { registerDirectApnsDevice } from "./directApnsRegistration";
+import { registerDirectApnsDevice, setDirectLiveActivityTokens } from "./directApnsRegistration";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
@@ -194,6 +195,7 @@ export function setAgentAwarenessRelayTokenProvider(
     pendingDeviceRegistration = null;
     registeredActivityPushTokens.clear();
   }
+  const hadProvider = relayTokenProvider !== null;
   relayTokenProvider = provider;
   relayTokenProviderIdentity = provider ? (identity ?? null) : null;
   if (!provider) {
@@ -204,7 +206,8 @@ export function setAgentAwarenessRelayTokenProvider(
     }
     // Without a signed-in user the relay can no longer update or end these
     // activities, so they would sit orphaned on the lock screen.
-    endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
+    // A signed-out cold start has no relay card to orphan; the direct one keeps running.
+    if (hadProvider) endLocalLiveActivities("live activity cleanup after cloud sign-out failed");
     setRegistrationStatus("unknown");
     void clearAgentAwarenessRegistrationRecord().catch((error: unknown) => {
       logRegistrationError("clear registration record on sign-out failed", error);
@@ -474,7 +477,7 @@ export function armAgentAwarenessLiveActivityForLocalWork(input: {
   readonly threadTitle: string;
   readonly projectTitle: string;
 }): void {
-  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
+  if (!canRegisterRemoteLiveActivities()) {
     return;
   }
   if (!environmentPublishesAgentActivity(input.environmentId)) {
@@ -767,6 +770,10 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
   });
   const relayExit = yield* Effect.exit(registerDeviceWithRelay(request, expectedGeneration));
   yield* Effect.promise(() => direct);
+  // A signed-in relay ends its own cards; signed out, nobody else will.
+  if (!relayTokenProvider && preferences.liveActivitiesEnabled === false) {
+    endLocalLiveActivities("live activity cleanup after turning the preference off failed");
+  }
   return yield* relayExit;
 });
 
@@ -783,6 +790,15 @@ function ensurePushTokenListener(): void {
     return;
   }
 
+  if (Platform.OS === "ios") {
+    try {
+      observeAgentLiveActivityPushToStartToken((token) =>
+        setDirectLiveActivityTokens({ pushToStartToken: token }),
+      );
+    } catch (error) {
+      logRegistrationError("push-to-start token listener unavailable", error);
+    }
+  }
   pushTokenSubscription = Notifications.addPushTokenListener((token) => {
     if (
       token.type === Platform.OS &&
@@ -807,7 +823,6 @@ function ensureAppStateListener(): void {
       return;
     }
     enqueueDeviceRegistration({}, "device registration after app foreground failed");
-    if (!relayTokenProvider) return;
     runRegistrationInBackground(
       refreshActiveLiveActivityRemoteRegistration(),
       "active live activity reconciliation after app foreground failed",
@@ -1007,6 +1022,11 @@ const registerLiveActivityPushTokenValue = Effect.fn(
 )(function* (input: {
   readonly activityPushToken: string;
 }): Effect.fn.Return<boolean, unknown, ManagedRelay.ManagedRelayClient> {
+  // Signed out, the relay cannot reach this device; connected T3 servers push to it directly.
+  if (!relayTokenProvider) {
+    setDirectLiveActivityTokens({ activityPushToken: input.activityPushToken });
+    return true;
+  }
   const acceptedAt = registeredActivityPushTokens.get(input.activityPushToken);
   if (acceptedAt !== undefined && Date.now() - acceptedAt < ACTIVITY_TOKEN_REREGISTER_INTERVAL_MS) {
     return true;
@@ -1049,7 +1069,7 @@ function scheduleActiveLiveActivityRegistrationRetry(): void {
 export const refreshActiveLiveActivityRemoteRegistration = Effect.fn(
   "remoteRegistration.refreshActiveLiveActivityRemoteRegistration",
 )(function* (): Effect.fn.Return<void, never, ManagedRelay.ManagedRelayClient> {
-  if (!canRegisterRemoteLiveActivities() || !relayTokenProvider) {
+  if (!canRegisterRemoteLiveActivities()) {
     return;
   }
 

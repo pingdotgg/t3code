@@ -2445,6 +2445,20 @@ export const layerWsRpc = (
             ),
             Effect.orDie,
           ),
+        [WS_METHODS.notificationsRegisterLiveActivity]: (input) =>
+          directApnsDevices.registerLiveActivity(input).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("live activity registration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
+        [WS_METHODS.notificationsUnregisterLiveActivity]: (input) =>
+          directApnsDevices.unregisterLiveActivity(input.deviceId).pipe(
+            Effect.tapError((cause) =>
+              Effect.logWarning("live activity unregistration failed", { cause }),
+            ),
+            Effect.orDie,
+          ),
         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
           Ref.update(rpcClientIds, (clientIds) => {
             const next = new Set(clientIds);

@@ -1,6 +1,12 @@
 import type { LiveActivity } from "expo-widgets";
 import type { AgentActivityProps } from "../../widgets/AgentActivity";
 
+export function observeAgentLiveActivityPushToStartToken(_listener: (token: string) => void): {
+  remove: () => void;
+} {
+  return { remove: () => {} };
+}
+
 export function dismissEndedAgentLiveActivities(): void {}
 
 export function getAgentLiveActivities(): Array<LiveActivity<AgentActivityProps>> {

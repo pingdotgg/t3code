@@ -139,3 +139,65 @@ export function notificationForState(state: AgentAwarenessState): DirectApnsNoti
     updatedAt: state.updatedAt,
   };
 }
+
+export interface DirectLiveActivityRow {
+  readonly environmentId: string;
+  readonly threadId: string;
+  readonly projectTitle: string;
+  readonly threadTitle: string;
+  readonly modelTitle: string;
+  readonly phase: string;
+  readonly status: string;
+  readonly updatedAt: string;
+  readonly deepLink: string;
+}
+
+// Mirrors the widget's AgentActivityProps in apps/mobile/src/widgets/AgentActivity.tsx.
+export interface DirectLiveActivityContent {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly activeCount: number;
+  readonly updatedAt: string;
+  readonly activities: ReadonlyArray<DirectLiveActivityRow>;
+}
+
+const MAX_LIVE_ACTIVITY_ROWS = 5;
+
+/**
+ * The card shows this environment's in-flight threads plus anything that just
+ * finished, so a completion is visible for a moment. Null means nothing is
+ * worth showing and a running card should end.
+ */
+export function liveActivityContentForStates(
+  states: Iterable<AgentAwarenessState>,
+  nowMs: number,
+): DirectLiveActivityContent | null {
+  const shown = [...states]
+    .filter((state) => {
+      if (!isTerminalPhase(state.phase)) return true;
+      const updatedAtMs = Date.parse(state.updatedAt);
+      return (
+        Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= DIRECT_APNS_TERMINAL_FRESHNESS_MS
+      );
+    })
+    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (shown.length === 0) return null;
+  const activeCount = shown.filter((state) => !isTerminalPhase(state.phase)).length;
+  return {
+    title: "T3 Code",
+    subtitle: activeCount > 0 ? "Agent work in progress" : "Agent work finished",
+    activeCount,
+    updatedAt: shown[0]!.updatedAt,
+    activities: shown.slice(0, MAX_LIVE_ACTIVITY_ROWS).map((state) => ({
+      environmentId: state.environmentId,
+      threadId: state.threadId,
+      projectTitle: truncateText(state.projectTitle, MAX_TEXT_LENGTH),
+      threadTitle: truncateText(state.threadTitle, MAX_TEXT_LENGTH),
+      modelTitle: truncateText(state.modelTitle, MAX_TEXT_LENGTH),
+      phase: state.phase,
+      status: statusForPhase(state.phase),
+      updatedAt: state.updatedAt,
+      deepLink: sanitizeDeepLink(state.deepLink),
+    })),
+  };
+}

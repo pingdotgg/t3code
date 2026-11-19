@@ -47,6 +47,8 @@ describe("RPC authorization scopes", () => {
     for (const method of [
       WS_METHODS.notificationsRegisterDevice,
       WS_METHODS.notificationsUnregisterDevice,
+      WS_METHODS.notificationsRegisterLiveActivity,
+      WS_METHODS.notificationsUnregisterLiveActivity,
     ]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
     }

@@ -92,6 +92,8 @@ describe("command permissions", () => {
   it.effect.each([
     WS_METHODS.notificationsRegisterDevice,
     WS_METHODS.notificationsUnregisterDevice,
+    WS_METHODS.notificationsRegisterLiveActivity,
+    WS_METHODS.notificationsUnregisterLiveActivity,
   ])("requires the destination thread-read grant for %s", (method) =>
     Effect.scoped(
       Effect.gen(function* () {

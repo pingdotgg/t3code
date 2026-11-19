@@ -1,8 +1,9 @@
 import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
-import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
+import { projectThreadAwarenessV2, type AgentAwarenessState } from "@t3tools/shared/agentAwareness";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -17,7 +18,12 @@ import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
 import * as DirectApnsClient from "./DirectApnsClient.ts";
 import * as DirectApnsDevices from "./DirectApnsDevices.ts";
-import { alertForTransition, makePhaseTracker, notificationForState } from "./directApnsPolicy.ts";
+import {
+  alertForTransition,
+  liveActivityContentForStates,
+  makePhaseTracker,
+  notificationForState,
+} from "./directApnsPolicy.ts";
 
 const SEND_CONCURRENCY = 4;
 
@@ -73,15 +79,91 @@ const make = Effect.gen(function* () {
   const devices = yield* DirectApnsDevices.DirectApnsDevices;
   const client = yield* DirectApnsClient.DirectApnsClient;
   const tracker = makePhaseTracker();
+  // The live card summarizes every thread, so it needs the current state of
+  // all of them, not just the phase the tracker keeps for transitions.
+  const states = new Map<ThreadId, AgentAwarenessState>();
+  // Last payload sent per activity token, so unchanged state is not re-pushed
+  // against APNs' update budget.
+  const sentSignatures = new Map<string, string>();
+  // Push-to-start tokens already used for the current burst of work. The new
+  // activity's own token only reaches us when the app next runs, so without
+  // this every phase change would start another card.
+  const startedTokens = new Set<string>();
+
+  const publishLiveActivities = Effect.fn("DirectApnsNotifier.publishLiveActivities")(function* () {
+    const entries = yield* devices.listLiveActivities;
+    if (entries.length === 0) return;
+    const nowMs = yield* Clock.currentTimeMillis;
+    const content = liveActivityContentForStates(states.values(), nowMs);
+    const finished = content === null || content.activeCount === 0;
+    const endContent = content ?? {
+      title: "T3 Code",
+      subtitle: "Agent work finished",
+      activeCount: 0,
+      updatedAt: DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+      activities: [],
+    };
+    if (finished) startedTokens.clear();
+    yield* Effect.forEach(
+      entries,
+      (entry) => {
+        const target = {
+          deviceId: entry.deviceId,
+          apsEnvironment: entry.apsEnvironment,
+          bundleId: entry.bundleId,
+        };
+        const push = (
+          token: string,
+          event: "start" | "update" | "end",
+          payload: typeof endContent,
+        ) =>
+          client.sendLiveActivity({ target, token, event, content: payload }).pipe(
+            Effect.flatMap((result) => {
+              if (result.outcome === "sent" && event === "update") {
+                sentSignatures.set(token, JSON.stringify(payload));
+              }
+              // An ended activity's token is dead; the app registers the next one.
+              const dead =
+                (result.outcome === "rejected" && result.removeToken) ||
+                (result.outcome === "sent" && event === "end");
+              if (!dead) return Effect.void;
+              sentSignatures.delete(token);
+              return devices.removeLiveActivityToken({ deviceId: entry.deviceId, token });
+            }),
+          );
+        const activityToken = entry.activityPushToken;
+        if (activityToken) {
+          if (finished) return push(activityToken, "end", endContent);
+          if (sentSignatures.get(activityToken) === JSON.stringify(content)) return Effect.void;
+          return push(activityToken, "update", content);
+        }
+        const startToken = entry.pushToStartToken;
+        if (startToken && !finished && !startedTokens.has(startToken)) {
+          startedTokens.add(startToken);
+          return push(startToken, "start", content);
+        }
+        return Effect.void;
+      },
+      { concurrency: SEND_CONCURRENCY, discard: true },
+    );
+  });
 
   const process = Effect.fn("DirectApnsNotifier.process")(function* (threadId: ThreadId) {
     if (!(yield* client.isConfigured)) {
       yield* Effect.logDebug("direct APNs notifier idle; credentials not configured");
       return;
     }
+    yield* observeAndAlert(threadId);
+    yield* publishLiveActivities();
+  });
+
+  const observeAndAlert = Effect.fn("DirectApnsNotifier.observeAndAlert")(function* (
+    threadId: ThreadId,
+  ) {
     const shell = yield* threads.getThreadShell(threadId);
     if (shell === null || shell.archivedAt !== null) {
       tracker.forget(threadId);
+      states.delete(threadId);
       return;
     }
     const project = yield* projects.getById(shell.projectId);
@@ -92,7 +174,11 @@ const make = Effect.gen(function* () {
       thread: shell,
     });
     const { previous } = tracker.observe(threadId, state);
-    if (state === null) return;
+    if (state === null) {
+      states.delete(threadId);
+      return;
+    }
+    states.set(threadId, state);
     const nowMs = yield* Clock.currentTimeMillis;
     const recipients = (yield* devices.list).filter((device) =>
       alertForTransition({ previous, state, preferences: device, nowMs }),
@@ -150,7 +236,9 @@ const make = Effect.gen(function* () {
     for (const shell of shellSnapshot.threads) {
       const project = projectById.get(shell.projectId);
       if (!project || shell.archivedAt !== null) continue;
-      tracker.seed(shell.id, projectThreadAwarenessV2({ environmentId, project, thread: shell }));
+      const state = projectThreadAwarenessV2({ environmentId, project, thread: shell });
+      tracker.seed(shell.id, state);
+      if (state !== null) states.set(shell.id, state);
     }
   });
 
