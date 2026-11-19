@@ -46,5 +46,15 @@ test(
       "2. Configure",
       "3. Deploy",
     ]);
+
+    const renderedItems = await browser.evaluate(() =>
+      [...document.querySelectorAll('[role="textbox"] ol > li')].map(
+        (item) => `${item.getAttribute("data-marker")} ${item.textContent?.trim()}`,
+      ),
+    );
+    expect(renderedItems, "The composer renders both pasted markers").toEqual([
+      "2. Configure",
+      "3. Deploy",
+    ]);
   },
 );
