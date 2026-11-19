@@ -55,6 +55,12 @@ vi.mock(import("../state/server"), async (original) => {
   ]);
   return { ...(await original()), primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
+vi.mock(import("../state/environments"), async (original) => {
+  const { EnvironmentId } = await import("@t3tools/contracts");
+  // Rows of an environment that is not connected are hidden; the fixtures live in "local".
+  const connected = [EnvironmentId.make("local")];
+  return { ...(await original()), useConnectedEnvironmentIds: () => connected };
+});
 vi.mock("../commandPaletteBus", () => ({
   openCommandPalette: vi.fn(),
   isCommandPaletteOpen: () => false,
