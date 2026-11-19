@@ -321,6 +321,7 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
+  isThreadCheckoutMissing,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
@@ -1774,7 +1775,22 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  // A removed thread checkout keeps git controls so the thread can move to another checkout.
+  const projectGitStatus = useAtomValue(
+    liveIsGitRepo === false && activeThreadWorktreePath !== null && activeProjectCwd !== null
+      ? chatGitStatusAtom(
+          vcsEnvironment.status({ environmentId, input: { cwd: activeProjectCwd } }),
+        )
+      : NO_CHAT_GIT_STATUS_ATOM,
+  );
+  const threadCheckoutMissing = isThreadCheckoutMissing({
+    worktreePath: activeThreadWorktreePath,
+    worktreeIsRepo: liveIsGitRepo,
+    projectIsRepo: projectGitStatus?.isRepo,
+  });
+  const isGitRepo =
+    threadCheckoutMissing ||
+    (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   // Provider-native subagents cannot take messages; approvals and questions go to the top-level parent.
   const showProviderSubagentBar = isProviderSubagent;
   const composerMounted = !showProviderSubagentBar;
