@@ -1,0 +1,28 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "module": "Preserve",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "outDir": "dist-electron",
+    "rootDir": ".",
+    "types": ["node"],
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        // The board is plain TypeScript, not Effect code.
+        "diagnosticSeverity": {
+          "nodeBuiltinImport": "off",
+          "globalConsole": "off",
+          "globalDate": "off",
+          "globalRandom": "off",
+          "globalTimers": "off",
+          "globalFetch": "off"
+        }
+      }
+    ]
+  },
+  "include": ["src", "electron", "vite.config.ts"]
+}

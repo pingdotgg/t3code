@@ -2,8 +2,34 @@
   "name": "@agent-board/app",
   "private": true,
   "type": "module",
+  "main": "dist-electron/electron/main.cjs",
+  "exports": {
+    ".": "./dist-electron/electron/main.cjs",
+    "./preload": "./dist-electron/electron/preload.cjs"
+  },
   "scripts": {
-    "check:boundary": "node scripts/check-engine-untouched.mjs",
-    "test": "node --test scripts/*.test.mjs"
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vp dev",
+    "build": "vp build && vp pack",
+    "start": "node scripts/launch-electron.mjs",
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run && node --test scripts/*.test.mjs",
+    "check:boundary": "node scripts/check-engine-untouched.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
+    "@tailwindcss/vite": "catalog:",
+    "electron": "44.10.1",
+    "lucide-react": "^0.564.0",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }
