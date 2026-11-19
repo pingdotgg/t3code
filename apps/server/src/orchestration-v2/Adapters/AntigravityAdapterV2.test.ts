@@ -1737,7 +1737,17 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string, availableModes?: string) =>
+  const ceilingPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "approval-required",
+    interactionMode: "default",
+    cwd: process.cwd(),
+    maxRuntimeMode: "auto-accept-edits",
+  });
+  const modesSetFor = (
+    pickedMode: string,
+    availableModes?: string,
+    runtimePolicy = ceilingPolicy,
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1786,12 +1796,7 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
           model: "gemini-test-low",
           options: [{ id: "_t3/session-mode", value: pickedMode }],
         },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "approval-required",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          maxRuntimeMode: "auto-accept-edits",
-        }),
+        runtimePolicy,
       });
       return modesSet;
     }).pipe(Effect.provide(layerSession), Effect.scoped);
@@ -1806,6 +1811,20 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
         "default",
         "accept-edits",
       ]);
+      // An explicit approval policy keeps the session in `default` even without a ceiling.
+      assert.deepEqual(
+        yield* modesSetFor(
+          "auto",
+          "default,accept-edits,auto,plan",
+          ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "on-request",
+          }),
+        ),
+        ["default"],
+      );
     }),
   );
 });

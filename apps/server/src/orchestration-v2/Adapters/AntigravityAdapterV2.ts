@@ -15,6 +15,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
@@ -138,6 +139,10 @@ interface AntigravityFlavorServices {
   readonly path: Path.Path;
   readonly host: ProviderHost.ProviderHost["Service"];
 }
+
+// An explicit approval or sandbox policy is answered by T3 per request, so the agent stays in `default`.
+const hasExplicitPermissionPolicy = (policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) =>
+  policy.approvalPolicy !== undefined || policy.sandboxPolicy !== undefined;
 
 export function makeAntigravityAcpAdapterFlavor(
   options: AntigravityAdapterV2Options & AntigravityFlavorServices,
@@ -268,8 +273,9 @@ export function makeAntigravityAcpAdapterFlavor(
         mapError: (cause) => cause,
       });
     }),
+    lockSessionModeToPolicy: hasExplicitPermissionPolicy,
     sessionModeForPolicy: (policy) =>
-      policy.approvalPolicy !== undefined || policy.sandboxPolicy !== undefined
+      hasExplicitPermissionPolicy(policy)
         ? "default"
         : antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,

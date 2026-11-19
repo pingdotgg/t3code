@@ -451,7 +451,10 @@ export interface AcpAdapterV2Flavor {
    * `reasoningEffort` is its `effortLevel`).
    */
   readonly ownedModelOptionIds?: ReadonlyArray<string>;
-  readonly lockSessionModeToPolicy?: true;
+  /** Ignore a picked session mode in favor of `sessionModeForPolicy`, always or for some policies. */
+  readonly lockSessionModeToPolicy?:
+    | true
+    | ((policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy) => boolean);
   readonly sessionModeForPolicy?: (
     policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
   ) => string | undefined;
@@ -8071,7 +8074,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             yield* runtime.setConfigOption(selection.id, selection.value);
           }
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
-          const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
+          const lock = flavor.lockSessionModeToPolicy;
+          const modeLocked =
+            policyMode !== undefined &&
+            (lock === true || (lock !== undefined && lock(runtimePolicy)));
           if (policyMode !== undefined) {
             yield* runtime.setMode(policyMode);
           }
