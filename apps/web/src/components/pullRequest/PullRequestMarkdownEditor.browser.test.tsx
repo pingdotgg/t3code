@@ -1,5 +1,11 @@
 import { act, render, type Screen } from "../../../test/render";
-import { AuthSourceControlWriteScope, EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { issueDescriptionResetKey } from "@t3tools/client-runtime/issue-presentation";
+import {
+  AuthSourceControlWriteScope,
+  EnvironmentId,
+  IssueTrackerKind,
+  ProjectId,
+} from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -62,10 +68,11 @@ function setup() {
   onCancel.mockReset();
 }
 
-async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
-  return render(
+function editor(options?: { value?: string; allowEmpty?: boolean; resetKey?: string }) {
+  return (
     <PullRequestMarkdownEditor
       value={options?.value ?? "Original description"}
+      resetKey={options?.resetKey}
       cwd="/repo"
       environmentId={secondary}
       completionScope={{
@@ -78,9 +85,11 @@ async function openEditor(options?: { value?: string; allowEmpty?: boolean }) {
       allowEmpty={options?.allowEmpty ?? false}
       onSave={onSave}
       onCancel={onCancel}
-    />,
+    />
   );
 }
+
+const openEditor = (options?: Parameters<typeof editor>[0]) => render(editor(options));
 
 function button(screen: Screen, label: string) {
   const match = [...screen.container.querySelectorAll("button")].find(
@@ -115,6 +124,29 @@ it("keeps an edited draft through revocation and saves it after access returns w
   await grant(true);
   await clickSave(screen);
   expect(onSave).toHaveBeenCalledExactlyOnceWith("Keep these unsaved edits");
+});
+
+it("preserves a draft on a media refresh and resets it on a description change", async () => {
+  setup();
+  permissions.allowed.add(secondary);
+  const image = "https://uploads.linear.app/workspace/file/image.png";
+  const tracker = IssueTrackerKind.make("linear");
+  const props = (value: string) => ({
+    value,
+    resetKey: issueDescriptionResetKey({ tracker, body: value }),
+  });
+  const first = `![Screenshot](${image}?signature=first)`;
+  const refreshed = `![Screenshot](${image}?signature=second)`;
+  await using screen = await openEditor(props(first));
+  const textarea = screen.container.querySelector("textarea")!;
+  await userEvent.fill(textarea, "Keep these unsaved edits");
+
+  await screen.rerender(editor(props(refreshed)));
+  expect(textarea.value).toBe("Keep these unsaved edits");
+
+  const changed = `Updated description on the server\n\n${refreshed}`;
+  await screen.rerender(editor(props(changed)));
+  expect(textarea.value).toBe(changed);
 });
 
 it("completes @mentions and !references on Enter, and Escape closes the list until the next keystroke", async () => {

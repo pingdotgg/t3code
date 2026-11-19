@@ -18,6 +18,7 @@ import {
 } from "effect/graphql";
 import { HttpClient } from "effect/http";
 import * as Headers from "effect/http/Headers";
+import { stripLinearFileSignatures } from "../shared/fileUrls.ts";
 import { LINEAR_KIND } from "../shared/issueUrl.ts";
 import { IssueTrackerError } from "@t3tools/source-control-core/server/IssueTracker";
 import * as IssueTrackerHost from "@t3tools/source-control-core/server/IssueTrackerHost";
@@ -235,16 +236,6 @@ const nextCursor = (pageInfo: {
   readonly endCursor: string | null;
 }) => (pageInfo.hasNextPage ? pageInfo.endCursor : null);
 
-/** Issue edits start with the Markdown returned by Linear, including temporary file signatures. */
-function stripFileSignatures(markdown: string): string {
-  return markdown.replace(/https:\/\/uploads\.linear\.app\/[^\s<>"\])]+/gu, (asset) => {
-    const url = new URL(asset);
-    if (!url.searchParams.has("signature")) return asset;
-    url.searchParams.delete("signature");
-    return url.href;
-  });
-}
-
 export const make = Effect.gen(function* () {
   // Only a default-carrying string: nothing in the environment can make it fail.
   const config = yield* LinearApiConfig.pipe(Effect.orDie);
@@ -397,7 +388,7 @@ export const make = Effect.gen(function* () {
   const updateIssue: LinearApi["Service"]["updateIssue"] = (identifier, input) => {
     const update =
       typeof input.description === "string"
-        ? { ...input, description: stripFileSignatures(input.description) }
+        ? { ...input, description: stripLinearFileSignatures(input.description) }
         : input;
     return call("updateIssue", (linear) =>
       linear.T3IssueUpdate({ id: identifier, input: update }),
