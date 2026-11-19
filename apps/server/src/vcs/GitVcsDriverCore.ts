@@ -1461,18 +1461,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ];
     // Git leaves the partial pack of a failed fetch in the shared object store, and each retry
     // downloads the backlog again. Another fetch into the same store may be writing a pack too,
-    // so the next attempt removes only the packs a failure left that have not changed since.
+    // however stalled, so the next attempt removes only the ones no process has open.
     const packDir = path.join(gitCommonDir, "objects", "pack");
     const listTempPacks = fileSystem
       .readDirectory(packDir)
       .pipe(Effect.map((names) => names.filter((name) => name.startsWith("tmp_pack_"))));
-    const stampTempPack = (name: string) =>
-      fileSystem.stat(path.join(packDir, name)).pipe(
-        Effect.map((info) => ({
-          name,
-          stamp: `${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`,
-        })),
-      );
+    // `lsof` exits 1 when no process has the file open; without it (Windows) packs stay.
+    const isTempPackAbandoned = (file: string) =>
+      commandSpawner
+        .spawn(
+          ChildProcess.make("lsof", ["-t", "--", file], {
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+          }),
+        )
+        .pipe(
+          Effect.flatMap((child) => child.exitCode),
+          Effect.scoped,
+          Effect.timeoutOption(Duration.seconds(10)),
+          Effect.map((exitCode) => Option.getOrUndefined(exitCode) === 1),
+          Effect.orElseSucceed(() => false),
+        );
     const key = `${gitCommonDir}\0${remoteName}`;
     const failure = statusRemoteRefreshFailures.get(key);
     if (failure && (yield* Clock.currentTimeMillis) < failure.retryAt) return;
@@ -1489,15 +1499,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const fetch = Effect.gen(function* () {
           yield* Effect.forEach(
             statusRemoteRefreshFailures.get(key)?.tempPacks ?? [],
-            (left) =>
-              stampTempPack(left.name).pipe(
-                Effect.flatMap((current) =>
-                  current.stamp === left.stamp
-                    ? fileSystem.remove(path.join(packDir, left.name))
-                    : Effect.void,
-                ),
+            (name) => {
+              const file = path.join(packDir, name);
+              return isTempPackAbandoned(file).pipe(
+                Effect.flatMap((abandoned) => (abandoned ? fileSystem.remove(file) : Effect.void)),
                 Effect.ignore,
-              ),
+              );
+            },
             { discard: true },
           );
           const existing = yield* listTempPacks.pipe(Effect.option);
@@ -1513,14 +1521,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
                   before === undefined
                     ? []
                     : yield* listTempPacks.pipe(
-                        Effect.flatMap((names) =>
-                          Effect.forEach(
-                            names.filter((name) => !before.includes(name)),
-                            // Another fetch can rename its pack away between the listing and here.
-                            (name) => stampTempPack(name).pipe(Effect.option),
-                          ),
-                        ),
-                        Effect.map((stamps) => stamps.flatMap(Option.toArray)),
+                        Effect.map((names) => names.filter((name) => !before.includes(name))),
                         Effect.orElseSucceed(() => []),
                       );
                 yield* recordStatusRemoteRefreshFailure(key, tempPacks);
@@ -1796,7 +1797,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     {
       readonly count: number;
       readonly retryAt: number;
-      readonly tempPacks: ReadonlyArray<{ readonly name: string; readonly stamp: string }>;
+      readonly tempPacks: ReadonlyArray<string>;
     }
   >();
   const untrackedTotalsFailures = new Map<
@@ -1822,10 +1823,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
     "GitVcsDriver.recordStatusRemoteRefreshFailure",
-  )(function* (
-    key: string,
-    tempPacks: ReadonlyArray<{ readonly name: string; readonly stamp: string }>,
-  ) {
+  )(function* (key: string, tempPacks: ReadonlyArray<string>) {
     const nextCount = (statusRemoteRefreshFailures.get(key)?.count ?? 0) + 1;
     const now = yield* Clock.currentTimeMillis;
     statusRemoteRefreshFailures.delete(key);

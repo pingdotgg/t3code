@@ -5614,11 +5614,23 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           const [second] = afterRetry.filter((name) => name !== "tmp_pack_existing");
           assert.isDefined(second);
 
-          // A pack that changed since the failure may be another fetch's, so it stays.
-          yield* fileSystem.writeFileString(pathService.join(packDir, second), "x", { flag: "a" });
-          yield* TestClock.adjust("15 minutes");
-          yield* driver.statusDetailsRemote(cwd);
-          assert.include(yield* tempPacks, second);
+          // A pack a process still has open may be a stalled fetch's, however long it stalls.
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const holder = yield* (yield* ChildProcessSpawner.ChildProcessSpawner).spawn(
+                ChildProcess.make("sh", [
+                  "-c",
+                  'exec 3<"$1"; echo open; sleep 600',
+                  "sh",
+                  pathService.join(packDir, second),
+                ]),
+              );
+              yield* holder.stdout.pipe(Stream.take(1), Stream.runDrain);
+              yield* TestClock.adjust("15 minutes");
+              yield* driver.statusDetailsRemote(cwd);
+              assert.include(yield* tempPacks, second);
+            }),
+          );
         }),
     );
 
