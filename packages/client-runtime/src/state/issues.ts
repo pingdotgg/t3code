@@ -23,6 +23,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -174,7 +175,18 @@ export function createIssueEnvironmentAtoms<R, E>(
     { environmentId, input }: { readonly environmentId: EnvironmentId; readonly input: IssueRef },
     registry: AtomRegistry.AtomRegistry,
   ) => Effect.sync(() => registry.refresh(detail({ environmentId, input: detailRef(input) })));
+  const linkedThreadSignals = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:linked-thread-refreshes",
+    tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  });
   return {
+    /** The threads an issue is linked to, reread when the server signals a link changed. */
+    linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:linked-threads",
+      tag: WS_METHODS.issuesLinkedThreads,
+      staleTimeMs: 0,
+      refreshTrigger: ({ environmentId }) => linkedThreadSignals({ environmentId, input: {} }),
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,
@@ -300,21 +312,22 @@ export function createMergedIssueListAtoms<E>(
   ) => {
     for (const target of targets) registry.refresh(list(target));
   };
-  // Every listing asked for, so a write made elsewhere can refresh the ones still shown.
-  const asked = new Map<string, ReadonlyArray<IssueListTarget>>();
+  // The targets behind each listing atom, so a write made elsewhere can refresh the ones still
+  // shown. Weak, so a closed search goes with its atom once the registry drops it.
+  const targetsOf = new WeakMap<Atom.Atom<MergedIssueList>, ReadonlyArray<IssueListTarget>>();
   return {
     atom: (targets: ReadonlyArray<IssueListTarget>) => {
       if (targets.length === 0) return empty;
-      const key = JSON.stringify(targets);
-      asked.set(key, targets);
-      return family(key);
+      const atom = family(JSON.stringify(targets));
+      targetsOf.set(atom, targets);
+      return atom;
     },
     refresh,
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
-      const live = new Set(registry.getNodes().keys());
-      for (const [key, targets] of asked) {
-        if (!live.has(family(key))) continue;
+      for (const node of registry.getNodes().values()) {
+        const targets = targetsOf.get(node.atom);
+        if (targets === undefined) continue;
         refresh(
           registry,
           targets.filter((target) => target.environmentId === environmentId),
