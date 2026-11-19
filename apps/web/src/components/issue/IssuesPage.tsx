@@ -232,7 +232,8 @@ export function IssuesPage() {
     () => {
       if (!list.isPending) list.reload();
     },
-    { key: JSON.stringify(targets) },
+    // The tab owns the refresh timer. Each filter's query handles its own freshness.
+    { key: "issues-list" },
   );
 
   const [pages, setPages] = useState<ReadonlyMap<EnvironmentId, HeldIssuePage>>(new Map());
