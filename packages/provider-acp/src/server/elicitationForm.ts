@@ -190,10 +190,14 @@ function typedAnswer(
 
 // Decline unaskable forms; validate types and selection counts, leaving other constraints to the agent.
 // `allowOther` lets single choices take typed text, sent as the field's value.
+// `keepMessage` puts a lone field's description after the message (MCP), not in its place (ACP repeats it).
 export function parseElicitationForm(
   requestedSchema: unknown,
   message: string,
-  { allowOther = false }: { readonly allowOther?: boolean } = {},
+  {
+    allowOther = false,
+    keepMessage = false,
+  }: { readonly allowOther?: boolean; readonly keepMessage?: boolean } = {},
 ): ElicitationForm | undefined {
   const schema = unknownRecord(requestedSchema);
   const required = new Set(
@@ -233,7 +237,7 @@ export function parseElicitationForm(
     }
   }
   const folded = new Set(companions.values());
-  const lone = parsedFields.length - folded.size === 1;
+  const lone = keepMessage && parsedFields.length - folded.size === 1;
   const intro = text(message);
   const questions: OrchestrationV2UserInputQuestion[] = [];
   for (const { id, property, options } of parsedFields) {
@@ -242,7 +246,6 @@ export function parseElicitationForm(
     const kind = field?.kind;
     const header = text(property.title) ?? `Question ${questions.length + 1}`;
     const description = text(property.description);
-    // A lone field's description often only says how to answer; keep the form's message too.
     const prompt =
       lone && description !== undefined && intro !== undefined && intro !== description
         ? `${intro} ${description}`

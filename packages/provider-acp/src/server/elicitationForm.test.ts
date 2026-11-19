@@ -131,6 +131,7 @@ describe("parseElicitationForm", () => {
         required: ["code"],
       },
       "Confirm deleting the staging fixture.",
+      { keepMessage: true },
     );
     assert.strictEqual(
       form?.questions[0]?.question,

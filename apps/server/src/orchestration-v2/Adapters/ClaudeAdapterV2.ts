@@ -12465,7 +12465,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const context = yield* Ref.get(activeTurn);
           const form =
             acceptance === undefined && request.mode !== "url"
-              ? parseElicitationForm(request.requestedSchema, request.message)
+              ? parseElicitationForm(request.requestedSchema, request.message, {
+                  keepMessage: true,
+                })
               : undefined;
           if (context !== null && form !== undefined && form.questions.length > 0) {
             if (context.heldRootFrames.length > 0) {
