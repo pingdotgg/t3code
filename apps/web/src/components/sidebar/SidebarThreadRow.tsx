@@ -1291,7 +1291,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
           <ThreadDetailsIssueRows
             links={thread.issues ?? []}
             threadRef={threadRef}
-            compact={false}
+            variant="mini"
             mountScope="sidebar-tooltip"
             openWith={whenThreadShown}
           />

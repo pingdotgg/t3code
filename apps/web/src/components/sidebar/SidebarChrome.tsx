@@ -28,7 +28,6 @@ import {
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { beginLayoutContentDrag } from "../../layout/layoutDrag";
 import { useOpenLayoutPage } from "../../layout/pageNavigation";
-import { readIssueListPreferences } from "../issue/issueListPreferences";
 import { IssueGlyph } from "../issue/issuePresentation";
 import { isSidebarUtilityPage, useNavigateToMainApp } from "./mainAppLocation";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
@@ -202,7 +201,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   const handleIssuesClick = () => {
     closeMobileSidebar();
-    void navigate({ to: "/issues", search: readIssueListPreferences() });
+    void openLayoutPage("issues");
   };
   const handleSettingsClick = () => {
     closeMobileSidebar();
@@ -257,6 +256,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                   icon={<IssueGlyph.issue className="size-4" />}
                   label={gt("Issues", { $context: "sidebar link to the list of issues" })}
                   onClick={handleIssuesClick}
+                  onPointerDown={(event) => beginLayoutContentDrag(event, { kind: "issues" })}
                 />
               ) : null}
               <SidebarUtilityItem

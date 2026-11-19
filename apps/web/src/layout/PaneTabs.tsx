@@ -51,6 +51,7 @@ import { Button, ContentButton } from "../components/ui/button";
 import { cn } from "../lib/utils";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
 import { PANE_GHOST_TAB_TITLE_CLASS, PANE_INACTIVE_TAB_TITLE_CLASS } from "../components/PaneNotch";
+import { IssueGlyph } from "../components/issue/issuePresentation";
 import { PullRequestGlyph } from "../components/pullRequest/pullRequestIcons";
 import { ThreadSurfaceTabIcon } from "../components/SurfaceTabIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
@@ -1295,13 +1296,17 @@ export function useLayoutTabLabel(tab: LayoutTab): {
         ? gt("Settings")
         : tab.content.kind === "usage"
           ? gt("Usage")
-          : gt("Pull requests");
+          : tab.content.kind === "issues"
+            ? gt("Issues", { $context: "sidebar link to the list of issues" })
+            : gt("Pull requests");
     const Icon =
       tab.content.kind === "settings"
         ? SettingsIcon
         : tab.content.kind === "usage"
           ? ChartNoAxesColumnIcon
-          : PullRequestGlyph.pullRequest;
+          : tab.content.kind === "issues"
+            ? IssueGlyph.issue
+            : PullRequestGlyph.pullRequest;
     return {
       icon: <Icon aria-hidden className="size-3.5 shrink-0" />,
       title,

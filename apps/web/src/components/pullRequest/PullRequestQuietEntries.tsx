@@ -72,6 +72,7 @@ export function PullRequestReviewEntry({
   outcome,
   stateLabel,
   preview,
+  icon,
   action,
   children,
   defaultOpen = false,
@@ -85,6 +86,8 @@ export function PullRequestReviewEntry({
   /** The host's own word for a review that is neither an approval nor a change request. */
   stateLabel: string;
   preview: string | null;
+  /** In place of the comment glyph, for an event line such as an issue's "closed this". */
+  icon?: ReactNode;
   action?: ReactNode;
   /** What opens under the line: the review's text, its reactions. Null leaves nothing to open. */
   children: ReactNode;
@@ -105,7 +108,7 @@ export function PullRequestReviewEntry({
           {outcome ? (
             <PullRequestReviewOutcomeIcon outcome={outcome} />
           ) : (
-            <MessageSquareIcon aria-hidden className="size-3.5 text-dim-foreground" />
+            (icon ?? <MessageSquareIcon aria-hidden className="size-3.5 text-dim-foreground" />)
           )}
           <span className="truncate">
             {outcome ? pullRequestReviewOutcomeVerb(outcome, messages) : stateLabel}

@@ -1,7 +1,13 @@
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { EyeIcon, LayersIcon, PenLineIcon, UsersIcon, type LucideIcon } from "lucide-react";
 import { useMessages } from "gt-react";
-import { Fragment, useDeferredValue, type RefCallback } from "react";
+import {
+  Fragment,
+  useDeferredValue,
+  type ElementType,
+  type ReactNode,
+  type RefCallback,
+} from "react";
 
 import { cn } from "~/lib/utils";
 import { Separator } from "../ui/separator";
@@ -39,6 +45,30 @@ function firstPaintGroups<Group extends { entries: ReadonlyArray<unknown> }>(
   });
 }
 
+/** A page list's group heading, shared by the pull request and issue lists. */
+export function WorkItemGroupHeader({
+  icon: Icon,
+  label,
+  count,
+}: {
+  icon: ElementType<{ className?: string; "aria-hidden"?: boolean }>;
+  label: ReactNode;
+  /** A number, or a short phrase such as how many projects a tracker serves. */
+  count: ReactNode;
+}) {
+  // The icon sits in the rows' 16px glyph column and the label on their title line.
+  return (
+    <div className="flex h-7 items-center gap-2 px-3 text-xs font-medium text-muted-foreground">
+      <span className="me-1 flex w-4 shrink-0 justify-center">
+        <Icon aria-hidden className="size-3.25" />
+      </span>
+      <h2 className="flex min-w-0 shrink items-center gap-2 truncate">{label}</h2>
+      <span className="shrink-0 tabular-nums font-normal text-dim-foreground">{count}</span>
+      <Separator className="min-w-2 flex-1" />
+    </div>
+  );
+}
+
 function PullRequestGroupHeader({
   group,
   count,
@@ -47,17 +77,12 @@ function PullRequestGroupHeader({
   count: number;
 }) {
   const resolve = useMessages();
-  const Icon = GROUP_ICONS[group.key] ?? LayersIcon;
-  // The icon sits in the rows' 16px glyph column and the label on their title line.
   return (
-    <div className="flex h-7 items-center gap-2 px-3 text-xs font-medium text-muted-foreground">
-      <span className="me-1 flex w-4 shrink-0 justify-center">
-        <Icon aria-hidden className="size-3.25" />
-      </span>
-      <h2 className="shrink-0">{resolve(group.label)}</h2>
-      <span className="shrink-0 tabular-nums font-normal text-dim-foreground">{count}</span>
-      <Separator className="min-w-2 flex-1" />
-    </div>
+    <WorkItemGroupHeader
+      icon={GROUP_ICONS[group.key] ?? LayersIcon}
+      label={resolve(group.label)}
+      count={count}
+    />
   );
 }
 

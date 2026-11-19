@@ -558,18 +558,18 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
             issues.length > 0 ? (
               <>
                 <section aria-label={gt("Linked issues")} className="flex flex-col">
-                  <h2 className="px-2 py-1 text-meta text-muted-foreground">
+                  <h2 className="px-2.5 pt-1 pb-1 text-meta text-muted-foreground">
                     <T>Issues</T>
                   </h2>
                   <ThreadDetailsIssueRows
                     links={issues}
                     threadRef={threadRef}
-                    compact={false}
+                    variant="panel"
                     mountScope="linked-items"
                   />
                 </section>
                 {linkCount > 0 ? (
-                  <h2 className="mt-2 border-t border-border px-3 pt-2 pb-1 text-meta text-muted-foreground">
+                  <h2 className="mt-2 border-t border-border px-2.5 pt-2 pb-1 text-meta text-muted-foreground">
                     <T>Pull requests</T>
                   </h2>
                 ) : null}
