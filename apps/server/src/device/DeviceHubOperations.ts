@@ -40,6 +40,16 @@ const HubDeviceList = Schema.Struct({
     Schema.Array(Schema.Struct({ message: Schema.String, error: Schema.optional(Schema.String) })),
   ),
 });
+const IosGridDeviceList = Schema.Struct({
+  devices: Schema.Array(
+    Schema.Struct({
+      device: Schema.String,
+      name: Schema.String,
+      runtime: Schema.String,
+      state: Schema.String,
+    }),
+  ),
+});
 const HubActionResult = Schema.Struct({
   ok: Schema.Boolean,
   id: Schema.optional(Schema.String),
@@ -74,8 +84,7 @@ export const makeDeviceHubOperations = (options: {
   readonly origin: string;
   readonly http: HttpClient.HttpClient;
   readonly run: DeviceHostReady["run"];
-  /** Android gates listing AVDs, which the hub does not report until they boot. */
-  readonly platformAvailable: (platform: DevicePlatform) => Effect.Effect<boolean>;
+  readonly availablePlatforms: Effect.Effect<{ readonly ios: boolean; readonly android: boolean }>;
 }): DeviceOperations => {
   const { hostId, origin, run } = options;
   const httpClient = options.http.pipe(HttpClient.withScope);
@@ -135,18 +144,20 @@ export const makeDeviceHubOperations = (options: {
       return {
         devices: [],
         detail: `The device hub did not answer within ${LIST_TIMEOUT_SECONDS} seconds.`,
-        incompletePlatforms: yield* Effect.filter(["ios", "android"] as const, (platform) =>
-          options.platformAvailable(platform),
+        incompletePlatforms: yield* options.availablePlatforms.pipe(
+          Effect.map((available) =>
+            (["ios", "android"] as const).filter((platform) => available[platform]),
+          ),
         ),
       };
     }
     const hubList = listed.value;
     const devices: Array<HostDevice> = [...hubList.simulators, ...hubList.emulators];
-    const androidAvailable = yield* options.platformAvailable("android");
+    const available = yield* options.availablePlatforms;
     const warnings = hubList.errors?.filter(
       (error) =>
         // The host summary already explains a missing Android SDK; the hub's failed probes are noise.
-        !(!androidAvailable && error.message.startsWith("[android-utils] ")) &&
+        !(!available.android && error.message.startsWith("[android-utils] ")) &&
         // CoreSimulator can retain deleted devices; their optional usage timestamps are absent.
         !(
           error.message.startsWith("[apple-utils] Failed to read CoreSimulator plist at ") &&
@@ -159,8 +170,42 @@ export const makeDeviceHubOperations = (options: {
         const head = errorHead(error.error ?? "");
         return boundDiagnostics(head ? `${error.message} ${head}` : error.message);
       }) ?? [];
+    if (available.ios) {
+      // The hub's recent-device list excludes never-used simulators; its grid includes them
+      // and retains the hub's availability and single-device session filters.
+      const grid = yield* hubJson(
+        HttpClientRequest.get(`${origin}${vendorPrefix("ios")}/grid/api`),
+        IosGridDeviceList,
+        "list",
+      ).pipe(Effect.result);
+      if (grid._tag === "Failure") {
+        details.push(
+          "Could not list all iOS simulators. Recently used simulators remain available.",
+        );
+      } else {
+        for (const device of grid.success.devices) {
+          if (
+            !/^iOS-\d+(?:-\d+)*$/.test(device.runtime) ||
+            devices.some(
+              (listed) =>
+                listed.platform === "ios" &&
+                listed.id.toUpperCase() === device.device.toUpperCase(),
+            )
+          )
+            continue;
+          devices.push({
+            id: device.device,
+            name: device.name,
+            version: device.runtime.replace("iOS-", "iOS ").replaceAll("-", "."),
+            platform: "ios",
+            booted: device.state === "Booted",
+            physical: false,
+          });
+        }
+      }
+    }
     let androidDiscoveryIncomplete = false;
-    if (androidAvailable) {
+    if (available.android) {
       const avds = yield* run("emulator", ["-list-avds"]);
       // Discovered devices stay listed; the AVDs that could not be listed are a warning.
       if (avds.code !== 0) {
