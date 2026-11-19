@@ -120,6 +120,15 @@ export class ThemePublishError extends Schema.TaggedError<ThemePublishError>()(
   }
 }
 
+export class ThemeDestinationDirectoryError extends Schema.TaggedError<ThemeDestinationDirectoryError>()(
+  "ThemeDestinationDirectoryError",
+  { themeId: Schema.String, destinationPath: Schema.String },
+) {
+  override get message(): string {
+    return `${this.destinationPath} is a directory, so the theme cannot be published as "${this.themeId}". Move it, or pass another id with --id.`;
+  }
+}
+
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
 
@@ -315,6 +324,15 @@ const publishThemeFile = Effect.fn(function* (input: {
 
   const publishFailure = (cause: unknown) =>
     new ThemePublishError({ themesDir: input.themesDir, cause });
+
+  // The rollback below moves and deletes single entries, so a directory would be moved away.
+  const destinationIsDirectory = yield* Effect.try({
+    try: () => NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory() ?? false,
+    catch: publishFailure,
+  });
+  if (destinationIsDirectory) {
+    return yield* new ThemeDestinationDirectoryError({ themeId, destinationPath });
+  }
 
   // O_EXCL prevents following a symlink at the predictable staging path.
   // Preserve bytes exactly: even an added newline could exceed the watcher's size limit.
