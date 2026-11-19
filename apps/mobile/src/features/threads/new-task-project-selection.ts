@@ -1,10 +1,13 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
+import { isPickableProjectMember } from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId, type ServerConfig } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
+
+type ProjectRef = { readonly environmentId: string; readonly projectId: string };
 
 type DraftProjectSelectionResolution =
   | { readonly kind: "preserve" }
@@ -12,26 +15,40 @@ type DraftProjectSelectionResolution =
   | { readonly kind: "pick" }
   | { readonly kind: "dismiss" };
 
-/**
- * The copy of a project a new thread starts in: the preferred environment's, then the
- * representative. An open copy wins over an archived one, a connected copy over a disconnected one.
- */
+function selectOpenProjectScopeMember(
+  scope: HomeProjectScope,
+  preferredEnvironmentId: EnvironmentId | null,
+  connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
+  lastProject?: ProjectRef,
+): EnvironmentProject | undefined {
+  const open = scope.projects.filter(isPickableProjectMember);
+  const remembered =
+    lastProject &&
+    open.find(
+      (project) =>
+        project.environmentId === lastProject.environmentId && project.id === lastProject.projectId,
+    );
+  if (remembered) return remembered;
+
+  const rank = (project: EnvironmentProject) =>
+    project.environmentId === preferredEnvironmentId ? 0 : project === scope.representative ? 1 : 2;
+  open.sort((left, right) => rank(left) - rank(right));
+  return open.find((project) => connectedEnvironmentIds.has(project.environmentId)) ?? open[0];
+}
+
+/** Picker scopes have an open copy; prefer a connected one, then the selected environment. */
 export function getProjectScopeSelectionTarget(
   scope: HomeProjectScope,
   preferredEnvironmentId: EnvironmentId | null,
   connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
 ): EnvironmentProject {
-  const open = scope.projects.filter((project) => project.archivedAt == null);
-  const rank = (project: EnvironmentProject) =>
-    project.environmentId === preferredEnvironmentId ? 0 : project === scope.representative ? 1 : 2;
-  const ordered = [...(open.length > 0 ? open : scope.projects)].sort(
-    (left, right) => rank(left) - rank(right),
+  const project = selectOpenProjectScopeMember(
+    scope,
+    preferredEnvironmentId,
+    connectedEnvironmentIds,
   );
-  return (
-    ordered.find((project) => connectedEnvironmentIds.has(project.environmentId)) ??
-    ordered[0] ??
-    scope.representative
-  );
+  if (!project) throw new Error("A pickable project group must have an open workspace");
+  return project;
 }
 
 export function filterProjectScopes(
@@ -177,8 +194,6 @@ export function resolveDraftProjectSelection(
   return onlyScope ? { kind: "select", project: onlyScope.representative } : { kind: "pick" };
 }
 
-type ProjectRef = { readonly environmentId: string; readonly projectId: string };
-
 /** The live copy of the thread list's filtered project a new thread starts in: the remembered one if it is a copy. */
 export function newTaskFilteredProject(
   scope: HomeProjectScope,
@@ -186,15 +201,13 @@ export function newTaskFilteredProject(
   connectedEnvironmentIds: ReadonlySet<EnvironmentId>,
   lastProject: ProjectRef | undefined,
 ): ProjectRef | undefined {
-  const live = scope.projects.filter((project) => project.archivedAt == null);
-  if (live.length === 0) return undefined;
-  const project =
-    live.find(
-      (candidate) =>
-        candidate.environmentId === lastProject?.environmentId &&
-        candidate.id === lastProject.projectId,
-    ) ?? getProjectScopeSelectionTarget(scope, preferredEnvironmentId, connectedEnvironmentIds);
-  return { environmentId: project.environmentId, projectId: project.id };
+  const project = selectOpenProjectScopeMember(
+    scope,
+    preferredEnvironmentId,
+    connectedEnvironmentIds,
+    lastProject,
+  );
+  return project && { environmentId: project.environmentId, projectId: project.id };
 }
 
 export function newTaskDestination(options: {
