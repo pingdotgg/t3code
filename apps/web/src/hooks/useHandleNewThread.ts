@@ -5,6 +5,8 @@ import {
 } from "@t3tools/client-runtime/environment";
 import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
 import { type AnyRouter, useRouter } from "@tanstack/react-router";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   composerDraftHasUserContent,
   markPromotedDraftThreadByRef,
@@ -31,9 +33,11 @@ import {
   useQuietThreadShell,
 } from "../state/entities";
 import {
+  draftModelSelectionApplies,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
+  threadHasStarted,
 } from "../lib/chatThreadActions";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { readT3ProjectFile } from "../lib/t3ProjectFileDefaults";
@@ -140,7 +144,12 @@ export function createNewThreadHandler(router: AnyRouter) {
             : currentRouteTarget.draftId,
         )
       : null;
-    const composerActiveProvider = carrySourceComposer?.activeProvider ?? null;
+    const composerActiveProvider = draftModelSelectionApplies(
+      carrySourceComposer,
+      threadHasStarted(carrySourceShell),
+    )
+      ? (carrySourceComposer?.activeProvider ?? null)
+      : null;
     const composerModelSelection = composerActiveProvider
       ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
       : null;
@@ -195,8 +204,8 @@ export function createNewThreadHandler(router: AnyRouter) {
       if (targetServerConfig === undefined) {
         toastManager.add({
           type: "warning",
-          title: "Environment settings are still loading",
-          description: "Wait for this environment to finish connecting, then try again.",
+          title: m(msg("Environment settings are still loading")),
+          description: m(msg("Wait for this environment to finish connecting, then try again.")),
         });
         return null;
       }
@@ -235,6 +244,21 @@ export function createNewThreadHandler(router: AnyRouter) {
     const logicalProjectKey = project
       ? deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings)
       : scopedProjectKey(projectRef);
+    // Another opener (home's own first-project draft) may have reached this project's draft first.
+    // Matches lag the location during a navigation, so compare against the location.
+    const resultIfAbandoned = () => {
+      const draft = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      if (draft === null || draft.promotedTo != null || readProject(projectRef) === null) {
+        return null;
+      }
+      const draftHref = router.buildLocation({
+        to: "/draft/$draftId",
+        params: { draftId: draft.draftId },
+      }).href;
+      return router.state.location.href === draftHref
+        ? { draftId: draft.draftId, threadId: draft.threadId }
+        : null;
+    };
     const hasBranchOption = options?.branch !== undefined;
     const hasWorktreePathOption = options?.worktreePath !== undefined;
     const hasEnvModeOption = options?.envMode !== undefined;
@@ -275,7 +299,10 @@ export function createNewThreadHandler(router: AnyRouter) {
           workspaceContext = pickExplicitWorkspaceOptions(options);
         } else if (!isDraftAlreadyOpen) {
           const defaultEnvMode = await resolveDefaultEnvMode();
-          if (defaultEnvMode === null || abandonedSinceRequest()) {
+          if (abandonedSinceRequest()) {
+            return resultIfAbandoned();
+          }
+          if (defaultEnvMode === null) {
             return null;
           }
           // Concurrent calls may change the draft; stale resets, remaps, or navigation could clobber it.
@@ -391,7 +418,10 @@ export function createNewThreadHandler(router: AnyRouter) {
     const createdAt = new Date().toISOString();
     return (async () => {
       const initialEnvMode = options?.envMode ?? (await resolveDefaultEnvMode());
-      if (initialEnvMode === null || abandonedSinceRequest()) {
+      if (abandonedSinceRequest()) {
+        return resultIfAbandoned();
+      }
+      if (initialEnvMode === null) {
         return null;
       }
       // Reuse drafts registered while awaiting so their pending navigation cannot lose them.
