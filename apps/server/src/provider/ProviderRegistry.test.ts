@@ -999,6 +999,98 @@ it.layer(
       }),
     );
 
+    it.effect(
+      "publishes a Codex model catalog refreshed after three seconds within the probe budget",
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const codexHome = path.resolve("test-codex-home");
+          const cachePath = path.join(codexHome, "models_cache.json");
+          const cacheRead = yield* Deferred.make<void>();
+          let fetchedAt = "1969-12-31T00:00:00.000Z";
+          const model = (slug: string) => ({
+            id: slug,
+            model: slug,
+            displayName: slug,
+            description: slug,
+            hidden: false,
+            isDefault: true,
+            supportedReasoningEfforts: [],
+            defaultReasoningEffort: "medium",
+          });
+          let catalog = [model("cached-model")];
+          const spawner = ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              const output = yield* Queue.unbounded<Uint8Array>();
+              const send = (message: unknown) =>
+                Queue.offer(output, encoder.encode(`${JSON.stringify(message)}\n`));
+              const results: Record<string, unknown> = {
+                initialize: {
+                  userAgent: "codex_cli_rs/0.167.0",
+                  codexHome,
+                  platformFamily: "unix",
+                  platformOs: "linux",
+                },
+                "account/read": {
+                  account: { type: "chatgpt", email: "test@example.com", planType: "pro" },
+                  requiresOpenaiAuth: true,
+                },
+                "config/read": { config: {}, origins: {} },
+                "skills/list": { data: [] },
+              };
+              const answer = (line: string) => {
+                const { id, method } = JSON.parse(line) as { id?: number; method?: string };
+                if (id === undefined || method === undefined) return Effect.void;
+                if (method === "model/list") {
+                  return send({ id, result: { data: catalog, nextCursor: null } });
+                }
+                return send({ id, result: results[method] ?? {} });
+              };
+              const decoder = new TextDecoder();
+              let buffered = "";
+              return ChildProcessSpawner.makeHandle({
+                ...mockHandle({ stdout: "", stderr: "", code: 0 }),
+                exitCode: Effect.never,
+                isRunning: Effect.succeed(true),
+                stdin: Sink.forEach((chunk: Uint8Array) => {
+                  buffered += decoder.decode(chunk, { stream: true });
+                  const lines = buffered.split("\n");
+                  buffered = lines.pop() ?? "";
+                  return Effect.forEach(lines.filter(Boolean), answer, { discard: true });
+                }),
+                stdout: Stream.fromQueue(output),
+              });
+            }),
+          );
+          const fiber = yield* checkCodexProviderStatus(defaultCodexSettings).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readFileString: (file, encoding) =>
+                file === cachePath
+                  ? Deferred.succeed(cacheRead, undefined).pipe(
+                      Effect.andThen(Effect.sync(() => JSON.stringify({ fetched_at: fetchedAt }))),
+                    )
+                  : fs.readFileString(file, encoding),
+            }),
+            Effect.forkChild,
+          );
+          yield* Deferred.await(cacheRead);
+          yield* TestClock.adjust("4 seconds");
+          catalog = [model("refreshed-model")];
+          fetchedAt = DateTime.formatIso(yield* DateTime.now);
+          yield* TestClock.adjust("16 seconds");
+          const status = yield* Fiber.join(fiber);
+
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.deepEqual(
+            status.models.map(({ slug }) => slug),
+            ["refreshed-model"],
+          );
+        }),
+    );
+
     it.effect("does not run --version when the Codex executable cannot start", () =>
       Effect.gen(function* () {
         if ((yield* HostProcess.Platform) === "win32") return;
