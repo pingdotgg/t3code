@@ -244,7 +244,7 @@ describe("AddEnvironmentDialog", () => {
     { outcome: "succeeds", result: AsyncResult.success(undefined) },
     {
       outcome: "fails",
-      result: AsyncResult.failure(Cause.fail(new Error("Route registration failed"))),
+      result: AsyncResult.failure<void, Error>(Cause.fail(new Error("Route registration failed"))),
     },
   ])(
     "keeps the reopened dialog intact when a dismissed relay registration $outcome",
