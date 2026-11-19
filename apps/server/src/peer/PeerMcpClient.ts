@@ -7,8 +7,10 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -229,6 +231,17 @@ const make = Effect.gen(function* () {
           code: "orchestration_error",
           message: `The linked environment answered HTTP ${response.status}.`,
         });
+      }
+      // A peer that renews a used link says when it now ends; one that does not sends nothing.
+      const expiresAt = Option.flatMap(
+        Option.fromNullishOr(response.headers[McpInvocationContext.LINK_EXPIRES_AT_HEADER]),
+        DateTime.make,
+      );
+      if (
+        Option.isSome(expiresAt) &&
+        !DateTime.Equivalence(expiresAt.value, resolved.link.expiresAt)
+      ) {
+        yield* links.recordExpiry(input.environmentId, expiresAt.value);
       }
       const body = yield* decodeToolCallResponse(
         responseJson(response.headers["content-type"], yield* response.text),
