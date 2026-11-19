@@ -244,6 +244,25 @@ describe("terminalUiStateStore actions", () => {
     expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID, "new"]);
   });
 
+  it.each([
+    ["unmounts right after the close", false],
+    ["sees the closing terminal once more before it unmounts", true],
+  ])("keeps a reopened terminal when the drawer %s", (_case, staleReconcile) => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], "manager-1");
+    store.closeTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID);
+    if (staleReconcile) {
+      store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], "manager-1");
+    }
+    // The drawer is gone now, so nothing reconciles the server dropping the terminal.
+    store.setTerminalOpen(THREAD_REF, true);
+    store.reconcileTerminalIds(THREAD_REF, [], "manager-1");
+
+    expect(layout().terminalOpen).toBe(true);
+    expect(layout().terminalIds).toEqual([DEFAULT_THREAD_TERMINAL_ID]);
+  });
+
   it("keeps the surviving pane active when another client closes its split sibling", () => {
     const store = useTerminalUiStateStore.getState();
     store.newTerminal(THREAD_REF, "first");
