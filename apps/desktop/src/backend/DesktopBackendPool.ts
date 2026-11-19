@@ -135,6 +135,7 @@ export const layer = Layer.effect(
       | Path.Path
       | DesktopEnvironment.DesktopEnvironment
       | ElectronDialog.ElectronDialog
+      | DesktopWindow.DesktopWindow
     >();
 
     const updateMarkerPath = environment.path.join(

@@ -130,6 +130,8 @@ export class DesktopWindow extends Context.Service<
     readonly activate: Effect.Effect<void, DesktopWindowError>;
     readonly createMainIfBackendReady: Effect.Effect<void, DesktopWindowError>;
     readonly showConnectingSplash: Effect.Effect<void>;
+    /** A shown window to attach a message box to, showing the connecting splash when there is none. */
+    readonly sheetParent: Effect.Effect<Option.Option<Electron.BrowserWindow>>;
     readonly handleBackendReady: (httpBaseUrl: URL) => Effect.Effect<void, DesktopWindowError>;
     readonly handleBackendNotReady: Effect.Effect<void>;
     readonly flushMainWindowBounds: Effect.Effect<void>;
@@ -1114,6 +1116,20 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.window.showConnectingSplash"),
   );
 
+  const sheetParent = Effect.gen(function* () {
+    yield* showConnectingSplash;
+    const window = yield* electronWindow.currentMainOrFirst;
+    if (Option.isSome(window) && !window.value.isVisible()) {
+      const target = window.value;
+      yield* Effect.callback<void>((resume) => {
+        const onShow = () => resume(Effect.void);
+        target.once("show", onShow);
+        return Effect.sync(() => target.off("show", onShow));
+      });
+    }
+    return window;
+  }).pipe(Effect.withSpan("desktop.window.sheetParent"));
+
   const dispatchRendererEvent = Effect.fn("desktop.window.dispatchRendererEvent")(function* (
     channel: string,
     payload: unknown,
@@ -1173,6 +1189,7 @@ export const make = Effect.gen(function* () {
     }).pipe(Effect.withSpan("desktop.window.activate")),
     createMainIfBackendReady,
     showConnectingSplash,
+    sheetParent,
     handleBackendReady: Effect.fn("desktop.window.handleBackendReady")(function* (httpBaseUrl) {
       backendHasStarted = true;
       yield* Ref.set(backendReadyRef, true);

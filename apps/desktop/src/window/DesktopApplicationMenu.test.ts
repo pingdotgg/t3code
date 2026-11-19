@@ -99,6 +99,7 @@ const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>
     activate: Effect.void,
     createMainIfBackendReady: Effect.void,
     showConnectingSplash: Effect.void,
+    sheetParent: Effect.succeedNone,
     handleBackendReady: () => Effect.void,
     handleBackendNotReady: Effect.void,
     flushMainWindowBounds: Effect.void,

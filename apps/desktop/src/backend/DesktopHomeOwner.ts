@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off - Probes the server's native SQLite ownership lock.
 import * as NodeSqlite from "node:sqlite";
 
+import type * as Electron from "electron";
+
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -11,6 +13,7 @@ import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { m } from "../i18n/messages.ts";
 import { BACKEND_QUIT_STOP_TIMEOUT } from "./DesktopBackendManager.ts";
 
@@ -90,13 +93,22 @@ export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOw
 export const showHomeOwnedDialog = Effect.fn("DesktopHomeOwner.showHomeOwnedDialog")(function* (
   owner: Option.Option<HomeOwner>,
 ) {
+  const { platform } = yield* DesktopEnvironment.DesktopEnvironment;
+  // A parentless box on macOS runs synchronously, blocking the lock poll; a sheet does not.
+  const parent =
+    platform === "darwin"
+      ? yield* (yield* DesktopWindow.DesktopWindow).sheetParent
+      : Option.none<Electron.BrowserWindow>();
   yield* (yield* ElectronDialog.ElectronDialog)
-    .showMessageBox({
-      type: "error",
-      message: m(msg("This T3 home is unavailable")),
-      detail: homeOwnedMessage(owner),
-      buttons: [m(msg("OK"))],
-    })
+    .showMessageBox(
+      {
+        type: "error",
+        message: m(msg("This T3 home is unavailable")),
+        detail: homeOwnedMessage(owner),
+        buttons: [m(msg("OK"))],
+      },
+      Option.getOrUndefined(parent),
+    )
     .pipe(Effect.ignore);
 });
 

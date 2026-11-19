@@ -210,6 +210,7 @@ function layerPool(
           activate: Effect.die("unexpected window activate"),
           createMainIfBackendReady: Effect.die("unexpected window create"),
           showConnectingSplash: Effect.void,
+          sheetParent: Effect.succeedNone,
           handleBackendReady: () => options.onReady ?? Effect.void,
           handleBackendNotReady: Effect.void,
           flushMainWindowBounds: Effect.void,
