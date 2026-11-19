@@ -404,6 +404,7 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       );
       yield* instance.snapshot.resolveMaintenance({ fresh: true });
       const capabilities = yield* instance.orchestrationAdapter.getCapabilities();
+      assert.isTrue(capabilities.sessions.supportsRuntimeModeSwitchInSession);
       assert.equal(
         capabilities.turns.supportsNativeGoals === true,
         version.endsWith("2.2.5") || version.endsWith("2.2.6"),
