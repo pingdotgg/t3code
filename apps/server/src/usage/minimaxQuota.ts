@@ -89,9 +89,10 @@ export const readMiniMaxQuota = Effect.fn("MiniMaxQuota.read")(function* (key: s
       Effect.flatMap(Schema.decodeUnknownEffect(Response)),
       Effect.timeout("15 seconds"),
       Effect.mapError(
-        () =>
+        (cause) =>
           new UsageLimitSourceError({
             detail: "Could not read MiniMax quota. Check the Coding Plan key and try again.",
+            cause,
           }),
       ),
     );

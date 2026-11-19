@@ -60,3 +60,26 @@ it.effect("keeps different MiniMax credentials distinct without exposing them", 
     ),
   ),
 );
+
+it.effect("preserves the underlying quota failure", () =>
+  Effect.gen(function* () {
+    const result = yield* Effect.result(readMiniMaxQuota("fixture-key"));
+    expect(result._tag).toBe("Failure");
+    if (result._tag === "Failure") {
+      expect(result.failure.cause).toBeDefined();
+      expect(result.failure.detail).toBe(
+        "Could not read MiniMax quota. Check the Coding Plan key and try again.",
+      );
+    }
+  }).pipe(
+    Effect.provide(NodeCrypto.layer),
+    Effect.provideService(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
+        ),
+      ),
+    ),
+  ),
+);

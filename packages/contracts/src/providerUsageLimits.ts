@@ -118,7 +118,7 @@ export type ProviderConsumeResetCreditInput = typeof ProviderConsumeResetCreditI
 
 export class UsageLimitSourceError extends Schema.TaggedError<UsageLimitSourceError>()(
   "UsageLimitSourceError",
-  { detail: Schema.String },
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return this.detail;
