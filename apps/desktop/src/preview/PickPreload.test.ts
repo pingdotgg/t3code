@@ -29,6 +29,9 @@ const startAnnotation = (): ShadowRoot => {
       disconnect() {}
     },
   );
+  // jsdom has no popover API.
+  HTMLElement.prototype.showPopover ??= () => {};
+  HTMLElement.prototype.hidePopover ??= () => {};
   using attachShadow = vi.spyOn(Element.prototype, "attachShadow");
   for (const listener of ipcListeners.get(START_PICK_CHANNEL) ?? []) listener({}, undefined, false);
   const shadowRoot = attachShadow.mock.results[0]?.value;
