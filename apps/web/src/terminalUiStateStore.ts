@@ -563,7 +563,6 @@ function removeRecordEntry<T>(record: Record<string, T>, key: string): Record<st
   return remaining;
 }
 
-// Holds no id this client closed, or reconcile closes a reopened terminal that reuses the id.
 interface TerminalServerObservation {
   readonly ids: string[];
   readonly snapshotId: string | symbol | undefined;
@@ -659,13 +658,21 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
                 suppression.suppressed,
               )
             : state.suppressedTerminalIdsByThreadKey;
-          const nextServerObservationsByThreadKey = suppression?.suppressed
-            ? forgetObservedTerminalId(
-                state.serverObservationsByThreadKey,
-                terminalThreadKey(threadRef),
-                suppression.terminalId,
-              )
-            : state.serverObservationsByThreadKey;
+          // An observed id that is not local was closed here or saved by an older build, so it
+          // must not make reconcile close the fresh terminal that reuses it.
+          const nextServerObservationsByThreadKey =
+            suppression &&
+            !suppression.suppressed &&
+            !selectThreadTerminalUiState(
+              state.terminalUiStateByThreadKey,
+              threadRef,
+            ).terminalIds.includes(suppression.terminalId)
+              ? forgetObservedTerminalId(
+                  state.serverObservationsByThreadKey,
+                  terminalThreadKey(threadRef),
+                  suppression.terminalId,
+                )
+              : state.serverObservationsByThreadKey;
           if (
             nextTerminalUiStateByThreadKey === state.terminalUiStateByThreadKey &&
             nextSuppressedTerminalIdsByThreadKey === state.suppressedTerminalIdsByThreadKey &&
@@ -753,20 +760,19 @@ export const useTerminalUiStateStore = create<TerminalUiStateStoreState>()(
           const state = get();
           const previous = state.serverObservationsByThreadKey[threadKey];
           const suppressedIds = new Set(state.suppressedTerminalIdsByThreadKey[threadKey]);
-          const followedIds = serverIds.filter((id) => !suppressedIds.has(id));
           const terminalUiStateByThreadKey = updateTerminalUiStateByThreadKey(
             state.terminalUiStateByThreadKey,
             threadRef,
             (terminalState) =>
               reconcileThreadTerminalSessionIds(
                 terminalState,
-                followedIds,
+                serverIds.filter((id) => !suppressedIds.has(id)),
                 // A different manager can start empty before old sessions reattach.
                 previous?.snapshotId === snapshotId ? (previous?.ids ?? []) : [],
               ),
           );
           // Metadata is ordered by activity, which does not change which terminals were seen.
-          const observedIds = followedIds.toSorted();
+          const observedIds = [...serverIds].sort();
           let serverObservationsByThreadKey = state.serverObservationsByThreadKey;
           if (observedIds.length === 0) {
             serverObservationsByThreadKey = removeRecordEntry(

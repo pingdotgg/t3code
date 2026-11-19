@@ -256,7 +256,7 @@ describe("terminalUiStateStore actions", () => {
       store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID], "manager-1");
     }
     // The drawer is gone now, so nothing reconciles the server dropping the terminal.
-    store.setTerminalOpen(THREAD_REF, true);
+    store.ensureTerminal(THREAD_REF, DEFAULT_THREAD_TERMINAL_ID, { open: true });
     store.reconcileTerminalIds(THREAD_REF, [], "manager-1");
 
     expect(layout().terminalOpen).toBe(true);
