@@ -125,7 +125,9 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
-const CHECKS_STATE_TTL = Duration.minutes(2);
+// A finished result for a head commit only changes on a re-run, while a pending one is about to.
+const PENDING_CHECKS_TTL = Duration.minutes(1);
+const FINISHED_CHECKS_TTL = Duration.minutes(30);
 
 function checksStateOf(checks: ReadonlyArray<PullRequestCheck>): PullRequestChecksState | null {
   const statuses = new Set(checks.map((check) => check.status));
@@ -197,7 +199,12 @@ export const make = Effect.gen(function* () {
     },
     {
       capacity: 1000,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? CHECKS_STATE_TTL : Duration.zero),
+      timeToLive: (exit) =>
+        Exit.isSuccess(exit)
+          ? exit.value === "pending"
+            ? PENDING_CHECKS_TTL
+            : FINISHED_CHECKS_TTL
+          : Duration.zero,
     },
   );
 
@@ -234,47 +241,45 @@ export const make = Effect.gen(function* () {
           })
           .pipe(
             Effect.flatMap((batch) => {
-              const readItems =
-                filters?.checks === undefined
-                  ? Effect.succeed(batch.items.map(toChangeRequest))
-                  : Effect.forEach(
-                      batch.items,
-                      (pullRequest) => {
-                        const item = toChangeRequest(pullRequest);
-                        if (
-                          (filters.review !== undefined &&
-                            (filters.review === "none"
-                              ? pullRequest.reviewDecision !== null
-                              : pullRequest.reviewDecision !== filters.review)) ||
-                          (filters.draft !== undefined &&
-                            pullRequest.isDraft !== (filters.draft === "only")) ||
-                          (filterAuthor !== undefined &&
-                            pullRequest.author?.login.toLowerCase() !== filterAuthor)
-                        ) {
-                          return Effect.succeed(item);
-                        }
-                        // Without a head revision a push cannot invalidate a cached answer, so the
-                        // row is read every time.
-                        const read =
-                          pullRequest.headSha === null
-                            ? api
-                                .listChecks({
-                                  repository: input.repository,
-                                  number: pullRequest.number,
-                                })
-                                .pipe(Effect.map(checksStateOf))
-                            : Cache.get(
-                                checksStates,
-                                JSON.stringify([
-                                  input.repository,
-                                  pullRequest.number,
-                                  pullRequest.headSha,
-                                ]),
-                              );
-                        return read.pipe(Effect.map((checksState) => ({ ...item, checksState })));
-                      },
-                      { concurrency: 5 },
-                    );
+              // A listing carries no check results, so an open row's are read here (they feed the
+              // row's CI icon, the checks grouping and the checks filter). Closed rows are read
+              // only for the filter.
+              const readItems = Effect.forEach(
+                batch.items,
+                (pullRequest) => {
+                  const item = toChangeRequest(pullRequest);
+                  if (
+                    (pullRequest.state !== "open" && filters?.checks === undefined) ||
+                    (filters?.review !== undefined &&
+                      (filters.review === "none"
+                        ? pullRequest.reviewDecision !== null
+                        : pullRequest.reviewDecision !== filters.review)) ||
+                    (filters?.draft !== undefined &&
+                      pullRequest.isDraft !== (filters.draft === "only")) ||
+                    (filterAuthor !== undefined &&
+                      pullRequest.author?.login.toLowerCase() !== filterAuthor)
+                  ) {
+                    return Effect.succeed(item);
+                  }
+                  // Without a head revision a push cannot invalidate a cached answer, so the
+                  // row is read every time.
+                  const read =
+                    pullRequest.headSha === null
+                      ? api
+                          .listChecks({ repository: input.repository, number: pullRequest.number })
+                          .pipe(Effect.map(checksStateOf))
+                      : Cache.get(
+                          checksStates,
+                          JSON.stringify([
+                            input.repository,
+                            pullRequest.number,
+                            pullRequest.headSha,
+                          ]),
+                        );
+                  return read.pipe(Effect.map((checksState) => ({ ...item, checksState })));
+                },
+                { concurrency: 5 },
+              );
               return readItems.pipe(
                 // Keep excluded rows so the service advances its cursor past every scanned row.
                 Effect.map((items) => ({ items, truncated: batch.truncated, continues: true })),
