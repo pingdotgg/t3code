@@ -43,6 +43,7 @@ const mocked = [
   ["provider/DocumentText.ts", "DocumentText"],
   ["vcs/GitVcsDriver.ts", "GitVcsDriver"],
   ["issue/IssueService.ts", "IssueService"],
+  ["git/GitManager.ts", "GitManager"],
   ["git/GitWorkflowService.ts", "GitWorkflowService"],
   ["orchestration-v2/Orchestrator.ts", "OrchestratorV2"],
   ["peer/PeerForwarding.ts", "PeerForwarding"],
