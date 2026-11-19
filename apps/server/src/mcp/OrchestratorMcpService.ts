@@ -934,6 +934,14 @@ function threadStatus(
   return backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? []) ? "waiting" : settledStatus;
 }
 
+const LIVE_LISTED_THREAD_STATUSES: ReadonlySet<OrchestratorMcpThreadListItem["status"]> = new Set([
+  "queued",
+  "preparing",
+  "starting",
+  "running",
+  "waiting",
+]);
+
 function listedThreadStatus(shell: OrchestrationV2ThreadShell) {
   return threadStatus(shell.activityRunStatus, shell.status, shell.pendingBackgroundTasks);
 }
@@ -3280,7 +3288,21 @@ const make = Effect.gen(function* () {
           ? null
           : new Set(input.statuses);
       const titleContains = input.titleContains?.toLocaleLowerCase();
+      // A live status needs a source the index's mayBeLive covers, so a live-only filter
+      // skips building shells for every thread that cannot match.
+      const mayBeLiveIds =
+        statuses !== null &&
+        [...statuses].every((status) => LIVE_LISTED_THREAD_STATUSES.has(status))
+          ? new Set(
+              (yield* threadManagement
+                .listActiveShellIndex()
+                .pipe(Effect.mapError(listFailure))).flatMap((entry) =>
+                entry.mayBeLive ? [entry.id] : [],
+              ),
+            )
+          : null;
       const candidates = projectThreads
+        .filter((thread) => mayBeLiveIds === null || mayBeLiveIds.has(thread.id))
         .filter(
           (thread) =>
             input.settled === undefined || threadSettlement(thread).settled === input.settled,

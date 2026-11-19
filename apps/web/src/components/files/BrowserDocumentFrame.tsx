@@ -13,6 +13,7 @@ import {
   readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -28,6 +29,7 @@ import {
 } from "@t3tools/shared/keybindings";
 import {
   lazy,
+  type ReactNode,
   Suspense,
   useEffect,
   useEffectEvent,
@@ -80,7 +82,12 @@ export const isPdfPreviewFile = (path: string): boolean =>
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // The document stays mounted while each revision gets a fresh PDF.js document.
-function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+function PdfDocument(props: {
+  src: string;
+  title: string;
+  documentKey: string;
+  actions?: ReactNode;
+}) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
     <PdfDocumentRevision
@@ -90,6 +97,7 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
       positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
+      actions={props.actions}
     />
   );
 }
@@ -101,6 +109,7 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  actions?: ReactNode;
 }) {
   const [src] = useState(props.src);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
@@ -125,6 +134,7 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        actions={props.actions}
       />
     </Suspense>
   );
@@ -144,6 +154,8 @@ export function BrowserDocumentFrame(props: {
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
+  /** Toolbar actions for the in-app PDF viewer; Chromium's own viewer brings its own. */
+  readonly pdfActions?: ReactNode;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -152,6 +164,7 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      actions={props.pdfActions}
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
@@ -292,12 +305,17 @@ export function HtmlRenderDocument(props: {
   readonly onContentHeight?: (height: number) => void;
   /** The frame height tracks the page, so the page must not scroll inside it. */
   readonly fitted?: boolean;
+  /** Keeps the page's scrollIntoView calls from scrolling the host, for frames inline in the chat. */
+  readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(
+    () =>
+      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+  );
   const [loaded, setLoaded] = useState(false);
   // A page that takes the screen can be taller than the screen, so it must scroll there.
   const fullscreen = useSyncExternalStore(
