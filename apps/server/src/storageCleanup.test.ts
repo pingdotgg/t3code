@@ -2396,29 +2396,8 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.live("remeasures a kept orphan on every run", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fixture = yield* cleanupFixture();
-        fixture.setThreads([]);
-        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
-        const bundle = `${orphan}/build/bundle.js`;
-        yield* fixture.fs.makeDirectory(`${orphan}/build`, { recursive: true });
-        yield* fixture.fs.writeFileString(bundle, "x".repeat(64 * 1024));
-        yield* fixture.fs.utimes(orphan, 1, 1);
-        const orphanBytes = Effect.map(
-          fixture.service.runNow,
-          (report) => report.entries.find((entry) => entry.path === orphan)?.bytes,
-        );
-        expect(yield* orphanBytes).toBe(yield* allocatedBytes(fixture.fs, bundle));
-        yield* fixture.fs.remove(bundle);
-        expect(yield* orphanBytes).toBe(0);
-      }),
-    ),
-  );
-
   it.effect(
-    "measures new orphans first and rotates cached refreshes when the budget runs out",
+    "measures new orphans first and rotates cached refreshes when the budget runs out, not counting discovery",
     () =>
       runCleanupTest(
         Effect.gen(function* () {
@@ -2427,6 +2406,7 @@ describe("orphan worktree reports", () => {
           let now = NOW_MS;
           let parent: string | undefined;
           let slowDirectory: string | undefined;
+          let slowDiscovery: string | undefined;
           const fixture = yield* cleanupFixture().pipe(
             Effect.provideService(Clock.Clock, {
               ...clock,
@@ -2437,7 +2417,7 @@ describe("orphan worktree reports", () => {
               readDirectory: (directory, options) =>
                 fs.readDirectory(directory, options).pipe(
                   Effect.map((names) => {
-                    if (directory === slowDirectory) now += 30_000;
+                    if (directory === slowDirectory || directory === slowDiscovery) now += 30_000;
                     return directory === parent ? names.sort() : names;
                   }),
                 ),
@@ -2466,6 +2446,7 @@ describe("orphan worktree reports", () => {
           expect(second.entries.find((entry) => entry.path === discovered)?.bytes).toBe(0);
           expect(second.entries.find((entry) => entry.path === later)?.bytes).toBe(size);
 
+          slowDiscovery = parent;
           const third = yield* fixture.service.runNow;
           expect(third.entries.find((entry) => entry.path === later)?.bytes).toBe(0);
         }),

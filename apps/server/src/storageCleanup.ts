@@ -575,7 +575,6 @@ const make = Effect.gen(function* () {
       return result;
     });
     const now = yield* Clock.currentTimeMillis;
-    const measurementDeadline = now + 30_000;
     const reported = new Map<string, { path: string; reason: string }>();
     const report = Effect.fnUntraced(
       function* (worktreePath: string, scratch = false) {
@@ -642,6 +641,8 @@ const make = Effect.gen(function* () {
     if (scratchRoot !== null)
       for (const folder of yield* directories(scratchRoot, null)) yield* report(folder, true);
 
+    // Discovery runs git probes, so the measurement budget starts after it.
+    const measurementDeadline = (yield* Clock.currentTimeMillis) + 30_000;
     // Give the first new folder a full walk so every sweep can make progress.
     let firstMeasurement = true;
     const refresh = trigger === "manual" ? [...orphanSizes] : [];

@@ -33,11 +33,16 @@ test(
           yield* fs.makeDirectory(build);
           yield* fs.writeFile(`${build}/bundle.js`, NodeCrypto.randomBytes(8 * 1024 * 1024));
           yield* fs.utimes(worktree, 1, 1);
+          const settings = decodeSettings(original);
+          const storageCleanup =
+            typeof settings.storageCleanup === "object" && settings.storageCleanup !== null
+              ? settings.storageCleanup
+              : {};
           yield* fs.writeFileString(
             settingsPath,
             JSON.stringify({
-              ...decodeSettings(original),
-              storageCleanup: { worktreeOnDelete: true },
+              ...settings,
+              storageCleanup: { ...storageCleanup, worktreeOnDelete: true },
             }),
           );
         }),
