@@ -4379,7 +4379,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const backendSearch = acpBackendWebSearch(
                   rawInputRecord,
                   rawOutput,
-                  toolCall.data.title ?? title ?? toolCall.title,
+                  typeof toolCall.data.title === "string"
+                    ? toolCall.data.title
+                    : (title ?? toolCall.title),
                 );
                 if (backendSearch !== undefined) {
                   const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
