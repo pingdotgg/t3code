@@ -16,6 +16,7 @@ import type { ProviderClientDefinition } from "@t3tools/provider-core/client";
 import {
   type AcpRegistrySearchAgent,
   AuthProvidersManageScope,
+  defaultInstanceIdForDriver,
   ProviderInstanceId,
   ProviderDriverKind,
   type EnvironmentId,
@@ -200,11 +201,9 @@ export function AddProviderInstanceDialog({
   const [isSaving, setIsSaving] = useState(false);
   const [createdInstanceId, setCreatedInstanceId] = useState<ProviderInstanceId | null>(null);
 
-  // Reserve Codex/Claude default ids because they run before configuration; other unconfigured slots are
-  // available.
+  // Default slots have their own lifecycle and cannot be deleted as custom instances.
   const existingIds = new Set([
-    "codex",
-    "claudeAgent",
+    ...providerClients.definitions.map(({ driverKind }) => defaultInstanceIdForDriver(driverKind)),
     ...Object.keys(settings.providerInstances ?? {}),
   ]);
 
