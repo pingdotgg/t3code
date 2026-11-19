@@ -505,19 +505,23 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
-// A boundary inside an item can clone its wrappers without selecting any of its content.
-function emptyBoundaryItem(
-  list: Element,
+function isList(node: Node): node is HTMLOListElement | HTMLUListElement {
+  return node instanceof Element && (node.tagName === "OL" || node.tagName === "UL");
+}
+
+// An endpoint can clone empty item wrappers at any nesting depth.
+function emptyListBoundary(
+  ancestor: Node,
   node: Node,
   offset: number,
   side: "start" | "end",
 ): Element | null {
-  if (node === list) return null;
   const next = (node: Node) => (side === "start" ? node.nextSibling : node.previousSibling);
   if (node instanceof Text && offset !== (side === "start" ? node.length : 0)) return null;
 
+  let boundary: Element | null = null;
   let remaining = node.childNodes[side === "start" ? offset : offset - 1] ?? null;
-  while (node.parentNode) {
+  while (node !== ancestor && node.parentNode) {
     for (let sibling = remaining; sibling; sibling = next(sibling)) {
       if (sibling instanceof Text && !sibling.data.trim()) continue;
       if (
@@ -528,48 +532,36 @@ function emptyBoundaryItem(
       ) {
         continue;
       }
-      return null;
+      return boundary;
     }
-    if (node.parentNode === list) {
-      return node instanceof Element && node.tagName === "LI" ? node : null;
+    if (node instanceof Element && node.tagName === "LI" && isList(node.parentNode)) {
+      boundary = node;
+    } else if (boundary && isList(node)) {
+      boundary = node;
     }
     remaining = next(node);
     node = node.parentNode;
   }
-  return null;
-}
-
-// Selecting all of an item's visible content can leave both endpoints inside its wrappers.
-function completeOrderedItemRange(range: Range): Range | null {
-  const ancestor = range.commonAncestorContainer;
-  const item = (ancestor instanceof Element ? ancestor : ancestor.parentElement)?.closest("li");
-  const list = item?.parentElement;
-  if (!item || list?.tagName !== "OL") return null;
-  if (
-    emptyBoundaryItem(list, range.startContainer, range.startOffset, "end") !== item ||
-    emptyBoundaryItem(list, range.endContainer, range.endOffset, "start") !== item
-  ) {
-    return null;
-  }
-  const expanded = range.cloneRange();
-  expanded.selectNode(item);
-  return expanded;
+  return boundary;
 }
 
 /** Clones the selection and restores the markers shown for its copied list items. */
 function cloneWithListMarkers(range: Range, container: Element): void {
-  const ancestor = range.commonAncestorContainer;
-  const withinList =
-    ancestor instanceof Element && (ancestor.tagName === "OL" || ancestor.tagName === "UL");
-  if (withinList) {
-    const start = emptyBoundaryItem(ancestor, range.startContainer, range.startOffset, "start");
-    const end = emptyBoundaryItem(ancestor, range.endContainer, range.endOffset, "end");
-    if (start || end) {
-      range = range.cloneRange();
-      if (start) range.setStartAfter(start);
-      if (end) range.setEndBefore(end);
-    }
+  const originalAncestor = range.commonAncestorContainer;
+  const start = emptyListBoundary(
+    originalAncestor,
+    range.startContainer,
+    range.startOffset,
+    "start",
+  );
+  const end = emptyListBoundary(originalAncestor, range.endContainer, range.endOffset, "end");
+  if (start || end) {
+    range = range.cloneRange();
+    if (start) range.setStartAfter(start);
+    if (end) range.setEndBefore(end);
   }
+  const ancestor = range.commonAncestorContainer;
+  const withinList = isList(ancestor);
   container.appendChild(range.cloneContents());
   if (withinList) {
     // Items copied within one list clone without the list around them.
@@ -608,10 +600,8 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const selectedRange = selection.getRangeAt(index);
-    if (selectedRange.collapsed) continue;
-    const itemRange = completeOrderedItemRange(selectedRange);
-    const range = itemRange ?? selectedRange;
+    const range = selection.getRangeAt(index);
+    if (range.collapsed) continue;
     const container = document.createElement("div");
     cloneWithListMarkers(range, container);
     // The indentation typed at a line start only shows; pasted, it would turn lines into code.
@@ -655,10 +645,7 @@ export function chatMarkdownClipboardPayload(
       wrapper.append(...container.childNodes);
       container.replaceChildren(wrapper);
     }
-    // An item selected in full keeps its marker even when it contains only a code block.
-    const text = itemRange
-      ? tidyMarkdown(serializeChildren(container))
-      : serializeRenderedMarkdownFragment(container);
+    const text = serializeRenderedMarkdownFragment(container);
     if (!text) continue;
     texts.push(text);
     htmls.push(sanitizedHtmlFrom(container));

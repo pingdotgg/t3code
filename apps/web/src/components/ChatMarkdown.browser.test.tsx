@@ -830,6 +830,66 @@ describe("ChatMarkdown copy", () => {
   );
 
   it.each([
+    {
+      source: "1. First\n2. Second\n\nAfter.",
+      from: "First",
+      skipFrom: true,
+      text: "2. Second\n\nAfter.",
+      items: 1,
+    },
+    {
+      source: "Before.\n\n1. First\n2. Second",
+      from: "Before.",
+      to: "Second",
+      skipTo: true,
+      text: "Before.\n\n1. First",
+      items: 1,
+    },
+    {
+      source: "1. Outer\n   1. Inner\n   2. Deeper\n2. Next",
+      from: "Inner",
+      to: "Next",
+      skipFrom: true,
+      text: "1. 2. Deeper\n2. Next",
+      items: 3,
+    },
+    {
+      source: "1. Outer\n   1. Inner\n2. Next",
+      from: "Inner",
+      to: "Next",
+      skipFrom: true,
+      text: "2. Next",
+      items: 1,
+    },
+  ])(
+    "omits edge items outside the selection when copying with the markers its list shows: $text",
+    async ({ source, from, to, skipFrom, skipTo, text, items }) => {
+      setup();
+      await using screen = await renderText(source);
+      const textNode = (shown: string) => {
+        const walker = document.createTreeWalker(screen.container, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          if (node.textContent === shown) return node;
+        }
+        throw new Error(`Could not find text: ${shown}`);
+      };
+      const end = to ? textNode(to) : textNode("After.");
+      const range = document.createRange();
+      range.setStart(textNode(from), skipFrom ? from.length : 0);
+      range.setEnd(end, skipTo ? 0 : end.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
+      expect(serializeRenderedMarkdownFragment(pasted.body)).toBe(text);
+      expect(pasted.querySelectorAll("li")).toHaveLength(items);
+    },
+  );
+
+  it.each([
     { boundary: "end", from: "Configure", to: "Verify", text: "2. Configure\n3. Deploy" },
     { boundary: "start", from: "Install", to: "Deploy", text: "2. Configure\n3. Deploy" },
     {
@@ -865,21 +925,31 @@ describe("ChatMarkdown copy", () => {
     },
   );
 
-  it("copies 2. Configure with the markers its list shows", async () => {
+  it.each([
+    { source: "1. Install\n2. Configure", selector: "li:nth-child(2)", text: "Configure" },
+    { source: "- Install\n- Configure", selector: "li:nth-child(2)", text: "Configure" },
+    { source: "1. `items[0]*_`", selector: "li code", text: "items[0]*_" },
+    { source: "1. [Docs](https://example.com)", selector: "li a", text: "Docs" },
+    {
+      source: "1. Install\n2. ```sh\n   pnpm dev\n   ```",
+      selector: "li pre code",
+      text: "pnpm dev\n",
+    },
+  ])("copies only the selected $selector content", async ({ source, selector, text }) => {
     setup();
-    await using screen = await renderText("1. Install\n2. Configure\n3. Deploy");
-    const item = screen.container.querySelectorAll("li")[1]!.firstChild!;
+    await using screen = await renderText(source);
+    const content = screen.container.querySelector(selector)!;
     const range = document.createRange();
-    range.selectNodeContents(item);
+    range.selectNodeContents(content);
     const selection = window.getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
 
     const payload = chatMarkdownClipboardPayload(selection);
-    expect(payload?.text).toBe("2. Configure");
+    expect(payload?.text).toBe(text);
     const pasted = new DOMParser().parseFromString(payload!.html, "text/html");
-    expect(pasted.querySelector("ol")?.start).toBe(2);
-    expect(pasted.body.textContent).toBe("Configure");
+    expect(pasted.querySelector("li")).toBeNull();
+    expect(pasted.body.textContent).toBe(text);
   });
 });
 
