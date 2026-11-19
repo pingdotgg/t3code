@@ -147,6 +147,12 @@ it("grades Codex shell and subagent calls with the shared rules", () => {
   assert.deepEqual(failed({ anyOf }, run([fieldsCard])), []);
   assert.deepEqual(failed({ anyOf }, run([fieldsCard, fieldsCard])), ["anyOf"]);
   assert.deepEqual(failed({ anyOf }, run([cards[0]!])), ["anyOf"]);
+  // One field holding every value is the combined input the case rejects.
+  const combinedField = {
+    ...fieldsCard,
+    input: { label: "OVH", fields: [{ label: cards.map((card) => card.input.label).join(", ") }] },
+  };
+  assert.deepEqual(failed({ anyOf }, run([combinedField])), ["anyOf"]);
 });
 
 it("matches shellMust, not shellMustNot, against a command's argv lists as a command line", () => {
@@ -1065,6 +1071,17 @@ it.effect("saves a new secret file for each request and tells the shell simulato
     assert.notEqual(first.file, second.file);
     assert.match(ref.secretRef, /^secret-ref:[0-9a-f]{32}$/);
     assert.notInclude([first.file, second.file], ref.secretRef.slice("secret-ref:".length));
+    assert.deepEqual(sample.secretFiles, [first.file, second.file]);
+    // T3 refuses `fields` with a ref or a pasted value, so nothing is saved.
+    for (const extra of [{ delivery: "secretRef" }, { value: "pw" }]) {
+      const refused = yield* answerToolCall(sample, config, {
+        type: "tool_use",
+        id: "f",
+        name: "mcp__t3-code__request_secret",
+        input: { label: "Login", fields: [{ name: "password", label: "Password" }], ...extra },
+      });
+      assert.isTrue(refused.is_error);
+    }
     assert.deepEqual(sample.secretFiles, [first.file, second.file]);
     const call = { tool: "Bash", input: { command: `wc -c < ${second.file}` } };
     const [machine] = shellRequest(sample, call, "claude-haiku-5-5").messages[0]?.content ?? [];

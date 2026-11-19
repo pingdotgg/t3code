@@ -1733,6 +1733,15 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
   if (isPageTool(name) && typeof input.path === "string" && !input.path.startsWith("/")) {
     return failed(`${input.path} is not a readable HTML document. Pass an absolute path.`);
   }
+  if (
+    name === "request_secret" &&
+    input.fields !== undefined &&
+    (input.value !== undefined || input.delivery === "secretRef")
+  ) {
+    return failed(
+      '`fields` values are saved as files. Leave out `value` and `delivery: "secretRef"`.',
+    );
+  }
   const mock = nextMock(sample, name, testCase.setup.mocks?.[name]);
   if (isT3Name(call.name) && PREVIEW_TOOLS.has(name)) {
     if (testCase.setup.world?.browserAgentAccess === false)
@@ -1817,7 +1826,28 @@ const matches = (expected: unknown, actual: unknown): boolean => {
     path
       .split(".")
       .reduce<unknown>((value, key) => (isRecord(value) ? value[key] : undefined), actual);
-  return Object.entries(expected).every(([path, value]) => matches(value, at(path)));
+  return Object.entries(expected).every(([path, value]) =>
+    // Each expected field needs its own field, so one field cannot hold every value.
+    path === "fields" && Array.isArray(value)
+      ? matchesEach(value, at(path))
+      : matches(value, at(path)),
+  );
+};
+
+const matchesEach = (
+  expected: ReadonlyArray<unknown>,
+  actual: unknown,
+  taken: ReadonlySet<number> = new Set(),
+): boolean => {
+  if (expected.length === 0) return true;
+  const [first, ...rest] = expected;
+  return (
+    Array.isArray(actual) &&
+    actual.some(
+      (item, i) =>
+        !taken.has(i) && matches(first, item) && matchesEach(rest, actual, new Set([...taken, i])),
+    )
+  );
 };
 
 /** Each new top-level thread request in a run; a failed call created nothing. */

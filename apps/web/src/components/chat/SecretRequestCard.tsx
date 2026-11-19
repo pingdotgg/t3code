@@ -100,7 +100,6 @@ function PendingSecretRequestForm(props: {
     reportFailure: false,
     reportDefect: false,
   });
-  const inputs = secretRequestInputs(item, messages);
   const multiple = item.fields !== undefined;
   // A reference answers one value, so a card with fields is always typed.
   const configuredSources = useSecretRequestSources(props.environmentId);
@@ -113,6 +112,7 @@ function PendingSecretRequestForm(props: {
   const [error, setError] = useState<string | null>(null);
   // Enter and click can both submit before a render.
   const inFlight = useRef(false);
+  const inputs = secretRequestInputs(item, messages);
   const inputId = (index: number) => `${formId}-${index}`;
   const describedBy = error !== null ? `${privacyId} ${errorId}` : privacyId;
   const canSave =
