@@ -177,8 +177,14 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
-  /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  /**
+   * Becomes the agent's TMPDIR, so off Windows it sits in /tmp: tools that put a Unix socket under
+   * it need room in the 104-byte sun_path. On Windows it stays beside the profile, because
+   * 120-character archive members under the profile's longer name would exceed MAX_PATH.
+   */
   readonly runtimeTemp: string;
+  /** Earlier runtime temp roots, swept on start to reclaim what a force-killed run left there. */
+  readonly legacyRuntimeTemps: ReadonlyArray<string>;
 }
 
 /** Hashes the instance ID so case-only differences stay separate on case-insensitive filesystems. */
@@ -187,10 +193,25 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
 )(function* (stateDir: string, instanceId: ProviderInstanceId) {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
-  const key = Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(instanceId)));
+  const hash = (value: string) =>
+    digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.map(Hex.encode));
+  const key = yield* hash(instanceId);
+  const profile = path.join(stateDir, "providers", "antigravity", key);
+  const stateRuntimeTemp = path.join(stateDir, "antigravity-tmp", key.slice(0, 12));
+  const legacyProfileTemp = path.join(profile, "antigravity-acp", "tmp");
+  if (path.sep === "\\") {
+    return {
+      profile,
+      runtimeTemp: stateRuntimeTemp,
+      legacyRuntimeTemps: [legacyProfileTemp],
+    } satisfies AntigravityInstanceDirectories;
+  }
+  // /tmp is shared by every T3 home, so the name also covers the state directory.
+  const sharedKey = yield* hash(`${stateDir}\0${instanceId}`);
   return {
-    profile: path.join(stateDir, "providers", "antigravity", key),
-    runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+    profile,
+    runtimeTemp: path.join("/tmp", `t3-agy-${sharedKey.slice(0, 12)}`),
+    legacyRuntimeTemps: [stateRuntimeTemp, legacyProfileTemp],
   } satisfies AntigravityInstanceDirectories;
 });
 
