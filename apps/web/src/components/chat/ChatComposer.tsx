@@ -156,7 +156,6 @@ import {
   useSpeechUnavailableReason,
 } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton } from "./ComposerSpeechButton";
-import { VoiceInputErrorPill } from "./VoiceInputErrorPill";
 import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME } from "./ComposerPrimaryActions";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
@@ -3733,31 +3732,18 @@ export function ChatComposer(props: ChatComposerProps) {
                       <button
                         type="button"
                         className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                        hidden={voiceInputActive && !canInterrupt}
-                        disabled={
-                          voiceInputActive ? !canInterrupt : collapsedComposerPrimaryActionDisabled
-                        }
-                        aria-label={
-                          voiceInputActive
-                            ? gt("Stop generation")
-                            : collapsedComposerPrimaryActionLabel
-                        }
+                        disabled={collapsedComposerPrimaryActionDisabled}
+                        aria-label={collapsedComposerPrimaryActionLabel}
                         onPointerDown={(event) => event.preventDefault()}
                         onClick={(event) => {
                           event.stopPropagation();
-                          if (voiceInputActive) onInterrupt();
-                          else if (showResumeAction) onResume();
+                          if (showResumeAction) onResume();
                           else if (props.resumeCompactionTokens !== null && !props.keepFullHistory)
                             expandMobileComposer();
                           else submitComposer();
                         }}
                       >
-                        {voiceInputActive ? (
-                          <span
-                            className="size-2.5 rounded-xs bg-error-foreground"
-                            aria-hidden="true"
-                          />
-                        ) : showResumeAction ? (
+                        {showResumeAction ? (
                           <PlayIcon className="size-4 fill-current" aria-hidden="true" />
                         ) : (
                           <svg
@@ -3987,7 +3973,7 @@ export function ChatComposer(props: ChatComposerProps) {
                   sendDisabledReason={primaryActionSendDisabledReason}
                   isEnvironmentUnavailable={primaryActionEnvironmentUnavailable}
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent || voiceInputActive}
+                  hasSendableContent={composerSendState.hasSendableContent}
                   canResume={showResumeAction}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   isEditingQueuedMessage={isEditingQueuedMessage}
@@ -3999,16 +3985,6 @@ export function ChatComposer(props: ChatComposerProps) {
                   keepFullHistory={props.keepFullHistory}
                   onToggleKeepFullHistory={props.onToggleKeepFullHistory}
                 >
-                  {speechInput.available && speechInput.state.phase === "error" ? (
-                    <VoiceInputErrorPill
-                      error={speechInput.state.error}
-                      errorAction={speechInput.state.errorAction}
-                      disabled={dictationDisabled}
-                      cancelShortcutLabel="Esc"
-                      onRetry={() => void speechInput.start()}
-                      onDismiss={() => speechInput.cancel()}
-                    />
-                  ) : null}
                   <VoiceInputSetup
                     environmentId={speechInput.transcriptionEnvironmentId}
                     open={speechInput.setup.open}

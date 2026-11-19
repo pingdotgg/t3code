@@ -221,6 +221,7 @@ export function ThreadDetailsPanel({ ref, ...props }: ThreadDetailsPanelProps) {
                 <section
                   aria-label={gt("Workspace")}
                   data-thread-details-card
+                  data-thread-details-workspace
                   className="surface-tray rounded-pane p-1"
                 >
                   <div className="surface-composer rounded-lg p-0.5">
