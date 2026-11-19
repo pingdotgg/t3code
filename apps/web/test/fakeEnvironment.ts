@@ -2,24 +2,31 @@
 // session that answers the shell, thread and config subscriptions from fixtures. Other RPCs
 // stay pending so nothing retries on timers. Everything above the wire is the app's own.
 import {
+  type AssetCreateUrlResult,
   AuthStandardClientScopes,
   EnvironmentId,
   EventId,
   ExecutionEnvironmentDescriptor,
   MessageId,
+  NodeId,
+  OrchestrationV2DispatchCommandError,
   ORCHESTRATION_PROTOCOL_VERSION,
   ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RuntimeRequestId,
   ServerConfig,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   WsRpcGroup,
   type VcsStatusStreamEvent,
+  type ModelSelection,
   type OrchestrationProjectShell,
+  type OrchestrationV2Command,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadProjection,
@@ -27,6 +34,7 @@ import {
   type OrchestrationV2ThreadStreamItem,
   type OrchestrationV2TurnItem,
   type TerminalMetadataStreamEvent,
+  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type {
   ConnectionAttemptError,
@@ -38,6 +46,7 @@ import type { WsRpcProtocolClient } from "@t3tools/client-runtime/rpc";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { APP_VERSION } from "~/branding";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Queue from "effect/Queue";
 import type * as Scope from "effect/Scope";
@@ -58,7 +67,7 @@ const descriptor = {
   // A matching version, since a mismatch adds an update banner a typical user never sees.
   serverVersion: APP_VERSION,
   orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION,
-  capabilities: { repositoryIdentity: true },
+  capabilities: { repositoryIdentity: true, sideChats: true, freshContext: true },
 };
 const auth = {
   policy: "loopback-browser",
@@ -67,27 +76,48 @@ const auth = {
   sessionCookieName: "t3_session",
 };
 
-const serverConfig: ServerConfig = {
-  ...Schema.decodeUnknownSync(ServerConfig)({
-    environment: descriptor,
+const readyProvider = (
+  instanceId: string,
+  driver: string,
+  models: ReadonlyArray<{ readonly slug: string; readonly name: string }>,
+) => ({
+  instanceId,
+  driver,
+  enabled: true,
+  installed: true,
+  version: "1.0.0",
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-03-17T19:12:28.000Z",
+  models: models.map((model) => ({ ...model, isCustom: false, capabilities: null })),
+});
+export const CODEX_PROVIDER = readyProvider(CODEX, "codex", [
+  { slug: "gpt-5.4", name: "GPT-5.4" },
+  { slug: "gpt-5.5", name: "GPT-5.5" },
+]);
+export const CLAUDE_PROVIDER = {
+  ...readyProvider("claudeAgent", "claudeAgent", [
+    { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+  ]),
+  slashCommands: [{ name: "compact" }],
+};
+
+const decodeServerConfig = Schema.decodeUnknownSync(ServerConfig);
+const makeServerConfig = (
+  providers: ReadonlyArray<unknown>,
+  supportsIssues = false,
+): ServerConfig => ({
+  ...decodeServerConfig({
+    environment: {
+      ...descriptor,
+      capabilities: { ...descriptor.capabilities, issues: supportsIssues },
+    },
     auth,
     cwd: "/workspace/render",
     keybindingsConfigPath: "/workspace/.t3/keybindings.json",
     keybindings: [],
     issues: [],
-    providers: [
-      {
-        instanceId: CODEX,
-        driver: "codex",
-        enabled: true,
-        installed: true,
-        version: "1.0.0",
-        status: "ready",
-        auth: { status: "authenticated" },
-        checkedAt: "2026-03-17T19:12:28.000Z",
-        models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
-      },
-    ],
+    providers,
     availableEditors: [],
     observability: {
       logsDirectoryPath: "/workspace/.t3/logs",
@@ -101,7 +131,13 @@ const serverConfig: ServerConfig = {
     shellResumeCompletionMarker: true,
   }),
   keybindings: DEFAULT_RESOLVED_KEYBINDINGS,
-};
+});
+let baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
+// A server only leaves threads out of the shell when it serves their families.
+const serverConfig = (): ServerConfig =>
+  threads.some((thread) => thread.olderSettled)
+    ? { ...baseServerConfig, shellThreadFamilies: true }
+    : baseServerConfig;
 
 const project: OrchestrationProjectShell = {
   id: PROJECT_ID,
@@ -162,13 +198,19 @@ export function assistantItem(
   } satisfies OrchestrationV2TurnItem;
 }
 
-function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: string) {
+function run(
+  threadId: ThreadId,
+  id: RunId,
+  ordinal: number,
+  userMessageId: string,
+  modelSelection: ModelSelection = MODEL,
+) {
   return {
     id,
     threadId,
     ordinal,
-    providerInstanceId: CODEX,
-    modelSelection: MODEL,
+    providerInstanceId: modelSelection.instanceId,
+    modelSelection,
     providerThreadId: null,
     userMessageId: MessageId.make(userMessageId),
     rootNodeId: null,
@@ -185,20 +227,32 @@ function run(threadId: ThreadId, id: RunId, ordinal: number, userMessageId: stri
 export interface FakeThread {
   /** Makes this a side chat of that thread. */
   readonly sideChatOf?: ThreadId;
+  /** Makes this an older settled thread the shell leaves out; only its family read returns it. */
+  readonly olderSettled?: true;
   readonly id: ThreadId;
   readonly title: string;
+  /** Defaults to GPT-5.4 on Codex. */
+  readonly modelSelection?: ModelSelection;
+  /** The first is the thread's active provider thread. */
+  readonly providerThreads?: ReadonlyArray<OrchestrationV2ProviderThread>;
+  readonly issues?: OrchestrationV2ThreadShell["issues"];
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
 }
 
 /** A thread of `turns` user prompts, each answered in markdown with a list and inline code. */
-export function threadWithHistory(name: string, turns: number): FakeThread {
+export function threadWithHistory(
+  name: string,
+  turns: number,
+  modelSelection: ModelSelection = MODEL,
+): FakeThread {
   const id = ThreadId.make(name);
   const runs: OrchestrationV2Run[] = [];
   const items: OrchestrationV2TurnItem[] = [];
   for (let turn = 0; turn < turns; turn++) {
     const runId = RunId.make(`${name}-run-${turn}`);
-    runs.push(run(id, runId, turn + 1, `${name}-user-${turn}`));
+    runs.push(run(id, runId, turn + 1, `${name}-user-${turn}`, modelSelection));
     items.push(
       userItem(id, runId, `${name}-user-${turn}`, turn * 2, `${name}: question ${turn}`),
       assistantItem(
@@ -211,22 +265,65 @@ export function threadWithHistory(name: string, turns: number): FakeThread {
       ),
     );
   }
-  return { id, title: `Thread ${name}`, runs, items };
+  return { id, title: `Thread ${name}`, modelSelection, runs, items };
+}
+
+/** A one-turn thread whose agent waits on an answer to one question. */
+export function threadWithQuestion(name: string, question: string): FakeThread {
+  const thread = threadWithHistory(name, 1);
+  const requestId = RuntimeRequestId.make(`${name}-request`);
+  return {
+    ...thread,
+    items: [
+      ...thread.items,
+      {
+        ...base(thread.id, RunId.make(`${name}-run-0`), `${name}-question`, 2),
+        type: "user_input_request",
+        requestId,
+        responseMode: "message",
+        questions: [
+          {
+            id: "choice",
+            header: "Choice",
+            question,
+            required: true,
+            allowCustomAnswer: false,
+            options: [{ label: "Continue", value: "continue", description: "Resume work" }],
+          },
+        ],
+      },
+    ],
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId: NodeId.make(`${name}-node`),
+        providerTurnId: null,
+        nativeRequestRef: null,
+        kind: "user_input",
+        status: "pending",
+        responseCapability: { type: "message" },
+        createdAt: AT,
+        resolvedAt: null,
+      },
+    ],
+  };
 }
 
 function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
   const latest = thread.runs.at(-1);
+  const modelSelection = thread.modelSelection ?? MODEL;
   return {
     id: thread.id,
     projectId: PROJECT_ID,
     title: thread.title,
-    providerInstanceId: CODEX,
-    modelSelection: MODEL,
+    providerInstanceId: modelSelection.instanceId,
+    modelSelection,
     runtimeMode: "full-access",
     interactionMode: "default",
     branch: "main",
     worktreePath: null,
-    activeProviderThreadId: null,
+    activeProviderThreadId: thread.providerThreads?.[0]?.id ?? null,
+    ...(thread.issues === undefined ? {} : { issues: thread.issues }),
     lineage: {
       rootThreadId: thread.sideChatOf ?? thread.id,
       parentThreadId: thread.sideChatOf ?? null,
@@ -249,8 +346,8 @@ function shellOf(thread: FakeThread): OrchestrationV2ThreadShell {
     createdAt: AT,
     updatedAt: AT,
     archivedAt: null,
-    settledOverride: null,
-    settledAt: null,
+    settledOverride: thread.olderSettled ? "settled" : null,
+    settledAt: thread.olderSettled ? AT : null,
     lastVisitedAt: AT,
     deletedAt: null,
   };
@@ -278,7 +375,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       interactionMode: shell.interactionMode,
       branch: shell.branch,
       worktreePath: shell.worktreePath,
-      activeProviderThreadId: null,
+      activeProviderThreadId: shell.activeProviderThreadId,
       lineage: shell.lineage,
       forkedFrom: null,
       createdBy: "user",
@@ -286,8 +383,8 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
       createdAt: AT,
       updatedAt: AT,
       archivedAt: null,
-      settledOverride: null,
-      settledAt: null,
+      settledOverride: shell.settledOverride,
+      settledAt: shell.settledAt,
       lastVisitedAt: AT,
       deletedAt: null,
     },
@@ -296,9 +393,9 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     nodes: [],
     subagents: [],
     providerSessions: [],
-    providerThreads: [],
+    providerThreads: [...(thread.providerThreads ?? [])],
     providerTurns: [],
-    runtimeRequests: [],
+    runtimeRequests: [...(thread.runtimeRequests ?? [])],
     messages: [],
     plans: [],
     turnItems: [...thread.items],
@@ -317,7 +414,17 @@ const json = (body: unknown, status = 200) =>
 // Keyed by thread id: a live thread subscription's queue, for pushing events to it.
 const threadSubscribers = new Map<string, Queue.Queue<OrchestrationV2ThreadStreamItem>>();
 let terminalMetadataSubscriber: Queue.Queue<TerminalMetadataStreamEvent> | null = null;
+let shellSubscriber: Queue.Queue<OrchestrationV2ShellStreamItem> | null = null;
 let threads: ReadonlyArray<FakeThread> = [];
+let dispatched: OrchestrationV2Command[] = [];
+let acceptCommands = false;
+let projects: ReadonlyArray<OrchestrationProjectShell> = [project];
+let holdCommand: (command: OrchestrationV2Command) => boolean = () => false;
+let pendingDispatches: Array<{
+  readonly command: OrchestrationV2Command;
+  readonly reply: Deferred.Deferred<never, OrchestrationV2DispatchCommandError>;
+}> = [];
+let pendingAssetUrls: Array<Deferred.Deferred<AssetCreateUrlResult>> = [];
 let sequence = 1;
 let vcsStatusSubscriber: Queue.Queue<VcsStatusStreamEvent> | null = null;
 
@@ -335,6 +442,41 @@ const subscribe = <A>(first: ReadonlyArray<A>, register?: (queue: Queue.Queue<A>
   );
 
 const handlers: Record<string, (input: never) => unknown> = {
+  // Recorded, and accepted only when the scenario asks, since a pending command holds every
+  // later command on its thread. Accepted commands' events never arrive.
+  [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
+    Effect.suspend(() => {
+      dispatched.push(command);
+      if (acceptCommands && !holdCommand(command)) {
+        if (command.type !== "thread.fork" || !command.sideChat || shellSubscriber === null)
+          return Effect.succeed({ sequence: sequence + 1 });
+        const fork: FakeThread = {
+          id: command.targetThreadId,
+          title: command.title ?? "Side chat",
+          sideChatOf: command.sourceThreadId,
+          runs: [],
+          items: [],
+        };
+        threads = [...threads, fork];
+        sequence += 1;
+        return Queue.offer(shellSubscriber, {
+          kind: "thread.updated",
+          sequence,
+          location: "active",
+          thread: shellOf(fork),
+        }).pipe(Effect.as({ sequence }));
+      }
+      const reply = Deferred.makeUnsafe<never, OrchestrationV2DispatchCommandError>();
+      pendingDispatches.push({ command, reply });
+      return Deferred.await(reply);
+    }),
+  // Held like any other unanswered call, until `answerAssetUrls`.
+  [WS_METHODS.assetsCreateUrl]: () =>
+    Effect.suspend(() => {
+      const reply = Deferred.makeUnsafe<AssetCreateUrlResult>();
+      pendingAssetUrls.push(reply);
+      return Deferred.await(reply);
+    }),
   [WS_METHODS.subscribeTerminalMetadata]: () =>
     subscribe<TerminalMetadataStreamEvent>([{ type: "snapshot", terminals: [] }], (queue) => {
       terminalMetadataSubscriber = queue;
@@ -343,19 +485,27 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: () =>
-    subscribe<OrchestrationV2ShellStreamItem>([
-      {
-        kind: "snapshot",
-        snapshot: {
-          schemaVersion: 1,
-          snapshotSequence: sequence,
-          projects: [project],
-          threads: threads.map(shellOf),
-          archivedThreads: [],
+    subscribe<OrchestrationV2ShellStreamItem>(
+      [
+        {
+          kind: "snapshot",
+          snapshot: {
+            schemaVersion: 1,
+            snapshotSequence: sequence,
+            projects,
+            threads: threads.filter((thread) => !thread.olderSettled).map(shellOf),
+            archivedThreads: [],
+          },
         },
+        { kind: "synchronized" },
+      ],
+      (queue) => {
+        shellSubscriber = queue;
+        return () => {
+          if (shellSubscriber === queue) shellSubscriber = null;
+        };
       },
-      { kind: "synchronized" },
-    ]),
+    ),
   [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input: { readonly threadId: ThreadId }) => {
     const thread = threads.find((candidate) => candidate.id === input.threadId);
     if (!thread) return Stream.never;
@@ -374,6 +524,16 @@ const handlers: Record<string, (input: never) => unknown> = {
       },
     );
   },
+  [ORCHESTRATION_V2_WS_METHODS.getThreadFamily]: (input: { readonly threadId: ThreadId }) => {
+    const rootOf = (thread: FakeThread) => thread.sideChatOf ?? thread.id;
+    const requested = threads.find((candidate) => candidate.id === input.threadId);
+    return Effect.succeed({
+      snapshotSequence: sequence,
+      threads: requested
+        ? threads.filter((thread) => rootOf(thread) === rootOf(requested)).map(shellOf)
+        : [],
+    });
+  },
   [WS_METHODS.subscribeVcsStatus]: () =>
     subscribe<VcsStatusStreamEvent>([], (queue) => {
       vcsStatusSubscriber = queue;
@@ -382,7 +542,7 @@ const handlers: Record<string, (input: never) => unknown> = {
       };
     }),
   [WS_METHODS.subscribeServerConfig]: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
 };
 
 // Unanswered calls stay pending, like a server that has not replied yet.
@@ -397,9 +557,9 @@ const client = new Proxy(handlers, {
 
 const session: EnvironmentConnectionLease["session"] = {
   client: client as unknown as WsRpcProtocolClient,
-  initialConfig: Effect.succeed(serverConfig),
+  initialConfig: Effect.sync(serverConfig),
   subscribeServerConfig: () =>
-    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig }]),
+    subscribe([{ version: 1 as const, type: "snapshot" as const, config: serverConfig() }]),
   ready: Effect.void,
   probe: Effect.void,
   inboundFrames: Effect.succeed(0),
@@ -421,6 +581,7 @@ export const fakeDriver = {
         target: entry.target,
       },
       session,
+      refusedRouteIds: [],
     }),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),
@@ -433,8 +594,36 @@ const encodedDescriptor = Schema.encodeSync(ExecutionEnvironmentDescriptor)(
 );
 
 /** Serves the environment's HTTP API and these threads until disposed. */
-export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Disposable {
+export function installFakeEnvironment(
+  fixtures: ReadonlyArray<FakeThread>,
+  options?: {
+    readonly acceptCommands?: boolean;
+    readonly keybindings?: ResolvedKeybindingsConfig;
+    readonly extraProjects?: ReadonlyArray<Pick<OrchestrationProjectShell, "id" | "title">>;
+    /** Commands left unanswered even when accepting, until `rejectPendingCommand`. */
+    readonly holdCommand?: (command: OrchestrationV2Command) => boolean;
+    readonly providers?: ReadonlyArray<unknown>;
+  },
+): Disposable {
   threads = fixtures;
+  baseServerConfig = {
+    ...makeServerConfig(
+      options?.providers ?? [CODEX_PROVIDER],
+      fixtures.some((thread) => (thread.issues?.length ?? 0) > 0),
+    ),
+    keybindings: options?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS,
+  };
+  dispatched = [];
+  acceptCommands = options?.acceptCommands === true;
+  projects = [
+    project,
+    ...(options?.extraProjects ?? []).map((extra) => ({
+      ...project,
+      ...extra,
+      workspaceRoot: `/workspace/${extra.title}`,
+    })),
+  ];
+  holdCommand = options?.holdCommand ?? (() => false);
   globalThis.fetch = async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
     if (url.origin !== window.location.origin) return realFetch(input, init);
@@ -456,11 +645,66 @@ export function installFakeEnvironment(fixtures: ReadonlyArray<FakeThread>): Dis
     [Symbol.dispose]: () => {
       globalThis.fetch = realFetch;
       threads = [];
+      baseServerConfig = makeServerConfig([CODEX_PROVIDER]);
+      dispatched = [];
+      acceptCommands = false;
+      projects = [project];
+      holdCommand = () => false;
+      pendingDispatches = [];
+      pendingAssetUrls = [];
     },
   };
 }
 
+/** Answers the oldest unanswered command with the server's rejection. */
+export async function rejectPendingCommand(message: string): Promise<void> {
+  const pending = pendingDispatches.shift();
+  if (!pending) throw new Error("No pending command");
+  await Effect.runPromise(
+    Deferred.fail(
+      pending.reply,
+      new OrchestrationV2DispatchCommandError({
+        commandId: pending.command.commandId,
+        commandType: pending.command.type,
+        message,
+      }),
+    ),
+  );
+}
+
+export function hasPendingAssetUrl(): boolean {
+  return pendingAssetUrls.length > 0;
+}
+
+/** Answers every held asset URL request, as a server that still has the file. */
+export async function answerAssetUrls(): Promise<void> {
+  const replies = pendingAssetUrls;
+  pendingAssetUrls = [];
+  for (const reply of replies) {
+    await Effect.runPromise(
+      Deferred.succeed(reply, { relativeUrl: "/api/assets/fake", expiresAt: 4_102_444_800_000 }),
+    );
+  }
+}
+
+/** Commands the app dispatched to the environment, oldest first. */
+export function dispatchedCommands(): ReadonlyArray<OrchestrationV2Command> {
+  return dispatched;
+}
+
 type ThreadEvent = Extract<OrchestrationV2ThreadStreamItem, { readonly kind: "event" }>["event"];
+
+/** Answers one RPC method with `handler` until disposed. */
+export function answerRpc(method: string, handler: (input: never) => unknown): Disposable {
+  const previous = handlers[method];
+  handlers[method] = handler;
+  return {
+    [Symbol.dispose]: () => {
+      if (previous) handlers[method] = previous;
+      else delete handlers[method];
+    },
+  };
+}
 
 export async function emitTerminalMetadata(event: TerminalMetadataStreamEvent): Promise<void> {
   if (terminalMetadataSubscriber === null) throw new Error("No terminal metadata subscription");

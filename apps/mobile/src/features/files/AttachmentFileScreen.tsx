@@ -5,11 +5,13 @@ import {
   clampFileAttachmentUploadBytes,
   formatAttachmentSize,
 } from "@t3tools/client-runtime/state/attachments";
+import { msg, useGT } from "gt-react-native";
 import { useRef, useState } from "react";
 import { View } from "react-native";
 
 import { AppBar, type AppBarMenu } from "../../components/ui/AppBar";
-import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
+import { m } from "../../i18n/messages";
+import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { useAttachmentDocument } from "../../lib/attachmentDocument";
 import { nativeViewerErrorMessage } from "../../lib/attachmentDownload";
 import { isFileBackedComposerAttachment } from "../../lib/composerImages";
@@ -37,6 +39,7 @@ type AttachmentFileScreenProps = StaticScreenProps<AttachmentFileRouteParams>;
 
 export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const navigation = useNavigation();
+  const gt = useGT();
   const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const params = props.route.params;
   const environmentId = params.environmentId?.trim()
@@ -90,7 +93,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     const message = pendingNativeError.current;
     pendingNativeError.current = null;
     if (nativeViewer === null) {
-      if (message) Dialog.alert("Could not open document", message);
+      if (message) Dialog.alert(m(msg("Could not open document")), message);
       return;
     }
     if (message) {
@@ -111,7 +114,10 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "preview",
-          title: renderedMode === "table" ? "Table" : "Preview",
+          title:
+            renderedMode === "table"
+              ? gt("Table", { $context: "file view mode" })
+              : gt("Preview", { $context: "file view mode" }),
           icon: renderedMode === "table" ? "tablecells" : "eye",
           inline: true,
           onPress: () => setRendered(true),
@@ -120,7 +126,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     renderedMode
       ? ({
           id: "source",
-          title: "Source",
+          title: gt("Source", { $context: "file view mode, raw source text" }),
           icon: "doc.text",
           inline: true,
           onPress: () => setRendered(false),
@@ -129,7 +135,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content && activeMode === "source"
       ? ({
           id: "word-wrap",
-          title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+          title: appearance.codeWordBreak ? gt("Disable word wrap") : gt("Enable word wrap"),
           icon: "text.alignleft",
           inline: false,
           onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
@@ -138,7 +144,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     content
       ? ({
           id: "copy",
-          title: content.truncated ? "Copy preview" : "Copy contents",
+          title: content.truncated ? gt("Copy preview") : gt("Copy contents"),
           icon: "doc.on.doc",
           inline: false,
           onPress: () => copyTextWithHaptic(content.text),
@@ -147,7 +153,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "share",
-          title: sharing ? "Opening share sheet…" : "Save or share",
+          title: sharing ? gt("Opening share sheet…") : gt("Save or share"),
           icon: "square.and.arrow.up",
           inline: false,
           onPress: () => void share(),
@@ -156,7 +162,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     uri
       ? ({
           id: "open-viewer",
-          title: "Open in file viewer",
+          title: gt("Open in file viewer"),
           icon: "arrow.up.left.and.arrow.down.right",
           inline: false,
           onPress: () => {
@@ -168,7 +174,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     draftKey
       ? ({
           id: "remove",
-          title: "Remove from draft",
+          title: gt("Remove from draft"),
           icon: "trash",
           inline: false,
           destructive: true,
@@ -178,7 +184,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   ].filter((action) => action !== null);
   const selectedAction = activeMode === "source" ? "source" : "preview";
   const fileMenu: AppBarMenu = {
-    title: "File actions",
+    title: gt("File actions"),
     icon: "ellipsis",
     items: [
       ...(renderedMode
@@ -209,7 +215,14 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
         })),
     ],
   };
-  const subtitle = `${draftKey ? "Draft attachment" : "Attachment"}${sizeBytes > 0 ? ` · ${formatAttachmentSize(sizeBytes)}` : ""}`;
+  const subtitle =
+    sizeBytes > 0
+      ? draftKey
+        ? gt("Draft attachment · {size}", { size: formatAttachmentSize(sizeBytes) })
+        : gt("Attachment · {size}", { size: formatAttachmentSize(sizeBytes) })
+      : draftKey
+        ? gt("Draft attachment")
+        : gt("Attachment");
   const refresh = useRefreshAssetUrl(environmentId, resource);
   const capabilities = useEnvironmentServerConfig(environmentId)?.environment.capabilities;
 

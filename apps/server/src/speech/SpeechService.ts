@@ -1,6 +1,7 @@
 import {
   SPEECH_STREAM_MAX_CHUNK_BYTES,
   type EnvironmentSpeechModel,
+  type EnvironmentSpeechModelDownload,
   type EnvironmentSpeechStatus,
   type SpeechAcceleration,
   type SpeechModelUnloadTimeout,
@@ -134,10 +135,14 @@ export class SpeechService extends Context.Service<
   {
     readonly status: Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly models: (includeBenchmarks: boolean) => Effect.Effect<SpeechModels, SpeechError>;
-    readonly downloadModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    readonly downloadModel: (
+      modelId: string,
+    ) => Effect.Effect<Required<EnvironmentSpeechModelDownload>, SpeechError>;
     readonly selectModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly cancelDownload: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly removeModel: (modelId: string) => Effect.Effect<SpeechModels, SpeechError>;
+    /** Uses catalog model files already on this machine, from a file or folder path. */
+    readonly linkModels: (source: string) => Effect.Effect<SpeechModels, SpeechError>;
     readonly prepareModel: Effect.Effect<void, SpeechError>;
     readonly transcribe: (
       pcmBytes: Uint8Array,
@@ -452,6 +457,13 @@ const make = Effect.gen(function* () {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
     const definition = selectedModel(settings);
     const ready = yield* store.isReady(definition);
+    const gpuDevices = yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => []));
+    const autoUsesCpu =
+      gpuDevices.length === 0 ||
+      autoCpuModel === definition.id ||
+      (loadedModelId === definition.id &&
+        loadedAcceleration === "auto" &&
+        model?.backend.toLowerCase() === "cpu");
     return {
       supported: true,
       state: activeTranscriptions > 0 ? "transcribing" : ready ? "ready" : "missing-model",
@@ -460,12 +472,18 @@ const make = Effect.gen(function* () {
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
       supportsBufferedStreaming: true,
+      supportsModelLinking: true,
       supportsTranslation: definition.supportsTranslation,
       languages: definition.languages,
       supportsLanguageDetection: definition.supportsLanguageDetection,
       acceleration: settings.speechAcceleration,
+      benchmarkTier:
+        settings.speechAcceleration === "cpu" ||
+        (settings.speechAcceleration === "auto" && autoUsesCpu)
+          ? "cpu"
+          : "accelerated",
       modelUnloadTimeout: settings.speechModelUnloadTimeout,
-      gpuDevices: yield* discoverGpuDevices.pipe(Effect.orElseSucceed(() => [])),
+      gpuDevices,
     };
   });
 
@@ -477,8 +495,8 @@ const make = Effect.gen(function* () {
     const models = yield* Effect.forEach(
       SPEECH_MODELS,
       (definition) =>
-        store.isReady(definition).pipe(
-          Effect.map((ready): EnvironmentSpeechModel => {
+        Effect.all([store.isReady(definition), store.linkedFrom(definition)]).pipe(
+          Effect.map(([ready, linkedFrom]): EnvironmentSpeechModel => {
             const operation = downloading?.modelId === definition.id ? downloading : undefined;
             return {
               id: definition.id,
@@ -502,6 +520,7 @@ const make = Effect.gen(function* () {
                   ? "installed"
                   : "downloadable",
               ...(operation ? { downloaded: operation.downloaded } : {}),
+              ...(ready && linkedFrom ? { linkedFrom } : {}),
             };
           }),
         ),
@@ -566,8 +585,9 @@ const make = Effect.gen(function* () {
   const silenceModelPath = Effect.fn("SpeechService.silenceModelPath")(function* (
     loaded: LoadedModel,
     options: SpeechTranscriptionOptions,
+    nativeStreaming: boolean,
   ) {
-    if (!options.speechSilenceFiltering && (loaded.supportsStreaming || loaded.supportsLongForm))
+    if (!options.speechSilenceFiltering && (nativeStreaming || loaded.supportsLongForm))
       return undefined;
     return yield* acquireSilenceModel("recording");
   });
@@ -603,7 +623,7 @@ const make = Effect.gen(function* () {
                 ),
               catch: (cause) => speechError("model preparation", cause),
             });
-            const vadPath = yield* silenceModelPath(loaded, options);
+            const vadPath = yield* silenceModelPath(loaded, options, false);
             const dictionary = normalizeSpeechCustomWords(options.speechCustomWords);
             const customWords = dictionary.map(({ term }) => term);
             // The vocabulary capability guarantees plain transcription, not translation.
@@ -739,7 +759,7 @@ const make = Effect.gen(function* () {
       loadModel(modelPath, definition, signal, settings.speechAcceleration),
     );
     loaded = streamModel;
-    const vadPath = yield* silenceModelPath(streamModel, options);
+    const vadPath = yield* silenceModelPath(streamModel, options, streamModel.supportsStreaming);
     let translateToEnglish = false;
     const beginStream = async () => {
       translateToEnglish =
@@ -877,24 +897,25 @@ const make = Effect.gen(function* () {
         Effect.onError((cause) => Scope.close(session, Exit.failCause(cause))),
       );
     }),
-    downloadModel: Effect.fn("SpeechService.downloadModel")((modelId) =>
-      requireSupported.pipe(
-        Effect.andThen(download(modelId)),
-        Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.void }),
-        Effect.andThen(modelsEffect),
-      ),
-    ),
+    downloadModel: Effect.fn("SpeechService.downloadModel")(function* (modelId) {
+      yield* requireSupported;
+      const cancelled = yield* download(modelId).pipe(
+        Effect.as(false),
+        Effect.catchTags({ SpeechDownloadCancelledError: () => Effect.succeed(true) }),
+      );
+      return { ...(yield* modelsEffect), cancelled };
+    }),
     selectModel: Effect.fn("SpeechService.selectModel")((modelId) =>
       exclusive(
         "model selection",
-        attempt("model selection", async () => {
-          if (!getSpeechModel(modelId)) throw new SpeechModelNotFoundError({ modelId });
-          await disposeModel();
+        Effect.gen(function* () {
+          const definition = getSpeechModel(modelId);
+          if (!definition || !(yield* store.isReady(definition)))
+            return yield* new SpeechModelNotFoundError({ modelId });
+          yield* attempt("model selection", () => disposeModel());
+          yield* writeSettings("model selection", { speechModelId: modelId });
         }),
-      ).pipe(
-        Effect.andThen(writeSettings("model selection", { speechModelId: modelId })),
-        Effect.andThen(modelsEffect),
-      ),
+      ).pipe(Effect.andThen(modelsEffect)),
     ),
     cancelDownload: Effect.fn("SpeechService.cancelDownload")((modelId) =>
       Effect.suspend(() =>
@@ -904,41 +925,46 @@ const make = Effect.gen(function* () {
       ).pipe(Effect.andThen(modelsEffect)),
     ),
     removeModel: Effect.fn("SpeechService.removeModel")((modelId) =>
-      readSettings("model removal").pipe(
-        Effect.flatMap((settings) =>
-          exclusive(
-            "model removal",
-            Effect.gen(function* () {
-              const definition = getSpeechModel(modelId);
-              if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
-              yield* attempt("model removal", async () => {
-                await loading?.catch(() => undefined);
-                if (loadedModelId === modelId) await disposeModel();
-              });
-              yield* store
-                .remove(definition)
-                .pipe(Effect.mapError((cause) => speechError("model removal", cause)));
-              if (selectedModel(settings).id !== modelId) return undefined;
-              const candidates = yield* Effect.forEach(
-                SPEECH_MODELS.filter((candidate) => candidate.id !== modelId),
-                (candidate) =>
-                  store.isReady(candidate).pipe(Effect.map((ready) => ({ candidate, ready }))),
-                { concurrency: "unbounded" },
-              );
-              return candidates.find(({ ready }) => ready)?.candidate.id;
-            }),
-          ).pipe(
-            Effect.flatMap((replacementId) =>
-              replacementId
-                ? writeSettings("model removal", { speechModelId: replacementId }).pipe(
-                    Effect.andThen(modelsEffect),
-                  )
-                : modelsEffect,
-            ),
-          ),
-        ),
-      ),
+      exclusive(
+        "model removal",
+        Effect.gen(function* () {
+          const settings = yield* readSettings("model removal");
+          const definition = getSpeechModel(modelId);
+          if (!definition) return yield* new SpeechModelNotFoundError({ modelId });
+          yield* attempt("model removal", async () => {
+            await loading?.catch(() => undefined);
+            if (loadedModelId === modelId) await disposeModel();
+          });
+          yield* store
+            .remove(definition)
+            .pipe(Effect.mapError((cause) => speechError("model removal", cause)));
+          if (selectedModel(settings).id !== modelId) return;
+          const candidates = yield* Effect.forEach(
+            SPEECH_MODELS.filter((candidate) => candidate.id !== modelId),
+            (candidate) =>
+              store.isReady(candidate).pipe(Effect.map((ready) => ({ candidate, ready }))),
+            { concurrency: "unbounded" },
+          );
+          const replacement = candidates.find(({ ready }) => ready)?.candidate;
+          if (replacement) yield* writeSettings("model removal", { speechModelId: replacement.id });
+        }),
+      ).pipe(Effect.andThen(modelsEffect)),
     ),
+    linkModels: Effect.fn("SpeechService.linkModels")(function* (source) {
+      yield* requireSupported;
+      const settings = yield* readSettings("model linking");
+      const linked = yield* exclusive(
+        "model linking",
+        store
+          .link(SPEECH_MODELS, source)
+          .pipe(Effect.mapError((cause) => speechError("model linking", cause))),
+      );
+      const first = linked[0];
+      if (first === undefined) return yield* new SpeechModelNotFoundError({ modelId: source });
+      if (!(yield* store.isReady(selectedModel(settings))))
+        yield* writeSettings("model linking", { speechModelId: first });
+      return yield* modelsEffect;
+    }),
     updateAcceleration: Effect.fn("SpeechService.updateAcceleration")((acceleration) =>
       writeSettings("acceleration update", { speechAcceleration: acceleration }).pipe(
         Effect.andThen(freshStatus("acceleration update")),
