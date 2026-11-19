@@ -801,53 +801,10 @@ function codexReplayPreamble(input: {
   ];
 }
 
-/** Every turn/start follows a config/read; inserts that exchange and shifts later client ids. */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
-  const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
-  let offset = 0;
-  let clientIds = new Map<number, number>();
-  for (const entry of entries) {
-    const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
-    if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
-      result.push(entry);
-      continue;
-    }
-    if (entry.type === "expect_outbound" && typeof frame.method === "string") {
-      if (frame.method === "initialize") {
-        offset = 0;
-        clientIds = new Map();
-      }
-      if (frame.method === "turn/start") {
-        const id = frame.id + offset;
-        const params = Predicate.isObject(frame.params) ? frame.params : {};
-        result.push(
-          {
-            type: "expect_outbound",
-            label: "config/read",
-            frame: { id, method: "config/read", params: { cwd: params.cwd, includeLayers: false } },
-          },
-          {
-            type: "emit_inbound",
-            label: "config/read",
-            frame: { id, result: { config: {}, origins: {} } },
-          },
-        );
-        offset += 1;
-      }
-      clientIds.set(frame.id, frame.id + offset);
-      result.push(withReplayRequestId(entry, frame.id + offset));
-      continue;
-    }
-    const mapped = clientIds.get(frame.id);
-    result.push(
-      entry.type === "emit_inbound" && frame.method === undefined && mapped !== undefined
-        ? withReplayRequestId(entry, mapped)
-        : entry,
-    );
-  }
-  return result;
+  return CodexAdapterV2Testkit.withCodexConfigReads(entries, { turnStart: true });
 }
 
 function withConfigReads(
@@ -929,8 +886,8 @@ describe("CodexAdapterV2 process exit", () => {
                     Predicate.isObject(entry.frame) &&
                     "id" in entry.frame,
                 );
-                if (response?.type === "emit_inbound") {
-                  yield* emit(response.frame);
+                if (response?.type === "emit_inbound" && Predicate.isObject(response.frame)) {
+                  yield* emit({ ...response.frame, id: frame.id });
                 }
               }),
             ).pipe(Sink.ensuring(Deferred.succeed(outputEnded, undefined))),
@@ -2419,6 +2376,68 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         },
       ]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  // regression: #37334 codex_apps cannot sign in when models go to a custom endpoint
+  it.effect("turns off Codex apps for threads on a custom endpoint", () =>
+    Effect.gen(function* () {
+      const scenario = "custom-endpoint-apps";
+      const entries = codexReplayPreamble({
+        nativeThreadId: "custom-endpoint-thread",
+        nativeTurnId: "unused",
+        prompt: "unused",
+      })
+        .slice(0, 5)
+        .flatMap((entry): Array<CodexReplay.CodexAppServerReplayEntry> =>
+          entry.type === "expect_outbound" && entry.label === "thread/start"
+            ? [
+                {
+                  type: "expect_outbound",
+                  label: "config/read",
+                  frame: { id: 2, method: "config/read", params: { includeLayers: false } },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "config/read",
+                  frame: {
+                    id: 2,
+                    result: {
+                      config: { openai_base_url: "https://proxy.example/v1" },
+                      origins: {},
+                    },
+                  },
+                },
+                {
+                  ...entry,
+                  frame: {
+                    id: 3,
+                    method: "thread/start",
+                    params: {
+                      config: {
+                        ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                        "features.apps": false,
+                        "shell_environment_policy.set.T3CODE_THREAD_ID": `thread-${scenario}`,
+                      },
+                    },
+                  },
+                },
+              ]
+            : entry.type === "emit_inbound" && entry.label === "thread/start"
+              ? [withReplayRequestId(entry, 3)]
+              : [entry],
+        );
+      yield* makeCodexReplayHarness(makeCodexReplayTranscript({ scenario, entries }));
     }).pipe(
       Effect.scoped,
       Effect.provide(
@@ -4328,7 +4347,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           "cause.method",
           failAt === 4 ? "thread/unarchive" : "thread/resume",
         );
-        assert.nestedPropertyVal(error, "cause.requestId", String(failAt));
+        // The session's config/read before thread/resume shifts every later client id by one.
+        assert.nestedPropertyVal(error, "cause.requestId", String(failAt + 1));
         return;
       }
       const resumed = yield* resume;

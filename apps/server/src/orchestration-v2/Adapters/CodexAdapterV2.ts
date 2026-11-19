@@ -20,6 +20,7 @@ import { classifyCodexManagedError } from "../../provider/CodexManagedErrors.ts"
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
+  codexCustomEndpoint,
   codexDefaultReasoningEffortOverride,
 } from "../../provider/CodexProvider.ts";
 import {
@@ -1511,6 +1512,7 @@ function codexThreadRuntimeParams(input: {
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly customEndpoint: boolean;
 }): {
   readonly cwd?: string;
   readonly model?: string;
@@ -1530,6 +1532,8 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      // codex_apps signs in to ChatGPT's apps service, which fails when models go to a custom endpoint.
+      ...(input.customEndpoint ? { "features.apps": false } : {}),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
@@ -7513,6 +7517,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        // The provider snapshot has no endpoint until its first probe ends, so read it here.
+        // No cwd, matching the probe that sets that endpoint.
+        const cachedCustomEndpoint = yield* Effect.cached(
+          client.request("config/read", { includeLayers: false }).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.map((response) => codexCustomEndpoint(response.config) !== undefined),
+            Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(false))),
+          ),
+        );
+        const readCustomEndpoint = ensureInitialized.pipe(Effect.andThen(cachedCustomEndpoint));
+
         // Codex refuses to resume a session archived elsewhere until it is unarchived, and
         // one it is still unloading after thread/unsubscribe until it emits thread/closed.
         const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
@@ -7776,8 +7791,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) =>
           request.pipe(
             Effect.catchIf(isCodexThreadNotFoundError, () =>
-              readMcpSession(providerThread.appThreadId).pipe(
-                Effect.flatMap((mcpSession) =>
+              Effect.all([readMcpSession(providerThread.appThreadId), readCustomEndpoint]).pipe(
+                Effect.flatMap(([mcpSession, customEndpoint]) =>
                   resumeNativeThread(threadId, {
                     excludeTurns: true,
                     ...codexThreadRuntimeParams({
@@ -7785,6 +7800,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       mcpSession,
                       modelSelection: input.modelSelection,
                       runtimePolicy: input.runtimePolicy,
+                      customEndpoint,
                     }),
                   }),
                 ),
@@ -7948,14 +7964,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }),
           ensureThread: (threadInput) =>
             ensureInitialized.pipe(
-              Effect.andThen(mcpSessions.read(threadInput.threadId)),
-              Effect.flatMap((mcpSession) =>
+              Effect.andThen(
+                Effect.all([mcpSessions.read(threadInput.threadId), readCustomEndpoint]),
+              ),
+              Effect.flatMap(([mcpSession, customEndpoint]) =>
                 client.request("thread/start", {
                   ...codexThreadRuntimeParams({
                     threadId: threadInput.threadId,
                     mcpSession,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
+                    customEndpoint,
                   }),
                   // Codex tags the child's MCP calls with thread_source "subagent".
                   ...(IdAllocator.isDelegatedTaskThread(threadInput.threadId)
@@ -7997,6 +8016,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  customEndpoint: yield* readCustomEndpoint,
                 }),
               });
               const response = yield* ensureInitialized.pipe(
@@ -8862,6 +8882,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     mcpSession: yield* readMcpSession(threadInput.providerThread.appThreadId),
                     modelSelection: input.modelSelection,
                     runtimePolicy: input.runtimePolicy,
+                    customEndpoint: yield* readCustomEndpoint,
                   }),
                 });
               }
@@ -8916,6 +8937,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...(threadInput.runtimePolicy === undefined
                     ? {}
                     : { runtimePolicy: threadInput.runtimePolicy }),
+                  customEndpoint: yield* readCustomEndpoint,
                 }),
               });
               const response = yield* ensureInitialized.pipe(

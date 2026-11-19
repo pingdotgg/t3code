@@ -151,6 +151,86 @@ export function layer(input: {
   return layerRegistry;
 }
 
+const CODEX_THREAD_REQUEST_METHODS = new Set(["thread/start", "thread/resume", "thread/fork"]);
+
+/**
+ * A session's first thread request follows a config/read, and with `turnStart` so does every
+ * turn/start; inserts that exchange where a transcript lacks it and shifts later client ids.
+ */
+export function withCodexConfigReads(
+  entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
+  options: { readonly turnStart: boolean },
+): Array<CodexReplay.CodexAppServerReplayEntry> {
+  const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
+  let offset = 0;
+  let clientIds = new Map<number, number>();
+  let sessionConfigRead = false;
+  for (const entry of entries) {
+    const frame = entry.type === "runtime_exit" ? undefined : entry.frame;
+    if (!Predicate.isObject(frame) || typeof frame.id !== "number") {
+      result.push(entry);
+      continue;
+    }
+    if (entry.type === "expect_outbound" && typeof frame.method === "string") {
+      if (frame.method === "initialize") {
+        offset = 0;
+        clientIds = new Map();
+        sessionConfigRead = false;
+      }
+      const previous = result.at(-2);
+      const threadRequest = CODEX_THREAD_REQUEST_METHODS.has(frame.method);
+      if (
+        ((options.turnStart && frame.method === "turn/start") ||
+          (threadRequest && !sessionConfigRead)) &&
+        !(previous?.type === "expect_outbound" && previous.label === "config/read")
+      ) {
+        const id = frame.id + offset;
+        const params = Predicate.isObject(frame.params) ? frame.params : {};
+        result.push(
+          {
+            type: "expect_outbound",
+            label: "config/read",
+            frame: {
+              id,
+              method: "config/read",
+              params:
+                frame.method === "turn/start"
+                  ? { cwd: params.cwd, includeLayers: false }
+                  : { includeLayers: false },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "config/read",
+            frame: { id, result: { config: {}, origins: {} } },
+          },
+        );
+        offset += 1;
+      }
+      if (threadRequest) sessionConfigRead = true;
+      clientIds.set(frame.id, frame.id + offset);
+      result.push(withReplayRequestId(entry, frame.id + offset));
+      continue;
+    }
+    const mapped = clientIds.get(frame.id);
+    result.push(
+      entry.type === "emit_inbound" && frame.method === undefined && mapped !== undefined
+        ? withReplayRequestId(entry, mapped)
+        : entry,
+    );
+  }
+  return result;
+}
+
+function withReplayRequestId(
+  entry: CodexReplay.CodexAppServerReplayEntry,
+  id: number,
+): CodexReplay.CodexAppServerReplayEntry {
+  return entry.type !== "runtime_exit" && Predicate.isObject(entry.frame)
+    ? { ...entry, frame: { ...entry.frame, id } }
+    : entry;
+}
+
 const decodeCodexAppServerReplayTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
@@ -162,6 +242,10 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
   driver: CodexAdapterV2.CODEX_DRIVER_KIND,
   decodeTranscript: (transcript) =>
     decodeCodexAppServerReplayTranscript(transcript).pipe(
+      Effect.map((decoded) => ({
+        ...decoded,
+        entries: withCodexConfigReads(decoded.entries, { turnStart: false }),
+      })),
       Effect.mapError(
         (cause) =>
           new CodexReplayTranscriptDecodeError({

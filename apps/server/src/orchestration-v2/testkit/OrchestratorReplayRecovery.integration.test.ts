@@ -67,9 +67,6 @@ import {
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
 const SECOND_FINAL = "provider thread resume fixture second turn complete";
 
-const decodeCodexTranscript = Schema.decodeUnknownEffect(
-  CodexReplay.CodexAppServerReplayTranscript,
-);
 const readRawTranscript = Effect.fn("readRecoveryTranscript")(function* (file: URL) {
   return yield* readProviderReplayTranscript(file);
 });
@@ -77,7 +74,9 @@ const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (
   const transcript = yield* readRawTranscript(
     new URL("./fixtures/provider_thread_resume/codex_transcript.ndjson", import.meta.url),
   );
-  return yield* decodeCodexTranscript(materializeReplayTranscriptWorkspace(transcript, workspace));
+  return yield* CodexOrchestratorReplayHarness.decodeTranscript(
+    materializeReplayTranscriptWorkspace(transcript, workspace),
+  );
 });
 const decodePromptPair = Schema.decodeUnknownEffect(Schema.Tuple([Schema.String, Schema.String]));
 const readClaudeSubagentResumeTranscript = Effect.fn("readClaudeSubagentResumeTranscript")(
