@@ -210,7 +210,10 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export function codexTimeZone(
   environment: Readonly<Record<string, string | undefined>>,
 ): DateTime.TimeZone {
-  const zoneName = environment.TZ?.replace(/^:/u, "").replace(/^\/usr\/share\/zoneinfo\//u, "");
+  const zoneName = environment.TZ?.replace(/^:/u, "").replace(
+    /^\/usr\/share\/zoneinfo\/(?:posix\/)?/u,
+    "",
+  );
   return Option.getOrElse(DateTime.zoneMakeNamed(zoneName ?? ""), DateTime.zoneMakeLocal);
 }
 

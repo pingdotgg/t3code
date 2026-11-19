@@ -376,6 +376,9 @@ describe("codexTimeZone", () => {
     expect(
       DateTime.zoneToString(codexTimeZone({ TZ: "/usr/share/zoneinfo/America/Chicago" })),
     ).toBe("America/Chicago");
+    expect(
+      DateTime.zoneToString(codexTimeZone({ TZ: ":/usr/share/zoneinfo/posix/America/Chicago" })),
+    ).toBe("America/Chicago");
     expect(DateTime.zoneToString(codexTimeZone({ TZ: "not/a-zone" }))).toBe(local);
     expect(DateTime.zoneToString(codexTimeZone({}))).toBe(local);
   });
