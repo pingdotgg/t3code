@@ -329,15 +329,19 @@ export function createLinkedThreadSession(options: {
     }, delayMs);
   };
 
+  // Only the newest forward read applies: a retry can start one while another is still out.
+  let latestRead = 0;
+
   const readLatest = async () => {
     const run = generation;
+    const read = ++latestRead;
     cancelNext?.();
     cancelNext = null;
     const shown = state.transcript;
     const result = await options.read(
       shown === null ? {} : { afterPosition: linkedThreadRefreshCursor(shown) },
     );
-    if (run !== generation) return;
+    if (run !== generation || read !== latestRead) return;
     if (!result.ok) {
       update({ error: result.error });
       if (isLinkedThreadFailureRetryable(result.error)) scheduleNext(LINKED_THREAD_IDLE_POLL_MS);

@@ -315,6 +315,15 @@ describe("createLinkedThreadSession", () => {
     expect(pending().map((timer) => timer.delayMs)).toEqual([LINKED_THREAD_IDLE_POLL_MS]);
   });
 
+  it("ignores a read that a newer one overtook", async () => {
+    const { session, reads } = harness();
+    session.subscribe(() => {});
+    session.retry();
+    await reads[1]!.answer({ ok: true, page: page([item(4, "new")]) });
+    await reads[0]!.answer({ ok: true, page: page([item(4, "old")]) });
+    expect(session.getSnapshot().transcript?.items.map((entry) => entry.text)).toEqual(["new"]);
+  });
+
   it("pages back without losing what a refresh brought in meanwhile", async () => {
     const { session, reads, fire } = harness();
     session.subscribe(() => {});
