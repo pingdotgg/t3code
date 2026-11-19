@@ -89,7 +89,9 @@ const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
 );
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 
-const layerProjectService = Layer.mock(ProjectService.ProjectService)({});
+const layerProjectService = Layer.mock(ProjectService.ProjectService)({
+  getById: () => Effect.succeedSome({ id: projectId, workspaceRoot: "/workspace" } as never),
+});
 
 const codexSelection = {
   instanceId: codexInstanceId,
@@ -274,7 +276,7 @@ describe("orchestrator MCP toolkit", () => {
         Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
         Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
         Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-        Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+        Layer.provide(layerProjectService),
         Layer.provideMerge(
           SecretRequests.layer.pipe(
             Layer.provide(layerMemorySecretStore),

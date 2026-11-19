@@ -38,6 +38,7 @@ import * as PeerForwarding from "../../apps/server/src/peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../apps/server/src/peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../apps/server/src/peer/PeerLinks.ts";
 import * as RemoteDelegation from "../../apps/server/src/peer/RemoteDelegation.ts";
+import * as ProjectService from "../../apps/server/src/project/ProjectService.ts";
 import * as SqlitePersistence from "../../apps/server/src/persistence/Sqlite.ts";
 import * as ServerSettings from "../../apps/server/src/serverSettings.ts";
 
@@ -80,6 +81,7 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
                 providerThreads: [providerThread],
               } as unknown as OrchestrationV2ThreadProjection),
           }),
+          Layer.mock(ProjectService.ProjectService)({}),
           Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
             get: () => Effect.succeedSome(runtime),
           }),
