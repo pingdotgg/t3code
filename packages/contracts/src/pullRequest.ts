@@ -667,6 +667,8 @@ export const PullRequestDetail = Schema.Struct({
   updatedAt: IsoDateTime,
   observedAt: Schema.optional(Schema.Finite),
   mergedAt: Schema.NullOr(IsoDateTime),
+  mergeCommitSha: Schema.optional(TrimmedNonEmptyString),
+  mergedBy: Schema.optional(PullRequestActor),
   closedAt: Schema.NullOr(IsoDateTime),
   reviewers: Schema.Array(PullRequestActor),
   labels: Schema.Array(PullRequestLabel),
@@ -754,8 +756,8 @@ export const PullRequestDiffFileContentsInput = Schema.Struct({
   ...PullRequestRef.fields,
   commit: Schema.optional(TrimmedNonEmptyString),
   changeType: Schema.Literals(["change", "rename-pure", "rename-changed", "new", "deleted"]),
-  oldPath: TrimmedNonEmptyString,
-  newPath: TrimmedNonEmptyString,
+  oldPath: Schema.NonEmptyString,
+  newPath: Schema.NonEmptyString,
 });
 export type PullRequestDiffFileContentsInput = typeof PullRequestDiffFileContentsInput.Type;
 
@@ -834,6 +836,8 @@ export const PullRequestActionInput = Schema.Struct({
   /** Native stack scope; only send to environments advertising pullRequestStackActions. */
   stackNumber: Schema.optional(PositiveInt),
   expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),
+  /** Merges refuse when the head commit is no longer this one. */
+  expectedHeadSha: Schema.optional(TrimmedNonEmptyString),
   ...PullRequestRef.fields,
   action: PullRequestAction,
   mergeMethod: Schema.optional(PullRequestMergeMethod),
@@ -946,18 +950,24 @@ export const PullRequestReactionInput = Schema.Struct({
 });
 export type PullRequestReactionInput = typeof PullRequestReactionInput.Type;
 
+/** The most labels or reviewers one write may change. */
+export const PULL_REQUEST_CHANGE_BATCH_LIMIT = 25;
+
 export const PullRequestReviewerRequestInput = Schema.Struct({
   ...PullRequestRef.fields,
   reviewers: Schema.Array(
     Schema.Struct({ id: TrimmedNonEmptyString, kind: PullRequestReviewerKind }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT)),
   requested: Schema.Boolean,
 });
 export type PullRequestReviewerRequestInput = typeof PullRequestReviewerRequestInput.Type;
 
 export const PullRequestLabelChangeInput = Schema.Struct({
   ...PullRequestRef.fields,
-  labels: Schema.Array(TrimmedNonEmptyString).check(Schema.isMinLength(1), Schema.isMaxLength(25)),
+  labels: Schema.Array(TrimmedNonEmptyString).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(PULL_REQUEST_CHANGE_BATCH_LIMIT),
+  ),
   applied: Schema.Boolean,
 });
 export type PullRequestLabelChangeInput = typeof PullRequestLabelChangeInput.Type;

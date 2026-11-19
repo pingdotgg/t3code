@@ -59,7 +59,7 @@ export class GitHubNotSignedInError extends Schema.TaggedError<GitHubNotSignedIn
   override get message(): string {
     return this.account === undefined
       ? `No GitHub credential for ${this.host}: run \`gh auth login --hostname ${this.host}\`.`
-      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source Control.`;
+      : `No GitHub credential for ${this.account} on ${this.host}: run \`gh auth login --hostname ${this.host}\` for that account or pick another in Settings → Source control & issues.`;
   }
 }
 
@@ -68,7 +68,7 @@ export class GitHubHostDisabledError extends Schema.TaggedError<GitHubHostDisabl
   { host: Schema.String },
 ) {
   override get message(): string {
-    return `GitHub host ${this.host} is turned off in Settings → Source Control.`;
+    return `GitHub host ${this.host} is turned off in Settings → Source control & issues.`;
   }
 }
 
@@ -81,11 +81,21 @@ export class GitHubCliFailedError extends Schema.TaggedError<GitHubCliFailedErro
   }
 }
 
+export class GitHubCliTimeoutError extends Schema.TaggedError<GitHubCliTimeoutError>()(
+  "GitHubCliTimeoutError",
+  { host: Schema.String, timeoutMs: Schema.Number, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `The GitHub CLI did not hand over a credential for ${this.host} within ${this.timeoutMs / 1000} seconds. The server may be overloaded; try again.`;
+  }
+}
+
 export type GitHubCredentialUnavailableError =
   | GitHubCliMissingError
   | GitHubNotSignedInError
   | GitHubHostDisabledError
   | GitHubCliFailedError
+  | GitHubCliTimeoutError
   | SettingsSecretUnresolvedError;
 
 export class GitHubCredentials extends Context.Service<
@@ -177,7 +187,9 @@ export const make = Effect.gen(function* () {
             : // gh exits non-zero with "no oauth token" when it has no login for the host.
               error._tag === "VcsProcessExitError"
               ? new GitHubNotSignedInError({ host, ...(account === undefined ? {} : { account }) })
-              : new GitHubCliFailedError({ host, cause: error }),
+              : error._tag === "VcsProcessTimeoutError"
+                ? new GitHubCliTimeoutError({ host, timeoutMs: error.timeoutMs, cause: error })
+                : new GitHubCliFailedError({ host, cause: error }),
         ),
         Effect.map((output) => output.stdout.trim()),
         Effect.filterOrFail(
@@ -239,7 +251,10 @@ export const make = Effect.gen(function* () {
       Exit.isSuccess(exit)
         ? TOKEN_TTL
         : Exit.findErrorOption(exit).pipe(
-              Option.exists((error) => error._tag === "GitHubCliFailedError"),
+              Option.exists(
+                (error) =>
+                  error._tag === "GitHubCliFailedError" || error._tag === "GitHubCliTimeoutError",
+              ),
             )
           ? Duration.zero
           : MISSING_TTL,
