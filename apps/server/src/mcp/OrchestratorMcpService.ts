@@ -2519,7 +2519,7 @@ const make = Effect.gen(function* () {
       }
       const runId = run.id;
       const nodeId = run.rootNodeId;
-      const key = yield* requestKey(input.clientRequestId);
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
       const turnItemId = TurnItemId.make(
         `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
       );
