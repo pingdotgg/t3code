@@ -1003,13 +1003,17 @@ function buildThreadSettingsCatalogItems(
 
 function SettingSegments(props: {
   readonly label: string;
+  readonly trailing?: ReactNode;
   readonly choices: ReadonlyArray<{ readonly value: string | boolean; readonly label: string }>;
   readonly selected: string | boolean | undefined;
   readonly onChange: (value: string | boolean) => void;
 }) {
   return (
     <View className="gap-1.5">
-      <Text className="text-sm text-foreground-muted">{props.label}</Text>
+      <View className="flex-row items-center justify-between gap-2">
+        <Text className="text-sm text-foreground-muted">{props.label}</Text>
+        {props.trailing}
+      </View>
       <View className="min-h-11 flex-row gap-1 rounded-xl border border-border-subtle bg-subtle p-1">
         {props.choices.map((choice) => {
           const selected = choice.value === props.selected;
@@ -1063,6 +1067,10 @@ function ThreadSettingsOptionsItem(props: {
     session.displayedDescriptors.find(
       (entry) => entry.id === "fastMode" && entry.type === "boolean",
     );
+  const ultracode =
+    session.displayedDescriptors.find(
+      (entry) => entry.id === "ultracode" && entry.type === "boolean",
+    ) ?? null;
   const speedChoices =
     speed?.type === "select"
       ? selectableChoices(speed).map((choice) => ({
@@ -1087,8 +1095,39 @@ function ThreadSettingsOptionsItem(props: {
       session.displayedModelSelection,
       session.reportedModelSelection,
     );
+  const ultracodeActive = ultracode ? currentValue(ultracode) === true : false;
+  const ultracodeToggle = ultracode ? (
+    <Pressable
+      accessibilityLabel={ultracode.label}
+      accessibilityRole="switch"
+      accessibilityState={{ checked: ultracodeActive }}
+      hitSlop={6}
+      className={cn(
+        "min-h-8 flex-row items-center gap-1.5 rounded-lg border px-2.5 py-1 active:opacity-70",
+        ultracodeActive ? "border-border bg-grouped-card" : "border-border-subtle bg-subtle",
+      )}
+      onPress={() => {
+        void Haptics.selectionAsync();
+        session.applyOptionChange(ultracode.id, !ultracodeActive);
+      }}
+    >
+      <SymbolView
+        name="flowchart"
+        size={13}
+        tintColorClassName={ultracodeActive ? "accent-foreground" : "accent-foreground-muted"}
+      />
+      <Text
+        className={cn(
+          "text-xs font-t3-medium",
+          ultracodeActive ? "text-foreground" : "text-foreground-muted",
+        )}
+      >
+        {ultracode.label}
+      </Text>
+    </Pressable>
+  ) : null;
   const extraOptions = session.displayedDescriptors.filter(
-    (entry) => entry.id !== reasoning?.id && entry.id !== speed?.id,
+    (entry) => entry.id !== reasoning?.id && entry.id !== speed?.id && entry.id !== ultracode?.id,
   );
 
   return (
@@ -1165,6 +1204,7 @@ function ThreadSettingsOptionsItem(props: {
       {reasoning ? (
         <SettingSegments
           label={gt("Reasoning")}
+          trailing={ultracodeToggle}
           choices={(session.promptTraits.ultrathinkPromptControlled
             ? reasoning.options.filter(
                 (choice) =>
@@ -1192,6 +1232,8 @@ function ThreadSettingsOptionsItem(props: {
             session.applyOptionChange(reasoning.id, value);
           }}
         />
+      ) : ultracodeToggle ? (
+        <View className="flex-row items-center">{ultracodeToggle}</View>
       ) : null}
     </View>
   );
