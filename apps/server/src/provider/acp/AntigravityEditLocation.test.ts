@@ -147,7 +147,13 @@ describe("antigravityEditPatch", () => {
       antigravityEditPatch({ path, rawInput: swapped, readPreEditFile: () => written });
     expect(swap("h\na\nb\nb\nf\n")).toMatch(/^@@ -2,2 \+2,2 @@$/m);
     expect(swap("h\nb\na\nb\nf\n")).toMatch(/ snippet, line unknown$/m);
-    // A replacement inside the target, as in a delete, is not a written edit.
+    // Deleting a leading line from line 3 leaves the target matching at line 2 after the write.
+    const trimmed = { Target: "drop\nkeep\n", Replacement: "keep\n" };
+    for (const written of ["header\ndrop\ndrop\nkeep\nfooter\n", "header\ndrop\nkeep\nfooter\n"])
+      expect(
+        antigravityEditPatch({ path, rawInput: trimmed, readPreEditFile: () => written }),
+      ).toMatch(/ snippet, line unknown$/m);
+    // A replacement that starts the target, as in a delete, is not a written edit.
     expect(
       antigravityEditPatch({
         path,

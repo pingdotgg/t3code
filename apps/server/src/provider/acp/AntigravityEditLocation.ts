@@ -108,7 +108,7 @@ function uniqueWholeLineMatch(
   return found?.whole === true ? { line: found.line, index: found.index } : undefined;
 }
 
-/** True when an occurrence of `other` overlaps `text[start, start + length)` and reaches outside it. */
+/** True when an occurrence of `other` overlaps `text[start, start + length)` other than as its prefix. */
 function straddlesSnippet(text: string, start: number, length: number, other: string): boolean {
   const end = start + length;
   for (
@@ -116,7 +116,7 @@ function straddlesSnippet(text: string, start: number, length: number, other: st
     index !== -1 && index < end;
     index = text.indexOf(other, index + 1)
   )
-    if (index < start || index + other.length > end) return true;
+    if (index !== start || index + other.length > end) return true;
   return false;
 }
 
@@ -199,8 +199,8 @@ export function antigravityEditPatch(input: {
       const target = chunk.TargetContent.replaceAll("\r\n", "\n");
       const replacement = chunk.ReplacementContent.replaceAll("\r\n", "\n");
       const match = uniqueWholeLineMatch(file, target, chunk.StartLine, chunk.EndLine);
-      // The runtime may write before T3 reads the file. A target overlapped by a written
-      // replacement that reaches past it could be either state, so it stays unplaced.
+      // The runtime may write before T3 reads the file. A target overlapped by a replacement
+      // other than as its prefix could be either state, so it stays unplaced.
       if (
         match !== undefined &&
         file !== undefined &&
