@@ -12,7 +12,8 @@ const RUNBOOK_URL =
 
 const LINK_ROUTE = `"/v1/client/environment-links"`;
 const TUNNEL_ROUTES = `"/v1/environments/:environmentId/tunnel", "/v1/environments/:environmentId/tunnel/recovery"`;
-const CLOUDFLARE_API = `['attributes.url.full'] startswith "https://api.cloudflare.com"`;
+// The Cloudflare SDK client spans record the host but not the full URL.
+const CLOUDFLARE_API = `['attributes.server.address'] == "api.cloudflare.com"`;
 const STATUS = `toint(['attributes.http.response.status_code'])`;
 // The tunnel reaper records its counters on this span every five minutes,
 // including while cleanup is off.
@@ -227,6 +228,11 @@ const relayDashboardCharts = (dataset: string): ReadonlyArray<QueryChart> => {
   const tunnelRequests = `${source}\n| where kind == "server" and ['attributes.http.request.method'] == "POST" and ['attributes.http.route'] in (${TUNNEL_ROUTES})`;
   const clientConnections = `${source}\n| where name == "relay.connection.attempt" and error != true\n| extend surface = tostring(['resource.custom']['t3.client.surface'])\n| where isnotempty(surface)`;
   return [
+    timeSeries(
+      "traffic",
+      "Requests and agent activity publishes",
+      `${source}\n| where kind == "server" or name == "relay.agent_activity_publisher.publish"\n| summarize requests = countif(kind == "server"), publishes = countif(name == "relay.agent_activity_publisher.publish") by bin_auto(_time)`,
+    ),
     timeSeries(
       "links",
       "Links by outcome",
