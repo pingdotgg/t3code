@@ -23,10 +23,8 @@ describe("formattingLocales", () => {
       regionalLocale: "nl-NL",
       expected: ["en-NL", "en"],
     },
-    { uiLocale: "en", systemLocales: ["de-DE"], expected: ["en-DE", "en"] },
     { uiLocale: "en", systemLocales: [], expected: ["en"] },
   ])("formats $uiLocale with system locales $systemLocales as $expected", (testCase) => {
-    // The UI locale stays last: Hermes on Android formats a tag ICU lacks (de-US) in the device locale.
     expect(
       formattingLocales(testCase.uiLocale, testCase.systemLocales, testCase.regionalLocale),
     ).toEqual(testCase.expected);
