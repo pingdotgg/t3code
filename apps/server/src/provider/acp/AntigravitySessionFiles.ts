@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { protoFields } from "./AntigravityChildWork.ts";
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
 
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
@@ -22,39 +23,6 @@ const TRAJECTORY_WORKSPACE_URIS = 7;
 const MAX_METADATA_BLOB_BYTES = 1024 * 1024;
 
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
-
-/** Length-delimited protobuf fields only; varints and fixed values are skipped. */
-function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
-  const fields: Array<readonly [number, Uint8Array]> = [];
-  let offset = 0;
-  const varint = () => {
-    let value = 0;
-    for (let shift = 0; shift < 64; shift += 7) {
-      const byte = bytes[offset++];
-      if (byte === undefined) throw new Error("Truncated varint");
-      value += (byte & 0x7f) * 2 ** shift;
-      if (byte < 0x80) return value;
-    }
-    throw new Error("Overlong varint");
-  };
-  while (offset < bytes.length) {
-    const key = varint();
-    const wire = key % 8;
-    const field = Math.floor(key / 8);
-    if (field === 0) throw new Error("Invalid protobuf field");
-    if (wire === 0) varint();
-    else if (wire === 1) offset += 8;
-    else if (wire === 5) offset += 4;
-    else if (wire === 2) {
-      const length = varint();
-      if (offset + length > bytes.length) throw new Error("Truncated field");
-      fields.push([field, bytes.subarray(offset, offset + length)]);
-      offset += length;
-    } else throw new Error("Unsupported wire type");
-  }
-  if (offset > bytes.length) throw new Error("Truncated field");
-  return fields;
-}
 
 function decodeTrajectoryOwnership(blob: Uint8Array):
   | {
@@ -134,24 +102,17 @@ async function readDatabaseWorkspacePaths(
   }
 }
 
-const canonicalPath = Effect.fnUntraced(function* (
+// The runtime may store the resolved path (macOS `/var` -> `/private/var`) or another drive-letter case.
+const pathKey = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   target: string,
 ) {
-  const resolved = path.resolve(target);
-  const direct = yield* fs.realPath(resolved).pipe(Effect.orElseSucceed(() => undefined));
-  if (direct !== undefined) return direct;
-  const parent = yield* fs
-    .realPath(path.dirname(resolved))
-    .pipe(Effect.orElseSucceed(() => undefined));
-  return parent === undefined ? undefined : path.join(parent, path.basename(resolved));
-});
-
-const normalizePathKey = (path: Path.Path, value: string) => {
-  const resolved = path.resolve(value);
+  const resolved = yield* fs
+    .realPath(target)
+    .pipe(Effect.orElseSucceed(() => path.resolve(target)));
   return path.sep === "\\" ? resolved.toLowerCase() : resolved;
-};
+});
 
 /** Call after the process closes. The unique temporary cwd proves which session we own. */
 export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySessionFiles")(
@@ -184,19 +145,9 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
       if (workspacePaths === undefined || workspacePaths.length === 0) {
         return;
       }
-      const cwdKeys = new Set([normalizePathKey(path, input.cwd)]);
-      const canonicalCwd = yield* canonicalPath(fs, path, input.cwd);
-      if (canonicalCwd !== undefined) {
-        cwdKeys.add(normalizePathKey(path, canonicalCwd));
-      }
+      const cwdKey = yield* pathKey(fs, path, input.cwd);
       for (const workspacePath of workspacePaths) {
-        const directMatch = cwdKeys.has(normalizePathKey(path, workspacePath));
-        if (directMatch) continue;
-        const canonicalWorkspace = yield* canonicalPath(fs, path, workspacePath);
-        if (
-          canonicalWorkspace === undefined ||
-          !cwdKeys.has(normalizePathKey(path, canonicalWorkspace))
-        ) {
+        if ((yield* pathKey(fs, path, workspacePath)) !== cwdKey) {
           return;
         }
       }

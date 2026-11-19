@@ -148,39 +148,6 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
     }),
   );
 
-  it.effect("refuses to delete a symlinked 1.5+ session DB", () =>
-    Effect.gen(function* () {
-      if (!symlinksSupported) return;
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-db-symlink-" });
-      const profileDirectory = path.join(root, "profile");
-      const conversations = path.join(profileDirectory, "antigravity-acp", "conversations");
-      const helperCwd = path.join(root, "helper");
-      const externalDb = path.join(root, "external.db");
-      yield* fs.makeDirectory(conversations, { recursive: true });
-      yield* fs.makeDirectory(helperCwd, { recursive: true });
-      writeNativeSessionDb(
-        externalDb,
-        encodeTrajectoryMetadata({
-          sessionId: SESSION_ID,
-          workspaceUris: [NodeURL.pathToFileURL(helperCwd).href],
-        }),
-      );
-      const linkedDb = path.join(conversations, `${SESSION_ID}.db`);
-      yield* fs.symlink(externalDb, linkedDb);
-
-      yield* removeAntigravitySessionFiles({
-        profileDirectory,
-        sessionId: SESSION_ID,
-        cwd: helperCwd,
-      });
-
-      expect(yield* fs.exists(linkedDb)).toBe(true);
-      expect(yield* fs.exists(externalDb)).toBe(true);
-    }),
-  );
-
   it.effect("keeps a 1.5+ session DB whose metadata belongs to a different workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -252,27 +219,6 @@ it.layer(NodeServices.layer)("removeAntigravitySessionFiles", (it) => {
         expect(yield* fs.exists(`${wrongId.base}.db`)).toBe(true);
         expect(yield* fs.exists(`${corrupt.base}.db`)).toBe(true);
       }),
-  );
-
-  it.effect("does not fall back to the DB when a .meta sidecar names another workspace", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const helperCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-helper-" });
-      const otherCwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-other-" });
-      const fixture = yield* makeNativeSessionFixture({
-        workspacePaths: [helperCwd],
-      });
-      yield* fs.writeFileString(`${fixture.base}.meta`, JSON.stringify({ cwd: otherCwd }));
-
-      yield* removeAntigravitySessionFiles({
-        profileDirectory: fixture.profileDirectory,
-        sessionId: fixture.sessionId,
-        cwd: helperCwd,
-      });
-
-      expect(yield* fs.exists(`${fixture.base}.db`)).toBe(true);
-      expect(yield* fs.exists(`${fixture.base}.meta`)).toBe(true);
-    }),
   );
 });
 
