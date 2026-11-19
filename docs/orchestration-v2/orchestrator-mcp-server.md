@@ -356,9 +356,9 @@ to the broadest mode it offers. `create_threads` remains the batch option for a
 shared checkout.
 
 Set `clientRequestId` on the initial launch to make it retryable. After an error
-or a lost reply, resend the same request with the same key in the same MCP
-session. This reuses any thread already created by that request. If the initial
-request had no key, check for the thread before launching again.
+or a lost reply, resend the same request with the same key from the same
+provider session. This reuses any thread already created by that request. If the
+initial request had no key, check for the thread before launching again.
 
 ### `t3_thread_list`
 
