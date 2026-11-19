@@ -397,6 +397,25 @@ const advertisedModel = (provider: ServerProvider, model: string) =>
     candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
   );
 
+// Antigravity settings can retain the native ID with the thinking level appended.
+function antigravityDelegationTarget(provider: ServerProvider, model: string) {
+  if (provider.driver !== "antigravity" || advertisedModel(provider, model)) return;
+  const separator = model.lastIndexOf("-");
+  if (separator === -1) return;
+  const family = model.slice(0, separator);
+  const value = model.slice(separator + 1);
+  const thinking = provider.models
+    .find((candidate) => candidate.slug === family)
+    ?.capabilities?.optionDescriptors?.find(
+      (descriptor) =>
+        descriptor.type === "select" &&
+        (descriptor.role === "reasoning" || descriptor.id === "thought_level"),
+    );
+  if (thinking?.type === "select" && thinking.options.some((choice) => choice.id === value)) {
+    return { model: family, thinking: { id: thinking.id, value } };
+  }
+}
+
 /** A folder's own provider config can add models that only its workspace snapshot lists. */
 export const withWorkspaceModels = (
   providers: ReadonlyArray<ServerProvider>,
@@ -1611,6 +1630,7 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    readonly allowAntigravityThinkingSuffix?: boolean;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
   }): Effect.fn.Return<ResolvedTarget, OrchestratorMcpFailure> {
@@ -1690,7 +1710,12 @@ const make = Effect.gen(function* () {
 
     const inheritedSelection = input.parent.thread.modelSelection;
     const requestedModel = input.target?.model;
+    const antigravityTarget =
+      input.allowAntigravityThinkingSuffix && requestedModel !== undefined
+        ? antigravityDelegationTarget(provider, requestedModel)
+        : undefined;
     const model =
+      antigravityTarget?.model ??
       requestedModel ??
       (instanceId === inheritedSelection.instanceId
         ? inheritedSelection.model
@@ -1701,7 +1726,7 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, model);
     const advertised = advertisedModel(provider, model);
     const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
@@ -1725,14 +1750,17 @@ const make = Effect.gen(function* () {
           descriptors,
         )
       : undefined;
-    if (requestedOptions !== undefined) {
+    if (requestedOptions !== undefined || antigravityTarget !== undefined) {
       const selections = new Map(
-        (requestedOptions.length === 0 ? [] : (options ?? [])).map((selection) => [
+        (requestedOptions?.length === 0 ? [] : (options ?? [])).map((selection) => [
           selection.id,
           selection,
         ]),
       );
-      for (const selection of requestedOptions) {
+      if (antigravityTarget !== undefined && requestedOptions?.length !== 0) {
+        selections.set(antigravityTarget.thinking.id, antigravityTarget.thinking);
+      }
+      for (const selection of requestedOptions ?? []) {
         selections.set(selection.id, selection);
       }
       options = [...selections.values()];
@@ -2802,6 +2830,7 @@ const make = Effect.gen(function* () {
         providers,
         cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
+        allowAntigravityThinkingSuffix: true,
       });
       const runtimeMode = yield* resolveRuntimeMode(
         parent.thread.runtimeMode,

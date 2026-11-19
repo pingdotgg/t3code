@@ -4361,6 +4361,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     () =>
       Effect.gen(function* () {
         const peerId = ProviderInstanceId.make("codex-subscription-2");
+        const antigravityId = ProviderInstanceId.make("antigravity");
         const driver = ProviderDriverKind.make("codex");
         const inherited = {
           instanceId: codexInstanceId,
@@ -4407,6 +4408,55 @@ describe("OrchestratorMcpService provider resolution", () => {
             name: "change provider with override",
             target: { providerInstanceId: peerId, options: { reasoningEffort: "max" } },
             expected: { instanceId: peerId, model: inherited.model, options: override },
+          },
+          {
+            name: "Antigravity model and explicit thinking level",
+            target: {
+              providerInstanceId: antigravityId,
+              model: "gemini-4-neon",
+              options: { thought_level: "high" },
+            },
+            expected: {
+              instanceId: antigravityId,
+              model: "gemini-4-neon",
+              options: [{ id: "thought_level", value: "high" }],
+            },
+          },
+          {
+            name: "Antigravity model with a thinking suffix",
+            target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high" },
+            expected: {
+              instanceId: antigravityId,
+              model: "gemini-4-neon",
+              options: [{ id: "thought_level", value: "high" }],
+            },
+          },
+          ...([[], {}] as const).map((options, index) => ({
+            name: `clear Antigravity suffix options with ${index === 0 ? "array" : "object"}`,
+            target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high", options },
+            expected: { instanceId: antigravityId, model: "gemini-4-neon", options: [] },
+          })),
+          {
+            name: "Antigravity native thinking option",
+            target: { providerInstanceId: antigravityId, model: "gemini-4-argon-high" },
+            expected: {
+              instanceId: antigravityId,
+              model: "gemini-4-argon",
+              options: [{ id: "thinking_level", value: "high" }],
+            },
+          },
+          {
+            name: "explicit Antigravity thinking overrides the suffix",
+            target: {
+              providerInstanceId: antigravityId,
+              model: "gemini-4-argon-high",
+              options: { thinking_level: "medium" },
+            },
+            expected: {
+              instanceId: antigravityId,
+              model: "gemini-4-argon",
+              options: [{ id: "thinking_level", value: "medium" }],
+            },
           },
           {
             name: "old Ultracode effort level",
@@ -4495,8 +4545,36 @@ describe("OrchestratorMcpService provider resolution", () => {
                 ],
               },
               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+              {
+                ...providerSnapshot({
+                  instanceId: antigravityId,
+                  driver: ProviderDriverKind.make("antigravity"),
+                }),
+                models: [
+                  { slug: "gemini-4-neon", id: "thought_level" },
+                  { slug: "gemini-4-argon", id: "thinking_level", role: "reasoning" as const },
+                ].map(({ slug, id, role }) => ({
+                  slug,
+                  name: slug,
+                  isCustom: false,
+                  capabilities: {
+                    optionDescriptors: [
+                      {
+                        id,
+                        ...(role === undefined ? {} : { role }),
+                        label: "Thinking",
+                        type: "select",
+                        options: [
+                          { id: "medium", label: "Medium" },
+                          { id: "high", label: "High" },
+                        ],
+                      },
+                    ],
+                  },
+                })),
+              },
             ]),
-            adapterRegistryLayer([codexInstanceId, peerId]),
+            adapterRegistryLayer([codexInstanceId, peerId, antigravityId]),
             Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
