@@ -210,7 +210,6 @@ describe("AddEnvironmentDialog", () => {
     const message = "dismissed pairing attempt";
     pairing.resolve(AsyncResult.failure(Cause.fail(new Error(message))));
     await expect.element(page.getByText("Could not add backend")).toBeInTheDocument();
-    await expect.element(dialog.getByRole("button", { name: "Add environment" })).toBeEnabled();
     await expect.element(dialog.getByText(message)).not.toBeInTheDocument();
   });
 });

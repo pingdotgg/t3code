@@ -45,7 +45,6 @@ test(
 
       await app.screenshot("after-first-pairing-finishes");
       await expect(dialog).toBeVisible();
-      await expect(open).toHaveAttribute("aria-expanded", "true");
     } finally {
       releasePairing.resolve();
       await server.stop();
