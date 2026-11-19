@@ -131,6 +131,11 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
         yield* step("same", { returns: Schema.Void, ...once }, Effect.void);
       }),
     ),
+    ...[1, 2].map((version) =>
+      workflow("versioned", { version, payload: Schema.Struct({}), returns: Schema.Number }, () =>
+        Effect.succeed(version),
+      ),
+    ),
   ];
 };
 
@@ -699,6 +704,7 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
   Effect.gen(function* () {
     const looked = yield* Deferred.make<void>();
     const opened = yield* Deferred.make<void>();
+    const checked = yield* Deferred.make<void>();
     // Holds the signal between finding no wait and buffering, while the wait opens and finds no mail.
     const store = Layer.effect(
       WorkflowStore.WorkflowStore,
@@ -713,6 +719,10 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
               first = false;
               return Effect.andThen(Deferred.succeed(looked, undefined), Deferred.await(opened));
             }),
+          mailNext: (addresses) =>
+            Effect.tap(real.mailNext(addresses), (mail) =>
+              mail === undefined && !first ? Deferred.succeed(checked, undefined) : Effect.void,
+            ),
         });
       }),
     );
@@ -729,7 +739,8 @@ it.effect("a signal buffered as its wait opens is still delivered to that wait",
           { change: "c9" },
           { idempotencyKey: "c9" },
         );
-        yield* workflows.waitFor(runId, atVerdict);
+        // Released once the open wait has looked for mail and found none.
+        yield* Deferred.await(checked);
         yield* Deferred.succeed(opened, undefined);
         assert.equal(yield* Fiber.join(sent), "delivered");
         const done = yield* workflows.waitFor(runId, status("completed"));
@@ -839,6 +850,10 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
           .start("twice", {}, { idempotencyKey: "t2", version: 2 })
           .pipe(Effect.flip);
         assert.equal(unknownVersion.message, "Version 2 of workflow twice is not registered.");
+        const older = yield* workflows.start("versioned", {}, { idempotencyKey: "v1", version: 1 });
+        const latest = yield* workflows.start("versioned", {}, { idempotencyKey: "v2" });
+        assert.equal((yield* workflows.waitFor(older.runId, status("completed"))).result, 1);
+        assert.equal((yield* workflows.waitFor(latest.runId, status("completed"))).result, 2);
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
