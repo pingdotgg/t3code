@@ -14,7 +14,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
-import { outputSchemaProblem } from "../../../orchestration-v2/runOutput.ts";
+import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -185,7 +185,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
         const schemaProblem =
-          input.outputSchema === undefined ? null : outputSchemaProblem(input.outputSchema);
+          input.outputSchema === undefined
+            ? null
+            : outputRequestProblem(input.outputSchema, {
+                text: input.message ?? "",
+                attachments: input.attachments,
+              });
         if (schemaProblem !== null || (input.outputSchema !== undefined && !input.message))
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",

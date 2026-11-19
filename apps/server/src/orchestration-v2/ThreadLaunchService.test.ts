@@ -632,7 +632,12 @@ it.effect("a run asked for a result stores what its agent submits once it fits t
 
     const rejected = yield* submit("command:output:bad", '{"verdict":"maybe"}').pipe(Effect.flip);
     assert.equal(rejected._tag, "ThreadManagementRunOutputRejectedError");
-    assert.include(rejected.message, "verdict");
+    // What did not fit is kept as the cause, for the agent that wrote it and nobody's logs.
+    assert.equal(rejected.message, "The result does not match the schema.");
+    assert.include(
+      String((rejected as { cause?: { message?: string } }).cause?.message),
+      "verdict",
+    );
     const unparsed = yield* submit("command:output:text", "merge").pipe(Effect.flip);
     assert.include(unparsed.message, "not valid JSON");
 

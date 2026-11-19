@@ -635,7 +635,13 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
     if (after.sent) return outcome;
     if (!waited.timedOut) {
       if (result !== undefined && after.later.some((run) => run.runId === result.runId)) {
-        return { type: "ended", runId: result.runId, status: result.status } satisfies WaitOutcome;
+        // A run that work woke was not asked for the result; the run before it holds it.
+        return {
+          type: "ended",
+          runId: result.runId,
+          status: result.status,
+          ...(outcome.output === undefined ? {} : { output: outcome.output }),
+        } satisfies WaitOutcome;
       }
       if (!workOutlivedRun) return outcome;
       if (after.later.some((run) => !TERMINAL_RUN_STATUSES.has(run.status))) continue;

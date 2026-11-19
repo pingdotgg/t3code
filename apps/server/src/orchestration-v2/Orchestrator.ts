@@ -9031,6 +9031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { usageLimitContinuationOfRunId: command.usageLimitContinuationOfRunId }),
       ...(continuedTaskId === undefined ? {} : { delegatedTaskId: continuedTaskId }),
       ...wakeWorkStartedAt(projection, command),
+      ...output,
     };
     const attempt: OrchestrationV2RunAttempt = {
       id: attemptId,
@@ -11810,6 +11811,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandId: command.commandId,
         commandType: command.type,
         cause: `Run ${command.runId} was not asked for a result.`,
+      });
+    }
+    // The service picks the active run, but the run can end before this command is its turn.
+    if (!isActiveRun(run)) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Run ${command.runId} is ${run.status} and takes no result.`,
       });
     }
     const now = yield* DateTime.now;

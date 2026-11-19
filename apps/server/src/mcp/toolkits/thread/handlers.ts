@@ -295,7 +295,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         .pipe(
           Effect.mapError((error) =>
             error._tag === "ThreadManagementRunOutputRejectedError"
-              ? new OrchestratorMcpFailure({ code: "invalid_request", message: error.message })
+              ? new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  // The agent wrote the value, so it is told what in it did not fit.
+                  message:
+                    error.cause instanceof Error
+                      ? `${error.message}\n${error.cause.message.slice(0, 2000)}`
+                      : error.message,
+                })
               : unavailable(),
           ),
         );
