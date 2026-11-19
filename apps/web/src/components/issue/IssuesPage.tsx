@@ -232,7 +232,7 @@ export function IssuesPage() {
     () => {
       if (!list.isPending) list.reload();
     },
-    // The tab owns the refresh timer. Each filter's query handles its own freshness.
+    // One key for the page: a key per filter set would keep an entry for every search typed.
     { key: "issues-list" },
   );
 
