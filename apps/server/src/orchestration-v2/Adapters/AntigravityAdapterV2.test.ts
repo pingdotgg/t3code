@@ -98,6 +98,20 @@ describe("AntigravityAdapterV2 flavor", () => {
     });
     assert.equal(launch?.title, "Readme Reader");
     assert.equal(launch?.prompt, "Read README.md");
+
+    // agy 1.5.x auto-approves one subagent per call with a flat input.
+    const single = flavor.extractSubagentUpdate?.({
+      toolCallId: "call_16976942396429577770",
+      title: "Run invoke_subagent",
+      kind: "other",
+      status: "completed",
+      data: {
+        rawInput: { TypeName: "research", Role: "Codebase Researcher", Prompt: "Read README.md" },
+      },
+    });
+    assert.equal(single?.status, "running");
+    assert.equal(single?.title, "Codebase Researcher");
+    assert.equal(single?.prompt, "Read README.md");
   });
 
   it("routes interaction_* permission requests to the question card", () => {
