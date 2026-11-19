@@ -244,11 +244,11 @@ export interface EffectOutboxV2Shape {
     readonly workerId: string;
     readonly excludeRestartContinuations?: boolean;
     readonly maxRunningTitleGenerations?: number;
-    readonly maxStartingRestartContinuations?: number;
+    readonly maxActiveRestartContinuations?: number;
   }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
   readonly nextClaimableAt: (input?: {
     readonly maxRunningTitleGenerations?: number;
-    readonly maxStartingRestartContinuations?: number;
+    readonly maxActiveRestartContinuations?: number;
   }) => Effect.Effect<Option.Option<DateTime.Utc>, EffectOutboxError>;
   readonly succeed: (input: {
     readonly effectId: string;
@@ -334,30 +334,33 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         available,
         Array.from({ length: Math.min(64, Math.max(0, Math.floor(count))) }, () => undefined),
       ).pipe(Effect.asVoid);
-    // A continuation stays starting until its run's provider-turn.start settles.
-    const restartContinuationsAtCapacity = (maxStarting: number) => sql`(
+    // A continuation holds a slot until its run stops working; one waiting on the user does not.
+    // pruneSettled keeps the succeeded continue effect while its run is live.
+    const restartContinuationsAtCapacity = (maxActive: number) => sql`(
       SELECT COUNT(*)
       FROM orchestration_v2_effect_outbox AS resuming
-      WHERE resuming.status IN ('pending', 'running')
+      WHERE resuming.effect_type = 'provider-runtime.continue'
         AND (
-          (resuming.status = 'running' AND resuming.effect_type = 'provider-runtime.continue')
+          resuming.status = 'running'
           OR (
-            resuming.effect_type = 'provider-turn.start'
+            resuming.status = 'succeeded'
             AND EXISTS (
               SELECT 1
               FROM orchestration_v2_projection_runs AS resuming_run
-              WHERE resuming_run.run_id = json_extract(resuming.payload_json, '$.runId')
-                AND json_type(resuming_run.payload_json, '$.restartContinuationOfRunId') IS NOT NULL
+              WHERE resuming_run.thread_id = resuming.thread_id
+                AND resuming_run.status IN ('preparing', 'starting', 'running')
+                AND json_extract(resuming_run.payload_json, '$.restartContinuationOfRunId') =
+                  json_extract(resuming.payload_json, '$.sourceRunId')
             )
           )
         )
-    ) >= ${maxStarting}`;
+    ) >= ${maxActive}`;
     // Retry backoff must block later effects so turns cannot race a pending rollback.
     const claimableCandidatePredicate = (
       availableBefore?: string,
       excludeRestartContinuations = false,
       maxRunningTitleGenerations?: number,
-      maxStartingRestartContinuations?: number,
+      maxActiveRestartContinuations?: number,
     ) =>
       sql`
         ${
@@ -382,11 +385,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 }
                 AND ${
                   // A held-back continuation must not hold up its thread's newer work.
-                  maxStartingRestartContinuations === undefined
+                  maxActiveRestartContinuations === undefined
                     ? sql`1 = 1`
                     : sql`NOT (
                         active.effect_type = 'provider-runtime.continue'
-                        AND ${restartContinuationsAtCapacity(maxStartingRestartContinuations)}
+                        AND ${restartContinuationsAtCapacity(maxActiveRestartContinuations)}
                       )`
                 }
               )
@@ -417,11 +420,11 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               )`
         }
         AND ${
-          maxStartingRestartContinuations === undefined
+          maxActiveRestartContinuations === undefined
             ? sql`1 = 1`
             : sql`(
                 candidate.effect_type != 'provider-runtime.continue'
-                OR NOT ${restartContinuationsAtCapacity(maxStartingRestartContinuations)}
+                OR NOT ${restartContinuationsAtCapacity(maxActiveRestartContinuations)}
               )`
         }
       `;
@@ -597,7 +600,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
           workerId,
           excludeRestartContinuations = false,
           maxRunningTitleGenerations,
-          maxStartingRestartContinuations,
+          maxActiveRestartContinuations,
         }) {
           const now = yield* DateTime.now;
           const nowIso = DateTime.formatIso(now);
@@ -617,7 +620,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
                 nowIso,
                 excludeRestartContinuations,
                 maxRunningTitleGenerations,
-                maxStartingRestartContinuations,
+                maxActiveRestartContinuations,
               )}
                 AND ${excludeRestartContinuations ? sql`candidate.effect_type != 'provider-runtime.continue'` : sql`1 = 1`}
               ORDER BY candidate.available_at ASC, candidate.created_at ASC, candidate.effect_id ASC
@@ -654,10 +657,10 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       nextClaimableAt: Effect.fnUntraced(
         function* ({
           maxRunningTitleGenerations,
-          maxStartingRestartContinuations,
+          maxActiveRestartContinuations,
         }: {
           readonly maxRunningTitleGenerations?: number;
-          readonly maxStartingRestartContinuations?: number;
+          readonly maxActiveRestartContinuations?: number;
         } = {}) {
           const rows = yield* sql<{ readonly available_at: string | null }>`
             SELECT MIN(candidate.available_at) AS available_at
@@ -666,7 +669,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               undefined,
               false,
               maxRunningTitleGenerations,
-              maxStartingRestartContinuations,
+              maxActiveRestartContinuations,
             )}
           `.pipe(NodeSqliteClient.readOnly, Effect.withTracerEnabled(false));
           const availableAt = rows[0]?.available_at;

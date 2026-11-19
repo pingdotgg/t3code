@@ -3405,11 +3405,11 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
     }),
   );
 
-  it.effect("holds restart continuations while resumed runs are starting", () =>
+  it.effect("holds restart continuations while resumed runs are working", () =>
     Effect.gen(function* () {
       const outbox = yield* EffectOutbox.EffectOutboxV2;
       const sql = yield* SqlClient.SqlClient;
-      const cap = { maxStartingRestartContinuations: 1 };
+      const cap = { maxActiveRestartContinuations: 1 };
       const workerId = "continuation-cap-worker";
       const threadOf = (name: string) =>
         ThreadId.make(`thread:foundation-continuation-cap:${name}`);
@@ -3458,6 +3458,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       assert.isUndefined(yield* claimId);
 
       yield* outbox.succeed({ effectId: start.id, workerId });
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'running' WHERE run_id = ${resumedRunId}`;
+      // A resumed run keeps its slot after its start settles, until it stops working.
+      assert.isUndefined(yield* claimId);
+      yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'waiting' WHERE run_id = ${resumedRunId}`;
       assert.strictEqual(yield* claimId, resume("b").id);
       yield* outbox.succeed({ effectId: resume("b").id, workerId });
     }),
