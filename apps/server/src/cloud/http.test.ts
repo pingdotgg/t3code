@@ -226,8 +226,10 @@ describe("link proof over a non-loopback transport", () => {
           Effect.flatMap((paired) => exchange((paired as { credential: string }).credential)),
         );
       expect(yield* linkableHere(desktop)).toBe(true);
-      expect(yield* linkableHere(yield* pair(["relay:read", "relay:configure"]))).toBe(true);
+      const remote = yield* pair(["relay:read", "relay:write", "relay:configure"]);
+      expect(yield* linkableHere(remote)).toBe(true);
       expect(yield* linkableHere(yield* pair(["relay:read", "relay:write"]))).toBe(false);
+      expect(yield* linkableHere(yield* pair(["relay:read", "relay:configure"]))).toBe(false);
     }),
   );
 

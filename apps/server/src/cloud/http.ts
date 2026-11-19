@@ -133,7 +133,11 @@ export const layer = HttpApiBuilder.group(
         Effect.gen(function* () {
           const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
           const state = yield* toHttpError(cloudLink.linkState());
-          return { ...state, linkableHere: principal.scopes.has(AuthRelayConfigureScope) };
+          // Linking also writes relay preferences, so configure alone cannot finish it.
+          const linkableHere =
+            principal.scopes.has(AuthRelayConfigureScope) &&
+            principal.scopes.has(AuthRelayWriteScope);
+          return { ...state, linkableHere };
         }),
       )
       .handle("checkReachability", () =>

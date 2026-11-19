@@ -383,7 +383,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
           linkEnvironment: linkEnvironmentWithPreference,
-          canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: true,
           previousEnabled: liveActivitiesPreferenceEnabled,
@@ -479,7 +481,9 @@ function ConfiguredSettingsNotificationsRouteScreen() {
         setLiveActivityUpdatesEnabled({
           updateEnvironment: updateEnvironmentPreference,
           linkEnvironment: linkEnvironmentWithPreference,
-          canConfigureEnvironment: (id) => canManageConnect(id, AuthRelayConfigureScope),
+          canConfigureEnvironment: (id) =>
+            canManageConnect(id, AuthRelayConfigureScope) &&
+            canManageConnect(id, AuthRelayWriteScope),
           canUpdateEnvironment: (id) => canManageConnect(id, AuthRelayWriteScope),
           enabled: false,
           previousEnabled: liveActivitiesPreferenceEnabled,

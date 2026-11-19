@@ -495,9 +495,11 @@ page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. When T3 Connect rejects a host's link, the host
 shows that it was removed from T3 Connect. To link it again, turn on
-**T3 Connect** in **Settings → Sharing & access** from any client paired with
-`relay:configure`, or run `t3 connect link` on the host and then restart T3 Code
-there. A
+**T3 Connect** in **Settings → Sharing & access** on web or desktop, or turn on
+**Live Activity Updates** in **Settings → Notifications** on mobile. Either needs a
+client paired with `relay:read`, `relay:write`, and `relay:configure`, which new
+desktop and startup pairings include. You can also run `t3 connect link` on the
+host and then restart T3 Code there. A
 command-line host that released its tunnel when it last stopped may link itself
 again on its next start; run `t3 connect unlink` on that host to keep it off.
 Removing an environment from a device's connection settings only forgets it on
