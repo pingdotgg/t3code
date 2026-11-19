@@ -544,12 +544,13 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
                 ? gt("Options", { $context: "heading for model options" })
                 : gt("Effort", { $context: "heading for reasoning effort levels" }))}
           </span>
-          {/* Keyed so the title cannot outlive the model it names. */}
+          {/* Keyed so a title set on hover cannot outlive the model it names. */}
           <span
-            key={picker.modelTitle}
+            key={picker.modelLabel}
             className="ms-auto min-w-0 truncate text-muted-foreground text-xs"
             onPointerEnter={(event) => {
-              event.currentTarget.title = picker.modelTitle;
+              const label = event.currentTarget;
+              label.title = label.scrollWidth > label.clientWidth ? picker.modelLabel : "";
             }}
           >
             {picker.modelLabel}

@@ -2,7 +2,7 @@ import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contr
 import { T, useGT } from "gt-react";
 import { memo } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
-import { getDisplayModelName, joinModelTitle } from "./providerIconUtils";
+import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -42,13 +42,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   };
   const displayName = getDisplayModelName(model);
-  // The slug names the exact model, and no row text shows it.
-  const rowTitle = joinModelTitle(
-    displayName,
-    props.subProvider,
-    props.providerDisplayName,
-    props.slug,
-  );
 
   const row = (
     <ComboboxItem
@@ -78,9 +71,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
       />
       <div
         className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        // A disabled row carries this line in its reason tooltip instead.
+        // Names the row in full on hover only when its name or sub-provider is cut off.
         onPointerEnter={(event) => {
-          event.currentTarget.title = props.disabledReason ? "" : rowTitle;
+          const clipped = [...event.currentTarget.children].some(
+            (child) => child.scrollWidth > child.clientWidth,
+          );
+          event.currentTarget.title = clipped
+            ? [displayName, props.subProvider].filter(Boolean).join(" · ")
+            : "";
         }}
       >
         <div className="min-w-0 truncate text-sm font-normal leading-snug">
@@ -154,8 +152,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        <span className="block">{props.disabledReason}</span>
-        <span className="block text-muted-foreground">{rowTitle}</span>
+        {props.disabledReason}
       </TooltipPopup>
     </Tooltip>
   );
