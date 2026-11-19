@@ -229,6 +229,8 @@ describe("LinearIssueTracker", () => {
       });
       // The stored key goes in as-is, not as a bearer token.
       expect(requests.map((request) => request.authorization)).toEqual(["lin_api_stored"]);
+      // Rows never show a body, so the listing leaves descriptions to the detail query.
+      expect(requests[0]?.query).not.toMatch(/\bdescription\b/);
 
       // Linear's reset header is an absolute time in epoch milliseconds.
       const resetAt = 4_102_444_800_000;
@@ -252,43 +254,6 @@ describe("LinearIssueTracker", () => {
         }),
       );
       expect([refused.reason, refused.retryAt]).toEqual(["rate-limited", resetAt]);
-    }),
-  );
-
-  it.effect("searches issue descriptions without downloading them in list rows", () =>
-    Effect.gen(function* () {
-      const summary = issue("ENG-1");
-      delete summary.description;
-      const { tracker, requests } = fakeLinear({
-        T3Issues: ({ filter }) => {
-          expect(filter).toMatchObject({
-            or: [
-              { title: { containsIgnoreCase: "repro steps" } },
-              { description: { containsIgnoreCase: "repro steps" } },
-            ],
-          });
-          return {
-            issues: {
-              nodes: [summary],
-              pageInfo: { hasNextPage: false, endCursor: null },
-            },
-          };
-        },
-        T3Issue: () => ({ issue: bareDetail("ENG-1") }),
-      });
-      const api = yield* tracker;
-      const list = yield* api.listIssues({
-        ...target,
-        state: "open",
-        involvement: "all",
-        query: "repro steps",
-        sort: "updated",
-        limit: 50,
-      });
-      expect(list.items.map((entry) => entry.key)).toEqual(["ENG-1"]);
-      expect(requests[0]?.query).not.toMatch(/\bdescription\b/);
-      expect((yield* api.getIssue({ ...target, key: "ENG-1" })).body).toBe("body");
-      expect(requests[1]?.query).toMatch(/\bdescription\b/);
     }),
   );
 
@@ -404,6 +369,7 @@ describe("LinearIssueTracker", () => {
       const api = yield* tracker;
       const detail = yield* api.getIssue({ ...target, key: "eng-7" });
       expect(detail.viewer).toBe("julius");
+      expect(detail.body).toBe("body");
       expect((yield* api.probeCredential("token")).workspace).toBe("acme");
       // The team's own workflow, in Linear's order, with the category each state falls in.
       expect(detail.states.map((entry) => [entry.name, entry.category])).toEqual([
