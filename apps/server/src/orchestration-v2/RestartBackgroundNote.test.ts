@@ -141,7 +141,30 @@ it("names a lost subagent by the id the agent resumes it with", () => {
       title: "Review",
       nativeItemRef: { driver: "claudeAgent", nativeId: "agent-1", strength: "strong" },
     } as never)?.label,
-    "Review (id agent-1)",
+    "Review (id agent-1; resume it with SendMessage to 'agent-1')",
+  );
+  assert.equal(
+    cancelledTurnItemWork(
+      {
+        id: "item-2",
+        type: "subagent",
+        origin: "provider_native",
+        title: "Audit",
+        nativeItemRef: { driver: "codex", nativeId: "call_1:agent", strength: "strong" },
+      } as never,
+      "agent-thread",
+    )?.label,
+    "Audit (id agent-thread)",
+  );
+  assert.equal(
+    cancelledTurnItemWork({
+      id: "item-3",
+      type: "subagent",
+      origin: "provider_native",
+      title: "Lost",
+      nativeItemRef: { driver: "claudeAgent", nativeId: null, strength: "strong" },
+    } as never)?.label,
+    "Lost",
   );
 });
 

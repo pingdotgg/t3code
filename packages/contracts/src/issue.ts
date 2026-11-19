@@ -7,6 +7,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -265,6 +266,8 @@ export const IssueListInput = Schema.Struct({
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
   /** Carry on from an earlier answer: only the scopes named here are read, one slice each. */
   cursors: Schema.optional(IssueListCursors),
+  /** An explicit refresh of the first page may also refresh tracker metadata. */
+  refresh: Schema.optional(Schema.Boolean),
   /** Free text the trackers themselves are asked to match. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   /** Label names an issue must carry, every one of them. */
@@ -300,7 +303,7 @@ export const IssueListProjectError = Schema.Struct({
 export type IssueListProjectError = typeof IssueListProjectError.Type;
 
 export const IssueListResult = Schema.Struct({
-  /** The signed-in account per host, which is what involvement compares against. */
+  /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
   /** By update, newest first, across every scope this answer covers. */
@@ -308,6 +311,11 @@ export const IssueListResult = Schema.Struct({
   errors: Schema.Array(IssueListProjectError),
   /** Where each scope carries on, sent straight back as `cursors`. Absent once a scope is done. */
   nextCursors: IssueListCursors,
+  /**
+   * Every scope the listing covers, matched or not, with one project that reads it. A Linear team
+   * bound in settings is named nowhere else. Absent from servers that predate it.
+   */
+  scopes: Schema.optional(Schema.Array(IssueScopeRef)),
 });
 export type IssueListResult = typeof IssueListResult.Type;
 
@@ -523,6 +531,20 @@ export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey
   return threadIssueKeyOf(left) === threadIssueKeyOf(right);
 }
 
+/** The threads an issue is linked to, most recently active first. */
+export const IssueLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+      settled: Schema.Boolean,
+    }),
+  ),
+});
+export type IssueLinkedThreadsResult = typeof IssueLinkedThreadsResult.Type;
+
 /**
  * A tracker that is not a git host: it is reached with its own credential rather than a
  * checkout's, and a project opts into it by binding one of the tracker's scopes. Everything a
@@ -570,6 +592,8 @@ export const IssueTrackerConnection = Schema.Struct({
   account: Schema.NullOr(TrimmedNonEmptyString),
   /** Why a stored credential did not work, when it did not. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The workspace the credential reaches, as its issue URLs name it; links elsewhere are foreign. */
+  workspace: Schema.optional(TrimmedNonEmptyString),
   scopes: Schema.Array(IssueTrackerScope),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;

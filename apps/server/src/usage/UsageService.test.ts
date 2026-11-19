@@ -1967,7 +1967,7 @@ describe("UsageService", () => {
       const sources = yield* Fiber.join(wider);
       assert.deepStrictEqual(cursor.state.calls, [
         { sinceMs: input.retentionCutoffMs, untilMs: CURSOR_NOW },
-        { sinceMs: 0, untilMs: CURSOR_NOW },
+        { sinceMs: 0, untilMs: input.retentionCutoffMs },
       ]);
       assert.strictEqual(sources[0]?.status, "ok");
       assert.deepStrictEqual(
@@ -2071,6 +2071,78 @@ describe("UsageService", () => {
             platform: "darwin",
             environment: {},
             secretStore: { get: () => Effect.sync(signIn) },
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("loads Cursor history that cannot be read in one request within the deadline", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      yield* TestClock.setTime(CURSOR_NOW);
+      const cursor = makeFakeCursor();
+      cursor.state.events = [
+        { timestampMs: CURSOR_NOW - 40 * HOUR_MS, outputTokens: 7 },
+        { timestampMs: CURSOR_NOW - 3 * HOUR_MS, outputTokens: 5 },
+      ];
+      // A large account: a window wider than half a day has too many pages for the read deadlines.
+      const read: CursorAccountReader.CursorAccountReader["Service"]["read"] = (
+        credential,
+        sinceMs,
+        untilMs,
+      ) =>
+        untilMs - sinceMs > 12 * HOUR_MS
+          ? Effect.succeed({
+              accountKey: cursor.state.accountKey,
+              records: [],
+              missing: false,
+              error: "Cursor account usage could not be read.",
+            })
+          : cursor.read(credential, sinceMs, untilMs);
+      yield* Effect.gen(function* () {
+        const service = yield* makeWithCursor(read);
+        let summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        for (let attempt = 1; attempt < 10 && totalOutputTokens(summary) < 12; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        assert.strictEqual(totalOutputTokens(summary), 12);
+
+        // Failed reads during an outage narrow the span; it widens back once reads work again.
+        cursor.state.error = "Cursor account usage could not be read.";
+        for (let attempt = 0; attempt < 20; attempt++) {
+          yield* TestClock.adjust("2 minutes");
+          yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        }
+        cursor.state.error = null;
+        yield* TestClock.adjust("10 hours");
+        cursor.state.events.push({ timestampMs: CURSOR_NOW + 10 * HOUR_MS, outputTokens: 3 });
+        const callsBeforeRecovery = cursor.state.calls.length;
+        summary = yield* service.readSummary({ ...WINDOW, awaitRefresh: true });
+        assert.strictEqual(totalOutputTokens(summary), 15);
+        assert.isBelow(cursor.state.calls.length - callsBeforeRecovery, 20);
+      }).pipe(
+        Effect.provide(
+          layerService({
+            prefix: "usage-service-cursor-large-account",
+            home,
+            settings,
+            platform: "darwin",
+            environment: {},
+            secretStore: {
+              get: () =>
+                Effect.succeedSome(
+                  new TextEncoder().encode(
+                    encodeUnknownJsonString({
+                      version: 1,
+                      backendUrl: "https://api2.cursor.sh",
+                      apiKey: "large-account-key",
+                      createdAtMs: 0,
+                    }),
+                  ),
+                ),
+            },
           }),
         ),
       );
