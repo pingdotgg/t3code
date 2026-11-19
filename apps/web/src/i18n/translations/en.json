@@ -1841,6 +1841,18 @@
   "480646ceb98c7163": "Close",
   "32fc9124998ebc18": "Local",
   "1c4158d741eec5da": "{label} (Local)",
+  "a12a4958ca6b924b": "Forwarded port {port}",
+  "0f14a51b016f825d": "Apps on this machine reach it at localhost:{port}.",
+  "4bdb9a086e77ee6d": "Port {port} on {environment}",
+  "7a462e32dba47f4c": "Open in browser",
+  "4b8087450e97c995": "Copy address",
+  "c170720e67d01733": "Stop forwarding",
+  "1e5c6d1c33667b17": "Forward localhost:{port}",
+  "e76f45b6a412a0b6": "Forward port {port} from {environment}",
+  "ecf3b95b3d9e6e74": "Forwarded",
+  "b3123e5b8602a134": "Type a port number to forward it",
+  "1bdeef9819b4a055": "Forward a port",
+  "de8a46b66f8ec455": "Forwarded ports",
   "f844c41fac2d339c": "Current",
   "69154433587763c0": "No matching actions.",
   "90c3a382ecefa0ce": "No matching commands, projects, or threads.",
@@ -2974,6 +2986,10 @@
   "314cdccee9c14774": "This server does not support registry lookups. Update it before switching tracks.",
   "22da1d00403ab2fd": "Could not check this environment's npm registry. Check the connection and registry settings.",
   "2fc0f7a698c95c90": "Connect to a server to check releases.",
+  "922269f8691aa3ba": "Could not tell whether this environment runs on this computer.",
+  "35cade9cc8a01363": "Port forwarding needs the desktop app.",
+  "9e303e0a794898d4": "This environment runs on this computer, so localhost:{port} already reaches it.",
+  "2d49965e0e27e23b": "This environment can't be reached right now. Try again once it reconnects.",
   "7280baf7517dad1c": "Failed to load refs.",
   "567c0fed6ab8efc1": "This connection cannot search host files.",
   "5189720b9436f98c": "Search is limited to {count} characters.",
@@ -4022,6 +4038,16 @@
     }
   ],
   "e58a1d884fa1d8f2": "Thread details",
+  "43c5fbd02c6f330a": "Show less",
+  "de45b075b016cb14": [
+    "Show ",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " more"
+  ],
   "02d9667ff2c8e0b8": "Issue {key}: {title}",
   "4276743ee60a3c62": "{count, plural, one {{count} comment} other {{count} comments}}",
   "42f634397f3960aa": "Show in thread details",
@@ -4061,16 +4087,6 @@
   ],
   "159ddd0d146a0f22": "Watching: the agent wakes when checks finish, someone comments, or the branch conflicts. Click to stop.",
   "1cbc8b5db51b4c77": "Merge",
-  "43c5fbd02c6f330a": "Show less",
-  "de45b075b016cb14": [
-    "Show ",
-    {
-      "i": 1,
-      "k": "_gt_value_1",
-      "v": "v"
-    },
-    " more"
-  ],
   "a3d040c4ef4fc6e9": "Ahead of pace",
   "b16fdf56b16d99c9": "On pace",
   "90f977e97ae8b6c6": "Under pace",
@@ -4085,6 +4101,7 @@
   "66be4fb43249bbd2": "{used} of {max} tokens",
   "ee3ae58c8b38a425": "{left}% left",
   "ebb26f93fb83a71b": "{label}: {left}% left",
+  "1b16346722b65812": "{timeLeft}% of the window left",
   "728c6cc1431e76c8": "Resets in {duration} · {time}",
   "e16b0b9b490c8bc7": "{label}: {value}",
   "ba67d0a9ff5dabf0": "Clipboard API is unavailable while copying admin request.",
@@ -4178,12 +4195,16 @@
   ],
   "3237699bd13dd4bb": "Stop subagent",
   "075398ac562d74b0": "Disconnect agent session",
+  "1d2025060ba3d1c3": "Could not forward port {port}",
   "086ecbb6f4c2e959": "Unable to open in browser",
   "51052c00ab1ac8cc": "Unable to open preview",
   "0ccd37739f9cf2b6": "Could not stop server",
   "a610a81c4061bb4c": "Servers",
+  "253bc8b5e99002dc": "Forwarded to :{port}",
   "bd1ca8ccb6d0b87c": "Agent",
   "e25e045607262b40": "Terminal",
+  "194a9791a83d3f79": "Stop forwarding localhost:{port}",
+  "95bbbac2f2e17273": "Forward localhost:{port} to this machine",
   "95b263aa683271cc": "Stop localhost:{port}",
   "f94866e17faddc05": [
     "Open in the browser panel. ",
@@ -4194,6 +4215,16 @@
     },
     " for your browser."
   ],
+  "781fba367a220012": [
+    "Forwarded to localhost:",
+    {
+      "i": 1,
+      "k": "_gt_value_1",
+      "v": "v"
+    },
+    " on this machine. Click to stop."
+  ],
+  "92347683e33e9f02": "Forward to this machine, for any app here",
   "3c7763243445b28d": "Stop server",
   "991cc9fb37606c91": "(empty response)",
   "36e4b8d2db087296": "Fork from this response",
@@ -5933,7 +5964,6 @@
   "a74538a7917c1c96": "Play video",
   "11a5a4d340e6397d": "Open original",
   "1b74242b0d303272": "Download video",
-  "7a462e32dba47f4c": "Open in browser",
   "f9ca1e61d515445e": "Missing data URL payload.",
   "1b547c297573369c": "This inline media could not be decoded.",
   "84f7c359e5f050b1": "The file could not be fetched (HTTP {status}).",
@@ -11868,7 +11898,6 @@
   "0bd938825ffcf992": "+{percent}% of pool",
   "09c0e00d7fb55402": "Using reset credit…",
   "4df3ff1be768a7ab": "{name}: {remaining}% left",
-  "1b16346722b65812": "{timeLeft}% of the window left",
   "7aaaff1c6484f25c": "Segment",
   "8bcab2ef61de6518": "$0 cap",
   "a16b48709357a5a7": "Manage usage",
