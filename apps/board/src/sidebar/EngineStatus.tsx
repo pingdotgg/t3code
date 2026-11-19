@@ -9,7 +9,7 @@ export function EngineStatus() {
   if (status.tone === "ask") {
     return (
       <div className="flex flex-col gap-2">
-        <span>T3 is not installed in WSL. Install it now?</span>
+        <span>T3 in WSL is too old or missing. Install the current release?</span>
         <div className="flex gap-2">
           <button
             type="button"

@@ -25,7 +25,9 @@ export interface EngineDeps {
   readonly host: LinuxHost;
   readonly fetch: (url: string, init?: RequestInit) => Promise<Response>;
   readonly tokens: TokenStore;
-  /** Asks once whether to install T3 in WSL. */
+  /** Whether the release a `--version` line reports connects to this client. */
+  readonly runtimeCompatible: (versionText: string) => boolean;
+  /** Asks once whether to install the current T3 release in WSL. */
   readonly confirmInstall: () => Promise<boolean>;
   readonly log: (message: string) => void;
   readonly sleep: (ms: number) => Promise<void>;
@@ -68,6 +70,7 @@ export function createEngine(deps: EngineDeps): Engine {
   let cli: string | null = null;
   let booted: { readonly pid: number; readonly exited: Promise<number | null> } | null = null;
   let stopping = false;
+  const tooOld: string[] = [];
 
   const setState = (next: EngineState) => {
     current = next;
@@ -127,28 +130,34 @@ export function createEngine(deps: EngineDeps): Engine {
     return true;
   };
 
-  // The newest runtime T3 desktop staged, or `t3` from the login PATH.
+  // Runtimes this client can use, best first: `t3` from the login PATH, then staged runtimes by
+  // age. A candidate that prints no version, such as a stub, never counts.
   const discoverCli = async (): Promise<string | null> => {
     if (config.t3Cli !== undefined) return config.t3Cli;
     const result = await host.shell(
       [
         prelude,
-        `if command -v t3 >/dev/null 2>&1; then echo "cli:t3"; exit 0; fi`,
-        `if [ -x "$HOME/.local/bin/t3" ]; then echo "cli:$HOME/.local/bin/t3"; exit 0; fi`,
+        `if command -v t3 >/dev/null 2>&1; then printf 'cli:t3|%s\\n' "$(t3 --version 2>/dev/null | head -n 1)"; fi`,
+        `if [ -x "$HOME/.local/bin/t3" ]; then printf 'cli:%s|%s\\n' "$HOME/.local/bin/t3" "$("$HOME/.local/bin/t3" --version 2>/dev/null | head -n 1)"; fi`,
         `for d in $(ls -1t "$T3_HOME/wsl-runtime" 2>/dev/null); do`,
         `  e="$T3_HOME/wsl-runtime/$d/apps/server/dist/bin.mjs"`,
-        // Staged runtimes can be stubs, so one must run to count.
-        `  if [ -f "$e" ] && node "$e" --version >/dev/null 2>&1; then echo "node:$e"; exit 0; fi`,
+        `  [ -f "$e" ] && printf 'node:%s|%s\\n' "$e" "$(node "$e" --version 2>/dev/null | head -n 1)"`,
         `done`,
+        `true`,
       ].join("\n"),
       { loginPath: true },
     );
-    const line = result.stdout.split("\n").find((entry) => /^(cli|node):/.test(entry));
-    if (line === undefined) return null;
-    const value = line.replace(/\r$/, "");
-    return value.startsWith("cli:")
-      ? shellQuote(value.slice(4))
-      : `node ${shellQuote(value.slice(5))}`;
+    for (const line of result.stdout.split("\n")) {
+      const match = /^(cli|node):(.*)\|(.*?)\r?$/.exec(line);
+      if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) continue;
+      if (match[3].trim() === "") continue;
+      if (!deps.runtimeCompatible(match[3])) {
+        tooOld.push(/\d+\.\d+\.\d+\S*/.exec(match[3])?.[0] ?? match[3].trim());
+        continue;
+      }
+      return match[1] === "cli" ? shellQuote(match[2]) : `node ${shellQuote(match[2])}`;
+    }
+    return null;
   };
 
   const ensureCli = async (): Promise<string | null> => {
@@ -165,6 +174,7 @@ export function createEngine(deps: EngineDeps): Engine {
       throw new Error(`The T3 install script failed: ${installed.stderr.trim() || "no output"}`);
     }
     cli = await discoverCli();
+    if (cli === null) throw new Error("The installed T3 does not work with this app.");
     return cli;
   };
 
@@ -172,7 +182,10 @@ export function createEngine(deps: EngineDeps): Engine {
     setState({ phase: "starting" });
     const command = await ensureCli();
     if (command === null) {
-      return offline("T3 is not installed in WSL, and installing it was declined.");
+      const found = tooOld.length === 0 ? "" : ` Found ${[...new Set(tooOld)].join(", ")}.`;
+      return offline(
+        `T3 in WSL is too old or missing.${found} Installing the current release was declined.`,
+      );
     }
     const child = await host.start(
       [

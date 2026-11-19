@@ -6,6 +6,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { app, BrowserWindow, ipcMain, safeStorage } from "electron";
 
+import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createEngine, type EngineConfig, type TokenStore } from "./engine";
 import { createLinuxHost, type LinuxHost, nodeProcessRunner, resolveDistro } from "./wslEngine";
 
@@ -99,6 +100,7 @@ export function registerEngineIpc(options: {
   let installAnswer: ((accepted: boolean) => void) | null = null;
   const engine = createEngine({
     config: configFromEnv(env),
+    runtimeCompatible: runtimeSupportsClient,
     host,
     fetch: globalThis.fetch,
     tokens: createTokenStore(NodePath.join(userData, "engine-tokens.json")),

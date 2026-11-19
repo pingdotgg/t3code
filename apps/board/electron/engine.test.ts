@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createEngine, type EngineConfig } from "./engine";
+import { runtimeSupportsClient } from "./runtimeCompatibility";
 import { createLinuxHost, type ProcessRunner, type RunResult } from "./wslEngine";
 
 const NO_CONFIG: EngineConfig = {
@@ -25,6 +26,8 @@ class FakeWsl {
   readonly liveOrigins = new Set<string>();
   readonly acceptedTokens = new Set<string>();
   hasT3 = true;
+  t3Version = "0.1.10";
+  stagedVersion = "0.1.10";
   rejectEveryToken = false;
   stagedRuntime: string | null = null;
   readonly bootPid = 4242;
@@ -68,8 +71,11 @@ class FakeWsl {
         return ok(this.runtimeFile === null ? "" : JSON.stringify(this.runtimeFile));
       }
       if (script.includes("command -v t3")) {
-        if (this.hasT3) return ok("cli:t3\n");
-        return ok(this.stagedRuntime === null ? "" : `node:${this.stagedRuntime}\n`);
+        const lines = [
+          this.hasT3 ? `cli:t3|t3 v${this.t3Version}` : "",
+          this.stagedRuntime === null ? "" : `node:${this.stagedRuntime}|t3 v${this.stagedVersion}`,
+        ];
+        return ok(lines.filter(Boolean).join("\n") + "\n");
       }
       if (script.includes("auth session issue")) {
         this.mints += 1;
@@ -79,6 +85,7 @@ class FakeWsl {
       if (script.includes("install.sh")) {
         this.installs += 1;
         this.hasT3 = true;
+        this.t3Version = "0.1.10";
         return ok();
       }
       throw new Error(`Unexpected script: ${script}`);
@@ -129,6 +136,7 @@ function setup(config: Partial<EngineConfig> = {}, install = false) {
   const engine = createEngine({
     config: { ...NO_CONFIG, ...config },
     host: createLinuxHost({ platform: "win32", distro: null, runner: wsl.runner }),
+    runtimeCompatible: runtimeSupportsClient,
     fetch: wsl.fetch,
     tokens: {
       read: (key) => tokenStore.get(key) ?? null,
@@ -250,8 +258,37 @@ describe("engine install", () => {
     expect(wsl.installs).toBe(0);
     expect(engine.state()).toEqual({
       phase: "offline",
-      reason: "T3 is not installed in WSL, and installing it was declined.",
+      reason: "T3 in WSL is too old or missing. Installing the current release was declined.",
     });
+  });
+
+  it("Given only an incompatible runtime, when the app starts, then it offers the install and boots nothing", async () => {
+    const { wsl, engine, installQuestions } = setup({}, false);
+    wsl.hasT3 = false;
+    wsl.stagedRuntime = "/home/u/.t3/wsl-runtime/0.0.30/apps/server/dist/bin.mjs";
+    wsl.stagedVersion = "0.0.30";
+
+    await engine.start();
+
+    expect(installQuestions).toHaveLength(1);
+    expect(wsl.starts).toEqual([]);
+    expect(wsl.installs).toBe(0);
+    expect(engine.state()).toEqual({
+      phase: "offline",
+      reason:
+        "T3 in WSL is too old or missing. Found 0.0.30. Installing the current release was declined.",
+    });
+  });
+
+  it("Given an incompatible t3 on the PATH and a compatible staged runtime, when the app starts, then it boots the staged one", async () => {
+    const { wsl, engine, installQuestions } = setup();
+    wsl.t3Version = "0.0.30";
+    wsl.stagedRuntime = "/home/u/.t3/wsl-runtime/0.1.10/apps/server/dist/bin.mjs";
+
+    await engine.start();
+
+    expect(installQuestions).toEqual([]);
+    expect(wsl.starts[0]).toContain(`exec node '${wsl.stagedRuntime}' serve`);
   });
 
   it("Given WSL has no T3, when the user accepts, then the app installs once and boots", async () => {
