@@ -207,6 +207,21 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
     }),
   );
 
+  it.effect("reads user skills kept in the instance profile", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const input = yield* makeWorkspace();
+      const skillPath = yield* writeSkill(
+        path.join(input.profileDirectory, "config", "skills", "otter"),
+        "---\nname: otter\n---\n",
+      );
+
+      assert.deepEqual(yield* discoverAntigravitySkills(input), [
+        { name: "otter", path: skillPath, scope: "user", enabled: true },
+      ]);
+    }),
+  );
+
   it.effect("marks disable-model-invocation skills as user-invoked only", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;

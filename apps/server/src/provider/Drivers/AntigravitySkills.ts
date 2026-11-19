@@ -195,7 +195,7 @@ const readSkillFrontmatter = Effect.fn("readAntigravitySkill")(function* (
 export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(function* (input: {
   readonly cwd: string;
   readonly userHome: string;
-  /** The instance's GEMINI_HOME, where agy loads plugins from. */
+  /** The instance's GEMINI_HOME, where agy loads plugins and user skills from. */
   readonly profileDirectory: string;
 }): Effect.fn.Return<
   ReadonlyArray<ServerProviderSkill>,
@@ -208,10 +208,17 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     path,
     path.join(input.userHome, ".gemini"),
   );
+  // Usually links to the ~/.gemini folders above; a real folder holds skills only agy sees.
+  const [profileConfigSkills, profileCliSkills] = antigravityUserSkillDirectories(
+    path,
+    input.profileDirectory,
+  );
   const roots = [
     { directory: configSkills, scope: "user" },
+    { directory: profileConfigSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".gemini", "skills"), scope: "project" },
     { directory: cliSkills, scope: "user" },
+    { directory: profileCliSkills, scope: "user" },
     { directory: path.resolve(input.cwd, ".agents", "skills"), scope: "project" },
     { directory: path.resolve(input.cwd, ".agent", "skills"), scope: "project" },
   ];
