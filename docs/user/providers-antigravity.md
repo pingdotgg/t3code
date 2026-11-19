@@ -112,9 +112,8 @@ Skills for every project go in `~/.gemini/config/skills` or
 so a skill there only appears when the project itself is your home directory.
 
 Antigravity receives images and audio directly, and reads PDFs and text files as
-documents. With the managed runtime on macOS and Linux, an MP4 video up to 20 MiB
-is sent as video to Gemini models. Other attachments, and videos for other models, are passed as a
-saved file path for the agent to inspect with its tools.
+documents. Other attachments, including videos, are passed as a saved file path for
+the agent to inspect with its tools.
 
 ### Subagents
 
