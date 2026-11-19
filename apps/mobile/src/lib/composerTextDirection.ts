@@ -7,6 +7,10 @@ import {
 export type ComposerLineDirection = TextDirection | "";
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+// A closing fence carries no info string.
+const CLOSING_FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
+// The paragraph breaks Foundation's paragraphRange uses, so entries line up with the iOS editor.
+const PARAGRAPH_BREAK = /\r\n|[\n\r\u0085\u2029]/;
 
 /**
  * One entry per line, as the web composer does per block: a line follows its own word
@@ -17,13 +21,12 @@ export function composerLineDirections(text: string): ReadonlyArray<ComposerLine
   if (!hasRightToLeftLetter(text)) return [];
   let fence: string | undefined;
   let previous: ComposerLineDirection = "";
-  return text.split("\n").map((line) => {
-    const marker = FENCE.exec(line)?.[1];
-    if (fence === undefined && marker) {
-      fence = marker;
-      return "ltr";
-    }
-    if (fence !== undefined) {
+  return text.split(PARAGRAPH_BREAK).map((line) => {
+    if (fence === undefined) {
+      fence = FENCE.exec(line)?.[1];
+      if (fence !== undefined) return "ltr";
+    } else {
+      const marker = CLOSING_FENCE.exec(line)?.[1];
       if (marker && marker[0] === fence[0] && marker.length >= fence.length) fence = undefined;
       return "ltr";
     }

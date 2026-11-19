@@ -21,6 +21,16 @@ describe("composerLineDirections", () => {
       "شغّل هذا الأمر ثم أخبرني بالنتيجة\n```\nnpm install مكتبة\n```\nشكرا",
       ["rtl", "ltr", "ltr", "ltr", "rtl"],
     ],
+    [
+      "an info string does not close a fence",
+      "مرحبا\n```\n```literal\nمرحبا\n```\nمرحبا",
+      ["rtl", "ltr", "ltr", "ltr", "ltr", "rtl"],
+    ],
+    [
+      "the paragraph breaks Foundation uses",
+      "مرحبا\u2029Run tests.\r\nPlantur، سيروم للشعر 100 مل\rشكرا",
+      ["rtl", "ltr", "rtl", "rtl"],
+    ],
     ["lines without letters continue the one above", "مرحبا\n\n123", ["rtl", "rtl", "rtl"]],
   ])("%s", (_name, text, expected) => {
     expect(composerLineDirections(text)).toEqual(expected);
