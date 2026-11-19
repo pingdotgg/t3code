@@ -91,6 +91,12 @@ it.effect(
         assert.include(twice[0]?.message ?? "", "hold@1 is defined twice, in again.ts and hold.ts");
         const dropped = yield* definitions.save("hold.ts", greet("hello"));
         assert.include(dropped[0]?.message ?? "", "hold@1 is no longer defined, and 1 of its runs");
+        // Nor one that exports something shaped like a workflow without what the engine walks.
+        const shaped = yield* definitions.save(
+          "shaped.ts",
+          'export default [{ name: "shaped", version: 1, body: () => Effect.void }];\n',
+        );
+        assert.include(shaped[0]?.message ?? "", "is not a workflow");
         assert.include((yield* definitions.remove("hold.ts"))[0]?.message ?? "", "hold@1");
         assert.deepStrictEqual(
           (yield* definitions.read).files.map((file) => file.name),
