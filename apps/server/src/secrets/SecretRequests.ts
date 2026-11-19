@@ -189,6 +189,7 @@ const make = Effect.gen(function* () {
             (yield* new SecretRequestError({ reason: "fields_mismatch" })));
     if (values !== undefined) {
       const savedAt = yield* Clock.currentTimeMillis;
+      // Cleared when interrupted too, or a retry would keep these values beside its own.
       yield* Effect.forEach(values, ([field, value]) =>
         Effect.gen(function* () {
           const encoded = yield* encodeStored({
@@ -208,7 +209,7 @@ const make = Effect.gen(function* () {
               ),
             );
         }),
-      ).pipe(Effect.tapError(() => removeAnswered(input.threadId, item)));
+      ).pipe(Effect.onError(() => removeAnswered(input.threadId, item)));
     }
     const secretStatus = values === undefined ? "declined" : "saved";
     yield* threadManagement

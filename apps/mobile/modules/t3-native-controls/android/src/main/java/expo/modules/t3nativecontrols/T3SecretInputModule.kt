@@ -113,8 +113,8 @@ class T3SecretInputView(context: Context, appContext: AppContext) : ExpoView(con
       // Next is submitted too: JS moves focus to the following field.
       if (
         actionId == EditorInfo.IME_ACTION_DONE ||
-          actionId == EditorInfo.IME_ACTION_NEXT ||
-          event?.keyCode == KeyEvent.KEYCODE_ENTER
+        actionId == EditorInfo.IME_ACTION_NEXT ||
+        event?.keyCode == KeyEvent.KEYCODE_ENTER
       ) {
         // Hardware Enter reports IME_NULL on Android 13 and earlier, and both key down and key up.
         if (event == null || event.action == KeyEvent.ACTION_DOWN) {

@@ -15,8 +15,10 @@ import {
 import { defineSecretProviderDriver } from "@t3tools/secret-provider-core/server/driver";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { defineSecretProvider } from "@t3tools/secret-provider-core/shared/definition";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
@@ -82,6 +84,7 @@ const withService = <A, E>(
     readonly closedFirst?: boolean;
     readonly failedRecords?: number;
     readonly resolver?: Layer.Layer<SecretResolver.SecretResolver>;
+    readonly afterCreate?: Effect.Effect<void>;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -114,7 +117,9 @@ const withService = <A, E>(
                     ),
                   } as never),
                 )
-              : Effect.sync(() => void stored.set(name, value)),
+              : Effect.sync(() => void stored.set(name, value)).pipe(
+                  Effect.andThen(options.afterCreate ?? Effect.void),
+                ),
           getOrCreateRandom: (name, bytes) =>
             Effect.sync(() => {
               const existing = stored.get(name);
@@ -595,6 +600,34 @@ it.effect("two racing answers to a fields card never mix their values", () =>
       },
     );
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("a fields answer interrupted between two values keeps neither", () =>
+  Effect.gen(function* () {
+    const firstStored = yield* Deferred.make<void>();
+    yield* withService(
+      ({ service, stored }) =>
+        Effect.gen(function* () {
+          const fiber = yield* service
+            .answer({
+              threadId,
+              turnItemId,
+              answer: { type: "save", values: { email: "a@acme.dev", password: "a-pw" } },
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(firstStored);
+          yield* Fiber.interrupt(fiber);
+          assert.deepEqual(valuesOf(stored), []);
+        }),
+      {
+        afterCreate: Deferred.succeed(firstStored, undefined).pipe(Effect.andThen(Effect.never)),
+        fields: [
+          { name: "email", label: "Email" },
+          { name: "password", label: "Password" },
+        ],
+      },
+    );
+  }),
 );
 
 it.effect("a failed file write keeps the value, so the request can retry", () =>
