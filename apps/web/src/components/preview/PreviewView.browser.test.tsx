@@ -41,6 +41,16 @@ const mocks = vi.hoisted(() => ({
   recordingTabIds: new Set<string>(),
   recordingRuntimeTabId: null as string | null,
   recordVisitForThread: vi.fn(),
+  // "tab-2" mirrors "tab-1" so switching tabs keeps the same page URL.
+  withSecondTab: <
+    T extends { sessions: Record<string, unknown>; desktopByTabId: Record<string, unknown> },
+  >(
+    state: T,
+  ): T => ({
+    ...state,
+    sessions: { ...state.sessions, "tab-2": state.sessions["tab-1"] },
+    desktopByTabId: { ...state.desktopByTabId, "tab-2": state.desktopByTabId["tab-1"] },
+  }),
 }));
 
 const STUB_BROWSER_DEFAULTS = {
@@ -99,53 +109,54 @@ vi.mock(import("~/browser/browserDefaults"), async (original) => ({
 vi.mock(import("~/previewStateStore"), async (original) => ({
   ...(await original()),
   rememberPreviewUrl: mocks.rememberPreviewUrl,
-  useThreadPreviewState: (() => ({
-    activeTabId: "tab-1",
-    serverEpoch: mocks.serverEpoch,
-    desktopByTabId: {
-      "tab-1": {
-        hasWebContents: true,
-        navStatus: mocks.idleDesktopOverlay
-          ? { _tag: "Idle" }
-          : { _tag: "Success", url: "http://example.com/", title: "Example" },
-        canGoBack: false,
-        canGoForward: false,
-        loading: mocks.loading,
-        zoomFactor: 1,
-        pictureInPicture: mocks.pictureInPicture,
-        colorScheme: "system",
-        audioMuted: false,
-        audible: false,
-        controller: "none",
+  useThreadPreviewState: (() =>
+    mocks.withSecondTab({
+      activeTabId: "tab-1",
+      serverEpoch: mocks.serverEpoch,
+      desktopByTabId: {
+        "tab-1": {
+          hasWebContents: true,
+          navStatus: mocks.idleDesktopOverlay
+            ? { _tag: "Idle" }
+            : { _tag: "Success", url: "http://example.com/", title: "Example" },
+          canGoBack: false,
+          canGoForward: false,
+          loading: mocks.loading,
+          zoomFactor: 1,
+          pictureInPicture: mocks.pictureInPicture,
+          colorScheme: "system",
+          audioMuted: false,
+          audible: false,
+          controller: "none",
+        },
       },
-    },
-    recentlySeenUrls: [],
-    sessions: mocks.showEmptyState
-      ? {}
-      : mocks.idleServerTab || mocks.idleDesktopTab
-        ? {
-            "tab-1": {
-              threadId: "thread-1",
-              tabId: "tab-1",
-              runtime: mocks.idleDesktopTab ? "desktop" : "server",
-              navStatus: { _tag: "Idle" },
-              canGoBack: false,
-              canGoForward: false,
-              updatedAt: "2026-07-13T00:00:00.000Z",
+      recentlySeenUrls: [],
+      sessions: mocks.showEmptyState
+        ? {}
+        : mocks.idleServerTab || mocks.idleDesktopTab
+          ? {
+              "tab-1": {
+                threadId: "thread-1",
+                tabId: "tab-1",
+                runtime: mocks.idleDesktopTab ? "desktop" : "server",
+                navStatus: { _tag: "Idle" },
+                canGoBack: false,
+                canGoForward: false,
+                updatedAt: "2026-07-13T00:00:00.000Z",
+              },
+            }
+          : {
+              "tab-1": {
+                threadId: "thread-1",
+                tabId: "tab-1",
+                runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
+                navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+                canGoBack: false,
+                canGoForward: false,
+                updatedAt: "2026-07-13T00:00:00.000Z",
+              },
             },
-          }
-        : {
-            "tab-1": {
-              threadId: "thread-1",
-              tabId: "tab-1",
-              runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
-              navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
-              canGoBack: false,
-              canGoForward: false,
-              updatedAt: "2026-07-13T00:00:00.000Z",
-            },
-          },
-  })) as never,
+    })) as never,
 }));
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
@@ -198,11 +209,14 @@ const TEST_THREAD_REF = {
 } as const;
 const TEST_RUNTIME_TAB_ID = previewRuntimeTabId(TEST_THREAD_REF, null, "tab-1");
 
-function view(onSendAnnotation?: ComponentProps<typeof PreviewView>["onSendAnnotation"]) {
+function view(
+  onSendAnnotation?: ComponentProps<typeof PreviewView>["onSendAnnotation"],
+  tabId = "tab-1",
+) {
   return (
     <PreviewView
       threadRef={TEST_THREAD_REF}
-      tabId="tab-1"
+      tabId={tabId}
       visible
       {...(onSendAnnotation ? { onSendAnnotation } : {})}
     />
@@ -342,6 +356,18 @@ describe("PreviewView", () => {
     await expect.element(input).toHaveValue("http://c.test/");
     await screen.rerender(chromeRow("http://b.test/"));
     await expect.element(input).toHaveValue("http://b.test/");
+  });
+
+  it("does not carry a typed address into another tab on the same URL", async () => {
+    setup();
+    await using screen = await render(view());
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("http://typed.test/");
+    (input.element() as HTMLInputElement).blur();
+    await expect.element(input).toHaveValue("http://typed.test/");
+
+    await screen.rerender(view(undefined, "tab-2"));
+    await expect.element(input).toHaveValue("http://example.com/");
   });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
