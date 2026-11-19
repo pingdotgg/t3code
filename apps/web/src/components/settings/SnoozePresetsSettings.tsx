@@ -17,6 +17,7 @@ import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react";
 import { PlusIcon, XIcon } from "lucide-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
+import { useFormattingLocale } from "../../i18n/I18nProvider";
 import { reconcileSnoozeDraft, sortSnoozeRows } from "./SnoozePresetsSettings.logic";
 import { formatShortTimestamp } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -249,14 +250,15 @@ function SnoozePresetList(props: {
 }) {
   const gt = useGT();
   const m = useMessages();
+  const locale = useFormattingLocale();
   const nowMinute = useNowMinute();
   const now = new Date(`${nowMinute}Z`);
   const formatTime = (date: Date) =>
-    formatShortTimestamp(date.toISOString(), props.timestampFormat);
+    formatShortTimestamp(date.toISOString(), props.timestampFormat, locale);
   const seenIds = new Set<string>();
   const seenWakes = new Set<string>();
   const previews = props.presets.map((preset) => {
-    const resolved = resolveSnoozePreset(preset, now, formatTime, m);
+    const resolved = resolveSnoozePreset(preset, now, formatTime, m, locale);
     if (resolved === null) return { tone: "muted", text: gt("Passed for today") } as const;
     if (seenIds.has(resolved.id)) {
       return { tone: "muted", text: gt("Duplicate of an option above") } as const;
@@ -269,7 +271,7 @@ function SnoozePresetList(props: {
     return { tone: "menu", label: resolved.label, when: resolved.whenLabel } as const;
   });
 
-  const menuPresets = resolveSnoozePresets(now, { presets: props.presets, formatTime }, m);
+  const menuPresets = resolveSnoozePresets(now, { presets: props.presets, formatTime, locale }, m);
   const repeatedLabels = new Set(
     menuPresets
       .map((preset) => preset.label)
