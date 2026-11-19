@@ -18,7 +18,11 @@ Antigravity setup.
 
 ### Sign in from a remote device
 
-Google returns to a `127.0.0.1` address. It can finish directly when your browser is
+With the native CLI, Google finishes on an Antigravity page that shows a code. Paste that
+code, or the page's full address, into the code field in the client where you started
+sign-in. This works the same from any device.
+
+With the older 1.4.5 runtime, Google returns to a `127.0.0.1` address. It can finish directly when your browser is
 on the environment's machine. From another device, the final page will usually
 fail to load because the sign-in listener is on the environment.
 

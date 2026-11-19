@@ -499,9 +499,13 @@ export function buildAntigravityAcpSpawnInput(input: {
   };
 }
 
+/** Where `agy acp --login` sends Google; the page shows a code the user pastes back. */
+const ANTIGRAVITY_CODE_REDIRECT_URI = "https://antigravity.google/oauth-callback";
+
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
   function* (
     authorizationUrl: string,
+    kind: "loopback" | "code" = "loopback",
   ): Effect.fn.Return<AntigravityAuthorizationUrl, AcpErrors.AcpError> {
     const invalidUrl = () =>
       authSupportError("Antigravity returned an invalid Google sign-in URL.");
@@ -513,7 +517,7 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
     const redirectUri = url.searchParams.get("redirect_uri");
     if (
       url.origin !== "https://accounts.google.com" ||
-      url.pathname !== "/o/oauth2/v2/auth" ||
+      url.pathname !== (kind === "loopback" ? "/o/oauth2/v2/auth" : "/o/oauth2/auth") ||
       url.username !== "" ||
       url.password !== "" ||
       url.hash !== "" ||
@@ -526,15 +530,45 @@ export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAutho
       state.length > 512 ||
       /\s/.test(state) ||
       redirectUri === null ||
-      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+      (kind === "loopback"
+        ? !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/$/.test(redirectUri)
+        : redirectUri !== ANTIGRAVITY_CODE_REDIRECT_URI)
     ) {
       return yield* invalidUrl();
     }
+    if (kind === "code") return { authorizationUrl, redirectUri, state };
     const redirect = yield* decodeUrl(redirectUri).pipe(Effect.mapError(invalidUrl));
     if (Number(redirect.port) < 1_024) return yield* invalidUrl();
     return { authorizationUrl, redirectUri, state };
   },
 );
+
+/**
+ * What `agy acp --login` reads after its link: the code the Antigravity page shows, or that page's
+ * URL, which must answer this sign-in. Undefined for anything else, including any line break.
+ */
+export function antigravityLoginResponse(
+  pending: AntigravityAuthorizationUrl,
+  response: string,
+): string | undefined {
+  const value = response.trim();
+  if (/^[\w./~-]{1,2048}$/.test(value)) return value;
+  if (value.length > maxAuthorizationUrlLength || /\s/.test(value)) return undefined;
+  const url = URL.parse(value);
+  if (
+    url === null ||
+    `${url.origin}${url.pathname}` !== pending.redirectUri ||
+    url.username !== "" ||
+    url.password !== "" ||
+    url.searchParams.getAll("state").length !== 1 ||
+    url.searchParams.get("state") !== pending.state ||
+    url.searchParams.getAll("code").length !== 1 ||
+    !url.searchParams.get("code")
+  ) {
+    return undefined;
+  }
+  return value;
+}
 
 export function makeAntigravityStdoutTransform(
   input: {

@@ -30,6 +30,7 @@ import {
   isAntigravitySignInRequiredError,
   makeAntigravityStderrHandler,
   makeAntigravityStdoutTransform,
+  antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
@@ -269,6 +270,46 @@ describe("Antigravity authorization URL", () => {
           expect(encodeUnknownJson(result.failure)).not.toContain(invalidUrl);
         }
       }),
+  );
+});
+
+describe("Antigravity code sign-in", () => {
+  const loginUrl =
+    "https://accounts.google.com/o/oauth2/auth?access_type=offline&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&state=login-state";
+
+  it.effect("accepts the agy CLI's link and only a code or page URL for that sign-in", () =>
+    Effect.gen(function* () {
+      const pending = yield* parseAntigravityAuthorizationUrl(loginUrl, "code");
+      expect(pending.redirectUri).toBe("https://antigravity.google/oauth-callback");
+      for (const other of [
+        loginUrl.replace("antigravity.google", "antigravity.google.example.invalid"),
+        loginUrl.replace("/o/oauth2/auth", "/o/oauth2/v2/auth"),
+      ]) {
+        expect(
+          Result.isFailure(
+            yield* parseAntigravityAuthorizationUrl(other, "code").pipe(Effect.result),
+          ),
+        ).toBe(true);
+      }
+      expect(
+        Result.isFailure(yield* parseAntigravityAuthorizationUrl(loginUrl).pipe(Effect.result)),
+      ).toBe(true);
+
+      const page = "https://antigravity.google/oauth-callback?state=login-state&code=4%2F0Ab-c";
+      expect(antigravityLoginResponse(pending, " 4/0Ab-code_1.x~ ")).toBe("4/0Ab-code_1.x~");
+      expect(antigravityLoginResponse(pending, page)).toBe(page);
+      for (const invalid of [
+        "",
+        "4/0Ab code",
+        "4/0Ab\nsecond line",
+        page.replace("login-state", "other-state"),
+        page.replace("antigravity.google", "evil.example"),
+        page.replace("&code=4%2F0Ab-c", ""),
+        `${page}&code=again`,
+      ]) {
+        expect(antigravityLoginResponse(pending, invalid)).toBeUndefined();
+      }
+    }),
   );
 });
 
