@@ -1641,6 +1641,14 @@ const nativeSubagentRef = (subagent: OrchestrationV2Subagent): DyingNativeSubage
 });
 
 const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
+  subagents.some(
+    (task) =>
+      task.origin === "app_owned" &&
+      task.childThreadId !== null &&
+      isOrchestrationV2WorkActive(task.status),
+  );
+
+const hasRunningAppOwnedTasks = (subagents: ReadonlyArray<OrchestrationV2Subagent>) =>
   subagents.some((task) => task.origin === "app_owned" && isOrchestrationV2WorkActive(task.status));
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
@@ -6160,7 +6168,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         latest?.id !== command.continuationAfterRunId ||
         latest.status !== "completed" ||
         stopped ||
-        hasRunningDelegatedTasks(sourceProjection.subagents) ||
+        hasRunningAppOwnedTasks(sourceProjection.subagents) ||
         sourceProjection.subagents.some(
           (task) =>
             task.origin === "app_owned" &&
