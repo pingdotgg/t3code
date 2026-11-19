@@ -25,7 +25,7 @@ import {
   SquareTerminalIcon,
   WrenchIcon,
 } from "lucide-react";
-import { useState } from "react";
+import React, { useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { m } from "../i18n/messages";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
