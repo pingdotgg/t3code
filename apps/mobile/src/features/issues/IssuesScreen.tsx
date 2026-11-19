@@ -75,7 +75,7 @@ const SORTS = {
 const FILTER_ROW_STYLE =
   Platform.OS === "android"
     ? { paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8, gap: 8 }
-    : { paddingHorizontal: 16, paddingTop: 2, paddingBottom: 10, gap: 8 };
+    : { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 10, gap: 8 };
 
 function choices<Value extends string>(
   options: Readonly<Record<Value, string>>,
