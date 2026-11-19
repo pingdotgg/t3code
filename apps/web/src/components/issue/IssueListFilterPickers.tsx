@@ -176,19 +176,19 @@ function ProjectChoices(props: {
           aria-label={gt("Search projects")}
         />
       ) : null}
-      <MenuItem
-        closeOnClick={false}
-        onClick={() =>
+      <MenuCheckboxItem
+        checked={allShown}
+        onCheckedChange={(shown) =>
           props.onChange(
-            allShown
-              ? pairsOf(props.projects.map((project) => pullRequestProjectKey(project)))
-              : [],
+            shown ? [] : pairsOf(props.projects.map((project) => pullRequestProjectKey(project))),
           )
         }
       >
-        <LayersIcon aria-hidden className="size-3.5" />
-        {allShown ? gt("Hide all") : gt("Show all projects")}
-      </MenuItem>
+        <span className="flex min-w-0 items-center gap-2">
+          <LayersIcon aria-hidden className="size-3.5" />
+          <span className="min-w-0 flex-1 truncate">{gt("Show all")}</span>
+        </span>
+      </MenuCheckboxItem>
       <MenuSeparator />
       {visible.length === 0 ? <MenuItem disabled>{gt("No matching projects.")}</MenuItem> : null}
       {visible.map((project) => {
