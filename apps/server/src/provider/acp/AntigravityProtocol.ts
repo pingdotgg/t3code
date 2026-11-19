@@ -423,8 +423,11 @@ function withAntigravityEditPatches(
       return { ...entry, patch: { format: "omitted" } };
     // An entry without new text stands in for a diff the runtime did not send. After the edit,
     // 1.5 runtimes report the whole file before and after it, which needs no placing.
+    // Older runtimes resend the snippets instead.
     const reported = typeof entry.newText === "string";
-    if (readPreEditFile === undefined && reported) return entry;
+    const wholeFile =
+      Predicate.isObject(data.rawInput) && ("Target" in data.rawInput || "target" in data.rawInput);
+    if (readPreEditFile === undefined && reported && wholeFile) return entry;
     const text = antigravityEditPatch({
       path: entry.path,
       rawInput: data.rawInput,

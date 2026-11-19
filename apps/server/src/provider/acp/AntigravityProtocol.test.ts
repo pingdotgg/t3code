@@ -358,6 +358,18 @@ describe("Antigravity tool results", () => {
         `--- ${path}\n+++ ${path}\n@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
       );
     }
+    // An unlocatable edit whose completion resends the snippet diff stays labeled as a snippet.
+    const resent = parseToolUpdate({
+      ...frame(replace),
+      update: { ...frame(replace).update, sessionUpdate: "tool_call_update", status: "completed" },
+    }).toolCall;
+    const unlocated = normalizeAntigravityToolCall(
+      mergeToolCallState(
+        normalizeAntigravityToolCall(parseToolUpdate(frame(replace)).toolCall, () => undefined),
+        resent,
+      ),
+    );
+    expect(unlocated.data.content).toMatchObject([{ patch: { format: "snippet" } }]);
     // Full-access edits arrive path-only; no hunk is offered instead of the tool's status text.
     let pathOnly = normalizeAntigravityToolCall(
       parseToolUpdate({
