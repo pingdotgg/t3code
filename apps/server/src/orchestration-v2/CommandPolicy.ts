@@ -59,6 +59,17 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/**
+ * A message that signs a provider account out at turn start, as `providerAuthLogout` does.
+ * With attachments the same text is an ordinary prompt.
+ */
+export function isProviderSignOutPrompt(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && message.text.trim().toLowerCase() === "/logout";
+}
+
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;

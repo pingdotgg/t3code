@@ -21,6 +21,7 @@ import {
   unavailable,
 } from "../../threadAccess.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
+import { isProviderSignOutPrompt } from "../../../orchestration-v2/CommandPolicy.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
@@ -324,6 +325,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         switch (input.action) {
           case "edit": {
             const text = yield* required(input.text, "text");
+            // This edit keeps the queued attachments, which only the orchestrator sees, and a
+            // bare /logout on a person's message would sign the provider out as that person.
+            if (isProviderSignOutPrompt({ text, attachments: [] })) {
+              return yield* new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "A queued message cannot be edited into a provider sign-out.",
+              });
+            }
             return yield* dispatch(input.threadId, (common) => ({
               ...common,
               type: "queued-run.edit",

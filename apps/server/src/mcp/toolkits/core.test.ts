@@ -546,6 +546,18 @@ it.effect("handoff analytics read only the caller's active run and its message",
       );
     yield* Deferred.await(recorded);
     expect(reads).toEqual([]);
+    // The edit keeps the queued attachments, so a bare /logout could sign the provider out.
+    const signOut = yield* server
+      .callTool({
+        name: "t3_queue",
+        arguments: { action: "edit", queuedRunId: "run:queued", text: " /LOGOUT " },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(signOut.isError).toBe(true);
+    expect(JSON.stringify(signOut.content)).toContain("provider sign-out");
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(

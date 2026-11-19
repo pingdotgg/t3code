@@ -34,7 +34,10 @@ import {
   OrchestratorDispatchError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
-import { dispatchCommand } from "./ThreadMessageIntake.ts";
+import * as ThreadMessageIntake from "./ThreadMessageIntake.ts";
+
+const dispatchCommand = (command: OrchestrationV2Command, sender = { managesProviders: true }) =>
+  ThreadMessageIntake.dispatchCommand(command, sender);
 
 const layerIntakeTest = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-question-intake-",
@@ -473,5 +476,68 @@ it.effect("refuses a queued edit that keeps a file another edit already deleted"
     NodeFS.rmSync(NodePath.join(config.attachmentsDir, `${kept.id}.png`));
     yield* edit([kept]);
     expect(captured).toHaveLength(2);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("a queued /logout edit without provider management must keep an attachment", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread-sign-out-edit");
+    const image = {
+      type: "image" as const,
+      id: ChatAttachmentId.make(createAttachmentId(threadId)!),
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    };
+    const config = yield* ServerConfig.ServerConfig;
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${image.id}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const captured: OrchestrationV2ServerCommand[] = [];
+    // The edit omits `attachments`, as an older client's does, so the queued ones stay.
+    const edit = (run: string, managesProviders: boolean) =>
+      dispatchCommand(
+        {
+          type: "queued-run.edit",
+          commandId: CommandId.make(`edit-${run}-${managesProviders}`),
+          threadId,
+          runId: RunId.make(run),
+          text: " /LOGOUT ",
+        },
+        { managesProviders },
+      ).pipe(
+        Effect.provide(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            dispatch: layerFailingDispatchHandler(captured),
+            hasReceipt: () => Effect.succeed(false),
+            getThreadRecords: () =>
+              Effect.succeed({
+                runs: ["attached", "bare"].map((id) => ({
+                  id: RunId.make(id),
+                  status: "queued",
+                  userMessageId: MessageId.make(id),
+                })),
+                messages: [
+                  { id: MessageId.make("attached"), attachments: [image] },
+                  { id: MessageId.make("bare"), attachments: [] },
+                ],
+              } as never),
+          }),
+        ),
+        Effect.flip,
+      );
+
+    expect((yield* edit("bare", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect((yield* edit("started", false))._tag).toBe("EnvironmentAuthorizationError");
+    expect(captured).toEqual([]);
+    yield* edit("attached", false);
+    yield* edit("bare", true);
+    // The kept files are pinned, so an edit racing this one cannot strip them afterwards.
+    expect(captured).toMatchObject([
+      { runId: "attached", attachments: [image] },
+      { runId: "bare" },
+    ]);
+    expect(captured[1]).not.toHaveProperty("attachments");
   }).pipe(Effect.provide(layerIntakeTest)),
 );

@@ -702,6 +702,10 @@ export const layer: Layer.Layer<
                   records: providerMessage.context?.records ?? [],
                 }),
                 hasAttachments: false,
+                // A scheduled delivery keeps its task author's createdBy.
+                sentByPerson:
+                  providerMessage.createdBy === "user" &&
+                  providerMessage.scheduledTaskId === undefined,
               }),
             );
         if (isEmptyCompaction || authResult?._tag === "Failure" || authResult?.success) {
