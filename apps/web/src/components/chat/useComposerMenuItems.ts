@@ -15,6 +15,7 @@ import type {
   ProviderDriverKind,
   ProviderInstanceId,
   PullRequestListInput,
+  PullRequestReferenceSigil,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
@@ -71,6 +72,7 @@ export function useComposerMenuItems({
   activeThreadId,
   pullRequestProjectId,
   pullRequestRepository,
+  pullRequestSigil,
   threadPullRequests,
   sideChatAvailable,
   sideChatDisabledReason,
@@ -91,6 +93,7 @@ export function useComposerMenuItems({
   readonly activeThreadId: ThreadId | null;
   readonly pullRequestProjectId: ProjectId | null;
   readonly pullRequestRepository: string | null;
+  readonly pullRequestSigil: PullRequestReferenceSigil;
   readonly threadPullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined;
   readonly sideChatAvailable: boolean;
   readonly sideChatDisabledReason: string | null;
@@ -403,7 +406,7 @@ export function useComposerMenuItems({
           state: pullRequest.state,
           isDraft: pullRequest.isDraft,
         },
-        label: `#${pullRequest.number}`,
+        label: `${pullRequestSigil}${pullRequest.number}`,
         description:
           pullRequest.repository.trim().toLowerCase() === pullRequestRepository.trim().toLowerCase()
             ? pullRequest.title

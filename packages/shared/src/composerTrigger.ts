@@ -1,3 +1,5 @@
+import type { PullRequestReferenceSigil } from "@t3tools/contracts";
+
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
@@ -65,9 +67,19 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
-export function detectComposerPullRequestTrigger(token: string, cursor: number) {
+const PULL_REQUEST_TRIGGER: Record<PullRequestReferenceSigil, RegExp> = {
+  "#": /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u,
+  "!": /(?:^|\p{Ps})!([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u,
+};
+
+/** `sigil` is the one the project's host links change requests with, such as GitLab's `!12`. */
+export function detectComposerPullRequestTrigger(
+  token: string,
+  cursor: number,
+  sigil: PullRequestReferenceSigil = "#",
+) {
   if (/^[@\p{Sc}]/u.test(token)) return null;
-  const match = /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  const match = PULL_REQUEST_TRIGGER[sigil].exec(token);
   if (!match) return null;
   const query = match[1] ?? "";
   return {
@@ -82,6 +94,7 @@ export function detectComposerTrigger(
   text: string,
   cursorInput: number,
   isWhitespaceChar?: (char: string) => boolean,
+  changeRequestSigil?: PullRequestReferenceSigil,
 ): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const wsCheck = isWhitespaceChar ?? isWhitespace;
@@ -101,7 +114,7 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor, changeRequestSigil);
   if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {

@@ -3782,6 +3782,11 @@ export default function ChatView(props: ChatViewProps) {
                                 pullRequestRepository={
                                   supportsPullRequests ? activeProjectRepository : null
                                 }
+                                pullRequestSigil={
+                                  sourceControlClients.find(
+                                    activeProject?.repositoryIdentity?.provider ?? "",
+                                  )?.changeRequestSigil ?? "#"
+                                }
                                 threadPullRequests={
                                   (activeThreadShell ?? activeThread)?.pullRequests
                                 }

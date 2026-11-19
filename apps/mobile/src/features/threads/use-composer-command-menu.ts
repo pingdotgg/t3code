@@ -3,6 +3,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
+  PullRequestReferenceSigil,
   ServerProvider,
   ThreadId,
   ThreadPullRequestLink,
@@ -259,6 +260,7 @@ export function useComposerCommandMenu({
   projectCwd,
   pullRequestProjectId = null,
   pullRequestRepository = null,
+  pullRequestSigil = "#",
   threadPullRequests,
   selectedProviderStatus,
   hasThread,
@@ -284,6 +286,8 @@ export function useComposerCommandMenu({
   readonly projectCwd: string | null;
   readonly pullRequestProjectId?: ProjectId | null;
   readonly pullRequestRepository?: string | null;
+  /** How the project's host references a change request by number: `#12`, or GitLab's `!12`. */
+  readonly pullRequestSigil?: PullRequestReferenceSigil;
   readonly threadPullRequests?: ReadonlyArray<ThreadPullRequestLink>;
   readonly selectedProviderStatus: ServerProvider | null;
   readonly hasThread: boolean;
@@ -349,7 +353,7 @@ export function useComposerCommandMenu({
     if (!enabled || selection.start !== selection.end) {
       return null;
     }
-    return detectComposerTrigger(draftMessage, selection.end);
+    return detectComposerTrigger(draftMessage, selection.end, undefined, pullRequestSigil);
   })();
   const pathSearch = useComposerPathSearch({
     environmentId,
@@ -387,7 +391,7 @@ export function useComposerCommandMenu({
           state: entry.state,
           isDraft: entry.isDraft,
         },
-        label: `#${entry.number}`,
+        label: `${pullRequestSigil}${entry.number}`,
         description: `${entry.isDraft ? gt("Draft", { $context: "pull request state" }) : messages(PULL_REQUEST_STATE_LABELS[entry.state])} · ${
           entry.repository.toLowerCase() === pullRequestRepository?.toLowerCase()
             ? ""

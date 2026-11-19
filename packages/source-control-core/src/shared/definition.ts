@@ -1,5 +1,6 @@
 import {
   type PullRequestAction,
+  type PullRequestReferenceSigil,
   type PullRequestReviewVerdict,
   type RepositoryIdentity,
   secretSetting,
@@ -313,6 +314,8 @@ export interface SourceControlDefinition {
    */
   readonly changeRequestCreateCommand?: RegExp;
   readonly authorProfileUrl: (login: string, repositoryUrl: string) => string | null;
+  /** The sigil that references a change request by number in text. Absent means `#`. */
+  readonly changeRequestSigil?: PullRequestReferenceSigil;
   /**
    * The references this host's own renderer links in plain text, such as `#12` or a commit SHA,
    * resolved against `repositoryUrl`, in the order they appear. Absent for a host whose grammar

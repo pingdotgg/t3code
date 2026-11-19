@@ -2,6 +2,7 @@ import type { ClientSettings } from "@t3tools/contracts/settings";
 import type {
   AssistantCitation,
   EnvironmentId,
+  PullRequestReferenceSigil,
   ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import type { ComposerPathSearchTarget } from "@t3tools/client-runtime/state/threads";
@@ -259,7 +260,11 @@ export function collapseExpandedComposerCursor(
   return collapsedCursor;
 }
 
-export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
+export function detectComposerTrigger(
+  text: string,
+  cursorInput: number,
+  changeRequestSigil?: PullRequestReferenceSigil,
+): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
   const tokenStart = tokenStartForCursor(text, cursor);
   const token = text.slice(tokenStart, cursor);
@@ -272,7 +277,7 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       rangeEnd: cursor,
     };
   }
-  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor, changeRequestSigil);
   if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
@@ -309,6 +314,7 @@ export function pastedPathQueryLength(
 export function composerStateAtPromptEnd(
   text: string,
   literalText = false,
+  changeRequestSigil?: PullRequestReferenceSigil,
 ): {
   cursor: number;
   trigger: ComposerTrigger | null;
@@ -318,7 +324,11 @@ export function composerStateAtPromptEnd(
     cursor,
     trigger: literalText
       ? null
-      : detectComposerTrigger(text, expandCollapsedComposerCursor(text, cursor)),
+      : detectComposerTrigger(
+          text,
+          expandCollapsedComposerCursor(text, cursor),
+          changeRequestSigil,
+        ),
   };
 }
 

@@ -96,6 +96,17 @@ describe("detectComposerTrigger", () => {
   });
 
   it.each([
+    ["Investigate #1", "#", "pull-request"],
+    ["Investigate !1", "#", null],
+    ["Investigate #1", "!", null],
+    ["Investigate !1", "!", "pull-request"],
+    ["Investigate (!fix", "!", "pull-request"],
+    ["Hello!", "!", null],
+  ] as const)("reads %j with change request sigil %s", (text, sigil, kind) => {
+    expect(detectComposerTrigger(text, text.length, undefined, sigil)?.kind ?? null).toBe(kind);
+  });
+
+  it.each([
     ["@src/(#1", "path", "src/(#1"],
     ["$review(#1", "skill", "review(#1"],
   ])("keeps explicit completion for %j", (token, kind, query) => {
