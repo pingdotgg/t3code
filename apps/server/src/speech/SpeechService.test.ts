@@ -404,7 +404,7 @@ it.effect("preserves the current model when another client removes a selection c
       _tag: "SpeechModelNotFoundError",
       modelId: "fallback-model",
     });
-    expect((yield* speech.status).modelId).toBe("test-model");
+    expect(yield* speech.status).toMatchObject({ supported: true, modelId: "test-model" });
   }).pipe(Effect.provide(layer)),
 );
 
