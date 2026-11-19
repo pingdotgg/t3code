@@ -41,6 +41,8 @@ function aggregateRowForState(state: RelayAgentActivityState) {
     phase: state.phase,
     status: statusForPhase(state.phase),
     updatedAt: state.updatedAt,
+    // A new heartbeat makes the card differ, so it is sent again and its stale date moves.
+    ...(state.heartbeatAt === undefined ? {} : { heartbeatAt: state.heartbeatAt }),
     deepLink: state.deepLink,
   };
 }

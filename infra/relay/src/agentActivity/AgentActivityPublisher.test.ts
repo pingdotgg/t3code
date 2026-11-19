@@ -1,4 +1,5 @@
 import { makeAggregateState } from "./agentActivityAggregate.ts";
+import { androidActivityData } from "./fcmPayloads.ts";
 import type { RelayAgentActivityState, RelayDeliveryResult } from "@t3tools/contracts/relay";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -492,6 +493,20 @@ describe("makeAggregateState", () => {
 
     expect(aggregate?.activeCount).toBe(1);
     expect(aggregate?.activities).toMatchObject([{ threadId: "thread-fresh" }]);
+  });
+
+  it("keeps a quiet row alive on its heartbeat, on the card and in Android's expiry", () => {
+    const heartbeatAt = "1970-01-01T02:59:00.000Z";
+    const aggregate = makeAggregateState({
+      activeStates: [{ ...state, heartbeatAt }],
+      terminalState: null,
+      nowMs: 3 * hourMs,
+    });
+
+    expect(aggregate?.activities).toMatchObject([{ updatedAt: state.updatedAt, heartbeatAt }]);
+    expect(androidActivityData(aggregate).activity_expires_at).toBe(
+      String(Date.parse(heartbeatAt) + 2 * hourMs),
+    );
   });
 
   it("returns null when every row has expired and nothing terminal remains", () => {
