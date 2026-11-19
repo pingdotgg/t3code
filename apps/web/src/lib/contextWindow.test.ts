@@ -84,6 +84,18 @@ describe("V2 context window presentation", () => {
     expect(snapshot?.usedTokens).toBe(2_000);
     expect(snapshot?.maxTokens).toBe(1_000_000);
 
+    // A report in the compaction's own millisecond is the provider's post-compaction usage.
+    const reportedWithCompaction = decodeTokenUsage({
+      usedTokens: 2_000,
+      maxTokens: 1_000_000,
+      autoCompactThreshold: 900_000,
+      updatedAt: "2026-06-20T00:00:00.000Z",
+    });
+    expect(
+      deriveLatestContextWindowSnapshot([compactionEntry(null)], reportedWithCompaction)
+        ?.autoCompactThreshold,
+    ).toBe(900_000);
+
     const { afterTokenCount: _, ...withoutCount } = compactionEntry(null).item;
     expect(
       deriveLatestContextWindowSnapshot([{ item: withoutCount }], usageBeforeCompaction),

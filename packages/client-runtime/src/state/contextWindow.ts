@@ -144,8 +144,9 @@ export function deriveLatestContextWindowSnapshot(
     const compactedAt = DateTime.formatIso(
       latestCompletedCompaction.completedAt ?? latestCompletedCompaction.updatedAt,
     );
-    // Usage reported before the compaction describes the context it just discarded.
-    if (usageUpdatedAt === null || Date.parse(compactedAt) >= Date.parse(usageUpdatedAt)) {
+    // Usage reported before the compaction describes the context it just discarded; usage at
+    // the same instant is the provider's own post-compaction report.
+    if (usageUpdatedAt === null || Date.parse(compactedAt) > Date.parse(usageUpdatedAt)) {
       return compactionSnapshot(
         latestCompletedCompaction,
         liveUsage?.maxTokens ?? asFiniteNumber(providerThread?.contextUsage?.maxTokens),
