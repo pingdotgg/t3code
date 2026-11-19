@@ -10,7 +10,7 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
+import { AntigravityCliRefreshError, makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
 
 const summary = {
   groups: [
@@ -65,6 +65,10 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
+    /** Signs in through the agy CLI's token file, whose access token expires at this time. */
+    cliExpiry?: string;
+    /** What the agy CLI writes back when asked to refresh; omitted, the refresh fails. */
+    cliRefreshedExpiry?: string;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
   } = {},
 ) {
@@ -83,7 +87,28 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         project_id: "project-id",
       }),
     );
-  if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
+  const cliTokenPath = path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token");
+  const cliToken = (refreshToken: string, expiry: string) =>
+    JSON.stringify({
+      auth_method: "consumer",
+      token: { access_token: "access-token", refresh_token: refreshToken, expiry },
+    });
+  const writeCliToken = (refreshToken: string, expiry: string) =>
+    fs.writeFileString(cliTokenPath, cliToken(refreshToken, expiry));
+  if (options.cliExpiry !== undefined) {
+    yield* writeCliToken(options.refreshToken ?? "refresh-a", options.cliExpiry);
+  } else if (!options.missingToken) {
+    yield* writeToken(options.refreshToken ?? "refresh-a");
+  }
+  let cliRefreshes = 0;
+  const refreshCliSignIn = Effect.suspend(() => {
+    cliRefreshes++;
+    return options.cliRefreshedExpiry === undefined
+      ? Effect.fail(new AntigravityCliRefreshError({ detail: "Please sign in." }))
+      : writeCliToken(options.refreshToken ?? "refresh-a", options.cliRefreshedExpiry).pipe(
+          Effect.orDie,
+        );
+  });
   const requests: Array<{ url: string; body: string }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
@@ -111,7 +136,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      expect(JSON.parse(body)).toEqual(
+        options.cliExpiry === undefined ? { project: "project-id" } : {},
+      );
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -132,8 +159,16 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
+    refreshCliSignIn,
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
-  return { ...usage, requests, writeToken, tokenPath };
+  return {
+    ...usage,
+    requests,
+    writeToken,
+    writeCliToken,
+    tokenPath,
+    cliRefreshes: () => cliRefreshes,
+  };
 });
 
 describe("Antigravity subscription limits", () => {
@@ -575,6 +610,66 @@ describe("Antigravity subscription limits", () => {
       yield* clear;
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(4);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("prefers an agy sign-in and refreshes it through the CLI once it expires", () =>
+    Effect.gen(function* () {
+      const usage = yield* fixture({
+        cliExpiry: "2026-10-21T11:00:00Z",
+        cliRefreshedExpiry: "2026-10-21T12:00:00Z",
+        userId: "google-user-1",
+      });
+      const userInfoReads = () =>
+        usage.requests.filter((request) => request.url.endsWith("/userinfo")).length;
+      yield* usage.writeToken("refresh-left-from-the-bundled-runtime");
+      const live = yield* usage.probe;
+      expect(live.unavailable).toBeUndefined();
+      expect(live.windows).toHaveLength(4);
+      expect(usage.cliRefreshes()).toBe(0);
+      expect(usage.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+
+      yield* usage.writeCliToken("refresh-a", "1970-01-01T00:00:30Z");
+      yield* usage.clear;
+      const refreshed = yield* usage.probe;
+      expect(usage.cliRefreshes()).toBe(1);
+      expect(refreshed.windows).toHaveLength(4);
+      expect(refreshed.credentialFingerprint).toBe(live.credentialFingerprint);
+
+      const reads = userInfoReads();
+      yield* usage.probe;
+      expect(usage.cliRefreshes()).toBe(1);
+      expect(userInfoReads()).toBe(reads);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("uses an agy sign-in the CLI left alone because it had not expired yet", () =>
+    Effect.gen(function* () {
+      const { probe, cliRefreshes } = yield* fixture({
+        cliExpiry: "1970-01-01T00:00:30Z",
+        cliRefreshedExpiry: "1970-01-01T00:00:30Z",
+      });
+      expect((yield* probe).unavailable).toBeUndefined();
+      expect(cliRefreshes()).toBe(1);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("waits before rerunning the agy CLI for a sign-in it could not refresh", () =>
+    Effect.gen(function* () {
+      const { probe, clear, requests, cliRefreshes } = yield* fixture({
+        cliExpiry: "1970-01-01T00:00:00Z",
+      });
+      expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+      yield* TestClock.adjust("14 minutes");
+      expect((yield* probe).unavailable?.reason).toBe("probeFailed");
+      expect(cliRefreshes()).toBe(1);
+      yield* TestClock.adjust("1 minute");
+      yield* probe;
+      expect(cliRefreshes()).toBe(2);
+      yield* clear;
+      yield* probe;
+      expect(cliRefreshes()).toBe(3);
+      expect(requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

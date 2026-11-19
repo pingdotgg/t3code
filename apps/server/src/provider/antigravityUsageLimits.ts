@@ -38,6 +38,14 @@ const TokenFile = Schema.Struct({
   refresh_token: Schema.NonEmptyString,
   project_id: Schema.optional(Schema.String),
 });
+/** The agy CLI's sign-in, a Go oauth2 token without the client credentials a refresh needs. */
+const CliTokenFile = Schema.Struct({
+  token: Schema.Struct({
+    access_token: Schema.NonEmptyString,
+    refresh_token: Schema.NonEmptyString,
+    expiry: Schema.String,
+  }),
+});
 const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
   expires_in: Schema.Number.check(Schema.isGreaterThan(0)),
@@ -77,7 +85,13 @@ const Models = Schema.Struct({
   ),
 });
 
+export class AntigravityCliRefreshError extends Schema.TaggedError<AntigravityCliRefreshError>()(
+  "AntigravityCliRefreshError",
+  { detail: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
+
 const decodeTokenFile = Schema.decodeEffect(Schema.fromJsonString(TokenFile));
+const decodeCliTokenFile = Schema.decodeEffect(Schema.fromJsonString(CliTokenFile));
 const decodeTokenResponse = Schema.decodeUnknownEffect(TokenResponse);
 const decodeUserInfo = Schema.decodeUnknownEffect(UserInfo);
 const decodeSummary = Schema.decodeUnknownEffect(Summary);
@@ -210,6 +224,8 @@ function modelWindows(models: typeof Models.Type) {
 export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(function* (input: {
   readonly profileDirectory: string;
   readonly authMethod: AntigravitySettings["authMethod"];
+  /** Rewrites the agy CLI's token file in the profile; only the CLI holds the client credentials. */
+  readonly refreshCliSignIn: Effect.Effect<void, AntigravityCliRefreshError>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -217,10 +233,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
-  const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
+  const acpDirectory = path.join(input.profileDirectory, "antigravity-acp");
+  const tokenPath = path.join(acpDirectory, "acp_token.json");
+  const cliTokenPath = path.join(acpDirectory, "antigravity-oauth-token");
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;
+  // The refresh spawns the CLI, so a sign-in it could not refresh waits before the next attempt.
+  let failedCliRefresh: { fingerprint: string; at: number } | undefined;
   let generation = 0;
 
   const request = (request: HttpClientRequest.HttpClientRequest) =>
@@ -230,30 +250,14 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       Effect.flatMap((response) => response.json),
       Effect.timeout("10 seconds"),
     );
-  const read = Effect.gen(function* () {
-    const startedGeneration = generation;
-    const checkedAt = DateTime.formatIso(yield* DateTime.now);
-    if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
-      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
-    }
-    if (!(yield* fs.exists(tokenPath))) {
-      cached = undefined;
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "Sign in with Google to see Antigravity limits.",
-      });
-    }
+  const legacyAccess = Effect.fn("AntigravityUsageProbe.legacyAccess")(function* (now: number) {
     const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
-    const fingerprint = yield* sha256(
-      `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
-    );
-    const now = yield* Clock.currentTimeMillis;
-    let accessToken: string;
-    let account: string;
-    if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
-      cached = undefined;
-      const refreshed = yield* request(
+    return {
+      fingerprint: yield* sha256(
+        `${token.client_id}\0${token.refresh_token}\0${token.project_id ?? ""}`,
+      ),
+      projectId: token.project_id,
+      obtain: request(
         HttpClientRequest.post("https://oauth2.googleapis.com/token").pipe(
           HttpClientRequest.bodyUrlParams({
             client_id: token.client_id,
@@ -262,29 +266,93 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
             grant_type: "refresh_token",
           }),
         ),
-      ).pipe(Effect.flatMap(decodeTokenResponse));
-      accessToken = refreshed.access_token;
+      ).pipe(
+        Effect.flatMap(decodeTokenResponse),
+        Effect.map((refreshed) => ({
+          accessToken: refreshed.access_token,
+          expiresAt: now + refreshed.expires_in * 1000,
+        })),
+      ),
+    };
+  });
+  const cliAccess = Effect.fn("AntigravityUsageProbe.cliAccess")(function* (
+    now: number,
+    startedGeneration: number,
+  ) {
+    const readToken = fs.readFileString(cliTokenPath).pipe(
+      Effect.flatMap(decodeCliTokenFile),
+      Effect.map(({ token }) => ({
+        accessToken: token.access_token,
+        refreshToken: token.refresh_token,
+        expiresAt: Date.parse(token.expiry),
+      })),
+    );
+    const token = yield* readToken;
+    const fingerprint = yield* sha256(`agy\0${token.refreshToken}`);
+    const fresh = (candidate: typeof token) => candidate.expiresAt > now + 60_000;
+    const refresh = input.refreshCliSignIn.pipe(
+      Effect.andThen(readToken),
+      // agy refreshes only within seconds of expiry, so it may leave a token that expires soon.
+      Effect.filterOrFail(
+        (candidate) => candidate.expiresAt > now,
+        () => new AntigravityCliRefreshError({ detail: "The agy sign-in did not refresh." }),
+      ),
+      Effect.tapError(() =>
+        Effect.sync(() => {
+          if (generation === startedGeneration) failedCliRefresh = { fingerprint, at: now };
+        }),
+      ),
+    );
+    return {
+      fingerprint,
+      projectId: undefined,
+      obtain: fresh(token)
+        ? Effect.succeed(token)
+        : failedCliRefresh?.fingerprint === fingerprint && now < failedCliRefresh.at + 15 * 60_000
+          ? Effect.fail(
+              new AntigravityCliRefreshError({ detail: "The agy sign-in did not refresh." }),
+            )
+          : refresh,
+    };
+  });
+  const read = Effect.gen(function* () {
+    const startedGeneration = generation;
+    const checkedAt = DateTime.formatIso(yield* DateTime.now);
+    if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
+      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+    }
+    const now = yield* Clock.currentTimeMillis;
+    // The agy CLI writes antigravity-oauth-token. The older bundled runtime's acp_token.json can
+    // outlive an upgrade, so it is read only without an agy sign-in.
+    const access = (yield* fs.exists(cliTokenPath))
+      ? yield* cliAccess(now, startedGeneration)
+      : (yield* fs.exists(tokenPath))
+        ? yield* legacyAccess(now)
+        : undefined;
+    if (!access) {
+      cached = undefined;
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Sign in with Google to see Antigravity limits.",
+      });
+    }
+    let session = cached;
+    if (session?.fingerprint !== access.fingerprint || session.expiresAt <= now + 60_000) {
+      const { accessToken, expiresAt } = yield* access.obtain;
       // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
-      account = yield* request(
+      const account = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
         ),
       ).pipe(
         Effect.flatMap(antigravityAccountFingerprint),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.orElseSucceed(() => access.fingerprint),
       );
-      if (generation === startedGeneration) {
-        cached = {
-          fingerprint,
-          account,
-          accessToken,
-          expiresAt: now + refreshed.expires_in * 1000,
-        };
-      }
-    } else {
-      accessToken = cached.accessToken;
-      account = cached.account;
+      session = { fingerprint: access.fingerprint, account, accessToken, expiresAt };
+      if (generation === startedGeneration) cached = session;
     }
+    const { accessToken, account } = session;
     const endpoints = ENDPOINTS[input.authMethod];
     // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
     const fetchWindows = Effect.fn("AntigravityUsageProbe.fetchWindows")(function* <E>(
@@ -307,7 +375,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
                   "User-Agent": antigravityUserAgent(platform, architecture),
                 }),
                 HttpClientRequest.bodyJsonUnsafe(
-                  token.project_id ? { project: token.project_id } : {},
+                  access.projectId ? { project: access.projectId } : {},
                 ),
               ),
             ).pipe(
@@ -355,6 +423,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     probe,
     clear: Effect.sync(() => {
       cached = undefined;
+      failedCliRefresh = undefined;
       generation++;
     }),
   };

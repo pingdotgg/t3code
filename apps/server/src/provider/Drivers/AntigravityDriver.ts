@@ -65,7 +65,10 @@ import {
 import { makeAcpNativeLoggerFactory } from "@t3tools/provider-acp/server/nativeLogging";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityProvider } from "../AntigravityProvider.ts";
-import { makeAntigravityUsageProbe } from "../antigravityUsageLimits.ts";
+import {
+  AntigravityCliRefreshError,
+  makeAntigravityUsageProbe,
+} from "../antigravityUsageLimits.ts";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import {
@@ -435,9 +438,46 @@ export const AntigravityDriver: ProviderDriver<
       };
     });
 
+    // Starting an agy session refreshes its expired sign-in in about a second. The bundled
+    // runtime unpacks about 1 GB per launch, so only the agy CLI is started for this.
+    const refreshCliSignIn = Effect.gen(function* () {
+      const executable = yield* installation.resolve(settings.binaryPath, processEnvironment);
+      if (executable.harnessPath !== null) {
+        return yield* new AntigravityCliRefreshError({
+          detail: "The bundled Antigravity runtime keeps its own sign-in.",
+        });
+      }
+      const processScope = yield* Scope.make();
+      yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
+      yield* authFlow
+        .withProcess(
+          Scope.close(processScope, Exit.void),
+          // A handler keeps a refused sign-in from marking auth required, which would interrupt this read.
+          makeDisposableRuntime({
+            onAuthorizationUrl: () =>
+              Effect.fail(
+                new AcpErrors.AcpTransportError({
+                  detail: "The agy sign-in needs a new Google sign-in.",
+                  cause: undefined,
+                }),
+              ),
+          }).pipe(Effect.flatMap((runtime) => runtime.start())),
+        )
+        .pipe(Effect.provideService(Scope.Scope, processScope));
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout("20 seconds"),
+      Effect.mapError((cause) =>
+        cause._tag === "AntigravityCliRefreshError"
+          ? cause
+          : new AntigravityCliRefreshError({ detail: "agy could not refresh its sign-in.", cause }),
+      ),
+      Effect.withSpan("AntigravityDriver.refreshCliSignIn"),
+    );
     const usage = yield* makeAntigravityUsageProbe({
       profileDirectory,
       authMethod: auth.authMethod,
+      refreshCliSignIn,
     }).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
