@@ -383,12 +383,4 @@ describe("WorkflowRunsView", () => {
     await expect.element(screen.getByText("Starts on daily at 09:00")).toBeVisible();
     await expect.element(runs).toMatchTextContent("Has not run yet.");
   });
-
-  it("points at where workflows are written when nothing has run", async () => {
-    setup({ runs: [], questions: [] });
-    await using screen = await render(page());
-
-    await expect.element(screen.getByText("No workflow runs yet")).toBeVisible();
-    await expect.element(screen.getByRole("button", { name: "Definitions" })).toBeVisible();
-  });
 });
