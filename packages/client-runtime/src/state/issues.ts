@@ -4,6 +4,8 @@ import {
   type IssueAssigneeCandidate,
   type IssueCandidates,
   type IssueComment,
+  type IssueCommentsPage,
+  type IssueDetail,
   type IssueLabelCandidate,
   type IssueListEntry,
   type IssueListInput,
@@ -17,9 +19,11 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 
 import {
+  type AtomCommandResult,
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -49,13 +53,96 @@ export function mergeIssueListPage(
 }
 
 /** Older comments go in front: the detail carries the newest page and pages walk backwards. */
-export function prependIssueComments(
+function prependIssueComments(
   current: ReadonlyArray<IssueComment>,
   older: ReadonlyArray<IssueComment>,
 ): ReadonlyArray<IssueComment> {
   if (older.length === 0) return current;
   const seen = new Set(current.map((comment) => comment.id));
   return [...older.filter((comment) => !seen.has(comment.id)), ...current];
+}
+
+export function createIssueCommentPager<E>(
+  detailAtom: Atom.Atom<
+    AsyncResult.AsyncResult<Pick<IssueDetail, "comments" | "commentsCursor">, E>
+  >,
+) {
+  const state = Atom.make<{
+    readonly older: (IssueCommentsPage & { readonly seed: string }) | null;
+    readonly loadingOlder: boolean;
+    readonly refreshing: boolean;
+    readonly refreshes: number;
+  }>({ older: null, loadingOlder: false, refreshing: false, refreshes: 0 });
+  const page = Atom.make((get) => {
+    const detailResult = get(detailAtom);
+    const detail = AsyncResult.getOrElse(detailResult, () => null);
+    const current = get(state);
+    const seed = detail?.commentsCursor ?? null;
+    const older = current.older?.seed === seed ? current.older : null;
+    const nextCursor = older ? older.nextCursor : seed;
+    return {
+      comments: detail?.comments ?? [],
+      seed,
+      older,
+      nextCursor,
+      loadingOlder: current.loadingOlder,
+      unavailable: detailResult.waiting || current.refreshing || current.loadingOlder,
+    };
+  });
+  const view = Atom.make((get) => {
+    const { comments, older, nextCursor, loadingOlder, unavailable } = get(page);
+    return {
+      comments: prependIssueComments(comments, older?.comments ?? []),
+      nextCursor,
+      loadingOlder,
+      canLoadOlder: nextCursor !== null && !unavailable,
+    };
+  });
+
+  return {
+    view,
+    async refresh(registry: AtomRegistry.AtomRegistry, read: () => void | Promise<void>) {
+      const current = registry.get(state);
+      if (current.refreshing) return;
+      // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
+      registry.set(state, {
+        ...current,
+        older: null,
+        refreshing: true,
+        refreshes: current.refreshes + 1,
+      });
+      try {
+        await read();
+      } finally {
+        registry.set(state, { ...registry.get(state), refreshing: false });
+      }
+    },
+    async loadOlder(
+      registry: AtomRegistry.AtomRegistry,
+      read: (cursor: string) => Promise<AtomCommandResult<IssueCommentsPage, unknown>>,
+    ) {
+      const { seed, older, nextCursor, unavailable } = registry.get(page);
+      if (seed === null || nextCursor === null || unavailable) return;
+      const current = registry.get(state);
+      registry.set(state, { ...current, loadingOlder: true });
+      try {
+        const result = await read(nextCursor);
+        const latest = registry.get(state);
+        if (latest.refreshes !== current.refreshes) return;
+        if (result._tag === "Failure") return result;
+        registry.set(state, {
+          ...latest,
+          older: {
+            seed,
+            comments: prependIssueComments(older?.comments ?? [], result.value.comments),
+            nextCursor: result.value.nextCursor,
+          },
+        });
+      } finally {
+        registry.set(state, { ...registry.get(state), loadingOlder: false });
+      }
+    },
+  };
 }
 
 /**
@@ -88,7 +175,18 @@ export function createIssueEnvironmentAtoms<R, E>(
     { environmentId, input }: { readonly environmentId: EnvironmentId; readonly input: IssueRef },
     registry: AtomRegistry.AtomRegistry,
   ) => Effect.sync(() => registry.refresh(detail({ environmentId, input: detailRef(input) })));
+  const linkedThreadSignals = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:linked-thread-refreshes",
+    tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  });
   return {
+    /** The threads an issue is linked to, reread when the server signals a link changed. */
+    linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:linked-threads",
+      tag: WS_METHODS.issuesLinkedThreads,
+      staleTimeMs: 0,
+      refreshTrigger: ({ environmentId }) => linkedThreadSignals({ environmentId, input: {} }),
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,
@@ -214,21 +312,22 @@ export function createMergedIssueListAtoms<E>(
   ) => {
     for (const target of targets) registry.refresh(list(target));
   };
-  // Every listing asked for, so a write made elsewhere can refresh the ones still shown.
-  const asked = new Map<string, ReadonlyArray<IssueListTarget>>();
+  // The targets behind each listing atom, so a write made elsewhere can refresh the ones still
+  // shown. Weak, so a closed search goes with its atom once the registry drops it.
+  const targetsOf = new WeakMap<Atom.Atom<MergedIssueList>, ReadonlyArray<IssueListTarget>>();
   return {
     atom: (targets: ReadonlyArray<IssueListTarget>) => {
       if (targets.length === 0) return empty;
-      const key = JSON.stringify(targets);
-      asked.set(key, targets);
-      return family(key);
+      const atom = family(JSON.stringify(targets));
+      targetsOf.set(atom, targets);
+      return atom;
     },
     refresh,
     /** Refreshes each listing of `environmentId` that something still reads. */
     refreshEnvironment: (registry: AtomRegistry.AtomRegistry, environmentId: EnvironmentId) => {
-      const live = new Set(registry.getNodes().keys());
-      for (const [key, targets] of asked) {
-        if (!live.has(family(key))) continue;
+      for (const node of registry.getNodes().values()) {
+        const targets = targetsOf.get(node.atom);
+        if (targets === undefined) continue;
         refresh(
           registry,
           targets.filter((target) => target.environmentId === environmentId),
@@ -260,7 +359,10 @@ const NO_ISSUE_CANDIDATES: MergedIssueCandidates = {
   truncated: false,
 };
 
-/** Fans out like the merged listing: a scope that fails leaves the others' answers in place. */
+/**
+ * Fans out like the merged listing: a scope that fails leaves the others' answers in place.
+ * Retry skips scopes that already answered or still have a request in flight.
+ */
 export function createMergedIssueCandidatesAtoms<E>(
   candidates: (
     target: IssueCandidatesTarget,
@@ -296,6 +398,15 @@ export function createMergedIssueCandidatesAtoms<E>(
       };
     }).pipe(Atom.withLabel(`issues:candidates:${key}`)),
   );
-  return (targets: ReadonlyArray<IssueCandidatesTarget>) =>
-    targets.length === 0 ? empty : family(JSON.stringify(targets));
+  return {
+    atom: (targets: ReadonlyArray<IssueCandidatesTarget>) =>
+      targets.length === 0 ? empty : family(JSON.stringify(targets)),
+    retry: (registry: AtomRegistry.AtomRegistry, targets: ReadonlyArray<IssueCandidatesTarget>) => {
+      for (const target of targets) {
+        const atom = candidates(target);
+        const result = registry.get(atom);
+        if (result._tag === "Failure" && !result.waiting) registry.refresh(atom);
+      }
+    },
+  };
 }

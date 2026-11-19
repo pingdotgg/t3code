@@ -7,6 +7,7 @@ import {
   NonNegativeInt,
   PositiveInt,
   ProjectId,
+  ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 import {
@@ -300,7 +301,7 @@ export const IssueListProjectError = Schema.Struct({
 export type IssueListProjectError = typeof IssueListProjectError.Type;
 
 export const IssueListResult = Schema.Struct({
-  /** The signed-in account per host, which is what involvement compares against. */
+  /** The signed-in account per host that involvement compared against. Empty for `all`. */
   viewers: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString),
   trackers: Schema.Array(IssueTrackerSummary),
   /** By update, newest first, across every scope this answer covers. */
@@ -527,6 +528,20 @@ export function threadIssueKeyOf(key: ThreadIssueKey): string {
 export function threadIssueKeysEqual(left: ThreadIssueKey, right: ThreadIssueKey): boolean {
   return threadIssueKeyOf(left) === threadIssueKeyOf(right);
 }
+
+/** The threads an issue is linked to, most recently active first. */
+export const IssueLinkedThreadsResult = Schema.Struct({
+  threads: Schema.Array(
+    Schema.Struct({
+      id: ThreadId,
+      projectId: ProjectId,
+      title: Schema.String,
+      archivedAt: Schema.NullOr(IsoDateTime),
+      settled: Schema.Boolean,
+    }),
+  ),
+});
+export type IssueLinkedThreadsResult = typeof IssueLinkedThreadsResult.Type;
 
 /**
  * A tracker that is not a git host: it is reached with its own credential rather than a
