@@ -4214,6 +4214,17 @@ describe("AcpAdapterV2", () => {
                         }),
                       ),
                     );
+                  // Copilot 1.0.114 names the subagent only by agentId, on the delta and the chunk.
+                  const agentChunk = (text: string, agentId: string) =>
+                    raw("assistant.message_delta", { deltaContent: text }, agentId).pipe(
+                      Effect.andThen(
+                        update({
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text },
+                          _meta: { "github.com/copilot": { agentId } },
+                        }),
+                      ),
+                    );
                   const launch = (toolCallId: string, description: string, mode: string) =>
                     update({
                       sessionUpdate: "tool_call",
@@ -4251,10 +4262,10 @@ describe("AcpAdapterV2", () => {
                     _meta: { "github.com/copilot": { agentId: "agent-a" } },
                   });
                   yield* chunk("`a.txt` says", "task-a");
-                  yield* chunk("`b.txt` has", "task-b");
+                  yield* agentChunk("`b.txt` has", "agent-b");
                   yield* chunk(" hello.", "task-a");
                   yield* chunk("a.txt b.txt", "task-bg");
-                  yield* chunk(" three lines.", "task-b");
+                  yield* agentChunk(" three lines.", "agent-b");
                   for (const [task, agent, text] of [
                     ["task-a", "agent-a", "`a.txt` says hello."],
                     ["task-b", "agent-b", "`b.txt` has three lines."],
