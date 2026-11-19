@@ -729,10 +729,12 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
       .join("\n");
     assert.notInclude(runPlan, "orchestration_v2_projection_runs_thread_ordinal_idx");
     assert.match(runPlan, /SEARCH orchestration_v2_projection_runs USING INDEX \w*status\w*/);
-    // The newest runs by ordinal, whatever their status, plus older runs the statuses match.
+    // The newest runs by ordinal, whatever their status, or the run that ended last, plus older runs
+    // the statuses match.
     for (const [filter, expected] of [
       [{ latestRunLimit: 2 }, [4, 5]],
       [{ latestRunLimit: 2, runStatuses: ["rolled_back"] as const }, [1, 4, 5]],
+      [{ includeLatestExecutedRun: true, runStatuses: ["rolled_back"] as const }, [1, 4]],
     ] as const) {
       const traced = traceSqlStatements();
       const recent = yield* store
@@ -857,7 +859,7 @@ it.effect("idle compaction filters keep the latest run, live work and the newest
 
 // One thread holds every way a run can still matter after a compaction. A run is requested at
 // its ordinal in minutes and ends 30 seconds later, unless the table says otherwise.
-it.effect("a compacted thread reads every run, and run records only for its recent runs", () =>
+it.effect("a compacted thread reads every run, but records and prompts only for recent ones", () =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const threadId = yield* addRolledBackRecoveryCandidate("compacted");
@@ -903,9 +905,10 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           driver,
         },
       });
-    for (const [ordinal, status, endedAt] of [
+    for (const [ordinal, status, endedAt, fresh] of [
       [2, "queued", null],
-      [3, "completed"],
+      // A fresh-context run starts its own conversation, so its prompt is read for the schedule check.
+      [3, "completed", undefined, true],
       // A held queue ran this old run after the compactions.
       [4, "completed", at(11.5)],
       [5, "completed"],
@@ -949,6 +952,7 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           completedAt: ended,
           checkpointId: null,
           contextHandoffId: null,
+          ...(fresh === true ? { freshContext: true } : {}),
         },
       });
       yield* store.apply({
@@ -1084,19 +1088,44 @@ it.effect("a compacted thread reads every run, and run records only for its rece
           })),
         );
     const all = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-    // Every run and every turn item is read, so a model switch is still measured from the last
-    // prompt. Run 1, the helper's, holds only a command item.
-    const expected = (recent: ReadonlyArray<number>) => ({
+    // Every run is read. Turn items are the failed errors of every run, and the prompts of the
+    // recent runs, of the fresh-context run 3 and of the run a model switch is measured from.
+    // Run 1, the helper's, holds only a command item.
+    const expected = (
+      recent: ReadonlyArray<number>,
+      prompts: ReadonlyArray<number> = [...recent, 3],
+    ) => ({
       runs: 15,
       attempts: recent,
       nodes: recent,
       providerTurns: recent,
       messages: recent,
-      turnItems: [1, ...all],
+      turnItems: [...new Set([5, ...prompts])].toSorted((a, b) => a - b),
     });
 
-    // Nothing is compacted yet, so the whole history is current.
-    assert.deepEqual(yield* read(), expected(all));
+    // Run 5 failed, and nothing is compacted yet, so the whole history is current.
+    yield* store.apply({
+      id: EventId.make("event:compacted:error-5"),
+      type: "turn-item.updated",
+      threadId,
+      runId: runId(5),
+      nodeId: rootNodeId(5),
+      driver,
+      occurredAt: at(5),
+      payload: {
+        ...item(5, 52, "failed"),
+        id: TurnItemId.make("item:compacted:error-5"),
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt: "2099-01-01T00:00:00.000Z",
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    assert.deepEqual(yield* read(), { ...expected(all), turnItems: [1, ...all] });
 
     // The window starts at the compaction's run. Queued run 2 and held run 4 are older but had
     // not ended by then.
@@ -1119,6 +1148,20 @@ it.effect("a compacted thread reads every run, and run records only for its rece
       yield* read([runId(3)], messageId(6)),
       expected([2, 3, 4, 6, 11, 12, 13, 14, 15]),
     );
+
+    // Only an unfiltered read with runs narrows its prompts; any other read keeps its filter.
+    const itemRuns = (fields: ReadonlyArray<"runs" | "turnItems">, filter: object) =>
+      store
+        .getThreadRecords(threadId, fields, {
+          sinceLastCompaction: { keepRunIds: [], keepMessageId: messageId(0) },
+          ...filter,
+        })
+        .pipe(Effect.map((records) => ordinals(records.turnItems.map((row) => row.runId))));
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [runId(5)] }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunIds: [] }), []);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { turnItemRunId: runId(5) }), [5]);
+    assert.deepEqual(yield* itemRuns(["runs", "turnItems"], { runIds: [runId(15)] }), [1, ...all]);
+    assert.deepEqual(yield* itemRuns(["turnItems"], {}), [1, ...all]);
 
     // A command also skips the node and the provider thread of each settled task. Tasks ended on
     // both sides of the compaction; one ran in the provider thread the thread's own runs use.
@@ -1266,11 +1309,12 @@ it.effect("a compacted thread reads every run, and run records only for its rece
     assert.deepEqual(unsettled.providerThreads, ["compacted", "old-pending", "recent-pending"]);
     assert.lengthOf(unsettled.rootNodes, all.length);
     assert.lengthOf(unsettled.runs, 15);
-    // Together: every run, every turn item and the provider thread the runs use stay, and the
-    // windowed records are read for the recent and named runs, less each settled task's node.
+    // Together: every run and the provider thread the runs use stay, and the windowed records are
+    // read for the recent and named runs, less each settled task's node.
     const recentRuns = ["11", "12", "13", "14", "15", "2", "3", "4", "6"];
     assert.deepEqual(both, {
       ...unsettled,
+      turnItems: windowed.turnItems,
       attempts: recentRuns,
       rootNodes: recentRuns,
       taskNodes: ["recent-pending"],
@@ -1286,6 +1330,47 @@ it.effect("a compacted thread reads every run, and run records only for its rece
         ]),
       ),
       both,
+    );
+
+    // A prompt that clients do not show cannot anchor a model switch. With the recent ones, and
+    // run 4's, folded into async answers, the switch is measured from run 10, so its prompt is
+    // read, with run 9's from the same batch.
+    const storedRuns = (yield* store.getThreadRecords(threadId, ["runs"])).runs;
+    for (const ordinal of [4, 11, 12, 14, 15]) {
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-run-${ordinal}`),
+        type: "run.updated",
+        threadId,
+        occurredAt: at(ordinal),
+        payload: {
+          ...storedRuns.find((run) => run.id === runId(ordinal))!,
+          userMessageId: MessageId.make(`async-answer:${ordinal}`),
+        },
+      });
+      yield* store.apply({
+        id: EventId.make(`event:compacted:async-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        runId: runId(ordinal),
+        nodeId: rootNodeId(ordinal),
+        driver,
+        occurredAt: at(ordinal),
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          ...item(ordinal, ordinal * 10, "completed"),
+          id: TurnItemId.make(`item:compacted:prompt-${ordinal}`),
+          type: "user_message",
+          messageId: MessageId.make(`async-answer:${ordinal}`),
+          inputIntent: "turn_start",
+          text: `Answer ${ordinal}`,
+          attachments: [],
+        },
+      });
+    }
+    assert.deepEqual(
+      (yield* read()).turnItems,
+      expected([2, 4, 11, 12, 13, 14, 15], [2, 3, 4, 9, 10, 11, 12, 13, 14, 15]).turnItems,
     );
   }).pipe(Effect.provide(layerTest)),
 );
@@ -8651,6 +8736,16 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         ),
       );
       yield* sql`UPDATE orchestration_v2_projection_threads SET deleted_at = NULL WHERE thread_id = ${threadId}`;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('limit-shell:malformed-error', ${threadId}, ${original.id}, ${original.rootNodeId},
+          99, 'error', 'failed', '2999-01-01T00:00:00.000Z', '{broken')`;
+      assert.isUndefined(
+        (yield* store.getLimitRecoveryCandidates({ now, autoResume: true, snooze: false })).find(
+          (row) => row.id === threadId,
+        ),
+      );
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'limit-shell:malformed-error'`;
       const recoveryOptions = { now, autoResume: false, snooze: false };
       assert.isUndefined(
         (yield* store.getLimitRecoveryCandidates(recoveryOptions)).find(
@@ -9259,6 +9354,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         const plan = (yield* sql.unsafe<{ readonly detail: string }>(
           `EXPLAIN QUERY PLAN ${statement}`,
         )).map((row) => row.detail);
+        if (marker === "AS failure_payload_json") {
+          assert.include(
+            plan.join("\n"),
+            "orchestration_v2_projection_turn_items_usage_limit_idx",
+            marker,
+          );
+        }
         const bindingLookup = plan.findIndex((detail) => detail.startsWith("SEARCH binding "));
         const sessionLookup = plan.findIndex((detail) => detail.startsWith("SEARCH session "));
         assert.isAtLeast(bindingLookup, 0, marker);
