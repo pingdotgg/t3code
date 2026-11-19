@@ -287,10 +287,11 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const interrupt = (threadId: string, environment: string) =>
+  const interrupt = (threadId: string, environment: string, runId?: string) =>
     Effect.asVoid(
       call(environment, "t3_thread_interrupt", OrchestratorMcpThreadInterruptResult, {
         threadId,
+        ...(runId === undefined ? {} : { runId }),
         reason: "Its workflow run was cancelled",
       }),
     );
