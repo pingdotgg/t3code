@@ -94,9 +94,7 @@ function IssuePreviewCardBody({ detail }: { detail: IssueDetail }) {
           {state.label}
         </span>
       </div>
-      <p className="mt-1 text-label text-foreground text-pretty">
-        {detail.title}
-      </p>
+      <p className="mt-1 text-label text-foreground text-pretty">{detail.title}</p>
       <div className="mt-2 flex min-w-0 items-center gap-2 text-caption text-muted-foreground">
         <PullRequestActorAvatar actor={author} className="size-4" />
         <span className="min-w-0 truncate">{authorLabel}</span>

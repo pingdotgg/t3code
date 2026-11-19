@@ -73,7 +73,8 @@ function endpointStatus(
       dot: "bg-muted-foreground/40",
     };
   }
-  if (check?.url !== url) return { label: resolve(msg("Not checked")), dot: "bg-muted-foreground/40" };
+  if (check?.url !== url)
+    return { label: resolve(msg("Not checked")), dot: "bg-muted-foreground/40" };
   const { result } = check;
   if (result === null) return { label: resolve(msg("Checking…")), dot: "bg-warning" };
   switch (result._tag) {

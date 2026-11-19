@@ -484,7 +484,9 @@ export function DevicePanel(props: {
                   ? grouped.map((group) => (
                       <section key={group.platform} className="flex flex-col gap-2">
                         <h3 className="text-xs font-medium text-dim-foreground">
-                          {group.platform === "ios" ? gt("iOS Simulators") : gt("Android Emulators")}
+                          {group.platform === "ios"
+                            ? gt("iOS Simulators")
+                            : gt("Android Emulators")}
                         </h3>
                         <DiscoveryList>
                           {group.devices.map((device) => (

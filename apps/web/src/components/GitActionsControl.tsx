@@ -1222,7 +1222,11 @@ export default function GitActionsControl({
   return (
     <>
       {presentation === "shortcut" ? null : displayMode === "panel" && isRepo ? (
-        <div className="flex shrink-0 items-center pe-1" role="group" aria-label={gt("Git actions")}>
+        <div
+          className="flex shrink-0 items-center pe-1"
+          role="group"
+          aria-label={gt("Git actions")}
+        >
           {showActions ? (
             <Tooltip>
               <TooltipTrigger
@@ -1314,8 +1318,8 @@ export default function GitActionsControl({
             <ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges}>
               <FileDiffIcon aria-hidden />
               <MenuItemLabel>
-                    <T>View changes</T>
-                  </MenuItemLabel>
+                <T>View changes</T>
+              </MenuItemLabel>
               {!showActions ? changesSummary : null}
               {keybindings && (
                 <MenuShortcut>

@@ -65,7 +65,9 @@ export function ProviderUpdateLaunchNotification() {
             onClick: () => {
               void writeTextToClipboard(command, {
                 target: "update command",
-                unavailableMessage: msg("Clipboard API is unavailable while copying update command."),
+                unavailableMessage: msg(
+                  "Clipboard API is unavailable while copying update command.",
+                ),
                 failureMessage: msg("Failed to copy update command to the clipboard."),
               });
             },

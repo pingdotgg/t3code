@@ -35,13 +35,15 @@ export function ScrollToEndButton(props: {
           <T>Scroll to end</T>
         </TooltipTrigger>
         <TooltipPopup>
-          {props.summary.length
-            ? props.summary.map((part) => (
-                <span className="block" key={part}>
-                  {part}
-                </span>
-              ))
-            : <T>Scroll to end</T>}
+          {props.summary.length ? (
+            props.summary.map((part) => (
+              <span className="block" key={part}>
+                {part}
+              </span>
+            ))
+          ) : (
+            <T>Scroll to end</T>
+          )}
         </TooltipPopup>
       </Tooltip>
     </div>

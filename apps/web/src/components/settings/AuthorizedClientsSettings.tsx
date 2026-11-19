@@ -1062,7 +1062,8 @@ export function ReachableAddressRow({
 }) {
   const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () => toastManager.add({ type: "success", title: resolveMessage(msg("Address copied")) }),
+    onCopy: () =>
+      toastManager.add({ type: "success", title: resolveMessage(msg("Address copied")) }),
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({

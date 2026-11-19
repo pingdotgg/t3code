@@ -9,7 +9,10 @@ import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFie
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME, ComposerSendPill } from "../chat/ComposerPrimaryActions";
+import {
+  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
+  ComposerSendPill,
+} from "../chat/ComposerPrimaryActions";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { Spinner } from "../ui/spinner";

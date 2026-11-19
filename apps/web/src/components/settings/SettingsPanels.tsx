@@ -1840,7 +1840,11 @@ function ScopedCompactIdleThreadsRow() {
             if (mode) updateSettings({ idleCompaction: mode.value });
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-56" aria-label={gt("Compact idle threads")}>
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-56"
+            aria-label={gt("Compact idle threads")}
+          >
             <SelectValue>
               {(value: string | null) =>
                 value === null

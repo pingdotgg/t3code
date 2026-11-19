@@ -646,10 +646,10 @@ export function AddEnvironmentDialog({
         >
           <PlusIcon className="size-3.5" />
           {isAddingSavedBackend
-          ? gt("Adding…")
-          : routeTarget
-            ? gt("Add route")
-            : gt("Add environment")}
+            ? gt("Adding…")
+            : routeTarget
+              ? gt("Add route")
+              : gt("Add environment")}
         </Button>
       </div>
     </div>

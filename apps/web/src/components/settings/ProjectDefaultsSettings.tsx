@@ -651,7 +651,11 @@ export function WorktreeSubmodulesRow() {
             if (isWorktreeSubmodules(value)) updateSettings({ worktreeSubmodules: value });
           }}
         >
-          <SelectTrigger size="sm" aria-label={gt("Worktree submodules")} leadingIcon={<GitBranchIcon />}>
+          <SelectTrigger
+            size="sm"
+            aria-label={gt("Worktree submodules")}
+            leadingIcon={<GitBranchIcon />}
+          >
             <SelectValue>
               {(value: string | null) =>
                 isWorktreeSubmodules(value)

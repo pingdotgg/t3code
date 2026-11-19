@@ -998,7 +998,11 @@ export default function DiffPanel({
                             <span className="flex items-center gap-3">
                               <span className="min-w-0 flex-1 truncate">{commit.subject}</span>
                               <span className="shrink-0 text-meta tabular-nums text-muted-foreground">
-                                {formatRelativeTimeLabel(commit.committedAt, Date.parse(now), messages)}
+                                {formatRelativeTimeLabel(
+                                  commit.committedAt,
+                                  Date.parse(now),
+                                  messages,
+                                )}
                               </span>
                             </span>
                           </TooltipTrigger>

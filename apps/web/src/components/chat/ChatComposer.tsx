@@ -3924,7 +3924,9 @@ export function ChatComposer(props: ChatComposerProps) {
                               : environmentDisconnected
                                 ? m(DISCONNECTED_COMPOSER_PLACEHOLDER)
                                 : (offeredPromptSuggestion ??
-                                  gt("Ask anything, @tag files/folders, $use skills, or / for commands"))
+                                  gt(
+                                    "Ask anything, @tag files/folders, $use skills, or / for commands",
+                                  ))
                     }
                     placeholderSuffix={
                       offeredPromptSuggestion !== null ? (
