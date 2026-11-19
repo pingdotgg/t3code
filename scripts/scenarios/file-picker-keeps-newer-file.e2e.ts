@@ -23,12 +23,13 @@ test(
     });
 
     await browser.addInitScript((citation) => {
-      const { promise: requested, resolve: markRequested } =
-        Promise.withResolvers<ProjectSearchEntriesInput>();
+      const { promise: requested, resolve: markRequested } = Promise.withResolvers<void>();
       const { promise: released, resolve: release } = Promise.withResolvers<void>();
+      const { promise: replied, resolve: markReplied } = Promise.withResolvers<void>();
       Object.assign(window, {
         citationRequested: requested,
         releaseCitation: release,
+        citationReplied: replied,
       });
 
       // Delay only the citation's real search, so the file picker can search in the meantime.
@@ -38,8 +39,9 @@ test(
           typeof data === "string"
             ? (JSON.parse(data) as {
                 _tag?: string;
+                id?: string;
                 tag?: string;
-                payload?: ProjectSearchEntriesInput;
+                payload?: { query?: string };
               })
             : null;
         if (
@@ -50,7 +52,19 @@ test(
           return send.call(this, data);
         }
 
-        markRequested(request.payload);
+        const onReply = (event: MessageEvent) => {
+          if (typeof event.data !== "string") return;
+          const messages = [JSON.parse(event.data)].flat();
+          if (
+            !messages.some((message) => message._tag === "Exit" && message.requestId === request.id)
+          )
+            return;
+          this.removeEventListener("message", onReply);
+          markReplied();
+        };
+        this.addEventListener("message", onReply);
+        Object.assign(window, { citationInput: request.payload });
+        markRequested();
         void released.then(() => send.call(this, data));
       };
     }, CITED);
@@ -60,8 +74,7 @@ test(
     await screen.getByRole("button", /^Agent See/).tap();
     await screen.getByRole("link", /^cited-note\.txt/).tap();
     await browser.evaluate(async () => {
-      await (window as unknown as { citationRequested: Promise<ProjectSearchEntriesInput> })
-        .citationRequested;
+      await (window as unknown as { citationRequested: Promise<void> }).citationRequested;
       return null;
     });
 
@@ -73,7 +86,8 @@ test(
     await browser.evaluate(async () => {
       const test = window as unknown as {
         releaseCitation: () => void;
-        citationRequested: Promise<ProjectSearchEntriesInput>;
+        citationReplied: Promise<void>;
+        citationInput: ProjectSearchEntriesInput;
       };
       const registryModule = "/src/rpc/atomRegistry.ts";
       const projectsModule = "/src/state/projects.ts";
@@ -99,21 +113,25 @@ test(
       ]);
       const atom = projectEnvironment.searchEntries({
         environmentId: location.pathname.split("/")[1] as EnvironmentId,
-        input: await test.citationRequested,
+        input: test.citationInput,
       });
       // Wait for the query used by the citation and flush React before reading the selected tab.
-      await react.act(async () => {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        const unsubscribe = appAtomRegistry.subscribe(atom, (result) => {
-          if (result._tag !== "Initial" && !result.waiting) resolve();
-        });
-        try {
-          test.releaseCitation();
-          await promise;
-        } finally {
-          unsubscribe();
-        }
-      });
+      const settled = Promise.resolve(
+        react.act(async () => {
+          const { promise, resolve } = Promise.withResolvers<void>();
+          const unsubscribe = appAtomRegistry.subscribe(atom, (result) => {
+            if (result._tag !== "Initial" && !result.waiting) resolve();
+          });
+          try {
+            await promise;
+          } finally {
+            unsubscribe();
+          }
+        }),
+      );
+      test.releaseCitation();
+      await test.citationReplied;
+      await settled;
       return null;
     });
     await app.screenshot("active-file-after-citation-search");
