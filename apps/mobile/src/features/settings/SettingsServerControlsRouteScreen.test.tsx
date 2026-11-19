@@ -17,6 +17,19 @@ const { Children, mocks } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock("gt-react-native", () => ({
+  msg: (message: string) => message,
+  T: Children,
+  Var: Children,
+  useGT: () => (message: string) => message,
+  useMessages: () => (message: string) => message,
+}));
+vi.mock("./components/AgentGatewaySection", () => ({ AgentGatewaySection: () => null }));
+vi.mock("./components/IssueTrackerSection", () => ({ IssueTrackerSection: () => null }));
+vi.mock("./components/SourceControlProvidersSection", () => ({
+  SourceControlProvidersSection: () => null,
+}));
+vi.mock("../pull-requests/pullRequestGlyphs", () => ({ PullRequestGlyph: {} }));
 vi.mock("react-native", () => ({
   View: Children,
   Alert: { alert: mocks.alert },

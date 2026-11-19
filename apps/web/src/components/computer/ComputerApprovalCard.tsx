@@ -10,6 +10,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as DateTime from "effect/DateTime";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { useDeadlinePassed } from "../../hooks/useDeadline";
@@ -60,6 +61,8 @@ export function ComputerApprovalCard({
   approval,
   announce = false,
 }: ComputerApprovalCardProps) {
+  const gt = useGT();
+  const m = useMessages();
   const expiresAtMs = DateTime.toEpochMillis(approval.expiresAt);
   const expired = useDeadlinePassed(expiresAtMs);
   const canApprove = useCanApproveComputerSteps(environmentId);
@@ -77,7 +80,7 @@ export function ComputerApprovalCard({
     });
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not answer that step.");
+      setError(failure instanceof Error ? failure.message : gt("Could not answer that step."));
     }
     setResponding(null);
   };
@@ -93,10 +96,14 @@ export function ComputerApprovalCard({
   const actions = (
     <>
       <Button size="xs" variant="outline" disabled={disabled} onClick={() => void decide(false)}>
-        {responding === false ? "Denying..." : "Deny"}
+        {responding === false
+          ? gt("Denying...")
+          : gt("Deny", { $context: "button, refuses a computer step" })}
       </Button>
       <Button size="xs" disabled={disabled} onClick={() => void decide(true)}>
-        {responding === true ? "Approving..." : "Approve"}
+        {responding === true
+          ? gt("Approving...")
+          : gt("Approve", { $context: "button, allows a computer step" })}
       </Button>
     </>
   );
@@ -104,16 +111,18 @@ export function ComputerApprovalCard({
   return (
     <section
       role={announce ? "alert" : "region"}
-      aria-label="Computer use approval"
+      aria-label={gt("Computer use approval")}
       data-computer-approval-card=""
       className="rounded-xl border border-warning/32 bg-warning-surface p-3 text-xs shadow-xs/5"
     >
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="font-medium text-warning-foreground">
-          {computerActionSentence(approval.binding.action)}
+          {computerActionSentence(approval.binding.action, m)}
         </h3>
         {expired ? (
-          <span className="shrink-0 text-muted-foreground">Expired</span>
+          <span className="shrink-0 text-muted-foreground">
+            <T>Expired</T>
+          </span>
         ) : (
           <span
             ref={tickTextContent(countdown, !expired)}
@@ -124,12 +133,14 @@ export function ComputerApprovalCard({
       <p className="mt-1 text-muted-foreground">{approval.binding.why}</p>
       <dl className="mt-2 grid gap-1.5">
         {surface.length === 0 ? null : (
-          <Field label="On">
+          <Field label={gt("On", { $context: "label for the app a computer step acts on" })}>
             <span className="font-mono">{surface}</span>
           </Field>
         )}
-        <Field label="Goal">{approval.binding.goal}</Field>
-        <Field label="Asked by">
+        <Field label={gt("Goal", { $context: "label for the task goal" })}>
+          {approval.binding.goal}
+        </Field>
+        <Field label={gt("Asked by")}>
           {approval.binding.requester} · {environmentLabel}
         </Field>
       </dl>
@@ -137,8 +148,10 @@ export function ComputerApprovalCard({
       <div className="mt-3 flex items-center justify-end gap-2">{actions}</div>
       {canApprove ? null : (
         <p className="mt-2 text-muted-foreground">
-          This connection cannot approve computer steps. Pair this device again in Settings →
-          Connections.
+          <T>
+            This connection cannot approve computer steps. Pair this device again in Settings →
+            Connections.
+          </T>
         </p>
       )}
       {error !== null ? (

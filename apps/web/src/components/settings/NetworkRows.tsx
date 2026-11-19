@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type NetworkMemberState,
@@ -650,7 +651,13 @@ function PairAgainDialog({
     reportFailure: false,
   });
   const baseUrl = useEnvironmentHttpBaseUrl(authority);
-  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({ target: "pairing link" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
+    target: {
+      target: "pairing link",
+      unavailableMessage: msg("Clipboard API is unavailable while copying pairing link."),
+      failureMessage: msg("Failed to copy pairing link to the clipboard."),
+    },
+  });
   const [level, setLevel] = useState<"full-access" | "read-only">("full-access");
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState<string | null>(null);

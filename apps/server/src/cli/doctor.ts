@@ -69,10 +69,20 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   yield* Console.log(
     `Database: ${formatBytes(status.databaseBytes)}, ${formatBytes(status.reclaimableBytes)} reclaimable.`,
   );
+  const legacyRecords = status.legacyOnlyRecords;
   if (status.legacyDatabaseBytes !== null) {
     yield* Console.log(
       `Database from before 0.1.0: ${formatBytes(status.legacyDatabaseBytes)}, kept for rolling back.`,
     );
+    if (legacyRecords === null) {
+      yield* Console.log(
+        "  Could not check for missing projects or threads. Keep the old database.",
+      );
+    } else if (legacyRecords.projects > 0 || legacyRecords.threads > 0) {
+      yield* Console.log(
+        `  The current database is missing legacy records. Projects missing: ${legacyRecords.projects}. Threads missing: ${legacyRecords.threads}. Keep the old database for recovery.`,
+      );
+    }
   }
   const repairs = [
     ...(status.incrementalVacuumEnabled && status.reclaimableBytes === 0
@@ -91,7 +101,10 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
               status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES,
           },
         ]),
-    ...(status.legacyDatabaseBytes === null
+    ...(status.legacyDatabaseBytes === null ||
+    legacyRecords === null ||
+    legacyRecords.projects > 0 ||
+    legacyRecords.threads > 0
       ? []
       : [
           {

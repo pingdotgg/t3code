@@ -50,7 +50,7 @@ import {
 } from "./NetworkRows";
 import type { SavedMachineNetwork } from "./SavedEnvironmentRows";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const failureToast = (title: string, description: string) =>
   toastManager.add(stackedThreadToast({ type: "error", title, description }));
@@ -118,6 +118,7 @@ export function MachinesSettings({
     );
   });
   const outside = savedEnvironments.filter((environment) => !shown.has(environment.environmentId));
+  const searchableSetting = useSearchableSetting();
   const search = searchableSetting("machines");
   return (
     <>

@@ -41,6 +41,7 @@ function setup() {
     presented: true,
     selectedThreadKey: "env-1:thread-1",
     selectedPullRequestKey: null,
+    selectedIssueKey: null,
   };
   return {
     registry,

@@ -20,6 +20,7 @@ import * as Fiber from "effect/Fiber";
 import * as DateTime from "effect/DateTime";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -209,22 +210,40 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   entries: ReadonlyArray<unknown>,
   replayGate?: ProviderReplayGate,
   continuationEnabled = true,
-  agentId = "claude-acp",
+  agentId: string | Record<string, unknown> = "claude-acp",
+  replacementEntries?: ReadonlyArray<unknown>,
+  runtimeMode: "approval-required" | "full-access" = "approval-required",
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const replayDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-lifecycle-" });
-  const transcript = yield* decodeAcpReplayTranscript(
-    {
-      provider: ACP_REGISTRY_PROVIDER,
-      protocol: "acp.ndjson-jsonrpc",
-      version: "1",
-      scenario: "claude-lifecycle",
-      entries: entries as never,
-    },
-    ACP_REGISTRY_PROVIDER,
+  const scriptPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
   );
+  const makeReplay = Effect.fn("openClaudeReplaySession.makeReplay")(function* (
+    entries: ReadonlyArray<unknown>,
+    name: string,
+  ) {
+    const transcript = yield* decodeAcpReplayTranscript(
+      {
+        provider: ACP_REGISTRY_PROVIDER,
+        protocol: "acp.ndjson-jsonrpc",
+        version: "1",
+        scenario: name,
+        entries: entries as never,
+      },
+      ACP_REGISTRY_PROVIDER,
+    );
+    return makeAcpReplayRuntime({
+      transcript,
+      statusPath: path.join(replayDir, `${name}.json`),
+      scriptPath,
+      childProcessSpawner,
+      fileSystem,
+      ...(replayGate === undefined ? {} : { replayGate }),
+    });
+  });
   const offers: Array<ProviderContinuationRequest> = [];
   const offered = yield* Queue.unbounded<void>();
   const continuationRequests = {
@@ -238,25 +257,25 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   let onTermination: NonNullable<
     AcpSessionRuntime.AcpSessionRuntimeOptions["onTermination"]
   > = () => Effect.die("Runtime has not started");
-  const replayRuntime = makeAcpReplayRuntime({
-    transcript,
-    statusPath: path.join(replayDir, "status.json"),
-    scriptPath: yield* path.fromFileUrl(
-      new URL("../../../scripts/acp-replay-agent.ts", import.meta.url),
-    ),
-    childProcessSpawner,
-    fileSystem,
-    ...(replayGate === undefined ? {} : { replayGate }),
-  });
+  const replayRuntime = yield* makeReplay(entries, "claude-lifecycle");
+  const replacementRuntime =
+    replacementEntries === undefined
+      ? replayRuntime
+      : yield* makeReplay(replacementEntries, "replacement");
+  let started = false;
   const adapterOptions = {
     selfInvocation: yield* resolveSelfInvocation(),
     instanceId,
-    settings: yield* decodeAcpRegistryAdapterSettings({ agentId }),
+    settings: yield* decodeAcpRegistryAdapterSettings(
+      typeof agentId === "string" ? { agentId } : agentId,
+    ),
     environment: {},
     ...(continuationEnabled ? { continuationRequests } : {}),
     makeRuntime: (runtimeInput: Parameters<typeof replayRuntime>[0]) => {
       onTermination = runtimeInput.onTermination;
-      return replayRuntime({
+      const replay = started ? replacementRuntime : replayRuntime;
+      started = true;
+      return replay({
         ...runtimeInput,
         protocolLogging: {
           logIncoming: false,
@@ -274,7 +293,6 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
   );
   const threadId = ThreadId.make("thread-claude-lifecycle");
   const modelSelection = { instanceId, model: "default" } as const;
-  const runtimeMode = "approval-required";
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode,
     interactionMode: "default",
@@ -287,7 +305,7 @@ const openClaudeReplaySession = Effect.fn("openClaudeReplaySession")(function* (
     runtimePolicy,
   });
   yield* Effect.addFinalizer(() => Effect.sync(() => replayGate?.releaseAll()));
-  if (continuationEnabled) {
+  if (continuationEnabled && agentId === "claude-acp") {
     assert.isDefined(
       runtime.hasPendingBackgroundWork,
       "Claude ACP v2 must report background work after foreground idle",
@@ -434,6 +452,196 @@ const claudeUnrelatedChildren = [
 ];
 
 describe("AcpRegistryAdapterV2", () => {
+  it.effect.each([
+    { commandPath: "/root/.local/bin/agy", offers: 1 },
+    { commandPath: "C:\\tools\\agy.exe", offers: 1 },
+    { commandPath: "/opt/bin/other-agent", offers: 0 },
+  ])("continues late output only for agy ($commandPath)", ({ commandPath, offers }) =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["wake"]);
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(CLAUDE_ROOT_SESSION, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          claudeFrames.open[2],
+          claudeFrames.open[3],
+          claudeFrames.prompt(1)[0],
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Background work finished." },
+            }),
+            label: "wake",
+          },
+          // agy ends each reply with usage_update; this one ends before the continuation run starts.
+          update({ sessionUpdate: "usage_update", used: 100, size: 1000 }),
+          claudeMarker("late output received"),
+        ],
+        gate,
+        true,
+        { source: "local", commandPath, commandArgs: ["acp"] },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      assert.equal((yield* session.terminal).status, "completed");
+      gate.release("wake");
+      yield* session.throughMarker("late output received");
+      assert.lengthOf(session.offers, offers, "late output must only wake agy");
+      if (offers === 0) return;
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* TestClock.adjust("3 seconds");
+      const continued = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continued), "Background work finished.");
+      const terminal = continued.at(-1)!;
+      if (terminal.type !== "turn.terminal") throw new Error("Missing continuation terminal");
+      assert.equal(terminal.status, "completed");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect.each(["approval-required", "full-access"] as const)(
+    "continues an agy permission request after the prompt settles (%s)",
+    (runtimeMode) =>
+      Effect.gen(function* () {
+        const gate = makeProviderReplayGate(["wake", "reply"]);
+        const session = yield* openClaudeReplaySession(
+          [
+            {
+              type: "expect_outbound",
+              frame: { kind: "request", method: "initialize", params: "<any>" },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "initialize",
+                result: {
+                  protocolVersion: 1,
+                  agentInfo: { name: "Antigravity ACP Server", version: "1.5.9" },
+                  agentCapabilities: { loadSession: true },
+                  authMethods: [],
+                },
+              },
+            },
+            claudeFrames.open[2],
+            claudeFrames.open[3],
+            claudeFrames.prompt(1)[0],
+            {
+              type: "emit_inbound",
+              frame: {
+                kind: "response",
+                method: "session/prompt",
+                result: { stopReason: "end_turn" },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "wake",
+              frame: {
+                kind: "request",
+                method: "session/request_permission",
+                params: {
+                  sessionId: CLAUDE_ROOT_SESSION,
+                  toolCall: {
+                    toolCallId: "late-command",
+                    title: "Run command",
+                    kind: "execute",
+                    status: "pending",
+                  },
+                  options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+                },
+              },
+            },
+            claudeMarker("late permission received"),
+            {
+              type: "expect_outbound",
+              frame: {
+                kind: "response",
+                method: "session/request_permission",
+                result: { outcome: { outcome: "selected", optionId: "allow" } },
+              },
+            },
+            {
+              ...claudeFrames.update(CLAUDE_ROOT_SESSION, {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Command approved." },
+              }),
+              label: "reply",
+            },
+            claudeFrames.update(CLAUDE_ROOT_SESSION, {
+              sessionUpdate: "usage_update",
+              used: 100,
+              size: 1000,
+            }),
+            claudeMarker("reply ended"),
+          ],
+          gate,
+          true,
+          { source: "local", commandPath: "/root/.local/bin/agy", commandArgs: ["acp"] },
+          undefined,
+          runtimeMode,
+        );
+        yield* session.runtime.startTurn(session.turnInput(1));
+        assert.equal((yield* session.terminal).status, "completed");
+        gate.release("wake");
+        yield* session.throughMarker("late permission received");
+        assert.lengthOf(session.offers, 1, "a permission request must offer a continuation");
+        yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+        yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+        if (runtimeMode === "approval-required") {
+          const events = yield* session.until(
+            (event) =>
+              event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending",
+          );
+          const request = events.at(-1)!;
+          if (request.type !== "runtime_request.updated") throw new Error("Missing approval");
+          yield* TestClock.adjust("5 seconds");
+          yield* session.runtime.respondToRuntimeRequest({
+            requestId: request.runtimeRequest.id,
+            decision: "accept",
+          });
+        }
+        // The model can be silent longer than the finalize debounce before it goes on.
+        yield* TestClock.adjust("10 seconds");
+        gate.release("reply");
+        // The closing usage_update must be handled before the clock moves, or its debounce never fires.
+        const output = yield* session.throughMarker("reply ended");
+        assert.isTrue(
+          output.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "Command approved.",
+          ),
+        );
+        assert.isFalse(output.some((event) => event.type === "turn.terminal"));
+        yield* TestClock.adjust("3 seconds");
+        assert.equal((yield* session.terminal).status, "completed");
+      }).pipe(Effect.provide(layerTest)),
+  );
+
   it("preserves and sanitizes structured ACP errors without exposing arbitrary defects", () => {
     const limit = new EffectAcpErrors.AcpRequestError({
       code: -31001,
@@ -1999,6 +2207,247 @@ describe("AcpRegistryAdapterV2", () => {
       const continuation = yield* session.until((event) => event.type === "turn.terminal");
       assert.include(JSON.stringify(continuation), "Agent 1 finished");
       assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // regression: #38599 Hermes replies on its own when a background process it started exits
+  it.effect.each([
+    { launch: "hermes acp", commandPath: "hermes", commandArgs: ["acp"] },
+    { launch: "a wrapper", commandPath: "node", commandArgs: ["hermes-acp.mjs"] },
+  ])("does not drop Hermes' reply after a background process finishes ($launch)", (launch) =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["process-exit"]);
+      const sessionId = "hermes-session";
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "hermes-agent", version: "0.23.1" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          update({
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Started it in the background." },
+          }),
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "session/prompt",
+              result: { stopReason: "end_turn" },
+            },
+          },
+          {
+            ...update({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "The background command printed DONE" },
+            }),
+            label: "process-exit",
+          },
+          update({ sessionUpdate: "session_info_update", title: "after completion reply" }),
+        ],
+        gate,
+        true,
+        { source: "local", commandPath: launch.commandPath, commandArgs: launch.commandArgs },
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const foreground = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(foreground.at(-1)), '"status":"completed"');
+      gate.release("process-exit");
+      yield* Queue.take(session.offered);
+      yield* session.throughMarker("after completion reply");
+      yield* session.offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* session.runtime.startTurn(session.turnInput(2, { continuation: true }));
+      yield* TestClock.adjust("10 seconds");
+      const continuation = yield* session.until((event) => event.type === "turn.terminal");
+      assert.include(JSON.stringify(continuation), "printed DONE");
+      assert.include(JSON.stringify(continuation.at(-1)), '"status":"completed"');
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("protects Hermes background work when a wrapper launches it on replacement", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["process-exit"]);
+      const request = (method: string) => ({
+        type: "expect_outbound",
+        frame: { kind: "request", method, params: "<any>" },
+      });
+      const respond = (method: string, result: object) => ({
+        type: "emit_inbound",
+        frame: { kind: "response", method, result },
+      });
+      const open = (sessionId: string, name: string) => [
+        request("initialize"),
+        respond("initialize", { protocolVersion: 1, agentInfo: { name, version: "1.0.0" } }),
+        request("session/new"),
+        respond("session/new", { sessionId }),
+      ];
+      const sessionId = "hermes-replacement";
+      const session = yield* openClaudeReplaySession(
+        open("initial-session", "generic-agent"),
+        gate,
+        true,
+        { source: "local", commandPath: "node", commandArgs: ["agent-wrapper.mjs"] },
+        [
+          ...open(sessionId, "hermes-agent"),
+          request("session/prompt"),
+          respond("session/prompt", { stopReason: "end_turn" }),
+          {
+            ...claudeFrames.update(sessionId, {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Background command finished" },
+            }),
+            label: "process-exit",
+          },
+        ],
+      );
+      const { threadId, modelSelection, runtimePolicy } = session.turnInput(1);
+      const replaceThread = {
+        threadId,
+        modelSelection,
+        runtimePolicy,
+        forceNewNativeThread: true,
+      };
+      const pendingWork = session.runtime.hasPendingBackgroundWork ?? Effect.succeed(false);
+      assert.isFalse(yield* pendingWork);
+      const providerThread = yield* session.runtime.ensureThread(replaceThread);
+      yield* session.runtime.startTurn({ ...session.turnInput(1), providerThread });
+      assert.equal((yield* session.terminal).status, "completed");
+
+      gate.release("process-exit");
+      yield* Queue.take(session.offered);
+      assert.isTrue(yield* pendingWork);
+      const error = yield* session.runtime.ensureThread(replaceThread).pipe(Effect.flip);
+      assert.include(String(error.cause), "background work is active");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  // Copilot flattens MCP titles and reports kind "read" for MCP calls and glob ("other" for rg);
+  // its native tool.execution_start event carries the real identity.
+  it.effect.each(["glob", "rg"])("keeps Copilot's MCP and %s identity", (toolName) =>
+    Effect.gen(function* () {
+      const sessionId = "copilot-session";
+      const executionStart = (data: Record<string, unknown>) => ({
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "github.com/copilot/sessionEvent",
+          params: { sessionId, type: "tool.execution_start", data },
+        },
+      });
+      const update = (sessionUpdate: Record<string, unknown>) =>
+        claudeFrames.update(sessionId, sessionUpdate);
+      const session = yield* openClaudeReplaySession(
+        [
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "initialize", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: {
+              kind: "response",
+              method: "initialize",
+              result: {
+                protocolVersion: 1,
+                agentInfo: { name: "Copilot", version: "1.0.112" },
+                agentCapabilities: { loadSession: true },
+                authMethods: [],
+              },
+            },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/new", params: "<any>" },
+          },
+          {
+            type: "emit_inbound",
+            frame: { kind: "response", method: "session/new", result: { sessionId } },
+          },
+          {
+            type: "expect_outbound",
+            frame: { kind: "request", method: "session/prompt", params: "<any>" },
+          },
+          executionStart({
+            toolCallId: "mcp-call",
+            mcpServerName: "demo-library",
+            mcpToolName: "search_books",
+          }),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "mcp-call",
+            title: "demo-library-search_books",
+            kind: "read",
+            status: "completed",
+            rawInput: { arguments: { query: "paper airplanes" }, limit: 2 },
+          }),
+          executionStart({
+            toolCallId: "native-search",
+            toolName,
+            toolTitle: "Finding files",
+            arguments: { pattern: "*.ts", paths: ["/workspace"] },
+          }),
+          update({
+            sessionUpdate: "tool_call",
+            toolCallId: "native-search",
+            title: "Finding files matching *.ts",
+            kind: toolName === "rg" ? "other" : "read",
+            status: "completed",
+            rawInput: { pattern: "*.ts", paths: ["/workspace"] },
+            locations: [{ path: "/workspace" }],
+          }),
+          update({ sessionUpdate: "session_info_update", title: "after tools" }),
+        ],
+        undefined,
+        false,
+        "github-copilot-cli",
+      );
+      yield* session.runtime.startTurn(session.turnInput(1));
+      const events = yield* session.throughMarker("after tools");
+      const lastItem = (nativeId: string) =>
+        events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          )
+          .at(-1);
+      const mcp = lastItem("mcp-call");
+      const search = lastItem("native-search");
+      assert.deepEqual(
+        {
+          mcp: mcp?.type === "dynamic_tool" ? mcp.toolName : mcp?.type,
+          search: search?.type === "dynamic_tool" ? search.toolName : search?.type,
+        },
+        { mcp: "demo-library.search_books", search: "file_search" },
+      );
     }).pipe(Effect.provide(layerTest)),
   );
 

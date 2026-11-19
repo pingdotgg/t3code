@@ -897,6 +897,24 @@ it.live("archiving the thread closes its open card", () =>
   ),
 );
 
+it.live("settling the thread closes its open card, so it no longer reads as asking", () =>
+  withBoth((a, b) =>
+    Effect.gen(function* () {
+      yield* seedThread(a);
+      yield* a.call({ url: b.url });
+      yield* pendingCard(a);
+      yield* endRun(a);
+      yield* a.orchestrator.dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make("command:settle:laptop"),
+        threadId,
+      });
+      expect(yield* cardOf(a)).toMatchObject({ status: "cancelled", linkStatus: "cancelled" });
+      expect((yield* a.orchestrator.getThreadShell(threadId))?.pendingRuntimeRequest).toBeNull();
+    }),
+  ),
+);
+
 it.live("a code the box refuses fails the request with its reason, and links nothing", () =>
   withBoth((a, b) =>
     Effect.gen(function* () {

@@ -151,6 +151,7 @@ export const layer = Layer.effect(
             request: {
               type: "thread-settlement.remote",
               action: action === "unsettle" ? "unsettle" : "settle",
+              settledBy,
               settledAt,
               threadIds: carried,
             },

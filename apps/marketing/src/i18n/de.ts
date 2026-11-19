@@ -32,7 +32,7 @@ export const de: Messages = {
     harnessPoints: [
       "Keine weiterverkauften Keys. Keine Kontingentgrenzen.",
       "Modell mitten im Thread wechseln.",
-      "Jede Woche neue Agents.",
+      "Jede Woche neue Agenten.",
     ],
     gitVisualLabel: `Illustration des Git-Workflows in ${APP_NAME}: Diff prüfen, Änderungen committen und pushen, Pull Request öffnen.`,
     prReady: "Bereit",
@@ -42,7 +42,7 @@ export const de: Messages = {
     commitPush: "Commit & Push",
     gitTitle: "Ein Klick für Commit, Push und PR.",
     gitBody:
-      "Jeder Agent-Thread schreibt in seinen eigenen Branch. Wenn alles passt, öffnet ein Klick den PR auf GitHub, mit generiertem Titel, Beschreibung und Changelog. Kein Terminal-Gefrickel nötig.",
+      "Jeder Agenten-Thread schreibt in seinen eigenen Branch. Wenn alles passt, öffnet ein Klick den PR auf GitHub, mit generiertem Titel, Beschreibung und Changelog. Kein Terminal-Gefrickel nötig.",
     gitPoints: [
       "Automatisch generierte PR-Titel und -Beschreibungen",
       "Inline-Diff-Review vor dem Push",

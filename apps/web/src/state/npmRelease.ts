@@ -4,6 +4,9 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Atom } from "effect/reactivity";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../i18n/messages";
 
 import { environmentSummaries } from "./presentation";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
@@ -14,7 +17,9 @@ const isServerNpmReleaseError = Schema.is(ServerNpmReleaseError);
 
 function unsupportedLookup(config: ServerConfig | null): ServerNpmReleaseError | null {
   if (config === null) {
-    return new ServerNpmReleaseError({ reason: "Connect to this server to check releases." });
+    return new ServerNpmReleaseError({
+      reason: m(msg("Connect to this server to check releases.")),
+    });
   }
   return config.environment.capabilities.npmReleaseLookup === true
     ? null
@@ -23,11 +28,18 @@ function unsupportedLookup(config: ServerConfig | null): ServerNpmReleaseError |
       });
 }
 
-export function npmReleaseFailureMessage(cause: Cause.Cause<unknown>): string {
+export function npmReleaseFailureMessage(
+  cause: Cause.Cause<unknown>,
+  resolve: MessageResolver = m,
+): string {
   const error = Option.getOrUndefined(Cause.findErrorOption(cause));
   return isServerNpmReleaseError(error)
     ? error.message
-    : `Could not check ${APP_NAME} releases from this environment. Check its connection.`;
+    : resolve(
+        msg("Could not check {app} releases from this environment. Check its connection.", {
+          app: APP_NAME,
+        }),
+      );
 }
 
 export const npmReleaseAtom = Atom.family((spec: string) =>
@@ -42,7 +54,7 @@ export const npmReleaseAtom = Atom.family((spec: string) =>
       ) ?? candidates[0];
     if (environmentId === undefined) {
       return Effect.fail(
-        new ServerNpmReleaseError({ reason: "Connect to a server to check releases." }),
+        new ServerNpmReleaseError({ reason: m(msg("Connect to a server to check releases.")) }),
       );
     }
     const unsupported = unsupportedLookup(get(serverEnvironment.configValueAtom(environmentId)));

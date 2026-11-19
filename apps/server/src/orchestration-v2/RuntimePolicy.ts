@@ -94,7 +94,7 @@ export const layer: Layer.Layer<RuntimePolicyV2> = Layer.succeed(RuntimePolicyV2
 const hideUserSkills = (thread: OrchestrationV2AppThread) =>
   thread.profileSnapshot?.includeUserSkills === false ? { hideUserSkills: true } : {};
 
-function providerRuntimeMode(
+export function providerRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
 ): RuntimeMode {

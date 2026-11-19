@@ -8,6 +8,7 @@ import {
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { useParams } from "@tanstack/react-router";
 import * as DateTime from "effect/DateTime";
+import { T, useGT } from "gt-react";
 import { MonitorIcon } from "lucide-react";
 import { useState } from "react";
 
@@ -20,6 +21,7 @@ import { ComputerApprovalCard } from "./ComputerApprovalCard";
 
 /** One environment's running task: its last step, the tap it waits for, and Stop. */
 function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
+  const gt = useGT();
   // Re-reads the clock once, when the tap this task waits for lapses.
   const nowMs = useNowAfter(nextComputerApprovalDeadline(entry.approvals));
   const [stopping, setStopping] = useState(false);
@@ -41,7 +43,7 @@ function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
     <div
       data-computer-strip-task=""
       role="group"
-      aria-label={`Computer use on ${entry.environmentLabel}`}
+      aria-label={gt("Computer use on {environment}", { environment: entry.environmentLabel })}
       className="flex min-w-0 flex-col gap-1 border-b border-border/40 py-1.5 last:border-b-0"
     >
       <div className="flex min-w-0 items-center gap-2">
@@ -52,7 +54,9 @@ function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
           {lastStep === null ? null : <span className="text-muted-foreground"> · {lastStep}</span>}
         </span>
         {task.approvalsMode === "skip" ? (
-          <span className="shrink-0 text-muted-foreground">approvals off</span>
+          <span className="shrink-0 text-muted-foreground">
+            <T>approvals off</T>
+          </span>
         ) : null}
         <span
           ref={tickTextContent(
@@ -62,7 +66,9 @@ function StripTask({ entry }: { readonly entry: ComputerActivityEntry }) {
           className="shrink-0 text-muted-foreground tabular-nums"
         />
         <InlineButton tone="muted" disabled={stopping} onClick={() => void stop()}>
-          {stopping ? "Stopping..." : "Stop"}
+          {stopping
+            ? gt("Stopping...")
+            : gt("Stop", { $context: "button, stops a running computer task" })}
         </InlineButton>
       </div>
       {approval === undefined ? null : (

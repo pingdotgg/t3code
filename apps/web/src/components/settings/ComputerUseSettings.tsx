@@ -8,9 +8,11 @@ import {
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 
+import { m, type MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { isElectron } from "../../env";
 import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
@@ -23,7 +25,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { ComputerPermissionRows } from "./ComputerPermissionRows";
 import { SecretInput } from "./SecretInput";
 import { useSettingsScope } from "./SettingsScopeContext";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   SettingsPageContainer,
   SettingsRow,
@@ -37,13 +39,14 @@ const GROUNDER_KINDS: ReadonlyArray<{
   readonly kind: Extract<ComputerGrounderKind, "openai-compatible" | "systemone">;
   readonly label: string;
 }> = [
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- API format name
   { kind: "openai-compatible", label: "OpenAI-compatible" },
+  // oxlint-disable-next-line t3code/no-untranslated-copy -- product name
   { kind: "systemone", label: "System One" },
 ];
 
 const JEV_KEYS_URL = "https://console.typesafe.ai/keys";
 
-const stepLimit = `${COMPUTER_LIMITS.maxSteps} steps`;
 const workingLimit = formatDuration(COMPUTER_LIMITS.timeoutMs);
 const approvalLimit = formatDuration(COMPUTER_LIMITS.approvalTimeoutMs);
 
@@ -54,15 +57,21 @@ function hostPlatformLabel(host: ComputerHostView): string {
 }
 
 /** What a host can do, in the order that decides whether it is usable at all. */
-function hostAbility(host: ComputerHostView): { readonly text: string; readonly ok: boolean } {
+function hostAbility(
+  host: ComputerHostView,
+  resolve: MessageResolver = m,
+): { readonly text: string; readonly ok: boolean } {
   if (host.accessibility !== true) {
-    return { text: "Needs Accessibility permission on that Mac", ok: false };
+    return { text: resolve(msg("Needs Accessibility permission on that Mac")), ok: false };
   }
-  if (host.computerUse !== true) return { text: "Fixed controls only", ok: true };
+  if (host.computerUse !== true) return { text: resolve(msg("Fixed controls only")), ok: true };
   if (host.screenRecording !== true) {
-    return { text: "Works from accessibility; screen reading is off", ok: true };
+    return {
+      text: resolve(msg("Works from accessibility; screen reading is off")),
+      ok: true,
+    };
   }
-  return { text: "Ready", ok: true };
+  return { text: resolve(msg("Ready", { $context: "computer host status" })), ok: true };
 }
 
 /**
@@ -77,6 +86,8 @@ function useSoleEnvironment() {
 }
 
 function AgentComputerUseSetting() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -89,13 +100,15 @@ function AgentComputerUseSetting() {
       {...searchableSetting("agent-computer-use")}
       description={
         isProjectScope
-          ? "Allow agents in this project to use a connected computer. Applies when the agent session next starts."
-          : "Allow agents to use a connected computer. Projects can override it."
+          ? gt(
+              "Allow agents in this project to use a connected computer. Applies when the agent session next starts.",
+            )
+          : gt("Allow agents to use a connected computer. Projects can override it.")
       }
       resetAction={
         settings.enableAgentComputerUse !== DEFAULT_SERVER_SETTINGS.enableAgentComputerUse ? (
           <SettingResetButton
-            label="default computer use"
+            ariaLabel={gt("Reset agent computer use to default")}
             onClick={() =>
               updateSettings({
                 enableAgentComputerUse: DEFAULT_SERVER_SETTINGS.enableAgentComputerUse,
@@ -107,7 +120,7 @@ function AgentComputerUseSetting() {
       control={
         <ScopedSwitch
           settingKeys={["enableAgentComputerUse"]}
-          aria-label="Agent computer use"
+          aria-label={gt("Agent computer use")}
           checked={settings.enableAgentComputerUse}
           onCheckedChange={(enabled) => updateSettings({ enableAgentComputerUse: enabled })}
         />
@@ -117,38 +130,44 @@ function AgentComputerUseSetting() {
 }
 
 function ApprovalsSetting() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const asking = settings.computerApprovals === "ask";
   const isProjectScope = scope.kind === "project" || scope.kind === "checkout";
   const behavior = asking
-    ? "A step that types, sends, buys or deletes waits for your tap, bound to that exact action. Fixed controls do not ask."
-    : "Steps run as soon as the agent asks. Every consequential step is still in the activity log, and Stop still ends a task from anywhere.";
+    ? gt(
+        "A step that types, sends, buys or deletes waits for your tap, bound to that exact action. Fixed controls do not ask.",
+      )
+    : gt(
+        "Steps run as soon as the agent asks. Every consequential step is still in the activity log, and Stop still ends a task from anywhere.",
+      );
 
   return (
     <SettingsRow
       serverScoped
       settingKeys={["computerApprovals"]}
       {...searchableSetting("computer-approvals")}
-      title="Ask before consequential actions"
+      title={gt("Ask before consequential actions")}
       description={
         isProjectScope
-          ? `${behavior} Applies from the next step, in this project.`
-          : `${behavior} Projects can override it.`
+          ? gt("{behavior} Applies from the next step, in this project.", { behavior })
+          : gt("{behavior} Projects can override it.", { behavior })
       }
       status={
         asking ? null : (
           <span className="flex items-center gap-1 text-warning-foreground">
             <TriangleAlertIcon className="size-3.5 shrink-0" aria-hidden />
-            Approvals off
+            <T>Approvals off</T>
           </span>
         )
       }
       control={
         <ScopedSwitch
           settingKeys={["computerApprovals"]}
-          aria-label="Ask before consequential actions"
+          aria-label={gt("Ask before consequential actions")}
           checked={asking}
           onCheckedChange={(ask) => updateSettings({ computerApprovals: ask ? "ask" : "skip" })}
         />
@@ -164,8 +183,10 @@ function HostRow({
   readonly host: ComputerHostView;
   readonly environmentLabel: string;
 }) {
-  const ability = hostAbility(host);
-  const controls = host.controls.length === 0 ? "no fixed controls" : host.controls.join(", ");
+  const gt = useGT();
+  const m = useMessages();
+  const ability = hostAbility(host, m);
+  const controls = host.controls.length === 0 ? gt("no fixed controls") : host.controls.join(", ");
   return (
     <SettingsRow
       title={host.name}
@@ -175,12 +196,18 @@ function HostRow({
             {hostPlatformLabel(host)} · {environmentLabel}
           </span>
           <span className={ability.ok ? undefined : "text-warning-foreground"}>{ability.text}</span>
-          <span>Fixed controls: {controls}</span>
+          <span>
+            <T>
+              Fixed controls: <Var>{controls}</Var>
+            </T>
+          </span>
         </span>
       }
       control={
         host.busyTaskId === null ? null : (
-          <span className="text-xs text-muted-foreground">Running a task</span>
+          <span className="text-xs text-muted-foreground">
+            <T>Running a task</T>
+          </span>
         )
       }
     />
@@ -188,21 +215,31 @@ function HostRow({
 }
 
 function ComputersSection() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const { environment, scope } = useSettingsScope();
   const selected = new Set(scope.environmentIds);
   const hosts = useComputerHosts().filter((entry) => selected.has(entry.environmentId));
 
   return (
-    <SettingsSection id="computer-use-computers" title="Computers">
+    <SettingsSection id="computer-use-computers" title={gt("Computers")}>
       <SettingsRow
         {...searchableSetting("computer-hosts")}
-        title="Connected computers"
+        title={gt("Connected computers")}
         description={
           hosts.length === 0
-            ? "None. Open Ada on the computer you want to use and allow this environment there; a computer is available only while Ada is open on it."
+            ? gt(
+                "None. Open Ada on the computer you want to use and allow this environment there; a computer is available only while Ada is open on it.",
+              )
             : undefined
         }
-        control={<span className="text-xs text-muted-foreground">{hosts.length} connected</span>}
+        control={
+          <span className="text-xs text-muted-foreground">
+            <T>
+              <Var>{hosts.length}</Var> connected
+            </T>
+          </span>
+        }
       />
       {hosts.map((entry) => (
         <HostRow
@@ -212,8 +249,11 @@ function ComputersSection() {
         />
       ))}
       <SettingsRow
-        title="Limits"
-        description={`${stepLimit} and ${workingLimit} of working time per task, one task per computer. A tap waits ${approvalLimit}; waiting for a tap or for the agent does not count as working time.`}
+        title={gt("Limits")}
+        description={gt(
+          "{steps} steps and {working} of working time per task, one task per computer. A tap waits {approval}; waiting for a tap or for the agent does not count as working time.",
+          { steps: COMPUTER_LIMITS.maxSteps, working: workingLimit, approval: approvalLimit },
+        )}
       />
       {isElectron ? (
         <ComputerPermissionRows environmentId={environment?.environmentId ?? null} />
@@ -248,6 +288,7 @@ function GrounderForm({
 }) {
   const saved = useEnvironmentSettings(environmentId, (settings) => settings.computerGrounder);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const gt = useGT();
   const [draft, setDraft] = useState<Partial<ComputerGrounderConfig> | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -263,7 +304,7 @@ function GrounderForm({
     await updateSettings(patch, {
       onSaved: () => {
         setDraft(null);
-        setMessage("Saved. Applies from the next step.");
+        setMessage(gt("Saved. Applies from the next step."));
       },
       onFailed: () => setMessage(null),
     });
@@ -272,7 +313,9 @@ function GrounderForm({
 
   const apiKeyField = (
     <div className="grid gap-1.5">
-      <Label htmlFor="computer-grounder-key">API key</Label>
+      <Label htmlFor="computer-grounder-key">
+        <T>API key</T>
+      </Label>
       <SecretInput
         id="computer-grounder-key"
         size="sm"
@@ -284,7 +327,7 @@ function GrounderForm({
   );
 
   return (
-    <SettingsSection id="computer-use-grounder" title="Decision endpoint">
+    <SettingsSection id="computer-use-grounder" title={gt("Decision endpoint")}>
       <form
         className="grid gap-4 px-4 py-4 sm:px-5"
         onSubmit={(event) => {
@@ -293,14 +336,23 @@ function GrounderForm({
         }}
       >
         <p className="text-xs text-muted-foreground">
-          Optional. A decision endpoint answers a click the policy cannot settle; without one the
-          agent answers in <code className="font-mono">computer_use</code>. It sees control labels
-          and up to 1,500 characters of visible text, and never writes text: only the text a task
-          was started with is ever typed.
-          {shared ? " It applies to all your devices, and clearing it clears it everywhere." : null}
+          <T>
+            Optional. A decision endpoint answers a click the policy cannot settle; without one the
+            agent answers in <code className="font-mono">computer_use</code>. It sees control labels
+            and up to 1,500 characters of visible text, and never writes text: only the text a task
+            was started with is ever typed.
+          </T>
+          {shared ? (
+            <>
+              {" "}
+              <T>It applies to all your devices, and clearing it clears it everywhere.</T>
+            </>
+          ) : null}
         </p>
         <div className="grid gap-1.5">
-          <Label htmlFor="computer-grounder-provider">Provider</Label>
+          <Label htmlFor="computer-grounder-provider">
+            <T>Provider</T>
+          </Label>
           <Select
             value={jev ? "jev" : "custom"}
             onValueChange={(provider) =>
@@ -319,8 +371,11 @@ function GrounderForm({
               <SelectValue />
             </SelectTrigger>
             <SelectPopup>
+              {/* oxlint-disable-next-line t3code/no-untranslated-copy -- product name */}
               <SelectItem value="jev">Jev (TypeSafe)</SelectItem>
-              <SelectItem value="custom">Custom</SelectItem>
+              <SelectItem value="custom">
+                <T context="custom provider option">Custom</T>
+              </SelectItem>
             </SelectPopup>
           </Select>
         </div>
@@ -328,22 +383,26 @@ function GrounderForm({
           <>
             {apiKeyField}
             <p className="text-xs text-muted-foreground">
-              Jev is TypeSafe's System One model. Get a key from the{" "}
-              <a
-                href={JEV_KEYS_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="underline underline-offset-2"
-              >
-                TypeSafe console
-              </a>
-              ; without one the agent plans each step.
+              <T>
+                Jev is TypeSafe's System One model. Get a key from the{" "}
+                <a
+                  href={JEV_KEYS_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  TypeSafe console
+                </a>
+                ; without one the agent plans each step.
+              </T>
             </p>
           </>
         ) : (
           <>
             <div className="grid gap-1.5">
-              <Label htmlFor="computer-grounder-kind">Kind</Label>
+              <Label htmlFor="computer-grounder-kind">
+                <T context="endpoint API kind">Kind</T>
+              </Label>
               <Select
                 value={values.kind}
                 onValueChange={(kind) =>
@@ -363,7 +422,9 @@ function GrounderForm({
               </Select>
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="computer-grounder-url">Base URL</Label>
+              <Label htmlFor="computer-grounder-url">
+                <T>Base URL</T>
+              </Label>
               <Input
                 id="computer-grounder-url"
                 size="sm"
@@ -377,7 +438,9 @@ function GrounderForm({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="computer-grounder-model">Model</Label>
+              <Label htmlFor="computer-grounder-model">
+                <T context="AI model">Model</T>
+              </Label>
               <Input
                 id="computer-grounder-model"
                 size="sm"
@@ -397,7 +460,7 @@ function GrounderForm({
             <span className="text-xs text-muted-foreground">{message}</span>
           )}
           <Button type="submit" size="sm" disabled={saving || draft === null}>
-            {saving ? "Saving..." : "Save"}
+            {saving ? gt("Saving...") : gt("Save", { $context: "button, saves the endpoint" })}
           </Button>
         </div>
       </form>
@@ -406,23 +469,28 @@ function GrounderForm({
 }
 
 function GrounderSection() {
+  const gt = useGT();
   const environment = useSoleEnvironment();
   if (environment === null) {
     return (
-      <SettingsSection id="computer-use-grounder" title="Decision endpoint">
+      <SettingsSection id="computer-use-grounder" title={gt("Decision endpoint")}>
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          Select one environment above to set the endpoint that answers a click computer use cannot
-          settle. It applies to all your devices.
+          <T>
+            Select one environment above to set the endpoint that answers a click computer use
+            cannot settle. It applies to all your devices.
+          </T>
         </p>
       </SettingsSection>
     );
   }
   if (environment.serverConfig?.environment.capabilities.computerUse !== true) {
     return (
-      <SettingsSection id="computer-use-grounder" title="Decision endpoint">
+      <SettingsSection id="computer-use-grounder" title={gt("Decision endpoint")}>
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
-          This environment's server does not offer computer use yet. Update it to configure a
-          decision endpoint.
+          <T>
+            This environment's server does not offer computer use yet. Update it to configure a
+            decision endpoint.
+          </T>
         </p>
       </SettingsSection>
     );
@@ -459,6 +527,8 @@ function AuditLine({ line }: { readonly line: Readonly<Record<string, unknown>> 
 }
 
 function AuditSection() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
   const environment = useSoleEnvironment();
   const environmentId = environment?.environmentId ?? null;
   const [limit, setLimit] = useState(50);
@@ -474,13 +544,15 @@ function AuditSection() {
     <SettingsSection {...searchableSetting("computer-audit")}>
       <div className="flex items-start justify-between gap-3 px-3 py-2 text-xs text-muted-foreground sm:px-4">
         <p>
-          Every task, grant, approval and outcome, newest last. Typed text is recorded as its length
-          and a digest, never the text.
+          <T>
+            Every task, grant, approval and outcome, newest last. Typed text is recorded as its
+            length and a digest, never the text.
+          </T>
         </p>
         <Button
           variant="ghost-muted"
           size="icon-micro"
-          aria-label="Refresh activity"
+          aria-label={gt("Refresh activity")}
           onClick={query.refresh}
         >
           <RefreshCwIcon />
@@ -491,8 +563,8 @@ function AuditSection() {
       ) : lines.length === 0 ? (
         <p className="px-3 pb-3 text-xs text-muted-foreground sm:px-4">
           {supported
-            ? "Nothing yet."
-            : "Select one environment above to read what computer use did there."}
+            ? gt("Nothing yet.")
+            : gt("Select one environment above to read what computer use did there.")}
         </p>
       ) : (
         <div className="max-h-80 overflow-auto border-t border-border/50">
@@ -504,7 +576,7 @@ function AuditSection() {
       {lines.length > 0 && lines.length >= limit ? (
         <div className="px-3 pb-2 sm:px-4">
           <Button variant="link" size="xs" onClick={() => setLimit((current) => current + 50)}>
-            Show older
+            <T>Show older</T>
           </Button>
         </div>
       ) : null}
@@ -517,13 +589,16 @@ function AuditSection() {
  * can use, who answers a click, and what happened.
  */
 export function ComputerUseSettingsPanel() {
+  const gt = useGT();
   return (
     <SettingsPageContainer>
       <p className="px-3 text-sm text-muted-foreground sm:px-4">
-        Computer use is in early testing and may make mistakes. Keep approvals on for anything
-        important.
+        <T>
+          Computer use is in early testing and may make mistakes. Keep approvals on for anything
+          important.
+        </T>
       </p>
-      <SettingsSection id="computer-use-agents" title="Agent access">
+      <SettingsSection id="computer-use-agents" title={gt("Agent access")}>
         <AgentComputerUseSetting />
         <ApprovalsSetting />
       </SettingsSection>

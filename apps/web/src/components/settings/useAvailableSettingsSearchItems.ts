@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 
 import { isElectron } from "~/env";
@@ -58,6 +59,7 @@ export function useAvailableSettingsSearchItems() {
   const canManageLocalBackend = !localEnvironmentDisabled && canMaintain;
   const desktopWsl = useEnvironmentQuery(
     isElectron && canManageLocalBackend ? desktopWslStateAtom : null,
+    useMessages(),
   );
   const wslSettingsRowVisible =
     isWslSettingsRowVisible({ state: desktopWsl.data, error: desktopWsl.error }) === true;

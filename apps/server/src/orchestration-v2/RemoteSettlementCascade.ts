@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   type GatewayScope,
   OrchestratorMcpThreadListResult,
+  THREAD_LIST_CHILDREN_OF_MAX,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -168,28 +169,28 @@ export const make = Effect.gen(function* () {
     return Option.isSome(renewed) && renewed.value.access === "full-access";
   });
 
-  /** Settles over this server's link; false when the peer is too old to list remote parents. */
-  const overLink = Effect.fn("RemoteSettlementCascade.overLink")(function* (
+  /** The peer's chats for `filter`, or false from a peer too old to list remote parents. */
+  const listOverLink = Effect.fn("RemoteSettlementCascade.listOverLink")(function* (
     request: RemoteSettlementRequest,
     environmentId: EnvironmentId,
+    filter: Record<string, unknown>,
   ) {
     const threads: Array<RemoteThread> = [];
     for (let cursor: number | null = 0; cursor !== null;) {
-      const page: OrchestratorMcpThreadListResult = yield* peers
-        .call({
-          environmentId,
-          tool: "t3_thread_list",
-          arguments: {
-            allProjects: true,
-            includeSubagents: false,
-            ...(request.action === "unsettle" ? { settled: true } : {}),
-            cursor,
-            limit: LINK_PAGE,
-          },
-          limits: LINK_LIMITS,
-          success: OrchestratorMcpThreadListResult,
-        })
-        .pipe(Effect.mapError(pending));
+      const page: OrchestratorMcpThreadListResult = yield* peers.call({
+        environmentId,
+        tool: "t3_thread_list",
+        arguments: {
+          allProjects: true,
+          includeSubagents: true,
+          ...filter,
+          ...(request.action === "unsettle" ? { settled: true } : {}),
+          cursor,
+          limit: LINK_PAGE,
+        },
+        limits: LINK_LIMITS,
+        success: OrchestratorMcpThreadListResult,
+      });
       for (const thread of page.threads) {
         // A version from before linked callers saw remote parents leaves this out.
         if (thread.parentEnvironmentId === undefined) return false;
@@ -202,23 +203,75 @@ export const make = Effect.gen(function* () {
       }
       cursor = page.nextCursor;
     }
+    return threads;
+  });
+
+  /**
+   * Only the card's children there, asked for by parent. A peer from before `childrenOf` refuses
+   * it by name, so only then are all its chats, subagents too, listed and matched here.
+   */
+  const remoteChildren = Effect.fn("RemoteSettlementCascade.remoteChildren")(
+    function* (request: RemoteSettlementRequest, environmentId: EnvironmentId) {
+      const threads: Array<RemoteThread> = [];
+      for (let start = 0; start < request.threadIds.length; start += THREAD_LIST_CHILDREN_OF_MAX) {
+        const childrenOf = {
+          environmentId: local,
+          threadIds: request.threadIds.slice(start, start + THREAD_LIST_CHILDREN_OF_MAX),
+        };
+        const listed = yield* listOverLink(request, environmentId, { childrenOf });
+        if (listed === false) return false;
+        threads.push(...listed);
+      }
+      return threads;
+    },
+    (effect, request, environmentId) =>
+      effect.pipe(
+        Effect.catchIf(
+          (error) => error.message.includes('Unknown argument "childrenOf"'),
+          () => listOverLink(request, environmentId, {}),
+        ),
+      ),
+  );
+
+  /**
+   * Settles over this server's link; false when the peer is too old to list remote parents. The
+   * peer records which settlement it follows, so an un-settle there reopens only what it settled,
+   * and a child still working refuses until it finishes, leaving this effect to retry.
+   */
+  const overLink = Effect.fn("RemoteSettlementCascade.overLink")(function* (
+    input: RemoteSettlementInput,
+    environmentId: EnvironmentId,
+  ) {
+    const { request } = input;
+    const threads = yield* remoteChildren(request, environmentId).pipe(Effect.mapError(pending));
+    if (threads === false) return false;
+    const follows = {
+      settledBy: request.settledBy ?? input.threadId,
+      settledAt: DateTime.formatIso(request.settledAt),
+    };
+    const organize = (args: Record<string, unknown>) =>
+      peers.call({
+        environmentId,
+        tool: "t3_thread_organize",
+        arguments: args,
+        limits: LINK_LIMITS,
+        success: Schema.Unknown,
+      });
     let failure: string | undefined;
     for (const thread of childrenOf(request, threads)) {
-      yield* peers
-        .call({
-          environmentId,
-          tool: "t3_thread_organize",
-          arguments: { threadId: thread.id, action: request.action },
-          limits: LINK_LIMITS,
-          success: Schema.Unknown,
-        })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.sync(() => {
-              failure = error.message;
-            }),
-          ),
-        );
+      const change = { threadId: thread.id, action: request.action };
+      yield* organize({ ...change, follows }).pipe(
+        // A peer from before `follows` takes the plain change, as it did before.
+        Effect.catchIf(
+          (error) => error.message.includes('Unknown argument "follows"'),
+          () => organize(change),
+        ),
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            failure = error.message;
+          }),
+        ),
+      );
     }
     if (failure !== undefined) return yield* new RemoteSettlementPending({ message: failure });
     return true;
@@ -285,7 +338,7 @@ export const make = Effect.gen(function* () {
     if (!(yield* stillCurrent(input.threadId, request))) return;
     let linkFailure: string | undefined;
     if (yield* linkSettles(environmentId)) {
-      const handled = yield* overLink(request, environmentId).pipe(
+      const handled = yield* overLink(input, environmentId).pipe(
         Effect.catch((error) =>
           Effect.sync(() => {
             linkFailure = error.message;

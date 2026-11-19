@@ -46,7 +46,7 @@ export const ptBR: Messages = {
     gitPoints: [
       "Títulos e descrições de PR gerados automaticamente",
       "Revisão do diff inline antes do push",
-      "PRs em rascunho, stacks de PRs e amend",
+      "PRs em rascunho, stacks de PRs e atualização de PRs",
       "Funciona com a sua autenticação atual do GitHub",
     ],
     openTitle: "Se não gostar de algo, faça um fork.",

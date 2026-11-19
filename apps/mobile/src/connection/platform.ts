@@ -1,6 +1,8 @@
 import { ClientCapabilities, PlatformConnectionSource } from "@t3tools/client-runtime/platform";
 import { ConnectionBlockedError, Connectivity, Wakeups } from "@t3tools/client-runtime/connection";
 import * as Clock from "effect/Clock";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -151,7 +153,11 @@ const layerCapabilities = Layer.effectContext(
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
+                detail: m(
+                  msg("{feature} environments are only available in the desktop app.", {
+                    feature: "SSH",
+                  }),
+                ),
               }),
             ),
           ),
@@ -159,7 +165,11 @@ const layerCapabilities = Layer.effectContext(
             Effect.fail(
               new ConnectionBlockedError({
                 reason: "unsupported",
-                detail: "SSH environments are only available in the desktop app.",
+                detail: m(
+                  msg("{feature} environments are only available in the desktop app.", {
+                    feature: "SSH",
+                  }),
+                ),
               }),
             ),
           ),
