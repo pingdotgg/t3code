@@ -48,6 +48,7 @@ import {
   composerContextImportsAtom,
   countComposerDraftAttachmentsAfterSelection,
   useComposerDraft,
+  useComposerDraftResetGeneration,
 } from "../../state/use-composer-drafts";
 import type { ComposerDocumentAttachment } from "../../lib/composerContext";
 import { useProject, useVisibleThreadShells } from "../../state/entities";
@@ -84,6 +85,7 @@ import {
   composerStripAttachments,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
+import { composerAttachmentUploadKey } from "../../lib/composerAttachmentUploadQueue";
 import {
   buildModelOptions,
   isModelSelectionUnavailable,
@@ -101,6 +103,7 @@ import {
   resolveComposerSendPresentation,
   type ComposerSendPresentation,
 } from "./composerSendPresentation";
+import { useSubmitAfterNativeImages } from "./useSubmitAfterNativeImages";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
 import { ComposerPopoverAnchor } from "./ComposerPopoverAnchor";
 import { ComposerQueuedEditAttachments } from "./ComposerQueuedEdit";
@@ -173,7 +176,7 @@ export interface ThreadComposerProps {
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
-  readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<boolean>;
   readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
@@ -293,6 +296,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   const composerDraftKey = props.draftKey ?? composerOwnerKey;
+  const readResetGeneration = useComposerDraftResetGeneration(composerDraftKey);
   const {
     text: draftMessage,
     attachments: draftAttachments,
@@ -303,7 +307,6 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     draftMessage.trim().length > 0 ||
     draftAttachments.length > 0 ||
     (queuedEdit?.existingAttachments.length ?? 0) > 0;
-  const stripAttachments = composerStripAttachments(draftAttachments);
   const showStopAction = !hasContent && props.canStopThread && queuedEdit === null;
   const onResumeQueue = props.onResumeQueue;
   const [resumingQueue, setResumingQueue] = useState(false);
@@ -321,6 +324,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     AuthOrchestrationOperateScope,
   );
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
+  const stripAttachments = composerStripAttachments(
+    draftAttachments,
+    (attachment) => uploadStates[composerAttachmentUploadKey(props.environmentId, attachment.id)],
+  );
   const attachmentsUploading =
     props.connectionState === "connected" &&
     composerAttachmentsStillUploading({
@@ -539,13 +546,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     onEditorFocusChange?.(false);
   };
   const handleSend = async (followUp?: ActiveTurnComposerAction) => {
-    if (
-      isSubmissionLocked ||
-      sendBlockedReason !== null ||
-      pendingPastedTextAttachmentCountRef.current > 0 ||
-      pendingNativeImagePasteCountRef.current > 0
-    )
-      return;
+    if (isSubmissionLocked || sendBlockedReason !== null) return;
+    // Sending now would leave a still-converting pasted image out of the turn, so wait for it.
+    if (nativeImageSubmit.deferSend(followUp)) return;
+    if (pendingPastedTextAttachmentCountRef.current > 0) return;
     if (usageLimitsOffered && isUsageLimitsCommand(draftMessage) && draftAttachments.length === 0) {
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
@@ -581,6 +585,14 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       projectTitle: props.environmentLabel ?? "T3 Code",
     });
   };
+
+  const nativeImageSubmit = useSubmitAfterNativeImages({
+    draftKey: composerDraftKey,
+    readResetGeneration,
+    blocked: isSubmissionLocked || sendBlockedReason !== null,
+    onPasteImages: props.onNativePasteImages,
+    onSubmit: (followUp) => void handleSend(followUp),
+  });
 
   const lockedProviderInstanceId = props.canSwitchProvider
     ? undefined
@@ -668,7 +680,8 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   ) : null;
 
   const modelControl = (
-    <View className="min-w-0 shrink">
+    // Only the expanded label can truncate; shrinking the icon-only control clips the icon.
+    <View className={compactEditor.isExpanded ? "min-w-0 shrink" : "shrink-0"}>
       <ComposerModelControl
         size={usesLargeControls ? "large" : "regular"}
         modelOption={currentModelOption}
@@ -815,7 +828,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                 style={[
                   {
                     minWidth:
-                      compactEditor.isExpanded || stripAttachments.length > 0
+                      compactEditor.isExpanded ||
+                      stripAttachments.length > 0 ||
+                      compactControl !== null
                         ? 0
                         : INLINE_EDITOR_MIN_WIDTH,
                   },
@@ -867,7 +882,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   onPasteImages={(uris) => {
                     if (isSubmissionLocked) return;
                     pendingNativeImagePasteCountRef.current += 1;
-                    void props.onNativePasteImages(uris).finally(() => {
+                    void nativeImageSubmit.pasteImages(uris).finally(() => {
                       pendingNativeImagePasteCountRef.current -= 1;
                     });
                   }}
