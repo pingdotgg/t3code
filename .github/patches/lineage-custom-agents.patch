@@ -584,7 +584,7 @@ index 4a7b08fbd8..70926daa21 100644
  
  const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 diff --git a/apps/server/src/mcp/OrchestratorMcpService.test.ts b/apps/server/src/mcp/OrchestratorMcpService.test.ts
-index 0bbb8a6532..51b80c4e5f 100644
+index 0bbb8a6532..9c3b8cfb7b 100644
 --- a/apps/server/src/mcp/OrchestratorMcpService.test.ts
 +++ b/apps/server/src/mcp/OrchestratorMcpService.test.ts
 @@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -610,14 +610,14 @@ index 0bbb8a6532..51b80c4e5f 100644
 +const layerMockProjectService = Layer.mock(ProjectService.ProjectService)({
 +  getById: (projectId) =>
 +    Effect.succeedSome({
-+        id: projectId,
-+        title: "Test project",
-+        workspaceRoot: process.cwd(),
-+        defaultModelSelection: {
-+          instanceId: ProviderInstanceId.make("codex"),
-+          model: "gpt-5.1-codex",
-+        },
-+      } as never),
++      id: projectId,
++      title: "Test project",
++      workspaceRoot: process.cwd(),
++      defaultModelSelection: {
++        instanceId: ProviderInstanceId.make("codex"),
++        model: "gpt-5.1-codex",
++      },
++    } as never),
 +});
  
  describe("OrchestratorMcpService", () => {
@@ -640,7 +640,25 @@ index 0bbb8a6532..51b80c4e5f 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -473,7 +487,7 @@ describe("OrchestratorMcpService", () => {
+         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+           list: () => Effect.succeed([]),
+         }),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
 @@ -572,7 +586,7 @@ describe("OrchestratorMcpService", () => {
+         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+           list: () => Effect.succeed([]),
+         }),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -677,7 +691,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -685,6 +703,15 @@ index 0bbb8a6532..51b80c4e5f 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -1175,7 +1189,7 @@ describe("OrchestratorMcpService", () => {
+           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+             list: () => Effect.succeed([]),
+           }),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
 @@ -1267,7 +1281,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
@@ -694,7 +721,16 @@ index 0bbb8a6532..51b80c4e5f 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -1636,6 +1650,94 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -1457,7 +1471,7 @@ describe("OrchestratorMcpService", () => {
+         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+           list: () => Effect.succeed([]),
+         }),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -1636,6 +1650,93 @@ describe("OrchestratorMcpService provider resolution", () => {
      turnItems: [],
    } as unknown as OrchestrationV2ThreadProjection;
  
@@ -760,8 +796,7 @@ index 0bbb8a6532..51b80c4e5f 100644
 +          ]),
 +          adapterRegistryLayer([codexInstanceId]),
 +          Layer.mock(ProjectService.ProjectService)({
-+            getById: () =>
-+              Effect.succeedSome({ id: projectId, workspaceRoot } as never),
++            getById: () => Effect.succeedSome({ id: projectId, workspaceRoot } as never),
 +          }),
 +          Layer.mock(SecretRequests.SecretRequests)({}),
 +          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
@@ -789,7 +824,34 @@ index 0bbb8a6532..51b80c4e5f 100644
    it.effect.each([
      "parent completion",
      "nested child completion",
-@@ -2049,7 +2151,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -1737,7 +1838,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           }),
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -1867,7 +1968,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           }),
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -1922,7 +2023,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+         ServerSettings.layerTest(),
+         providerRegistryLayer([]),
+         adapterRegistryLayer([]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -2049,7 +2150,7 @@ describe("OrchestratorMcpService provider resolution", () => {
              antigravityInstanceId,
              disabledAntigravityInstanceId,
            ]),
@@ -798,7 +860,7 @@ index 0bbb8a6532..51b80c4e5f 100644
            Layer.mock(SecretRequests.SecretRequests)({}),
            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2233,7 +2335,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2233,7 +2334,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  }),
                  providerRegistryLayer(catalog),
                  adapterRegistryLayer([codexInstanceId, opencodeInstanceId]),
@@ -807,7 +869,16 @@ index 0bbb8a6532..51b80c4e5f 100644
                  Layer.mock(SecretRequests.SecretRequests)({}),
                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2451,7 +2553,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2391,7 +2492,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+               }),
+           }),
+           adapterRegistryLayer([museInstanceId]),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -2451,7 +2552,7 @@ describe("OrchestratorMcpService provider resolution", () => {
            forkShadow,
          ]),
          adapterRegistryLayer([codexInstanceId]),
@@ -816,7 +887,34 @@ index 0bbb8a6532..51b80c4e5f 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2749,7 +2851,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2512,7 +2613,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           }),
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -2580,7 +2681,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+             }),
+           ]),
+           adapterRegistryLayer([codexInstanceId]),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -2627,7 +2728,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           },
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -2749,7 +2850,7 @@ describe("OrchestratorMcpService provider resolution", () => {
            }),
          ]),
          adapterRegistryLayer([codexInstanceId, altInstanceId]),
@@ -825,7 +923,7 @@ index 0bbb8a6532..51b80c4e5f 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2859,7 +2961,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2859,7 +2960,7 @@ describe("OrchestratorMcpService provider resolution", () => {
              }),
            ]),
            adapterRegistryLayer([codexInstanceId, altInstanceId]),
@@ -834,7 +932,7 @@ index 0bbb8a6532..51b80c4e5f 100644
            Layer.mock(SecretRequests.SecretRequests)({}),
            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2933,6 +3035,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2933,6 +3034,7 @@ describe("OrchestratorMcpService provider resolution", () => {
          });
          const layerThreads = ThreadManagementService.layer.pipe(
            Layer.provideMerge(layerOrchestrator),
@@ -842,7 +940,7 @@ index 0bbb8a6532..51b80c4e5f 100644
            Layer.provide(
              LegacyV1ThreadImporter.layer.pipe(
                Layer.provide(layerOrchestrator),
-@@ -2954,7 +3057,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2954,7 +3056,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
                  providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
                ]),
@@ -850,6 +948,23 @@ index 0bbb8a6532..51b80c4e5f 100644
 +              layerMockProjectService,
                Layer.mock(SecretRequests.SecretRequests)({}),
                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+               Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -3116,6 +3218,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+         });
+         const layerThreads = ThreadManagementService.layer.pipe(
+           Layer.provideMerge(layerOrchestrator),
++          Layer.provide(layerMockProjectService),
+           Layer.provide(
+             LegacyV1ThreadImporter.layer.pipe(
+               Layer.provide(layerOrchestrator),
+@@ -3183,7 +3286,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+               providerRegistryLayer([
+                 providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+               ]),
+-              Layer.mock(ProjectService.ProjectService)({}),
++              layerMockProjectService,
+               Layer.mock(SecretRequests.SecretRequests)({}),
+               layerRemoteDelegation,
                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
 @@ -3397,7 +3500,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  ? [codexAltInstanceId]
@@ -869,37 +984,10 @@ index 0bbb8a6532..51b80c4e5f 100644
                    Layer.mock(SecretRequests.SecretRequests)({}),
                    Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                    Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-@@ -4168,7 +4271,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-           ServerSettings.layerTest(),
-           providerRegistryLayer([]),
-           adapterRegistryLayer([]),
--          Layer.mock(ProjectService.ProjectService)({}),
-+          layerMockProjectService,
-           Layer.mock(SecretRequests.SecretRequests)({}),
-           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -4331,7 +4434,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
-             ]),
-             adapterRegistryLayer([codexInstanceId, peerId]),
--            Layer.mock(ProjectService.ProjectService)({}),
-+            layerMockProjectService,
-             Layer.mock(SecretRequests.SecretRequests)({}),
-             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -4523,7 +4626,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-             list: () => Effect.succeed([]),
-           }),
--          Layer.mock(ProjectService.ProjectService)({}),
-+          layerMockProjectService,
-           Layer.mock(SecretRequests.SecretRequests)({}),
-           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -5274,3 +5377,55 @@ describe("OrchestratorMcpService thread stop", () => {
-     }),
-   );
- });
+@@ -3736,6 +3839,58 @@ describe("OrchestratorMcpService provider resolution", () => {
+         assert.equal(updated.webhookUrl, undefined);
+       }),
+     );
 +
 +    it.effect("hides a webhook URL from a thread whose turn has ended", () =>
 +      Effect.gen(function* () {
@@ -952,6 +1040,72 @@ index 0bbb8a6532..51b80c4e5f 100644
 +        assert.equal(listed.tasks[0]?.webhookUrl, undefined);
 +      }),
 +    );
+   });
+ 
+   describe("the base branch of an unbound scheduled task", () => {
+@@ -4168,7 +4323,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           ServerSettings.layerTest(),
+           providerRegistryLayer([]),
+           adapterRegistryLayer([]),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4331,7 +4486,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+             ]),
+             adapterRegistryLayer([codexInstanceId, peerId]),
+-            Layer.mock(ProjectService.ProjectService)({}),
++            layerMockProjectService,
+             Layer.mock(SecretRequests.SecretRequests)({}),
+             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4426,7 +4581,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           },
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4480,7 +4635,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           },
+         ]),
+         adapterRegistryLayer([codexInstanceId]),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4523,7 +4678,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+             list: () => Effect.succeed([]),
+           }),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4604,7 +4759,7 @@ describe("OrchestratorMcpService thread lookup", () => {
+           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+             list: () => Effect.succeed([]),
+           }),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -5163,7 +5318,7 @@ describe("OrchestratorMcpService thread stop", () => {
+             layerAdapters,
+             ServerSettings.layerTest(),
+             Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+-            Layer.mock(ProjectService.ProjectService)({}),
++            layerMockProjectService,
+             Layer.mock(SecretRequests.SecretRequests)({}),
+             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
 diff --git a/apps/server/src/mcp/OrchestratorMcpService.ts b/apps/server/src/mcp/OrchestratorMcpService.ts
 index 8dcd025c82..4fec119fc6 100644
 --- a/apps/server/src/mcp/OrchestratorMcpService.ts
@@ -1169,7 +1323,7 @@ index 8dcd025c82..4fec119fc6 100644
    | ServerSettings.ServerSettingsService
    | RemoteDelegation.RemoteDelegation
 diff --git a/apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts b/apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts
-index 2ec6e93992..8a2925e421 100644
+index 2ec6e93992..6f60a11e3a 100644
 --- a/apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts
 +++ b/apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts
 @@ -89,6 +89,8 @@ const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
@@ -1185,7 +1339,7 @@ index 2ec6e93992..8a2925e421 100644
                Layer.provide(
                  CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
                ),
-+            Layer.provide(layerProjectService),
++              Layer.provide(layerProjectService),
              ),
            ),
          ),
@@ -1290,10 +1444,10 @@ index 93177fffbd..00e0de24da 100644
                  Layer.provide(ManagedPolicy.layerTest()),
                  Layer.provide(
 diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
-index c71addfa57..87e50df719 100644
+index 06657eec6d..14b685537c 100644
 --- a/apps/server/src/orchestration-v2/Orchestrator.ts
 +++ b/apps/server/src/orchestration-v2/Orchestrator.ts
-@@ -3927,6 +3927,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -3964,6 +3964,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
        title: command.title,
        providerInstanceId: command.modelSelection.instanceId,
        modelSelection: command.modelSelection,
@@ -1301,7 +1455,7 @@ index c71addfa57..87e50df719 100644
        runtimeMode: command.runtimeMode,
        interactionMode: command.interactionMode,
        branch: command.branch,
-@@ -9757,6 +9758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -9788,6 +9789,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
            now,
            createdBy: command.createdBy,
            creationSource: command.creationSource,
@@ -1310,10 +1464,10 @@ index c71addfa57..87e50df719 100644
          runtimeMode: command.runtimeMode,
          interactionMode: command.interactionMode,
 diff --git a/apps/server/src/orchestration-v2/ProjectionStore.ts b/apps/server/src/orchestration-v2/ProjectionStore.ts
-index f945d82b75..282c09ede5 100644
+index 4a48997db5..f3c6fa3d34 100644
 --- a/apps/server/src/orchestration-v2/ProjectionStore.ts
 +++ b/apps/server/src/orchestration-v2/ProjectionStore.ts
-@@ -1887,6 +1887,7 @@ export function threadShellFromProjection(
+@@ -1891,6 +1891,7 @@ export function threadShellFromProjection(
      title: projection.thread.title,
      providerInstanceId: projection.thread.providerInstanceId,
      modelSelection: projection.thread.modelSelection,
@@ -1321,7 +1475,7 @@ index f945d82b75..282c09ede5 100644
      runtimeMode: projection.thread.runtimeMode,
      interactionMode: projection.thread.interactionMode,
      branch: projection.thread.branch,
-@@ -2201,6 +2202,7 @@ function shellFromState(input: {
+@@ -2205,6 +2206,7 @@ function shellFromState(input: {
      title: input.state.thread.title,
      providerInstanceId: input.state.thread.providerInstanceId,
      modelSelection: input.state.thread.modelSelection,
@@ -1330,7 +1484,7 @@ index f945d82b75..282c09ede5 100644
      interactionMode: input.state.thread.interactionMode,
      branch: input.state.thread.branch,
 diff --git a/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts b/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
-index ca79456323..0899ef1c05 100644
+index ca79456323..412acf1f84 100644
 --- a/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
 @@ -42,6 +42,7 @@ import * as Orchestrator from "./Orchestrator.ts";
@@ -1342,6 +1496,14 @@ index ca79456323..0899ef1c05 100644
  import * as SqlitePersistence from "../persistence/Sqlite.ts";
  import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 @@ -3219,6 +3220,7 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
+       Effect.provide(
+         ThreadManagementService.layer.pipe(
+           Layer.provideMerge(layer),
++          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+           Layer.provide(ServerSettings.layerTest()),
+           Layer.provide(
+             CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+@@ -3306,6 +3308,7 @@ it.effect("replays an accepted steer after its target turn completes", () =>
        Effect.provide(
          ThreadManagementService.layer.pipe(
            Layer.provideMerge(layer),
@@ -1618,7 +1780,7 @@ index 6bf0513b00..990e3f45aa 100644
                    ? Effect.provideService(DispatchModeLimit, {
                        runtimeMode: input.runtimeMode,
 diff --git a/apps/server/src/orchestration-v2/ThreadManagementService.test.ts b/apps/server/src/orchestration-v2/ThreadManagementService.test.ts
-index 97ab0a8db1..5bb7faf585 100644
+index 97ab0a8db1..81c4d564a4 100644
 --- a/apps/server/src/orchestration-v2/ThreadManagementService.test.ts
 +++ b/apps/server/src/orchestration-v2/ThreadManagementService.test.ts
 @@ -30,6 +30,7 @@ import * as TestClock from "effect/testing/TestClock";
@@ -1653,7 +1815,15 @@ index 97ab0a8db1..5bb7faf585 100644
      );
  
  it.effect(
-@@ -322,7 +328,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
+@@ -219,6 +225,7 @@ it.effect.each([
+   const threadId = ThreadId.make("thread:thread-management:worktree-gone");
+   const dispatched: Array<string> = [];
+   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
++    Layer.provide(layerProjectServiceTest),
+     Layer.provide(
+       Layer.succeed(ThreadWorktreeRestore, {
+         restore: () =>
+@@ -322,7 +329,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
      let pending = true;
      const stored = (sequence: number, event: object) =>
        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
@@ -1662,7 +1832,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -348,6 +354,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
+@@ -348,6 +355,7 @@ it.effect("waitForThread follows a restart continuation instead of the cut run",
        ),
        Layer.provide(ServerSettings.layerTest()),
        Layer.provide(layerReceiptsTest),
@@ -1670,7 +1840,7 @@ index 97ab0a8db1..5bb7faf585 100644
      );
      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
        Effect.provide(layerTest),
-@@ -399,7 +406,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
+@@ -399,7 +407,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
      let subagents = [{ status: "running" }];
      const stored = (sequence: number, event: object) =>
        ({ sequence, event: { threadId, ...event } }) as unknown as OrchestrationV2StoredEvent;
@@ -1679,7 +1849,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -428,6 +435,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
+@@ -428,6 +436,7 @@ it.effect("waitForThread can wait past an ended run for the thread's delegated w
        ),
        Layer.provide(ServerSettings.layerTest()),
        Layer.provide(layerReceiptsTest),
@@ -1687,7 +1857,7 @@ index 97ab0a8db1..5bb7faf585 100644
      );
      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
        Effect.provide(layerTest),
-@@ -477,7 +485,7 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
+@@ -477,7 +486,7 @@ it.effect("waitForThread settles delegated work on a thread rolled back past its
        startedAt: DateTime.makeUnsafe(0),
        completedAt: DateTime.makeUnsafe(1_000),
      } as unknown as OrchestrationV2Run;
@@ -1696,7 +1866,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -530,7 +538,7 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
+@@ -530,7 +539,7 @@ it.effect("waitForThread returns the cut run once its continuation is declined",
      const subscribed = yield* Deferred.make<void>();
      const declined = yield* Deferred.make<void>();
      let pending = true;
@@ -1705,7 +1875,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -625,7 +633,7 @@ it.effect.each([
+@@ -625,7 +634,7 @@ it.effect.each([
                  }),
              }),
        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
@@ -1714,7 +1884,7 @@ index 97ab0a8db1..5bb7faf585 100644
          Layer.provide(
            Layer.mergeAll(
              Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -719,7 +727,7 @@ it.effect.each([
+@@ -719,7 +728,7 @@ it.effect.each([
      const dispatched: Array<string> = [];
      // The notification starts after the completed run was observed, before settlement commits.
      let raced = false;
@@ -1723,7 +1893,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -796,6 +804,7 @@ it.effect.each([
+@@ -796,6 +805,7 @@ it.effect.each([
        ),
        Layer.provide(ServerSettings.layerTest()),
        Layer.provide(layerReceiptsTest),
@@ -1731,7 +1901,7 @@ index 97ab0a8db1..5bb7faf585 100644
      );
      const service = yield* ThreadManagementService.ThreadManagementService.pipe(
        Effect.provide(layerTest),
-@@ -887,7 +896,7 @@ it.effect.each([
+@@ -887,7 +897,7 @@ it.effect.each([
      const dispatched: Array<OrchestrationV2Command | { readonly type: string }> = [];
      const teardowns: Array<string> = [];
      const tornDown = yield* Deferred.make<void>();
@@ -1740,7 +1910,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(
          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
            isLive: () => Effect.succeed(true),
-@@ -968,7 +977,7 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
+@@ -968,7 +978,7 @@ it.effect("Force stop refuses once a newer run has started, before killing anyth
    Effect.gen(function* () {
      const threadId = ThreadId.make("thread:thread-management:force-stop-superseded");
      let killed = false;
@@ -1749,7 +1919,7 @@ index 97ab0a8db1..5bb7faf585 100644
        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
        Layer.provide(
          Layer.mock(Orchestrator.OrchestratorV2)({
-@@ -1015,7 +1024,7 @@ it.effect(
+@@ -1015,7 +1025,7 @@ it.effect(
            Deferred.makeUnsafe<void, Orchestrator.OrchestratorV2Error>(),
          ]),
        );
@@ -1853,7 +2023,7 @@ index c692636bb8..2c47a31468 100644
    | Orchestrator.OrchestratorV2
    | ProviderSessionManager.ProviderSessionManagerV2
 diff --git a/apps/server/src/orchestration-v2/ThreadStop.test.ts b/apps/server/src/orchestration-v2/ThreadStop.test.ts
-index fc52191d32..141be36bfe 100644
+index fc52191d32..c891bcabd4 100644
 --- a/apps/server/src/orchestration-v2/ThreadStop.test.ts
 +++ b/apps/server/src/orchestration-v2/ThreadStop.test.ts
 @@ -30,6 +30,7 @@ import * as EventStore from "./EventStore.ts";
@@ -1874,6 +2044,16 @@ index fc52191d32..141be36bfe 100644
      ),
    ),
    Layer.provideMerge(ServerSettings.layerTest()),
+@@ -2117,6 +2121,9 @@ it.effect.each([
+       );
+       const layerLive = ThreadManagementService.layer.pipe(
+         Layer.provide(layerSessionsStartingFollowUpFirst),
++        Layer.provide(
++          Layer.mock(ProjectService.ProjectService)({ listAgents: () => Effect.succeed([]) }),
++        ),
+         Layer.provideMerge(
+           Layer.mergeAll(
+             layerDatabase,
 diff --git a/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts b/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts
 index 268c2ccb7e..7523dc0d5e 100644
 --- a/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts
@@ -1937,7 +2117,7 @@ index da06fd60e9..9c0a2a7cd9 100644
    Layer.provide(
      Layer.mergeAll(
 diff --git a/apps/server/src/project/ProjectService.ts b/apps/server/src/project/ProjectService.ts
-index 1db031456f..5e323dfd13 100644
+index 873760a820..6926cf10d2 100644
 --- a/apps/server/src/project/ProjectService.ts
 +++ b/apps/server/src/project/ProjectService.ts
 @@ -1,5 +1,8 @@
@@ -1949,7 +2129,7 @@ index 1db031456f..5e323dfd13 100644
    type OrchestrationProjectShell,
    ProjectId,
    type Project,
-@@ -15,6 +18,7 @@ import * as Effect from "effect/Effect";
+@@ -17,6 +20,7 @@ import * as Effect from "effect/Effect";
  import * as FileSystem from "effect/FileSystem";
  import * as Layer from "effect/Layer";
  import * as Option from "effect/Option";
@@ -1957,7 +2137,7 @@ index 1db031456f..5e323dfd13 100644
  import * as Result from "effect/Result";
  import * as Schema from "effect/Schema";
  
-@@ -39,6 +43,7 @@ import * as ProcessRunner from "../processRunner.ts";
+@@ -41,6 +45,7 @@ import * as ProcessRunner from "../processRunner.ts";
  import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
  import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
  import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
@@ -1965,7 +2145,7 @@ index 1db031456f..5e323dfd13 100644
  
  export interface ProjectCreateInput extends ProjectCreatePayload {
    readonly commandId: CommandId;
-@@ -147,6 +152,9 @@ export class ProjectService extends Context.Service<
+@@ -149,6 +154,9 @@ export class ProjectService extends Context.Service<
        workspaceRoot: string,
        options?: { readonly includeDeleted?: boolean },
      ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
@@ -1975,7 +2155,7 @@ index 1db031456f..5e323dfd13 100644
      /**
       * Where to scan `cwd`'s workspace inventory. A thread's removed managed worktree scans its
       * project, which turn start recreates the worktree from; anything else, or a failure, is `cwd`.
-@@ -177,13 +185,14 @@ export const make = Effect.gen(function* () {
+@@ -179,13 +187,14 @@ export const make = Effect.gen(function* () {
    const projects = yield* ProjectStore.ProjectStoreV2;
    const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
    const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
@@ -1991,7 +2171,7 @@ index 1db031456f..5e323dfd13 100644
    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
    const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
      Effect.provide(ProcessRunner.layer),
-@@ -393,6 +402,34 @@ export const make = Effect.gen(function* () {
+@@ -408,6 +417,34 @@ export const make = Effect.gen(function* () {
      return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
    });
  
@@ -2025,8 +2205,8 @@ index 1db031456f..5e323dfd13 100644
 +
    const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
      function* (input) {
-       const workspaceRoot = yield* normalizeWorkspaceRoot({
-@@ -667,6 +704,7 @@ export const make = Effect.gen(function* () {
+       yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
+@@ -686,6 +723,7 @@ export const make = Effect.gen(function* () {
      delete: deleteProject,
      getById,
      getByWorkspaceRoot,
@@ -2210,10 +2390,10 @@ index 0000000000..e83a76ca00
 +});
 diff --git a/apps/web/src/components/chat/AgentPicker.tsx b/apps/web/src/components/chat/AgentPicker.tsx
 new file mode 100644
-index 0000000000..a16081b168
+index 0000000000..33a8ebd3b5
 --- /dev/null
 +++ b/apps/web/src/components/chat/AgentPicker.tsx
-@@ -0,0 +1,272 @@
+@@ -0,0 +1,268 @@
 +import { memo } from "react";
 +import { BotIcon, ChevronDownIcon } from "lucide-react";
 +import type { AgentId, AgentSummary } from "@t3tools/contracts";
@@ -2229,11 +2409,7 @@ index 0000000000..a16081b168
 +  MenuSeparator as MenuDivider,
 +  MenuTrigger,
 +} from "../ui/menu";
-+import {
-+  ComposerControl,
-+  ComposerControlIcon,
-+  type ComposerControlSize,
-+} from "./ComposerControl";
++import { ComposerControl, ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 +import { useComposerMenuProps } from "./composerEventScope";
 +import { useComposerMenuState } from "./useComposerMenuState";
 +
@@ -2744,7 +2920,7 @@ index 9b9827ed8c..eebd0d48ed 100644
                        interactionMode: DEFAULT_INTERACTION_MODE,
                        branch,
 diff --git a/apps/web/src/components/settings/ProjectDefaultsSettings.tsx b/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
-index 49d9774553..7d6622a398 100644
+index 49d9774553..5d85ca5c34 100644
 --- a/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
 +++ b/apps/web/src/components/settings/ProjectDefaultsSettings.tsx
 @@ -1,6 +1,12 @@
@@ -2947,7 +3123,7 @@ index 49d9774553..7d6622a398 100644
    const modelRow = (
      <SettingsRow
        serverScoped
-@@ -221,6 +369,53 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
+@@ -221,6 +369,56 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
        }
      />
    );
@@ -2966,7 +3142,10 @@ index 49d9774553..7d6622a398 100644
 +      status={agentStatus}
 +      resetAction={
 +        settings.defaultAgentId !== null ? (
-+          <SettingResetButton label="default agent" onClick={() => setAgent(null)} />
++          <SettingResetButton
++            ariaLabel={gt("Reset default agent to default")}
++            onClick={() => setAgent(null)}
++          />
 +        ) : null
 +      }
 +      control={
@@ -3610,7 +3789,7 @@ index 678f58294c..d09ffb573b 100644
    fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
    /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
 diff --git a/packages/provider-core/src/server/subagentProjection.ts b/packages/provider-core/src/server/subagentProjection.ts
-index 88b124bf5f..b3da2f1831 100644
+index 88b124bf5f..a1a4cae9c3 100644
 --- a/packages/provider-core/src/server/subagentProjection.ts
 +++ b/packages/provider-core/src/server/subagentProjection.ts
 @@ -1,5 +1,6 @@
@@ -3620,7 +3799,7 @@ index 88b124bf5f..b3da2f1831 100644
    MessageId,
    ModelSelection,
    NodeId,
-@@ -61,11 +62,13 @@ export function makeSubagentChildThread(input: {
+@@ -61,11 +62,17 @@ export function makeSubagentChildThread(input: {
    readonly now: DateTime.Utc;
    readonly createdBy: OrchestrationV2Actor;
    readonly creationSource: OrchestrationV2CreationSource;
@@ -3629,7 +3808,11 @@ index 88b124bf5f..b3da2f1831 100644
 -  // The remote parent delegated the parent thread, not its subagents.
 -  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
 +  // A delegated parent does not make its child a delegated thread; a child agent is explicit.
-+  const { delegatedFrom: _delegatedFrom, agentId: _parentAgentId, ...inherited } = input.parentThread;
++  const {
++    delegatedFrom: _delegatedFrom,
++    agentId: _parentAgentId,
++    ...inherited
++  } = input.parentThread;
    return {
      ...inherited,
 +    ...(input.targetAgentId === undefined ? {} : { agentId: input.targetAgentId }),
