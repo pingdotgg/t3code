@@ -2,6 +2,11 @@
   "name": "neon-website-vocs",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alchemy-run/alchemy.git",
+    "directory": "examples/neon-website-vocs"
+  },
   "type": "module",
   "scripts": {
     "dev": "alchemy dev",
@@ -11,6 +16,7 @@
     "build": "vocs build"
   },
   "dependencies": {
+    "@alchemy.run/neon": "workspace:*",
     "alchemy": "workspace:*",
     "effect": "catalog:",
     "react": "catalog:react-rsc",
@@ -21,19 +27,15 @@
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@alchemy.run/test": "workspace:*",
     "@effect/platform-node": "catalog:",
     "@types/node": "catalog:node24",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "@vercel/nft": "catalog:",
     "@vitejs/plugin-react": "catalog:",
     "@vitejs/plugin-rsc": "catalog:",
     "typescript": "catalog:",
-    "vite": "catalog:",
-    "@vercel/nft": "catalog:"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/alchemy-run/alchemy.git",
-    "directory": "examples/neon-website-vocs"
+    "vite": "catalog:"
   }
 }

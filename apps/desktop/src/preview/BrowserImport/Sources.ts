@@ -16,6 +16,8 @@ export interface BrowserImportPathContext {
   readonly path: Path.Path;
   readonly platform: NodeJS.Platform;
   readonly home: string;
+  readonly linuxConfigHome: string;
+  readonly linuxChromeConfigHome: string;
   readonly appData: string | undefined;
   readonly localAppData: string | undefined;
 }
@@ -68,7 +70,10 @@ const chromiumSource = (input: {
         : undefined;
     }
     return input.linuxSegments
-      ? context.path.join(context.home, ".config", ...input.linuxSegments)
+      ? context.path.join(
+          input.id === "chrome" ? context.linuxChromeConfigHome : context.linuxConfigHome,
+          ...input.linuxSegments,
+        )
       : undefined;
   },
 });
@@ -109,7 +114,8 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainAccount: "Vivaldi",
     macSegments: ["Vivaldi"],
     linuxSegments: ["vivaldi"],
-    linuxSecretApplication: "vivaldi",
+    // Vivaldi stores its Linux libsecret key under Chrome's application name.
+    linuxSecretApplication: "chrome",
   }),
   chromiumSource({
     id: "opera",
@@ -184,7 +190,7 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
       if (context.platform === "win32") {
         return context.appData ? context.path.join(context.appData, "zen") : undefined;
       }
-      return context.path.join(context.home, ".config", "zen");
+      return context.path.join(context.linuxConfigHome, "zen");
     },
     alternateLinuxRoots: (context) => [
       context.path.join(context.home, ".zen"),
@@ -291,10 +297,18 @@ export const sourcePathContext = Effect.gen(function* () {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const home = environment.HOME ?? environment.USERPROFILE ?? "";
+  const xdgConfigHome = environment.XDG_CONFIG_HOME;
+  const linuxConfigHome =
+    xdgConfigHome && path.isAbsolute(xdgConfigHome) ? xdgConfigHome : path.join(home, ".config");
+  const chromeConfigHome = environment.CHROME_CONFIG_HOME;
   return {
     path,
     platform,
-    home: environment.HOME ?? environment.USERPROFILE ?? "",
+    home,
+    linuxConfigHome,
+    linuxChromeConfigHome:
+      chromeConfigHome && path.isAbsolute(chromeConfigHome) ? chromeConfigHome : linuxConfigHome,
     appData: environment.APPDATA,
     localAppData: environment.LOCALAPPDATA,
   } satisfies BrowserImportPathContext;
@@ -331,6 +345,12 @@ const countProfileCookies = Effect.fnUntraced(function* (
   if (database === undefined) return undefined;
   return yield* Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    // readChromiumCookieDatabase imports a razed jar as empty; Firefox has no such reader guard.
+    if (definition.engine !== "firefox") {
+      const tables =
+        yield* sql`select 1 from sqlite_master where type = 'table' and name = 'cookies'`;
+      if (tables.length === 0) return 0;
+    }
     const rows =
       definition.engine === "firefox"
         ? yield* sql`select count(*) as count from moz_cookies where originAttributes = ''`

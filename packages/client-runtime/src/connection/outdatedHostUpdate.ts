@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { MarkedText, translatableMessage } from "../errors/translatable.ts";
 import {
   ORCHESTRATION_PROTOCOL_VERSION,
   type EnvironmentId,
@@ -43,6 +45,7 @@ export class OutdatedHostUpdateError extends Schema.TaggedError<OutdatedHostUpda
   {
     environmentId: Schema.String,
     message: Schema.String,
+    i18nMessage: Schema.optionalKey(MarkedText),
   },
 ) {}
 
@@ -108,7 +111,11 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     ) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `Update T3 Code on ${descriptor.label} manually; it cannot update itself.`,
+        ...translatableMessage(
+          msg("Update T3 Code on {host} manually; it cannot update itself.", {
+            host: descriptor.label,
+          }),
+        ),
       });
     }
 
@@ -141,20 +148,31 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
           capabilities.serverSelfUpdateProgress === true
             ? yield* Effect.gen(function* () {
                 const terminal = yield* Ref.make(Option.none<ServerSelfUpdateResult>());
+                let receivedProgress = false;
                 const streamExit = yield* client[WS_METHODS.serverUpdateServerWithProgress](
                   input,
                 ).pipe(
                   Stream.runForEach((event) =>
                     event.type === "complete"
                       ? Ref.set(terminal, Option.some(event.result))
-                      : onStage(event.stage),
+                      : Effect.sync(() => {
+                          receivedProgress = true;
+                        }).pipe(Effect.andThen(onStage(event.stage))),
                   ),
                   Effect.exit,
                 );
+                const selfUpdateMethod = capabilities.serverSelfUpdate;
+                // Desktop preparation needs its terminal commit token.
+                const accepted =
+                  receivedProgress &&
+                  (selfUpdateMethod === "boot-service" || selfUpdateMethod === "respawn")
+                    ? { targetVersion: input.targetVersion, method: selfUpdateMethod }
+                    : undefined;
                 return yield* resolveServerUpdateProgressResult(
                   input.targetVersion,
                   yield* Ref.get(terminal),
                   streamExit,
+                  accepted,
                 );
               })
             : yield* client[WS_METHODS.serverUpdateServer](input).pipe(
@@ -218,7 +236,11 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     if (Option.isNone(resumed)) {
       return yield* new OutdatedHostUpdateError({
         environmentId,
-        message: `${descriptor.label} did not come back on a compatible T3 Code version.`,
+        ...translatableMessage(
+          msg("{host} did not come back on a compatible T3 Code version.", {
+            host: descriptor.label,
+          }),
+        ),
       });
     }
 

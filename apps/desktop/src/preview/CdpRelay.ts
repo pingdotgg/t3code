@@ -9,6 +9,10 @@ export interface CdpRelayTarget {
     owner?: string,
   ) => Promise<unknown>;
   readonly sessionDetached?: (owner: string) => void;
+  /** Whether a page session, by owner as `send` names it, gets the page's screencast frames. */
+  readonly receivesScreencast: (owner: string | undefined) => boolean;
+  /** Acknowledges a native screencast frame, letting Chromium send the next one. */
+  readonly ackScreencastFrame: (frameId: number) => void;
   /** The page's own CDP target id; Playwright keys the main frame by it. */
   readonly targetId: () => Promise<string>;
   readonly url: () => string;
@@ -36,6 +40,29 @@ const isCommand = (value: unknown): value is CdpCommand =>
   typeof (value as { id?: unknown }).id === "number" &&
   typeof (value as { method?: unknown }).method === "string";
 
+// CDP values are plain JSON data, so their serialized size can be bounded before
+// JSON.stringify allocates it. A string counts at its length unless it holds a
+// character JSON may escape, which can take six code units.
+const MAX_CDP_PAYLOAD_SIZE = 64 * 1024 * 1024;
+const MAY_ESCAPE = /[^\x20\x21\x23-\x5b\x5d-\ud7ff\ue000-\uffff]/;
+const serializedSize = (text: string) =>
+  (MAY_ESCAPE.test(text) ? text.length * 6 : text.length) + 3;
+
+const fitsPayloadBudget = (message: unknown) => {
+  let remaining = MAX_CDP_PAYLOAD_SIZE;
+  const visit = (value: unknown): boolean => {
+    remaining -= typeof value === "string" ? serializedSize(value) : 26;
+    if (remaining < 0) return false;
+    if (typeof value !== "object" || value === null) return true;
+    if (Array.isArray(value)) return value.every(visit);
+    return Object.entries(value).every(([key, item]) => {
+      remaining -= serializedSize(key);
+      return visit(item);
+    });
+  };
+  return visit(message);
+};
+
 const BROWSER_CONTEXT_ID = "t3-preview";
 const ANNOUNCE = Symbol("announce");
 const PAGE_SESSION_ID = "t3-preview-page";
@@ -50,11 +77,48 @@ const ACKNOWLEDGED = new Set([
 export function createCdpRelayConnection(
   target: CdpRelayTarget,
   write: (message: string) => void,
+  close: () => void,
 ): CdpRelayConnection {
-  const send = (message: Record<string, unknown>) => write(JSON.stringify(message));
+  let closed = false;
+  const send = (message: Record<string, unknown>) => {
+    if (closed) return;
+    if (fitsPayloadBudget(message)) {
+      write(JSON.stringify(message));
+      return;
+    }
+    // An error reply fails only that command. A dropped event would leave
+    // Playwright out of step with the page, so the relay closes instead.
+    if (typeof message["id"] === "number") {
+      write(
+        JSON.stringify({
+          id: message["id"],
+          error: { code: -32000, message: "CDP payload too large" },
+          ...(message["sessionId"] === undefined ? {} : { sessionId: message["sessionId"] }),
+        }),
+      );
+      return;
+    }
+    closed = true;
+    close();
+  };
   let attached = false;
+  let downloadEventsEnabled = false;
   /** Relay-created page sessions share one real debugger; child frame sessions retain their own ids. */
   const sessions = new Map<string, "browser" | "page">([[PAGE_SESSION_ID, "page"]]);
+  // Each page session holds one unacknowledged frame and keeps the newest one skipped meanwhile.
+  const unackedFrames = new Map<string, number>();
+  const skippedFrames = new Map<string, Record<string, unknown>>();
+  // Chromium keeps a few frames in flight and reuses one frame id per run, so pacing it means
+  // leaving frames every session is busy for unacknowledged and releasing one per consumer ack.
+  const heldNativeFrames: Array<number> = [];
+  const releaseHeldFramesWithoutHolders = () => {
+    if (skippedFrames.size === 0)
+      for (const frameId of heldNativeFrames.splice(0)) target.ackScreencastFrame(frameId);
+  };
+  const sendFrame = (sessionId: string, params: Record<string, unknown>) => {
+    unackedFrames.set(sessionId, params["sessionId"] as number);
+    send({ method: "Page.screencastFrame", params, sessionId });
+  };
   let sessionSequence = 0;
   const newSession = (kind: "browser" | "page") => {
     const sessionId = `t3-preview-${kind}-${++sessionSequence}`;
@@ -77,9 +141,15 @@ export function createCdpRelayConnection(
       case "Browser.setDownloadBehavior": {
         const directory = command.params?.["downloadPath"];
         const allowed = command.params?.["behavior"] !== "deny" && typeof directory === "string";
+        // Browser-scoped behavior targets Electron's app session; preview paths belong to will-download.
+        const result = await target.send(
+          "Page.setDownloadBehavior",
+          { behavior: command.params?.["behavior"] === "deny" ? "deny" : "default" },
+          undefined,
+        );
         target.setDownloadDirectory(allowed ? directory : null);
-        const { browserContextId: _ignored, ...params } = command.params ?? {};
-        return target.send("Browser.setDownloadBehavior", params, undefined);
+        downloadEventsEnabled = command.params?.["eventsEnabled"] === true;
+        return result;
       }
       case "Browser.getVersion":
         return {
@@ -116,6 +186,9 @@ export function createCdpRelayConnection(
         const sessionId = command.params?.["sessionId"];
         if (typeof sessionId === "string" && sessionId !== PAGE_SESSION_ID) {
           sessions.delete(sessionId);
+          unackedFrames.delete(sessionId);
+          skippedFrames.delete(sessionId);
+          releaseHeldFramesWithoutHolders();
           target.sessionDetached?.(sessionId);
         }
         return {};
@@ -136,6 +209,8 @@ export function createCdpRelayConnection(
     }
   };
 
+  let runtimeReset: Promise<unknown> | undefined;
+
   const pageCommand = (command: CdpCommand): Promise<unknown> => {
     const child = sessions.get(command.sessionId!) === "page" ? undefined : command.sessionId;
     const owner =
@@ -146,11 +221,41 @@ export function createCdpRelayConnection(
     }
     // Playwright asks for this on every page; the host emulates focus only while it is in use.
     if (command.method === "Emulation.setFocusEmulationEnabled") return Promise.resolve({});
+    if (command.method === "Page.screencastFrameAck" && child === undefined) {
+      // A restart keeps the slot too, or restarting would let frames past an unacknowledged one.
+      const sessionId = command.sessionId!;
+      if (unackedFrames.get(sessionId) === command.params?.["sessionId"]) {
+        unackedFrames.delete(sessionId);
+        const skipped = skippedFrames.get(sessionId);
+        skippedFrames.delete(sessionId);
+        if (
+          skipped !== undefined &&
+          target.receivesScreencast(sessionId === PAGE_SESSION_ID ? undefined : sessionId)
+        )
+          sendFrame(sessionId, skipped);
+        const released = heldNativeFrames.shift();
+        if (released !== undefined) target.ackScreencastFrame(released);
+      }
+      return Promise.resolve({});
+    }
+    if (command.method === "Page.stopScreencast" && child === undefined) {
+      skippedFrames.delete(command.sessionId!);
+      releaseHeldFramesWithoutHolders();
+    }
+    // The shared debugger keeps Runtime enabled after an earlier connection, and a repeated
+    // enable reports no existing contexts; Playwright waits for them, so reset once per connection.
+    if (command.method === "Runtime.enable" && child === undefined) {
+      runtimeReset ??= target.send("Runtime.disable", {}, undefined, owner).catch(() => undefined);
+      return runtimeReset.then(() =>
+        target.send(command.method, command.params ?? {}, undefined, owner),
+      );
+    }
     return target.send(command.method, command.params ?? {}, child, owner);
   };
 
   return {
     receive: (raw) => {
+      if (closed) return;
       let command: unknown;
       try {
         command = JSON.parse(raw);
@@ -186,14 +291,36 @@ export function createCdpRelayConnection(
     },
     event: (method, params, sessionId) => {
       if (!attached) return;
+      if (method.startsWith("Page.download")) method = method.replace("Page.", "Browser.");
       // Download events are the browser's; Playwright listens on its root session.
       if (method.startsWith("Browser.download")) {
-        send({ method, params });
+        if (downloadEventsEnabled) send({ method, params });
         return;
       }
       // Electron reports the page's own events with an empty session id.
       if (sessionId) {
         send({ method, params, sessionId });
+        return;
+      }
+      if (method === "Page.screencastFrame") {
+        const frame = (params ?? {}) as Record<string, unknown>;
+        const frameId = frame["sessionId"];
+        if (typeof frameId !== "number") return;
+        let held = false;
+        let delivered = false;
+        for (const [id, kind] of sessions) {
+          if (kind !== "page") continue;
+          if (!target.receivesScreencast(id === PAGE_SESSION_ID ? undefined : id)) continue;
+          if (unackedFrames.has(id)) {
+            skippedFrames.set(id, frame);
+            held = true;
+          } else {
+            sendFrame(id, frame);
+            delivered = true;
+          }
+        }
+        if (held && !delivered) heldNativeFrames.push(frameId);
+        else target.ackScreencastFrame(frameId);
         return;
       }
       for (const [id, kind] of sessions)
