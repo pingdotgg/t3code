@@ -57,38 +57,77 @@ const steeredTurn =
 it.layer(NodeServices.layer)("makeKimiPromptOutcomeWatch", (it) => {
   // regression: #36163 Kimi answers session/prompt with end_turn while it keeps working
   it.effect.each([
-    { case: "the prompt's turn handed off to a steered turn", appended: steeredTurn, polls: 1 },
+    {
+      case: "the prompt's turn handed off to a steered turn",
+      before: completedTurn(0),
+      appended: steeredTurn,
+      polls: 1,
+      settles: false,
+    },
     // Sent while that steered turn runs: Kimi queues it and answers at once, writing nothing.
-    { case: "the prompt was only queued behind Kimi's own turn", appended: "", polls: 41 },
-  ])("does not settle as completed when $case", ({ appended, polls: pollCount }) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const home = yield* fileSystem.makeTempDirectoryScoped();
-      const agentDirectory = path.join(home, "sessions", "wd_proj_1", SESSION_ID, "agents", "main");
-      yield* fileSystem.makeDirectory(agentDirectory, { recursive: true });
-      const wire = path.join(agentDirectory, "wire.jsonl");
-      yield* fileSystem.writeFileString(wire, completedTurn(0));
-      const polls = yield* Queue.unbounded<void>();
-      const watch = yield* makeKimiPromptOutcomeWatch(home).pipe(
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fileSystem,
-          open: (path, options) =>
-            Effect.addFinalizer(() => Queue.offer(polls, undefined)).pipe(
-              Effect.andThen(fileSystem.open(path, options)),
-            ),
-        }),
-      );
+    {
+      case: "the prompt was only queued behind Kimi's own turn",
+      before: steeredTurn,
+      appended: "",
+      polls: 41,
+      settles: false,
+    },
+    // Its own turn ends only after the reply; this prompt's turn has not started.
+    {
+      case: "Kimi's own turn ends after a queued prompt is answered",
+      before: steeredTurn,
+      appended: completedTurn(1),
+      polls: 41,
+      settles: false,
+    },
+    // Slash commands such as /compact answer without starting a turn.
+    {
+      case: "a slash command answers with no turn",
+      before: completedTurn(0),
+      appended: "",
+      polls: 41,
+      settles: true,
+    },
+  ])(
+    "settles as completed: $settles when $case",
+    ({ before, appended, polls: pollCount, settles }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const home = yield* fileSystem.makeTempDirectoryScoped();
+        const agentDirectory = path.join(
+          home,
+          "sessions",
+          "wd_proj_1",
+          SESSION_ID,
+          "agents",
+          "main",
+        );
+        yield* fileSystem.makeDirectory(agentDirectory, { recursive: true });
+        const wire = path.join(agentDirectory, "wire.jsonl");
+        yield* fileSystem.writeFileString(wire, before);
+        const polls = yield* Queue.unbounded<void>();
+        const watch = yield* makeKimiPromptOutcomeWatch(home).pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fileSystem,
+            open: (path, options) =>
+              Effect.addFinalizer(() => Queue.offer(polls, undefined)).pipe(
+                Effect.andThen(fileSystem.open(path, options)),
+              ),
+          }),
+        );
 
-      const check = yield* watch(SESSION_ID);
-      yield* fileSystem.writeFileString(wire, appended, { flag: "a" });
-      const outcome = yield* check(endTurn).pipe(Effect.forkChild);
-      for (let poll = 1; poll < pollCount; poll++) {
+        const check = yield* watch(SESSION_ID);
+        // The watch reads the log once to learn whether Kimi's own turn is still open.
         yield* Queue.take(polls);
-        yield* TestClock.adjust("50 millis");
-      }
-      assert.isDefined(yield* Fiber.join(outcome));
-    }),
+        yield* fileSystem.writeFileString(wire, appended, { flag: "a" });
+        const outcome = yield* check(endTurn).pipe(Effect.forkChild);
+        for (let poll = 1; poll < pollCount; poll++) {
+          yield* Queue.take(polls);
+          yield* TestClock.adjust("50 millis");
+        }
+        assert.strictEqual((yield* Fiber.join(outcome)) === undefined, settles);
+      }),
   );
 
   it.effect("fails only the turn this prompt ended, once Kimi writes its outcome", () =>
@@ -115,12 +154,14 @@ it.layer(NodeServices.layer)("makeKimiPromptOutcomeWatch", (it) => {
       );
 
       const completed = yield* watch(SESSION_ID);
+      yield* Queue.take(polls);
       yield* append(completedTurn(1));
       assert.isUndefined(yield* completed(endTurn));
       yield* Queue.take(polls);
 
       // Kimi answers the prompt before `turn.ended` reaches disk.
       const failed = yield* watch(SESSION_ID);
+      yield* Queue.take(polls);
       yield* append(failedTurn(2).slice(0, 40));
       const pending = yield* failed(endTurn).pipe(Effect.forkChild);
       yield* Queue.take(polls);

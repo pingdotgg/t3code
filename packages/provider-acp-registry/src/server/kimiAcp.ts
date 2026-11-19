@@ -28,6 +28,14 @@ const KimiTurnEnded = Schema.fromJsonString(
 );
 const decodeTurnEnded = Schema.decodeUnknownOption(KimiTurnEnded);
 type KimiTurnEnded = typeof KimiTurnEnded.Type;
+const decodeTurnBoundary = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      type: Schema.Literals(["turn.prompt", "turn.ended"]),
+      agentId: Schema.Literal("main"),
+    }),
+  ),
+);
 const decodePromptSteered = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({ type: Schema.Literal("prompt.steered"), agentId: Schema.Literal("main") }),
@@ -65,10 +73,9 @@ function turnFailure(ended: KimiTurnEnded, steered: boolean) {
 }
 
 /**
- * Kimi Code (2.5.3, 2.6.1) answers a failed turn with `end_turn` and no error. Its main
- * agent's `wire.jsonl` records the real outcome, so the check reads the `turn.ended`
- * this prompt appended. Kimi 2.6.1 also answers `end_turn` when a steered notice ends the
- * turn, and at once for a prompt it only queues; neither is a completed turn.
+ * Kimi Code answers failed, steered-away and queued prompts with `end_turn`, and runs that
+ * work without ACP updates. Its main agent's `wire.jsonl` shows what happened. Slash commands
+ * answer without a turn, so only a prompt sent while a turn is open counts as queued.
  */
 export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(function* (
   configuredHome: string | undefined,
@@ -98,6 +105,31 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           Effect.orElseSucceed(() => 0n),
         )
       : 0n;
+    // Reads back from the end until the last main-agent `turn.prompt` or `turn.ended`.
+    const turnOpen = Option.isNone(before)
+      ? false
+      : yield* Effect.scoped(
+          Effect.gen(function* () {
+            const file = yield* fileSystem.open(before.value, { flag: "r" });
+            let position = startOffset;
+            let carry = Buffer.alloc(0);
+            while (position > 0n) {
+              const start =
+                position > BigInt(READ_CHUNK_BYTES) ? position - BigInt(READ_CHUNK_BYTES) : 0n;
+              const chunk = yield* file.readAlloc(Number(position - start), { position: start });
+              if (Option.isNone(chunk)) return false;
+              const lines = Buffer.concat([chunk.value, carry]).toString("utf8").split("\n");
+              carry = start > 0n ? Buffer.from(lines.shift() ?? "", "utf8") : carry;
+              for (const line of lines.reverse()) {
+                if (!line.includes('"turn.prompt"') && !line.includes('"turn.ended"')) continue;
+                const record = decodeTurnBoundary(line);
+                if (Option.isSome(record)) return record.value.type === "turn.prompt";
+              }
+              position = start;
+            }
+            return false;
+          }),
+        ).pipe(Effect.orElseSucceed(() => false));
 
     return Effect.fn("KimiTurnOutcome.check")(function* (result: EffectAcpSchema.PromptResponse) {
       if (result.stopReason !== "end_turn") return undefined;
@@ -107,6 +139,8 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
       let offset = startOffset;
       let ended: KimiTurnEnded | undefined;
       let steered = false;
+      // Kimi's own unfinished turn ends first; this prompt's outcome follows its `turn.prompt`.
+      let started = !turnOpen;
       // Each poll decodes only the complete lines appended since the last one.
       const readAppended = Effect.scoped(
         Effect.gen(function* () {
@@ -123,6 +157,12 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
           const complete = bytes.lastIndexOf(0x0a) + 1;
           offset += BigInt(complete);
           for (const line of bytes.subarray(0, complete).toString("utf8").split("\n")) {
+            if (!started) {
+              started =
+                line.includes('"turn.prompt"') &&
+                Option.exists(decodeTurnBoundary(line), (record) => record.type === "turn.prompt");
+              continue;
+            }
             if (ended === undefined && line.includes('"prompt.steered"')) {
               steered ||= Option.isSome(decodePromptSteered(line));
             }
@@ -143,12 +183,14 @@ export const makeKimiPromptOutcomeWatch = Effect.fn("KimiTurnOutcome.make")(func
         }),
         Effect.map((ended) => turnFailure(ended, steered)),
         Effect.catchTags({
-          KimiTurnNotEnded: () =>
-            Effect.succeed(
-              hiddenWorkFailure(
-                "Kimi queued this message behind work it was still doing and answered before running it. Its reply can't be shown here.",
-              ),
-            ),
+          KimiTurnNotEnded: (error) =>
+            turnOpen
+              ? Effect.succeed(
+                  hiddenWorkFailure(
+                    "Kimi queued this message behind work it was still doing and answered before running it. Its reply can't be shown here.",
+                  ),
+                )
+              : Effect.fail(error),
         }),
         Effect.catch(() =>
           Effect.logWarning("Kimi's session log has no outcome for this turn.").pipe(
