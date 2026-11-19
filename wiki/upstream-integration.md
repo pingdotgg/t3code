@@ -5,25 +5,28 @@ description: Main and branch integration boundaries and fork compatibility excep
 tags: [upstream, fork, integration]
 status: stable
 generated:
-  by: opencode/gpt-6.1-sol
-  at: 2026-11-17T17:55:44+00:00
+  by: opencode/gpt-6.2-astra
+  at: 2026-11-19T17:06:56+00:00
 verified:
-  - by: opencode/gpt-6.1-sol
-    at: 2026-11-17T17:55:44+00:00
+  - by: opencode/gpt-6.2-astra
+    at: 2026-11-19T17:06:56+00:00
 snapshot:
-  at: 2026-11-17T17:55:44+00:00
-  fork_main: 092507e48b85224a3a3dff60a116367be27746e9
-  upstream_main: b46edac5c1993b0c2cf721a5ffd3909709bcf7c0
-  shared_baseline: b46edac5c1993b0c2cf721a5ffd3909709bcf7c0
-  last_main_integration: 62999eedc1a7ba75e79c50a191281d3f3379c46f
-  last_main_upstream: b46edac5c1993b0c2cf721a5ffd3909709bcf7c0
-  missing_upstream_on_main: 0
+  at: 2026-11-19T17:06:56+00:00
+  fork_main: c0024320aef4d012e6d9d0161a237c65dbedef1b
+  upstream_main: e37e45fd5bba464f689b9c1a9c0509c299698995
+  shared_baseline: 8cf97b5f06f30a872ce30ab8a888f2ff012365a2
+  last_main_integration: 84c7171b300a5aa6aa0217ad7ac187011085daa4
+  last_main_upstream: 8cf97b5f06f30a872ce30ab8a888f2ff012365a2
+  missing_upstream_on_main: 186
   missing_upstream_at_integrated_tip: 0
-  branch_integration: 62999eedc1a7ba75e79c50a191281d3f3379c46f
-  branch_parent: 38ba9f1c7a493a0dbf8fed634f7ec04808c430ae
-  branch_code_tip: 62999eedc1a7ba75e79c50a191281d3f3379c46f
+  branch_integration: 9bd07b098ffb7c109f71c809f45fb21bdd528d38
+  branch_parent: c0024320aef4d012e6d9d0161a237c65dbedef1b
+  branch_code_tip: 9bd07b098ffb7c109f71c809f45fb21bdd528d38
   missing_upstream_on_branch: 0
 sources:
+  - id: november-19-integration
+    resource: https://github.com/NicholasZolton/t3code/pull/86
+    title: November 19 upstream integration and verification
   - id: november-17-main-git
     resource: "Completed main verification at 2026-11-17T17:55:44+00:00: fetched origin/main equals 092507e48b85224a3a3dff60a116367be27746e9 with parents fork main 38ba9f1c7a493a0dbf8fed634f7ec04808c430ae and PR head 6b18f3fc0d7d09a22f76f48927518c90fcc922e4. Initial integration 423f20588f1dbb437367d966a4f2617338263b87, follow-up merge/code tip 62999eedc1a7ba75e79c50a191281d3f3379c46f and pinned upstream b46edac5c1993b0c2cf721a5ffd3909709bcf7c0 are ancestors of main. All 205 incoming commits are incorporated; the shared baseline equals the pinned upstream tip and zero upstream commits are missing on main. PR 84 merged at 2026-11-17T17:55:35Z. Its final head has no check runs, workflow runs, reviews, requested reviewers, comments or review threads. The initial head had also registered no checks after a 16-minute watch. Local verification and reproduced baseline failures are recorded on the PR. No live deployment occurred."
     title: Completed November 17 main ancestry and merge verification
@@ -433,9 +436,9 @@ sources:
 
 # Upstream integration
 
-Fork `main` at `092507e48b` incorporates upstream through `b46edac5c1`.
-PR #84 merged all 205 incoming commits with ancestry preserved and zero main gap.
-Remote deployment remains separate.[^november-17-main-git]
+[PR #86](https://github.com/NicholasZolton/t3code/pull/86) integrates the 186 commits from fork `main`'s shared baseline `8cf97b5f06` through upstream `e37e45fd5b`. At the snapshot above, fork `main` was `c0024320ae` and the integration was on the PR branch at `9bd07b098f`. See the PR for its current merge and verification status.
+
+The PR tools use the same change-request step as the fork's Git/Jujutsu actions. Approval waits coexist with upstream's wait-until-merged mode. Ranked search follows upstream's extraction of the shared thread picker. Of 632 incoming paths without previous fork changes, only that picker differs from upstream.
 
 This is a revision-pinned snapshot, not a claim about newer upstream work.
 Refresh it after the next review or integration using the
