@@ -2,7 +2,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   authScopeResponse,
-  AuthStandardClientScopes,
+  AuthAdministrativeClientScopes,
   connectDeviceVerificationCode,
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
@@ -107,7 +107,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         const authenticated = yield* serverAuth.authenticateHttpRequest(request);
         expect(devExchange.cookieName).toMatch(/^t3_dev_session_/);
         expect(devExchange.expireNormalCookie).toBe(true);
-        expect(devExchange.response).toMatchObject(authScopeResponse(AuthStandardClientScopes));
+        expect(devExchange.response).toMatchObject(
+          authScopeResponse(AuthAdministrativeClientScopes),
+        );
         expect(authenticated.scopes).toEqual(["orchestration:read"]);
       }).pipe(
         Effect.provide(
@@ -265,7 +267,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect((yield* Effect.flip(sessions.verify(token)))._tag).toBe("SessionTokenRevokedError");
         expect(
           (yield* serverAuth.createBrowserSession(recovery.credential, requestMetadata)).response,
-        ).toMatchObject({ authenticated: true, ...authScopeResponse(AuthStandardClientScopes) });
+        ).toMatchObject({
+          authenticated: true,
+          ...authScopeResponse(AuthAdministrativeClientScopes),
+        });
       }).pipe(
         Effect.provide(
           layerEnvironmentAuth({
@@ -754,7 +759,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           makeCookieRequest(sessions.cookieName, exchanged.sessionToken),
         );
 
-        expect(verified.scopes).toEqual(AuthStandardClientScopes);
+        expect(verified.scopes).toEqual(AuthAdministrativeClientScopes);
         expect(verified.subject).toBe("administrative-bootstrap");
       }).pipe(Effect.provide(layerEnvironmentAuth())),
     );

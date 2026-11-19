@@ -2319,9 +2319,18 @@ effectIt.effect.each([
       const resendsOriginal =
         "unsentResume" in sideChat &&
         (!("acceptedResume" in sideChat) || "restartedResume" in sideChat);
-      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
-        withInlineContext(context, resendsOriginal ? "Original request" : ""),
-      ]);
+      const texts = harness.startTurn.mock.calls.map(([turn]) => turn.message.text);
+      expect(texts).toHaveLength(1);
+      if (resendsOriginal || context === "") {
+        expect(texts[0]).toBe(
+          withInlineContext(context, resendsOriginal ? "Original request" : ""),
+        );
+      } else {
+        // A resume that has to carry context still tells the agent to continue.
+        const contextPrefix = withInlineContext(context, "");
+        expect(texts[0]?.startsWith(contextPrefix)).toBe(true);
+        expect(texts[0]?.slice(contextPrefix.length).trim()).not.toBe("");
+      }
       expect(harness.startTurn.mock.calls[0]?.[0].resume === true).toBe(
         context === "" && !resendsOriginal,
       );
