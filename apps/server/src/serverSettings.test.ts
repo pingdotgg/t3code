@@ -3350,7 +3350,7 @@ it.effect("publishes edits made before the restored settings watch is registered
       `{ "responseStreamingMode": "turn" }`,
     );
 
-    const replaced = yield* Deferred.make<FileSystem.WatchEvent>();
+    const replaced = yield* Deferred.make<void>();
     const registering = yield* Deferred.make<void>();
     const allowRegistration = yield* Deferred.make<void>();
     const settingsLayer = layerServerSettings().pipe(
@@ -3365,6 +3365,7 @@ it.effect("publishes edits made before the restored settings watch is registered
                   if (directory === dotfiles) {
                     options?.onReady?.();
                     return Stream.fromEffect(Deferred.await(replaced)).pipe(
+                      Stream.as({ _tag: "Create", path: "active" } as const),
                       Stream.concat(Stream.never),
                     );
                   }
@@ -3392,7 +3393,7 @@ it.effect("publishes edits made before the restored settings watch is registered
       yield* fs.rename(active, path.join(dotfiles, "previous"));
       yield* fs.rename(restored, active);
       // Deliver the event on the test clock so it drains the watcher and any eager debounce.
-      yield* Deferred.succeed(replaced, { _tag: "Create", path: "active" }).pipe(
+      yield* Deferred.succeed(replaced, undefined).pipe(
         Effect.delay(1),
         Effect.forkScoped({ startImmediately: true }),
       );
