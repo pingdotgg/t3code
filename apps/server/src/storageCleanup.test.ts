@@ -2417,46 +2417,59 @@ describe("orphan worktree reports", () => {
     ),
   );
 
-  it.effect("measures a new orphan before refreshing a cached size", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const clock = yield* Clock.Clock;
-        let now = NOW_MS;
-        let parent: string | undefined;
-        let slowDirectory: string | undefined;
-        const fixture = yield* cleanupFixture().pipe(
-          Effect.provideService(Clock.Clock, {
-            ...clock,
-            currentTimeMillis: Effect.sync(() => now),
-          }),
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fs,
-            readDirectory: (directory, options) =>
-              fs.readDirectory(directory, options).pipe(
-                Effect.map((names) => {
-                  if (directory === slowDirectory) now += 30_000;
-                  return directory === parent ? names.sort() : names;
-                }),
-              ),
-          }),
-        );
-        fixture.setThreads([]);
-        parent = `${fixture.config.worktreesDir}/repository`;
-        const cached = `${parent}/a-cached`;
-        const discovered = `${parent}/b-discovered`;
-        yield* fs.makeDirectory(`${cached}/build`, { recursive: true });
-        yield* fs.utimes(cached, 1, 1);
-        const first = yield* fixture.service.runNow;
-        expect(first.entries.find((entry) => entry.path === cached)?.bytes).toBe(0);
+  it.effect(
+    "measures new orphans first and rotates cached refreshes when the budget runs out",
+    () =>
+      runCleanupTest(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const clock = yield* Clock.Clock;
+          let now = NOW_MS;
+          let parent: string | undefined;
+          let slowDirectory: string | undefined;
+          const fixture = yield* cleanupFixture().pipe(
+            Effect.provideService(Clock.Clock, {
+              ...clock,
+              currentTimeMillis: Effect.sync(() => now),
+            }),
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fs,
+              readDirectory: (directory, options) =>
+                fs.readDirectory(directory, options).pipe(
+                  Effect.map((names) => {
+                    if (directory === slowDirectory) now += 30_000;
+                    return directory === parent ? names.sort() : names;
+                  }),
+                ),
+            }),
+          );
+          fixture.setThreads([]);
+          parent = `${fixture.config.worktreesDir}/repository`;
+          const cached = `${parent}/a-cached`;
+          const later = `${parent}/b-cached`;
+          const discovered = `${parent}/c-discovered`;
+          for (const directory of [cached, later]) {
+            yield* fs.makeDirectory(`${directory}/build`, { recursive: true });
+            yield* fs.utimes(directory, 1, 1);
+          }
+          const bundle = `${later}/build/bundle.js`;
+          yield* fs.writeFileString(bundle, "x".repeat(64 * 1024));
+          const size = yield* allocatedBytes(fs, bundle);
+          const first = yield* fixture.service.runNow;
+          expect(first.entries.find((entry) => entry.path === later)?.bytes).toBe(size);
 
-        slowDirectory = `${cached}/build`;
-        yield* fs.makeDirectory(discovered);
-        yield* fs.utimes(discovered, 1, 1);
-        const second = yield* fixture.service.runNow;
-        expect(second.entries.find((entry) => entry.path === discovered)?.bytes).toBe(0);
-      }),
-    ),
+          slowDirectory = `${cached}/build`;
+          yield* fs.remove(bundle);
+          yield* fs.makeDirectory(discovered);
+          yield* fs.utimes(discovered, 1, 1);
+          const second = yield* fixture.service.runNow;
+          expect(second.entries.find((entry) => entry.path === discovered)?.bytes).toBe(0);
+          expect(second.entries.find((entry) => entry.path === later)?.bytes).toBe(size);
+
+          const third = yield* fixture.service.runNow;
+          expect(third.entries.find((entry) => entry.path === later)?.bytes).toBe(0);
+        }),
+      ),
   );
 
   it.live("retains the last orphan size on a failed refresh and can refresh it later", () =>

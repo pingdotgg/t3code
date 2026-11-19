@@ -644,13 +644,9 @@ const make = Effect.gen(function* () {
 
     // Give the first new folder a full walk so every sweep can make progress.
     let firstMeasurement = true;
-    const refresh = new Map<string, string>();
+    const refresh = trigger === "manual" ? [...orphanSizes] : [];
     for (const [key, { path }] of reported) {
-      const bytes = orphanSizes.get(key);
-      if (bytes !== undefined) {
-        if (trigger === "manual" && bytes !== null) refresh.set(key, path);
-        continue;
-      }
+      if (orphanSizes.has(key)) continue;
       const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
       if (!firstMeasurement && remaining <= 0) break;
       const measured = yield* measureWorktree(path).pipe(
@@ -659,13 +655,15 @@ const make = Effect.gen(function* () {
       firstMeasurement = false;
       if (Option.isSome(measured)) orphanSizes.set(key, measured.value.bytes);
     }
-    for (const [key, path] of refresh) {
+    for (const [key, bytes] of refresh) {
+      const orphan = reported.get(key);
+      if (orphan === undefined || bytes === null) continue;
       const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
       if (remaining <= 0) break;
-      const measured = yield* measureWorktree(path).pipe(Effect.timeoutOption(remaining));
-      if (Option.isSome(measured) && measured.value.bytes !== null) {
-        orphanSizes.set(key, measured.value.bytes);
-      }
+      const measured = yield* measureWorktree(orphan.path).pipe(Effect.timeoutOption(remaining));
+      // A slow or failed refresh moves to the end too, so it cannot starve the next orphan.
+      orphanSizes.delete(key);
+      orphanSizes.set(key, Option.getOrUndefined(measured)?.bytes ?? bytes);
     }
     for (const [key, orphan] of reported) {
       entries.push({
