@@ -74,12 +74,12 @@ const provider: ServerProvider = {
   skills: [],
 };
 
-const makeHarness = Effect.fn(function* (name: string) {
-  const cwd = yield* checkpointWorkspace(name);
+const makeFakeAdapter = (cwd: string) => {
   const turns: Array<{
     readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
     readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
   }> = [];
+  const interrupted: Array<ReadonlyArray<string> | undefined> = [];
   const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
     instanceId,
     driver,
@@ -145,7 +145,10 @@ const makeHarness = Effect.fn(function* (name: string) {
               });
             }),
           steerTurn: () => Effect.die("unused"),
-          interruptTurn: () => Effect.void,
+          interruptTurn: ({ providerThread }) =>
+            Effect.sync(() => {
+              interrupted.push(providerThread.pendingBackgroundTasks?.map((t) => t.taskId));
+            }),
           respondToRuntimeRequest: () => Effect.die("unused"),
           readThreadSnapshot: () => Effect.die("unused"),
           rollbackThread: () => Effect.die("unused"),
@@ -153,6 +156,12 @@ const makeHarness = Effect.fn(function* (name: string) {
         };
       }),
   };
+  return { adapter, turns, interrupted };
+};
+
+const makeHarness = Effect.fn(function* (name: string) {
+  const cwd = yield* checkpointWorkspace(name);
+  const { adapter, turns } = makeFakeAdapter(cwd);
   const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
   const layerOrchestrator = ProviderReplayHarness.layerWithRegistry({ name }, layerAdapters, {
     runEffectWorker: false,
@@ -201,87 +210,7 @@ const cancelBackgroundOnlyTask = (
   Effect.scoped(
     Effect.gen(function* () {
       const cwd = yield* checkpointWorkspace(`task-cancel-background-${background}`);
-      const turns: Array<{
-        readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
-        readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
-      }> = [];
-      const interrupted: Array<ReadonlyArray<string> | undefined> = [];
-      const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
-        instanceId,
-        driver,
-        getCapabilities: () => Effect.succeed(ClaudeProviderCapabilitiesV2),
-        planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-        openSession: (input) =>
-          Effect.gen(function* () {
-            const now = yield* DateTime.now;
-            const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-            return {
-              instanceId,
-              driver,
-              providerSessionId: input.providerSessionId,
-              providerSession: {
-                id: input.providerSessionId,
-                driver,
-                providerInstanceId: instanceId,
-                status: "ready",
-                cwd,
-                model: modelSelection.model,
-                capabilities: ClaudeProviderCapabilitiesV2,
-                createdAt: now,
-                updatedAt: now,
-                lastError: null,
-              },
-              events: Stream.fromQueue(events),
-              ensureThread: ({ threadId }) =>
-                Effect.succeed({
-                  id: ProviderThreadId.make(`provider-thread:${threadId}`),
-                  driver,
-                  providerInstanceId: instanceId,
-                  providerSessionId: input.providerSessionId,
-                  appThreadId: threadId,
-                  ownerNodeId: null,
-                  nativeThreadRef: { driver, nativeId: `native:${threadId}`, strength: "strong" },
-                  nativeConversationHeadRef: null,
-                  status: "idle",
-                  firstRunOrdinal: null,
-                  lastRunOrdinal: null,
-                  handoffIds: [],
-                  forkedFrom: null,
-                  createdAt: now,
-                  updatedAt: now,
-                }),
-              resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-              startTurn: (turn) =>
-                Effect.gen(function* () {
-                  turns.push({ turn, events });
-                  yield* Queue.offer(events, {
-                    type: "provider_turn.updated",
-                    driver,
-                    providerTurn: {
-                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
-                      providerThreadId: turn.providerThread.id,
-                      nodeId: turn.rootNodeId,
-                      runAttemptId: turn.attemptId,
-                      nativeTurnRef: null,
-                      ordinal: turn.providerTurnOrdinal,
-                      status: "running",
-                      startedAt: now,
-                      completedAt: null,
-                    },
-                  });
-                }),
-              steerTurn: () => Effect.die("unused"),
-              interruptTurn: ({ providerThread }) =>
-                Effect.sync(() => {
-                  interrupted.push(providerThread.pendingBackgroundTasks?.map((t) => t.taskId));
-                }),
-              respondToRuntimeRequest: () => Effect.die("unused"),
-              readThreadSnapshot: () => Effect.die("unused"),
-              rollbackThread: () => Effect.die("unused"),
-              forkThread: () => Effect.die("unused"),
-            };
-          }),
-      };
+      const { adapter, turns, interrupted } = makeFakeAdapter(cwd);
       const layerAdapters = ProviderAdapterRegistry.layerSingle(adapter);
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
