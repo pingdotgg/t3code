@@ -1,10 +1,6 @@
 import { Atom, AsyncResult } from "effect/reactivity";
 import * as Cause from "effect/Cause";
-import * as Option from "effect/Option";
-import { BearerConnectionTarget } from "@t3tools/client-runtime/connection";
-import { Discovery } from "@t3tools/client-runtime/relay";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { EnvironmentId } from "@t3tools/contracts";
 import { useState } from "react";
 import { page, userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -12,7 +8,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { render, stubGlobal } from "../../../test/render";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { ToastProvider } from "../ui/toast";
-import type { EnvironmentPresentation } from "~/state/environments";
 
 const mocks = vi.hoisted(() => ({
   connectPairing: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
@@ -21,9 +16,6 @@ const mocks = vi.hoisted(() => ({
   connectSshEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(async () =>
     AsyncResult.success(undefined),
   ),
-  registerEnvironment: vi.fn<() => Promise<AtomCommandResult<void, Error>>>(),
-  useRelayEnvironmentDiscovery:
-    vi.fn<typeof import("~/state/environments").useRelayEnvironmentDiscovery>(),
   refresh: () => {},
 }));
 
@@ -36,12 +28,6 @@ vi.mock(import("~/connection/onboarding"), async (original) => ({
   connectPairing: mocks.connectPairing as never,
   connectSshEnvironment: mocks.connectSshEnvironment as never,
 }));
-vi.mock(import("~/connection/catalog"), async (original) => ({
-  environmentCatalog: {
-    ...(await original()).environmentCatalog,
-    register: mocks.registerEnvironment as never,
-  },
-}));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: (() => ({
@@ -53,7 +39,7 @@ vi.mock(import("~/state/query"), async (original) => ({
 }));
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
-  useRelayEnvironmentDiscovery: mocks.useRelayEnvironmentDiscovery,
+  useRelayEnvironmentDiscovery: (() => ({ environments: new Map() })) as never,
 }));
 vi.mock(import("~/state/server"), async (original) => ({
   ...(await original()),
@@ -62,25 +48,19 @@ vi.mock(import("~/state/server"), async (original) => ({
 
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
 
-function Owner({
-  initialRouteTarget = null,
-}: {
-  initialRouteTarget?: EnvironmentPresentation | null;
-}) {
-  const [open, setOpen] = useState(initialRouteTarget !== null);
-  const [routeTarget, setRouteTarget] = useState(initialRouteTarget);
+function Owner() {
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
     <AppAtomRegistryProvider>
       <AddEnvironmentDialog
         open={open}
-        routeTarget={routeTarget}
+        routeTarget={null}
         error={error}
         savedEnvironments={[]}
         onOpenChange={(nextOpen) => {
           setOpen(nextOpen);
-          if (nextOpen) setRouteTarget(null);
-          else setError(null);
+          if (!nextOpen) setError(null);
         }}
         onErrorChange={setError}
       />
@@ -91,10 +71,6 @@ function Owner({
 function setup() {
   mocks.connectPairing.mockClear();
   mocks.connectSshEnvironment.mockClear();
-  mocks.registerEnvironment.mockReset();
-  mocks.useRelayEnvironmentDiscovery
-    .mockReset()
-    .mockReturnValue(Discovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE);
   return stubGlobal("desktopBridge", {});
 }
 
@@ -256,80 +232,4 @@ describe("AddEnvironmentDialog", () => {
     await expect.element(page.getByText("Environment connected")).toBeInTheDocument();
     await expect.element(dialog.getByRole("button", { name: "Add environment" })).toBeEnabled();
   });
-
-  it.each([
-    { outcome: "succeeds", result: AsyncResult.success(undefined) },
-    {
-      outcome: "fails",
-      result: AsyncResult.failure<void, Error>(Cause.fail(new Error("Route registration failed"))),
-    },
-  ])(
-    "keeps the reopened dialog intact when a dismissed relay registration $outcome",
-    async ({ result }) => {
-      using _bridge = setup();
-      const environmentId = EnvironmentId.make("relay-fallback-test");
-      const target = new BearerConnectionTarget({
-        environmentId,
-        label: "Desk",
-        connectionId: "desk",
-      });
-      const routeTarget: EnvironmentPresentation = {
-        environmentId,
-        label: target.label,
-        displayUrl: null,
-        relayManaged: false,
-        entry: { target, profile: Option.none(), alternateRoutes: [], enabled: true },
-        connection: { phase: "available", error: null, traceId: null },
-        serverConfig: null,
-        refusedRouteIds: [],
-      };
-      mocks.useRelayEnvironmentDiscovery.mockReturnValue({
-        ...Discovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
-        listed: true,
-        environments: new Map([
-          [
-            environmentId,
-            {
-              environment: {
-                environmentId,
-                label: target.label,
-                endpoint: {
-                  httpBaseUrl: "https://relay.example.com/",
-                  wsBaseUrl: "wss://relay.example.com/",
-                  providerKind: "t3_relay",
-                },
-                linkedAt: "2026-11-19T10:00:00Z",
-              },
-              availability: "online",
-              status: Option.none(),
-              error: Option.none(),
-            },
-          ],
-        ]),
-      });
-      const registration = Promise.withResolvers<AtomCommandResult<void, Error>>();
-      mocks.registerEnvironment.mockReturnValueOnce(registration.promise);
-      await using _screen = await render(
-        <ToastProvider>
-          <Owner initialRouteTarget={routeTarget} />
-        </ToastProvider>,
-      );
-
-      const dialog = page.getByRole("dialog");
-      await userEvent.click(dialog.getByRole("button", { name: "Add T3 Connect" }));
-      await userEvent.keyboard("{Escape}");
-      await expectDefaultModeAfterReopen();
-      await expect.element(dialog.getByRole("button", { name: "Adding…" })).toBeDisabled();
-
-      registration.resolve(result);
-      if (result._tag === "Success") {
-        await expect.element(page.getByText("Route added", { exact: true })).toBeInTheDocument();
-      } else {
-        await expect.element(page.getByText("Could not add the route.")).toBeInTheDocument();
-        await expect.element(page.getByText("Route registration failed")).toBeInTheDocument();
-      }
-      await expect.element(dialog.getByRole("button", { name: "Add environment" })).toBeEnabled();
-      await expect.element(dialog.getByText("Route registration failed")).not.toBeInTheDocument();
-    },
-  );
 });

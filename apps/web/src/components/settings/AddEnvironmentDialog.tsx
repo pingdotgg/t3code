@@ -456,7 +456,6 @@ export function AddEnvironmentDialog({
       : null;
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
-    const session = savedBackendSessionRef.current;
     setIsAddingSavedBackend(true);
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
@@ -470,23 +469,15 @@ export function AddEnvironmentDialog({
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message =
-          error instanceof Error ? (thrownErrorMessage(error, m) ?? error.message) : undefined;
-        if (session === savedBackendSessionRef.current) {
-          onErrorChange(message ?? gt("Could not add the route."));
-        } else {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: gt("Could not add the route."),
-              description: message,
-            }),
-          );
-        }
+        onErrorChange(
+          error instanceof Error
+            ? (thrownErrorMessage(error, m) ?? error.message)
+            : gt("Could not add the route."),
+        );
       }
       return;
     }
-    if (session === savedBackendSessionRef.current) handleOpenChange(false);
+    handleOpenChange(false);
     toastManager.add({
       type: "success",
       title: gt("Route added"),
