@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "{appName} no pudo guardar esta aprobación, así que la página sigue bloqueada. Comprueba que el disco no está lleno y que se puede escribir en su carpeta de datos y vuelve a intentarlo.",
   "a0315d43e8e5be7e": "Permitir",
   "2ec823ca24387055": "Bloquear",
+  "709219ff9ff49a4f": "{origin} quiere conocer tu ubicación",
   "8fc0b116123fb50b": "{origin} quiere ver el texto y las imágenes copiados al portapapeles",
   "c0f756221736393f": "Vista previa · {title}",
   "6994444f4fec4070": "Vista previa del navegador",

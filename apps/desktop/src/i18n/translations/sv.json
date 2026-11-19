@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "{appName} kunde inte spara det här godkännandet, så sidan förblir blockerad. Kontrollera att disken inte är full och att datamappen är skrivbar och försök sedan igen.",
   "a0315d43e8e5be7e": "Tillåt",
   "2ec823ca24387055": "Blockera",
+  "709219ff9ff49a4f": "{origin} vill veta var du befinner dig",
   "8fc0b116123fb50b": "{origin} vill se text och bilder som kopierats till urklipp",
   "c0f756221736393f": "Förhandsvisning · {title}",
   "6994444f4fec4070": "Förhandsvisning i webbläsaren",

@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "{appName} n’a pas pu enregistrer cette approbation, la page reste donc bloquée. Vérifiez que le disque n’est pas plein et que son dossier de données est accessible en écriture, puis réessayez.",
   "a0315d43e8e5be7e": "Autoriser",
   "2ec823ca24387055": "Bloquer",
+  "709219ff9ff49a4f": "{origin} souhaite connaître votre position",
   "8fc0b116123fb50b": "{origin} veut voir le texte et les images copiés dans le presse-papiers",
   "c0f756221736393f": "Aperçu · {title}",
   "6994444f4fec4070": "Aperçu du navigateur",

@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "O {appName} não conseguiu salvar esta aprovação, então a página continua bloqueada. Verifique se o disco não está cheio e se a pasta de dados permite gravação e tente novamente.",
   "a0315d43e8e5be7e": "Permitir",
   "2ec823ca24387055": "Bloquear",
+  "709219ff9ff49a4f": "{origin} quer saber sua localização",
   "8fc0b116123fb50b": "{origin} quer ver textos e imagens copiados para a área de transferência",
   "c0f756221736393f": "Pré-visualização · {title}",
   "6994444f4fec4070": "Pré-visualização do navegador",

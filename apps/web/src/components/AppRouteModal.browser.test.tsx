@@ -78,6 +78,26 @@ describe("AppRouteModal", () => {
       expect(behind.backdropFilter).toMatch(/blur\(1[26]px\)/);
     },
   );
+  it("returns focus to the opener when Esc closes it", async () => {
+    const opener = <button type="button">Open usage</button>;
+    await using screen = await render(opener, { router: "/" });
+    const openerButton = screen.getByRole("button", { name: "Open usage" });
+    (openerButton.element() as HTMLElement).focus();
+
+    await screen.rerender(
+      <>
+        {opener}
+        <AppRouteModal label="Usage">
+          <p>Usage</p>
+        </AppRouteModal>
+      </>,
+    );
+    await expect.element(page.getByRole("dialog", { name: "Usage" })).toHaveFocus();
+    await userEvent.keyboard("{Escape}");
+
+    await expect.element(page.getByRole("dialog", { name: "Usage" })).not.toBeInTheDocument();
+    await expect.element(openerButton).toHaveFocus();
+  });
 
   it("stays open when Esc belongs to a modal outside Base UI", async () => {
     await using _screen = await render(

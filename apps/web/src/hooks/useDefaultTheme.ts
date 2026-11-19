@@ -1,6 +1,6 @@
 import { asDefaultThemeAdoption } from "../orbit/themeOrigin";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { themeEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { themeServerSettingsAtom } from "../state/server";
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
 import { getThemeSnapshot, setAppearanceMode, setTheme } from "./useTheme";
@@ -59,7 +59,7 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
 
 function adoptDefaultTheme(): void {
   if (typeof window === "undefined") return;
-  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
   if (environmentId === null) return;
   const settings = appAtomRegistry.get(themeServerSettingsAtom);
   const { defaultTheme, defaultThemeSetAt } = settings;
@@ -97,7 +97,7 @@ function adoptDefaultTheme(): void {
 /** Like the theme, the environment's mode applies once per set, then local choices win. */
 function adoptDefaultAppearance(): void {
   if (typeof window === "undefined") return;
-  const environmentId = appAtomRegistry.get(themeEnvironmentIdAtom);
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
   const { defaultAppearance, defaultAppearanceSetAt } =
     appAtomRegistry.get(themeServerSettingsAtom);
   const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
@@ -128,7 +128,7 @@ function adoptDefaults(): void {
  */
 export function startDefaultThemeAdoption(): () => void {
   const unsubscribes = [
-    appAtomRegistry.subscribe(themeEnvironmentIdAtom, adoptDefaults),
+    appAtomRegistry.subscribe(localEnvironmentIdAtom, adoptDefaults),
     appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaults),
     subscribeToCustomThemes(adoptDefaults),
   ];

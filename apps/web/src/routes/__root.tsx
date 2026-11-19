@@ -195,9 +195,11 @@ function RootRouteBranch() {
   // Conn: extra desktop windows leave activation, snapshots and Orbit sync to the main window.
   const appHosts = (
     <>
-      {primaryEnvironmentAuthenticated && isMainWindow ? <DesktopAppActivationCoordinator /> : null}
       {(primaryEnvironmentAuthenticated || localEnvironmentDisabled) && isMainWindow ? (
-        <DesktopWebLinkCoordinator />
+        <>
+          <DesktopAppActivationCoordinator />
+          <DesktopWebLinkCoordinator />
+        </>
       ) : null}
       {isElectron ? <RunningThreadKeepAlive /> : null}
       <RelayClientInstallDialog />

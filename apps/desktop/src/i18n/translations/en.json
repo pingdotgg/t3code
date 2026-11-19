@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "{appName} could not save this approval, so the page stays blocked. Check that the disk is not full and its data folder is writable, then try again.",
   "a0315d43e8e5be7e": "Allow",
   "2ec823ca24387055": "Block",
+  "709219ff9ff49a4f": "{origin} wants to know your location",
   "8fc0b116123fb50b": "{origin} wants to see text and images copied to the clipboard",
   "c0f756221736393f": "Preview · {title}",
   "6994444f4fec4070": "Browser preview",

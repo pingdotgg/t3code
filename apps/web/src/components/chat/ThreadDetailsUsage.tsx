@@ -8,9 +8,11 @@ import {
   collectProviderUsageLimits,
   type LimitPace,
   paceOf,
+  paceRemainingPercent,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimitsCopy";
+import { Link } from "@tanstack/react-router";
 import { msg, useGT, useLocale, useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
@@ -39,7 +41,7 @@ export interface ThreadDetailsUsageInput {
 
 type UsageTone = "error" | "warning" | null;
 
-/** The selected provider's limit windows. Each row reads as room left. */
+/** The selected provider's limit windows. Each row reads as room left and opens the usage page. */
 export function ThreadDetailsUsage({
   providerInstanceId,
   providers,
@@ -75,6 +77,7 @@ export function ThreadDetailsUsage({
             tone={null}
             value={gt("Unavailable")}
             tooltip={<span className="text-foreground">{notice}</span>}
+            opensUsage
           />
         ) : (
           limits.windows.map((window) => <LimitRow key={window.id} window={window} now={now} />)
@@ -163,19 +166,27 @@ function LimitRow({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const left = remainingPercent(window);
   const pace = paceOf(window, now);
+  const timeLeft = paceRemainingPercent(window, now);
   const resetsAt = window.resetsAt ? Date.parse(window.resetsAt) : Number.NaN;
   return (
     <UsageRow
       label={window.label}
       fill={left}
       tone={left <= 10 ? "error" : left <= 20 ? "warning" : null}
+      tick={timeLeft}
       value={`${left}%`}
       ariaValue={gt("{left}% left", { left })}
+      opensUsage
       tooltip={
         <>
           <span className="text-foreground">
             {gt("{label}: {left}% left", { label: window.label, left })}
           </span>
+          {pace && timeLeft !== null ? (
+            <span className="text-muted-foreground">
+              {m(PACE_LABEL[pace])} · {gt("{timeLeft}% of the window left", { timeLeft })}
+            </span>
+          ) : null}
           {window.resetsAt && resetsAt > now ? (
             <span className="text-muted-foreground">
               {gt("Resets in {duration} · {time}", {
@@ -184,14 +195,13 @@ function LimitRow({
               })}
             </span>
           ) : null}
-          {pace ? <span className="text-muted-foreground">{m(PACE_LABEL[pace])}</span> : null}
         </>
       }
     />
   );
 }
 
-/** One label, hairline, and value row; the whole row opens the details tooltip. */
+/** One label, hairline, and value row; the whole row opens the details tooltip. With `opensUsage` it links to the usage page. */
 function UsageRow({
   label,
   fill,
@@ -201,6 +211,7 @@ function UsageRow({
   ariaValue = value,
   tooltip,
   muted = false,
+  opensUsage = false,
 }: {
   readonly label: string;
   /** Bar fill from 0 to 100. Null hides the bar. */
@@ -212,20 +223,26 @@ function UsageRow({
   readonly ariaValue?: string;
   readonly tooltip: ReactNode;
   readonly muted?: boolean;
+  readonly opensUsage?: boolean;
 }) {
   const gt = useGT();
+  const rowProps = {
+    "aria-label": gt("{label}: {value}", { label, value: ariaValue }),
+    className: cn(
+      "col-span-3 grid h-6 grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-(--shell-highlight)",
+      opensUsage ? "group cursor-pointer active:bg-(--shell-highlight)" : "cursor-default",
+    ),
+  };
   return (
     <Tooltip>
       <TooltipTrigger
         render={
-          <div
-            tabIndex={0}
-            aria-label={gt("{label}: {value}", { label, value: ariaValue })}
-            className="col-span-3 grid h-6 cursor-default grid-cols-subgrid items-center rounded-lg px-2.5 outline-none hover:bg-(--shell-highlight) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-popup-open:bg-(--shell-highlight)"
-          />
+          opensUsage ? <Link to="/usage" {...rowProps} /> : <div tabIndex={0} {...rowProps} />
         }
       >
-        <span className="max-w-28 truncate text-muted-foreground">{label}</span>
+        <span className="max-w-28 truncate text-muted-foreground group-hover:text-foreground">
+          {label}
+        </span>
         {fill !== null ? (
           <span className="relative h-[3px] rounded-full bg-muted-foreground/30 dark:bg-muted-foreground/20">
             {fill > 0 ? (
@@ -246,8 +263,8 @@ function UsageRow({
             {tick !== null ? (
               <span
                 aria-hidden
-                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/60"
-                style={{ left: `${tick}%` }}
+                className="absolute -top-[3px] h-[9px] w-px -translate-x-1/2 bg-foreground/75"
+                style={{ left: `clamp(0.5px, ${tick}%, calc(100% - 0.5px))` }}
               />
             ) : null}
           </span>
@@ -271,7 +288,10 @@ function UsageRow({
       </TooltipTrigger>
       {/* Rows sit 8px inside the card; clear its edge instead of overlapping it. */}
       <TooltipPopup side="left" sideOffset={16}>
-        <div className="flex flex-col gap-0.5">{tooltip}</div>
+        <div className="flex flex-col gap-0.5">
+          {tooltip}
+          {opensUsage ? <span className="text-muted-foreground">{gt("Open usage")}</span> : null}
+        </div>
       </TooltipPopup>
     </Tooltip>
   );

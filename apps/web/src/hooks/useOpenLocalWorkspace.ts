@@ -3,6 +3,7 @@ import {
   findProjectByPath,
   inferProjectTitleFromPath,
 } from "@t3tools/client-runtime/state/projects";
+import { useAtomValue } from "@effect/atom-react";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 import { msg } from "gt-react";
@@ -11,7 +12,8 @@ import { handleDesktopAppActivationRequest } from "../desktopAppActivation";
 import { m } from "../i18n/messages";
 import { newProjectId } from "../lib/utils";
 import { readProjects, readThreadShell, waitForProject } from "../state/entities";
-import { usePrimaryEnvironment } from "../state/environments";
+import { useEnvironment } from "../state/environments";
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -22,39 +24,37 @@ import { useNewThreadHandler } from "./useHandleNewThread";
 import { appName } from "@t3tools/shared/appName";
 
 /**
- * Opens a folder on this computer as a project in the primary environment: an
+ * Opens a folder on this computer as a project in this computer's environment: an
  * existing project opens (and unarchives), a new one is added. Used by `t3 <dir>`
- * activations and folders dropped on the sidebar. `ready` is false until the
- * primary environment's projects have loaded, so a known folder is not added twice.
+ * activations and folders dropped on the sidebar. `ready` is false until that
+ * environment's projects have loaded, so a known folder is not added twice.
  */
 export function useOpenLocalWorkspace() {
-  const primaryEnvironment = usePrimaryEnvironment();
+  const localEnvironment = useEnvironment(useAtomValue(localEnvironmentIdAtom));
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
   const openThread = useNewThreadHandler();
   const router = useRouter();
-  const shellHasSnapshot = useEnvironmentShellHasSnapshot(
-    primaryEnvironment?.environmentId ?? null,
-  );
+  const shellHasSnapshot = useEnvironmentShellHasSnapshot(localEnvironment?.environmentId ?? null);
   const ready =
-    primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null &&
+    localEnvironment?.connection.phase === "connected" &&
+    localEnvironment.serverConfig !== null &&
     shellHasSnapshot;
 
   const open = (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
       getTarget: () => {
         if (
-          primaryEnvironment?.connection.phase !== "connected" ||
-          primaryEnvironment.serverConfig === null
+          localEnvironment?.connection.phase !== "connected" ||
+          localEnvironment.serverConfig === null
         ) {
           return null;
         }
         return {
-          environmentId: primaryEnvironment.environmentId,
-          platform: primaryEnvironment.serverConfig.environment.platform.os,
+          environmentId: localEnvironment.environmentId,
+          platform: localEnvironment.serverConfig.environment.platform.os,
         };
       },
       findProject: (environmentId, workspaceRoot) =>

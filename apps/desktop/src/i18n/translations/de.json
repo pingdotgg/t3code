@@ -49,6 +49,7 @@
   "cef0b4629463cfdb": "{appName} konnte diese Genehmigung nicht speichern, daher bleibt die Seite blockiert. Prüfe, ob die Festplatte voll ist und ob ihr Datenordner beschreibbar ist, und versuche es dann erneut.",
   "a0315d43e8e5be7e": "Erlauben",
   "2ec823ca24387055": "Blockieren",
+  "709219ff9ff49a4f": "{origin} möchte deinen Standort erfahren",
   "8fc0b116123fb50b": "{origin} möchte in die Zwischenablage kopierte Texte und Bilder sehen",
   "c0f756221736393f": "Vorschau · {title}",
   "6994444f4fec4070": "Browservorschau",
