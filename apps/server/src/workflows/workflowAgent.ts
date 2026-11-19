@@ -211,19 +211,28 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       );
     }
     // The turn may only be out of sight, not dead: it is stopped before another does its work again.
+    // A stop that does not get through pauses the run unrecorded, or gives up a step that returns.
+    let lingers = false;
     if (died && turn.failed === undefined) {
       const lost = turn;
-      yield* journaled(
+      lingers = !(yield* journaled(
         run,
         name,
         `agent/${name}/${round}/stop`,
-        Schema.Void,
-        agents.interrupt({ ...threadOf(lost), turnId: lost.turnId }).pipe(Effect.ignore),
-      );
+        Schema.Boolean,
+        agents
+          .interrupt({ ...threadOf(lost), turnId: lost.turnId })
+          .pipe(
+            Effect.retry({ times: 2 }),
+            Effect.as(true),
+            onFailure === "pause" ? identity : Effect.catch(() => Effect.succeed(false)),
+          ),
+      ));
+      if (lingers) problem = `${problem}; its turn could not be stopped`;
     }
     // A turn that died is not the job's fault the first time: once more, on a thread of its own.
     // One a person stopped is not tried again behind their back.
-    if (round % 2 === 0 && !stopped) continue;
+    if (round % 2 === 0 && !stopped && !lingers) continue;
     if (onFailure === "return") {
       yield* journaled(
         run,

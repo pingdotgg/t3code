@@ -928,8 +928,14 @@ it.effect(
             { idempotencyKey: "f2" },
           );
           yield* agents.started(runId, "write/0");
+          // Its turn is stopped before the next one starts; a stop that fails pauses the run.
+          agents.refuseStops(3);
           yield* agents.end(runId, "write/0", { ending: "failed", detail: "failed" });
+          const refused = yield* workflows.waitFor(runId, status("paused"));
+          assert.include(refused.detail ?? "", "the link is down");
+          assert.equal(agents.interrupted.length, 0);
           yield* agents.started(runId, "write/1");
+          assert.equal(agents.interrupted.length, 1);
           yield* agents.end(runId, "write/1", { ending: "failed", detail: "provider error" });
 
           const paused = yield* workflows.waitFor(runId, status("paused"));
