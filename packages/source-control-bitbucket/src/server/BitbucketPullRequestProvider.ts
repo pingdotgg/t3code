@@ -1,5 +1,8 @@
 import { resolvePullRequestAuthorFilter, SourceControlProviderKind } from "@t3tools/contracts";
+import * as Cache from "effect/Cache";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { rollupCheckStatuses } from "@t3tools/source-control-core/server/pullRequestChecks";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 
@@ -16,6 +19,12 @@ import {
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { BitbucketPullRequest } from "./bitbucketPullRequestJson.ts";
 import { definition } from "../shared/definition.ts";
+
+// Each open row costs one read, so answers live long enough that refreshes stay well inside the
+// hourly quota; the destination branch moving on is the staleness this bounds.
+const MERGEABILITY_TTL = Duration.minutes(10);
+const MERGEABILITY_CAPACITY = 1000;
+const MERGEABILITY_READS = 5;
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -171,6 +180,18 @@ export const make = Effect.gen(function* () {
     });
   };
 
+  // Listings omit conflicts; reuse reads until the head or target branch changes or the TTL expires.
+  const mergeabilities = yield* Cache.makeWith(
+    (key: string) => {
+      const [repository, number] = JSON.parse(key) as [string, number, string, string];
+      return api.getMergeability({ repository, number });
+    },
+    {
+      capacity: MERGEABILITY_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? MERGEABILITY_TTL : Duration.zero),
+    },
+  );
+
   const provider: PullRequestProviderApi = {
     kind: SourceControlProviderKind.make("bitbucket"),
     capabilities: CAPABILITIES,
@@ -180,9 +201,9 @@ export const make = Effect.gen(function* () {
 
     getViewer: () => api.getViewer().pipe(Effect.mapError(fail("getViewer"))),
 
-    listChangeRequests: (input) =>
-      api
-        .listPullRequests({
+    listChangeRequests: Effect.fn("BitbucketPullRequestProvider.listChangeRequests")(
+      function* (input) {
+        const batch = yield* api.listPullRequests({
           repository: input.repository,
           state: input.state,
           limit: input.limit,
@@ -193,15 +214,32 @@ export const make = Effect.gen(function* () {
               ? undefined
               : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
           draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
-        })
-        .pipe(
-          Effect.mapError(fail("listChangeRequests")),
-          Effect.map((batch) => ({
-            items: batch.items.map(toChangeRequest),
-            truncated: batch.truncated,
-            continues: true,
-          })),
-        ),
+        });
+        const items = yield* Effect.forEach(
+          batch.items,
+          (pullRequest) => {
+            if (pullRequest.state !== "open") return Effect.succeed(toChangeRequest(pullRequest));
+            return recoverRead(
+              Cache.get(
+                mergeabilities,
+                JSON.stringify([
+                  input.repository,
+                  pullRequest.number,
+                  pullRequest.headSha ?? "",
+                  pullRequest.baseBranch,
+                ]),
+              ),
+              "unknown" as const,
+            ).pipe(
+              Effect.map((mergeability) => ({ ...toChangeRequest(pullRequest), mergeability })),
+            );
+          },
+          { concurrency: MERGEABILITY_READS },
+        );
+        return { items, truncated: batch.truncated, continues: true };
+      },
+      Effect.mapError(fail("listChangeRequests")),
+    ),
 
     getChangeRequestChecks: (input) =>
       Effect.all([api.getPullRequest(input), api.listChecks(input)], { concurrency: 2 }).pipe(
