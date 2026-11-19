@@ -1,6 +1,7 @@
 import { selectedNavigationTab, visibleNavigationTabs } from "./navigation-tab-order";
 import { requireNativeView } from "expo";
 import { CommonActions, useNavigation } from "@react-navigation/native";
+import { selectThreadQuickAccess } from "@t3tools/client-runtime/state/thread-quick-access";
 import {
   Keyboard,
   processColor,
@@ -15,6 +16,9 @@ import { useAndroidControlSizing } from "../../../components/ui/useAndroidContro
 import { useToolbarLayout } from "../../../components/ui/useToolbarLayout";
 import { rootNavigationRef } from "../../../lib/rootNavigation";
 import { useWorkspaceConnectionState } from "../../../state/workspace";
+import { useWorkspaceEnvironments } from "../../../state/workspace";
+import { useVisibleThreadShells } from "../../../state/entities";
+import { scopedThreadKey } from "../../../lib/scopedEntities";
 import { androidWorkspaceNavigationColors } from "./android-workspace-navigation-colors";
 import {
   androidWorkspaceTabNavigationState,
@@ -24,6 +28,7 @@ import { useAppearancePreferences } from "../../settings/appearance/AppearancePr
 import { useSoftKeyboardShowing } from "../../keyboard/useSoftKeyboardShowing";
 import { useAdaptiveWorkspaceLayout } from "../adaptive-workspace-context";
 import { useAndroidWorkspaceRoot } from "./AndroidWorkspaceTabsProvider";
+import { useSelectWorkspaceDetail } from "./useSelectWorkspaceDetail";
 import { useNavigationTabOrder, useHiddenNavigationTabs } from "./navigation-tabs";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import { FLOATING_TABS, floatingTabsMetrics } from "./floating-workspace-tabs";
@@ -48,10 +53,18 @@ interface NativeNavigationProps extends ViewProps {
   readonly unselectedColor: number;
   readonly actionColor: number;
   readonly actionContentColor: number;
+  readonly environmentLabel: string;
+  readonly environmentOnline: boolean;
+  readonly quickThreadKeys: readonly string[];
+  readonly quickThreadTitles: readonly string[];
+  readonly quickThreadWorking: readonly boolean[];
+  readonly selectedThreadKey: string;
   readonly onTabSelected: (
     event: NativeSyntheticEvent<{ readonly tab: AndroidWorkspaceNavigationTab }>,
   ) => void;
   readonly onNewThread: () => void;
+  readonly onEnvironmentSelected: () => void;
+  readonly onThreadSelected: (event: NativeSyntheticEvent<{ readonly key: string }>) => void;
   readonly onOverlayChange: (event: NativeSyntheticEvent<{ readonly overlay: boolean }>) => void;
 }
 
@@ -69,7 +82,7 @@ export function AndroidWorkspaceNavigation(props: {
   readonly fillWidth?: boolean;
   readonly paneWidth?: number;
   readonly onSelect?: () => void;
-  /** The rail needs the whole workspace while it widens over the list. */
+  /** The rail needs the whole workspace while the original menu expands over the list. */
   readonly onOverlayChange?: (overlay: boolean) => void;
 }) {
   const workspace = useWorkspaceTabs()!;
@@ -80,6 +93,9 @@ export function AndroidWorkspaceNavigation(props: {
   const insets = useSafeAreaInsets();
   const toolbar = useToolbarLayout();
   const connectionState = useWorkspaceConnectionState();
+  const environments = useWorkspaceEnvironments();
+  const quickThreads = selectThreadQuickAccess(useVisibleThreadShells());
+  const selectDetail = useSelectWorkspaceDetail();
   const keyboardVisible = useSoftKeyboardShowing();
   const { layout } = useAdaptiveWorkspaceLayout();
   const { themeAppearance, themeVariables: colors } = useAppearancePreferences();
@@ -88,6 +104,23 @@ export function AndroidWorkspaceNavigation(props: {
   const rail = Boolean(props.rail);
   const floating = !rail && Boolean(props.floating);
   const tabs = [...visibleNavigationTabs(order, hidden, rail ? 5 : 4), "settings"];
+  const selectedThread = quickThreads.find(({ thread }) =>
+    rootNavigationRef
+      .getRootState()
+      ?.routes.some(
+        (route) =>
+          route.name === "Thread" &&
+          (route.params as ReactNavigation.RootParamList["Thread"] | undefined)?.environmentId ===
+            thread.environmentId &&
+          (route.params as ReactNavigation.RootParamList["Thread"] | undefined)?.threadId ===
+            thread.id,
+      ),
+  )?.thread;
+  const currentEnvironmentId =
+    selectedThread?.environmentId ?? quickThreads[0]?.thread.environmentId;
+  const currentEnvironment =
+    environments.find((environment) => environment.environmentId === currentEnvironmentId) ??
+    environments[0];
   const { containerColor, indicatorColor, selectedColor, unselectedColor } =
     androidWorkspaceNavigationColors(colors, rail, floating);
   const selectedTab = selectedNavigationTab(
@@ -133,6 +166,16 @@ export function AndroidWorkspaceNavigation(props: {
         unselectedColor={nativeColor(unselectedColor)}
         actionColor={nativeColor(colors["--color-primary"])}
         actionContentColor={nativeColor(colors["--color-primary-foreground"])}
+        environmentLabel={currentEnvironment?.environmentLabel ?? "Environment"}
+        environmentOnline={currentEnvironment?.connectionState === "connected"}
+        quickThreadKeys={quickThreads.map(({ thread }) =>
+          scopedThreadKey(thread.environmentId, thread.id),
+        )}
+        quickThreadTitles={quickThreads.map(({ thread }) => thread.title)}
+        quickThreadWorking={quickThreads.map(({ working }) => working)}
+        selectedThreadKey={
+          selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : ""
+        }
         onTabSelected={(event) => {
           Keyboard.dismiss();
           const tab = event.nativeEvent.tab;
@@ -154,6 +197,23 @@ export function AndroidWorkspaceNavigation(props: {
         onNewThread={() => {
           Keyboard.dismiss();
           props.onNewThread();
+        }}
+        onEnvironmentSelected={() => {
+          Keyboard.dismiss();
+          workspace.dispatch({ type: "select", tab: "threads" });
+          props.onSelect?.();
+        }}
+        onThreadSelected={(event) => {
+          Keyboard.dismiss();
+          const selected = quickThreads.find(
+            ({ thread }) =>
+              scopedThreadKey(thread.environmentId, thread.id) === event.nativeEvent.key,
+          )?.thread;
+          if (!selected) return;
+          selectDetail({
+            name: "Thread",
+            params: { environmentId: selected.environmentId, threadId: selected.id },
+          });
         }}
         onOverlayChange={(event) => props.onOverlayChange?.(event.nativeEvent.overlay)}
         style={

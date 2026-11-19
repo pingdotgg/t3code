@@ -395,6 +395,10 @@
       "types": "./src/state/threadInbox.ts",
       "default": "./src/state/threadInbox.ts"
     },
+    "./state/thread-quick-access": {
+      "types": "./src/state/threadQuickAccess.ts",
+      "default": "./src/state/threadQuickAccess.ts"
+    },
     "./state/thread-relationships": {
       "types": "./src/state/threadRelationships.ts",
       "default": "./src/state/threadRelationships.ts"

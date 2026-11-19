@@ -110,7 +110,31 @@ class T3WorkspaceNavigationModule : Module() {
       Prop("actionContentColor") { view: T3WorkspaceNavigationView, value: Int ->
         view.actionContentColor = value
       }
-      Events("onTabSelected", "onNewThread", "onOverlayChange")
+      Prop("environmentLabel") { view: T3WorkspaceNavigationView, value: String ->
+        view.environmentLabel = value
+      }
+      Prop("environmentOnline") { view: T3WorkspaceNavigationView, value: Boolean ->
+        view.environmentOnline = value
+      }
+      Prop("quickThreadKeys") { view: T3WorkspaceNavigationView, value: List<String> ->
+        view.quickThreadKeys = value
+      }
+      Prop("quickThreadTitles") { view: T3WorkspaceNavigationView, value: List<String> ->
+        view.quickThreadTitles = value
+      }
+      Prop("quickThreadWorking") { view: T3WorkspaceNavigationView, value: List<Boolean> ->
+        view.quickThreadWorking = value
+      }
+      Prop("selectedThreadKey") { view: T3WorkspaceNavigationView, value: String ->
+        view.selectedThreadKey = value
+      }
+      Events(
+        "onTabSelected",
+        "onNewThread",
+        "onEnvironmentSelected",
+        "onThreadSelected",
+        "onOverlayChange",
+      )
     }
   }
 }
@@ -125,6 +149,8 @@ class T3WorkspaceNavigationView(
 
   private val onTabSelected by EventDispatcher()
   private val onNewThread by EventDispatcher()
+  private val onEnvironmentSelected by EventDispatcher()
+  private val onThreadSelected by EventDispatcher()
   private val onOverlayChange by EventDispatcher()
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "issues", "usage", "settings"))
   var selectedTab by mutableStateOf("threads")
@@ -142,6 +168,12 @@ class T3WorkspaceNavigationView(
   var unselectedColor by mutableStateOf(0)
   var actionColor by mutableStateOf(0)
   var actionContentColor by mutableStateOf(0)
+  var environmentLabel by mutableStateOf("Environment")
+  var environmentOnline by mutableStateOf(false)
+  var quickThreadKeys by mutableStateOf(emptyList<String>())
+  var quickThreadTitles by mutableStateOf(emptyList<String>())
+  var quickThreadWorking by mutableStateOf(emptyList<Boolean>())
+  var selectedThreadKey by mutableStateOf("")
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
     // Fabric measures the replacement bar before attaching it on a fold.
@@ -253,12 +285,7 @@ class T3WorkspaceNavigationView(
 
   @Composable
   private fun rail() {
-    // One rail surface widens in place over the list. Material's ModalWideNavigationRail
-    // instead moves its destinations into a dialog window copy, which blanks them for a few
-    // frames while the window attaches and lays them out at a different height.
     var expanded by remember { mutableStateOf(false) }
-    // React Native sizes this view to the rail. While the rail is open it spans the workspace,
-    // and it only widens once the host has made room, so the surface is never clipped.
     var roomy by remember { mutableStateOf(false) }
     val progress by animateFloatAsState(
       targetValue = if (expanded && roomy) 1f else 0f,
@@ -266,7 +293,6 @@ class T3WorkspaceNavigationView(
     )
     val overlay = expanded || progress != 0f
     LaunchedEffect(overlay) { onOverlayChange(mapOf("overlay" to overlay)) }
-    // The activity handles Back before React Native, so an open rail closes first.
     val backDispatcher = (appContext.currentActivity as? ComponentActivity)?.onBackPressedDispatcher
     DisposableEffect(backDispatcher, expanded) {
       val callback = object : OnBackPressedCallback(expanded) {
@@ -295,13 +321,12 @@ class T3WorkspaceNavigationView(
       Column(
         Modifier
           .fillMaxHeight()
-          .width(lerp(RAIL_WIDTH, EXPANDED_RAIL_WIDTH, progress.coerceAtLeast(0f)))
+          .width(lerp(RAIL_WIDTH, EXPANDED_RAIL_WIDTH, fraction))
           .shadow(RAIL_SHADOW * fraction, railShape, clip = false)
           .background(Color(containerColor), railShape)
           .padding(top = safeAreaTop.dp, bottom = safeAreaBottom.dp + 12.dp)
           .selectableGroup(),
       ) {
-        // As tall as the list toolbar so the menu lines up with the toolbar's actions.
         Box(
           Modifier.height(headerHeight.dp).padding(start = RAIL_INSET),
           contentAlignment = Alignment.CenterStart,
@@ -320,7 +345,27 @@ class T3WorkspaceNavigationView(
             )
           }
         }
-        // Other tabs keep the button's slot so the destinations below never move between tabs.
+        sectionSpacer(fraction)
+        environmentItem(fraction) {
+          expanded = false
+          onEnvironmentSelected(emptyMap<String, Any>())
+        }
+        sectionSpacer(fraction)
+        quickThreadKeys.take(MAX_QUICK_THREADS).forEachIndexed { index, key ->
+          quickThreadItem(
+            key = key,
+            title = quickThreadTitles.getOrNull(index) ?: "Thread",
+            working = quickThreadWorking.getOrNull(index) == true,
+            fraction = fraction,
+          ) {
+            expanded = false
+            onThreadSelected(mapOf("key" to key))
+          }
+        }
+        railItem("threads", fraction, icon = R.drawable.t3_threads_rail) {
+          expanded = false
+          onTabSelected(mapOf("tab" to "threads"))
+        }
         if (selectedTab == "threads") {
           newThreadButton(fraction) {
             expanded = false
@@ -330,7 +375,7 @@ class T3WorkspaceNavigationView(
           Spacer(Modifier.padding(top = 12.dp).height(FAB_SIZE))
         }
         Spacer(Modifier.weight(1f))
-        tabs.forEach { tab ->
+        tabs.filterNot { it == "threads" }.forEach { tab ->
           railItem(tab, fraction) {
             expanded = false
             onTabSelected(mapOf("tab" to tab))
@@ -341,7 +386,93 @@ class T3WorkspaceNavigationView(
     }
   }
 
-  /** The collapsed FAB widens with the rail and reveals its label as it goes. */
+  @Composable
+  private fun sectionSpacer(fraction: Float) {
+    Box(
+      Modifier
+        .padding(start = RAIL_INSET, end = RAIL_INSET, top = 4.dp, bottom = 8.dp)
+        .height(1.dp)
+        .width(lerp(ITEM_HEIGHT, EXPANDED_RAIL_WIDTH - RAIL_INSET * 2, fraction))
+        .background(Color(unselectedColor).copy(alpha = 0.18f)),
+    )
+  }
+
+  @Composable
+  private fun environmentItem(fraction: Float, onClick: () -> Unit) {
+    val initials = initials(environmentLabel).ifBlank { "ENV" }
+    railEntry(
+      selected = false,
+      title = "Environment: $environmentLabel",
+      fraction = fraction,
+      onClick = onClick,
+      icon = {
+        Box(contentAlignment = Alignment.Center) {
+          Surface(
+            shape = MaterialTheme.shapes.small,
+            color = STATUS_GREEN.copy(alpha = 0.12f),
+            modifier = Modifier.size(28.dp),
+          ) {
+            Box(contentAlignment = Alignment.Center) {
+              Text(initials, color = STATUS_GREEN, fontSize = 9.sp)
+            }
+          }
+          Box(
+            Modifier
+              .align(Alignment.BottomEnd)
+              .size(8.dp)
+              .background(
+                if (environmentOnline) STATUS_GREEN else Color(unselectedColor).copy(alpha = 0.55f),
+                CircleShape,
+              ),
+          )
+        }
+      },
+    )
+  }
+
+  @Composable
+  private fun quickThreadItem(
+    key: String,
+    title: String,
+    working: Boolean,
+    fraction: Float,
+    onClick: () -> Unit,
+  ) {
+    railEntry(
+      selected = key == selectedThreadKey,
+      title = if (working) "Working: $title" else title,
+      fraction = fraction,
+      onClick = onClick,
+      icon = {
+        Box(contentAlignment = Alignment.Center) {
+          if (working) {
+            Icon(
+              painterResource(R.drawable.t3_chats),
+              contentDescription = null,
+              tint = STATUS_GREEN,
+            )
+            Box(
+              Modifier
+                .align(Alignment.TopEnd)
+                .size(6.dp)
+                .background(STATUS_GREEN, CircleShape),
+            )
+          } else {
+            Surface(
+              shape = CircleShape,
+              color = Color(unselectedColor).copy(alpha = 0.10f),
+              modifier = Modifier.size(28.dp),
+            ) {
+              Box(contentAlignment = Alignment.Center) {
+                Text(initials(title).ifBlank { "·" }, color = Color(unselectedColor), fontSize = 9.sp)
+              }
+            }
+          }
+        }
+      },
+    )
+  }
+
   @Composable
   private fun newThreadButton(fraction: Float, onClick: () -> Unit) {
     Surface(
@@ -375,14 +506,39 @@ class T3WorkspaceNavigationView(
     }
   }
 
-  /**
-   * A destination whose indicator stretches from a circle around the icon into a pill around
-   * the icon and label. The icon never moves, so the collapsed and expanded rails share it.
-   */
   @Composable
-  private fun railItem(tab: String, fraction: Float, onClick: () -> Unit) {
+  private fun railItem(
+    tab: String,
+    fraction: Float,
+    icon: Int? = null,
+    onClick: () -> Unit,
+  ) {
     val selected = selectedTab == tab
     val title = expandedTabTitle(tab)
+    val tint = Color(if (selected) selectedColor else unselectedColor)
+    railEntry(
+      selected = selected,
+      title = title,
+      fraction = fraction,
+      onClick = onClick,
+      icon = {
+        Icon(
+          icon?.let { painterResource(it) } ?: tabIconPainter(tab),
+          contentDescription = null,
+          tint = tint,
+        )
+      },
+    )
+  }
+
+  @Composable
+  private fun railEntry(
+    selected: Boolean,
+    title: String,
+    fraction: Float,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit,
+  ) {
     val tint = Color(if (selected) selectedColor else unselectedColor)
     Box(
       Modifier
@@ -398,7 +554,7 @@ class T3WorkspaceNavigationView(
         Modifier.fillMaxHeight().padding(start = (ITEM_HEIGHT - ICON_SIZE) / 2).clipToBounds(),
         verticalAlignment = Alignment.CenterVertically,
       ) {
-        Icon(tabIconPainter(tab), contentDescription = null, tint = tint)
+        Box(Modifier.size(ICON_SIZE), contentAlignment = Alignment.Center) { icon() }
         Text(
           title,
           Modifier.padding(start = 12.dp).alpha(labelAlpha(fraction)).clearAndSetSemantics {},
@@ -411,6 +567,16 @@ class T3WorkspaceNavigationView(
       }
     }
   }
+
+  private fun labelAlpha(fraction: Float) = ((fraction - 0.35f) / 0.65f).coerceIn(0f, 1f)
+
+  private fun initials(label: String): String = label
+    .trim()
+    .split(Regex("\\s+"))
+    .filter(String::isNotBlank)
+    .take(2)
+    .mapNotNull { it.firstOrNull()?.uppercase() }
+    .joinToString("")
 
   private fun tabTitle(tab: String) = when (tab) {
     "threads" -> "Chats"
@@ -440,13 +606,11 @@ class T3WorkspaceNavigationView(
     val EXPANDED_RAIL_WIDTH = 240.dp
     val RAIL_INSET = 12.dp
     val ITEM_HEIGHT = 48.dp
-    val FAB_SIZE = 48.dp
     val ICON_SIZE = 24.dp
-    val RAIL_SHADOW = 6.dp
+    val FAB_SIZE = 48.dp
+    val RAIL_SHADOW = 8.dp
+    val STATUS_GREEN = Color(0xFF22C55E)
+    const val MAX_QUICK_THREADS = 3
     const val DISABLED_ALPHA = 0.4f
-
-    // Labels fade in over the second half of the widening, once there is room for them, and
-    // fade out over the first half of the narrowing, before the surface clips them.
-    fun labelAlpha(fraction: Float) = ((fraction - 0.5f) / 0.5f).coerceIn(0f, 1f)
   }
 }

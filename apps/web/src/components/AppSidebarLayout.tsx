@@ -42,6 +42,7 @@ import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
+import { SidebarNavigationRail } from "./sidebar/SidebarNavigationRail";
 import { isAppModalPage } from "./sidebar/mainAppLocation";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -63,6 +64,7 @@ import {
   useSidebarVisibility,
 } from "./ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { Sheet, SheetDescription, SheetHeader, SheetPopup, SheetTitle } from "./ui/sheet";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
@@ -414,6 +416,128 @@ function SidebarControl({ showSidebar }: { readonly showSidebar: boolean }) {
   );
 }
 
+function ThreadSidebarShellContent({
+  resetSidebarWidth,
+  routeReveal,
+  sidebarArea,
+  sidebarMaximumWidth,
+  sidebarMinimumWidth,
+  setSidebarWidth,
+  windowControlsInsetStyle,
+  isMobile,
+  open,
+}: {
+  resetSidebarWidth: () => void;
+  routeReveal: SidebarRouteReveal;
+  sidebarArea: ReturnType<typeof workspaceAreaProps>;
+  sidebarMaximumWidth: number;
+  sidebarMinimumWidth: number;
+  setSidebarWidth: (width: number) => void;
+  windowControlsInsetStyle: CSSProperties;
+  isMobile: boolean;
+  open: boolean;
+}) {
+  const gt = useGT();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [focusSearchRequest, setFocusSearchRequest] = useState(0);
+  const [openScopeFilterRequest, setOpenScopeFilterRequest] = useState(0);
+
+  const openSearch = () => {
+    setFocusSearchRequest((request) => request + 1);
+    if (!open) setDrawerOpen(true);
+  };
+  const showDrawer = !isMobile && !open && drawerOpen;
+
+  return (
+    <>
+      <SidebarNavigationRail
+        drawerOpen={showDrawer}
+        onEnvironment={() => {
+          setOpenScopeFilterRequest((request) => request + 1);
+          if (!open) setDrawerOpen(true);
+        }}
+        onSearch={openSearch}
+        onThreads={() => {
+          if (!open) setDrawerOpen(true);
+        }}
+      />
+      <div className="hidden w-(--sidebar-width-icon) shrink-0 md:block" aria-hidden="true" />
+      <Sidebar
+        side="left"
+        collapsible="offcanvas"
+        className="md:left-(--sidebar-width-icon)! md:group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width-icon)-var(--sidebar-width))]!"
+        data-app-sidebar=""
+        {...sidebarArea}
+        role="navigation"
+        aria-label={gt("Threads")}
+        resizable={{
+          maxWidth: sidebarMaximumWidth,
+          minWidth: sidebarMinimumWidth,
+          shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
+            nextWidth <= currentWidth ||
+            wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
+          storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+          onResize: setSidebarWidth,
+        }}
+        style={windowControlsInsetStyle}
+      >
+        {!showDrawer ? (
+          <ThreadSidebar
+            focusSearchRequest={focusSearchRequest}
+            openScopeFilterRequest={openScopeFilterRequest}
+            routeReveal={routeReveal}
+          />
+        ) : null}
+        <SidebarRail onDoubleClick={resetSidebarWidth} />
+      </Sidebar>
+      <Sheet onOpenChange={setDrawerOpen} open={showDrawer}>
+        <SheetPopup
+          className="ml-(--sidebar-width-icon) h-full w-(--sidebar-width)! max-w-none!"
+          data-session-drawer=""
+          showCloseButton={false}
+          side="left"
+        >
+          <SheetHeader className="sr-only">
+            <SheetTitle>{gt("Threads")}</SheetTitle>
+            <SheetDescription>{gt("Threads")}</SheetDescription>
+          </SheetHeader>
+          <div className="h-full min-h-0 bg-sidebar surface-grain text-sidebar-foreground">
+            {showDrawer ? (
+              <ThreadSidebar
+                focusSearchRequest={focusSearchRequest}
+                openScopeFilterRequest={openScopeFilterRequest}
+                routeReveal={routeReveal}
+              />
+            ) : null}
+          </div>
+        </SheetPopup>
+      </Sheet>
+    </>
+  );
+}
+
+function ThreadSidebarShell(props: {
+  resetSidebarWidth: () => void;
+  routeReveal: SidebarRouteReveal;
+  sidebarArea: ReturnType<typeof workspaceAreaProps>;
+  sidebarMaximumWidth: number;
+  sidebarMinimumWidth: number;
+  setSidebarWidth: (width: number) => void;
+  windowControlsInsetStyle: CSSProperties;
+}) {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const { isMobile, open } = useSidebar();
+
+  return (
+    <ThreadSidebarShellContent
+      key={`${pathname}:${isMobile ? "mobile" : open ? "expanded" : "collapsed"}`}
+      {...props}
+      isMobile={isMobile}
+      open={open}
+    />
+  );
+}
+
 export function AppSidebarLayout({
   children,
   showSidebar = true,
@@ -473,27 +597,15 @@ export function AppSidebarLayout({
         {showSidebar ? (
           <>
             <SidebarBrandWidthProbe isElectron={isElectron} onWidthChange={setBrandWidth} />
-            <Sidebar
-              side="left"
-              collapsible="offcanvas"
-              data-app-sidebar=""
-              {...sidebarArea}
-              role="navigation"
-              aria-label={gt("Threads")}
-              resizable={{
-                maxWidth: sidebarMaximumWidth,
-                minWidth: sidebarMinimumWidth,
-                shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
-                  nextWidth <= currentWidth ||
-                  wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,
-                storageKey: THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
-                onResize: setSidebarWidth,
-              }}
-              style={windowControlsInsetStyle}
-            >
-              <ThreadSidebar routeReveal={sidebarRouteReveal} />
-              <SidebarRail onDoubleClick={resetSidebarWidth} />
-            </Sidebar>
+            <ThreadSidebarShell
+              resetSidebarWidth={resetSidebarWidth}
+              routeReveal={sidebarRouteReveal}
+              sidebarArea={sidebarArea}
+              sidebarMaximumWidth={sidebarMaximumWidth}
+              sidebarMinimumWidth={sidebarMinimumWidth}
+              setSidebarWidth={setSidebarWidth}
+              windowControlsInsetStyle={windowControlsInsetStyle}
+            />
           </>
         ) : null}
         {children}

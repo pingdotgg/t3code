@@ -13,12 +13,24 @@ vi.mock(import("../state/server"), async (original) => {
   return { ...actual, primaryServerKeybindingsAtom: Atom.make(keybindings) };
 });
 // The thread list needs live environments; the shortcut lives in the shell around it.
-vi.mock(import("./Sidebar"), () => ({ default: (() => null) as never }));
+vi.mock(import("./Sidebar"), () => ({
+  default: (() => (
+    <div>
+      <button type="button">Filter threads by environment or project</button>
+    </div>
+  )) as never,
+}));
 
 import { AppSidebarLayout } from "./AppSidebarLayout";
 
+function setup() {
+  localStorage.clear();
+  return { [Symbol.dispose]: () => localStorage.clear() };
+}
+
 describe("sidebar toggle shortcut", () => {
-  it("leaves the key to a focused terminal when its rule excludes terminalFocus", async () => {
+  it("honors terminal focus and keeps collapsed thread access in the rail", async () => {
+    using _storage = setup();
     await page.viewport(1280, 800);
     using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
     await using screen = await render(
@@ -38,5 +50,23 @@ describe("sidebar toggle shortcut", () => {
     await userEvent.click(screen.getByRole("button", { name: "Outside" }));
     await userEvent.keyboard("{Control>}b{/Control}");
     await vi.waitFor(() => expect(wrapper.getAttribute("data-sidebar-state")).toBe("collapsed"));
+    await userEvent.click(screen.getByRole("button", { name: "Threads", exact: true }));
+
+    await vi.waitFor(() =>
+      expect(document.querySelector<HTMLElement>("[data-session-drawer]")).not.toBeNull(),
+    );
+    await expect
+      .element(
+        screen.getByRole("button", {
+          name: "Filter threads by environment or project",
+        }),
+      )
+      .toBeInTheDocument();
+
+    expect(document.querySelector('[aria-label="Toggle main sidebar"]')).not.toBeNull();
+    expect(document.querySelector('[aria-label^="Environment:"]')).not.toBeNull();
+    expect(
+      document.querySelector('[data-sidebar-navigation-rail] [aria-label="Threads"]'),
+    ).not.toBeNull();
   });
 });

@@ -1,0 +1,21 @@
+<!-- Lucide MessagesSquare (ISC), matching the desktop Threads rail entry. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="24dp"
+  android:height="24dp"
+  android:viewportWidth="24"
+  android:viewportHeight="24">
+  <path
+    android:fillColor="@android:color/transparent"
+    android:pathData="M16,10A2,2 0,0 1,14 12H6.83A2,2 0,0 0,5.41 12.59L3.21,14.79A0.71,0.71 0,0 1,2 14.29V4A2,2 0,0 1,4 2H14A2,2 0,0 1,16 4Z"
+    android:strokeColor="#000000"
+    android:strokeLineCap="round"
+    android:strokeLineJoin="round"
+    android:strokeWidth="2" />
+  <path
+    android:fillColor="@android:color/transparent"
+    android:pathData="M20,9A2,2 0,0 1,22 11V21.29A0.71,0.71 0,0 1,20.79 21.79L18.59,19.59A2,2 0,0 0,17.17 19H10A2,2 0,0 1,8 17V16"
+    android:strokeColor="#000000"
+    android:strokeLineCap="round"
+    android:strokeLineJoin="round"
+    android:strokeWidth="2" />
+</vector>
