@@ -419,7 +419,16 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
           harnessPath: null,
         };
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+        expect(
+          session.providerSession.capabilities.sessions.supportsRuntimeModeSwitchInSession,
+        ).toBe(false);
+        // Detached `invoke_subagent` children never forward permission prompts, so full access
+        // drops them for the whole process; a runtime mode change respawns it.
+        for (const runtimeMode of [
+          "full-access",
+          "auto-accept-edits",
+          "approval-required",
+        ] as const) {
           const requestsBefore = (yield* h.readRequests).length;
           const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
           const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
@@ -444,6 +453,7 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
             h.profileDirectory,
             "--app-data-dir",
             "antigravity-acp",
+            ...(runtimeMode === "full-access" ? ["--dangerously-skip-permissions"] : []),
           ]);
           expect(
             (yield* h.readRequests)
