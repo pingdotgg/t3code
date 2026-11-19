@@ -30,8 +30,8 @@ export class RelayReadDb extends Context.Service<RelayReadDb, RelayDb["Service"]
 ) {}
 
 export const readDb = Effect.gen(function* () {
-  const primary = yield* RelayDb;
-  return Option.getOrElse(yield* Effect.serviceOption(RelayReadDb), () => primary);
+  const replica = yield* Effect.serviceOption(RelayReadDb);
+  return Option.isSome(replica) ? replica.value : yield* RelayDb;
 });
 
 export class RelayTransactions extends Context.Service<
@@ -103,9 +103,9 @@ export const RelayHyperdrive = Effect.gen(function* () {
 /** Prod only: stage branches have no read replicas. */
 export const RelayReplicaHyperdrive = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
-  if (relayDatabaseMode(stage) !== "shared-database") return undefined;
+  if (relayDatabaseMode(stage) !== "shared-database") return Option.none();
   const { runtimeRole } = yield* PlanetscaleDatabase;
-  return yield* Cloudflare.Hyperdrive.Connection("RelayReplicaHyperdrive", {
+  const hyperdrive = yield* Cloudflare.Hyperdrive.Connection("RelayReplicaHyperdrive", {
     // PlanetScale routes a `|replica` username across the cluster's read replicas.
     origin: Output.map(runtimeRole.origin, (origin) => ({
       ...origin,
@@ -116,4 +116,5 @@ export const RelayReplicaHyperdrive = Effect.gen(function* () {
     },
     originConnectionLimit: 40,
   });
+  return Option.some(hyperdrive);
 });

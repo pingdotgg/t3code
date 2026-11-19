@@ -176,19 +176,17 @@ export const layer = Api.make(
 
     const cloudMintPrivateKey = yield* cloudMintKeyPair.privateKey;
     const cloudMintPublicKey = yield* cloudMintKeyPair.publicKey;
-    const hyperdrive = yield* Cloudflare.Hyperdrive.Connect(yield* RelayDb.RelayHyperdrive);
-    // Named statements collide behind Hyperdrive transaction pooling (Effect-TS/effect#8320); use unnamed statements.
-    const db = yield* Drizzle.Postgres(hyperdrive.connectionString, {
-      client: { prepare: false },
-    });
-    const replicaHyperdriveResource = yield* RelayDb.RelayReplicaHyperdrive;
-    const readDb =
-      replicaHyperdriveResource === undefined
-        ? undefined
-        : yield* Drizzle.Postgres(
-            (yield* Cloudflare.Hyperdrive.Connect(replicaHyperdriveResource)).connectionString,
-            { client: { prepare: false } },
-          );
+    const connectDb = (hyperdrive: Cloudflare.Hyperdrive.Connection) =>
+      Cloudflare.Hyperdrive.Connect(hyperdrive).pipe(
+        Effect.flatMap(({ connectionString }) =>
+          // Named statements collide behind Hyperdrive transaction pooling (Effect-TS/effect#8320); use unnamed statements.
+          Drizzle.Postgres(connectionString, { client: { prepare: false } }),
+        ),
+      );
+    const db = yield* connectDb(yield* RelayDb.RelayHyperdrive);
+    const readDb = yield* RelayDb.RelayReplicaHyperdrive.pipe(
+      Effect.flatMap((replica) => Effect.transposeOption(Option.map(replica, connectDb))),
+    );
 
     const managedEndpointTunnelBinding = yield* Cloudflare.Tunnel.ReadWriteTunnel();
     // Keep Worker custom-domain reconciliation ordered after API zone provisioning.
@@ -355,7 +353,10 @@ export const layer = Api.make(
           Layer.provideMerge(
             Layer.mergeAll(
               Layer.succeed(RelayDb.RelayDb, db),
-              readDb === undefined ? Layer.empty : Layer.succeed(RelayDb.RelayReadDb, readDb),
+              Option.match(readDb, {
+                onNone: () => Layer.empty,
+                onSome: (replica) => Layer.succeed(RelayDb.RelayReadDb, replica),
+              }),
             ),
           ),
         ),
