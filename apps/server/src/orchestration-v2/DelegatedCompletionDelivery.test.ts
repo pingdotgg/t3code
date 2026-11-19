@@ -2029,6 +2029,74 @@ it.layer(layerContinuationWorkerTest)("interrupted completion wakes", (it) => {
       assert.equal(afterLateResult.thread.settledOverride, "settled");
     }),
   );
+
+  it.effect(
+    "automatic settlement with a queued completion wake keeps its running siblings' wakes",
+    () =>
+      Effect.gen(function* () {
+        const { orchestrator, sink, now, threadId, sibling, wake, completeSibling } =
+          yield* queueCompletionWakeBesideRunningSibling("sibling-auto-settle");
+        const busy = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+          (run) => run.status === "running",
+        )!;
+        // The turn the wake queued behind ends, and settle on merge lands before the wake starts.
+        yield* sink.write({
+          events: [
+            {
+              ...runEvent({
+                threadId,
+                runId: busy.id,
+                ordinal: busy.ordinal,
+                status: "completed",
+                now,
+              }),
+              payload: { ...busy, status: "completed", completedAt: now },
+            },
+            {
+              ...runEvent({
+                threadId,
+                runId: wake.id,
+                ordinal: wake.ordinal,
+                status: "queued",
+                now,
+              }),
+              payload: { ...wake, queueHeld: true },
+            },
+          ],
+        });
+
+        yield* orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make("sibling-auto-settle-settle"),
+          threadId,
+          snapshotAt: yield* DateTime.now,
+        });
+        const afterSettle = yield* orchestrator.getThreadProjection(threadId);
+        assert.notEqual(
+          afterSettle.subagents.find((task) => task.id === sibling.id)?.completionDelivery?.state,
+          "disposed",
+        );
+
+        const afterSequence = yield* completeSibling;
+        yield* sink.stream({ afterSequence, eventType: "subagent.updated" }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.id === sibling.id &&
+              stored.event.payload.status === "completed",
+          ),
+          Stream.take(1),
+          Stream.runDrain,
+        );
+        const afterLateResult = yield* orchestrator.getThreadProjection(threadId);
+        assert.isTrue(
+          afterLateResult.runs.some(
+            (run) => run.id !== wake.id && !afterSettle.runs.some((prior) => prior.id === run.id),
+          ),
+          "the running sibling's completion must still wake the parent",
+        );
+      }),
+  );
 });
 
 it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
