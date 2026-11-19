@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodeSqlite from "node:sqlite";
 import * as NodeZlib from "node:zlib";
@@ -104,6 +106,36 @@ const GIT_FILE_READ_CONCURRENCY = 16;
 // A blocked path is skipped for a while, then read again in case it was fixed.
 const BLOCKED_GIT_FILE_RETRY_MS = 5 * 60 * 1000;
 const MAX_BLOCKED_GIT_FILE_PATHS = 1024;
+
+// Repository discovery reads only folders the user picks, within these bounds.
+const MAX_DISCOVERY_DEPTH = 4;
+const MAX_DISCOVERY_DIRECTORIES = 5_000;
+const MAX_DISCOVERED_REPOSITORIES = 200;
+// ponytail: one deadline for the whole walk; a readdir stuck on a network mount still holds a pool thread.
+const DISCOVERY_DEADLINE = "15 seconds";
+// Dependencies and build output hold vendored checkouts, not the user's projects.
+const DISCOVERY_SKIPPED_NAMES = new Set([
+  "node_modules",
+  "bower_components",
+  "vendor",
+  "Pods",
+  "dist",
+  "build",
+  "out",
+  "target",
+  "venv",
+  "__pycache__",
+]);
+// macOS guards these with consent prompts a server cannot answer; read them only when picked.
+const DISCOVERY_PROTECTED_HOME_FOLDERS = [
+  "Desktop",
+  "Documents",
+  "Downloads",
+  "Library",
+  "Movies",
+  "Music",
+  "Pictures",
+];
 
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
@@ -234,6 +266,10 @@ export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
     readonly scan: Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
+    /** Git repositories under folders the user picked, as candidates without history. */
+    readonly discoverRepositories: (
+      roots: ReadonlyArray<string>,
+    ) => Effect.Effect<AgentSessionScanResult, AgentSessionScanError>;
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
@@ -902,6 +938,8 @@ export const make = Effect.gen(function* () {
   const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
   const baseDir = path.resolve(serverConfig.baseDir);
   const worktreesDir = path.resolve(serverConfig.worktreesDir);
+  // Matches ManagedProjectFolders' named projects root.
+  const namedProjectsRoot = path.join(baseDir, "projects");
   const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
   const foldWorktreeCase = isWindows;
@@ -925,9 +963,13 @@ export const make = Effect.gen(function* () {
         normalizeForWorktreeMatch(ancestor, foldWorktreeCase),
       ),
     ) ||
-    normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+    (normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
       normalizeForWorktreeMatch(baseDir, foldWorktreeCase),
-    ) ||
+    ) &&
+      // New project creates the user's projects here; the rest of T3's folder is its own state.
+      !normalizeForWorktreeMatch(candidatePath, foldWorktreeCase).startsWith(
+        normalizeForWorktreeMatch(namedProjectsRoot, foldWorktreeCase),
+      )) ||
     isT3ManagedWorktree(candidatePath, worktreesDir, foldWorktreeCase);
 
   const listDirectory = (directory: string) =>
@@ -1932,6 +1974,143 @@ export const make = Effect.gen(function* () {
 
   let cachedCandidates: Effect.Success<ReturnType<typeof collectCandidates>> | null = null;
 
+  /** Candidates for directory projects, matched to the projects already here. */
+  const toProjectCandidates = Effect.fn("AgentSessionScanner.toProjectCandidates")(function* (
+    entries: ReadonlyMap<
+      string,
+      {
+        readonly path: string;
+        readonly sources: ReadonlyArray<AgentSessionSource>;
+        readonly threadCount: number;
+        readonly lastActiveAtMs: number | null;
+        readonly git: AgentSessionProjectGit | null;
+      }
+    >,
+  ) {
+    // Resolve persisted roots too; transcripts may use different symlinks to the same directory.
+    const importedProjects = yield* projectStore
+      .listShells()
+      .pipe(
+        Effect.mapError(
+          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
+        ),
+      );
+    const importedProjectsByRoot = new Map<string, (typeof importedProjects)[number]>();
+    for (const project of importedProjects) {
+      const projectRoot = path.resolve(expandHomePath(project.workspaceRoot, homeDir));
+      importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
+      importedProjectsByRoot.set(yield* directoryIdentity(projectRoot), project);
+    }
+
+    const candidates: Array<AgentSessionProjectCandidate> = [];
+    for (const [key, entry] of entries) {
+      const importedProject =
+        importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
+        importedProjectsByRoot.get(key);
+      const candidatePath = importedProject?.workspaceRoot ?? entry.path;
+      candidates.push({
+        path: candidatePath,
+        title: path.basename(candidatePath) || candidatePath,
+        ...(importedProject === undefined ? {} : { projectId: importedProject.id }),
+        sources: [...entry.sources],
+        threadCount: entry.threadCount,
+        lastActiveAt:
+          entry.lastActiveAtMs === null
+            ? null
+            : DateTime.formatIso(DateTime.makeUnsafe(entry.lastActiveAtMs)),
+        alreadyImported: importedProject !== undefined,
+        git: entry.git,
+      });
+    }
+    return candidates;
+  });
+
+  const discoverRepositories: AgentSessionScanner["Service"]["discoverRepositories"] = Effect.fn(
+    "AgentSessionScanner.discoverRepositories",
+  )(function* (roots) {
+    const protectedFolders = new Set(
+      DISCOVERY_PROTECTED_HOME_FOLDERS.map((name) =>
+        normalizeProjectPathForComparison(path.join(homeDir, name)),
+      ),
+    );
+    const queue = roots.flatMap((root) => {
+      const expanded = expandHomePath(root.trim(), homeDir);
+      return path.isAbsolute(expanded) ? [{ directory: path.resolve(expanded), depth: 0 }] : [];
+    });
+    const repositories: Array<string> = [];
+    const seen = new Set<string>();
+    let truncated = false;
+    // Breadth first, so the bounds cut the deepest folders and shallow repositories come first.
+    const walk = Effect.gen(function* () {
+      for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+        const { directory, depth } = next;
+        const key = normalizeProjectPathForComparison(directory);
+        if (seen.has(key)) continue;
+        if (seen.size === MAX_DISCOVERY_DIRECTORIES) {
+          truncated = true;
+          return;
+        }
+        seen.add(key);
+        // An unreadable folder is skipped like an empty one.
+        const entries = yield* Effect.promise(() =>
+          NodeFSP.readdir(directory, { withFileTypes: true }).catch(() => []),
+        );
+        // A repository's own folders are its business: nested checkouts and submodules stay out.
+        if (entries.some((entry) => entry.name === ".git")) {
+          repositories.push(directory);
+          if (repositories.length === MAX_DISCOVERED_REPOSITORIES) {
+            truncated = queue.length > 0;
+            return;
+          }
+          continue;
+        }
+        if (depth === MAX_DISCOVERY_DEPTH) continue;
+        for (const entry of entries) {
+          // Dirents report symlinks as links, so links (and the loops they make) are not followed.
+          if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+          if (DISCOVERY_SKIPPED_NAMES.has(entry.name)) continue;
+          const child = path.join(directory, entry.name);
+          if (protectedFolders.has(normalizeProjectPathForComparison(child))) continue;
+          if (isExcludedProjectPath(child)) continue;
+          queue.push({ directory: child, depth: depth + 1 });
+        }
+      }
+    });
+    if (Option.isNone(yield* walk.pipe(Effect.timeoutOption(DISCOVERY_DEADLINE)))) {
+      truncated = true;
+    }
+
+    // A linked worktree counts toward its main checkout, as in the history scan.
+    const directoryProjects = yield* resolveDirectoryProjects(repositories);
+    const entries = new Map<
+      string,
+      {
+        path: string;
+        sources: ReadonlyArray<AgentSessionSource>;
+        threadCount: number;
+        lastActiveAtMs: number | null;
+        git: AgentSessionProjectGit | null;
+      }
+    >();
+    for (const directory of repositories) {
+      const project = directoryProjects.get(directory);
+      if (project === undefined || project === null || entries.has(project.key)) continue;
+      entries.set(project.key, {
+        path: project.path,
+        sources: [],
+        threadCount: 0,
+        lastActiveAtMs: null,
+        git: project.git,
+      });
+    }
+    const candidates = yield* toProjectCandidates(entries);
+    return {
+      candidates: candidates.toSorted((left, right) => left.path.localeCompare(right.path)),
+      scannedAt: DateTime.formatIso(yield* DateTime.now),
+      ...(truncated ? { truncated: true } : {}),
+    };
+  });
+
   const scan: AgentSessionScanner["Service"]["scan"] = Effect.gen(function* () {
     cachedCandidates = yield* collectCandidates();
     const { candidates: raw, truncated } = cachedCandidates;
@@ -1980,41 +2159,7 @@ export const make = Effect.gen(function* () {
           : Math.max(existing.lastActiveAtMs, candidate.lastActiveAtMs);
     }
 
-    // Resolve persisted roots too; transcripts may use different symlinks to the same directory.
-    const importedProjects = yield* projectStore
-      .listShells()
-      .pipe(
-        Effect.mapError(
-          (cause) => new AgentSessionScanError({ operation: "read-projects", cause }),
-        ),
-      );
-    const importedProjectsByRoot = new Map<string, (typeof importedProjects)[number]>();
-    for (const project of importedProjects) {
-      const projectRoot = path.resolve(expandHomePath(project.workspaceRoot, homeDir));
-      importedProjectsByRoot.set(normalizeProjectPathForComparison(projectRoot), project);
-      importedProjectsByRoot.set(yield* directoryIdentity(projectRoot), project);
-    }
-
-    const candidates: Array<AgentSessionProjectCandidate> = [];
-    for (const [key, entry] of merged.entries()) {
-      const importedProject =
-        importedProjectsByRoot.get(normalizeProjectPathForComparison(entry.path)) ??
-        importedProjectsByRoot.get(key);
-      const candidatePath = importedProject?.workspaceRoot ?? entry.path;
-      candidates.push({
-        path: candidatePath,
-        title: path.basename(candidatePath) || candidatePath,
-        ...(importedProject === undefined ? {} : { projectId: importedProject.id }),
-        sources: entry.sources,
-        threadCount: entry.threadCount,
-        lastActiveAt:
-          entry.lastActiveAtMs === null
-            ? null
-            : DateTime.formatIso(DateTime.makeUnsafe(entry.lastActiveAtMs)),
-        alreadyImported: importedProject !== undefined,
-        git: entry.git,
-      });
-    }
+    const candidates = yield* toProjectCandidates(merged);
 
     candidates.sort((left, right) => {
       if (left.lastActiveAt === right.lastActiveAt) return left.path.localeCompare(right.path);
@@ -2307,7 +2452,7 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  return AgentSessionScanner.of({ scan, discoverRepositories, recentThreads });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make).pipe(

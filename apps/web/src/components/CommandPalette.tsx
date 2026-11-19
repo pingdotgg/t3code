@@ -70,6 +70,8 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  FolderSearchIcon,
+  HistoryIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -84,6 +86,7 @@ import {
   TextSearchIcon,
   UserPlusIcon,
 } from "lucide-react";
+import { openAddProjectsDialog } from "./AddProjectsDialog";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1096,6 +1099,28 @@ function OpenCommandPaletteDialog(props: {
           await startAddProjectBrowse(environmentId);
         },
       },
+      {
+        kind: "action",
+        value: `action:add-project:${environmentId}:history`,
+        searchTerms: ["import", "history", "agent", "claude", "codex", "pi", "sessions"],
+        title: gt("Agent history"),
+        description: gt("Import projects your agents worked in, with their threads"),
+        icon: <HistoryIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openAddProjectsDialog({ environmentId, source: "history" });
+        },
+      },
+      {
+        kind: "action",
+        value: `action:add-project:${environmentId}:discover`,
+        searchTerms: ["find", "search", "discover", "scan", "repositories", "git", "folders"],
+        title: gt("Find Git repositories"),
+        description: gt("Search folders on this environment for repositories"),
+        icon: <FolderSearchIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          openAddProjectsDialog({ environmentId, source: "disk" });
+        },
+      },
     ];
 
     if (newProjectsRootFor(environmentId) !== null) {
@@ -1636,6 +1661,8 @@ function OpenCommandPaletteDialog(props: {
       ),
       "url",
       "environment",
+      "import",
+      "history",
     ],
     title: gt("Add project"),
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,

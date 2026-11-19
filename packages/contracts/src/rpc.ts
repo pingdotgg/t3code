@@ -100,6 +100,7 @@ import {
   AgentSessionScanInput,
   AgentSessionScanResult,
   AgentSessionScanError,
+  ProjectDiscoveryInput,
 } from "./agentSessions.ts";
 import {
   AssetAccessError,
@@ -457,6 +458,7 @@ export const WS_METHODS = {
   filesystemBrowse: "filesystem.browse",
   filesystemGetMetadata: "filesystem.getMetadata",
   agentSessionsScan: "agentSessions.scan",
+  filesystemDiscoverRepositories: "filesystem.discoverRepositories",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
   assetsPersistChatAttachments: "assets.persistChatAttachments",
@@ -1599,6 +1601,13 @@ const WsAgentSessionsScanRpc = Rpc.make(WS_METHODS.agentSessionsScan, {
   error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
 });
 
+// Candidates have no history: threadCount 0 and no sources.
+const WsFilesystemDiscoverRepositoriesRpc = Rpc.make(WS_METHODS.filesystemDiscoverRepositories, {
+  payload: ProjectDiscoveryInput,
+  success: AgentSessionScanResult,
+  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
+});
+
 const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   payload: AgentSessionImportInput,
   success: AgentSessionImportResult,
@@ -2404,6 +2413,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsFilesystemBrowseRpc,
   WsFilesystemGetMetadataRpc,
   WsAgentSessionsScanRpc,
+  WsFilesystemDiscoverRepositoriesRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsAssetsPersistChatAttachmentsRpc,

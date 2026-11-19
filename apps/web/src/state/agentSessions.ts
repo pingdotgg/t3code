@@ -17,3 +17,8 @@ export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRunt
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,
 });
+
+export const repositoryDiscovery = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:filesystem:discover-repositories",
+  tag: WS_METHODS.filesystemDiscoverRepositories,
+});

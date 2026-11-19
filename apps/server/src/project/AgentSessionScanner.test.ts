@@ -141,6 +141,12 @@ const runScan = (input: ScannerTestInput) =>
     return yield* scanner.scan;
   }).pipe(Effect.provide(layerScannerTest(input)));
 
+const runDiscovery = (input: ScannerTestInput & { readonly roots: ReadonlyArray<string> }) =>
+  Effect.gen(function* () {
+    const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+    return yield* scanner.discoverRepositories(input.roots);
+  }).pipe(Effect.provide(layerScannerTest(input)));
+
 const runRecentThreadOutcomes = (input: ScannerTestInput & { readonly workspaceRoot: string }) =>
   Effect.gen(function* () {
     const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -1323,11 +1329,13 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
         const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
         const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+        const configBaseDir = yield* fileSystem.realPath(
+          yield* makeTempDir("t3code-scanner-base-"),
+        );
         const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const fileSystem = yield* FileSystem.FileSystem;
 
         const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
         yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
@@ -1484,6 +1492,101 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           { path: workspace, threadCount: 1 },
         ]);
       }),
+    );
+  });
+
+  describe("discoverRepositories", () => {
+    it.effect(
+      "finds repositories under a picked folder without entering skipped or linked ones",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const root = yield* fileSystem.realPath(yield* makeTempDir("t3code-discovery-root-"));
+          const makeRepo = Effect.fn("AgentSessionScanner.test.makeRepo")(function* (
+            directory: string,
+            origin?: string,
+          ) {
+            yield* fileSystem.makeDirectory(path.join(directory, ".git"), { recursive: true });
+            yield* fileSystem.writeFileString(
+              path.join(directory, ".git", "config"),
+              origin === undefined ? "[core]\n" : `[remote "origin"]\n\turl = ${origin}\n`,
+            );
+          });
+
+          const app = path.join(root, "app");
+          yield* makeRepo(app, "git@github.com:pingdotgg/t3code.git");
+          // Nested checkouts belong to the repository around them.
+          yield* makeRepo(path.join(app, "packages", "nested"));
+          const imported = path.join(root, "clients", "imported");
+          yield* makeRepo(imported);
+          yield* makeRepo(path.join(root, "clients", "node_modules", "dependency"));
+          yield* makeRepo(path.join(root, ".hidden", "repo"));
+          yield* makeRepo(path.join(root, "a", "b", "c", "d", "too-deep"));
+          yield* fileSystem.makeDirectory(path.join(root, "plain"));
+          // A link back to the root would loop if it were followed.
+          yield* fileSystem.symlink(root, path.join(root, "plain", "loop"));
+
+          const result = yield* runDiscovery({
+            claudeHomePath,
+            codexHomePath,
+            roots: [root],
+            importedWorkspaceRoots: [imported],
+          });
+
+          expect(
+            result.candidates.map((candidate) => ({
+              path: candidate.path,
+              alreadyImported: candidate.alreadyImported,
+              threadCount: candidate.threadCount,
+              git: candidate.git,
+            })),
+          ).toEqual([
+            {
+              path: app,
+              alreadyImported: false,
+              threadCount: 0,
+              git: { remoteKey: "github.com/pingdotgg/t3code", repository: "pingdotgg/t3code" },
+            },
+            {
+              path: imported,
+              alreadyImported: true,
+              threadCount: 0,
+              git: { remoteKey: null, repository: null },
+            },
+          ]);
+          expect(result.truncated).toBeUndefined();
+        }),
+    );
+
+    it.effect(
+      "finds repositories New project made under T3's folder, but not its other state",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* fileSystem.realPath(
+            yield* makeTempDir("t3code-scanner-base-"),
+          );
+          const made = path.join(configBaseDir, "projects", "made");
+          const state = path.join(configBaseDir, "userdata", "repo");
+          for (const directory of [made, state]) {
+            yield* fileSystem.makeDirectory(path.join(directory, ".git"), { recursive: true });
+          }
+
+          const result = yield* runDiscovery({
+            claudeHomePath,
+            codexHomePath,
+            configBaseDir,
+            roots: [path.join(configBaseDir, "projects"), configBaseDir],
+          });
+
+          expect(result.candidates.map((candidate) => candidate.path)).toEqual([made]);
+        }),
     );
   });
 
