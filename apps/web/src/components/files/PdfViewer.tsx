@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
 import { msg, useGT } from "gt-react";
@@ -59,6 +60,7 @@ function PdfPage(props: {
   const gt = useGT();
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
+  const painted = useRef<PDFDocumentProxy>(null);
   const { document: pdf, index, width, onSize, onError } = props;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Render the PDF page canvas and text layer, cancelling tasks and releasing pdf.js page resources on cleanup.
   useEffect(() => {
@@ -66,7 +68,11 @@ function PdfPage(props: {
     let paint: ReturnType<Awaited<ReturnType<PDFDocumentProxy["getPage"]>>["render"]> | undefined;
     let layer: TextLayer | undefined;
     let loadedPage: Awaited<ReturnType<PDFDocumentProxy["getPage"]>> | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     void (async () => {
+      // A drag changes the width every frame. CSS scales the painted page until the width settles.
+      if (painted.current === pdf)
+        await new Promise((resolve) => (timer = setTimeout(resolve, 150)));
       const page = await pdf.getPage(index + 1);
       loadedPage = page;
       if (cancelled || !canvas.current || !text.current) {
@@ -81,10 +87,12 @@ function PdfPage(props: {
         window.devicePixelRatio || 1,
         Math.sqrt((8 * 1024 * 1024) / (viewport.width * viewport.height)),
       );
-      canvas.current.width = Math.ceil(viewport.width * ratio);
-      canvas.current.height = Math.ceil(viewport.height * ratio);
+      // Resizing a canvas blanks it, so the page paints off screen and replaces the old one whole.
+      const buffer = document.createElement("canvas");
+      buffer.width = Math.ceil(viewport.width * ratio);
+      buffer.height = Math.ceil(viewport.height * ratio);
       paint = page.render({
-        canvas: canvas.current,
+        canvas: buffer,
         viewport,
         transform: [ratio, 0, 0, ratio, 0, 0],
         background: "white",
@@ -96,13 +104,22 @@ function PdfPage(props: {
         viewport,
         textContentSource: page.streamTextContent(),
       });
-      await Promise.all([paint.promise, layer.render()]);
+      const shown = paint.promise.then(() => {
+        if (cancelled || !canvas.current) return;
+        canvas.current.width = buffer.width;
+        canvas.current.height = buffer.height;
+        canvas.current.getContext("2d", { alpha: false })?.drawImage(buffer, 0, 0);
+        buffer.width = 0;
+        painted.current = pdf;
+      });
+      await Promise.all([shown, layer.render()]);
     })().catch((cause: unknown) => {
       if (!cancelled)
         onError(thrownErrorMessage(cause, m) ?? m(msg("This PDF page could not render.")));
     });
     return () => {
       cancelled = true;
+      clearTimeout(timer);
       paint?.cancel();
       layer?.cancel();
       // Release operator lists when virtual pages leave the viewport.
@@ -144,6 +161,7 @@ export default function PdfViewer(props: {
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
+  actions?: ReactNode;
 }) {
   const gt = useGT();
   const [savedPosition] = useState(() =>
@@ -448,6 +466,7 @@ export default function PdfViewer(props: {
             </FileSurfaceAction>
           </>
         ) : null}
+        {props.actions}
       </div>
       <div
         ref={scroll}
