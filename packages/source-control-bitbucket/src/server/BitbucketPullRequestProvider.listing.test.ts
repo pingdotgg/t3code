@@ -124,7 +124,7 @@ it.effect("pages through rows that share an update instant by excluding those al
   }),
 );
 
-it.effect("reads check results per row only when the listing filters on checks", () =>
+it.effect("reads each open row's check results, skipping rows a filter will drop", () =>
   Effect.gen(function* () {
     let headSha = "head-1";
     const row = (id: number) => ({
@@ -177,12 +177,13 @@ it.effect("reads check results per row only when the listing filters on checks",
         filters,
       });
 
+    const statusReads = () => urls.filter((url) => url.includes("/statuses")).length;
     const unfiltered = yield* list();
-    assert.isFalse(urls.some((url) => url.includes("/statuses")));
     assert.deepStrictEqual(
       unfiltered.items.map((item) => item.checksState),
-      [undefined, undefined, undefined, undefined],
+      ["failing", "passing", "passing", "passing"],
     );
+    assert.strictEqual(statusReads(), 4);
 
     const filters = { checks: "failing", review: "none", draft: "hide" } as const;
     const filtered = yield* list(filters);
@@ -194,18 +195,82 @@ it.effect("reads check results per row only when the listing filters on checks",
       filtered.items.map((item) => item.number),
       [1, 2, 3, 4],
     );
-    const statusReads = () => urls.filter((url) => url.includes("/statuses")).length;
-    assert.strictEqual(statusReads(), 2);
-    yield* list(filters);
-    assert.strictEqual(statusReads(), 2);
-    headSha = "head-2";
+    // The first listing already read rows 1 and 2, so the filtered one reads nothing new.
+    assert.strictEqual(statusReads(), 4);
     yield* list(filters);
     assert.strictEqual(statusReads(), 4);
-    yield* list(filters, "acme/other");
+    headSha = "head-2";
+    yield* list(filters);
     assert.strictEqual(statusReads(), 6);
+    yield* list(filters, "acme/other");
+    assert.strictEqual(statusReads(), 8);
+    // A finished result stays for its head commit; it only changes on a re-run.
     yield* TestClock.adjust("2 minutes");
     yield* list(filters);
     assert.strictEqual(statusReads(), 8);
+    yield* TestClock.adjust("30 minutes");
+    yield* list(filters);
+    assert.strictEqual(statusReads(), 10);
+  }),
+);
+
+it.effect("rereads a pending check result after a minute", () =>
+  Effect.gen(function* () {
+    const pullRequestRow = (id: number) => ({
+      id,
+      title: `Pull request ${id}`,
+      state: "OPEN",
+      created_on: "2026-10-11T00:00:00.000000+00:00",
+      updated_on: "2026-10-11T00:00:00.000000+00:00",
+      source: { branch: { name: `feat/${id}` }, commit: { hash: `sha${id}` } },
+      destination: { branch: { name: "main" } },
+      links: { html: { href: `https://bitbucket.org/acme/web/pull-requests/${id}` } },
+    });
+    const listInput = {
+      cwd: "/w",
+      repository: "acme/web",
+      host: "bitbucket.org",
+      involvement: "all",
+      viewer: "bilal",
+      limit: 10,
+    } as const;
+    let state = "INPROGRESS";
+    const reads: string[] = [];
+    const provider = yield* BitbucketPullRequestProvider.make.pipe(
+      Effect.provide(
+        BitbucketPullRequestApi.layer.pipe(
+          Layer.provide(
+            Layer.mock(BitbucketApi.BitbucketApi)({
+              request: ({ url }) => {
+                if (url.includes("/statuses")) {
+                  reads.push(url);
+                  return Effect.succeed({
+                    body: JSON.stringify({ values: [{ key: "ci", name: "ci", state }] }),
+                    truncated: false,
+                  });
+                }
+                return Effect.succeed({
+                  body: JSON.stringify({ values: [pullRequestRow(1)] }),
+                  truncated: false,
+                });
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    const first = yield* provider.listChangeRequests({ ...listInput, state: "open" });
+    yield* TestClock.adjust("30 seconds");
+    yield* provider.listChangeRequests({ ...listInput, state: "open" });
+    assert.strictEqual(reads.length, 1);
+    state = "SUCCESSFUL";
+    yield* TestClock.adjust("31 seconds");
+    const later = yield* provider.listChangeRequests({ ...listInput, state: "open" });
+
+    assert.strictEqual(first.items[0]?.checksState, "pending");
+    assert.strictEqual(later.items[0]?.checksState, "passing");
+    assert.strictEqual(reads.length, 2);
   }),
 );
 
