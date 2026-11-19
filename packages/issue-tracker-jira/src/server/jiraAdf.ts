@@ -381,12 +381,14 @@ export function markdownToAdf(markdown: string) {
     extensions: [gfm()],
     mdastExtensions: [gfmFromMarkdown()],
   });
-  // The first definition of an identifier wins, as in CommonMark.
+  // A definition anywhere applies to the whole document; the first one of an identifier wins.
   const definitions = new Map<string, string>();
-  for (const child of tree.children) {
-    if (child.type === "definition" && !definitions.has(child.identifier))
-      definitions.set(child.identifier, child.url);
-  }
+  const collect = (node: Mdast.Nodes): void => {
+    if (node.type === "definition" && !definitions.has(node.identifier))
+      definitions.set(node.identifier, node.url);
+    if ("children" in node) node.children.forEach(collect);
+  };
+  collect(tree);
   resolveReferences(tree, definitions);
   return { type: "doc", version: 1, content: tree.children.flatMap(blockFromMdast) };
 }
