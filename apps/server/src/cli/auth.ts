@@ -1,4 +1,9 @@
-import { AuthAccessWriteScope, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthRevokePairingLinkInput,
+  AuthSessionId,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -152,13 +157,23 @@ const pairingListCommand = Command.make("list", {
 
 const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
+  id: Argument.String("id").pipe(
+    Argument.withDescription("Pairing credential id to revoke."),
+    // Same schema the server applies, so both paths revoke the same id.
+    Argument.withSchema(AuthRevokePairingLinkInput.fields.id),
+  ),
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const revoked = yield* environmentAuth.revokePairingLink(flags.id);
+        const revoked = yield* changeAccess({
+          viaServer: (client) =>
+            client.auth
+              .revokePairingLink({ headers: {}, payload: { id: flags.id } })
+              .pipe(Effect.map((result) => result.revoked)),
+          locally: environmentAuth.revokePairingLink(flags.id),
+        });
         yield* Console.log(
           revoked
             ? `Revoked pairing credential ${flags.id}.\n`
@@ -209,7 +224,20 @@ const connectDeviceApproveCommand = Command.make("approve", {
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
-        const approved = yield* environmentAuth.approveConnectDeviceByCode(flags.code);
+        const [pairingLinkId, ...others] = yield* environmentAuth.connectRequestsShowingCode(
+          flags.code,
+        );
+        // Two waiting devices that share a code are ambiguous; approve neither.
+        const approved =
+          pairingLinkId !== undefined &&
+          others.length === 0 &&
+          (yield* changeAccess({
+            viaServer: (client) =>
+              client.auth
+                .approveConnectDevice({ headers: {}, payload: { pairingLinkId } })
+                .pipe(Effect.map((result) => result.approved)),
+            locally: environmentAuth.approveConnectDevice(pairingLinkId),
+          }));
         yield* Console.log(
           approved
             ? `Approved ${flags.code}. The device connects on its next try.\n`
