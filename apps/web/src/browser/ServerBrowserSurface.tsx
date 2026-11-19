@@ -927,7 +927,7 @@ export function ServerBrowserSurface(props: {
         />
         {visible && framesStalled && !pdfUrl ? (
           <div className="absolute inset-0 flex items-center justify-center bg-background p-4 text-center">
-            <p role="alert" className="max-w-sm text-sm text-muted-foreground">
+            <p role="alert" className="max-w-sm text-body text-muted-foreground">
               <T>
                 The server's browser loaded this page but is not drawing it. Try reloading, or open
                 the page in a browser on this computer.
