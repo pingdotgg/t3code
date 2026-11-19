@@ -18,6 +18,7 @@ import okio.ByteString.Companion.toByteString
 
 private const val SEND_HIGH_WATER_BYTES = 1024L * 1024
 private const val HANDSHAKE_TIMEOUT_MS = 10_000
+
 // Browsers open about six connections per host; this leaves room for several hosts and sockets.
 private const val MAX_CONNECTIONS = 64
 private const val MAX_SOCKS4_STRING = 255
