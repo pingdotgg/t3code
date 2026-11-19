@@ -519,6 +519,10 @@ function AuditSection() {
 export function ComputerUseSettingsPanel() {
   return (
     <SettingsPageContainer>
+      <p className="px-3 text-sm text-muted-foreground sm:px-4">
+        Computer use is in early testing and may make mistakes. Keep approvals on for anything
+        important.
+      </p>
       <SettingsSection id="computer-use-agents" title="Agent access">
         <AgentComputerUseSetting />
         <ApprovalsSetting />

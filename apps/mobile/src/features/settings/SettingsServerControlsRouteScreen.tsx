@@ -4,6 +4,7 @@ import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { readEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text } from "../../components/ui/AppText";
+import { Chip } from "../../components/ui/Chip";
 import {
   type ResponseStreamingMode,
   type ServerSettings,
@@ -413,7 +414,11 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
 
             {props.page === "computer" ? (
               <>
-                <SettingsSection title="Agent access">
+                <SettingsSection
+                  title="Agent access"
+                  titleIcon={<Chip label="Beta" size="small" />}
+                  footer="Computer use is in early testing and may make mistakes. Keep approvals on for anything important."
+                >
                   <SettingsSwitchRow
                     icon="desktopcomputer"
                     label="Agent computer use"
