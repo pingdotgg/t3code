@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as GameDevService from "../../../gameDev/GameDevService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -43,7 +43,8 @@ const GameStatusTool = Tool.make("continuum_game_status", {
   success: Result,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GameCallTool = Tool.make("continuum_game_call", {
   ...shared,
@@ -54,7 +55,9 @@ const GameCallTool = Tool.make("continuum_game_call", {
     args: Schema.optionalKey(Json),
   }),
   success: Result,
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GameCaptureTool = Tool.make("continuum_game_capture", {
   ...shared,
@@ -69,7 +72,8 @@ const GameCaptureTool = Tool.make("continuum_game_capture", {
   success: Result,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GameLogsTool = Tool.make("continuum_game_logs", {
   ...shared,
@@ -99,7 +103,8 @@ const GameLogsTool = Tool.make("continuum_game_logs", {
   success: Result,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GameRunTestsTool = Tool.make("continuum_game_run_tests", {
   ...shared,
@@ -111,7 +116,9 @@ const GameRunTestsTool = Tool.make("continuum_game_run_tests", {
     roots: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   success: Result,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const GameCheckpointTool = Tool.make("continuum_game_checkpoint", {
   ...shared,
@@ -124,7 +131,9 @@ const GameCheckpointTool = Tool.make("continuum_game_checkpoint", {
     checkpointId: Schema.optionalKey(Schema.String),
   }),
   success: Result,
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetBlenderTool = Tool.make("continuum_asset_blender", {
   ...shared,
@@ -150,7 +159,9 @@ const AssetBlenderTool = Tool.make("continuum_asset_blender", {
     fresh: Schema.optionalKey(Schema.Boolean),
   }),
   success: Result,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetSaveRevisionTool = Tool.make("continuum_asset_save_revision", {
   ...shared,
@@ -164,7 +175,9 @@ const AssetSaveRevisionTool = Tool.make("continuum_asset_save_revision", {
     brief: Schema.optionalKey(Brief),
   }),
   success: Result,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetRegisterTool = Tool.make("continuum_asset_register", {
   ...shared,
@@ -185,7 +198,9 @@ const AssetRegisterTool = Tool.make("continuum_asset_register", {
     brief: Schema.optionalKey(Brief),
   }),
   success: Result,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetImportTool = Tool.make("continuum_asset_import", {
   ...shared,
@@ -197,7 +212,9 @@ const AssetImportTool = Tool.make("continuum_asset_import", {
     place: Schema.optionalKey(Json),
   }),
   success: Result,
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetListTool = Tool.make("continuum_asset_list", {
   ...shared,
@@ -207,7 +224,8 @@ const AssetListTool = Tool.make("continuum_asset_list", {
   success: Result,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const AssetForgeGuiTool = Tool.make("continuum_asset_forgegui", {
   ...shared,
@@ -223,7 +241,9 @@ const AssetForgeGuiTool = Tool.make("continuum_asset_forgegui", {
     brief: Schema.optionalKey(Brief),
   }),
   success: Result,
-}).annotate(Tool.Destructive, true);
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const GameDevToolkit = Toolkit.make(
   GameStatusTool,

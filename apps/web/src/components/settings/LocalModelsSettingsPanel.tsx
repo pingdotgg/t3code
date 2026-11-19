@@ -33,7 +33,7 @@ import {
   progressPercent,
 } from "./LocalModelsSettings.logic";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const isModelName = Schema.is(OllamaModelName);
 
@@ -96,6 +96,7 @@ export function LocalModelsSettingsPanel() {
 }
 
 function LocalModelsSettingsContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const startOllama = useAtomCommand(ollamaEnvironment.start, { reportFailure: false });
   const installOllama = useAtomCommand(ollamaEnvironment.install, { reportFailure: false });
   const pullModel = useAtomCommand(ollamaEnvironment.pull, { reportFailure: false });

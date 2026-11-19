@@ -4,7 +4,6 @@ import type {
   ClientOs,
   DesktopBridge,
 } from "@t3tools/contracts";
-import { APP_BASE_NAME } from "../branding";
 
 export interface BrowserIdentity {
   readonly userAgent: string;
@@ -78,7 +77,8 @@ export function clientPresentationMetadata(input: {
 }): AuthClientPresentationMetadata {
   if (input.desktopBridge !== undefined) {
     return {
-      label: `${APP_BASE_NAME} Desktop`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- client label stored on the server
+      label: "Continuum IDE Desktop",
       deviceType: "desktop",
       os: clientOsFromElectronPlatform(input.desktopBridge.getClientPlatform()),
       surface: "desktop",
@@ -87,7 +87,8 @@ export function clientPresentationMetadata(input: {
   }
 
   return {
-    label: `${APP_BASE_NAME} Web`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- client label stored on the server
+    label: "Continuum IDE Web",
     deviceType: browserDeviceType(input.identity),
     os: browserClientOs(input.identity),
     surface: "web",

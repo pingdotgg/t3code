@@ -45,7 +45,7 @@ const fakeAppImage = (canMount = true, app = REPORTER) => {
   const root = tempRoot();
   const image = NodePath.join(root, "image");
   writeExecutable(NodePath.join(image, "t3code"), app);
-  const appImage = NodePath.join(root, "T3 Code.AppImage");
+  const appImage = NodePath.join(root, "Continuum IDE.AppImage");
   writeExecutable(
     appImage,
     [
@@ -190,7 +190,7 @@ describe("renderCliShim", () => {
   });
 
   it("writes a Windows launcher that keeps cmd from reinterpreting paths", () => {
-    const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\T3 Code.exe";
+    const executable = "C:\\Apps\\R&whoami&X 100%\\!CHANNEL!\\Continuum IDE.exe";
     const script = renderCliShim({
       target: { kind: "windows", executable, entry: "C:\\Apps\\server.asar\\bin.mjs" },
       shimPath: "C:\\Users\\José\\.t3\\bin\\t3.cmd",
@@ -200,7 +200,7 @@ describe("renderCliShim", () => {
     expect(lines).toContain("setlocal EnableExtensions DisableDelayedExpansion");
     expect(lines).toContain("chcp 65001 >nul");
     expect(lines).toContain(
-      'if exist "C:\\Apps\\R&whoami&X 100%%\\!CHANNEL!\\T3 Code.exe" goto run',
+      'if exist "C:\\Apps\\R&whoami&X 100%%\\!CHANNEL!\\Continuum IDE.exe" goto run',
     );
     const bare = lines.filter(
       (line) => line.includes("whoami") && !/"[^"]*whoami[^"]*"/.test(line),

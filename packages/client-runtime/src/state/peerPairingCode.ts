@@ -8,7 +8,6 @@ import {
   type AuthCreatePairingCredentialInput,
   type AuthMcpClientAccess,
   type AuthPairingCredentialResult,
-  mcpClientScopes,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
@@ -26,7 +25,7 @@ import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAut
 import { createEnvironmentCommand } from "./runtime.ts";
 
 const MINT_TIMEOUT_MS = 8_000;
-const PEER_PAIRING_CODE_LABEL = "T3 Code link";
+const PEER_PAIRING_CODE_LABEL = "Continuum IDE link";
 const MCP_APPROVAL_CODE_LABEL = "App sign-in";
 
 /** Minting failed; the user can still paste a code from the other environment. */
@@ -87,6 +86,15 @@ const mintOnEnvironment = Effect.fnUntraced(function* (payload: AuthCreatePairin
       cause: "The environment is not connected.",
     });
   }
+  if (
+    payload.purpose === "peer-link" &&
+    prepared.value.descriptor?.capabilities.peerLinkPairingCodes !== true
+  ) {
+    return yield* new PeerPairingCodeError({
+      reason: "unavailable",
+      cause: "The environment does not support peer-link pairing codes.",
+    });
+  }
   return yield* mintPairingCredential(prepared.value, payload);
 });
 
@@ -100,7 +108,19 @@ export function createPeerPairingCodeCommand<R, E>(
   return createEnvironmentCommand(runtime, {
     label: "environment-data:peer-pairing-code:mint",
     execute: (access: AuthMcpClientAccess) =>
-      mintOnEnvironment({ label: PEER_PAIRING_CODE_LABEL, scopes: mcpClientScopes(access) }).pipe(
+      mintOnEnvironment({
+        label: PEER_PAIRING_CODE_LABEL,
+        access,
+        purpose: "peer-link",
+      }).pipe(
+        Effect.filterOrFail(
+          (minted) => minted.purpose === "peer-link" && minted.access === access,
+          () =>
+            new PeerPairingCodeError({
+              reason: "unavailable",
+              cause: "The environment did not issue a peer-link code.",
+            }),
+        ),
         Effect.map((minted) => minted.credential),
       ),
   });

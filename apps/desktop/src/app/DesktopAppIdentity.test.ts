@@ -21,9 +21,9 @@ const defaultEnvironmentInput = {
   platform: "darwin",
   processArch: "arm64",
   appVersion: "1.2.3",
-  appPath: "/Applications/T3 Code.app/Contents/Resources/app.asar",
+  appPath: "/Applications/Continuum IDE.app/Contents/Resources/app.asar",
   isPackaged: true,
-  resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
+  resourcesPath: "/Applications/Continuum IDE.app/Contents/Resources",
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
@@ -40,7 +40,7 @@ interface ElectronAppCalls {
 const layerElectronApp = (calls: ElectronAppCalls) =>
   Layer.succeed(ElectronApp.ElectronApp, {
     metadata: Effect.die("unexpected metadata read"),
-    name: Effect.succeed("T3 Code"),
+    name: Effect.succeed("Continuum IDE"),
     systemLocale: Effect.succeed("en-US"),
     preferredSystemLanguages: Effect.succeed(["en-US"]),
     whenReady: Effect.void,
@@ -133,7 +133,7 @@ const withIdentity = <A, E, R>(
               input.legacyPathProbeError
                 ? Effect.fail(input.legacyPathProbeError)
                 : Effect.succeed(
-                    input.legacyPathExists === true && /T3 Code \((Alpha|Dev)\)/.test(path),
+                    input.legacyPathExists === true && /Continuum IDE \((Alpha|Dev)\)/.test(path),
                   ),
             readFileString: () =>
               Effect.succeed(input.packageJson ?? '{"t3codeCommitHash":"abcdef1234567890"}'),
@@ -148,7 +148,7 @@ const withIdentity = <A, E, R>(
 };
 
 describe("DesktopAppIdentity", () => {
-  it.effect("isolates the Continuum profile even when a T3 Code profile exists", () =>
+  it.effect("isolates the Continuum profile even when a Continuum IDE profile exists", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;
@@ -160,7 +160,7 @@ describe("DesktopAppIdentity", () => {
     ),
   );
 
-  it.effect("never adopts a T3 Code development profile", () =>
+  it.effect("never adopts a Continuum IDE development profile", () =>
     withIdentity(
       Effect.gen(function* () {
         const identity = yield* DesktopAppIdentity.DesktopAppIdentity;

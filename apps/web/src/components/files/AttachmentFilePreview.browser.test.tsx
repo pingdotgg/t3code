@@ -79,6 +79,7 @@ import type { BinaryWorkerResult } from "./binaryPreviewProtocol";
 import type { TextPreviewResult } from "./largeTextProtocol";
 import type { ReactElement } from "react";
 import type { OfficeWorkerResult } from "./officePreviewProtocol";
+import { previewErrorText } from "./previewFailureMessages";
 
 // Real worker imports and WASM initialization can exceed waitFor's default second
 // when the full browser project runs concurrently on CI.
@@ -222,7 +223,8 @@ describe("bounded binary previews", () => {
       ]);
       expect(await request({ type: "entry", path: "replaced.txt" })).toEqual({
         type: "error",
-        message: "This archive entry is unavailable.",
+        code: "archive-entry-unavailable",
+        message: "archive-entry-unavailable",
       });
     } finally {
       worker.terminate();
@@ -365,7 +367,7 @@ describe("bounded binary previews", () => {
         await act(() => trigger.focus());
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{ArrowDown}{Enter}");
         await vi.waitFor(() =>
@@ -376,7 +378,7 @@ describe("bounded binary previews", () => {
         await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
         await userEvent.keyboard("{Enter}");
         await expect
-          .element(page.getByRole("option", { name: "zzInventory (1 rows)" }))
+          .element(page.getByRole("option", { name: "zzInventory (1 row)" }))
           .toBeVisible();
         await userEvent.keyboard("{Escape}");
       } finally {
@@ -1331,9 +1333,9 @@ it.each([
     const bytes = await zip.generateAsync({ type: "arraybuffer", compression: "DEFLATE" });
     const { prepareOffice } = await import("./officeArchive");
     if (row > 250000) {
-      await expect(prepareOffice(bytes, "xlsx")).rejects.toThrow(
-        "This workbook exceeds the preview limit",
-      );
+      await expect(
+        prepareOffice(bytes, "xlsx").catch((cause: unknown) => previewErrorText(cause, "")),
+      ).resolves.toContain("This workbook exceeds the preview limit");
       return;
     }
     const prepared = await prepareOffice(bytes, "xlsx");

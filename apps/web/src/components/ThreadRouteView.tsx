@@ -13,7 +13,7 @@ import { WorkspaceTabBarSlot } from "./workspaceTabs/WorkspaceTabBarSlot";
 import { useWorkspaceTabsStore } from "../workspaceTabsStore";
 
 import ChatView from "./ChatView";
-import { BackgroundThreadContext } from "./chat/backgroundThread";
+import { BackgroundThreadContext, HiddenThreadContext } from "./chat/backgroundThread";
 import { SidebarInset } from "./ui/sidebar";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -250,21 +250,23 @@ export function ThreadRouteView({
       inert={background}
     >
       <BackgroundThreadContext value={background}>
-        <WorkspaceTabBarSlot value={tabBar}>
-          {/* The same wrapper with or without a split, so opening one keeps this ChatView. */}
-          <div className="flex min-h-0 min-w-0 flex-1">
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">{view}</div>
-            {showSplit ? (
-              <div className="hidden min-h-0 md:contents">
-                <WorkspaceSplitPane
-                  splitKey={split.key}
-                  activeKey={activeTabKey}
-                  ratio={split.ratio}
-                />
-              </div>
-            ) : null}
-          </div>
-        </WorkspaceTabBarSlot>
+        <HiddenThreadContext value={background}>
+          <WorkspaceTabBarSlot value={tabBar}>
+            {/* The same wrapper with or without a split, so opening one keeps this ChatView. */}
+            <div className="flex min-h-0 min-w-0 flex-1">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">{view}</div>
+              {showSplit ? (
+                <div className="hidden min-h-0 md:contents">
+                  <WorkspaceSplitPane
+                    splitKey={split.key}
+                    activeKey={activeTabKey}
+                    ratio={split.ratio}
+                  />
+                </div>
+              ) : null}
+            </div>
+          </WorkspaceTabBarSlot>
+        </HiddenThreadContext>
       </BackgroundThreadContext>
       {background ? null : redirect}
     </SidebarInset>

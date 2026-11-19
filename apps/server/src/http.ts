@@ -6,8 +6,10 @@ import {
 } from "@t3tools/contracts";
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
+import { FILE_PREVIEW_SCROLL_SCRIPT } from "@t3tools/shared/htmlRender";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
 import * as ByteSize from "effect/ByteSize";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -15,6 +17,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import { cast, pipe } from "effect/Function";
 import {
   HttpClient,
@@ -52,6 +55,7 @@ import {
   browserApiCorsAllowedHeaders,
   browserApiCorsAllowedMethods,
   DESKTOP_RENDERER_ORIGINS,
+  MCP_HTTP_PATH,
 } from "./httpCors.ts";
 import { requestUrl } from "./requestUrl.ts";
 
@@ -165,7 +169,7 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     readonly fileName?: string;
     readonly mimeType?: string;
     readonly file?: OpenMediaFile;
-    readonly renderIntent?: "mcp-app";
+    readonly renderIntent?: "mcp-app" | "file-preview";
   },
   rangeHeader?: string,
   ifRangeHeader?: string,
@@ -191,6 +195,24 @@ export const assetFileResponse = Effect.fn("assetFileResponse")(function* (
     return method === "HEAD"
       ? HttpServerResponse.empty({ status: 200, headers })
       : HttpServerResponse.uint8Array(body, { headers });
+  }
+  if (
+    asset.renderIntent === "file-preview" &&
+    !asset.download &&
+    headers["Content-Type"] === "text/html; charset=utf-8"
+  ) {
+    const bytes = yield* readMcpAppHtml(asset.path);
+    // A page too large to buffer is served as is, without scroll restoration.
+    if (bytes !== null) {
+      const script = new TextEncoder().encode(FILE_PREVIEW_SCROLL_SCRIPT);
+      const body = new Uint8Array(bytes.byteLength + script.byteLength);
+      body.set(bytes);
+      body.set(script, bytes.byteLength);
+      headers["Content-Length"] = String(body.byteLength);
+      return method === "HEAD"
+        ? HttpServerResponse.empty({ status: 200, headers })
+        : HttpServerResponse.uint8Array(body, { headers });
+    }
   }
   const mediaFile = asset.file;
   const mediaInfo = mediaFile ? yield* statMediaFile(asset.path, mediaFile) : undefined;
@@ -258,7 +280,7 @@ export const layerBrowserApiCors = Layer.unwrap(
     const config = yield* ServerConfig.ServerConfig;
     const devOrigin = config.devUrl?.origin;
     // Credentialed dev requests need explicit Vite/Electron origins; packaged desktop uses the default wildcard.
-    return HttpRouter.cors({
+    const cors = HttpMiddleware.cors({
       ...(devOrigin
         ? {
             allowedOrigins: [devOrigin, ...DESKTOP_RENDERER_ORIGINS, ...config.devAllowedOrigins],
@@ -269,6 +291,15 @@ export const layerBrowserApiCors = Layer.unwrap(
       allowedHeaders: browserApiCorsAllowedHeaders,
       maxAge: 600,
     });
+    return HttpRouter.middleware(
+      (httpEffect) => {
+        const withCors = cors(httpEffect);
+        return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) =>
+          request.url.split("?", 1)[0] === MCP_HTTP_PATH ? httpEffect : withCors,
+        );
+      },
+      { global: true },
+    );
   }),
 );
 
@@ -402,6 +433,18 @@ const layerUntracedRequests = Layer.succeed(HttpMiddleware.TracerDisabledWhen)((
 });
 
 export const withUntracedRequests = Layer.provide(layerUntracedRequests);
+
+// Request spans otherwise parent to the server's lifetime span, so every request shares one trace id.
+export const withRootRequestSpans = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
+  Layer.fromBuild((memoMap, scope) =>
+    Layer.buildWithMemoMap(layer, memoMap, scope).pipe(
+      // ParentSpan is optional to every reader, so removing it leaves R satisfied.
+      Effect.updateContext(
+        (context: Context.Context<R>) =>
+          Context.omit(Tracer.ParentSpan)(context) as Context.Context<R>,
+      ),
+    ),
+  );
 
 export const layerAssetRoute = HttpRouter.add(
   "GET",

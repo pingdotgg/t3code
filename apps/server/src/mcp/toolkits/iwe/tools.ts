@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as IweService from "../../../iwe/IweService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -30,7 +30,8 @@ const FindTool = Tool.make("continuum_iwe_find", {
   success: Schema.Unknown,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const RetrieveTool = Tool.make("continuum_iwe_retrieve", {
   ...shared,
@@ -46,7 +47,8 @@ const RetrieveTool = Tool.make("continuum_iwe_retrieve", {
   success: Schema.Unknown,
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const WriteTool = Tool.make("continuum_iwe_write", {
   ...shared,
@@ -59,7 +61,9 @@ const WriteTool = Tool.make("continuum_iwe_write", {
     title: Schema.optionalKey(Schema.String),
   }),
   success: Schema.Unknown,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const RenameTool = Tool.make("continuum_iwe_rename", {
   ...shared,
@@ -67,6 +71,8 @@ const RenameTool = Tool.make("continuum_iwe_rename", {
     "Rename an IWE note's key and update every link to it across the workspace, with IWE's own rename.",
   parameters: Schema.Struct({ key: Schema.String, newKey: Schema.String }),
   success: Schema.Unknown,
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const IweToolkit = Toolkit.make(FindTool, RetrieveTool, WriteTool, RenameTool);

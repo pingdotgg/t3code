@@ -38,7 +38,7 @@ function member(id: string, environmentId: EnvironmentId): SidebarProjectGroupMe
   return {
     id: ProjectId.make(id),
     environmentId,
-    title: "T3 Code",
+    title: "Continuum IDE",
     workspaceRoot: `/repos/${id}`,
     physicalProjectKey: `${environmentId}:/repos/${id}`,
     environmentLabel:
@@ -170,6 +170,11 @@ describe("editing scheduled task branch settings", () => {
     const draft = taskToDraft(legacyTask);
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
+  });
+
+  it("leaves the base automatic when a task without a worktree switches to one", () => {
+    const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
+    expect(draft.baseRef).toBe("");
   });
 });
 

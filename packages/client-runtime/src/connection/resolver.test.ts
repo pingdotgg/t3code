@@ -108,6 +108,8 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
           },
         })),
     authorizeDpopHttp: () => Effect.die("unused"),
+    authorizeDirectDpop: () => Effect.die("unused"),
+    authorizeDirectDpopHttp: () => Effect.die("unused"),
     rememberCheckedDescriptor: () => Effect.void,
     renewDpopBeforeExpiry: () => Effect.die("unused"),
   });
@@ -183,7 +185,7 @@ describe("ConnectionResolver", () => {
       const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
 
       expect(error).toMatchObject({ reason: "unsupported" });
-      expect(error.message).toContain("Update T3 Code on Compatible environment");
+      expect(error.message).toContain("Update Continuum IDE on Compatible environment");
     }),
   );
 

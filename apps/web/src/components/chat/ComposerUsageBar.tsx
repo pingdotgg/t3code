@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import type { ServerProvider } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 
@@ -61,7 +62,7 @@ export function ComposerUsageBar({ provider }: { readonly provider: ServerProvid
           to="/usage"
           className="mt-2 block text-muted-foreground text-xs hover:text-foreground"
         >
-          Open the usage page
+          <T>Open the usage page</T>
         </Link>
       </PopoverPopup>
     </Popover>

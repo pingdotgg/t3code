@@ -11,7 +11,7 @@ import * as Layer from "effect/Layer";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { liveThreadShell } from "./McpToolAccess.testkit.ts";
-import { readThread } from "./threadAccess.ts";
+import { assertTargetWithinLimits, readThread } from "./threadAccess.ts";
 
 const bareId = ThreadId.make("5d0b4a3e-8c1f-4a52-9d37-2f6c7e1b9a04");
 const claudeCode: McpInvocationContext.McpClientCaller = {
@@ -115,5 +115,26 @@ it.effect("points an unencoded delegated-task id at the encoded thread it belong
 
     expect(error.code).toBe("thread_not_found");
     expect(error.message).toContain(`\`${encoded}\``);
+  }),
+);
+
+it.effect("identifies the target and effective caller ceiling when a thread write is refused", () =>
+  Effect.gen(function* () {
+    for (const [runtimeMode, interactionMode, code] of [
+      ["approval-required", "default", "runtime_mode_escalation_denied"],
+      ["full-access", "plan", "interaction_mode_escalation_denied"],
+      ["approval-required", "plan", "runtime_mode_escalation_denied"],
+    ] as const) {
+      const target = liveThreadShell(bareId, { runtimeMode: "full-access" });
+      const error = yield* assertTargetWithinLimits({ runtimeMode, interactionMode }, target).pipe(
+        Effect.flip,
+      );
+
+      expect(error.code).toBe(code);
+      expect(error.message).toContain(bareId);
+      expect(error.message).toContain("full-access/default");
+      expect(error.message).toContain(`${runtimeMode}/${interactionMode}`);
+      expect(error.message).not.toMatch(/child|parent mode/i);
+    }
   }),
 );

@@ -1,6 +1,6 @@
 import { OrchestratorMcpFailure } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as MemoryVaultService from "../../../memoryVaults/MemoryVaultService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -28,7 +28,8 @@ const MemorySearchTool = Tool.make("continuum_memory_search", {
   }),
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const MemoryReadTool = Tool.make("continuum_memory_read", {
   ...shared,
@@ -43,7 +44,8 @@ const MemoryReadTool = Tool.make("continuum_memory_read", {
   }),
 })
   .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false);
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const MemoryUpdateTool = Tool.make("continuum_memory_update", {
   ...shared,
@@ -63,6 +65,8 @@ const MemoryUpdateTool = Tool.make("continuum_memory_update", {
     chars: Schema.Number,
     redactedSecrets: Schema.Number,
   }),
-}).annotate(Tool.Destructive, false);
+})
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const MemoryToolkit = Toolkit.make(MemorySearchTool, MemoryReadTool, MemoryUpdateTool);

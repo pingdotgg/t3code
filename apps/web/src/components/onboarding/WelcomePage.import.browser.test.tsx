@@ -569,7 +569,7 @@ it("stays busy while setup saves after an import with nothing to open", async ()
   expect(state.createProject).toHaveBeenCalledOnce();
 });
 
-it("leaves projects already in T3 Code out of the default import, unless the box is checked", async () => {
+it("leaves projects already in Continuum IDE out of the default import, unless the box is checked", async () => {
   using _now = setup();
   const existing = ProjectId.make("existing");
   const justAdded = ProjectId.make("just-added");

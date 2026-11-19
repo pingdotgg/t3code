@@ -23,7 +23,7 @@ import { memoryVaultEnvironment } from "../../state/memoryVaults";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "../settings/settingsLayout";
-import { searchableSetting } from "../settings/settingsSearch";
+import { useSearchableSetting } from "../settings/settingsSearch";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -103,6 +103,7 @@ export function MemoryVaultsSettingsPanel() {
 }
 
 function MemoryVaultsContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const query = useEnvironmentQuery(memoryVaultEnvironment.overview({ environmentId, input: {} }));
   const updateSettings = useAtomCommand(memoryVaultEnvironment.updateSettings, {
     reportFailure: false,

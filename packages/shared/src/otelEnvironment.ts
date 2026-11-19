@@ -176,7 +176,7 @@ const exporter = (name: string): Config.Config<Setting<Exporter>> =>
         ? { value }
         : {
             value,
-            warning: `${name} names ${ignored.join(", ")}, which T3 Code does not export to, so ${ignored.length === 1 ? "it was" : "they were"} ignored`,
+            warning: `${name} names ${ignored.join(", ")}, which Continuum IDE does not export to, so ${ignored.length === 1 ? "it was" : "they were"} ignored`,
           };
     }),
   );

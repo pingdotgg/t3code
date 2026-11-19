@@ -88,7 +88,7 @@ const repositoryIdentity = {
   provider: SourceControlProviderKind.make("github"),
   owner: "t3tools",
   name: "t3code",
-  displayName: "T3 Code",
+  displayName: "Continuum IDE",
 };
 
 function makeProject(
@@ -299,7 +299,7 @@ describe("buildProjectGroups", () => {
 
     const label = (projects: ReadonlyArray<EnvironmentProject>) =>
       buildProjectGroups({ projects, settings: settings("repository") })[0]?.label;
-    expect(label(folderTitles)).toBe("T3 Code");
+    expect(label(folderTitles)).toBe("Continuum IDE");
     expect(label(renamed)).toBe("t3code");
   });
 
@@ -319,7 +319,7 @@ describe("buildProjectGroups", () => {
       preferredEnvironmentId: environmentId,
     });
     expect(groups).toHaveLength(1);
-    expect(groups[0]?.label).toBe("T3 Code");
+    expect(groups[0]?.label).toBe("Continuum IDE");
 
     // A subfolder group in repository_path mode keeps its own title.
     const localIdentity = { ...repositoryIdentity, rootPath: "/work/t3code" };

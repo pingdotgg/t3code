@@ -23,7 +23,7 @@ import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const PREVIEW_TEXT =
   "Hi, I'm reading from Continuum. The tests passed, and the change is ready for review.";
@@ -90,6 +90,7 @@ function SpeechSlider(props: {
 
 /** Settings → Voice → Read aloud: text-to-speech for agent messages on this device. */
 export function ReadAloudSettings() {
+  const searchableSetting = useSearchableSetting();
   const speech = useClientSettings((settings) => settings.speech);
   const previewing = useSpeechPlayback(
     (state) => state.sourceId === "settings-preview" && state.status !== "idle",

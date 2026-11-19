@@ -1,9 +1,4 @@
-export type ComposerTriggerKind =
-  | "path"
-  | "pull-request"
-  | "slash-command"
-  | "slash-model"
-  | "skill";
+export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 
 export interface ComposerTrigger {
@@ -70,49 +65,25 @@ export function isCurrencyAmountQuery(query: string): boolean {
   return /^\.?[0-9][0-9,._]*(?:[kKmMbBtT]|[eE][0-9]+)?[.,;:!?)]*$/.test(query);
 }
 
+export function detectComposerPullRequestTrigger(token: string, cursor: number) {
+  if (/^[@\p{Sc}]/u.test(token)) return null;
+  const match = /(?:^|\p{Ps})#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
+  if (!match) return null;
+  const query = match[1] ?? "";
+  return {
+    kind: "pull-request" as const,
+    query,
+    rangeStart: cursor - query.length - 1,
+    rangeEnd: cursor,
+  };
+}
+
 export function detectComposerTrigger(
   text: string,
   cursorInput: number,
   isWhitespaceChar?: (char: string) => boolean,
 ): ComposerTrigger | null {
   const cursor = clampCursor(text, cursorInput);
-  const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-  const linePrefix = text.slice(lineStart, cursor);
-
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch && isPathWord(text, lineStart, cursor, isWhitespaceChar ?? isWhitespace)) {
-      return null;
-    }
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      if (commandQuery.toLowerCase() === "model") {
-        return {
-          kind: "slash-model",
-          query: "",
-          rangeStart: lineStart,
-          rangeEnd: cursor,
-        };
-      }
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-
-    const modelMatch = /^\/model(?:\s+(.*))?$/i.exec(linePrefix);
-    if (modelMatch) {
-      return {
-        kind: "slash-model",
-        query: (modelMatch[1] ?? "").trim(),
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-  }
-
   const wsCheck = isWhitespaceChar ?? isWhitespace;
   let tokenIdx = cursor - 1;
   while (tokenIdx >= 0 && !wsCheck(text[tokenIdx] ?? "")) {
@@ -130,14 +101,8 @@ export function detectComposerTrigger(
       rangeEnd: cursor,
     };
   }
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch)
-    return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
+  const pullRequestTrigger = detectComposerPullRequestTrigger(token, cursor);
+  if (pullRequestTrigger) return pullRequestTrigger;
   const skillPrefix = /^\p{Sc}/u.exec(token);
   if (skillPrefix) {
     if (isCurrencyAmountQuery(token.slice(skillPrefix[0].length))) return null;

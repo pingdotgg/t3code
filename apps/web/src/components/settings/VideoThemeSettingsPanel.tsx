@@ -19,7 +19,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const SOURCE_LABELS: Record<VideoBackgroundSource, string> = {
   off: "Off",
@@ -29,6 +29,7 @@ const SOURCE_LABELS: Record<VideoBackgroundSource, string> = {
 
 /** Settings → Video theme: a moving background behind the app. */
 export function VideoThemeSettingsPanel() {
+  const searchableSetting = useSearchableSetting();
   const settings = useClientSettings((current) => ({
     source: current.videoBackground,
     folder: current.videoBackgroundFolder,
@@ -113,7 +114,7 @@ export function VideoThemeSettingsPanel() {
           resetAction={
             settings.surfaceOpacity !== DEFAULT_VIDEO_SURFACE_OPACITY ? (
               <SettingResetButton
-                label="surface opacity"
+                ariaLabel="Reset surface opacity"
                 onClick={() =>
                   updateSettings({ videoSurfaceOpacity: DEFAULT_VIDEO_SURFACE_OPACITY })
                 }

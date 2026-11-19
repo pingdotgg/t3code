@@ -26,7 +26,7 @@ vi.hoisted(() => {
   electronModule.exports = {
     app: {
       getVersion: () => "1.0.0",
-      getName: () => "T3 Code",
+      getName: () => "Continuum IDE",
       isPackaged: true,
       quit: () => undefined,
       once: () => undefined,

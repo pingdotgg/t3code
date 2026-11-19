@@ -9,12 +9,13 @@ import {
 import { APP_BASE_NAME } from "../../branding";
 import { Button } from "../ui/button";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { windowOpacityHint } from "./WindowOpacitySetting.logic";
 
 /** Whole-window opacity. Desktop only: a browser tab cannot make its window see-through. */
 export function WindowOpacitySetting() {
+  const searchableSetting = useSearchableSetting();
   const bridge = typeof window === "undefined" ? undefined : window.desktopBridge;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
@@ -38,7 +39,7 @@ export function WindowOpacitySetting() {
       resetAction={
         opacity !== DEFAULT_WINDOW_OPACITY ? (
           <SettingResetButton
-            label="window transparency"
+            ariaLabel="Reset window transparency"
             onClick={() => updateSettings({ windowOpacity: DEFAULT_WINDOW_OPACITY })}
           />
         ) : null

@@ -44,6 +44,7 @@ import { AttachmentFilePreview } from "./AttachmentFilePreview";
 import JSZip from "jszip";
 import { OFFICE_PREVIEW_MAX_COLUMNS, type OfficeWorkerResult } from "./officePreviewProtocol";
 import { WORD_LIMITS } from "./officeArchive";
+import { previewErrorText, previewFailureText } from "./previewFailureMessages";
 
 it.each(["<w:body/>", "<w:body></w:body>"])(
   "opens an empty Word document with %s",
@@ -256,7 +257,7 @@ it("reports the final slide at maximum scroll after page visibility changes", as
   await using screen = await render(
     <OfficePages
       pages={Array.from({ length: 6 }, () => ({ width: 400, height: 240 }))}
-      label="Slide"
+      kind="slide"
       paint={async () => undefined}
       onPageChange={changed}
       onError={(error) => {
@@ -373,7 +374,7 @@ it.each([
       ) {
         expect(result).toMatchObject({
           type: "error",
-          message: expect.stringContaining("Preview limited"),
+          code: expect.stringMatching(/^word-limited-/),
         });
       } else {
         expect(result.type).toBe("docx");
@@ -455,7 +456,7 @@ it.each([
     });
     expect(result).toMatchObject({
       type: "error",
-      message: expect.stringContaining("Preview limited"),
+      code: expect.stringMatching(/^word-limited-/),
     });
   } finally {
     worker.terminate();
@@ -850,10 +851,9 @@ it.each(["repeated binary", "XML relationship alias", "duplicate relationship ID
         );
         worker.postMessage({ type: "open", kind: "docx", bytes }, [bytes]);
       });
-      expect(result).toMatchObject({
-        type: "error",
-        message: expect.stringContaining("expanded markup"),
-      });
+      expect(result.type === "error" ? previewFailureText(result) : result.type).toContain(
+        "expanded markup",
+      );
     } finally {
       worker.terminate();
     }
@@ -892,10 +892,9 @@ it.each(["XFD200", "XFD300", "XFD1048576", "AX500", "AZ9999999"])(
         worker.postMessage({ type: "open", kind: "xlsx", bytes }, [bytes]);
       });
       if (ref === "AZ9999999" || ref === "XFD1048576") {
-        expect(result).toMatchObject({
-          type: "error",
-          message: expect.stringContaining(ref === "AZ9999999" ? "invalid" : "preview limit"),
-        });
+        expect(result.type === "error" ? previewFailureText(result) : result.type).toContain(
+          ref === "AZ9999999" ? "invalid" : "preview limit",
+        );
       } else {
         expect(result.type).toBe("xlsx");
         if (result.type !== "xlsx") throw new Error("Expected workbook values");
@@ -967,8 +966,10 @@ it.each(['<u val="double"/>', '<u val="double"></u>'])(
     }
     archive.file("xl/styles.xml", "<styleSheet><numFmts/><numFmts/></styleSheet>");
     await expect(
-      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx"),
-    ).rejects.toThrow("duplicate stylesheet blocks");
+      prepareOffice(await archive.generateAsync({ type: "arraybuffer" }), "xlsx").catch(
+        (cause: unknown) => previewErrorText(cause, ""),
+      ),
+    ).resolves.toContain("duplicate stylesheet blocks");
   },
 );
 

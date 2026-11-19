@@ -1,3 +1,4 @@
+import { EnvironmentAuthInvalidError } from "@t3tools/contracts";
 import {
   RelayEnvironmentEndpointUnavailableError,
   type RelayProtectedError,
@@ -53,9 +54,9 @@ const results = (state: SupervisorConnectionState, via?: "relay" | "direct") =>
   diagnose(state, via)?.hops.map((hop) => `${hop.hop}:${hop.result}`);
 
 describe("presentConnectionDiagnosis", () => {
-  it("tells a working tunnel apart from T3 Code not answering", () => {
+  it("tells a working tunnel apart from Continuum IDE not answering", () => {
     expect(diagnose(backoff(unavailable("origin_unreachable")))?.headline).toBe(
-      "Tunnel works, but T3 Code on Mac mini did not answer",
+      "Tunnel works, but Continuum IDE on Mac mini did not answer",
     );
     expect(results(backoff(unavailable("origin_unreachable")), "direct")).toEqual([
       "device:ok",
@@ -161,6 +162,19 @@ describe("presentConnectionDiagnosis", () => {
     );
     expect(diagnosis?.headline).toBe("Mac mini is waiting for someone to approve this device");
     expect(diagnosis?.steps.join(" ")).toContain("t3 auth connect-device approve K7QM-2XFD");
+  });
+
+  it("tells a host that refused this device's login to sign in again, not to start Continuum IDE", () => {
+    const failure = mapRemoteEnvironmentError(
+      new EnvironmentAuthInvalidError({
+        code: "auth_invalid",
+        reason: "invalid_credential",
+        traceId: "trace-1",
+      }),
+    );
+    const steps = diagnose(backoff(failure), "direct")?.steps.join(" ");
+    expect(steps).not.toContain("Make sure Continuum IDE is running");
+    expect(steps).toMatch(/pair|sign in/i);
   });
 
   it("does not report hops as working when the failure names none", () => {

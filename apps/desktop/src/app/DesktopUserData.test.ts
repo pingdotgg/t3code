@@ -10,7 +10,7 @@ import { PRODUCT_BRAND } from "@t3tools/shared/branding";
 import { clearStaleGpuCaches, resolveUserDataPath } from "./DesktopUserData.ts";
 
 it.effect.each(["t3code", "t3code-v2", "T3 Code (Alpha)"])(
-  "never adopts a T3 Code profile from %s, so Continuum keeps its own credential keys",
+  "never adopts a Continuum IDE profile from %s, so Continuum keeps its own credential keys",
   (sourceName) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

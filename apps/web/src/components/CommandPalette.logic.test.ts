@@ -1,3 +1,4 @@
+import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import type { Thread } from "../types";
@@ -646,7 +647,9 @@ describe("buildThreadActionItems", () => {
     });
     const items = buildThreadActionItems({
       threads: [idThread, titleThread],
-      projectByKey: new Map([[`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "T3 Code" }]]),
+      projectByKey: new Map([
+        [`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`, { title: "Continuum IDE" }],
+      ]),
       icon: null,
       runThread: async (_thread) => undefined,
     });
@@ -666,11 +669,13 @@ describe("buildThreadActionItems", () => {
     ]);
   });
 
-  it("hides subagent threads but keeps forks", () => {
+  it("hides subagent threads and tasks shown under their parent but keeps forks", () => {
     const parentId = ThreadId.make("parent");
+    const delegatedId = ThreadId.make("delegated");
     const items = buildThreadActionItems({
       threads: [
         makeThread({ id: parentId, title: "Parent" }),
+        makeThread({ id: delegatedId, title: "Delegated task" }),
         makeThread({
           id: ThreadId.make("subagent"),
           title: "Subagent",
@@ -690,6 +695,9 @@ describe("buildThreadActionItems", () => {
           },
         }),
       ],
+      delegatedUnderParent: new Set([
+        threadKey({ environmentId: LOCAL_ENVIRONMENT_ID, threadId: delegatedId }),
+      ]),
       projectByKey: new Map(),
       icon: null,
       runThread: async () => undefined,

@@ -81,7 +81,7 @@ function makeWindowsRevealWindow() {
     show: vi.fn(),
     moveTop: vi.fn(),
     focus: vi.fn(),
-    getTitle: vi.fn(() => "T3 Code (Dev)"),
+    getTitle: vi.fn(() => "Continuum IDE (Dev)"),
     getBounds: vi.fn(() => ({ x: 100, y: 50, width: 1_200, height: 800 })),
     getContentBounds: vi.fn(() => ({ x: 108, y: 50, width: 1_184, height: 792 })),
     getNativeWindowHandle: vi.fn(() => Buffer.from([41, 0, 0, 0])),
@@ -128,7 +128,7 @@ describe("ElectronWindow", () => {
       assert.deepEqual(windowsForegroundPrepareMock.mock.calls[0]?.[0], {
         windowId: 41,
         processId: process.pid,
-        title: "T3 Code (Dev)",
+        title: "Continuum IDE (Dev)",
         bounds: { x: 200, y: 100, width: 2_400, height: 1_600 },
         contentBounds: { x: 216, y: 100, width: 2_368, height: 1_584 },
       });

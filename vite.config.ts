@@ -149,6 +149,7 @@ export default defineConfig({
       NodeURL.fileURLToPath(
         new URL("./packages/shared/src/testing/providerEnv.ts", import.meta.url),
       ),
+      NodeURL.fileURLToPath(new URL("./packages/shared/src/testing/gitEnv.ts", import.meta.url)),
     ],
     ...(isRepoRootTestRun
       ? {
@@ -583,6 +584,26 @@ export default defineConfig({
           ],
         },
       },
+      // Registered always so a disable comment for intentional English counts as used.
+      // `vp run i18n:untranslated` counts what it flags.
+      {
+        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/client-runtime/src/**"],
+        excludeFiles: [
+          "**/*.{test,spec,bench}.{ts,tsx}",
+          "**/{test,testkit,testing,fixtures}/**",
+          "**/*.test-fixtures.ts",
+          "**/{test-fixtures,*TestFixtures}.ts",
+          "apps/mobile/src/features/development/**",
+          "packages/client-runtime/src/rpc/**",
+          // Continuum-only features are English until they join the catalogs (docs/internals/i18n.md).
+          "apps/web/src/components/{forge,entertainment,iwe,memoryVaults,agentEyes,usageSharing,workspaceTabs,continuum,videoBackground}/**",
+          "apps/web/src/speech/**",
+          "apps/web/src/components/settings/{UsageSharingSettingsPanel,ReadAloudSettings,LocalModelsSettingsPanel,LocalModelsSettings.logic,NotificationSoundSettings,VideoThemeSettingsPanel,ProviderUpdatesSettingsPanel,WindowOpacitySetting,WindowOpacitySetting.logic}.{ts,tsx}",
+          "apps/web/src/components/chat/{SuperchargeControl,ContinuumComposerStatus,useContinuumCommandSend,MemoryVaultPicker}.{ts,tsx}",
+          "apps/web/src/{continuumSurfaces,continuumCommands,notificationJingles,agentEyes.logic}.ts",
+        ],
+        rules: { "t3code/no-untranslated-copy": "error" },
+      },
       {
         // React Compiler owns memoization; upstream rules do not ban redundant useMemo/useCallback.
         files: ["apps/web/src/**/*.{ts,tsx}"],
@@ -647,6 +668,7 @@ export default defineConfig({
           "apps/mobile/src/features/review/useNativeReviewDiffBridge.ts",
           "apps/mobile/src/features/settings/SettingsEnvironmentsRouteScreen.tsx",
           "apps/mobile/src/features/threads/ThreadComposer.tsx",
+          "apps/mobile/src/components/ComposerSurface.tsx",
           "apps/mobile/src/features/threads/ThreadFeed.tsx",
           "apps/mobile/src/features/threads/ThreadQueueControl.tsx",
           "apps/mobile/src/features/review/ReviewCommentCard.tsx",

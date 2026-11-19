@@ -21,7 +21,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const SOURCE_LABELS: Record<UsageShareSourceKind, string> = {
   "anthropic-api": "Claude (Anthropic API key)",
@@ -87,6 +87,7 @@ export function UsageSharingSettingsPanel() {
 }
 
 function UsageSharingContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const query = useEnvironmentQuery(usageSharingEnvironment.overview({ environmentId, input: {} }));
   const overview = query.data;
   const [error, setError] = useState<string | null>(null);
@@ -238,6 +239,7 @@ function EndpointRow({
   readonly overview: UsageSharingOverview;
   readonly onDone: (result: CommandResult) => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const setEndpoint = useAtomCommand(usageSharingEnvironment.setEndpoint, { reportFailure: false });
   const [value, setValue] = useState(overview.endpoint ?? "");
   return (

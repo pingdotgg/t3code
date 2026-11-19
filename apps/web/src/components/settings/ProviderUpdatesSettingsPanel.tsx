@@ -13,7 +13,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const MODE_LABELS: Record<ProviderRuntimeUpdateMode, string> = {
   auto: "Keep up to date",
@@ -35,6 +35,7 @@ export function ProviderUpdatesSettingsPanel() {
 }
 
 function ProviderUpdatesContent({ environmentId }: { readonly environmentId: EnvironmentId }) {
+  const searchableSetting = useSearchableSetting();
   const query = useEnvironmentQuery(
     providerRuntimeEnvironment.status({ environmentId, input: {} }),
   );

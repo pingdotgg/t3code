@@ -206,7 +206,20 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params !== null
   ) {
     const params = { ...(normalized.params as Record<string, unknown>) };
-    if (params.approvalPolicy === "never") {
+    // Older recordings used `never` for full access, before MCP prompts were kept interactive.
+    if (
+      params.approvalPolicy === "never" ||
+      stableStringify(params.approvalPolicy) ===
+        stableStringify({
+          granular: {
+            mcp_elicitations: true,
+            request_permissions: false,
+            rules: false,
+            sandbox_approval: false,
+            skill_approval: false,
+          },
+        })
+    ) {
       delete params.approvalPolicy;
     }
     if (

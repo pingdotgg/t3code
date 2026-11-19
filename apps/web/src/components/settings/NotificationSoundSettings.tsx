@@ -17,7 +17,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const EVENT_LABELS: Record<NotificationSoundEvent, { title: string; description: string }> = {
   completion: { title: "Session finished", description: "An agent finished its turn." },
@@ -53,6 +53,7 @@ function patchSounds(current: SoundSettings, patch: Partial<SoundSettings>) {
 }
 
 export function NotificationSoundSettings() {
+  const searchableSetting = useSearchableSetting();
   const sound = useClientSettings((settings) => settings.notificationSounds);
   const mode = useClientSettings((settings) => settings.notificationMode);
   const soundsOn = hasNotificationSound(mode);
