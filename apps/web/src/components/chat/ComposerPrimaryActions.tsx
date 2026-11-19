@@ -110,10 +110,6 @@ const COMPOSER_PILL_CLASS_NAME =
 const COMPOSER_PILL_SLOT_CLASS_NAME =
   "relative isolate flex h-full shrink-0 cursor-pointer items-center justify-center rounded-item outline-none transition-colors duration-150 hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring [&_svg]:pointer-events-none";
 
-/** A 32px icon button inside a send pill outside the chat composer. */
-export const COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME =
-  "relative isolate flex h-full w-8 items-center justify-center overflow-hidden rounded-md text-foreground outline-none transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
-
 /** A labeled primary action on the message-action pill; callers add height, padding and split edges. */
 function MessageActionPill({ className, type = "button", ...props }: ComponentProps<"button">) {
   return <button type={type} className={cn(messageActionPillClassName, className)} {...props} />;
@@ -573,3 +569,7 @@ export function ComposerSendPill({
     </span>
   );
 }
+
+// A 32px button slot of the send pill for a send action outside the thread composer.
+export const COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME =
+  "relative isolate flex h-full w-8 items-center justify-center overflow-hidden rounded-md text-foreground outline-none transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";

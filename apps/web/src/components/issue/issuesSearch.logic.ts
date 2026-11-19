@@ -1,4 +1,3 @@
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 
@@ -36,14 +35,43 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   key: bounded(raw.key),
 });
 
+type Labeled<Project> = Project & {
+  readonly label: string;
+  readonly details: ReadonlyArray<string>;
+};
+
+const distinguish = <Project>(
+  projects: ReadonlyArray<Labeled<Project>>,
+  detail: (project: Project) => string,
+): ReadonlyArray<Labeled<Project>> => {
+  const counts = new Map<string, number>();
+  const key = (project: Labeled<Project>) => JSON.stringify([project.label, project.details]);
+  for (const project of projects) counts.set(key(project), (counts.get(key(project)) ?? 0) + 1);
+  return projects.map((project) =>
+    (counts.get(key(project)) ?? 0) > 1
+      ? { ...project, details: [...project.details, detail(project)] }
+      : project,
+  );
+};
+
 /** One choice per project: projects on one repository can read different Linear teams. */
 export const issueFilterProjects = (
   projects: ReadonlyArray<EnvironmentProject>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
-) =>
-  pullRequestFilterProjects(
-    projects
-      .filter((project) => !project.isScratch)
-      .map((project) => ({ ...project, repositoryIdentity: null })),
-    environmentLabels,
+) => {
+  const labeled = projects
+    .filter((project) => !project.isScratch)
+    .map((project) => ({ ...project, label: project.title, details: [] as string[] }));
+  const byServer = distinguish(
+    labeled,
+    (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
+  const byPath = distinguish(byServer, (project) => project.workspaceRoot);
+  const byEnvironment = distinguish(byPath, (project) => project.environmentId);
+  return distinguish(byEnvironment, (project) => project.id)
+    .map(({ label, details, ...project }) => ({
+      ...project,
+      title: details.length === 0 ? label : `${label} (${details.join(", ")})`,
+    }))
+    .toSorted((left, right) => left.title.localeCompare(right.title));
+};
