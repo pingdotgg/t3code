@@ -37,7 +37,7 @@ const DESCRIPTOR: StandaloneIssueTrackerDescriptor = {
     fields: [
       { key: "site", label: "Site (example.atlassian.net)", secret: false },
       { key: "email", label: "Email", secret: false },
-      { key: "token", label: "API token", secret: true },
+      { key: "token", label: "API token (without scopes)", secret: true },
     ],
   },
 };

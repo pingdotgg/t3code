@@ -37,11 +37,27 @@ function inline(nodes: ReadonlyArray<AdfNode> | undefined): string {
   return (nodes ?? []).map(inlineNode).join("");
 }
 
+/** Literal Jira text, escaped so Markdown reads it back as the same characters. */
+const escape = (text: string) =>
+  text
+    .replace(/[\\`*_~[\]<&]/g, "\\$&")
+    .replace(/^(\s*)([#>+=-])/gm, "$1\\$2")
+    .replace(/^(\s*\d+)([.)])/gm, "$1\\$2");
+
+/** The shortest run of backticks that `text` does not contain, at least `min` long. */
+const fence = (text: string, min: number) =>
+  "`".repeat(Math.max(min, ...Array.from(text.matchAll(/`+/g), (run) => run[0].length + 1)));
+
 function marked(text: string, marks: ReadonlyArray<AdfMark> | undefined): string {
-  let out = text;
+  const code = marks?.some((mark) => mark.type === "code") ?? false;
+  let out = code ? text : escape(text);
+  if (code) {
+    const ticks = fence(text, 1);
+    const pad = text.startsWith("`") || text.endsWith("`") ? " " : "";
+    out = `${ticks}${pad}${out}${pad}${ticks}`;
+  }
   for (const mark of marks ?? []) {
-    if (mark.type === "code") out = `\`${out}\``;
-    else if (mark.type === "strong") out = `**${out}**`;
+    if (mark.type === "strong") out = `**${out}**`;
     else if (mark.type === "em") out = `*${out}*`;
     else if (mark.type === "strike") out = `~~${out}~~`;
   }
@@ -134,8 +150,11 @@ function block(node: AdfNode): string {
       return list(node, false);
     case "orderedList":
       return list(node, true);
-    case "codeBlock":
-      return `\`\`\`${attr(node, "language") ?? ""}\n${inline(node.content)}\n\`\`\``;
+    case "codeBlock": {
+      const code = (node.content ?? []).map((child) => child.text ?? "").join("");
+      const ticks = fence(code, 3);
+      return `${ticks}${attr(node, "language") ?? ""}\n${code}\n${ticks}`;
+    }
     case "blockquote":
     case "panel":
       return blocks(node.content)
@@ -185,6 +204,8 @@ export function hasJiraOnlyContent(document: unknown): boolean {
   if (!isNode(document)) return false;
   const visit = (node: AdfNode): boolean =>
     JIRA_ONLY.has(node.type) ||
+    Number(node.attrs?.["colspan"] ?? 1) > 1 ||
+    Number(node.attrs?.["rowspan"] ?? 1) > 1 ||
     (node.marks ?? []).some((mark) => mark.type !== "link" && !MARKDOWN_MARKS.has(mark.type)) ||
     (node.content ?? []).some((child) => isNode(child) && visit(child));
   return visit(document);
@@ -340,11 +361,31 @@ function blockFromMdast(node: Mdast.RootContent): AdfNode[] {
   }
 }
 
+/** Reference links as the inline links they stand for, since ADF has no definitions. */
+function resolveReferences(node: Mdast.Nodes, definitions: ReadonlyMap<string, string>): void {
+  if (!("children" in node)) return;
+  node.children = node.children.map((child) => {
+    const url = "identifier" in child ? definitions.get(child.identifier) : undefined;
+    if (child.type === "linkReference" && url !== undefined)
+      return { type: "link", url, children: child.children };
+    if (child.type === "imageReference" && url !== undefined)
+      return { type: "image", url, alt: child.alt ?? null };
+    return child;
+  }) as typeof node.children;
+  for (const child of node.children) resolveReferences(child, definitions);
+}
+
 /** Markdown as a Jira document, the way Jira's own editor would have stored it. */
 export function markdownToAdf(markdown: string) {
   const tree = fromMarkdown(markdown, {
     extensions: [gfm()],
     mdastExtensions: [gfmFromMarkdown()],
   });
+  const definitions = new Map(
+    tree.children.flatMap((child) =>
+      child.type === "definition" ? [[child.identifier, child.url] as const] : [],
+    ),
+  );
+  resolveReferences(tree, definitions);
   return { type: "doc", version: 1, content: tree.children.flatMap(blockFromMdast) };
 }

@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveIssueLinkTarget } from "./issueLinks.ts";
+import { mayContainStandaloneIssueLink, resolveIssueLinkTarget } from "./issueLinks.ts";
 
 const project = (id: string, repository: string) =>
   ({
@@ -140,6 +140,9 @@ describe("resolveIssueLinkTarget", () => {
       scope: "ENG",
       key: "ENG-4",
     });
+    const upper = "See https://ACME.ATLASSIAN.NET/browse/ENG-4";
+    expect(mayContainStandaloneIssueLink(upper)).toBe(true);
+    expect(resolve(upper.slice(4))?.ref.key).toBe("ENG-4");
     // Project keys repeat across sites; only the connected one's links are its issues.
     expect(resolve("https://othercorp.atlassian.net/browse/ENG-4")).toBeNull();
     expect(resolve("https://acme.atlassian.net.evil.example/browse/ENG-4")).toBeNull();

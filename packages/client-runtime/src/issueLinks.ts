@@ -83,7 +83,8 @@ export function isStandaloneIssueLink(url: string): boolean {
 
 /** A cheap pre-check, so text without such a link never asks for the bindings. */
 export function mayContainStandaloneIssueLink(text: string): boolean {
-  return text.includes(`${LINEAR_HOST}/`) || text.includes(`.${JIRA_HOST}/`);
+  const lower = text.toLowerCase();
+  return lower.includes(`${LINEAR_HOST}/`) || lower.includes(`.${JIRA_HOST}/`);
 }
 
 /**

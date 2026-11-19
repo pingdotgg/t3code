@@ -338,20 +338,26 @@ export const make = Effect.gen(function* () {
         ),
       );
     }
-    const response = yield* httpClient.execute(request).pipe(
-      Effect.timeout(REQUEST_TIMEOUT),
-      Effect.mapError((cause) =>
-        fail(input.operation, "failed", "Jira could not be reached.", { cause }),
-      ),
-    );
-    if (response.status < 200 || response.status >= 300) {
-      return yield* Effect.flatMap(refusal(input.operation, response), Effect.fail);
-    }
-    if (input.schema === null) return null;
-    return yield* HttpClientResponse.schemaBodyJson(input.schema)(response).pipe(
-      Effect.mapError((cause) =>
-        fail(input.operation, "failed", "Jira returned an unexpected body.", { cause }),
-      ),
+    const unreachable = (cause?: unknown) =>
+      fail(input.operation, "failed", "Jira could not be reached.", { cause });
+    const exchange = Effect.gen(function* () {
+      const response = yield* httpClient.execute(request).pipe(Effect.mapError(unreachable));
+      if (response.status < 200 || response.status >= 300) {
+        return yield* Effect.flatMap(refusal(input.operation, response), Effect.fail);
+      }
+      if (input.schema === null) return null;
+      return yield* HttpClientResponse.schemaBodyJson(input.schema)(response).pipe(
+        Effect.mapError((cause) =>
+          fail(input.operation, "failed", "Jira returned an unexpected body.", { cause }),
+        ),
+      );
+    });
+    // The deadline covers the body too: Jira can send its headers, then stall.
+    return yield* exchange.pipe(
+      Effect.timeoutOrElse({
+        duration: REQUEST_TIMEOUT,
+        orElse: () => Effect.fail(unreachable()),
+      }),
     );
   });
 

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, UrlParams } from "effect/http";
 import { IssueTrackerKind } from "@t3tools/contracts";
 import type { StandaloneIssueTrackerApi } from "@t3tools/source-control-core/server/IssueTracker";
@@ -303,18 +305,19 @@ describe("JiraIssueTracker", () => {
         }),
         "GET /issue/ENG-1/comment": (seen) => {
           expect(seen.params.get("orderBy")).toBe("-created");
+          const startAt = Number(seen.params.get("startAt"));
           return {
-            startAt: Number(seen.params.get("startAt")),
+            startAt,
             total: 51,
             comments: [
               {
-                id: "c2",
+                id: `c${startAt + 2}`,
                 author: THEO,
                 body: doc(paragraph("newest")),
                 created: "2026-07-02T09:00:00.000+0000",
               },
               {
-                id: "c1",
+                id: `c${startAt + 1}`,
                 author: JULIUS,
                 body: doc(paragraph("older")),
                 created: "2026-07-01T09:00:00.000+0000",
@@ -355,6 +358,7 @@ describe("JiraIssueTracker", () => {
 
       const older = yield* api.getComments({ ...target, key: "ENG-1", cursor: "2" });
       expect(requests.at(-1)?.params.get("startAt")).toBe("2");
+      expect(older.comments.map((comment) => comment.id)).toEqual(["c3", "c4"]);
       expect(older.nextCursor).toBe("4");
       const bad = yield* Effect.flip(api.getComments({ ...target, key: "ENG-1", cursor: "x" }));
       expect(bad.detail).toContain("cursor");
@@ -519,6 +523,8 @@ describe("JiraIssueTracker", () => {
         "GET /myself": () => new Response("", { status: 401 }),
         "POST /search/jql": () =>
           new Response("", { status: 429, headers: { "retry-after": "30" } }),
+        "GET /issue/ENG-1": () =>
+          new Response(new ReadableStream(), { headers: { "content-type": "application/json" } }),
         "GET /issue/createmeta/ENG/issuetypes": () =>
           new Response(JSON.stringify({ errors: { project: "You cannot create issues here." } }), {
             status: 403,
@@ -536,6 +542,11 @@ describe("JiraIssueTracker", () => {
         api.create({ ...target, title: "x", body: "", labels: [], assignees: [] }),
       );
       expect(refused.detail).toBe("You cannot create issues here.");
+      const stalled = yield* Effect.forkChild(
+        Effect.flip(api.getIssue({ ...target, key: "ENG-1" })),
+      );
+      yield* TestClock.adjust("31 seconds");
+      expect((yield* Fiber.join(stalled)).detail).toBe("Jira could not be reached.");
     }),
   );
 });

@@ -123,9 +123,10 @@ function TrackerRow({
       input: { tracker: tracker.tracker, token },
     });
     setBusy(false);
-    if (result._tag === "Success") return;
+    if (result._tag === "Success") return true;
     const error = squashAtomCommandFailure(result);
     setFailure(error instanceof Error ? error.message : gt("The request failed."));
+    return false;
   };
 
   const inputId = `issue-tracker-${tracker.tracker}-${environmentId}`;
@@ -207,7 +208,7 @@ function TrackerRow({
                         id={inputId}
                         fields={tracker.credential.fields}
                         connected={tracker.connected}
-                        onSubmit={(token) => void submit(token)}
+                        onSubmit={submit}
                       />
                     ) : (
                       <SecretInput
@@ -260,7 +261,7 @@ function CredentialFields({
   readonly id: string;
   readonly fields: NonNullable<IssueTrackerConnection["credential"]["fields"]>;
   readonly connected: boolean;
-  readonly onSubmit: (token: string) => void;
+  readonly onSubmit: (token: string) => Promise<boolean>;
 }) {
   const gt = useGT();
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
@@ -271,8 +272,9 @@ function CredentialFields({
       onSubmit={(event) => {
         event.preventDefault();
         if (token === null) return;
-        onSubmit(token);
-        setDrafts({});
+        void onSubmit(token).then((connected) => {
+          if (connected) setDrafts({});
+        });
       }}
     >
       {fields.map((field) => (

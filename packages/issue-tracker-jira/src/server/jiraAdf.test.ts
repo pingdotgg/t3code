@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { adfToMarkdown, markdownToAdf } from "./jiraAdf.ts";
+import { adfToMarkdown, hasJiraOnlyContent, markdownToAdf } from "./jiraAdf.ts";
 
 const text = (value: string, marks?: ReadonlyArray<unknown>) =>
   marks === undefined ? { type: "text", text: value } : { type: "text", text: value, marks };
@@ -115,5 +115,32 @@ describe("jiraAdf", () => {
   it("keeps a document's text through a round trip", () => {
     const markdown = "Fix **this** and ~~that~~.\n\n- one\n- two\n\n```\nraw\n```";
     expect(adfToMarkdown(markdownToAdf(markdown))).toBe(markdown);
+    // Literal Markdown characters and a fence inside code stay what Jira stored.
+    const literal = {
+      type: "doc",
+      version: 1,
+      content: [
+        { type: "paragraph", content: [text("**draft** 2. [x]"), text("a`b", [{ type: "code" }])] },
+        { type: "paragraph", content: [text("1. not a list")] },
+        { type: "codeBlock", content: [text("```\nstill code")] },
+      ],
+    };
+    expect(markdownToAdf(adfToMarkdown(literal))).toEqual(literal);
+  });
+
+  it("reads reference links, and treats merged table cells as Jira-only", () => {
+    expect(markdownToAdf("[Guide][g]\n\n[g]: https://x.test").content).toEqual([
+      {
+        type: "paragraph",
+        content: [text("Guide", [{ type: "link", attrs: { href: "https://x.test" } }])],
+      },
+    ]);
+    const cell = (attrs?: Record<string, unknown>) => ({
+      type: "table",
+      content: [{ type: "tableRow", content: [{ type: "tableHeader", ...(attrs && { attrs }) }] }],
+    });
+    expect(hasJiraOnlyContent({ type: "doc", content: [cell({ colspan: 1 })] })).toBe(false);
+    expect(hasJiraOnlyContent({ type: "doc", content: [cell({ colspan: 2 })] })).toBe(true);
+    expect(hasJiraOnlyContent({ type: "doc", content: [cell({ rowspan: 3 })] })).toBe(true);
   });
 });
