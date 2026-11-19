@@ -2759,48 +2759,55 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
    * Inserts an `@path` link for each dropped item on a server that shares this computer's
    * filesystem. Send waits until every link lands, or a slow WSL conversion would miss the message.
    */
-  const insertComposerPathLinks = async (
+  const insertComposerPathLinks = (
     items: File[],
     target: Exclude<FolderDropTarget, "remote">,
     busyTitle: string,
   ): Promise<{ linked: File[]; missing: File[] }> => {
     const draftKey = attachmentTargetKeyRef.current;
+    pendingDraftWork.begin(draftKey);
+    return linkComposerPaths(items, target, busyTitle, draftKey).finally(() =>
+      pendingDraftWork.end(draftKey),
+    );
+  };
+
+  const linkComposerPaths = async (
+    items: File[],
+    target: Exclude<FolderDropTarget, "remote">,
+    busyTitle: string,
+    draftKey: string,
+  ): Promise<{ linked: File[]; missing: File[] }> => {
     const linked: File[] = [];
     const missing: File[] = [];
-    pendingDraftWork.begin(draftKey);
-    try {
-      const bridge = window.desktopBridge;
-      for (const item of items) {
-        const droppedPath = resolveDroppedFolderPath(item, bridge?.getPathForFile);
-        const path =
-          droppedPath === null || typeof target === "string"
-            ? droppedPath
-            : ((await bridge
-                ?.toLocalBackendPath(target.wslBackendId, droppedPath)
-                .catch(() => null)) ?? null);
-        // ChatView is reused across threads, so a slow conversion must not land in the next draft.
-        if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) {
-          return { linked, missing };
-        }
-        if (path === null) {
-          missing.push(item);
-          continue;
-        }
-        const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
-          ensureLeadingBoundary: true,
-        });
-        if (!inserted) {
-          toastManager.add({
-            type: "error",
-            title: busyTitle,
-            description: gt("The composer is busy; try again once it is ready."),
-          });
-          break;
-        }
-        linked.push(item);
+    const bridge = window.desktopBridge;
+    for (const item of items) {
+      const droppedPath = resolveDroppedFolderPath(item, bridge?.getPathForFile);
+      const path =
+        droppedPath === null || typeof target === "string"
+          ? droppedPath
+          : ((await bridge
+              ?.toLocalBackendPath(target.wslBackendId, droppedPath)
+              .catch(() => null)) ?? null);
+      // ChatView is reused across threads, so a slow conversion must not land in the next draft.
+      if (!composerMountedRef.current || attachmentTargetKeyRef.current !== draftKey) {
+        return { linked, missing };
       }
-    } finally {
-      pendingDraftWork.end(draftKey);
+      if (path === null) {
+        missing.push(item);
+        continue;
+      }
+      const inserted = insertComposerTextAtEndStable(`${serializeComposerFileLink(path)} `, {
+        ensureLeadingBoundary: true,
+      });
+      if (!inserted) {
+        toastManager.add({
+          type: "error",
+          title: busyTitle,
+          description: gt("The composer is busy; try again once it is ready."),
+        });
+        break;
+      }
+      linked.push(item);
     }
     focusComposer();
     return { linked, missing };

@@ -216,7 +216,7 @@ export function useComposerAttachmentIntake(input: {
         fileStagingLimit !== null &&
         file.size > fileStagingLimit
       ) {
-        localFileLinker ??= resolveLocalFileLinker();
+        if (localFileLinker === undefined) localFileLinker = resolveLocalFileLinker();
         if (localFileLinker !== null) {
           filesToLink.push(file);
           continue;
