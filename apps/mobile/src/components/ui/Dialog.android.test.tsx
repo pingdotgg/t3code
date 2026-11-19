@@ -90,13 +90,40 @@ it("keeps a dialog raised while the activity is replaced", () => {
   expect(current.container.textContent).toContain("Shared content imported");
 });
 
-it("tells a replaced alert it was dismissed", () => {
+it.each([
+  {
+    kind: "alert",
+    present: (onClose: () => void) =>
+      Dialog.alert("Older", undefined, [{ text: "OK" }], { onDismiss: onClose }),
+  },
+  {
+    kind: "confirm",
+    present: (onClose: () => void) =>
+      Dialog.confirm({
+        title: "Remove project",
+        confirmText: "Remove",
+        onConfirm: () => {},
+        onCancel: onClose,
+      }),
+  },
+  {
+    kind: "text-input",
+    present: (onClose: () => void) =>
+      Dialog.prompt({
+        title: "Rename",
+        initialValue: "",
+        confirmText: "Save",
+        onConfirm: () => {},
+        onCancel: onClose,
+      }),
+  },
+])("tells a replaced $kind it was closed without an answer", ({ present }) => {
   mountHost();
-  const onDismiss = vi.fn();
-  act(() => Dialog.alert("Older", undefined, [{ text: "OK" }], { onDismiss }));
+  const onClose = vi.fn();
+  act(() => present(onClose));
   act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
 
-  expect(onDismiss).toHaveBeenCalledOnce();
+  expect(onClose).toHaveBeenCalledOnce();
 });
 
 it("ignores a late action from a dialog that a newer one replaced", () => {
