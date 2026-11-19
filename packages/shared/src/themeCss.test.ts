@@ -21,6 +21,10 @@ describe("themeCssValueFetches", () => {
     ["background-image", `url("${SVG_WITH_OWN_GRADIENT}")`, false],
     // The url( sits inside a string, so the address after that string is a real remote url().
     ["content", `"url('data:" url("https://evil.example/a") "'"`, true],
+    ["--leak", '/* " */ url(https://evil.example/a) /* " */', true],
+    ["content", String.raw`"Theme preview: \"ready\""`, false],
+    ["--label", String.raw`'It\'s ready'`, false],
+    ["content", String.raw`url("#icon") / "The \"ready\" icon"`, false],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],
     ["color", "red", false],
