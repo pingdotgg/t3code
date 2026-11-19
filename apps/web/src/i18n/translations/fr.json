@@ -2730,6 +2730,8 @@
   "8f109e64ea66ebaf": "Impossible de copier le texte dans le presse-papiers.",
   "3444fc0e046baae6": "L’API Presse-papiers n’est pas disponible pour lire le texte.",
   "ec2160de6dd9c8d3": "Impossible de lire le texte depuis le presse-papiers.",
+  "d0d666e8667322ca": "Les paramètres de l’environnement sont en cours de chargement",
+  "aa985f3cefd7c4d2": "Attendez que la connexion à cet environnement soit établie, puis réessayez.",
   "433bd7a75c28a858": "Impossible de créer le dépôt {label}",
   "181a251357eeca66": "{error} Utilisez Publier le dépôt dans le menu Git pour réessayer.",
   "fc6379bdbd00c0a3": "Publié sur {label}",

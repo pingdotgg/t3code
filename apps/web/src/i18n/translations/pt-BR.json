@@ -2730,6 +2730,8 @@
   "8f109e64ea66ebaf": "Falha ao copiar o texto para a área de transferência.",
   "3444fc0e046baae6": "A API da área de transferência não está disponível ao ler o texto.",
   "ec2160de6dd9c8d3": "Falha ao ler o texto da área de transferência.",
+  "d0d666e8667322ca": "As configurações do ambiente ainda estão carregando",
+  "aa985f3cefd7c4d2": "Aguarde até que este ambiente esteja conectado e tente novamente.",
   "433bd7a75c28a858": "Não foi possível criar o repositório no {label}",
   "181a251357eeca66": "{error} Use Publicar repositório no menu do Git para tentar novamente.",
   "fc6379bdbd00c0a3": "Publicado no {label}",
