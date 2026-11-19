@@ -103,9 +103,12 @@ const make = Effect.gen(function* () {
   const settings = yield* Settings.ServerSettingsService;
   const analytics = yield* Analytics.AnalyticsService;
   const providers = yield* Providers.ProviderRegistry;
-  // Serializes each limit or answer check with its writes, a card's answer through settling the
-  // card. Order: feedback, settings, SQL; nothing that holds the settings lock takes this one.
+  // Serializes the limit checks with their writes. Held only after any settings wait, so an answer
+  // stalled on the settings lock never holds up a card or an unprompted report.
   const lock = yield* Semaphore.make(1);
+  // Serializes answers, each from its claim through settling its card. Order: answers, settings,
+  // SQL. Nothing that holds the settings lock or `lock` takes this one.
+  const answering = yield* Semaphore.make(1);
 
   const record = (
     card: Omit<FeedbackCard, "conversationTrace">,
@@ -143,40 +146,45 @@ const make = Effect.gen(function* () {
 
   /**
    * Inserts a report under the settings lock, so a switch to Off is wholly before or after it: a
-   * read cannot return the mode an update is replacing. Call it under the feedback lock.
+   * read cannot return the mode an update is replacing. An unprompted report takes `lock` inside
+   * it for its limit; a requested one is called under `answering`.
    */
   const insert = Effect.fn("FeedbackStore.insert")(function* (
     report: Omit<FeedbackReport, "sent">,
     runId: RunId | null,
   ) {
     const traceJson = yield* encodeTrace(report.trace).pipe(Effect.mapError(storageError));
+    const write = (mode: AgentFeedbackMode) =>
+      sql.withTransaction(
+        Effect.gen(function* () {
+          if (!report.userRequested) {
+            const limited = yield* overLimit(runId);
+            if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
+          }
+          // Last before the insert: the mode can change while a card waits.
+          yield* allowedBy(mode, report.userRequested, report.source);
+          yield* sql`INSERT INTO agent_feedback ${sql.insert({
+            id: report.id,
+            thread_id: report.threadId,
+            run_id: runId,
+            created_at: report.createdAt,
+            kind: report.kind,
+            subject: report.subject,
+            expected: report.expected,
+            actual: report.actual,
+            workaround: report.workaround,
+            user_requested: report.userRequested ? 1 : 0,
+            trace: traceJson,
+            source: report.source,
+            // Marked sent before the hand-off and cleared only on a refusal, so a delivery cut
+            // short reads as sent.
+            sent: 1,
+          })}`;
+        }),
+      );
     yield* settings
-      .withSettingsSnapshot((current) =>
-        sql.withTransaction(
-          Effect.gen(function* () {
-            if (!report.userRequested) {
-              const limited = yield* overLimit(runId);
-              if (limited !== undefined) return yield* new FeedbackLimitError({ scope: limited });
-            }
-            // Last before the insert: the mode can change while a card waits.
-            yield* allowedBy(current.agentFeedback.mode, report.userRequested, report.source);
-            yield* sql`INSERT INTO agent_feedback ${sql.insert({
-              id: report.id,
-              thread_id: report.threadId,
-              run_id: runId,
-              created_at: report.createdAt,
-              kind: report.kind,
-              subject: report.subject,
-              expected: report.expected,
-              actual: report.actual,
-              workaround: report.workaround,
-              user_requested: report.userRequested ? 1 : 0,
-              trace: traceJson,
-              source: report.source,
-              sent: 0,
-            })}`;
-          }),
-        ),
+      .withSettingsSnapshot(({ agentFeedback: { mode } }) =>
+        report.userRequested ? write(mode) : lock.withPermit(write(mode)),
       )
       .pipe(
         Effect.mapError((error) =>
@@ -189,7 +197,7 @@ const make = Effect.gen(function* () {
       );
   });
 
-  /** Sends a stored report as the `agent.feedback` event; false while telemetry is off. */
+  /** Sends a stored report as the `agent.feedback` event; false when telemetry refuses it. */
   const deliver = Effect.fn("FeedbackStore.deliver")(function* (
     report: Omit<FeedbackReport, "sent">,
     dimensions: Partial<ProviderDimensions>,
@@ -206,8 +214,8 @@ const make = Effect.gen(function* () {
       source,
       ...dimensions,
     });
-    if (sent) {
-      yield* sql`UPDATE agent_feedback SET sent = 1 WHERE id = ${report.id}`.pipe(
+    if (!sent) {
+      yield* sql`UPDATE agent_feedback SET sent = 0 WHERE id = ${report.id}`.pipe(
         Effect.mapError(storageError),
       );
     }
@@ -230,7 +238,7 @@ const make = Effect.gen(function* () {
       threadId,
       createdAt: DateTime.formatIso(yield* DateTime.now),
     };
-    yield* lock.withPermit(insert(report, runId));
+    yield* insert(report, runId);
     return { ...report, sent: yield* deliver(report, dimensions) };
   });
 
@@ -297,14 +305,15 @@ const make = Effect.gen(function* () {
 
     // One answer at a time, from the claim through settling the card, so no other answer can
     // settle it differently in between.
-    yield* lock
+    yield* answering
       .withPermit(
         Effect.gen(function* () {
           const [waiting] = yield* sql<{ readonly waiting: number }>`
             SELECT 1 AS waiting FROM orchestration_v2_projection_turn_items
             WHERE turn_item_id = ${item.id} AND status = 'waiting'`;
           if (waiting === undefined) return yield* fail("already_answered");
-          // Stored before its card was settled, by a crash or a failed record: settle it now.
+          // Stored before its card was settled, by a crash or a failed record: settle it now. A
+          // report not known to be refused reads as sent.
           const [stored] = yield* sql<{ readonly sent: number; readonly trace: string | null }>`
             SELECT sent, trace FROM agent_feedback WHERE id = ${card.reportId}`;
           if (stored !== undefined) {

@@ -823,6 +823,64 @@ it.effect("a report stored before its card was settled settles the card on the n
   }),
 );
 
+it.effect("a report handed to telemetry heals as sent even if the sent write fails", () =>
+  Effect.gen(function* () {
+    const { events, cards, failRecords, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const card = yield* show(cards, requested);
+      // Every write of `sent` fails, and so does the card record after the hand-off.
+      yield* sql`CREATE TRIGGER fail_sent_write BEFORE UPDATE OF sent ON agent_feedback
+        BEGIN SELECT RAISE(ABORT, 'The sent write failed.'); END`;
+      yield* Ref.set(failRecords, true);
+      expect(yield* Effect.result(answer(card, "send"))).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "record_failed" },
+      });
+      expect(yield* Ref.get(events)).toHaveLength(1);
+      yield* sql`DROP TRIGGER fail_sent_write`;
+      yield* Ref.set(failRecords, false);
+      // The report left the machine, so the next answer settles the card as sent.
+      yield* answer(card, "decline");
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("sent");
+      expect(yield* listFeedbackReports).toMatchObject([{ sent: true }]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("a card is shown while an answer waits for the settings lock", () =>
+  Effect.gen(function* () {
+    const { settingsLock, reading, events, cards, layer } = yield* harness;
+    yield* Effect.gen(function* () {
+      const card = yield* show(cards, requested);
+      // Something else holds the settings lock for a long time, as an agent uninstall can.
+      const holding = yield* Deferred.make<void>();
+      const done = yield* Deferred.make<void>();
+      const holder = yield* settingsLock
+        .withPermits(1)(
+          Deferred.succeed(holding, undefined).pipe(Effect.andThen(Deferred.await(done))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(holding);
+      const begun = yield* Deferred.make<void>();
+      yield* Ref.set(reading, { begun, release: yield* Deferred.make<void>() });
+      const parked = yield* Effect.forkChild(answer(card, "send"));
+      yield* Deferred.await(begun);
+      // An agent's request for another card does not wait behind the parked answer.
+      const second = yield* Effect.forkChild(
+        show(cards, requested).pipe(Effect.timeoutOption("1 second")),
+      );
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(second))._tag).toBe("Some");
+      yield* Deferred.succeed(done, undefined);
+      yield* Fiber.join(holder);
+      yield* Fiber.join(parked);
+      expect((yield* Queue.take(cards)).feedbackStatus).toBe("sent");
+      expect(yield* Ref.get(events)).toHaveLength(1);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect("a Send refused while Off settles the card before a later Send can store it", () =>
   Effect.gen(function* () {
     const { mode, events, cards, shown, recordGates, layer } = yield* harness;
