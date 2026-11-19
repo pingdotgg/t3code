@@ -440,11 +440,11 @@ it("names the first linked issue and reveals more issues on demand", async () =>
   });
   expect(externalClick.defaultPrevented).toBe(false);
   const extra = screen.getByRole("link", { name: "Issue #124: Tab list jumps" });
-  expect(extra.query()).toBeNull();
+  await expect.element(extra).not.toBeInTheDocument();
   await screen.getByRole("button", { name: "Show 1 more" }).click();
   await expect.element(extra).toBeVisible();
   await screen.getByRole("button", { name: "Show less" }).click();
-  expect(extra.query()).toBeNull();
+  await expect.element(extra).not.toBeInTheDocument();
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
