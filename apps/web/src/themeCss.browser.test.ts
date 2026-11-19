@@ -45,6 +45,14 @@ it("applies theme CSS and drops every rule that would load a remote file", () =>
   expect(kept.join("\n")).toContain("--toggle:");
   expect(style.cursor).toBe("auto");
 
+  // Overriding one longhand hides a var() shorthand's text, which is kept when no source can fetch.
+  applyThemeCss(`
+    [data-theme-css-probe] { --edge: 4px solid red; border: var(--edge); border-left-width: 0px; }
+    [data-theme-css-probe] { background: var(--none, linear-gradient(red, blue)); background-color: red; }
+  `);
+  expect(style.borderTopWidth).toBe("4px");
+  expect(style.backgroundImage).toContain("linear-gradient");
+
   applyThemeCss(undefined);
   expect(getComputedStyle(probe).color).not.toBe("rgb(1, 2, 3)");
 });
