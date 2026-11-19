@@ -2117,6 +2117,41 @@ it.layer(
           signedIn.auth,
         );
       });
+
+      it("keeps scanned folders through Antigravity refreshes", () => {
+        const scanned = ["/project", "/plain"].reduce<ServerProvider>(
+          (provider, cwd) =>
+            ProviderRegistry.upsertProviderWorkspaceSnapshot(provider, cwd, {
+              ...signedIn,
+              skills: [{ name: "review", path: `${cwd}/SKILL.md`, enabled: true }],
+            }),
+          signedIn,
+        );
+        const healthCheck = { ...signedIn, checkedAt: "2026-09-05T00:01:00.000Z" };
+
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(scanned, {
+            ...healthCheck,
+            workspaceSnapshots: [],
+          }).workspaceSnapshots,
+          scanned.workspaceSnapshots,
+        );
+        const sessionFolder = {
+          cwd: "/project",
+          checkedAt: "2026-09-05T00:01:00.000Z",
+          slashCommands: [{ name: "swarm" }],
+          skills: [],
+        };
+        assert.deepStrictEqual(
+          ProviderRegistry.mergeProviderSnapshot(scanned, {
+            ...healthCheck,
+            workspaceSnapshots: [sessionFolder],
+          })
+            .workspaceSnapshots?.map((snapshot) => snapshot.cwd)
+            .toSorted(),
+          ["/plain", "/project"],
+        );
+      });
     });
 
     it("fills missing capabilities from the previous provider snapshot", () => {
