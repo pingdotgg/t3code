@@ -5,6 +5,7 @@ import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { parse as parseYamlDocument } from "yaml";
 
 /** Match Python os.path.expanduser: USERPROFILE, then HOMEDRIVE+HOMEPATH on Windows; HOME elsewhere. */
@@ -43,6 +44,7 @@ const SKILL_READ_CHUNK_BYTES = 1024;
 const SkillFrontmatter = Schema.Struct({
   name: Schema.optional(Schema.NullOr(Schema.String)),
   description: Schema.optional(Schema.NullOr(Schema.String)),
+  "disable-model-invocation": Schema.optional(Schema.Unknown),
 });
 const decodeSkillFrontmatter = Schema.decodeUnknownSync(SkillFrontmatter);
 const decodePluginPreferences = Schema.decodeUnknownOption(
@@ -103,10 +105,36 @@ function parseSkillFrontmatter(contents: string, fileName: string) {
     const description = frontmatter.description?.trim();
     // Native names are not trimmed. Do not rename one to fit the picker contract.
     if (!name || name !== name.trim()) return undefined;
-    return { name, ...(description ? { description } : {}) };
+    return {
+      name,
+      ...(description ? { description } : {}),
+      ...(frontmatter["disable-model-invocation"] === true ? { userInvocationOnly: true } : {}),
+    };
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Antigravity leaves user-only skills out of the model's catalog and expands a native `/name`
+ * only when it opens the prompt, so point the model at the file the user invoked.
+ */
+export function annotateAntigravityUserOnlySkillMentions(
+  text: string,
+  skills: ReadonlyArray<ServerProviderSkill>,
+): string {
+  const paths = new Map(
+    skills.flatMap((skill) =>
+      skill.enabled && skill.userInvocationOnly === true ? [[skill.name, skill.path]] : [],
+    ),
+  );
+  const annotated = new Set<string>();
+  return text.replace(SKILL_MENTION_PATTERN, (mention, _prefix: string, name: string) => {
+    const path = paths.get(name);
+    if (path === undefined || annotated.has(name)) return mention;
+    annotated.add(name);
+    return `${mention} [The user invoked this skill. Follow the instructions at: ${path}]`;
+  });
 }
 
 /** The native loader orders child paths with Go's URL.EscapedPath encoding. */

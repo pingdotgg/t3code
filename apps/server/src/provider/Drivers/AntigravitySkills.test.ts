@@ -1,10 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverAntigravitySkills } from "./AntigravitySkills.ts";
+import {
+  annotateAntigravityUserOnlySkillMentions,
+  discoverAntigravitySkills,
+} from "./AntigravitySkills.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const writeSkill = Effect.fn("writeSkill")(function* (directory: string, contents: string) {
@@ -389,4 +392,33 @@ it.layer(NodeServices.layer)("discoverAntigravitySkills", (it) => {
       }
     }),
   );
+});
+
+describe("annotateAntigravityUserOnlySkillMentions", () => {
+  it("points the model at each user-only skill once and leaves other text alone", () => {
+    const skills = [
+      {
+        name: "ship",
+        path: "/s/ship/SKILL.md",
+        scope: "user",
+        enabled: true,
+        userInvocationOnly: true,
+      },
+      { name: "lint", path: "/s/lint/SKILL.md", scope: "user", enabled: true },
+      {
+        name: "off",
+        path: "/s/off/SKILL.md",
+        scope: "user",
+        enabled: false,
+        userInvocationOnly: true,
+      },
+    ];
+    assert.equal(
+      annotateAntigravityUserOnlySkillMentions(
+        "Run $ship then $lint and $off or $5 and a$ship ok.\n$ship",
+        skills,
+      ),
+      "Run $ship [The user invoked this skill. Follow the instructions at: /s/ship/SKILL.md] then $lint and $off or $5 and a$ship ok.\n$ship",
+    );
+  });
 });

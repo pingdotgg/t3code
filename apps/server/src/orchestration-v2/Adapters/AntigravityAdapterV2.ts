@@ -4,6 +4,7 @@ import {
   ProviderInstanceId,
   type OrchestrationV2ProviderCapabilities,
   type ProviderSetupError,
+  type ServerProviderSkill,
 } from "@t3tools/contracts";
 import type { SelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -47,6 +48,7 @@ import {
   normalizeAntigravityToolCall,
 } from "../../provider/acp/AntigravityProtocol.ts";
 import { isAntigravitySignInRequiredError } from "../../provider/antigravityAuthSupport.ts";
+import { annotateAntigravityUserOnlySkillMentions } from "../../provider/Drivers/AntigravitySkills.ts";
 import {
   AcpProviderCapabilitiesV2,
   makeAcpAdapterV2,
@@ -101,6 +103,7 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly discoverSkills?: (cwd: string) => Effect.Effect<ReadonlyArray<ServerProviderSkill>>;
 }
 
 /**
@@ -223,6 +226,15 @@ export function makeAntigravityAcpAdapterFlavor(
     mcpOverHttp: true,
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
+    rewriteUserText: (text, turnInput) => {
+      const cwd = turnInput.runtimePolicy.cwd;
+      if (options.discoverSkills === undefined || !cwd || !text.includes("$")) {
+        return Effect.succeed(text);
+      }
+      return options
+        .discoverSkills(cwd)
+        .pipe(Effect.map((skills) => annotateAntigravityUserOnlySkillMentions(text, skills)));
+    },
     buildAttachmentPrompt: ({
       text,
       attachments,

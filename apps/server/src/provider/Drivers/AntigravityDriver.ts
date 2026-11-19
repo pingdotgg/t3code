@@ -480,6 +480,12 @@ export const AntigravityDriver: ProviderDriver<
         ),
       ),
       profileDirectory,
+      discoverSkills: (cwd) =>
+        discoverAntigravitySkills({ cwd, userHome, profileDirectory }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.orElseSucceed(() => []),
+        ),
       onSessionStarted: provider.onSessionStarted,
       onSessionEvent: (event, cwd) => {
         if (event._tag === "ConfigOptionsUpdated") {
