@@ -28,6 +28,8 @@ impl Drop for TestDir {
 struct Shell {
     snapshot: Mutex<Value>,
     live: tokio::sync::broadcast::Sender<ShellStreamItem>,
+    /// What the watch loop sent as `thread.pull-request-watch.sync`.
+    syncs: Mutex<Vec<Value>>,
 }
 impl Engine for Shell {
     fn dispatch(
@@ -50,6 +52,10 @@ impl Engine for Shell {
     }
     fn shell_snapshot(&self) -> BoxFuture<'_, Result<Value, EngineError<GetShellSnapshotError>>> {
         Box::pin(async { Ok(self.snapshot.lock().expect("snapshot").clone()) })
+    }
+    fn sync_pull_request_watch(&self, command: Value) -> BoxFuture<'_, Result<(), String>> {
+        self.syncs.lock().expect("syncs").push(command);
+        Box::pin(async { Ok(()) })
     }
     fn call(&self, tag: &str, _: Value) -> BoxFuture<'_, Result<Value, EngineError<Value>>> {
         let archived = tag == "orchestration.getArchivedShellSnapshot";
@@ -102,6 +108,7 @@ fn shell(root: &std::path::Path) -> Arc<Shell> {
             json!({"projects":[{"id":"p1","title":"Repo","workspaceRoot":root,"repositoryIdentity":{"locator":{"remoteUrl":"git@github.com:a/b.git"}}}],"threads":[]}),
         ),
         live: tokio::sync::broadcast::channel(8).0,
+        syncs: Mutex::new(Vec::new()),
     })
 }
 fn panel(engine: Arc<Shell>, dir: &TestDir, endpoint: &str) -> Arc<Panel> {
@@ -1458,4 +1465,146 @@ fn observed_threads_evict_the_oldest_observation_and_keep_completion_together() 
         views.iter().any(|v| v.id == "a-0" && v.completed == "done"),
         "newer state remains intact"
     );
+}
+
+/// A stub GitHub whose pull request 7 has the checks and comments in `state`.
+async fn watched_api(state: Arc<Mutex<Value>>) -> (String, tokio::task::JoinHandle<()>) {
+    use axum::{Json, Router, routing::get};
+    let router = Router::new()
+        .route("/user", get(|| async { Json(json!({"id": 12, "login": "nick"})) }))
+        .route(
+            "/graphql",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                let state = state.clone();
+                async move {
+                    let query = text(&body, "query");
+                    let now = state.lock().expect("state").clone();
+                    let mut pr: Value = serde_json::from_str(include_str!(
+                        "../../../../conn-source-control/src/pull_requests/sample.json"
+                    ))
+                    .expect("sample");
+                    pr["headRefOid"] = now["head"].clone();
+                    pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["contexts"] =
+                        json!({"nodes": now["contexts"], "pageInfo": {"hasNextPage": false, "endCursor": null}});
+                    pr["comments"] = json!({"nodes": now["comments"], "pageInfo": {"hasNextPage": false}});
+                    pr["reviews"] = json!({"nodes": [], "pageInfo": {"hasNextPage": false}});
+                    pr["reviewThreads"] = json!({"nodes": [], "pageInfo": {"hasNextPage": false}});
+                    pr["reviewDismissals"] = json!({"nodes": [], "pageInfo": {"hasNextPage": false}});
+                    let data = if query.contains("RoutingIdentityViewer") {
+                        json!({"viewer": {"databaseId": 12, "login": "nick"}})
+                    } else {
+                        json!({"viewer": {"login": "nick"}, "repository": {"pullRequest": pr,
+                            "mergeCommitAllowed": true, "squashMergeAllowed": true,
+                            "rebaseMergeAllowed": true, "autoMergeAllowed": true,
+                            "viewerPermission": "WRITE"}})
+                    };
+                    Json(json!({"data": data}))
+                }
+            }),
+        )
+        .fallback(|| async { axum::http::StatusCode::NO_CONTENT });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let base = format!("http://{}", listener.local_addr().expect("addr"));
+    let task = tokio::spawn(async move {
+        axum::serve(listener, router).await.expect("stub API");
+    });
+    (base, task)
+}
+
+/// The watch loop reads a watched pull request through `gh`'s login and the panel's client,
+/// and sends the engine the watch's next state; a change in the checks or a new comment sends
+/// T3's wake text (`PullRequestWatchReactor`), and a quiet read sends nothing.
+#[tokio::test]
+async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_change() {
+    let dir = TestDir::new();
+    let shell = shell(&dir.0);
+    let state = Arc::new(Mutex::new(json!({
+        "head": "1111111111111111111111111111111111111111",
+        "contexts": [{"__typename": "StatusContext", "context": "ci", "state": "PENDING",
+            "targetUrl": "https://ci.example/ci"}],
+        "comments": [],
+    })));
+    let (base, task) = watched_api(state.clone()).await;
+    let started = "2026-11-16T00:00:00.000Z";
+    let watch = json!({"startedAt": started, "headSha": null, "failedChecks": [], "passed": false,
+        "passedChecks": [], "conflicting": false, "awaitingBaseline": "all",
+        "remarksThrough": started, "remarkIds": [], "wakes": 0});
+    let thread = |watch: &Value| {
+        json!({"id": "t1", "projectId": "p1", "title": "T", "settledAt": null,
+            "settledOverride": null, "lineage": {"relationshipToParent": null},
+            "pullRequests": [{"host": "github.com", "repository": "a/b", "number": 7,
+                "url": "https://github.com/a/b/pull/7", "source": "agent",
+                "linkedAt": started, "snapshot": null, "stack": null, "watch": watch}]})
+    };
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&watch)]);
+    let panel = panel(shell.clone(), &dir, &base);
+    let mut watcher = watches::Watcher::new(panel);
+
+    // The first read is the baseline: the watch remembers the head, nothing wakes.
+    watcher.pass(None).await;
+    let baseline = shell
+        .syncs
+        .lock()
+        .expect("syncs")
+        .pop()
+        .expect("baseline sync");
+    assert!(baseline.get("wake").is_none(), "{baseline}");
+    assert_eq!(baseline["startedAt"], started);
+    assert_eq!(baseline["host"], "github.com");
+    let next = baseline["watch"].clone();
+    assert_eq!(next["headSha"], "1111111111111111111111111111111111111111");
+    assert!(next.get("awaitingBaseline").is_none(), "{next}");
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&next)]);
+
+    // CI fails and a reviewer comments: one wake with both, in T3's words.
+    {
+        let mut now = state.lock().expect("state");
+        now["contexts"][0]["state"] = json!("FAILURE");
+        now["comments"] = json!([{"id": "C1", "body": "Please <b>rename</b> this.",
+            "createdAt": "2030-01-01T00:00:00Z", "url": "https://github.com/a/b/pull/7#c1",
+            "author": {"login": "reviewer"}}]);
+    }
+    watcher.pass(None).await;
+    let woke = shell.syncs.lock().expect("syncs").pop().expect("wake sync");
+    let wake = &woke["wake"];
+    assert_eq!(
+        wake["text"],
+        "Update on pull request #7 (https://github.com/a/b/pull/7), which T3 Code is watching for you:\n\
+         - Checks failed on 1111111:\n  - ci https://ci.example/ci\n\
+         - 1 new comment:\n  - reviewer: \"Please rename this.\" https://github.com/a/b/pull/7#c1\n\n\
+         Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."
+    );
+    assert_eq!(
+        wake["notification"],
+        json!({"source": {"kind": "monitor"}, "outcome": "failed",
+            "summary": "#7: checks failed, new comments"})
+    );
+    assert_eq!(wake["includesRemarks"], true);
+    assert!(
+        wake["messageId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("message:pr-watch:"))
+    );
+    assert_eq!(woke["watch"]["failedChecks"], json!(["ci"]));
+
+    // A pass with nothing new sends nothing.
+    shell.snapshot.lock().expect("snapshot")["threads"] = json!([thread(&woke["watch"])]);
+    watcher.pass(None).await;
+    assert!(
+        shell.syncs.lock().expect("syncs").is_empty(),
+        "a quiet pull request is left alone"
+    );
+
+    // A merged pull request ends the watch without a wake.
+    {
+        let mut snapshot = shell.snapshot.lock().expect("snapshot");
+        snapshot["threads"][0]["pullRequests"][0]["snapshot"] = json!({"state": "merged"});
+    }
+    watcher.pass(None).await;
+    let ended = shell.syncs.lock().expect("syncs").pop().expect("end sync");
+    assert_eq!(ended["watch"], Value::Null);
+    assert!(ended.get("wake").is_none());
+    task.abort();
 }

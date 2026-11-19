@@ -5,6 +5,7 @@
 //! - `ask`: the turn asks for a command approval, then answers once approved.
 //! - `question`: the turn asks the user a question (`user_input`) and waits for the answer.
 //! - `fail`: the turn fails.
+//! - `push`: a finished `git push` command row, then the turn completes.
 //! - `subagent`: a subagent's child thread with one message, then the turn completes.
 //! - `background`: the turn completes with background work left, then asks for a
 //!   continuation turn, which answers `continued` and ends the work.
@@ -722,6 +723,22 @@ impl Session for FakeSession {
                 "background-hold" => {
                     self.background.store(true, Ordering::SeqCst);
                     started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "holding", false));
+                    started.push(provider_turn(&turn, "completed"));
+                    started.push(terminal(&turn, TurnStatus::Completed, None));
+                }
+                // `push`: a finished `git push` row, then the turn completes.
+                "push" => {
+                    let now = now_iso();
+                    started.push(event(json!({"type": "turn_item.updated", "turnItem": {
+                        "id": format!("turn-item:push:{}", turn.run_id), "threadId": turn.thread_id,
+                        "runId": turn.run_id, "nodeId": null,
+                        "providerThreadId": turn.provider_thread_id,
+                        "providerTurnId": format!("turn:{}", turn.run_id), "nativeItemRef": null,
+                        "parentItemId": null, "ordinal": 0, "status": "completed", "title": null,
+                        "startedAt": now, "completedAt": now, "updatedAt": now,
+                        "type": "command_execution", "input": "git push origin HEAD",
+                    }})));
+                    started.extend(assistant(&turn, &format!("{}:a", turn.run_id), "pushed", false));
                     started.push(provider_turn(&turn, "completed"));
                     started.push(terminal(&turn, TurnStatus::Completed, None));
                 }

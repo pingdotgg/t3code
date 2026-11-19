@@ -4,8 +4,10 @@
 //! Keys, URLs and chains come from the host definition registry
 //! (`conn_source_control::registry`), as T3's come from `sourceControlDefinitions`.
 //!
-//! Not here: `watch_pull_request` and `unwatch_pull_request` (they read the host), and the
-//! guide tools (a text generator and a host).
+//! `watch_pull_request` and `unwatch_pull_request` follow `PullRequestWatchService.setWatching`;
+//! `read_pull_request_guide` follows the toolkit's `locateAll`. `write_pull_request_guides` is
+//! not served: the server has no review guide generator.
+//! Their host reads go through the server's GitHub panel (`McpConfig::pull_requests`).
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -667,6 +669,237 @@ pub(crate) async fn list_thread(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .and_then(Value::as_array)
         .map(Vec::as_slice);
     Ok(list(&thread, cursor, states))
+}
+
+// ---- Watches and guides ------------------------------------------------------------------
+
+const WATCH_FAILED: &str = "Could not change whether the pull request is watched.";
+const WATCH_FROM_SUBAGENT: &str = "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
+
+/// `PullRequestProjectNotFoundError`.
+fn project_not_found(repository: &str) -> String {
+    format!(
+        "No project in this environment is a checkout of {repository}, so its pull requests cannot be read here. Add one with t3_project_create."
+    )
+}
+
+/// The `message` of a pull request contract failure, as T3's error classes render it.
+fn contract_message(error: &Value) -> String {
+    match error["_tag"].as_str() {
+        Some("PullRequestUnavailableError") => match error["reason"].as_str() {
+            Some("cli-missing") => error["requirement"]
+                .as_str()
+                .unwrap_or("The tool this host is read through is not installed or set up.")
+                .to_owned(),
+            Some("cli-unauthenticated") => error["requirement"]
+                .as_str()
+                .unwrap_or("This host has no working credentials.")
+                .to_owned(),
+            Some("provider-unsupported") => {
+                "Change requests cannot be browsed for this project's host yet.".to_owned()
+            }
+            _ => match error["host"].as_str() {
+                Some(host) => format!(
+                    "No project in T3 Code is on {host}. Add any {host} project to read its change requests."
+                ),
+                None => format!(
+                    "{} is not a project in T3 Code. Add it as a project to read its change requests.",
+                    error["repository"].as_str().unwrap_or("This repository")
+                ),
+            },
+        },
+        Some("PullRequestOperationError") => format!(
+            "Pull request operation {} failed: {}",
+            text(error, "operation"),
+            text(error, "detail")
+        ),
+        _ => error["message"]
+            .as_str()
+            .unwrap_or("An error occurred")
+            .to_owned(),
+    }
+}
+
+/// `guideFailureDetail`: the failure's `detail`, else its message.
+fn guide_failure_detail(error: &Value) -> String {
+    error["detail"]
+        .as_str()
+        .map_or_else(|| contract_message(error), str::to_owned)
+}
+
+fn watched_link(thread: &Value, key: &ThreadPullRequestKey) -> Option<Value> {
+    links_of(thread)
+        .into_iter()
+        .find(|link| !is_dismissed(link) && key_of(link) == *key)
+}
+
+impl Cx<'_> {
+    async fn pull_request_host(
+        &self,
+        operation: &'static str,
+        input: Value,
+    ) -> Option<Result<Value, Value>> {
+        let host = self.config().pull_requests.clone()?;
+        Some(host(operation, input).await)
+    }
+
+    /// `projectForPullRequest`: the project that checks out the target's repository,
+    /// preferring the caller's.
+    async fn project_for(&self, target: &Target, preferred: Option<&Value>) -> Option<Value> {
+        let input = json!({"host": target.key.host, "repository": target.key.repository,
+            "preferredProjectId": preferred.map(|p| p["id"].clone())});
+        let found = self.pull_request_host("locateProject", input).await?.ok()?;
+        let id = found["projectId"].as_str()?;
+        let shell = self.shell().await.ok()?;
+        shell["projects"]
+            .as_array()?
+            .iter()
+            .find(|p| p["id"] == id)
+            .cloned()
+    }
+}
+
+/// `watch_pull_request` and `unwatch_pull_request`: `PullRequestWatchService.setWatching`.
+pub(crate) async fn set_watching(cx: &Cx<'_>, args: &Args, watching: bool) -> ToolResult {
+    cx.writes_threads(&[args.get("threadId").and_then(Value::as_str)])
+        .await?;
+    let thread = cx.pull_request_thread(args).await?;
+    let project = cx.project_of(&thread).await;
+    let target = resolve_target(args, project.as_ref())?;
+    let thread_id = text(&thread, "id").to_owned();
+    if watching && thread["lineage"]["relationshipToParent"] == "subagent" {
+        return Err(message(WATCH_FROM_SUBAGENT));
+    }
+    let before = watched_link(&thread, &target.key);
+    let not_open = || message("The pull request is merged, so there is nothing to watch.");
+    if watching
+        && before
+            .as_ref()
+            .is_some_and(|l| l["snapshot"]["state"] == "merged")
+    {
+        return Err(not_open());
+    }
+    if watching && before.as_ref().is_none_or(|l| l.get("watch").is_none()) {
+        let input = json!({"projectId": thread["projectId"], "host": target.key.host,
+            "repository": target.key.repository, "number": target.key.number});
+        match cx.pull_request_host("watchSummary", input).await {
+            Some(Ok(summary)) if summary["state"] == "merged" => return Err(not_open()),
+            // Host and transport errors can recover while the watch is on.
+            Some(Err(error)) if error["_tag"] == "PullRequestUnavailableError" => {
+                return Err(ToolError::Message(contract_message(&error)));
+            }
+            _ => {}
+        }
+    }
+    let mut command = target.json();
+    command.insert("type".into(), json!("thread.pull-request.watch"));
+    command.insert(
+        "commandId".into(),
+        json!(Cx::pull_request_command_id("mcp-pr-watch", &thread_id)),
+    );
+    command.insert("threadId".into(), json!(thread_id));
+    command.insert("watching".into(), json!(watching));
+    command.remove("url");
+    if watching {
+        command.insert("link".into(), json!({"url": target.url, "source": "agent"}));
+    }
+    cx.dispatch(Value::Object(command))
+        .await
+        .map_err(|_| message(WATCH_FAILED))?;
+    let after = cx
+        .projection(&thread_id)
+        .await
+        .map_err(|_| message(&format!("Thread {thread_id} was not found.")))?;
+    let mut result = target.json();
+    result.insert(
+        "watching".into(),
+        json!(
+            watched_link(&after["thread"], &target.key).is_some_and(|l| l.get("watch").is_some())
+        ),
+    );
+    result.insert(
+        "wasWatching".into(),
+        json!(before.is_some_and(|l| l.get("watch").is_some())),
+    );
+    Ok(Value::Object(result))
+}
+
+/// One `locateAll` entry: the resolved target, the project that holds it, the caller's.
+struct Located {
+    target: Result<Target, String>,
+    project: Option<Value>,
+    caller_project: Option<Value>,
+}
+
+/// `locateAll`, for one target.
+async fn locate(cx: &Cx<'_>, input: &Args) -> Located {
+    let caller_project = match cx.caller_projection().await {
+        Ok(Some(own)) => cx.project_of(&own["thread"]).await,
+        _ => None,
+    };
+    let target = match resolve_target(input, caller_project.as_ref()) {
+        Ok(target) => Ok(target),
+        Err(ToolError::Message(text)) => Err(text),
+        Err(other) => Err(other.to_string()),
+    };
+    let project = match &target {
+        Ok(target) => cx.project_for(target, caller_project.as_ref()).await,
+        Err(_) => None,
+    };
+    Located {
+        target,
+        project,
+        caller_project,
+    }
+}
+
+fn guide_reference(project: &Value, target: &Target) -> Value {
+    json!({"projectId": project["id"], "host": target.key.host,
+        "repository": target.key.repository, "number": target.key.number})
+}
+
+/// `read_pull_request_guide`.
+pub(crate) async fn read_guide(cx: &Cx<'_>, args: &Args) -> ToolResult {
+    let located = locate(cx, args).await;
+    let target = located.target.map_err(ToolError::Message)?;
+    let Some(project) = located.project.as_ref().or(located.caller_project.as_ref()) else {
+        return Err(message(&project_not_found(&target.key.repository)));
+    };
+    let answer = match cx
+        .pull_request_host("reviewGuide", guide_reference(project, &target))
+        .await
+    {
+        Some(answer) => answer,
+        None => {
+            Err(json!({"_tag": "PullRequestUnavailableError", "reason": "provider-unsupported"}))
+        }
+    };
+    let result = answer.map_err(|error| {
+        let unsupported = matches!(
+            error["reason"].as_str(),
+            Some("provider-unsupported" | "repository-without-project")
+        );
+        if located.project.is_none()
+            && error["_tag"] == "PullRequestUnavailableError"
+            && unsupported
+        {
+            message(&project_not_found(&target.key.repository))
+        } else {
+            ToolError::Message(guide_failure_detail(&error))
+        }
+    })?;
+    let guide = result.get("guide").cloned().unwrap_or(Value::Null);
+    let current = result.get("currentHeadSha").cloned().unwrap_or(Value::Null);
+    let stale = !guide.is_null() && !current.is_null() && guide["headSha"] != current;
+    let mut out = target.json();
+    out.insert("guide".into(), guide);
+    out.insert(
+        "run".into(),
+        result.get("run").cloned().unwrap_or(Value::Null),
+    );
+    out.insert("currentHeadSha".into(), current);
+    out.insert("stale".into(), json!(stale));
+    Ok(Value::Object(out))
 }
 
 #[cfg(test)]

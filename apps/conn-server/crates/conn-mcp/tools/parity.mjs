@@ -302,6 +302,19 @@ const claudeModels = (value) =>
 /** What a search found, in order: ids differ between servers, titles and sources do not. */
 const searchOrder = (value) => value.matches.map((match) => [match.title, match.source]);
 
+// With no `gh` on PATH, T3's credential lookup ends as "not signed in" (cli-unauthenticated);
+// conn-source-control reports the missing CLI (cli-missing). Both refuse the watch with their
+// GitHub requirement text. The PR panel answers the same way; it is not this slice's code.
+const NO_GH = {
+  why: "no gh: T3 says cli-unauthenticated, Conn says cli-missing",
+  match: (result) =>
+    result.kind === "failure" &&
+    [
+      "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.",
+      "No GitHub credential on the server. Set GH_TOKEN, or install the GitHub CLI (https://cli.github.com/) and run `gh auth login`.",
+    ].includes(result.code),
+};
+
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
@@ -492,6 +505,34 @@ const steps = [
   ["unlink_pull_requests", (c) => ({ threadId: c.idleThreadId, states: ["open", 5] })],
   ["unlink_pull_requests", (c) => ({ threadId: c.idleThreadId, states: [] })],
   ["link_pull_requests", (c) => ({ threadId: c.idleThreadId, urls: [] })],
+  // Pull request watches and guides. No `gh` is on either server's PATH, so each host read
+  // takes the same "no credential" path; values and failure texts are compared.
+  ...[
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/o/r/pull/9" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/o/r/pull/3" }),
+  ].map((input) => ["unwatch_pull_request", input, undefined, { same: (v) => v }]),
+  ...[
+    (c) => ({ threadId: c.idleThreadId, url: "https://github.com/o/r/pull/9" }),
+    (c) => ({ threadId: c.idleThreadId, repository: "o/r", number: 9, host: "github.com" }),
+    (c) => ({ threadId: c.idleThreadId, url: "https://example.com/team/x" }),
+    (c) => ({ threadId: c.idleThreadId, repository: "o/r", number: 1 }),
+    () => ({ url: "https://github.com/o/r/pull/9" }),
+    () => ({ threadId: "thread:none", url: "https://github.com/o/r/pull/9" }),
+    () => ({ threadId: "thread:none" }),
+  ].flatMap((input) => [
+    ["watch_pull_request", input, undefined, { same: (v) => v, known: NO_GH }],
+    ["unwatch_pull_request", input, undefined, { same: (v) => v }],
+  ]),
+  ["list_thread_pull_requests", (c) => ({ threadId: c.idleThreadId }), undefined, {
+    same: (v) => v.pullRequests.map((p) => [p.number, p.watching]).toSorted(),
+  }],
+  ...[
+    { url: "https://github.com/o/r/pull/9" },
+    { repository: "o/r", number: 9, host: "github.com" },
+    { url: "https://example.com/team/x" },
+    { repository: "o/r" },
+    { repository: "o/r", number: 9 },
+  ].map((input) => ["read_pull_request_guide", () => input, undefined, { same: (v) => v }]),
   ["send_to_user", () => ({ message: 5 })],
   ["t3_thread_wait", () => ({ threadId: true })],
   ["t3_thread_list", () => ({ allProjects: "yes" })],
@@ -628,6 +669,10 @@ for (const [tool, input, after, options] of run) {
   const [ts, rust] = results;
   const label = `${tool} ${JSON.stringify(input({ projectId: "<p>", threadId: "<t>", runId: "<r>" }))}`;
   if (ts.kind !== rust.kind || ts.code !== rust.code) {
+    if (options?.known !== undefined && options.known.match(ts) && options.known.match(rust)) {
+      report(`${label}: KNOWN ${options.known.why}`, true);
+      continue;
+    }
     report(
       `${label}: T3 ${ts.kind} ${ts.code ?? ""} / Conn ${rust.kind} ${rust.code ?? ""}`,
       false,

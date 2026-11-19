@@ -156,6 +156,7 @@ pub(crate) fn handler(command_type: &str) -> Option<Handler> {
         "thread.mark-unread" => thread_mark_unread,
         "thread.pull-request.link" => thread_pull_request_link,
         "thread.pull-request.unlink" => thread_pull_request_unlink,
+        "thread.pull-request.watch" => thread_pull_request_watch,
         "thread.user-input.dismiss" => thread_user_input_dismiss,
         "provider-session.detach" => provider_session_detach,
         "provider.switch" => provider_switch,
@@ -181,9 +182,9 @@ pub(crate) fn refusal(command_type: &str) -> &'static str {
         "thread.guest-share.close" | "thread.guest-message.dismiss" => {
             "Conn Server does not share threads with guests."
         }
-        "thread.pull-request-link.sync"
-        | "thread.pull-request.watch"
-        | "thread.pull-request.sync" => "Conn Server does not watch pull requests yet.",
+        "thread.pull-request-link.sync" | "thread.pull-request.sync" => {
+            "Conn Server does not sync pull request links from the host yet."
+        }
         "notification.delivery.accept" => {
             "Conn Server does not deliver background notifications yet."
         }
@@ -408,7 +409,7 @@ fn delivery(tx: &Tx<'_>, c: &MessageDispatch) -> Result<(Delivery, Option<Value>
     })
 }
 
-fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
+pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let mut c: MessageDispatch = decode(command)?;
     let thread = live_thread(tx, &c.thread_id)?;
     let fresh = c.fresh_context == Some(true);
@@ -864,14 +865,43 @@ pub(crate) fn start_next_queued(
     if !thread["archivedAt"].is_null() {
         return Ok(None);
     }
-    let next = queued_runs(tx, thread_id)?
-        .into_iter()
-        .find(|run| match only {
-            Some(id) => run["id"] == id,
-            None => run["queueHeld"] != true,
-        });
-    let Some(mut run) = next else {
-        return Ok(None);
+    let mut only = only;
+    let mut run = loop {
+        let next = queued_runs(tx, thread_id)?
+            .into_iter()
+            .find(|run| match only {
+                Some(id) => run["id"] == id,
+                None => run["queueHeld"] != true,
+            });
+        let Some(run) = next else {
+            return Ok(None);
+        };
+        // A queued pull request wake whose watches all moved on is dropped, and one that
+        // outlived some of them tells only the current ones (`startNextQueuedRun`).
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let Some(message) = tx
+            .entity(thread_id, "messages", message_id)?
+            .filter(|m| m["notification"]["source"]["kind"] == "monitor")
+        else {
+            break run;
+        };
+        let messages = tx.entities(thread_id, "messages")?;
+        let run_id = run["id"].as_str().unwrap_or_default().to_owned();
+        if crate::pull_requests::stale_wake(&thread, &messages, &message) {
+            finish_run(tx, thread_id, &run_id, "cancelled", None)?;
+            only = None;
+            continue;
+        }
+        if let Some(mut current) = crate::pull_requests::current_wake(&thread, &messages, &message)
+        {
+            current["updatedAt"] = json!(tx.now());
+            let mut write = Draft::new(thread_id, "message.updated", current).run(Some(&run_id));
+            if let Some(root) = run["rootNodeId"].as_str() {
+                write = write.node(Some(root));
+            }
+            tx.append(write)?;
+        }
+        break run;
     };
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
@@ -1174,10 +1204,19 @@ struct ThreadStop {
 }
 
 fn thread_stop(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let command_id = command["commandId"].as_str().map(str::to_owned);
     let c: ThreadStop = decode(command)?;
-    live_thread(tx, &c.thread_id)?;
+    let mut thread = live_thread(tx, &c.thread_id)?;
     // Stop means stop: queued messages wait until the user sends again or resumes the queue.
     hold_queue(tx, &c.thread_id)?;
+    // Stop also ends the thread's pull request watches.
+    if crate::pull_requests::has_watch(&thread) {
+        crate::pull_requests::end_watches(&mut thread);
+        tx.append(
+            Draft::new(&c.thread_id, "thread.pull-request-synced", thread)
+                .command(command_id.as_deref()),
+        )?;
+    }
     let children = crate::families::stop_children(tx, &c.thread_id)?;
     let active = active_run(tx, &c.thread_id)?;
     // With no active run, background work that outlives the latest run is the target: the
@@ -1309,7 +1348,11 @@ fn interrupt_item_id(run_id: &str, signal: &str) -> String {
 }
 
 /// The `run_interrupt_request` item of a run, when Stop asked for it.
-fn interrupt_request(tx: &Tx<'_>, thread_id: &str, run_id: &str) -> StoreResult<Option<Value>> {
+pub(crate) fn interrupt_request(
+    tx: &Tx<'_>,
+    thread_id: &str,
+    run_id: &str,
+) -> StoreResult<Option<Value>> {
     tx.entity(
         thread_id,
         "turnItems",
@@ -1602,6 +1645,7 @@ fn thread_archive(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let c: ThreadOnly = decode(command)?;
     patch_thread(tx, &c.thread_id, "thread.archived", true, |t, now| {
         t["archivedAt"] = json!(now);
+        crate::pull_requests::end_watches(t);
     })?;
     Ok(vec![Effect::ThreadClosed {
         thread_id: c.thread_id,
@@ -2185,6 +2229,7 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
         let already =
             t["settledOverride"] == "settled" && !is_null(t, "settledAt") && is_null(t, "pinnedAt");
         t["settledOverride"] = json!("settled");
+        crate::pull_requests::end_watches(t);
         if !already {
             t["settledAt"] = if settled_at.is_string() {
                 settled_at
@@ -2404,6 +2449,219 @@ fn thread_pull_request_link(tx: &mut Tx<'_>, command: Value) -> Outcome {
 
 fn thread_pull_request_unlink(tx: &mut Tx<'_>, command: Value) -> Outcome {
     thread_pull_request_link(tx, command)
+}
+
+fn is_settled_or_archived(thread: &Value) -> bool {
+    thread["settledOverride"] == "settled"
+        || !is_null(thread, "settledAt")
+        || !is_null(thread, "archivedAt")
+}
+
+/// `thread.pull-request.watch`: starts or stops a watch (`PullRequestWatchService`, the client).
+/// The checks are T3's `dispatchThreadMutation` guards; the change is T3's decider.
+fn thread_pull_request_watch(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    if command["watching"] == true {
+        if is_settled_or_archived(&thread) {
+            return reject(format!(
+                "Thread {thread_id} is settled or archived and cannot watch pull requests."
+            ));
+        }
+        if thread["lineage"]["relationshipToParent"] == "subagent" {
+            return reject(format!(
+                "Thread {thread_id} is a subagent; its parent thread watches pull requests."
+            ));
+        }
+        // Agent watches use the latest executed run to catch calls racing Stop.
+        if command["link"]["source"] == "agent" {
+            let latest = tx
+                .entities(&thread_id, "runs")?
+                .into_iter()
+                .filter(|r| {
+                    r["status"] != "queued"
+                        && !(r["status"] == "cancelled" && r["startedAt"].is_null())
+                })
+                .max_by(|a, b| {
+                    let end = |r: &Value| {
+                        r["completedAt"]
+                            .as_str()
+                            .and_then(conn_support::time::millis_from_iso)
+                            .unwrap_or(i64::MAX)
+                    };
+                    end(a).cmp(&end(b)).then_with(|| {
+                        a["ordinal"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .cmp(&b["ordinal"].as_u64().unwrap_or(0))
+                    })
+                });
+            if let Some(latest) = latest
+                && interrupt_request(tx, &thread_id, latest["id"].as_str().unwrap_or_default())?
+                    .is_some()
+            {
+                return reject(format!("Thread {thread_id} was stopped."));
+            }
+        }
+    }
+    let now = tx.now().to_owned();
+    let updated = crate::pull_requests::decide_watch(&thread, &command, &now).unwrap_or(thread);
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    tx.append(
+        Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+    )?;
+    Ok(vec![])
+}
+
+/// `thread.pull-request-watch.checks-reopen`, sent when an agent's push command ends
+/// (`PullRequestSyncReactor.reopenWatchedChecks`).
+pub(crate) fn pull_request_watch_checks_reopen(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let thread = live_thread(tx, &thread_id)?;
+    if let Some(updated) = crate::pull_requests::reopen_checks(&thread) {
+        let cid = command["commandId"].as_str().map(str::to_owned);
+        tx.append(
+            Draft::new(&thread_id, "thread.pull-request-synced", updated).command(cid.as_deref()),
+        )?;
+    }
+    Ok(vec![])
+}
+
+/// `thread.pull-request-watch.sync`, which only the server's watch loop sends: the watch's new
+/// state for one or more pull requests of a thread, and at most one wake for them all
+/// (`dispatchPullRequestWatchSync`). A watch that ended or moved during the host read, or a
+/// wake for a thread that settled, refuses the whole command.
+pub(crate) fn pull_request_watch_sync(tx: &mut Tx<'_>, command: Value) -> Outcome {
+    const MOVED: &str = "The pull request watch ended or its thread settled while it was read.";
+    let thread_id = command["threadId"].as_str().unwrap_or_default().to_owned();
+    let mut thread = live_thread(tx, &thread_id)?;
+    let wake = command.get("wake").filter(|w| w.is_object());
+    let mut primary = command.clone();
+    if let Some(map) = primary.as_object_mut() {
+        map.remove("others");
+        map.remove("wake");
+        if wake.is_some_and(|w| w["includesRemarks"] == true) {
+            map.insert("includesRemarks".into(), json!(true));
+        }
+    }
+    let mut entries = vec![primary];
+    for other in command["others"].as_array().into_iter().flatten() {
+        let mut entry = other.clone();
+        if let Some(map) = entry.as_object_mut() {
+            map.insert("type".into(), command["type"].clone());
+            map.insert("commandId".into(), command["commandId"].clone());
+            map.insert("threadId".into(), json!(thread_id));
+        }
+        entries.push(entry);
+    }
+    let inactive = is_settled_or_archived(&thread)
+        || (thread["lineage"]["relationshipToParent"] == "subagent"
+            && thread["creationSource"] == "provider");
+    let monitor = wake.is_some_and(|w| w["notification"]["source"]["kind"] == "monitor");
+    let links: Vec<Option<Value>> = entries
+        .iter()
+        .map(|entry| crate::pull_requests::sync_link(&thread, entry))
+        .collect();
+    let outdated: Vec<bool> = entries
+        .iter()
+        .zip(&links)
+        .map(|(entry, link)| {
+            monitor
+                && entry["watch"].is_object()
+                && crate::pull_requests::snapshot_ends_watch(
+                    link.as_ref().map_or(&Value::Null, |l| &l["snapshot"]),
+                    entry["startedAt"].as_str().unwrap_or_default(),
+                )
+        })
+        .collect();
+    let moved = entries.iter().zip(&links).any(|(entry, link)| {
+        link.as_ref()
+            .and_then(|l| l.get("watch"))
+            .and_then(|w| w.get("startedAt"))
+            != entry.get("startedAt")
+    });
+    if moved || (wake.is_some() && inactive) || (entries.len() > 1 && outdated.contains(&true)) {
+        return reject(MOVED);
+    }
+    let now = tx.now().to_owned();
+    let mut changed = false;
+    for entry in &entries {
+        if let Some(updated) = crate::pull_requests::decide_watch(&thread, entry, &now) {
+            thread = updated;
+            changed = true;
+        }
+    }
+    let cid = command["commandId"].as_str().map(str::to_owned);
+    if changed {
+        // T3 sends `thread.pull-request-link-updated` per link; this store keeps whole threads.
+        tx.append(
+            Draft::new(&thread_id, "thread.pull-request-synced", thread).command(cid.as_deref()),
+        )?;
+    }
+    let Some(wake) = wake else {
+        return Ok(vec![]);
+    };
+    if outdated.first() == Some(&true) {
+        return Ok(vec![]);
+    }
+    let sections = wake["sections"].as_array();
+    let stamps: Vec<Value> = entries
+        .iter()
+        .enumerate()
+        .map(|(index, entry)| {
+            let mut stamp = crate::pull_requests::entry_key(entry);
+            if let Some(map) = stamp.as_object_mut() {
+                map.insert("watchStartedAt".into(), entry["startedAt"].clone());
+                let head = if entry["includesRemarks"] == true {
+                    Value::Null
+                } else {
+                    entry["watch"]["headSha"].clone()
+                };
+                map.insert("headSha".into(), head);
+                if entry["watch"].is_null() {
+                    map.insert("watchEnded".into(), json!(true));
+                }
+                if entries.len() > 1
+                    && let Some(section) = sections.and_then(|s| s.get(index))
+                {
+                    map.insert("section".into(), section.clone());
+                }
+            }
+            stamp
+        })
+        .collect();
+    let mut notification = wake["notification"].clone();
+    if monitor {
+        let mut source = json!({"kind": "monitor"});
+        if let Some(map) = source.as_object_mut() {
+            map.insert(
+                "pullRequest".into(),
+                stamps.first().cloned().unwrap_or(Value::Null),
+            );
+            if stamps.len() > 1 {
+                map.insert(
+                    "otherPullRequests".into(),
+                    json!(stamps.get(1..).unwrap_or_default()),
+                );
+            }
+        }
+        notification["source"] = source;
+    }
+    message_dispatch(
+        tx,
+        json!({
+            "type": "message.dispatch",
+            "commandId": command["commandId"],
+            "threadId": thread_id,
+            "messageId": wake["messageId"],
+            "text": wake["text"],
+            "notification": notification,
+            "attachments": [],
+            "dispatchMode": {"type": "queue_after_active"},
+            "createdBy": "agent",
+            "creationSource": "server",
+        }),
+    )
 }
 
 /// Dismisses a pending user question without an answer: the provider gets an empty answer.

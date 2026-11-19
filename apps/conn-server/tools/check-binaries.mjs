@@ -8,7 +8,7 @@ import { cargoBuildEnv } from "./sealed-env.mjs";
 const examples = [
   ["release", "conn-server", "effect_fixture", "replay_server", "settings_secrets", "text_generation", "model_manifest_cache", "mcp_apps"],
   ["release", "conn-engine", "export_turn", "tool_output_cases"],
-  ["release", "conn-source-control", "registry_cases"],
+  ["release", "conn-source-control", "registry_cases", "pr_watch_cases"],
   ["release", "conn-features", "webhook_functions"],
   ["release", "conn-mcp", "html_cases"],
   ["debug", "conn-provider-codex", "conformance", "codex_probe"],

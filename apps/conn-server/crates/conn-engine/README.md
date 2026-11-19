@@ -33,7 +33,7 @@ decode is a defect, not a broken client.
 
 ## dispatchCommand
 
-44 of the 56 command types are handled. The other 12 answer `OrchestrationV2DispatchCommandError`
+45 of the 58 command types are handled. The other 13 answer `OrchestrationV2DispatchCommandError`
 with a reason the client shows (`commands::refusal`).
 
 | Handled                                                                                                                                                             | Refused, and why                                                                             |
@@ -41,8 +41,8 @@ with a reason the client shows (`commands::refusal`).
 | `thread.create`, `message.dispatch` (all five dispatch modes), `run.interrupt` (`holdQueue`), `thread.stop`, `runtime-request.respond`, `thread.user-input.dismiss` | `thread.merge_back`: no portable context handoff (needs Codex `thread/inject_items` and Claude `inlineContextLength` in the providers) |
 | `queued-run.start`, `.cancel`, `.reorder`, `.edit`, `queue.resume`, `queued-message.promote-to-steer`                                                               | (none)                                                                                       |
 | `thread.archive`, `unarchive`, `delete`, `visit`, `mark-unread`, `metadata.update` (`regenerateTitle`), `title.regeneration.complete`                               | `prepared-run.release`, `.progress`, `.fail`, `.retry`: no worktree preparation              |
-| `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.watch`, `.pull-request.sync`: no PR watching |
-| `thread.pull-request.link`, `.unlink`                                                                                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
+| `thread.settle`, `auto-settle`, `unsettle`, `snooze`, `unsnooze`, `auto-settle.set`, `pin`, `unpin`, `pin.reorder`, `active.reorder`, `tag.set`                     | `thread.pull-request-link.sync`, `.pull-request.sync`: no link sync from the host            |
+| `thread.pull-request.link`, `.unlink`, `.watch` (and the server-only `thread.pull-request-watch.sync` and `.checks-reopen`)                                                               | `thread.guest-share.close`, `thread.guest-message.dismiss`: no guest sharing                 |
 | `thread.runtime-mode.set`, `interaction-mode.set`, `model-selection.set`, `provider.switch`, `provider-session.detach`                                              | `notification.delivery.accept`, `subagent.stop`                     |
 | `delegated_task.request`, `.wake-policy`, `.completion-delivery.acknowledge`, `.dispose`, `checkpoint.rollback`, `thread.fork`, `thread.created.record` |                                                                                              |
 
@@ -57,7 +57,7 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
 | `thread.fork` | `ThreadForkService.ts`, `Orchestrator.ts` `dispatchThreadFork` | A new thread from a run of another, with a `fork` context transfer and the provider's native fork | `Session::fork_thread`, `ContextHandoffService.ts` | yes |
 | `thread.merge_back` | `Orchestrator.ts` `dispatchThreadMergeBack`, `ContextHandoffService.ts` | Records a pending `merge_back` context transfer from a fork to its parent; the parent's next message carries the fork's delta | fork, context transfers (no checkpoint) | yes |
 | `prepared-run.release`, `.progress`, `.fail`, `.retry` | `ThreadLaunchService.ts`, `Orchestrator.ts` `dispatchPreparedRun*`, `ProjectSetupScriptRunner.ts` | A worktree launch's `preparing` run: progress, failure, retry, release to the provider; setup scripts typed into a `setup-<id>` terminal | `conn-terminal` prompt and marker watch, `conn-vcs` worktree | yes |
-| `thread.pull-request-link.sync`, `thread.pull-request.watch`, `thread.pull-request.sync` | `ThreadPullRequestService.ts`, `PullRequestWatchReactor.ts` | Pull request links and watches | the forge CLIs | other |
+| `thread.pull-request-link.sync`, `thread.pull-request.sync` | `ThreadPullRequestService.ts`, `PullRequestSyncReactor.ts` | Link snapshots and the branch PR from the host | the link sweep | other |
 | `thread.guest-share.close`, `thread.guest-message.dismiss` | `GuestShareDecider.ts` | Guest sharing | guest share | other |
 | `notification.delivery.accept` | `Orchestrator.ts` `dispatchNotificationAccepted`, `NotificationMailbox.ts` | Marks a background notification delivered to a run | a notification mailbox (not built) | later |
 | `subagent.stop` | `Orchestrator.ts` `dispatchSubagentStop` | Stops one subagent of a run | `Session::stop_task` in the providers (in the trait, not built) | later |

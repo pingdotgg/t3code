@@ -689,6 +689,10 @@ impl Inner {
         };
         let handler = if command_type == "secret_request.record" {
             Some(crate::secret_requests::record as commands::Handler)
+        } else if command_type == "thread.pull-request-watch.sync" {
+            Some(commands::pull_request_watch_sync as commands::Handler)
+        } else if command_type == "thread.pull-request-watch.checks-reopen" {
+            Some(commands::pull_request_watch_checks_reopen as commands::Handler)
         } else {
             commands::handler(&command_type)
         };
@@ -1121,6 +1125,22 @@ impl Engine for SqliteEngine {
             self.inner
                 .db(move |store| store.created_run_status(&command_id))
                 .await
+        })
+    }
+
+    fn sync_pull_request_watch(&self, mut command: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(async move {
+            let Some(fields) = command.as_object_mut() else {
+                return Err("Invalid pull request watch sync.".into());
+            };
+            fields.insert("type".into(), json!("thread.pull-request-watch.sync"));
+            self.inner
+                .dispatch_value(command)
+                .await
+                .map(|_| ())
+                .map_err(|e| match e {
+                    DispatchError::Rejected(e) | DispatchError::Internal(e) => e,
+                })
         })
     }
 

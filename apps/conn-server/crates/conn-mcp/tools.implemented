@@ -33,6 +33,9 @@ link_pull_requests
 unlink_pull_request
 unlink_pull_requests
 list_thread_pull_requests
+watch_pull_request
+unwatch_pull_request
+read_pull_request_guide
 t3_background_wait
 
 t3_workflow_stop

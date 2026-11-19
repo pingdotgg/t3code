@@ -138,6 +138,7 @@ apps/server/src/worktreesDirectory.ts
 [crates/conn-source-control]
 apps/server/src/sourceControl
 apps/server/src/pullRequest
+apps/server/src/orchestration-v2/pullRequestWatch.ts
 packages/source-control-core
 packages/source-control-github
 
@@ -211,3 +212,7 @@ packages/contracts/src/credentials.ts
 [crates/conn-mcp/src/tools/test_logins.rs]
 apps/server/src/credentials/credentialOrigin.ts
 apps/server/src/mcp/toolkits/credentials
+
+[crates/conn-server/src/methods/pull_requests/watches.rs]
+apps/server/src/orchestration-v2/PullRequestWatchReactor.ts
+apps/server/src/orchestration-v2/pullRequestWatch.ts

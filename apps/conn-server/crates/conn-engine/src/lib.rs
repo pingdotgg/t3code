@@ -46,6 +46,7 @@ mod html_cleanup;
 mod output;
 mod projects;
 mod pull_requests;
+mod push;
 mod reads;
 mod restart;
 mod rollback;
@@ -423,6 +424,14 @@ pub trait Engine: Send + Sync {
                 "this engine does not support {method}"
             )))
         })
+    }
+
+    /// `thread.pull-request-watch.sync`: what the server's watch loop read, and its wake. Not a
+    /// client command, so it never goes through [`Engine::dispatch`].
+    fn sync_pull_request_watch(&self, _command: Value) -> BoxFuture<'_, Result<(), String>> {
+        Box::pin(std::future::ready(Err(
+            "Pull request watches are not supported.".into(),
+        )))
     }
 
     /// Records a secret card without exposing an internal command through client dispatch.

@@ -67,7 +67,19 @@ pub struct McpConfig {
     pub test_logins: Option<conn_features::test_logins::TestLogins>,
     /// The broker also used by panels.requests and panels.respond.
     pub panels: Option<conn_features::panels::PanelBroker>,
+    /// The server's GitHub pull request panel; without it the watch and guide tools answer
+    /// as T3 does when no host can be read.
+    pub pull_requests: Option<PullRequestHost>,
 }
+
+/// One call into the server's pull request panel: `(operation, input)` to the result, or the
+/// contract failure (`PullRequestUnavailableError`, `PullRequestOperationError`, ...). The
+/// operations are `watchSummary`, `locateProject` and `reviewGuide`.
+pub type PullRequestHost = Arc<
+    dyn Fn(&'static str, Value) -> conn_engine::BoxFuture<'static, Result<Value, Value>>
+        + Send
+        + Sync,
+>;
 
 pub type ProviderRefresh = Arc<dyn Fn(String) -> conn_engine::BoxFuture<'static, ()> + Send + Sync>;
 

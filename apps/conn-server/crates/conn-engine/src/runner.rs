@@ -1128,6 +1128,31 @@ impl Inner {
             {
                 self.command_output.finish(&draft.thread_id, item_id);
             }
+            // A finished push can start new checks on the thread's watched pull requests
+            // (`PullRequestSyncReactor.reopenWatchedChecks`).
+            let pushed = match &translated {
+                Translated::Event(draft)
+                    if draft.event_type == "turn-item.updated"
+                        && draft.payload["type"] == "command_execution"
+                        && !matches!(
+                            draft.payload["status"].as_str(),
+                            Some("running" | "pending" | "waiting" | "idle")
+                        )
+                        && draft.payload["input"]
+                            .as_str()
+                            .is_some_and(crate::push::is_push_command) =>
+                {
+                    draft.payload["id"].as_str().map(|item| {
+                        json!({
+                            "type": "thread.pull-request-watch.checks-reopen",
+                            // Stable per command: a repeated settlement clears an answer once.
+                            "commandId": format!("server:pr-push-checks:{}:{item}", draft.thread_id),
+                            "threadId": draft.thread_id,
+                        })
+                    })
+                }
+                _ => None,
+            };
             if matches!(translated, Translated::Terminal(..)) {
                 self.command_output.finish_thread(&thread_id);
             }
@@ -1196,6 +1221,14 @@ impl Inner {
                         }
                     }
                 }
+            }
+            if let Some(command) = pushed
+                && let Err(
+                    crate::engine::DispatchError::Rejected(e)
+                    | crate::engine::DispatchError::Internal(e),
+                ) = self.dispatch_value(command).await
+            {
+                eprintln!("conn-engine: could not reopen watched checks after a push: {e}");
             }
         }
         if !self.shutting_down()

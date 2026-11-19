@@ -67,6 +67,7 @@ fn fixture_with(
             hub: conn_vcs::VcsHub::default(),
         }),
         panels: Some(conn_features::panels::PanelBroker::default()),
+        pull_requests: None,
         test_logins: Some(conn_features::test_logins::TestLogins::new(&dir)),
         secrets: Some(conn_features::secrets::SecretRequests::new(
             &dir,
@@ -1712,8 +1713,6 @@ const NAMED_NOT_SERVED: &[&str] = &[
     "fill_credential",
     "t3_environment_link",
     "t3_environment_links",
-    "unwatch_pull_request",
-    "watch_pull_request",
 ];
 
 /// Every text we send to an agent that can name a tool: the orchestration text and Claude's
@@ -1781,6 +1780,7 @@ async fn fixture_with_tasks(name: &str) -> Fixture {
         refresh_provider: None,
         worktrees: None,
         panels: Some(conn_features::panels::PanelBroker::default()),
+        pull_requests: None,
         secrets: config.secrets.clone(),
         test_logins: base.service.config.test_logins.clone(),
         engine,
@@ -3510,3 +3510,5 @@ async fn mcp_panel_actions_use_the_ninety_second_action_timeout() {
     }
     f.service.config.engine.shutdown().await;
 }
+
+mod pull_request_watches;

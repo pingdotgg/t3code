@@ -218,6 +218,359 @@ fn unlink(key: &ThreadPullRequestKey, links: &[Value], existing: usize) -> Vec<V
     }
 }
 
+// ---- Watches: `thread.pull-request.watch` and `thread.pull-request-watch.sync` -------------
+
+/// `withPullRequestWatch(link, watch)`.
+fn with_watch(link: &Value, watch: Option<&Value>) -> Value {
+    match watch {
+        Some(watch) => {
+            let mut link = link.clone();
+            if let Some(map) = link.as_object_mut() {
+                map.remove("endedWatch");
+                map.insert("watch".into(), watch.clone());
+            }
+            link
+        }
+        None => without_watch(link),
+    }
+}
+
+/// Every link's watch ended, as archive, settle and Stop end them.
+pub(crate) fn end_watches(thread: &mut Value) {
+    if let Some(links) = thread.get_mut("pullRequests").and_then(Value::as_array_mut) {
+        for link in links.iter_mut() {
+            *link = without_watch(link);
+        }
+    }
+}
+
+pub(crate) fn has_watch(thread: &Value) -> bool {
+    thread["pullRequests"]
+        .as_array()
+        .is_some_and(|links| links.iter().any(|l| l.get("watch").is_some()))
+}
+
+fn visible_match<'a>(links: &'a [Value], key: &ThreadPullRequestKey) -> Option<&'a Value> {
+    links
+        .iter()
+        .find(|link| !is_dismissed(link) && key_of(link) == *key)
+}
+
+/// `syncedPullRequestWatch`: a push that cleared the answer during the read wins.
+fn synced_watch(existing: Option<&Value>, command: &Value) -> Option<Value> {
+    let watch = command.get("watch").filter(|w| w.is_object())?;
+    if command.get("checksPendingBefore").is_none()
+        || existing.is_some_and(|e| e.get("checksPending").is_some())
+    {
+        return Some(watch.clone());
+    }
+    let mut watch = watch.clone();
+    if let Some(map) = watch.as_object_mut() {
+        map.remove("checksPending");
+    }
+    Some(watch)
+}
+
+/// A new watch, carrying what an ended one told so a restart does not repeat it.
+fn fresh_watch(existing: &Value, started_at: &str) -> Value {
+    let ended = existing.get("endedWatch").filter(|w| w.is_object());
+    let mut watch = json!({
+        "startedAt": started_at,
+        "headSha": null,
+        "failedChecks": [],
+        "passed": false,
+        "passedChecks": [],
+        "conflicting": false,
+    });
+    if let (Some(ended), Some(map)) = (ended, watch.as_object_mut()) {
+        for key in [
+            "headSha",
+            "failedChecks",
+            "passed",
+            "passedChecks",
+            "conflicting",
+        ] {
+            map.insert(key.into(), ended.get(key).cloned().unwrap_or(Value::Null));
+        }
+        if let Some(rebase) = ended.get("rebaseRequired") {
+            map.insert("rebaseRequired".into(), rebase.clone());
+        }
+    }
+    if let Some(map) = watch.as_object_mut() {
+        match ended {
+            Some(ended) => {
+                if let Some(baseline) = ended.get("awaitingBaseline") {
+                    map.insert("awaitingBaseline".into(), baseline.clone());
+                }
+                for key in ["owedChecks", "awaitingApproval", "approvalAnnounced"] {
+                    if let Some(value) = ended.get(key) {
+                        map.insert(key.into(), value.clone());
+                    }
+                }
+                if ended["checksPending"] == true {
+                    map.insert("checksPending".into(), json!(true));
+                }
+                if let Some(since) = ended.get("checksAwaitedSince") {
+                    map.insert("checksAwaitedSince".into(), since.clone());
+                }
+            }
+            None => {
+                map.insert("awaitingBaseline".into(), json!("all"));
+            }
+        }
+        map.insert("remarksThrough".into(), json!(started_at));
+        map.insert("remarkIds".into(), json!([]));
+        map.insert("wakes".into(), json!(0));
+    }
+    watch
+}
+
+/// T3's decider for `thread.pull-request.watch` and `thread.pull-request-watch.sync`: the
+/// thread after the command, or `None` when it stays as it was.
+pub(crate) fn decide_watch(thread: &Value, command: &Value, now: &str) -> Option<Value> {
+    let key = key_of(command);
+    let linked = links_of(thread);
+    let sync = command["type"] == "thread.pull-request-watch.sync";
+    let watching = command["watching"] == true;
+    let new_link = command.get("link").filter(|l| l.is_object());
+    let links: Vec<Value> = match new_link {
+        Some(link) if !sync && watching && visible_match(&linked, &key).is_none() => {
+            let dismissed = linked.iter().find(|l| key_of(l) == key);
+            let mut fresh = key_json(&key);
+            if let Some(map) = fresh.as_object_mut() {
+                map.insert("url".into(), link["url"].clone());
+                let web = link
+                    .get("repositoryWebUrl")
+                    .filter(|w| w.is_string())
+                    .or_else(|| dismissed.and_then(|d| d.get("repositoryWebUrl")));
+                if let Some(web) = web {
+                    map.insert("repositoryWebUrl".into(), web.clone());
+                }
+                map.insert("source".into(), link["source"].clone());
+                map.insert("linkedAt".into(), json!(now));
+                map.insert("snapshot".into(), Value::Null);
+                map.insert("stack".into(), Value::Null);
+                if let Some(ended) = dismissed.and_then(|d| d.get("endedWatch")) {
+                    map.insert("endedWatch".into(), ended.clone());
+                }
+            }
+            let mut out: Vec<Value> = linked
+                .iter()
+                .filter(|l| key_of(l) != key)
+                .cloned()
+                .collect();
+            out.push(fresh);
+            out
+        }
+        _ => linked.clone(),
+    };
+    let changed_links = links != linked;
+    let index = links
+        .iter()
+        .position(|link| !is_dismissed(link) && key_of(link) == key)?;
+    let existing = links.get(index)?;
+    let current = existing.get("watch").filter(|w| w.is_object());
+    let watch = if sync {
+        if current.and_then(|w| w.get("startedAt")) == command.get("startedAt") {
+            synced_watch(current, command)
+        } else {
+            current.cloned()
+        }
+    } else if !watching {
+        None
+    } else {
+        Some(
+            current
+                .cloned()
+                .unwrap_or_else(|| fresh_watch(existing, now)),
+        )
+    };
+    if watch.as_ref() == current && !changed_links {
+        return None;
+    }
+    let final_watch = (sync && watch.is_none())
+        .then(|| command.get("endedWatch").filter(|w| w.is_object()))
+        .flatten();
+    let updated_link = match final_watch {
+        Some(ended) => with_watch(&with_watch(existing, Some(ended)), None),
+        None => with_watch(existing, watch.as_ref()),
+    };
+    let mut pull_requests = links.clone();
+    if let Some(slot) = pull_requests.get_mut(index) {
+        *slot = updated_link;
+    }
+    let mut updated = thread.clone();
+    if let Some(map) = updated.as_object_mut() {
+        map.insert("pullRequests".into(), json!(pull_requests));
+        if !sync {
+            map.insert("updatedAt".into(), json!(now));
+        }
+    }
+    Some(updated)
+}
+
+/// `pullRequestSnapshotEndsWatch`.
+pub(crate) fn snapshot_ends_watch(snapshot: &Value, started_at: &str) -> bool {
+    let state = snapshot["state"].as_str();
+    state == Some("merged")
+        || (state == Some("closed")
+            && match (
+                snapshot["syncedAt"]
+                    .as_str()
+                    .and_then(conn_support::time::millis_from_iso),
+                conn_support::time::millis_from_iso(started_at),
+            ) {
+                (Some(synced), Some(started)) => synced >= started,
+                _ => false,
+            })
+}
+
+/// The visible link of `thread` for one sync entry.
+pub(crate) fn sync_link(thread: &Value, entry: &Value) -> Option<Value> {
+    visible_match(&links_of(thread), &key_of(entry)).cloned()
+}
+
+/// The `{host, repository, number}` of a sync entry, canonical.
+pub(crate) fn entry_key(entry: &Value) -> Value {
+    key_json(&key_of(entry))
+}
+
+// ---- Queued wakes: `isStalePullRequestWatchWake`, `currentPullRequestWatchWake` -------------
+
+/// `monitorPullRequestStamps`: the pull requests a `monitor` notice speaks for.
+fn monitor_stamps(notification: &Value) -> Vec<Value> {
+    let source = &notification["source"];
+    if source["kind"] != "monitor" || !source["pullRequest"].is_object() {
+        return Vec::new();
+    }
+    let mut stamps = vec![source["pullRequest"].clone()];
+    stamps.extend(
+        source["otherPullRequests"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .cloned(),
+    );
+    stamps
+}
+
+/// `isStalePullRequestWatchStamp`.
+fn stale_stamp(thread: &Value, messages: &[Value], stamp: &Value) -> bool {
+    let key = key_of(stamp);
+    let links = links_of(thread);
+    let Some(link) = visible_match(&links, &key) else {
+        return true;
+    };
+    let started = &stamp["watchStartedAt"];
+    let watch = link.get("watch").filter(|w| w.is_object());
+    if stamp["watchEnded"] == true {
+        // The final notice outlives its watch, but a replacement watch supersedes it.
+        let latest = watch.or_else(|| link.get("endedWatch").filter(|w| w.is_object()));
+        return latest.map(|w| &w["startedAt"]) != Some(started);
+    }
+    let Some(watch) = watch else {
+        // A watch the server ended with a final notice still owes the wakes queued before it.
+        let ended_with_notice = messages.iter().any(|message| {
+            monitor_stamps(&message["notification"])
+                .iter()
+                .any(|ending| {
+                    ending["watchEnded"] == true
+                        && &ending["watchStartedAt"] == started
+                        && key_of(ending) == key
+                })
+        });
+        return !ended_with_notice
+            || &link["endedWatch"]["startedAt"] != started
+            || snapshot_ends_watch(&link["snapshot"], started.as_str().unwrap_or_default());
+    };
+    &watch["startedAt"] != started
+        || (!stamp["headSha"].is_null() && watch["headSha"] != stamp["headSha"])
+        || snapshot_ends_watch(
+            &link["snapshot"],
+            watch["startedAt"].as_str().unwrap_or_default(),
+        )
+}
+
+/// `isStalePullRequestWatchWake`: every pull request a queued wake speaks for has moved on.
+pub(crate) fn stale_wake(thread: &Value, messages: &[Value], message: &Value) -> bool {
+    let stamps = monitor_stamps(&message["notification"]);
+    !stamps.is_empty() && stamps.iter().all(|s| stale_stamp(thread, messages, s))
+}
+
+/// `currentPullRequestWatchWake`: a queued wake for several pull requests, rebuilt from the
+/// ones still current, or `None` when it needs no change.
+pub(crate) fn current_wake(thread: &Value, messages: &[Value], message: &Value) -> Option<Value> {
+    use conn_source_control::pull_requests::watch::{Wake, combine};
+    let stamps = monitor_stamps(&message["notification"]);
+    if stamps.len() < 2 {
+        return None;
+    }
+    let current: Vec<&Value> = stamps
+        .iter()
+        .filter(|s| !stale_stamp(thread, messages, s))
+        .collect();
+    let (first, rest) = current.split_first()?;
+    if rest.len() == stamps.len() - 1 {
+        return None;
+    }
+    let sections: Vec<Wake> = current
+        .iter()
+        .filter_map(|stamp| {
+            let section = stamp.get("section").filter(|s| s.is_object())?;
+            Some(Wake {
+                text: section["text"].as_str().unwrap_or_default().to_owned(),
+                outcome: match section["outcome"].as_str() {
+                    Some("failed") => "failed",
+                    Some("completed") => "completed",
+                    _ => "updated",
+                },
+                summary: section["summary"].as_str().unwrap_or_default().to_owned(),
+            })
+        })
+        .collect();
+    if sections.len() != current.len() {
+        return None;
+    }
+    let wake = combine(&sections)?;
+    let mut source = json!({"kind": "monitor"});
+    let mut primary = (*first).clone();
+    if rest.is_empty()
+        && let Some(map) = primary.as_object_mut()
+    {
+        map.remove("section");
+    }
+    source["pullRequest"] = primary;
+    if !rest.is_empty() {
+        source["otherPullRequests"] = json!(rest);
+    }
+    let mut updated = message.clone();
+    updated["text"] = json!(wake.text);
+    updated["notification"] =
+        json!({"source": source, "outcome": wake.outcome, "summary": wake.summary});
+    Some(updated)
+}
+
+/// `thread.pull-request-watch.checks-reopen`: a push can start new checks, so each watch
+/// forgets whether checks were running. `None` when no watch had an answer.
+pub(crate) fn reopen_checks(thread: &Value) -> Option<Value> {
+    let links = thread["pullRequests"].as_array()?;
+    if !links.iter().any(|l| {
+        l.get("watch")
+            .is_some_and(|w| w.get("checksPending").is_some())
+    }) {
+        return None;
+    }
+    let mut updated = thread.clone();
+    if let Some(links) = updated["pullRequests"].as_array_mut() {
+        for link in links {
+            if let Some(watch) = link.get_mut("watch").and_then(Value::as_object_mut) {
+                watch.remove("checksPending");
+            }
+        }
+    }
+    Some(updated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

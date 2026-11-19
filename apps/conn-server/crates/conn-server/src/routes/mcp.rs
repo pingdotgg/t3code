@@ -78,6 +78,7 @@ pub fn service(deps: &Deps) -> Option<Arc<McpService>> {
         secrets: deps.secrets.clone(),
         test_logins: deps.test_logins.clone(),
         panels: deps.panels.clone(),
+        pull_requests: crate::methods::pull_requests::mcp_host(deps),
     }))
 }
 

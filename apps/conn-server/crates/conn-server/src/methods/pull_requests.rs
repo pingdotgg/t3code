@@ -28,6 +28,7 @@ use std::{
 };
 use tokio::sync::{OnceCell, mpsc, watch};
 mod guides;
+mod watches;
 
 #[derive(Clone, Debug)]
 struct Project {
@@ -325,6 +326,37 @@ impl Panel {
             }
             _ if actions::is_mutation(method) => self.action(method, &input).await,
             _ => self.cached_read(method, &input).await,
+        }
+    }
+    /// What `/mcp` asks of the panel (`mcp_host`).
+    async fn mcp_call(&self, operation: &str, input: Value) -> Result<Value, Failure> {
+        match operation {
+            // `summary` with `bypassCache`, as `PullRequestWatchService` reads it.
+            "watchSummary" => {
+                let (project, client, lookup) = self.reference_client("summary", &input).await?;
+                self.load_read("summary", &input, &project, &client, &lookup)
+                    .await
+            }
+            // The project that checks out `host/repository` (`projectForPullRequest`).
+            "locateProject" => {
+                let host = text(&input, "host").to_lowercase();
+                let repository = text(&input, "repository");
+                let projects = self.projects(&json!({"host": host})).await?;
+                let matches =
+                    |p: &&Project| p.host == host && p.repository.eq_ignore_ascii_case(repository);
+                let preferred = input.get("preferredProjectId");
+                let found = projects
+                    .iter()
+                    .filter(matches)
+                    .find(|p| preferred.is_some_and(|id| id == p.id.as_str()))
+                    .or_else(|| projects.iter().find(matches));
+                Ok(json!({"projectId": found.map(|p| p.id.clone())}))
+            }
+            "reviewGuide" => self.review_guide(&input).await,
+            "generateReviewGuide" => self.generate_review_guide(&input).await,
+            _ => Err(Failure::die(format!(
+                "Unknown pull request operation {operation}"
+            ))),
         }
     }
     fn guide_unavailable(&self) -> Failure {
@@ -1267,6 +1299,30 @@ impl Shared {
                 })
                 .clone(),
         )
+    }
+}
+
+/// The panel's operations `/mcp` uses for the watch and guide tools (`conn_mcp::PullRequestHost`).
+pub(crate) fn mcp_host(deps: &Deps) -> Option<conn_mcp::PullRequestHost> {
+    let panel = deps.pull_requests.panel(deps)?;
+    Some(Arc::new(move |operation: &'static str, input: Value| {
+        let panel = panel.clone();
+        Box::pin(async move {
+            panel
+                .mcp_call(operation, input)
+                .await
+                .map_err(|failure| match failure {
+                    Failure::Fail(value) => value,
+                    Failure::Die(defect) => defect,
+                })
+        }) as conn_engine::BoxFuture<'static, Result<Value, Value>>
+    }))
+}
+
+/// Starts the pull request watch loop (`watches.rs`) for the server's life.
+pub(crate) fn start_watches(deps: &Deps) {
+    if let Some(panel) = deps.pull_requests.panel(deps) {
+        tokio::spawn(watches::run(panel));
     }
 }
 

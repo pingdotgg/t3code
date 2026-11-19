@@ -21,6 +21,48 @@ the run stays open. Waiting for terminal confirmation is deliberate. `idle-diff`
 split in `KNOWN` as `intermittent`; a gate either side misses still fails it. Whether to
 match T3 is open.
 
+## PR watching and review guides (2026-11-19)
+
+Served: `watch_pull_request`, `unwatch_pull_request` and `read_pull_request_guide` (70 of 87
+tools), and the engine commands `thread.pull-request.watch` and the server-only
+`thread.pull-request-watch.sync` and `thread.pull-request-watch.checks-reopen`.
+`write_pull_request_guides` stays unregistered: the server has no review guide generator
+(T3 runs a model in a temporary checkout), so the tool could only fail.
+
+- **The watch works.** A loop in the server (`methods/pull_requests/watches.rs`) reads each
+  watched PR from GitHub every 2 minutes, and at once when a new watch appears, through the
+  panel's client (`gh`'s login). It evaluates the read as T3's `pullRequestWatch.ts` does
+  (`conn-source-control/src/pull_requests/watch.rs`) and sends one sync per thread. A change
+  wakes the thread with T3's text as a `monitor` notice: a `message.dispatch` with
+  `queue_after_active`, `createdBy: agent`, `creationSource: server`. Checks, approvals,
+  remarks (review-thread pages included), conflicts, rebases, merge-queue removals, "no checks
+  after 15 minutes", 10 comment-only wakes, closed and merged PRs, and 8 failed reads all
+  follow T3. Watches live on the thread's links, so they survive a restart. Archive, settle
+  and Stop end them. New watches that overflow the loop's queue ask for one more full pass.
+- **Queued wakes are checked when they start** (`startNextQueuedRun`): a wake whose watches
+  all ended or moved is cancelled; a wake for several PRs is narrowed to the current ones.
+- **A push reopens checks.** When an agent's push command finishes (`isPushCommand`, ported
+  in `conn-engine/src/push.rs`), the engine sends `checks-reopen`, which clears each watch's
+  `checksPending`. A read of the old head that lands afterwards cannot restore it.
+- **Guides:** `read_pull_request_guide` reads the panel's stored guide.
+- **Proof.** `pr-watch-diff` (new check): 42 cases, 71 host reads, through T3's own
+  `evaluatePullRequestWatch`, `pullRequestWatchMessage` and `combinePullRequestWatchWakes`
+  and ours, each side feeding its own next watch forward; values equal. `parity.mjs`: 22 new
+  calls of the three tools on both servers with no `gh`, values and texts compared, plus
+  `tools/list`. Engine tests: a sync wakes and runs a turn; a stale sync is refused; Stop ends
+  the watch; a queued wake is cancelled after unwatch and narrowed to one of two PRs (both
+  fail without the fix); a `git push` row clears `checksPending` and an in-flight old read
+  cannot restore it (fails without the fix). Server test: the loop on a stub GitHub sends the
+  baseline, one wake for a failed check and a new comment, nothing on a quiet pass, and an
+  end without a wake on merge. `push.rs` unit test: T3's own test inputs.
+- **Known differences.** No GitHub change feed or watch fingerprints: news waits for the next
+  2-minute sweep, and an unchanged PR is read again after 10 minutes (T3's no-fingerprint
+  path). No cached review-thread tails, no watch-life log lines. The sync writes
+  `thread.pull-request-synced` (whole thread) where T3 writes `thread.pull-request-link-updated`
+  (one link); clients end in the same state. With no `gh` on the server, T3 refuses a watch
+  with its "not signed in" text and we with "no credential" (cli-missing), as the panel
+  already does; `parity.mjs` lists it as KNOWN.
+
 ## Provider sign-in (2026-11-19)
 
 The six `provider.auth.*` methods are served, and `provider.auth.subscribe` now matches T3.

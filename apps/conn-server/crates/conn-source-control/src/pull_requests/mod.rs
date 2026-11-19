@@ -18,6 +18,7 @@ pub mod normalize;
 mod stack;
 #[cfg(test)]
 mod tests;
+pub mod watch;
 static CLI_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
 static HTTP_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(8);
 const UNAUTHENTICATED: &str = "GitHub has no working credential for this host. Run `gh auth login`, or check the account and hosts in Settings → Source control & issues.";

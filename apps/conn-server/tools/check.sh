@@ -194,6 +194,9 @@ run 4 120 "textgen-diff" node crates/conn-server/tools/textgen-diff.mjs "$releas
 # GitHub and unknown-host fallback against T3's registry, test literals and a fixed grid.
 run 4 120 "registry-diff" \
   node crates/conn-source-control/tools/registry-diff.mjs "$release/examples/registry_cases"
+# Pull request watch evaluation and wake texts against T3's own pullRequestWatch.ts.
+run 4 120 "pr-watch-diff" \
+  node crates/conn-source-control/tools/pr-watch-diff.mjs "$release/examples/pr_watch_cases"
 # Webhook prompt templates, filters and signatures against T3's own functions.
 run 4 120 "webhook-diff" node crates/conn-features/tools/webhook-diff.mjs "$release/examples/webhook_functions"
 run 4 120 "limits-diff" node crates/conn-server/tools/limits-diff.mjs

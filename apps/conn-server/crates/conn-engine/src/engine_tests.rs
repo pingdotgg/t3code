@@ -1299,8 +1299,301 @@ fn every_contract_command_is_handled_or_refused_with_a_reason() {
             );
         }
     }
-    assert_eq!(handled, 44);
+    assert_eq!(handled, 45);
     assert_eq!(conn_contract::COMMAND_TYPES.len(), 58);
+}
+
+/// A watch starts with a link, its sync from the watch loop records what the host showed and
+/// wakes the thread with T3's notice, and Stop ends it (`dispatchPullRequestWatchSync`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_pull_request_watch_sync_wakes_the_thread_with_a_notice() {
+    let db = TempDb::new("pr-watch");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request.watch", "commandId": "w1", "threadId": "t1",
+            "host": "GitHub.com", "repository": "O/R", "number": 7, "watching": true,
+            "link": {"url": "https://github.com/O/R/pull/7", "source": "agent"}}),
+    )
+    .await;
+    let link = projection(&engine, "t1").await["thread"]["pullRequests"][0].clone();
+    assert_eq!(link["host"], "github.com", "{link}");
+    assert_eq!(link["source"], "agent");
+    let started = link["watch"]["startedAt"].as_str().unwrap().to_owned();
+    assert_eq!(
+        link["watch"]["awaitingBaseline"], "all",
+        "a first watch waits for its baseline"
+    );
+    assert_eq!(link["watch"]["remarksThrough"], started);
+
+    let sync = |watch: Value, wake: Value| {
+        json!({"commandId": format!("s-{}", watch["wakes"]), "threadId": "t1", "host": "github.com",
+            "repository": "o/r", "number": 7, "startedAt": started, "watch": watch, "wake": wake})
+    };
+    let mut moved = link["watch"].clone();
+    moved.as_object_mut().unwrap().remove("awaitingBaseline");
+    moved["headSha"] = json!("abcdef1234");
+    moved["failedChecks"] = json!(["test"]);
+    let wake = json!({"text": "Update on pull request #7", "messageId": "message:pr-watch:1",
+        "notification": {"source": {"kind": "monitor"}, "outcome": "failed",
+            "summary": "#7: checks failed"}});
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    engine
+        .sync_pull_request_watch(sync(moved.clone(), wake.clone()))
+        .await
+        .unwrap();
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    assert_eq!(
+        p["thread"]["pullRequests"][0]["watch"], moved,
+        "the watch moved on"
+    );
+    let message = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "message:pr-watch:1")
+        .cloned()
+        .expect("the wake message");
+    assert_eq!(message["createdBy"], "agent");
+    assert_eq!(message["creationSource"], "server");
+    assert_eq!(
+        message["notification"]["source"],
+        json!({"kind": "monitor", "pullRequest": {"host": "github.com", "repository": "o/r",
+            "number": 7, "watchStartedAt": started, "headSha": "abcdef1234"}})
+    );
+    assert_eq!(run_statuses(&p).len(), 1, "the wake ran a turn");
+
+    // A sync for a watch that is no longer the current one is refused whole.
+    let mut stale = sync(moved.clone(), wake.clone());
+    stale["startedAt"] = json!("2020-01-01T00:00:00.000Z");
+    stale["commandId"] = json!("s-stale");
+    assert!(engine.sync_pull_request_watch(stale).await.is_err());
+
+    // Stop ends the watch and keeps it as the ended one.
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "stop", "threadId": "t1"}),
+    )
+    .await;
+    let link = projection(&engine, "t1").await["thread"]["pullRequests"][0].clone();
+    assert!(link.get("watch").is_none(), "{link}");
+    assert_eq!(link["endedWatch"], moved);
+
+    // Watching again keeps what the ended watch told; unwatching leaves the link.
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request.watch", "commandId": "w2", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "watching": true}),
+    )
+    .await;
+    let watch = projection(&engine, "t1").await["thread"]["pullRequests"][0]["watch"].clone();
+    assert_eq!(watch["headSha"], "abcdef1234");
+    assert_eq!(watch["failedChecks"], json!(["test"]));
+    assert!(watch.get("awaitingBaseline").is_none(), "{watch}");
+    dispatch(
+        &engine,
+        json!({"type": "thread.pull-request.watch", "commandId": "w3", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "watching": false}),
+    )
+    .await;
+    let link = projection(&engine, "t1").await["thread"]["pullRequests"][0].clone();
+    assert!(
+        link.get("watch").is_none() && link["endedWatch"].is_object(),
+        "{link}"
+    );
+
+    // Settled threads refuse new watches.
+    dispatch(
+        &engine,
+        json!({"type": "thread.settle", "commandId": "settle", "threadId": "t1"}),
+    )
+    .await;
+    let refused = engine
+        .dispatch(
+            from_json(
+                json!({"type": "thread.pull-request.watch", "commandId": "w4",
+                "threadId": "t1", "host": "github.com", "repository": "o/r", "number": 7,
+                "watching": true}),
+            )
+            .unwrap(),
+        )
+        .await;
+    assert!(matches!(refused, Err(EngineError::Rejected(_))));
+}
+
+fn watch_command(id: &str, number: u64, watching: bool) -> Value {
+    json!({"type": "thread.pull-request.watch", "commandId": id, "threadId": "t1",
+        "host": "github.com", "repository": "o/r", "number": number, "watching": watching,
+        "link": {"url": format!("https://github.com/o/r/pull/{number}"), "source": "manual"}})
+}
+
+async fn current_watch(engine: &SqliteEngine, number: u64) -> Value {
+    projection(engine, "t1").await["thread"]["pullRequests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["number"] == number)
+        .map(|l| l["watch"].clone())
+        .unwrap_or(Value::Null)
+}
+
+fn section(number: u64) -> Value {
+    json!({"text": format!("Update on pull request #{number}\n\nLook into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."),
+        "outcome": "failed", "summary": format!("#{number}: checks failed")})
+}
+
+/// A wake queued behind a running turn is checked again when it would start
+/// (`startNextQueuedRun`): one whose watches all ended is cancelled; one for two pull
+/// requests, one of them since unwatched, tells only the other.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_wake_is_dropped_or_narrowed_when_its_watches_end() {
+    let db = TempDb::new("pr-wake-stale");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    for (id, n) in [("w7", 7), ("w8", 8)] {
+        dispatch(&engine, watch_command(id, n, true)).await;
+    }
+    let started = |watch: &Value| watch["startedAt"].as_str().unwrap().to_owned();
+    let (s7, s8) = (
+        started(&current_watch(&engine, 7).await),
+        started(&current_watch(&engine, 8).await),
+    );
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+
+    // Turn 1 keeps the thread busy; a wake for #7 queues behind it, then #7 is unwatched.
+    dispatch(&engine, message("t1", "m1", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut w7 = current_watch(&engine, 7).await;
+    w7["failedChecks"] = json!(["ci"]);
+    engine
+        .sync_pull_request_watch(json!({"commandId": "s1", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "startedAt": s7,
+            "watch": w7, "wake": {"text": "Update on pull request #7", "messageId": "message:wake-1",
+                "notification": {"source": {"kind": "monitor"}, "outcome": "failed",
+                    "summary": "#7: checks failed"}}}))
+        .await
+        .unwrap();
+    dispatch(&engine, watch_command("u7", 7, false)).await;
+    let runs = run_statuses(&projection(&engine, "t1").await);
+    assert_eq!(runs.last().unwrap().1, "queued", "{runs:?}");
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "i1", "threadId": "t1",
+            "runId": runs[0].0}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    let runs = run_statuses(&projection(&engine, "t1").await);
+    assert_eq!(runs[1].1, "cancelled", "the stale wake never ran: {runs:?}");
+
+    // Turn 3 busy again; one wake for #7 (watched again) and #8 queues; #8 is unwatched.
+    dispatch(&engine, watch_command("w7b", 7, true)).await;
+    let s7 = started(&current_watch(&engine, 7).await);
+    dispatch(&engine, message("t1", "m3", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let (w7, w8) = (
+        current_watch(&engine, 7).await,
+        current_watch(&engine, 8).await,
+    );
+    engine
+        .sync_pull_request_watch(json!({"commandId": "s2", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "startedAt": s7, "watch": w7,
+            "others": [{"host": "github.com", "repository": "o/r", "number": 8,
+                "startedAt": s8, "watch": w8}],
+            "wake": {"text": "both", "messageId": "message:wake-2",
+                "notification": {"source": {"kind": "monitor"}, "outcome": "failed",
+                    "summary": "#7: checks failed; #8: checks failed"},
+                "sections": [section(7), section(8)]}}))
+        .await
+        .unwrap();
+    dispatch(&engine, watch_command("u8", 8, false)).await;
+    let runs = run_statuses(&projection(&engine, "t1").await);
+    dispatch(
+        &engine,
+        json!({"type": "run.interrupt", "commandId": "i3", "threadId": "t1",
+            "runId": runs[2].0}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    until_run_ends(&mut thread).await;
+    let p = projection(&engine, "t1").await;
+    let runs = run_statuses(&p);
+    assert_eq!(runs[3].1, "completed", "the narrowed wake ran: {runs:?}");
+    let wake = p["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["id"] == "message:wake-2")
+        .cloned()
+        .unwrap();
+    assert_eq!(wake["text"], section(7)["text"], "only #7 is told");
+    assert_eq!(wake["notification"]["summary"], "#7: checks failed");
+    assert!(
+        wake["notification"]["source"]
+            .get("otherPullRequests")
+            .is_none()
+    );
+    assert!(
+        wake["notification"]["source"]["pullRequest"]
+            .get("section")
+            .is_none()
+    );
+}
+
+/// A finished push clears each watch's `checksPending` (`checks-reopen`), and a read of the
+/// old head that was in flight cannot put its `false` back (`syncedPullRequestWatch`).
+#[tokio::test(flavor = "current_thread")]
+async fn a_push_reopens_watched_checks_and_an_old_read_cannot_close_them() {
+    let db = TempDb::new("pr-push-reopen");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, watch_command("w7", 7, true)).await;
+    let mut answered = current_watch(&engine, 7).await;
+    let started = answered["startedAt"].as_str().unwrap().to_owned();
+    answered.as_object_mut().unwrap().remove("awaitingBaseline");
+    answered["checksPending"] = json!(false);
+    answered["passed"] = json!(true);
+    engine
+        .sync_pull_request_watch(json!({"commandId": "s1", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "startedAt": started,
+            "watch": answered}))
+        .await
+        .unwrap();
+    assert_eq!(current_watch(&engine, 7).await["checksPending"], false);
+
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "m1", "push")).await;
+    until_run_ends(&mut thread).await;
+    let reopened = current_watch(&engine, 7).await;
+    assert!(reopened.get("checksPending").is_none(), "{reopened}");
+    assert_eq!(reopened["passed"], true, "only the answer is forgotten");
+
+    // The read started before the push lands now: its `false` belongs to the old head.
+    let mut late = answered.clone();
+    late["headSha"] = json!("old");
+    engine
+        .sync_pull_request_watch(json!({"commandId": "s2", "threadId": "t1",
+            "host": "github.com", "repository": "o/r", "number": 7, "startedAt": started,
+            "watch": late, "checksPendingBefore": false}))
+        .await
+        .unwrap();
+    let after = current_watch(&engine, 7).await;
+    assert!(after.get("checksPending").is_none(), "{after}");
+    assert_eq!(after["headSha"], "old", "the rest of the read lands");
 }
 
 #[tokio::test(flavor = "current_thread")]

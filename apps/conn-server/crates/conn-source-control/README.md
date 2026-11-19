@@ -21,7 +21,7 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 | `pr` in VCS status | Not served (always `null`) |
 | `pullRequests.*` (35) | GitHub panel reads and writes, including stacks and stored guides. `runAction` and `generateReviewGuide` register typed refusals; those operations are unavailable. |
 | Engine commands for linked pull requests (7) | `thread.pull-request.link` and `unlink` as T3's decider (part 4); the other 5 refused |
-| `/mcp` pull request tools (9) | 5 served (part 4): `link_pull_request(s)`, `unlink_pull_request(s)`, `list_thread_pull_requests`; `watch`/`unwatch` and the 2 guide tools not served |
+| `/mcp` pull request tools (9) | 8 served: the 5 link tools, `watch`/`unwatch_pull_request`, `read_pull_request_guide`; `write_pull_request_guides` not served (no guide generator) |
 
 ## Modules
 
@@ -41,6 +41,7 @@ The specification is `packages/source-control-core`, `packages/source-control-gi
 | `registry/` | The host definition registry (`mod.rs`), its URL routes (`paths.rs`), thread link keys (`thread_keys.rs`) |
 | `detect.rs` | Provider detection: the checkout's remotes, the recognised context, unknown hosts refined |
 | `cache.rs` | `TtlCache`: bounded, one shared lookup per key, a time to live per answer (Effect's `Cache`) |
+| `pull_requests/watch.rs` | A watch's evaluation and wake texts (`pullRequestWatch.ts`); `tools/pr-watch-diff.mjs` runs T3's functions and ours on the same cases |
 
 ## Sign-in and stars
 
@@ -197,13 +198,16 @@ own reducers).
 
 `conn-mcp/src/tools/pull_requests.rs` serves the five link tools (`pullRequestTarget.ts`
 `resolveTarget`, `resolveThreadPullRequestChains`, T3's paging). Proof: 26 `parity.mjs` steps
-against the T3 server, values compared, no differences.
+against the T3 server, values compared, no differences. It also serves the watch and guide
+tools; the engine decides `thread.pull-request.watch` and `thread.pull-request-watch.sync`,
+and `conn-server/src/methods/pull_requests/watches.rs` is the watch loop (`docs/status.md`,
+"PR watching and review guides").
 
 ## PR panel differences
 
 - Reads use a bounded memory cache rather than T3's persistent stale reads; entries do not survive restart.
 - Listings read each repository separately. ETag revalidation, credential-token caching, quota reserve and Unix-socket transport remain absent.
-- Withheld whole-diff single-file extraction and automatic PR-link sync/watch reactors remain unbuilt.
+- Withheld whole-diff single-file extraction and the automatic PR-link sync reactor remain unbuilt. The watch loop has no GitHub change feed or fingerprints.
 - The 15 actions, stack and guide methods remain unregistered here; the actions branch supplies them.
 - No live macOS/iPhone or signed-in Orbit proof has been run for the panel.
 
