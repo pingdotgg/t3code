@@ -3893,8 +3893,17 @@ export const make = Effect.gen(function* () {
     const shell = yield* projects
       .getShell(projectId)
       .pipe(Effect.orElseSucceed(() => Option.none<OrchestrationProjectShell>()));
-    // A project with no repository has no listing to refresh.
-    const turnRepository = Option.getOrUndefined(shell)?.repositoryIdentity?.canonicalKey;
+    // A shell's identity can still be on its way; the list resolves it the same way. A project with
+    // no repository has no listing to refresh.
+    const turnShell = Option.getOrUndefined(shell);
+    const turnIdentity =
+      turnShell === undefined
+        ? null
+        : (turnShell.repositoryIdentity ??
+          (yield* repositoryIdentities
+            .resolve(turnShell.workspaceRoot)
+            .pipe(Effect.orElseSucceed(() => null))));
+    const turnRepository = turnIdentity?.canonicalKey;
     if (turnRepository !== undefined) {
       const key = turnRepository.toLowerCase();
       quietTurnsByRepository.set(key, (quietTurnsByRepository.get(key) ?? 0) + 1);
