@@ -3444,10 +3444,20 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
     var(--app-theme-secondary-label) 40%,
     var(--sidebar-foreground)
   );
+  --muted-foreground: color-mix(
+    in oklab,
+    var(--app-theme-muted-foreground) 50%,
+    var(--sidebar-foreground)
+  );
   --dim-foreground: color-mix(
     in oklab,
-    var(--sidebar-muted-foreground) 55%,
+    var(--sidebar-muted-foreground) 65%,
     var(--sidebar-foreground)
+  );
+  --contrast-muted-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--muted-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
   );
   --contrast-secondary-label: color-mix(
     in oklab,
