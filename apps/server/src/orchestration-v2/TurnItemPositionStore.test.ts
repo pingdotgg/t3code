@@ -48,7 +48,7 @@ it.effect("reuses an item's position without attempting another allocation inser
         runId: RunId.make("run:moved"),
         runOrdinal: 2,
       }),
-      first,
+      2_000_001,
     );
     assert.equal(
       yield* positions.allocate({ ...input, threadId: ThreadId.make("thread:other") }),
