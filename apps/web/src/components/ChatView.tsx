@@ -1964,6 +1964,7 @@ export default function ChatView(props: ChatViewProps) {
   });
   const {
     saveProjectScript: saveProjectScriptStable,
+    importProjectScript: importProjectScriptStable,
     updateProjectScript: updateProjectScriptStable,
     deleteProjectScript: deleteProjectScriptStable,
   } = useProjectScriptEditing({
@@ -3994,6 +3995,7 @@ export default function ChatView(props: ChatViewProps) {
                     : {})}
                   onRunProjectScript={runProjectScriptStable}
                   onAddProjectScript={saveProjectScriptStable}
+                  onImportProjectScript={importProjectScriptStable}
                   onUpdateProjectScript={updateProjectScriptStable}
                   onDeleteProjectScript={deleteProjectScriptStable}
                   usage={{

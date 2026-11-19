@@ -1747,6 +1747,10 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    readSettings: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:read-settings",
+      tag: WS_METHODS.serverGetSettings,
+    }),
     updateSettings,
     mutateProviderInstance: updateSettings,
     prepareAcpRegistryAgent: createEnvironmentRpcCommand(runtime, {

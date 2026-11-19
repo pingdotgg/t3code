@@ -26,14 +26,14 @@ import {
   keybindingValueForCommand,
 } from "../../lib/projectScriptKeybindings";
 import {
-  buildProjectScript,
   commandForProjectScript,
+  hasMatchingProjectScript,
   nextProjectScriptId,
   projectScriptIdFromCommand,
-  releaseClaimedRoles,
+  saveProjectScriptToList,
 } from "../../projectScripts";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { readEnvironmentSettings, serverEnvironment } from "../../state/server";
+import { readEnvironmentConfig, serverEnvironment } from "../../state/server";
 import { readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { readProject, readProjects } from "../../state/entities";
@@ -48,7 +48,8 @@ export function useProjectScriptEditing(input: {
   readonly project: { readonly id: ProjectId } | null;
 }) {
   const { environmentId, project } = input;
-  const readSettings = useAtomCommand(readEnvironmentSettings, { reportFailure: false });
+  const readSettings = useAtomCommand(serverEnvironment.readSettings, { reportFailure: false });
+  const readConfig = useAtomCommand(readEnvironmentConfig, { reportFailure: false });
   const updateProjectScriptSettings = useAtomCommand(serverEnvironment.updateSettings, {
     reportFailure: false,
   });
@@ -68,17 +69,27 @@ export function useProjectScriptEditing(input: {
   }): Promise<AtomCommandResult<void, unknown>> => {
     const { settings } = input;
     const serverConfig = appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId));
-    const previousKeybinding = keybindingValueForCommand(
-      serverConfig?.keybindings ?? [],
-      input.keybindingCommand,
-    );
-    const isDeletingScript = !input.nextScripts.some(
-      (script) => commandForProjectScript(script.id) === input.keybindingCommand,
-    );
-    const changesKeybinding =
+    const scriptId = input.keybindingCommand
+      ? projectScriptIdFromCommand(input.keybindingCommand)
+      : null;
+    const isDeletingScript = !input.nextScripts.some((script) => script.id === scriptId);
+    const requestedKeybinding = input.keybinding?.trim() || null;
+    const shouldReadKeybindings =
       input.keybinding !== undefined &&
-      (input.keybinding?.trim() || null) !== previousKeybinding &&
-      (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope));
+      input.keybindingCommand !== null &&
+      (!isDeletingScript || readEnvironmentScope(environmentId, AuthSettingsWriteScope)) &&
+      (requestedKeybinding !== null ||
+        input.previousScripts.some((script) => script.id === scriptId));
+    // The config stream can lag an acknowledged shortcut update too.
+    const configResult = shouldReadKeybindings
+      ? await readConfig({ environmentId, input: {} })
+      : null;
+    if (configResult?._tag === "Failure")
+      return mapAtomCommandResult(configResult, () => undefined);
+    const keybindings = configResult?.value.keybindings ?? [];
+    const changesKeybinding =
+      shouldReadKeybindings &&
+      requestedKeybinding !== keybindingValueForCommand(keybindings, input.keybindingCommand);
     if (changesKeybinding && !readEnvironmentScope(environmentId, AuthSettingsWriteScope)) {
       return AsyncResult.failure(
         Cause.fail(
@@ -144,14 +155,8 @@ export function useProjectScriptEditing(input: {
       );
     }
 
-    const scriptId = input.keybindingCommand
-      ? projectScriptIdFromCommand(input.keybindingCommand)
-      : null;
-    if (!keybindingRule && !input.previousScripts.some((script) => script.id === scriptId)) {
-      return updateResult;
-    }
     const retainedElsewhere =
-      !input.nextScripts.some((script) => script.id === scriptId) &&
+      isDeletingScript &&
       (settings.defaultProjectScripts.some((script) => script.id === scriptId) ||
         Object.entries(settings.projectSettingsOverrides).some(
           ([projectId, entry]) =>
@@ -166,7 +171,7 @@ export function useProjectScriptEditing(input: {
         ));
     if (!keybindingRule && retainedElsewhere) return updateResult;
 
-    const previousRules = (serverConfig?.keybindings ?? []).flatMap((binding) => {
+    const previousRules = keybindings.flatMap((binding) => {
       if (binding.command !== input.keybindingCommand || binding.whenAst) return [];
       const previous = decodeProjectScriptKeybindingRule({
         keybinding: keybindingValueForCommand([binding], input.keybindingCommand),
@@ -226,8 +231,15 @@ export function useProjectScriptEditing(input: {
     );
   };
 
-  const submitProjectScript = (scriptId: string | null, input: NewProjectScriptInput) =>
+  const submitProjectScript = (
+    scriptId: string | null,
+    input: NewProjectScriptInput,
+    source: "editor" | "import" = "editor",
+  ) =>
     editProjectScripts(async (projectId, settings, scripts) => {
+      if (source === "import" && hasMatchingProjectScript(scripts, input)) {
+        return AsyncResult.success(undefined);
+      }
       if (scriptId !== null && !scripts.some((script) => script.id === scriptId)) {
         return AsyncResult.failure(Cause.fail(new Error(m(msg("Script not found.")))));
       }
@@ -237,15 +249,16 @@ export function useProjectScriptEditing(input: {
           input.name,
           scripts.map((script) => script.id),
         );
-      const next = buildProjectScript(id, input);
-      const updated = scripts.map((script) =>
-        script.id === id ? next : releaseClaimedRoles(script, input),
-      );
       return persistProjectScripts({
         projectId,
         settings,
         previousScripts: scripts,
-        nextScripts: scriptId === null ? [...updated, next] : updated,
+        nextScripts: saveProjectScriptToList(
+          scripts,
+          id,
+          input,
+          scriptId === null ? "add" : "edit",
+        ),
         keybinding: input.keybinding,
         keybindingCommand: commandForProjectScript(id),
       });
@@ -295,7 +308,12 @@ export function useProjectScriptEditing(input: {
     saveProjectScript: useStableCallback((input: NewProjectScriptInput) =>
       submitProjectScript(null, input),
     ),
-    updateProjectScript: useStableCallback(submitProjectScript),
+    importProjectScript: useStableCallback((input: NewProjectScriptInput) =>
+      submitProjectScript(null, input, "import"),
+    ),
+    updateProjectScript: useStableCallback((scriptId: string, input: NewProjectScriptInput) =>
+      submitProjectScript(scriptId, input),
+    ),
     deleteProjectScript: useStableCallback(deleteProjectScript),
   };
 }

@@ -38,9 +38,9 @@ export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRunt
   usageLimitSources: true,
   usageLimitsCommand: true,
 });
-export const readEnvironmentSettings = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "environment-data:server:read-settings",
-  tag: WS_METHODS.serverGetSettings,
+export const readEnvironmentConfig = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:server:read-config",
+  tag: WS_METHODS.serverGetConfig,
 });
 export const environmentUpdateStatesAtom = environmentAtomList(
   "web-environment-update-states",

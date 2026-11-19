@@ -26,10 +26,9 @@ import {
   keybindingValueForCommand,
 } from "../../lib/projectScriptKeybindings";
 import {
-  buildProjectScript,
   commandForProjectScript,
   nextProjectScriptId,
-  releaseClaimedRoles,
+  saveProjectScriptToList,
 } from "../../projectScripts";
 import { useProjects } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
@@ -203,14 +202,8 @@ export function useProjectScriptSettings(
       ),
     ];
     const id = scriptId ?? nextProjectScriptId(input.name, existingIds);
-    const next = buildProjectScript(id, input);
     return persist(
-      (current) => {
-        const updated = current.map((script) =>
-          script.id === id ? next : releaseClaimedRoles(script, input),
-        );
-        return scriptId === null ? [...updated, next] : updated;
-      },
+      (current) => saveProjectScriptToList(current, id, input, scriptId === null ? "add" : "edit"),
       id,
       input.keybinding,
     );
