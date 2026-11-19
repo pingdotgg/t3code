@@ -1,4 +1,9 @@
-import { AuthAccessWriteScope, AuthSessionId, AuthStandardClientScopes } from "@t3tools/contracts";
+import {
+  AuthAccessWriteScope,
+  AuthRevokePairingLinkInput,
+  AuthSessionId,
+  AuthStandardClientScopes,
+} from "@t3tools/contracts";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -152,7 +157,11 @@ const pairingListCommand = Command.make("list", {
 
 const pairingRevokeCommand = Command.make("revoke", {
   ...authLocationFlags,
-  id: Argument.String("id").pipe(Argument.withDescription("Pairing credential id to revoke.")),
+  id: Argument.String("id").pipe(
+    Argument.withDescription("Pairing credential id to revoke."),
+    // Same schema the server applies, so both paths revoke the same id.
+    Argument.withSchema(AuthRevokePairingLinkInput.fields.id),
+  ),
 }).pipe(
   Command.withDescription("Revoke an active client pairing token."),
   Command.withHandler((flags) =>
