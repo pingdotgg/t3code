@@ -531,10 +531,10 @@ index 0000000000..afff018ca6
 +  );
 +}
 diff --git a/apps/server/src/auth/RpcAuthorization.ts b/apps/server/src/auth/RpcAuthorization.ts
-index 7925fd8697..a1a7a3214f 100644
+index 2e73a401ca..2e08779734 100644
 --- a/apps/server/src/auth/RpcAuthorization.ts
 +++ b/apps/server/src/auth/RpcAuthorization.ts
-@@ -63,6 +63,7 @@ export const RPC_REQUIRED_SCOPES = {
+@@ -64,6 +64,7 @@ export const RPC_REQUIRED_SCOPES = {
    [ORCHESTRATION_V2_WS_METHODS.subscribeCommandOutput]: AuthOrchestrationReadScope,
    [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: AuthOrchestrationReadScope,
    [WS_METHODS.projectsMutate]: AuthOrchestrationOperateScope,
@@ -563,7 +563,7 @@ index 523d8ad560..4fa668040e 100644
        ),
      ),
 diff --git a/apps/server/src/mcp/OrchestratorMcpService.activity.test.ts b/apps/server/src/mcp/OrchestratorMcpService.activity.test.ts
-index cd8c506447..fd019ee733 100644
+index 4a7b08fbd8..70926daa21 100644
 --- a/apps/server/src/mcp/OrchestratorMcpService.activity.test.ts
 +++ b/apps/server/src/mcp/OrchestratorMcpService.activity.test.ts
 @@ -20,6 +20,7 @@ import * as Layer from "effect/Layer";
@@ -584,7 +584,7 @@ index cd8c506447..fd019ee733 100644
  
  const environmentId = EnvironmentId.make("environment-mcp-orchestrator-detail");
 diff --git a/apps/server/src/mcp/OrchestratorMcpService.test.ts b/apps/server/src/mcp/OrchestratorMcpService.test.ts
-index 816a0dcb98..4df046fa6c 100644
+index 0bbb8a6532..51b80c4e5f 100644
 --- a/apps/server/src/mcp/OrchestratorMcpService.test.ts
 +++ b/apps/server/src/mcp/OrchestratorMcpService.test.ts
 @@ -2,6 +2,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -595,7 +595,7 @@ index 816a0dcb98..4df046fa6c 100644
    CommandId,
    ContextTransferId,
    EnvironmentId,
-@@ -34,6 +35,7 @@ import * as DateTime from "effect/DateTime";
+@@ -36,6 +37,7 @@ import * as DateTime from "effect/DateTime";
  import * as Deferred from "effect/Deferred";
  import * as Duration from "effect/Duration";
  import * as Effect from "effect/Effect";
@@ -603,7 +603,7 @@ index 816a0dcb98..4df046fa6c 100644
  import * as Fiber from "effect/Fiber";
  import * as Layer from "effect/Layer";
  import * as Option from "effect/Option";
-@@ -84,6 +86,18 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
+@@ -86,6 +88,18 @@ const layerOrchestratorService = OrchestratorMcpService.layer.pipe(
    Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
  );
@@ -622,7 +622,7 @@ index 816a0dcb98..4df046fa6c 100644
  
  describe("OrchestratorMcpService", () => {
    it.effect("retries terminal acknowledgement with a fresh command id", () =>
-@@ -208,7 +222,7 @@ describe("OrchestratorMcpService", () => {
+@@ -210,7 +224,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -631,7 +631,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -316,7 +330,7 @@ describe("OrchestratorMcpService", () => {
+@@ -327,7 +341,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -640,7 +640,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -604,7 +618,7 @@ describe("OrchestratorMcpService", () => {
+@@ -572,7 +586,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -649,7 +649,16 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -706,7 +720,7 @@ describe("OrchestratorMcpService", () => {
+@@ -773,7 +787,7 @@ describe("OrchestratorMcpService", () => {
+         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+           list: () => Effect.succeed([]),
+         }),
+-        Layer.mock(ProjectService.ProjectService)({}),
++        layerMockProjectService,
+         Layer.mock(SecretRequests.SecretRequests)({}),
+         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -875,7 +889,7 @@ describe("OrchestratorMcpService", () => {
            Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
              list: () => Effect.succeed([]),
            }),
@@ -658,7 +667,7 @@ index 816a0dcb98..4df046fa6c 100644
            Layer.mock(SecretRequests.SecretRequests)({}),
            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -815,7 +829,7 @@ describe("OrchestratorMcpService", () => {
+@@ -984,7 +998,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -667,7 +676,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -912,7 +926,7 @@ describe("OrchestratorMcpService", () => {
+@@ -1081,7 +1095,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -676,7 +685,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -1098,7 +1112,7 @@ describe("OrchestratorMcpService", () => {
+@@ -1267,7 +1281,7 @@ describe("OrchestratorMcpService", () => {
          Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
            list: () => Effect.succeed([]),
          }),
@@ -685,16 +694,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -1288,7 +1302,7 @@ describe("OrchestratorMcpService", () => {
-         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-           list: () => Effect.succeed([]),
-         }),
--        Layer.mock(ProjectService.ProjectService)({}),
-+        layerMockProjectService,
-         Layer.mock(SecretRequests.SecretRequests)({}),
-         Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -1467,6 +1481,94 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -1636,6 +1650,94 @@ describe("OrchestratorMcpService provider resolution", () => {
      turnItems: [],
    } as unknown as OrchestrationV2ThreadProjection;
  
@@ -789,7 +789,7 @@ index 816a0dcb98..4df046fa6c 100644
    it.effect.each([
      "parent completion",
      "nested child completion",
-@@ -1880,7 +1982,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2049,7 +2151,7 @@ describe("OrchestratorMcpService provider resolution", () => {
              antigravityInstanceId,
              disabledAntigravityInstanceId,
            ]),
@@ -798,7 +798,7 @@ index 816a0dcb98..4df046fa6c 100644
            Layer.mock(SecretRequests.SecretRequests)({}),
            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2064,7 +2166,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2233,7 +2335,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  }),
                  providerRegistryLayer(catalog),
                  adapterRegistryLayer([codexInstanceId, opencodeInstanceId]),
@@ -807,7 +807,7 @@ index 816a0dcb98..4df046fa6c 100644
                  Layer.mock(SecretRequests.SecretRequests)({}),
                  Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                  Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2282,7 +2384,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2451,7 +2553,7 @@ describe("OrchestratorMcpService provider resolution", () => {
            forkShadow,
          ]),
          adapterRegistryLayer([codexInstanceId]),
@@ -816,7 +816,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2509,7 +2611,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2749,7 +2851,7 @@ describe("OrchestratorMcpService provider resolution", () => {
            }),
          ]),
          adapterRegistryLayer([codexInstanceId, altInstanceId]),
@@ -825,7 +825,7 @@ index 816a0dcb98..4df046fa6c 100644
          Layer.mock(SecretRequests.SecretRequests)({}),
          Layer.mock(RemoteDelegation.RemoteDelegation)({}),
          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2619,7 +2721,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2859,7 +2961,7 @@ describe("OrchestratorMcpService provider resolution", () => {
              }),
            ]),
            adapterRegistryLayer([codexInstanceId, altInstanceId]),
@@ -834,7 +834,15 @@ index 816a0dcb98..4df046fa6c 100644
            Layer.mock(SecretRequests.SecretRequests)({}),
            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2714,7 +2816,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -2933,6 +3035,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+         });
+         const layerThreads = ThreadManagementService.layer.pipe(
+           Layer.provideMerge(layerOrchestrator),
++          Layer.provide(layerMockProjectService),
+           Layer.provide(
+             LegacyV1ThreadImporter.layer.pipe(
+               Layer.provide(layerOrchestrator),
+@@ -2954,7 +3057,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
                  providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
                ]),
@@ -843,15 +851,7 @@ index 816a0dcb98..4df046fa6c 100644
                Layer.mock(SecretRequests.SecretRequests)({}),
                Layer.mock(RemoteDelegation.RemoteDelegation)({}),
                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -2859,6 +2961,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-         });
-         const layerThreads = ThreadManagementService.layer.pipe(
-           Layer.provideMerge(layerOrchestrator),
-+          Layer.provide(layerMockProjectService),
-           Layer.provide(
-             LegacyV1ThreadImporter.layer.pipe(
-               Layer.provide(layerOrchestrator),
-@@ -3140,7 +3243,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -3397,7 +3500,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                  ? [codexAltInstanceId]
                  : [codexInstanceId, codexAltInstanceId],
              ),
@@ -860,7 +860,46 @@ index 816a0dcb98..4df046fa6c 100644
              Layer.mock(SecretRequests.SecretRequests)({}),
              Layer.mock(RemoteDelegation.RemoteDelegation)({}),
              Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -3370,0 +3472,52 @@ describe("OrchestratorMcpService provider resolution", () => {
+@@ -3714,7 +3817,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+                     list: () => Effect.succeed([]),
+                   }),
+-                  Layer.mock(ProjectService.ProjectService)({}),
++                  layerMockProjectService,
+                   Layer.mock(SecretRequests.SecretRequests)({}),
+                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+@@ -4168,7 +4271,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           ServerSettings.layerTest(),
+           providerRegistryLayer([]),
+           adapterRegistryLayer([]),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4331,7 +4434,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
+             ]),
+             adapterRegistryLayer([codexInstanceId, peerId]),
+-            Layer.mock(ProjectService.ProjectService)({}),
++            layerMockProjectService,
+             Layer.mock(SecretRequests.SecretRequests)({}),
+             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -4523,7 +4626,7 @@ describe("OrchestratorMcpService provider resolution", () => {
+           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+             list: () => Effect.succeed([]),
+           }),
+-          Layer.mock(ProjectService.ProjectService)({}),
++          layerMockProjectService,
+           Layer.mock(SecretRequests.SecretRequests)({}),
+           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+@@ -5274,3 +5377,55 @@ describe("OrchestratorMcpService thread stop", () => {
+     }),
+   );
+ });
 +
 +    it.effect("hides a webhook URL from a thread whose turn has ended", () =>
 +      Effect.gen(function* () {
@@ -913,47 +952,11 @@ index 816a0dcb98..4df046fa6c 100644
 +        assert.equal(listed.tasks[0]?.webhookUrl, undefined);
 +      }),
 +    );
-@@ -3457,7 +3612,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-                     list: () => Effect.succeed([]),
-                   }),
--                  Layer.mock(ProjectService.ProjectService)({}),
-+                  layerMockProjectService,
-                   Layer.mock(SecretRequests.SecretRequests)({}),
-                   Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
-@@ -3877,7 +4032,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-           ServerSettings.layerTest(),
-           providerRegistryLayer([]),
-           adapterRegistryLayer([]),
--          Layer.mock(ProjectService.ProjectService)({}),
-+          layerMockProjectService,
-           Layer.mock(SecretRequests.SecretRequests)({}),
-           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -4040,7 +4195,7 @@ describe("OrchestratorMcpService provider resolution", () => {
-               providerSnapshot({ instanceId: peerId, driver, model: inherited.model }),
-             ]),
-             adapterRegistryLayer([codexInstanceId, peerId]),
--            Layer.mock(ProjectService.ProjectService)({}),
-+            layerMockProjectService,
-             Layer.mock(SecretRequests.SecretRequests)({}),
-             Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-@@ -4312,7 +4467,7 @@ describe("OrchestratorMcpService thread lookup", () => {
-           Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
-             list: () => Effect.succeed([]),
-           }),
--          Layer.mock(ProjectService.ProjectService)({}),
-+          layerMockProjectService,
-           Layer.mock(SecretRequests.SecretRequests)({}),
-           Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
 diff --git a/apps/server/src/mcp/OrchestratorMcpService.ts b/apps/server/src/mcp/OrchestratorMcpService.ts
-index eaa505663c..adfe8bdc2f 100644
+index 8dcd025c82..4fec119fc6 100644
 --- a/apps/server/src/mcp/OrchestratorMcpService.ts
 +++ b/apps/server/src/mcp/OrchestratorMcpService.ts
-@@ -81,9 +81,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
+@@ -82,9 +82,11 @@ import * as SecureRandom from "effect/crypto/SecureRandom";
  import * as DateTime from "effect/DateTime";
  import * as Duration from "effect/Duration";
  import * as Effect from "effect/Effect";
@@ -965,7 +968,7 @@ index eaa505663c..adfe8bdc2f 100644
  import * as Ref from "effect/Ref";
  import * as Schema from "effect/Schema";
  import * as Stream from "effect/Stream";
-@@ -115,6 +117,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
+@@ -117,6 +119,7 @@ import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
  import { userFacingDispatchErrorMessage } from "../orchestration-v2/UserFacingErrors.ts";
  import * as ProjectService from "../project/ProjectService.ts";
  import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
@@ -973,7 +976,7 @@ index eaa505663c..adfe8bdc2f 100644
  import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
  import * as ServerSettings from "../serverSettings.ts";
  import {
-@@ -1205,6 +1208,8 @@ const make = Effect.gen(function* () {
+@@ -1273,6 +1276,8 @@ const make = Effect.gen(function* () {
    const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
    const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
    const projects = yield* ProjectService.ProjectService;
@@ -982,7 +985,10 @@ index eaa505663c..adfe8bdc2f 100644
    const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
    const gitDriver = yield* GitVcsDriver.GitVcsDriver;
    const serverSettings = yield* ServerSettings.ServerSettingsService;
-@@ -1235,3 +1240,23 @@ const make = Effect.gen(function* () {
+@@ -1307,6 +1312,26 @@ const make = Effect.gen(function* () {
+       );
+     return selection;
+   });
 +
 +  const provideAgentFiles = <A, E>(
 +    effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
@@ -1006,7 +1012,7 @@ index eaa505663c..adfe8bdc2f 100644
    const secretRequests = yield* SecretRequests.SecretRequests;
  
    const requireCapability = (scope: McpInvocationScope) =>
-@@ -2485,6 +2510,12 @@ const make = Effect.gen(function* () {
+@@ -2599,6 +2624,12 @@ const make = Effect.gen(function* () {
        const settings = yield* serverSettings.getSettings.pipe(
          Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
        );
@@ -1019,7 +1025,7 @@ index eaa505663c..adfe8bdc2f 100644
        const inherited = parent?.thread.modelSelection;
        const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
        return {
-@@ -2550,6 +2581,13 @@ const make = Effect.gen(function* () {
+@@ -2664,6 +2695,13 @@ const make = Effect.gen(function* () {
              constraints: [...constraints],
            };
          }),
@@ -1033,7 +1039,7 @@ index eaa505663c..adfe8bdc2f 100644
          features: {
            appOwnedSubagents: true,
            asyncPolling: true,
-@@ -2602,7 +2640,6 @@ const make = Effect.gen(function* () {
+@@ -2716,7 +2754,6 @@ const make = Effect.gen(function* () {
            "Delegated tasks require an active run owned by this MCP provider session.",
          );
        }
@@ -1041,7 +1047,7 @@ index eaa505663c..adfe8bdc2f 100644
        const key = yield* requestKey(input.clientRequestId);
        const commandId = stableCommandId({
          scope,
-@@ -2610,9 +2647,102 @@ const make = Effect.gen(function* () {
+@@ -2724,9 +2761,102 @@ const make = Effect.gen(function* () {
          operation: "delegate-task",
        });
        const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
@@ -1145,7 +1151,7 @@ index eaa505663c..adfe8bdc2f 100644
          providers,
          skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
        });
-@@ -2668,6 +2798,7 @@ const make = Effect.gen(function* () {
+@@ -2782,6 +2912,7 @@ const make = Effect.gen(function* () {
            parentRunId: parentRun.id,
            parentNodeId: parentRun.rootNodeId,
            task: taskPrompt(input),
@@ -1153,7 +1159,7 @@ index eaa505663c..adfe8bdc2f 100644
            ...(input.title === undefined ? {} : { title: input.title }),
            modelSelection: target.modelSelection,
            runtimeMode,
-@@ -3534,6 +3665,8 @@ export const layer: Layer.Layer<
+@@ -3687,6 +3818,8 @@ export const layer: Layer.Layer<
    | ProviderAdapterRegistry.ProviderAdapterRegistryV2
    | ScheduledTaskService.ScheduledTaskService
    | ProjectService.ProjectService
@@ -1196,10 +1202,10 @@ index 928fda0dd7..19f4bdd3c8 100644
  );
  
 diff --git a/apps/server/src/mcp/toolkits/core.test.ts b/apps/server/src/mcp/toolkits/core.test.ts
-index 35a18f5f0b..79d35e042b 100644
+index af2501b295..f82f9ebf99 100644
 --- a/apps/server/src/mcp/toolkits/core.test.ts
 +++ b/apps/server/src/mcp/toolkits/core.test.ts
-@@ -709,6 +709,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act
+@@ -713,6 +713,7 @@ it.effect("a client caller targets any thread within its ceiling and cannot act
          .pipe(
            Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
            Effect.provideService(McpSchema.McpServerClient, client),
@@ -1207,7 +1213,7 @@ index 35a18f5f0b..79d35e042b 100644
          );
  
      const untargeted = yield* call("t3_thread_organize", { action: "pin" }, clientScope("auto"));
-@@ -908,6 +909,7 @@ it.effect("refuses act-as-caller tools to a client caller", () =>
+@@ -986,6 +987,7 @@ it.effect("hides act-as-caller tools from a client caller", () =>
        layerOrchestratorToolkit.pipe(
          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
          Layer.provide(NodeCrypto.layer),
@@ -1215,7 +1221,7 @@ index 35a18f5f0b..79d35e042b 100644
          Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
          Layer.provide(ServerSettings.layerTest()),
          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-@@ -958,6 +960,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
+@@ -1036,6 +1038,7 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
        layerOrchestratorToolkit.pipe(
          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
          Layer.provide(NodeCrypto.layer),
@@ -1223,7 +1229,7 @@ index 35a18f5f0b..79d35e042b 100644
          Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
          Layer.provide(ServerSettings.layerTest()),
          Layer.provide(Layer.mock(ProviderRegistry.ProviderRegistry)({})),
-@@ -1097,6 +1100,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
+@@ -1223,6 +1226,7 @@ it.effect.each(["t3_thread_interrupt", "t3_workflow_stop"])(
          layerOrchestratorToolkit.pipe(
            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
            Layer.provide(NodeCrypto.layer),
@@ -1231,7 +1237,7 @@ index 35a18f5f0b..79d35e042b 100644
            Layer.provide(
              Layer.mock(ThreadManagement.ThreadManagementService)({
                getThreadShell: () =>
-@@ -1205,6 +1209,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
+@@ -1331,6 +1335,7 @@ it.effect("discovers workflow stop targets and requires orchestration capability
        layerOrchestratorToolkit.pipe(
          Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
          Layer.provide(NodeCrypto.layer),
@@ -1239,7 +1245,7 @@ index 35a18f5f0b..79d35e042b 100644
          Layer.provide(
            Layer.mock(ThreadManagement.ThreadManagementService)({
              getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
-@@ -1325,6 +1330,7 @@ it.effect(
+@@ -1546,6 +1551,7 @@ it.effect(
          layerOrchestratorToolkit.pipe(
            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
            Layer.provide(NodeCrypto.layer),
@@ -1248,10 +1254,10 @@ index 35a18f5f0b..79d35e042b 100644
              Layer.mock(ThreadManagement.ThreadManagementService)({
                listProjectThreads: () => Effect.succeed([unsettled, settled]),
 diff --git a/apps/server/src/observability/RpcInstrumentation.ts b/apps/server/src/observability/RpcInstrumentation.ts
-index 4549ee8a33..2a3585c61d 100644
+index a2b698657a..2ac9c94d5e 100644
 --- a/apps/server/src/observability/RpcInstrumentation.ts
 +++ b/apps/server/src/observability/RpcInstrumentation.ts
-@@ -171,6 +171,7 @@ const RPC_AGGREGATES = {
+@@ -185,6 +185,7 @@ const RPC_AGGREGATES = {
    [WS_METHODS.filesystemGetMetadata]: "workspace",
    [WS_METHODS.agentSessionsScan]: "workspace",
    [WS_METHODS.agentSessionsImport]: "workspace",
@@ -1260,10 +1266,10 @@ index 4549ee8a33..2a3585c61d 100644
    [WS_METHODS.assetsPersistChatAttachments]: "orchestration",
    [WS_METHODS.attachmentsCreateUploadUrl]: "workspace",
 diff --git a/apps/server/src/orchestration-v2/ClaudeAutomaticDelivery.integration.test.ts b/apps/server/src/orchestration-v2/ClaudeAutomaticDelivery.integration.test.ts
-index 0fead24d97..c4ab950373 100644
+index 93177fffbd..00e0de24da 100644
 --- a/apps/server/src/orchestration-v2/ClaudeAutomaticDelivery.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/ClaudeAutomaticDelivery.integration.test.ts
-@@ -39,6 +39,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+@@ -40,6 +40,7 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
  import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
  import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
  import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -1271,7 +1277,7 @@ index 0fead24d97..c4ab950373 100644
  import * as Orchestrator from "./Orchestrator.ts";
  import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
  import * as ThreadLaunchService from "./ThreadLaunchService.ts";
-@@ -338,6 +339,11 @@ it.effect.each(deliveries)(
+@@ -339,6 +340,11 @@ it.effect.each(deliveries)(
                        Effect.succeed({ importedThreadCount: 0, importedMessageCount: 0 }),
                    }),
                  ),
@@ -1284,10 +1290,10 @@ index 0fead24d97..c4ab950373 100644
                  Layer.provide(ManagedPolicy.layerTest()),
                  Layer.provide(
 diff --git a/apps/server/src/orchestration-v2/Orchestrator.ts b/apps/server/src/orchestration-v2/Orchestrator.ts
-index 226b7d703d..39e1b10f2d 100644
+index c71addfa57..87e50df719 100644
 --- a/apps/server/src/orchestration-v2/Orchestrator.ts
 +++ b/apps/server/src/orchestration-v2/Orchestrator.ts
-@@ -3735,6 +3735,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -3927,6 +3927,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
        title: command.title,
        providerInstanceId: command.modelSelection.instanceId,
        modelSelection: command.modelSelection,
@@ -1295,7 +1301,7 @@ index 226b7d703d..39e1b10f2d 100644
        runtimeMode: command.runtimeMode,
        interactionMode: command.interactionMode,
        branch: command.branch,
-@@ -9398,6 +9399,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
+@@ -9757,6 +9758,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
            now,
            createdBy: command.createdBy,
            creationSource: command.creationSource,
@@ -1304,10 +1310,10 @@ index 226b7d703d..39e1b10f2d 100644
          runtimeMode: command.runtimeMode,
          interactionMode: command.interactionMode,
 diff --git a/apps/server/src/orchestration-v2/ProjectionStore.ts b/apps/server/src/orchestration-v2/ProjectionStore.ts
-index 2d31d3e9bd..5d42e202b9 100644
+index f945d82b75..282c09ede5 100644
 --- a/apps/server/src/orchestration-v2/ProjectionStore.ts
 +++ b/apps/server/src/orchestration-v2/ProjectionStore.ts
-@@ -1767,6 +1767,7 @@ export function threadShellFromProjection(
+@@ -1887,6 +1887,7 @@ export function threadShellFromProjection(
      title: projection.thread.title,
      providerInstanceId: projection.thread.providerInstanceId,
      modelSelection: projection.thread.modelSelection,
@@ -1315,7 +1321,7 @@ index 2d31d3e9bd..5d42e202b9 100644
      runtimeMode: projection.thread.runtimeMode,
      interactionMode: projection.thread.interactionMode,
      branch: projection.thread.branch,
-@@ -2080,6 +2081,7 @@ function shellFromState(input: {
+@@ -2201,6 +2202,7 @@ function shellFromState(input: {
      title: input.state.thread.title,
      providerInstanceId: input.state.thread.providerInstanceId,
      modelSelection: input.state.thread.modelSelection,
@@ -1324,10 +1330,10 @@ index 2d31d3e9bd..5d42e202b9 100644
      interactionMode: input.state.thread.interactionMode,
      branch: input.state.thread.branch,
 diff --git a/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts b/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
-index 129b0e2664..19c2352c02 100644
+index ca79456323..0899ef1c05 100644
 --- a/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
 +++ b/apps/server/src/orchestration-v2/SteeringCompletion.integration.test.ts
-@@ -33,6 +33,7 @@ import * as Orchestrator from "./Orchestrator.ts";
+@@ -42,6 +42,7 @@ import * as Orchestrator from "./Orchestrator.ts";
  import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
  import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
  import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -1335,7 +1341,7 @@ index 129b0e2664..19c2352c02 100644
  import * as ServerSettings from "../serverSettings.ts";
  import * as SqlitePersistence from "../persistence/Sqlite.ts";
  import * as CommandReceiptStore from "./CommandReceiptStore.ts";
-@@ -3049,6 +3050,7 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
+@@ -3219,6 +3220,7 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
        Effect.provide(
          ThreadManagementService.layer.pipe(
            Layer.provideMerge(layer),
@@ -1344,10 +1350,10 @@ index 129b0e2664..19c2352c02 100644
            Layer.provide(
              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
 diff --git a/apps/server/src/orchestration-v2/ThreadLaunchService.test.ts b/apps/server/src/orchestration-v2/ThreadLaunchService.test.ts
-index e163b5c1eb..da6ace126f 100644
+index 9f40a5a176..4fe6a575b2 100644
 --- a/apps/server/src/orchestration-v2/ThreadLaunchService.test.ts
 +++ b/apps/server/src/orchestration-v2/ThreadLaunchService.test.ts
-@@ -151,10 +151,32 @@ function makeHarness(options: HarnessOptions = {}) {
+@@ -157,10 +157,32 @@ function makeHarness(options: HarnessOptions = {}) {
    );
    const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
    const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
@@ -1380,7 +1386,7 @@ index e163b5c1eb..da6ace126f 100644
    );
    const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
    const createWorktree = vi.fn(
-@@ -186,6 +208,7 @@ function makeHarness(options: HarnessOptions = {}) {
+@@ -192,6 +214,7 @@ function makeHarness(options: HarnessOptions = {}) {
      options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
    );
    const layerExternalServices = Layer.mergeAll(
@@ -1388,7 +1394,7 @@ index e163b5c1eb..da6ace126f 100644
      WorktreeSetupTracker.layer,
      Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
      Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
-@@ -207,6 +230,7 @@ function makeHarness(options: HarnessOptions = {}) {
+@@ -213,6 +236,7 @@ function makeHarness(options: HarnessOptions = {}) {
                : Option.none(),
          ),
        getByWorkspaceRoot: () => Effect.succeedSome(project),
@@ -1397,7 +1403,7 @@ index e163b5c1eb..da6ace126f 100644
        snapshot: Effect.die("unused"),
        getShell: () => Effect.die("unused"),
 diff --git a/apps/server/src/orchestration-v2/ThreadLaunchService.ts b/apps/server/src/orchestration-v2/ThreadLaunchService.ts
-index eb07bb1de1..d2feb8991a 100644
+index 6bf0513b00..990e3f45aa 100644
 --- a/apps/server/src/orchestration-v2/ThreadLaunchService.ts
 +++ b/apps/server/src/orchestration-v2/ThreadLaunchService.ts
 @@ -4,9 +4,11 @@ import * as TerminalManager from "../terminal/Manager.ts";
@@ -1412,9 +1418,9 @@ index eb07bb1de1..d2feb8991a 100644
    type OrchestrationV2Actor,
    type OrchestrationV2CreationSource,
    type OrchestrationV2DelegatedFrom,
-@@ -26,10 +28,12 @@ import * as Clock from "effect/Clock";
- import * as Context from "effect/Context";
+@@ -28,10 +30,12 @@ import * as Context from "effect/Context";
  import * as DateTime from "effect/DateTime";
+ import * as Duration from "effect/Duration";
  import * as Effect from "effect/Effect";
 +import * as FileSystem from "effect/FileSystem";
  import * as Exit from "effect/Exit";
@@ -1423,9 +1429,9 @@ index eb07bb1de1..d2feb8991a 100644
  import * as Option from "effect/Option";
 +import * as Path from "effect/Path";
  import * as Ref from "effect/Ref";
+ import * as Schedule from "effect/Schedule";
  import * as Schema from "effect/Schema";
- import * as Scope from "effect/Scope";
-@@ -58,6 +62,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
+@@ -61,6 +65,7 @@ import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
  import { randomUuidV4 } from "@t3tools/provider-core/server/randomUuid";
  import { DispatchModeLimit } from "./DispatchModeLimit.ts";
  import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -1433,7 +1439,7 @@ index eb07bb1de1..d2feb8991a 100644
  
  // The agent waits for its branch name; a rate-limited provider would hold it for minutes.
  const BRANCH_NAME_TIMEOUT = "20 seconds";
-@@ -80,6 +85,7 @@ export interface ThreadLaunchInitialMessage {
+@@ -86,6 +91,7 @@ export interface ThreadLaunchInitialMessage {
    readonly text: string;
    readonly attachments: ReadonlyArray<ChatAttachment>;
    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
@@ -1441,7 +1447,7 @@ index eb07bb1de1..d2feb8991a 100644
  }
  
  export interface ThreadLaunchInput {
-@@ -90,6 +96,9 @@ export interface ThreadLaunchInput {
+@@ -96,6 +102,9 @@ export interface ThreadLaunchInput {
    readonly title: string;
    readonly generateTitle?: boolean;
    readonly modelSelection: ModelSelection;
@@ -1451,7 +1457,7 @@ index eb07bb1de1..d2feb8991a 100644
    readonly runtimeMode: RuntimeMode;
    readonly interactionMode: ProviderInteractionMode;
    readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
-@@ -252,6 +261,8 @@ const make = Effect.gen(function* () {
+@@ -274,6 +283,8 @@ const make = Effect.gen(function* () {
    const setupScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
    const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
    const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1460,7 +1466,7 @@ index eb07bb1de1..d2feb8991a 100644
    const textGeneration = yield* TextGeneration.TextGeneration;
    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
    const ids = yield* IdAllocator.IdAllocatorV2;
-@@ -1106,22 +1117,85 @@ const make = Effect.gen(function* () {
+@@ -1274,22 +1285,85 @@ const make = Effect.gen(function* () {
            "update-thread",
          )("Reusing an existing thread requires a thread id.");
        }
@@ -1554,7 +1560,7 @@ index eb07bb1de1..d2feb8991a 100644
          const candidateThreadId =
            input.threadId ??
            reusableLaunchReceipt?.threadId ??
-@@ -1129,7 +1203,7 @@ const make = Effect.gen(function* () {
+@@ -1297,7 +1371,7 @@ const make = Effect.gen(function* () {
              .thread({ projectId: input.projectId })
              .pipe(Effect.mapError(mapError(input, "create-thread"))));
  
@@ -1563,7 +1569,7 @@ index eb07bb1de1..d2feb8991a 100644
            const shell = yield* threads
              .getThreadShell(candidateThreadId)
              .pipe(Effect.mapError(mapError(input, "create-thread", candidateThreadId)));
-@@ -1143,6 +1217,9 @@ const make = Effect.gen(function* () {
+@@ -1311,6 +1385,9 @@ const make = Effect.gen(function* () {
                candidateThreadId,
              )("Project identity changed.");
            }
@@ -1573,7 +1579,7 @@ index eb07bb1de1..d2feb8991a 100644
          }
  
          if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
-@@ -1186,6 +1263,9 @@ const make = Effect.gen(function* () {
+@@ -1354,6 +1431,9 @@ const make = Effect.gen(function* () {
                    : { senderThreadId: input.initialMessage.senderThreadId }),
                  attachments: input.initialMessage.attachments,
                  ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
@@ -1583,7 +1589,7 @@ index eb07bb1de1..d2feb8991a 100644
                  ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
                };
          const claimDispatch =
-@@ -1202,7 +1282,8 @@ const make = Effect.gen(function* () {
+@@ -1370,7 +1450,8 @@ const make = Effect.gen(function* () {
                  threadId: candidateThreadId,
                  projectId: input.projectId,
                  title: input.title,
@@ -1593,7 +1599,7 @@ index eb07bb1de1..d2feb8991a 100644
                  runtimeMode: input.runtimeMode,
                  interactionMode: input.interactionMode,
                  branch: initialBranch,
-@@ -1252,16 +1333,12 @@ const make = Effect.gen(function* () {
+@@ -1423,16 +1504,12 @@ const make = Effect.gen(function* () {
                  type: "message.dispatch",
                  commandId: messageCommandId,
                  threadId,
@@ -1753,7 +1759,7 @@ index 97ab0a8db1..5bb7faf585 100644
          Layer.provide(
            Layer.mock(Orchestrator.OrchestratorV2)({
 diff --git a/apps/server/src/orchestration-v2/ThreadManagementService.ts b/apps/server/src/orchestration-v2/ThreadManagementService.ts
-index 611d9a3244..cae3550b75 100644
+index c692636bb8..2c47a31468 100644
 --- a/apps/server/src/orchestration-v2/ThreadManagementService.ts
 +++ b/apps/server/src/orchestration-v2/ThreadManagementService.ts
 @@ -69,6 +69,7 @@ import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -1764,7 +1770,7 @@ index 611d9a3244..cae3550b75 100644
  import * as ServerSettings from "../serverSettings.ts";
  import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
  
-@@ -611,6 +612,7 @@ const make = Effect.gen(function* () {
+@@ -612,6 +613,7 @@ const make = Effect.gen(function* () {
    const layerScope = yield* Effect.scope;
    const agentScope = yield* AgentScope;
    const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
@@ -1772,7 +1778,7 @@ index 611d9a3244..cae3550b75 100644
    const serverSettings = yield* ServerSettings.ServerSettingsService;
    const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
    const worktreeRestore = yield* ThreadWorktreeRestore;
-@@ -808,9 +810,57 @@ const make = Effect.gen(function* () {
+@@ -809,9 +811,57 @@ const make = Effect.gen(function* () {
      }
    };
  
@@ -1830,7 +1836,7 @@ index 611d9a3244..cae3550b75 100644
        Effect.andThen(orchestrator.dispatch(command)),
      );
  
-@@ -1808,6 +1858,7 @@ export const layer: Layer.Layer<
+@@ -1816,6 +1866,7 @@ export const layer: Layer.Layer<
    ThreadManagementService,
    never,
    | Orchestrator.OrchestratorV2
@@ -1838,7 +1844,7 @@ index 611d9a3244..cae3550b75 100644
    | ProviderSessionManager.ProviderSessionManagerV2
    | ServerSettings.ServerSettingsService
    | CommandReceiptStore.CommandReceiptStoreV2
-@@ -1821,6 +1872,7 @@ export const layerWithLegacyImporter: Layer.Layer<
+@@ -1829,6 +1880,7 @@ export const layerWithLegacyImporter: Layer.Layer<
    ThreadManagementService,
    never,
    | LegacyV1ThreadImporter.LegacyV1ThreadImporter
@@ -1869,7 +1875,7 @@ index fc52191d32..141be36bfe 100644
    ),
    Layer.provideMerge(ServerSettings.layerTest()),
 diff --git a/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts b/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts
-index cd4e4df9ff..58f793b1d6 100644
+index 268c2ccb7e..7523dc0d5e 100644
 --- a/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts
 +++ b/apps/server/src/orchestration-v2/ThreadTitleRegenerationService.test.ts
 @@ -23,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
@@ -1913,10 +1919,10 @@ index 07385bf134..0dad587f07 100644
          OrchestrationEventStore.layer,
          ProjectStore.layer,
 diff --git a/apps/server/src/orchestration-v2/runtimeLayer.ts b/apps/server/src/orchestration-v2/runtimeLayer.ts
-index 4f834535cc..4d19288110 100644
+index da06fd60e9..9c0a2a7cd9 100644
 --- a/apps/server/src/orchestration-v2/runtimeLayer.ts
 +++ b/apps/server/src/orchestration-v2/runtimeLayer.ts
-@@ -280,6 +280,13 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
+@@ -285,6 +285,13 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
  const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
    Layer.provide(layerProjectService),
  );
@@ -1931,7 +1937,7 @@ index 4f834535cc..4d19288110 100644
    Layer.provide(
      Layer.mergeAll(
 diff --git a/apps/server/src/project/ProjectService.ts b/apps/server/src/project/ProjectService.ts
-index 4bdc838643..ac23287187 100644
+index 1db031456f..5e323dfd13 100644
 --- a/apps/server/src/project/ProjectService.ts
 +++ b/apps/server/src/project/ProjectService.ts
 @@ -1,5 +1,8 @@
@@ -2029,10 +2035,10 @@ index 4bdc838643..ac23287187 100644
      snapshot,
      listPage,
 diff --git a/apps/server/src/relay/AgentAwarenessRelay.test.ts b/apps/server/src/relay/AgentAwarenessRelay.test.ts
-index 10388e99fe..0f046456f1 100644
+index 5cde458a1c..4265400886 100644
 --- a/apps/server/src/relay/AgentAwarenessRelay.test.ts
 +++ b/apps/server/src/relay/AgentAwarenessRelay.test.ts
-@@ -320,6 +320,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
+@@ -321,6 +321,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
        update: unused,
        delete: unused,
        getByWorkspaceRoot: unused,
@@ -2041,10 +2047,10 @@ index 10388e99fe..0f046456f1 100644
        snapshot: Effect.succeed({ projects: [project], updatedAt: NOW }),
        listPage: unused,
 diff --git a/apps/server/src/scheduledTasks/ScheduledTaskService.ts b/apps/server/src/scheduledTasks/ScheduledTaskService.ts
-index 05fdbe8b08..7e200ad85f 100644
+index 4570115a91..1a7a213475 100644
 --- a/apps/server/src/scheduledTasks/ScheduledTaskService.ts
 +++ b/apps/server/src/scheduledTasks/ScheduledTaskService.ts
-@@ -1067,6 +1067,7 @@ export const layer = Layer.effect(
+@@ -1115,6 +1115,7 @@ export const layer = Layer.effect(
                      projectId: active.projectId,
                      title: active.title,
                      modelSelection: active.modelSelection,
@@ -2053,10 +2059,10 @@ index 05fdbe8b08..7e200ad85f 100644
                      interactionMode: active.interactionMode,
                      workspaceStrategy: active.workspaceStrategy,
 diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
-index 09c6d86c05..2b356828f3 100644
+index 63d45c4881..f06453a1c2 100644
 --- a/apps/server/src/ws.ts
 +++ b/apps/server/src/ws.ts
-@@ -41,6 +41,7 @@ import {
+@@ -43,6 +43,7 @@ import {
    type EditorId,
    type FileManagerRevealKind,
    type OrchestrationV2Command,
@@ -2064,7 +2070,7 @@ index 09c6d86c05..2b356828f3 100644
    type GitActionProgressEvent,
    type GitManagerServiceError,
    type MessageId,
-@@ -1431,7 +1432,9 @@ export const layerWsRpc = (
+@@ -1443,7 +1444,9 @@ export const layerWsRpc = (
        const intakeContext = yield* Effect.context<
          | ThreadManagementService.ThreadManagementService
          | ThreadLaunchService.ThreadLaunchService
@@ -2074,7 +2080,7 @@ index 09c6d86c05..2b356828f3 100644
          | ServerConfig.ServerConfig
          | ServerSettings.ServerSettingsService
          | DocumentText.DocumentText
-@@ -2958,6 +2961,7 @@ export const layerWsRpc = (
+@@ -3003,6 +3006,7 @@ export const layerWsRpc = (
                  }),
              ),
            ),
@@ -2083,10 +2089,10 @@ index 09c6d86c05..2b356828f3 100644
            workspaceFileSystem.readFile(input).pipe(
              Effect.mapError(
 diff --git a/apps/web/src/components/ChatView.tsx b/apps/web/src/components/ChatView.tsx
-index 115c30779a..01bc8daeaf 100644
+index a731a5798e..ce17715972 100644
 --- a/apps/web/src/components/ChatView.tsx
 +++ b/apps/web/src/components/ChatView.tsx
-@@ -48,7 +48,7 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
+@@ -51,7 +51,7 @@ import { RightPanelSurfaceContent } from "./chat/RightPanelSurfaceContent";
  import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
  import { isScratchProject } from "@t3tools/client-runtime/state/projects";
  import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -2095,7 +2101,7 @@ index 115c30779a..01bc8daeaf 100644
  import { feedbackBannerItem } from "./chat/ComposerFeedback";
  import { freshSessionBannerItem } from "./chat/ComposerFreshSession";
  import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./chat/freshSessionArms";
-@@ -278,6 +278,7 @@ import {
+@@ -285,6 +285,7 @@ import {
    useThreadCheckpointSummaries,
  } from "../state/entities";
  import { useEnvironmentShellHasSnapshot } from "../state/shell";
@@ -2103,7 +2109,7 @@ index 115c30779a..01bc8daeaf 100644
  import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
  import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
  import { ExpandedImageDialogHost, openExpandedImagePreview } from "./chat/ExpandedImageDialog";
-@@ -450,6 +451,10 @@ export default function ChatView(props: ChatViewProps) {
+@@ -459,6 +460,10 @@ export default function ChatView(props: ChatViewProps) {
    const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
    const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
    const draftId = routeKind === "draft" ? props.draftId : null;
@@ -2481,10 +2487,10 @@ index 0000000000..a16081b168
 +  );
 +});
 diff --git a/apps/web/src/components/chat/ChatComposer.tsx b/apps/web/src/components/chat/ChatComposer.tsx
-index 77dce59689..5414b263f3 100644
+index 603edc067d..29d0acbce0 100644
 --- a/apps/web/src/components/chat/ChatComposer.tsx
 +++ b/apps/web/src/components/chat/ChatComposer.tsx
-@@ -193,6 +193,8 @@ import { readThreadShell } from "~/state/entities";
+@@ -200,6 +200,8 @@ import { readThreadShell } from "~/state/entities";
  import { useLinkedEnvironments } from "~/state/peerLinks";
  import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
  import type {
@@ -2493,7 +2499,7 @@ index 77dce59689..5414b263f3 100644
    ComposerContextRecord,
    OrchestrationV2Run,
    ThreadPullRequestLink,
-@@ -337,6 +339,8 @@ export interface ChatComposerHandle {
+@@ -347,6 +349,8 @@ export interface ChatComposerHandle {
      environmentContexts: EnvironmentContextRecord[];
      selectedPromptEffort: string | null;
      selectedModelSelection: ModelSelection;
@@ -2502,7 +2508,7 @@ index 77dce59689..5414b263f3 100644
      multipleModelSelections: ReadonlyArray<ModelSelection> | null;
      providerAvailable: boolean;
      selectedProvider: ProviderDriverKind;
-@@ -459,6 +463,12 @@ export interface ChatComposerProps {
+@@ -454,6 +458,12 @@ export interface ChatComposerProps {
    }> | null;
    onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
  
@@ -2515,7 +2521,8 @@ index 77dce59689..5414b263f3 100644
    onCompactContext: () => void;
    onSend: (
      e?: { preventDefault: () => void },
-@@ -587,3 +597,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -580,6 +590,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+     onFileOpen,
      editingQueuedAttachments,
      onRemoveEditingQueuedAttachment,
 +    agents,
@@ -2524,7 +2531,9 @@ index 77dce59689..5414b263f3 100644
 +    onSelectAgent,
 +    agentPickerDisabled = false,
    } = props;
-@@ -2481,6 +2496,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+   const {
+     activePendingProgress: incomingPendingProgress,
+@@ -2549,6 +2564,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
        onModelPickerOpenChange={setIsComposerModelPickerOpen}
        modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
        getModelDisabledReason={getModelDisabledReason}
@@ -2536,7 +2545,7 @@ index 77dce59689..5414b263f3 100644
      />
    );
    // An open question owns the space above the composer. Only a machine problem,
-@@ -3193,6 +3213,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -3292,6 +3312,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
          environmentContexts: composerEnvironmentContexts,
          selectedPromptEffort,
          selectedModelSelection,
@@ -2545,7 +2554,7 @@ index 77dce59689..5414b263f3 100644
          multipleModelSelections:
            routeKind === "draft" && multipleModelSelections !== null
              ? multipleModelSelections.map((selection) =>
-@@ -3262,6 +3284,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
+@@ -3361,6 +3383,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
        selectedInstanceId,
        reportedModelSelection,
        selectedModelSelection,
@@ -2627,7 +2636,7 @@ index 0324962b59..0dda1fcddd 100644
        return resolve(msg("Unknown", { $context: "agent status" }));
    }
 diff --git a/apps/web/src/components/chat/ThreadRelationshipsControl.tsx b/apps/web/src/components/chat/ThreadRelationshipsControl.tsx
-index 95c6d8f096..c73e56a3ba 100644
+index e8a5fc1fe6..bf466fb70a 100644
 --- a/apps/web/src/components/chat/ThreadRelationshipsControl.tsx
 +++ b/apps/web/src/components/chat/ThreadRelationshipsControl.tsx
 @@ -18,6 +18,7 @@ import {
@@ -2638,7 +2647,7 @@ index 95c6d8f096..c73e56a3ba 100644
    threadRelationshipRowStatus,
    orderWebThreadLineageRows,
    resolveMergeBackTargetThreadId,
-@@ -525,7 +526,11 @@ export function ThreadRelationshipsPanel(props: {
+@@ -573,7 +574,11 @@ export function ThreadRelationshipsPanel(props: {
    const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
    const relationshipRows = orderWebThreadLineageRows({
      graph,
@@ -2651,7 +2660,7 @@ index 95c6d8f096..c73e56a3ba 100644
      currentThreadId: props.threadId,
      mergeTargetThreadId,
    })
-@@ -724,10 +729,11 @@ export function ThreadRelationshipsPanel(props: {
+@@ -776,10 +781,11 @@ export function ThreadRelationshipsPanel(props: {
      const isSubagent = edge.kind === "subagent";
      const isMergeTarget = threadId === mergeTargetThreadId;
      const isParent = isParentThreadRelationship(edge, props.threadId);
@@ -2668,10 +2677,10 @@ index 95c6d8f096..c73e56a3ba 100644
        ? CornerLeftUpIcon
        : isSubagent
 diff --git a/apps/web/src/components/chat/useComposerSend.ts b/apps/web/src/components/chat/useComposerSend.ts
-index 1afe53a944..402bf92570 100644
+index 43f2082e7b..184d07ab13 100644
 --- a/apps/web/src/components/chat/useComposerSend.ts
 +++ b/apps/web/src/components/chat/useComposerSend.ts
-@@ -587,6 +587,8 @@ export function useComposerSend(input: ComposerSendInput) {
+@@ -767,6 +767,8 @@ export function useComposerSend(input: ComposerSendInput) {
        selectedProviderModels: ctxSelectedProviderModels,
        selectedPromptEffort: ctxSelectedPromptEffort,
        selectedModelSelection: ctxSelectedModelSelection,
@@ -2680,7 +2689,7 @@ index 1afe53a944..402bf92570 100644
      } = sendCtx;
      const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
        mergeDirectPreviewAnnotation({
-@@ -1110,6 +1112,7 @@ export function useComposerSend(input: ComposerSendInput) {
+@@ -1299,6 +1301,7 @@ export function useComposerSend(input: ComposerSendInput) {
          project: activeProject,
          branch: activeThreadBranch!,
          selections: multipleModelSelections,
@@ -2688,7 +2697,7 @@ index 1afe53a944..402bf92570 100644
          targets: multipleTargets,
          sendSnapshot,
          createdAt: messageCreatedAt,
-@@ -1249,6 +1252,8 @@ export function useComposerSend(input: ComposerSendInput) {
+@@ -1445,6 +1448,8 @@ export function useComposerSend(input: ComposerSendInput) {
                        projectId: activeProject.id,
                        title,
                        modelSelection: threadCreateModelSelection,
@@ -3023,7 +3032,7 @@ index 0000000000..13af77de20
 +
 +Automatic lead-agent routing is a separate design. An opt-in lead could receive the initial request and choose from an explicit allowlist of lightweight and deep agents using a documented complexity rubric. T3 would persist the chosen agent and resolved model before the first provider turn, honor a user's explicit agent or model choice, and report when no allowed target is available. That design needs a labeled routing evaluation and clear latency and cost limits before implementation.
 diff --git a/docs/user/composer.md b/docs/user/composer.md
-index 89a96f120d..61ad3210a7 100644
+index 7f27587971..1ab105ee68 100644
 --- a/docs/user/composer.md
 +++ b/docs/user/composer.md
 @@ -126,6 +126,47 @@ returns to the remembered selection.
@@ -3075,7 +3084,7 @@ index 89a96f120d..61ad3210a7 100644
  
  On web and desktop, select text within one assistant response and choose
 diff --git a/packages/client-runtime/src/operations/commands.ts b/packages/client-runtime/src/operations/commands.ts
-index ce64335922..746a0a7702 100644
+index 3c8f905174..18e7071438 100644
 --- a/packages/client-runtime/src/operations/commands.ts
 +++ b/packages/client-runtime/src/operations/commands.ts
 @@ -2,6 +2,7 @@ import { msg } from "gt-i18n";
@@ -3112,7 +3121,7 @@ index ce64335922..746a0a7702 100644
      runtimeMode: input.runtimeMode,
      interactionMode: input.interactionMode,
      branch: input.branch,
-@@ -799,6 +805,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+@@ -803,6 +809,10 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
        title: input.titleSeed ?? thread.title,
        generateTitle: input.titleSeed !== undefined,
        modelSelection: input.modelSelection ?? thread.modelSelection,
@@ -3123,7 +3132,7 @@ index ce64335922..746a0a7702 100644
        runtimeMode: input.runtimeMode,
        interactionMode: input.interactionMode,
        workspaceStrategy,
-@@ -807,6 +817,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
+@@ -811,6 +821,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
          text: input.message.text,
          ...(context ? { context } : {}),
          attachments,
@@ -3134,7 +3143,7 @@ index ce64335922..746a0a7702 100644
      });
    }
 diff --git a/packages/client-runtime/src/state/models.ts b/packages/client-runtime/src/state/models.ts
-index 6bc914b857..de9f22851f 100644
+index b37da2abe2..a528a77d7e 100644
 --- a/packages/client-runtime/src/state/models.ts
 +++ b/packages/client-runtime/src/state/models.ts
 @@ -2,6 +2,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
@@ -3145,7 +3154,7 @@ index 6bc914b857..de9f22851f 100644
    EnvironmentId,
    MessageId,
    OrchestrationProjectShell,
-@@ -147,6 +148,7 @@ export interface EnvironmentThreadShell {
+@@ -151,6 +152,7 @@ export interface EnvironmentThreadShell {
    readonly title: string;
    readonly providerInstanceId: ProviderInstanceId;
    readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
@@ -3153,7 +3162,7 @@ index 6bc914b857..de9f22851f 100644
    readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
    readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
    readonly branch: string | null;
-@@ -294,6 +296,7 @@ export function presentThreadShell(
+@@ -300,6 +302,7 @@ export function presentThreadShell(
          : thread.title,
      providerInstanceId: thread.providerInstanceId,
      modelSelection: thread.modelSelection,
@@ -3400,10 +3409,10 @@ index 0000000000..a6a24fe0b4
 +  }
 +}
 diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
-index 8dd47df33a..15451359bc 100644
+index c005fdd039..b740790740 100644
 --- a/packages/contracts/src/index.ts
 +++ b/packages/contracts/src/index.ts
-@@ -42,6 +42,7 @@ export * from "./orchestrationV2.ts";
+@@ -43,6 +43,7 @@ export * from "./orchestrationV2.ts";
  export * from "./guestShare.ts";
  export * from "./guestStream.ts";
  export * from "./applicationEvent.ts";
@@ -3412,7 +3421,7 @@ index 8dd47df33a..15451359bc 100644
  export * from "./peerLink.ts";
  export * from "./threadMetadataMcp.ts";
 diff --git a/packages/contracts/src/orchestrationV2.ts b/packages/contracts/src/orchestrationV2.ts
-index 44e9aa8290..26216cdbe7 100644
+index c528611665..40b7ca2aa6 100644
 --- a/packages/contracts/src/orchestrationV2.ts
 +++ b/packages/contracts/src/orchestrationV2.ts
 @@ -57,6 +57,7 @@ import {
@@ -3423,7 +3432,7 @@ index 44e9aa8290..26216cdbe7 100644
  import { ThreadIssueKey, ThreadIssueLink, ThreadIssueLinkSource } from "./issue.ts";
  import {
    ThreadLinkedPullRequest,
-@@ -470,6 +471,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
+@@ -474,6 +475,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
    title: TrimmedNonEmptyString,
    providerInstanceId: ProviderInstanceId,
    modelSelection: ModelSelection,
@@ -3432,7 +3441,7 @@ index 44e9aa8290..26216cdbe7 100644
    runtimeMode: RuntimeMode,
    interactionMode: ProviderInteractionMode,
    branch: Schema.NullOr(TrimmedNonEmptyString),
-@@ -2197,6 +2200,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
+@@ -2211,6 +2214,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
    title: Schema.String,
    providerInstanceId: ProviderInstanceId,
    modelSelection: ModelSelection,
@@ -3440,7 +3449,7 @@ index 44e9aa8290..26216cdbe7 100644
    runtimeMode: RuntimeMode,
    interactionMode: ProviderInteractionMode,
    branch: Schema.NullOr(TrimmedNonEmptyString),
-@@ -3091,6 +3095,7 @@ export const OrchestrationV2Command = Schema.Union([
+@@ -3108,6 +3112,7 @@ export const OrchestrationV2Command = Schema.Union([
      projectId: ProjectId,
      title: TrimmedNonEmptyString,
      modelSelection: ModelSelection,
@@ -3448,7 +3457,7 @@ index 44e9aa8290..26216cdbe7 100644
      runtimeMode: RuntimeMode,
      interactionMode: ProviderInteractionMode,
      branch: Schema.NullOr(TrimmedNonEmptyString),
-@@ -3530,6 +3535,7 @@ export const OrchestrationV2Command = Schema.Union([
+@@ -3566,6 +3571,7 @@ export const OrchestrationV2Command = Schema.Union([
      parentRunId: RunId,
      parentNodeId: NodeId,
      task: TrimmedNonEmptyString,
@@ -3456,7 +3465,7 @@ index 44e9aa8290..26216cdbe7 100644
      title: Schema.optional(TrimmedNonEmptyString),
      modelSelection: ModelSelection,
      runtimeMode: RuntimeMode,
-@@ -3894,6 +3900,10 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+@@ -3931,6 +3937,10 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
    title: TrimmedNonEmptyString,
    generateTitle: Schema.optional(Schema.Boolean),
    modelSelection: ModelSelection,
@@ -3467,7 +3476,7 @@ index 44e9aa8290..26216cdbe7 100644
    runtimeMode: RuntimeMode,
    interactionMode: ProviderInteractionMode,
    workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
-@@ -3903,6 +3913,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
+@@ -3940,6 +3950,7 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
        text: Schema.String,
        context: Schema.optional(OrchestrationMessageContext),
        attachments: Schema.Array(ChatAttachment),
@@ -3509,10 +3518,10 @@ index d7c607744d..00a82a9858 100644
      appOwnedSubagents: Schema.Boolean,
      asyncPolling: Schema.Boolean,
 diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
-index e1d392cd08..5d73dc8b7a 100644
+index 41733dae56..301206d859 100644
 --- a/packages/contracts/src/rpc.ts
 +++ b/packages/contracts/src/rpc.ts
-@@ -236,6 +236,7 @@ import {
+@@ -262,6 +262,7 @@ import {
    OrchestrationV2RpcSchemas,
    OrchestrationV2ThreadLaunchError,
  } from "./orchestrationV2.ts";
@@ -3520,7 +3529,7 @@ index e1d392cd08..5d73dc8b7a 100644
  import {
    ProjectCreateNewInput,
    ProjectCreateNewResult,
-@@ -415,6 +416,7 @@ import { VcsError } from "./vcs.ts";
+@@ -441,6 +442,7 @@ import { VcsError } from "./vcs.ts";
  import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
  
  export const WS_METHODS = {
@@ -3528,7 +3537,7 @@ index e1d392cd08..5d73dc8b7a 100644
    projectsListEntries: "projects.listEntries",
    projectsListIgnoredFiles: "projects.listIgnoredFiles",
    projectsReadFile: "projects.readFile",
-@@ -1395,6 +1397,11 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
+@@ -1539,6 +1541,11 @@ const WsProjectsListIgnoredFilesRpc = Rpc.make(WS_METHODS.projectsListIgnoredFil
    success: ProjectListIgnoredFilesResult,
    error: Schema.Union([ProjectListEntriesError, EnvironmentAuthorizationError]),
  });
@@ -3540,7 +3549,7 @@ index e1d392cd08..5d73dc8b7a 100644
  
  const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
    payload: ProjectReadFileInput,
-@@ -2234,6 +2241,7 @@ export const WsRpcGroup = RpcGroup.make(
+@@ -2392,6 +2399,7 @@ export const WsRpcGroup = RpcGroup.make(
    WsSubscribeProjectClonesRpc,
    WsProjectsListEntriesRpc,
    WsProjectsListIgnoredFilesRpc,
@@ -3549,7 +3558,7 @@ index e1d392cd08..5d73dc8b7a 100644
    WsProjectsSearchContentsRpc,
    WsProjectsSearchEntriesRpc,
 diff --git a/packages/contracts/src/settings.ts b/packages/contracts/src/settings.ts
-index 7bbb03595d..ba9f2a209b 100644
+index 678f58294c..d09ffb573b 100644
 --- a/packages/contracts/src/settings.ts
 +++ b/packages/contracts/src/settings.ts
 @@ -6,6 +6,7 @@ import {
@@ -3560,7 +3569,7 @@ index 7bbb03595d..ba9f2a209b 100644
  import * as Effect from "effect/Effect";
  import * as Option from "effect/Option";
  import * as Duration from "effect/Duration";
-@@ -1171,6 +1172,7 @@ export type WorktreeCleanup = typeof WorktreeCleanup.Type;
+@@ -1173,6 +1174,7 @@ export type WorktreeCleanup = typeof WorktreeCleanup.Type;
  export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
    "worktreeCleanup",
    "defaultModelSelection",
@@ -3568,7 +3577,7 @@ index 7bbb03595d..ba9f2a209b 100644
    "defaultRuntimeMode",
    "defaultThreadEnvMode",
    "newWorktreesStartFromOrigin",
-@@ -1209,6 +1211,7 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
+@@ -1211,6 +1213,7 @@ export type ProjectProviderInstanceOverride = typeof ProjectProviderInstanceOver
  export const ProjectSettingsOverrides = Schema.Struct({
    worktreeCleanup: Schema.optionalKey(WorktreeCleanup),
    defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -3576,7 +3585,7 @@ index 7bbb03595d..ba9f2a209b 100644
    defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
    defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
    newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
-@@ -1260,6 +1263,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
+@@ -1262,6 +1265,7 @@ const NULLABLE_PROJECT_SETTINGS_OVERRIDES: ReadonlySet<ProjectScopedServerSettin
    }[ProjectScopedServerSettingKey]
  >([
    "defaultModelSelection",
@@ -3584,7 +3593,7 @@ index 7bbb03595d..ba9f2a209b 100644
    "sourceControlWriterModelSelection",
    "reviewGuideModelSelection",
    "pullRequestMergeMethod",
-@@ -1421,6 +1425,7 @@ export const ServerSettings = Schema.Struct({
+@@ -1428,6 +1432,7 @@ export const ServerSettings = Schema.Struct({
    defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
      Schema.withDecodingDefault(Effect.succeed(null)),
    ),
@@ -3592,7 +3601,7 @@ index 7bbb03595d..ba9f2a209b 100644
    fallbackModelSelection: Schema.NullOr(ModelSelection).pipe(
      Schema.withDecodingDefault(Effect.succeed(null)),
    ),
-@@ -1871,6 +1876,7 @@ export const ServerSettingsPatch = Schema.Struct({
+@@ -1882,6 +1887,7 @@ export const ServerSettingsPatch = Schema.Struct({
      Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
    ),
    defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
@@ -3601,7 +3610,7 @@ index 7bbb03595d..ba9f2a209b 100644
    fallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
    /** Replaces each project's override set; null removes it. Omitted providerInstances retains its stored value. */
 diff --git a/packages/provider-core/src/server/subagentProjection.ts b/packages/provider-core/src/server/subagentProjection.ts
-index f2c3092bf1..bc4c56bb2c 100644
+index 88b124bf5f..b3da2f1831 100644
 --- a/packages/provider-core/src/server/subagentProjection.ts
 +++ b/packages/provider-core/src/server/subagentProjection.ts
 @@ -1,5 +1,6 @@
@@ -3611,7 +3620,7 @@ index f2c3092bf1..bc4c56bb2c 100644
    MessageId,
    ModelSelection,
    NodeId,
-@@ -60,11 +61,13 @@ export function makeSubagentChildThread(input: {
+@@ -61,11 +62,13 @@ export function makeSubagentChildThread(input: {
    readonly now: DateTime.Utc;
    readonly createdBy: OrchestrationV2Actor;
    readonly creationSource: OrchestrationV2CreationSource;
