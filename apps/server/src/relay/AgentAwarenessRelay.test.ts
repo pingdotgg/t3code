@@ -939,6 +939,33 @@ describe("AgentAwarenessRelay", () => {
     }),
   );
 
+  it.effect("does not publish a task delegated here from a linked environment", () =>
+    Effect.gen(function* () {
+      const delegated = (overrides: Partial<OrchestrationV2ThreadShell>) =>
+        shell({
+          createdBy: "agent",
+          creationSource: "mcp",
+          delegatedFrom: {
+            environmentId: EnvironmentId.make("parent-environment"),
+            threadId: ThreadId.make("parent-thread"),
+            title: "Parent",
+          },
+          ...overrides,
+        });
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      yield* Ref.set(currentShell, delegated({}));
+      yield* relay.publishThread(THREAD_ID);
+      yield* Ref.set(currentShell, delegated({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      assert.deepEqual(
+        publications.map((publication) => publication.state?.phase ?? null),
+        [],
+      );
+    }),
+  );
+
   it.effect("retries a failed completion even after the thread settles", () =>
     Effect.gen(function* () {
       const { relay, currentShell, publications } = yield* makeTestRelay({
