@@ -3,6 +3,7 @@ import {
   MessageId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   type ProjectId,
+  type RunId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -78,6 +79,11 @@ import {
 } from "./webhookDedupe.ts";
 import { describeFailedWebhookFilter, findFailedWebhookFilter } from "./webhookFilter.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
+
+interface AcceptedTaskCommand {
+  readonly thread_id: ThreadId;
+  readonly command_type: "thread.create" | "message.dispatch";
+}
 
 export const WEBHOOK_ROUTE_PREFIX = "/api/hooks";
 const isScheduledTaskError = Schema.is(ScheduledTaskError);
@@ -883,6 +889,45 @@ export const layer = Layer.effect(
       ),
     );
 
+    const readAcceptedTaskCommand = Effect.fn("ScheduledTaskService.readAcceptedTaskCommand")(
+      function* (commandId: CommandId) {
+        const [accepted] = yield* sql<AcceptedTaskCommand>`
+          SELECT aggregate_id AS thread_id, command_type FROM orchestration_command_receipts
+          WHERE command_id = ${commandId}
+            AND aggregate_kind = 'thread' AND status = 'accepted'
+            AND command_type IN ('thread.create', 'message.dispatch')
+        `.pipe(NodeSqliteClient.readOnly);
+        return accepted;
+      },
+    );
+
+    const recoverAcceptedTaskCommand = Effect.fn("ScheduledTaskService.recoverAcceptedTaskCommand")(
+      function* (
+        task: ScheduledTask,
+        commandId: CommandId,
+        messageId: MessageId,
+        accepted: AcceptedTaskCommand,
+      ) {
+        if (accepted.command_type === "thread.create") {
+          const [preparing] = yield* sql<{ readonly run_id: RunId }>`
+            SELECT runs.run_id FROM orchestration_v2_projection_messages AS messages
+            JOIN orchestration_v2_projection_runs AS runs
+              ON runs.run_id = messages.run_id AND runs.thread_id = messages.thread_id
+            WHERE messages.message_id = ${messageId}
+              AND messages.thread_id = ${accepted.thread_id} AND runs.status = 'preparing'
+          `.pipe(NodeSqliteClient.readOnly);
+          if (preparing !== undefined)
+            yield* threadLaunch.prepareRun({
+              commandId,
+              threadId: accepted.thread_id,
+              runId: preparing.run_id,
+            });
+          yield* bindThread(task, accepted.thread_id);
+        }
+        return accepted.thread_id;
+      },
+    );
+
     // A dispatch is recorded once the message is accepted; the provider can still
     // reject the turn after that, so follow the run and record its failure. A one-time
     // task whose turn completed is spent, so it is removed; its thread stays.
@@ -942,7 +987,8 @@ export const layer = Layer.effect(
       webhook?: {
         readonly deliveryId: string;
         readonly prompt: string;
-        readonly dispatched: Ref.Ref<boolean>;
+        readonly dispatched: Ref.Ref<boolean | undefined>;
+        readonly accepted: AcceptedTaskCommand | undefined;
       },
     ) {
       // Read before reserving: nothing between the reservation and its release may fail.
@@ -1001,13 +1047,15 @@ export const layer = Layer.effect(
           const reason =
             active.createdAt !== task.createdAt
               ? "The task was replaced before this delivery ran."
-              : active.schedule.type !== "webhook"
-                ? "The task's trigger changed before this delivery ran."
-                : webhookPolicyBlock !== undefined
-                  ? webhookPolicyBlock
-                  : !active.enabled
-                    ? "The task was paused before this delivery ran."
-                    : null;
+              : webhook.accepted !== undefined
+                ? null
+                : active.schedule.type !== "webhook"
+                  ? "The task's trigger changed before this delivery ran."
+                  : webhookPolicyBlock !== undefined
+                    ? webhookPolicyBlock
+                    : !active.enabled
+                      ? "The task was paused before this delivery ran."
+                      : null;
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
@@ -1076,48 +1124,68 @@ export const layer = Layer.effect(
             );
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
-        const result =
-          active.threadId === null
-            ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
-                  })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                    ),
-                  ),
+        let result =
+          webhook?.accepted !== undefined
+            ? Exit.succeed(
+                yield* recoverAcceptedTaskCommand(task, commandId, messageId, webhook.accepted),
               )
-            : yield* Effect.exit(
+            : yield* Effect.gen(function* () {
+                if (active.threadId === null)
+                  return yield* threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
+                    );
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                return yield* sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
                   Effect.as(ThreadId.make(active.threadId)),
+                );
+              }).pipe(
+                // A failed reply can follow acceptance; keep its claim until a receipt settles it.
+                Effect.onExit((exit) =>
+                  webhook === undefined
+                    ? Effect.void
+                    : Ref.set(webhook.dispatched, Exit.isSuccess(exit) ? true : undefined),
                 ),
+                Effect.exit,
               );
+        if (Exit.isFailure(result)) {
+          const accepted = yield* readAcceptedTaskCommand(commandId);
+          if (accepted === undefined) {
+            if (webhook !== undefined) yield* Ref.set(webhook.dispatched, false);
+          } else {
+            if (webhook !== undefined) yield* Ref.set(webhook.dispatched, true);
+            result = Exit.succeed(
+              yield* recoverAcceptedTaskCommand(active, commandId, messageId, accepted),
+            );
+          }
+        }
 
         const runSucceeded = result._tag === "Success";
-        if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);
         const completedAt = yield* localNow;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : dispatchErrorMessage(result.cause);
-        const threadId = runSucceeded ? result.value : null;
+        const lastRunError = Exit.isFailure(result) ? dispatchErrorMessage(result.cause) : null;
+        const threadId = Exit.isSuccess(result) ? result.value : null;
         // One transaction, so an edit cannot land between reading the schedule and
         // writing the next run computed from it. The origin is read first: it reads
         // files, and the transaction holds SQLite's writer lock.
@@ -2031,14 +2099,20 @@ export const layer = Layer.effect(
       task: ScheduledTask,
       deliveryId: string,
       prompt: string,
+      accepted?: AcceptedTaskCommand,
     ) {
       const runOutcome = (outcome: "started" | "skipped" | "failed") =>
         Effect.all([
           Effect.annotateCurrentSpan({ "scheduled_task.webhook.run_outcome": outcome }),
           Metrics.increment(Metrics.webhookRunsTotal, { outcome }),
         ]);
-      const dispatched = yield* Ref.make(false);
-      return yield* runTask(task, "webhook", { deliveryId, prompt, dispatched }).pipe(
+      const dispatched = yield* Ref.make<boolean | undefined>(accepted !== undefined);
+      return yield* runTask(task, "webhook", {
+        deliveryId,
+        prompt,
+        dispatched,
+        accepted,
+      }).pipe(
         Effect.flatMap(({ dispatchFailed }) =>
           dispatchFailed
             ? runOutcome("failed").pipe(
@@ -2060,14 +2134,16 @@ export const layer = Layer.effect(
           Effect.gen(function* () {
             const started = yield* Ref.get(dispatched);
             yield* Effect.logWarning("Webhook dispatch failed", { taskId: task.id, cause });
-            yield* runOutcome(started ? "started" : "failed");
+            if (started !== undefined) yield* runOutcome(started ? "started" : "failed");
             yield* markDeliveryFailed(
               deliveryId,
-              started
-                ? "The run started, but completion could not be recorded."
-                : "The run failed to start.",
+              started === undefined
+                ? "The run could not be confirmed; its delivery is retained for recovery."
+                : started
+                  ? "The run started, but completion could not be recorded."
+                  : "The run failed to start.",
             );
-            if (!started) {
+            if (started === false) {
               yield* sql
                 .withTransaction(
                   Effect.gen(function* () {
@@ -2083,7 +2159,7 @@ export const layer = Layer.effect(
               yield* releaseFailedDelivery(deliveryId);
             }
             // Pending windows retry the same command id to finish bookkeeping.
-            return !started;
+            return started === false;
           }),
         ),
       );
@@ -2555,6 +2631,24 @@ export const layer = Layer.effect(
                   yield* markDeliveryFailed(entry.delivery_id, "The run failed to start.");
                   yield* releaseFailedDelivery(entry.delivery_id);
                 }
+                yield* remove;
+                continue;
+              }
+              // A running window may have committed its command before completion failed.
+              // Read outside runWebhookDelivery so a failed lookup retains the replay claim.
+              const accepted =
+                entry.state === "running"
+                  ? yield* readAcceptedTaskCommand(
+                      CommandId.make(`scheduled-task:${taskId}:webhook:${entry.delivery_id}`),
+                    )
+                  : undefined;
+              if (accepted !== undefined) {
+                // Resume accepted work without rendering or dispatching another message.
+                const task = yield* decodePendingTask(entry.task_json);
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL
+                  WHERE delivery_id = ${entry.delivery_id}`;
+                if (!(yield* runWebhookDelivery(task, entry.delivery_id, task.prompt, accepted)))
+                  return;
                 yield* remove;
                 continue;
               }
