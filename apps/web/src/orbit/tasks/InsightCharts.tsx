@@ -83,7 +83,13 @@ function niceScale(min: number, max: number) {
 }
 
 const SHORT_DATE = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" });
+const SHORT_HOUR = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+/** A day (`YYYY-MM-DD`) shows as a date; an hour (ISO time, the 24-hour view) as a local time. */
 const dateLabel = (date: string) => {
+  if (date.includes("T")) {
+    const time = Date.parse(date);
+    return Number.isNaN(time) ? date : SHORT_HOUR.format(time);
+  }
   const time = Date.parse(`${date}T00:00:00`);
   return Number.isNaN(time) ? date : SHORT_DATE.format(time);
 };

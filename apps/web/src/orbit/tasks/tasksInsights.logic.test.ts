@@ -43,6 +43,7 @@ function insights(overrides: Partial<OrbitTaskInsights> = {}): OrbitTaskInsights
     },
     weekly: [],
     daily: [],
+    hourly: [],
     byModel: [],
     ...overrides,
   };

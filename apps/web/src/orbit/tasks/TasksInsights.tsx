@@ -141,9 +141,13 @@ function useInsightHint() {
   return (id: InsightId, insights: OrbitTaskInsights | null) => {
     switch (id) {
       case "completed":
-        return gt(
-          "Tasks that merged in the period. The line counts the merges in the days up to each point.",
-        );
+        return insights?.period === "24h"
+          ? gt(
+              "Tasks that merged in the period. The line counts the merges in the hours up to each point.",
+            )
+          : gt(
+              "Tasks that merged in the period. The line counts the merges in the days up to each point.",
+            );
       case "spent":
         return gt(
           "All agent tokens of the tasks that ended, replaced threads included. More tasks spend more, so a change is neither good nor bad.",
@@ -334,19 +338,24 @@ export function TasksInsightsStrip(props: { orbitProjectId: number | null; query
   const open = shown.find((spec) => spec.id === expanded);
   const grid = insightGrid(shown.length);
   const days = period === "7d" ? 7 : 30;
+  const periodScope =
+    period === "24h"
+      ? gt("Last 24 hours against the 24 before.")
+      : gt("Last {days} days against the {days} before.", { days });
   const searching = props.query.trim().length > 0;
   const scope =
     state.status === "error"
       ? gt("Orbit did not answer: {message}", { message: state.message })
-      : [
-          gt("Last {days} days against the {days} before.", { days }),
-          searching ? gt("The search does not narrow these numbers.") : null,
-        ]
+      : [periodScope, searching ? gt("The search does not narrow these numbers.") : null]
           .filter((part) => part !== null)
           .join(" ");
   return (
     <section
-      aria-label={gt("Task insights, last {days} days", { days })}
+      aria-label={
+        period === "24h"
+          ? gt("Task insights, last 24 hours")
+          : gt("Task insights, last {days} days", { days })
+      }
       className="@container scrollbar-inset shrink-0 overflow-x-auto overflow-y-hidden border-b border-(--shell-divider)! p-2"
     >
       {/* One lane-style container, a task-card block per number. */}

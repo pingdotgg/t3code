@@ -43,7 +43,7 @@ export const INSIGHTS: ReadonlyArray<InsightSpec> = [
   { id: "reviewRounds", label: msg("Review rounds"), unit: "", better: "lower" },
 ];
 
-export const INSIGHT_PERIODS: ReadonlyArray<OrbitTaskInsightsPeriod> = ["7d", "30d"];
+export const INSIGHT_PERIODS: ReadonlyArray<OrbitTaskInsightsPeriod> = ["24h", "7d", "30d"];
 
 /** The raw number behind an insight. Shares are 0–1, durations in milliseconds. */
 function rawValue(summary: OrbitTaskInsightsSummary, id: InsightId): number | null {
@@ -128,14 +128,14 @@ export function insightChangeTone(
 }
 
 export interface TrendPoint {
-  /** The last day the point covers, `YYYY-MM-DD`. */
+  /** The last day the point covers, `YYYY-MM-DD`, or the start of its last hour (ISO) in the 24-hour view. */
   readonly date: string;
   readonly value: number | null;
 }
 
 /**
  * The insight over time, where Orbit reports a series: merges summed over a trailing window of
- * days (7 days in the 30-day view, 3 in the 7-day view), and tokens per task by week. Null for
+ * days (7 days in the 30-day view, 3 in the 7-day view) or of hours (3 in the 24-hour view), and tokens per task by week. Null for
  * every other number until Orbit reports its history.
  */
 export function insightTrend(
@@ -143,15 +143,18 @@ export function insightTrend(
   id: InsightId,
 ): ReadonlyArray<TrendPoint> | null {
   if (insights === null) return null;
+  if (id === "completed" && insights.period === "24h") {
+    return insights.hourly.length > 1
+      ? trailing(
+          insights.hourly.map((hour) => ({ date: hour.hour, merged: hour.merged })),
+          1,
+          3,
+        )
+      : null;
+  }
   if (id === "completed" && insights.daily.length > 1) {
     const [step, window] = insights.period === "30d" ? [2, 7] : [1, 3];
-    const days = insights.daily;
-    const points: TrendPoint[] = [];
-    for (let end = days.length - 1; end >= 0; end -= step) {
-      const span = days.slice(Math.max(0, end - window + 1), end + 1);
-      points.unshift({ date: days[end]!.date, value: span.reduce((sum, d) => sum + d.merged, 0) });
-    }
-    return points;
+    return trailing(insights.daily, step, window);
   }
   if (id === "tokens" && insights.weekly.length > 1) {
     return insights.weekly.map((week) => ({
@@ -160,4 +163,18 @@ export function insightTrend(
     }));
   }
   return null;
+}
+
+/** Merges summed over a trailing window of buckets, one point every `step` buckets, ending at the newest. */
+function trailing(
+  buckets: ReadonlyArray<{ readonly date: string; readonly merged: number }>,
+  step: number,
+  window: number,
+): ReadonlyArray<TrendPoint> {
+  const points: TrendPoint[] = [];
+  for (let end = buckets.length - 1; end >= 0; end -= step) {
+    const span = buckets.slice(Math.max(0, end - window + 1), end + 1);
+    points.unshift({ date: buckets[end]!.date, value: span.reduce((sum, b) => sum + b.merged, 0) });
+  }
+  return points;
 }

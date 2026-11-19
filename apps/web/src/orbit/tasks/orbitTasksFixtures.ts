@@ -288,8 +288,8 @@ const LIST_KEYS = [
 const INSIGHTS_PERIOD_END = Date.parse("2026-11-19T00:00:00+00:00");
 
 /** Orbit's `/task-insights` answer, shaped like its own fixture; no 6041/6042 fields yet. */
-function insightsOf(period: "7d" | "30d") {
-  const days = period === "7d" ? 7 : 30;
+function insightsOf(period: "24h" | "7d" | "30d") {
+  const days = period === "24h" ? 1 : period === "7d" ? 7 : 30;
   const scale = days / 30;
   const summary = (
     merged: number,
@@ -339,7 +339,15 @@ function insightsOf(period: "7d" | "30d") {
         tokens_per_merged_pr:
           index === 4 ? null : 1_900_000 - index * 40_000 + (index % 3) * 90_000,
       })),
-      daily: Array.from({ length: days }, (_, index) => ({
+      hourly:
+        period === "24h"
+          ? Array.from({ length: 24 }, (_, index) => ({
+              hour: new Date(INSIGHTS_PERIOD_END - (24 - index) * 3_600_000).toISOString(),
+              merged: [0, 1, 0, 2, 1, 0][index % 6]!,
+              not_merged: index % 7 === 0 ? 1 : 0,
+            }))
+          : [],
+      daily: Array.from({ length: period === "24h" ? 0 : days }, (_, index) => ({
         date: day(days - index),
         merged: [3, 5, 4, 2, 6, 4, 3, 1, 5, 7, 2, 4, 6, 3][index % 14]! + Math.floor(index / 10),
         not_merged: index % 4 === 0 ? 1 : 0,
@@ -441,7 +449,14 @@ export function fixtureOrbitTasksTransport(
     if (request.path === "/task-insights") {
       return options?.insightsFailure
         ? failure(500, "gateway.unhandled", "The gateway could not complete the request.")
-        : json(200, insightsOf(request.query?.period === "7d" ? "7d" : "30d"));
+        : json(
+            200,
+            insightsOf(
+              request.query?.period === "24h" || request.query?.period === "7d"
+                ? request.query.period
+                : "30d",
+            ),
+          );
     }
     if (request.path === "/tasks") {
       const rows = details.map((detail) =>

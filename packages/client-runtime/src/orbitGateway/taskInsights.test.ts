@@ -40,6 +40,7 @@ function insights(overrides: Partial<OrbitTaskInsights> = {}): OrbitTaskInsights
     },
     weekly: [],
     daily: [],
+    hourly: [],
     byModel: [],
     ...overrides,
   };
@@ -110,6 +111,18 @@ describe("task insights", () => {
       { date: "2026-11-09", value: null },
     ]);
     expect(insightTrend(insights({ daily, weekly }), "wasted")).toBeNull();
+    const hourly = Array.from({ length: 4 }, (_, index) => ({
+      hour: `2026-11-19T1${index}:00:00+00:00`,
+      merged: index,
+    }));
+    expect(insightTrend(insights({ period: "24h", hourly }), "completed")).toEqual([
+      { date: "2026-11-19T10:00:00+00:00", value: 0 },
+      { date: "2026-11-19T11:00:00+00:00", value: 1 },
+      { date: "2026-11-19T12:00:00+00:00", value: 3 },
+      { date: "2026-11-19T13:00:00+00:00", value: 6 },
+    ]);
+    // An older Orbit answers the 24-hour period without hours: no line, not a daily one.
+    expect(insightTrend(insights({ period: "24h", daily }), "completed")).toBeNull();
     expect(insightTrend(null, "completed")).toBeNull();
   });
 });

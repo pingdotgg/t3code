@@ -303,7 +303,8 @@ function BoardToolbar() {
                 );
               })}
             </MenuGroup>
-            <MenuSeparator />
+            {/* -mx-1: the popup's p-1 inset; the line runs to the menu's edge. */}
+            <MenuSeparator className="-mx-1" />
             <MenuGroup>
               <MenuGroupLabel>{gt("Insights")}</MenuGroupLabel>
               {INSIGHTS.map((insight) => (
@@ -317,7 +318,7 @@ function BoardToolbar() {
                 </MenuCheckboxItem>
               ))}
             </MenuGroup>
-            <MenuSeparator />
+            <MenuSeparator className="-mx-1" />
             <MenuGroup>
               <MenuGroupLabel>{gt("Insights period")}</MenuGroupLabel>
               {/* One choice, with the same check as the items above so the groups line up. */}
@@ -329,7 +330,11 @@ function BoardToolbar() {
                   onCheckedChange={() => settings.setInsightPeriod(period)}
                   closeOnClick={false}
                 >
-                  {period === "7d" ? gt("Last 7 days") : gt("Last 30 days")}
+                  {period === "24h"
+                    ? gt("Last 24 hours")
+                    : period === "7d"
+                      ? gt("Last 7 days")
+                      : gt("Last 30 days")}
                 </MenuCheckboxItem>
               ))}
             </MenuGroup>

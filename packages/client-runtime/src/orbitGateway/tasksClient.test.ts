@@ -225,7 +225,27 @@ describe("createOrbitTasksClient", () => {
         previous: { merged: null, deliveryTimeMs: null },
         weekly: [{ weekStart: "2026-11-09", tokensPerMergedPr: null }],
         daily: [{ date: "2026-11-18", merged: 3 }],
+        hourly: [],
         byModel: [{ key: "gpt-5.5", merged: 4, leadTimeMs: null }],
+      },
+    });
+    const day = createOrbitTasksClient(
+      transport(200, {
+        data: {
+          period: "24h",
+          current: summary,
+          previous: {},
+          daily: [],
+          hourly: [{ hour: "2026-11-19T10:00:00+00:00", merged: 2, not_merged: 0 }, { hour: 1 }],
+        },
+      }),
+    );
+    expect(await day.getTaskInsights({ period: "24h" })).toMatchObject({
+      status: "ok",
+      value: {
+        period: "24h",
+        daily: [],
+        hourly: [{ hour: "2026-11-19T10:00:00+00:00", merged: 2 }],
       },
     });
     const failing = createOrbitTasksClient(
