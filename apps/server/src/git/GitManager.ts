@@ -738,6 +738,9 @@ function toPullRequestHeadRemoteInfo(pr: {
   };
 }
 
+const sameBaseUrlHost = (left: string, right: string) =>
+  URL.canParse(left) && URL.canParse(right) && new URL(left).host === new URL(right).host;
+
 export const make = Effect.gen(function* () {
   const gitCore = yield* GitVcsDriver.GitVcsDriver;
   const sourceControlProviders = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
@@ -759,6 +762,32 @@ export const make = Effect.gen(function* () {
         allowNonZeroExit: true,
       })
       .pipe(Effect.map((result) => result.stdout.split("\n", 1)[0]?.trim() || null));
+  // The checkout's provider follows origin, but a branch's change requests live on the host
+  // of the remote it was pushed to, which can differ when a repository mixes hosts.
+  const branchSourceControlProvider = Effect.fn("GitManager.branchSourceControlProvider")(
+    function* (cwd: string, remoteName: string | null) {
+      const fallback = yield* sourceControlProviders.resolveHandle({ cwd });
+      const remoteUrl = remoteName
+        ? yield* readRemoteUrl(cwd, remoteName).pipe(Effect.orElseSucceed(() => null))
+        : null;
+      const provider = remoteUrl ? sourceControlDefinitions.recognizeRemote(remoteUrl) : null;
+      if (
+        !remoteName ||
+        !remoteUrl ||
+        !provider ||
+        (provider.kind === fallback.provider.kind &&
+          fallback.context !== null &&
+          sameBaseUrlHost(provider.baseUrl, fallback.context.provider.baseUrl))
+      ) {
+        return fallback.provider;
+      }
+      const handle = yield* sourceControlProviders.resolveHandle({
+        cwd,
+        context: { provider, remoteName, remoteUrl },
+      });
+      return handle.provider;
+    },
+  );
   const changeRequestTermsFor = Effect.fn("GitManager.changeRequestTermsFor")(function* (
     cwd: string,
   ) {
@@ -838,8 +867,11 @@ export const make = Effect.gen(function* () {
   const pushCurrentBranch = Effect.fn("GitManager.pushCurrentBranch")(function* (
     cwd: string,
     branch: string | null,
+    remoteName?: string,
   ) {
-    const result = yield* gitCore.pushCurrentBranch(cwd, branch);
+    const result = yield* gitCore.pushCurrentBranch(cwd, branch, {
+      remoteName: remoteName ?? null,
+    });
     if (result.status === "pushed" && result.branch) {
       yield* shareBranchBase(cwd, result.branch);
     }
@@ -1240,13 +1272,16 @@ export const make = Effect.gen(function* () {
         Effect.catchIf(isNotGitRepositoryError, () => Effect.succeed(nonRepositoryStatusDetails)),
       );
     const hostingProvider = details.isRepo
-      ? yield* resolveHostingProvider(cwd, details.branch)
+      ? yield* resolveHostingProvider(cwd, details.branch, details.pushRemote ?? null)
       : null;
 
     return {
       isRepo: details.isRepo,
       ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,
+      ...(details.remotes ? { remotes: details.remotes } : {}),
+      ...(details.pushRemote ? { pushRemote: details.pushRemote } : {}),
+      ...(details.pushRemoteChoices ? { pushRemoteChoices: details.pushRemoteChoices } : {}),
       isDefaultRef: details.isDefaultBranch,
       refName: details.branch,
       hasWorkingTreeChanges: details.hasWorkingTreeChanges,
@@ -1607,11 +1642,13 @@ export const make = Effect.gen(function* () {
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
+    pushRemote: string | null,
   ) {
     const preferredRemoteName =
-      branch === null
+      pushRemote ??
+      (branch === null
         ? "origin"
-        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin");
+        : ((yield* readConfigValueNullable(cwd, `branch.${branch}.remote`)) ?? "origin"));
     const remoteUrl =
       (yield* readRemoteUrlNullable(cwd, preferredRemoteName)) ??
       (yield* readRemoteUrlNullable(cwd, "origin"));
@@ -2001,10 +2038,11 @@ export const make = Effect.gen(function* () {
       | "headRepositoryNameWithOwner"
       | "headRepositoryOwnerLogin"
       | "isCrossRepository"
+      | "remoteName"
     >,
     ownerHeadSelector?: string,
   ) {
-    const provider = yield* sourceControlProvider(cwd);
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
     const probe = headBranchProbe(provider, headContext.headSelectors, "open", ownerHeadSelector);
     for (const headSelector of probe.headSelectors) {
       const pullRequests = yield* provider.listChangeRequests({
@@ -2037,7 +2075,7 @@ export const make = Effect.gen(function* () {
   ) {
     const parsedByNumber = new Map<number, PullRequestInfo>();
 
-    const provider = yield* sourceControlProvider(cwd);
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
     const probe = headBranchProbe(
       provider,
       headContext.headSelectors,
@@ -2220,7 +2258,10 @@ export const make = Effect.gen(function* () {
       }
     }
 
-    const defaultFromProvider = yield* sourceControlProvider(cwd).pipe(
+    const defaultFromProvider = yield* branchSourceControlProvider(
+      cwd,
+      headContext.remoteName,
+    ).pipe(
       Effect.flatMap((provider) => provider.getDefaultBranch({ cwd })),
       Effect.orElseSucceed(() => null),
     );
@@ -2239,26 +2280,43 @@ export const make = Effect.gen(function* () {
     return { baseBranch: "main", baseRef: "main" };
   });
 
+  // Same-host forks target the primary repository; other hosts use their own base.
   const resolveBaseRangeRef = Effect.fn("resolveBaseRangeRef")(function* (
     cwd: string,
     baseBranch: string,
+    branchRemoteName: string | null,
   ) {
     if (baseBranch.startsWith("refs/")) return baseBranch;
-    const remoteName = yield* gitCore
+    const primaryRemoteName = yield* gitCore
       .resolvePrimaryRemoteName(cwd)
       .pipe(Effect.orElseSucceed(() => null));
-    if (!remoteName) return baseBranch;
-
-    return yield* gitCore
-      .resolveRemoteTrackingCommit({
-        cwd,
-        refName: baseBranch,
-        fallbackRemoteName: remoteName,
-      })
-      .pipe(
-        Effect.map((resolved) => resolved.commitSha),
-        Effect.orElseSucceed(() => baseBranch),
-      );
+    const primary = yield* sourceControlProviders.resolveHandle({ cwd });
+    const branchUrl = branchRemoteName
+      ? yield* readRemoteUrl(cwd, branchRemoteName).pipe(Effect.orElseSucceed(() => null))
+      : null;
+    const branchProvider = branchUrl ? sourceControlDefinitions.recognizeRemote(branchUrl) : null;
+    const preferBranchRemote =
+      branchProvider !== null &&
+      (branchProvider.kind !== primary.provider.kind ||
+        primary.context === null ||
+        !sameBaseUrlHost(branchProvider.baseUrl, primary.context.provider.baseUrl));
+    const remoteNames = [
+      ...new Set(
+        preferBranchRemote
+          ? [branchRemoteName, primaryRemoteName]
+          : [primaryRemoteName, branchRemoteName],
+      ),
+    ].filter((remoteName) => remoteName !== null);
+    for (const remoteName of remoteNames) {
+      const commitSha = yield* gitCore
+        .resolveRemoteTrackingCommit({ cwd, refName: baseBranch, fallbackRemoteName: remoteName })
+        .pipe(
+          Effect.map((resolved) => resolved.commitSha),
+          Effect.orElseSucceed(() => null),
+        );
+      if (commitSha) return commitSha;
+    }
+    return baseBranch;
   });
 
   const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
@@ -2435,8 +2493,9 @@ export const make = Effect.gen(function* () {
     cwd: string,
     status: { branch: string; upstreamRef: string | null; hasUpstream: boolean },
     changeRequestLabel: string,
+    pushRemote: string | undefined,
   ) {
-    const target = yield* gitCore.resolvePushTarget(cwd, status);
+    const target = yield* gitCore.resolvePushTarget(cwd, { ...status, remoteName: pushRemote });
     if (!target) return;
     const headContext = yield* resolveBranchHeadContext(cwd, {
       branch: status.branch,
@@ -2470,10 +2529,9 @@ export const make = Effect.gen(function* () {
       readonly baseBranch: string;
       readonly baseRef: string;
       readonly headBranch: string;
+      readonly headRemoteName: string | null;
     }) => Effect.Effect<{ readonly title: string; readonly body: string }, E>,
   ) {
-    const provider = yield* sourceControlProvider(cwd);
-    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -2497,6 +2555,8 @@ export const make = Effect.gen(function* () {
       cwd,
       pushRemoteRef ? { branch, ...pushRemoteRef } : { branch, upstreamRef: details.upstreamRef },
     );
+    const provider = yield* branchSourceControlProvider(cwd, headContext.remoteName);
+    const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
 
     const existing = yield* findOpenPr(cwd, headContext);
     if (existing) {
@@ -2511,7 +2571,8 @@ export const make = Effect.gen(function* () {
     }
 
     // A PR opened from the remote branch would leave out commits not pushed yet.
-    if (details.aheadCount > 0) {
+    // With a push remote, ahead counts against the upstream, which the push does not move.
+    if (!pushRemoteRef && details.aheadCount > 0) {
       return yield* new GitManagerError({
         operation: "runPrStep",
         cwd,
@@ -2522,6 +2583,7 @@ export const make = Effect.gen(function* () {
     const baseBranch = requestedBase ?? resolved.baseBranch;
     const generated = yield* content({
       provider,
+      headRemoteName: headContext.remoteName,
       baseBranch,
       baseRef: requestedBase ?? resolved.baseRef,
       headBranch: headContext.headBranch,
@@ -2608,7 +2670,7 @@ export const make = Effect.gen(function* () {
       emit,
       pushRemoteRef,
       undefined,
-      ({ provider, baseBranch, baseRef, headBranch }) =>
+      ({ provider, baseBranch, baseRef, headBranch, headRemoteName }) =>
         Effect.gen(function* () {
           const terms = sourceControlDefinitions.get(provider.kind).changeRequest;
           yield* emit({
@@ -2616,7 +2678,7 @@ export const make = Effect.gen(function* () {
             phase: "pr",
             label: `Generating ${terms.shortLabel} content...`,
           });
-          const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
+          const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef, headRemoteName);
           const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
           const policy = yield* resolveStylePolicy(cwd, settings);
           const changeRequestTemplate =
@@ -3729,6 +3791,7 @@ export const make = Effect.gen(function* () {
             input.cwd,
             { ...initialStatus, branch: initialStatus.branch },
             changeRequestTerms.shortLabelWithArticle,
+            input.pushRemote,
           );
         }
 
@@ -3759,7 +3822,7 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() => pushCurrentBranch(input.cwd, currentBranch, input.pushRemote)),
               )
           : { status: "skipped_not_requested" as const };
 
