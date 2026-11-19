@@ -316,6 +316,31 @@ describe("composer list normalization", () => {
     expect(editor.state.doc.textContent).toBe("- go");
   });
 
+  it.each([
+    ["+ ", "bulletList"],
+    ["* ", "bulletList"],
+    ["1. ", "orderedList"],
+  ])("keeps the typed %j when Backspace follows its list shortcut", (marker, list) => {
+    const editor = createEditor("");
+    for (const char of marker) {
+      const { from, to } = editor.state.selection;
+      const insert = () => editor.state.tr.insertText(char, from, to);
+      const handled = editor.state.plugins.some((plugin) =>
+        plugin.props.handleTextInput?.call(plugin, editor.view, from, to, char, insert),
+      );
+      if (!handled) editor.view.dispatch(editor.state.tr.insertText(char, from, to));
+    }
+    expect(editor.state.doc.firstChild?.type.name).toBe(list);
+    const backspace = chord("Backspace");
+    expect(
+      editor.state.plugins.some((plugin) =>
+        plugin.props.handleKeyDown?.call(plugin, editor.view, backspace),
+      ),
+    ).toBe(true);
+    expect(editor.state.doc.firstChild?.type.name).toBe("paragraph");
+    expect(editor.state.doc.textContent).toBe(marker);
+  });
+
   it("preserves formatting and the caret when removing the literal prefix", () => {
     const editor = createEditor("**text**");
     editor.view.dispatch(editor.state.tr.insert(1, editor.schema.text("- ")));

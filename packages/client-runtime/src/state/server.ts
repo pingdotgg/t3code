@@ -1,4 +1,11 @@
 import {
+  errorI18nMessage,
+  type MarkedText,
+  markedTextEnglish,
+  resolveMarkedText,
+  thrownErrorMessage,
+} from "../errors/translatable.ts";
+import {
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
@@ -9,6 +16,7 @@ import {
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
+  type UsageSummary,
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -25,7 +33,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom } from "effect/reactivity";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   createAtomCommandScheduler,
@@ -62,6 +70,8 @@ import {
   type ServerConfigProjection,
   withoutEnvironmentThemes,
 } from "./serverConfigProjection.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type { ServerConfigProjection } from "./serverConfigProjection.ts";
 
@@ -81,6 +91,8 @@ export type ServerUpdateState =
       readonly fromVersion: string;
       readonly targetVersion: string;
       readonly message: string;
+      /** `message` as marked text, so it follows the UI language; absent for plain error text. */
+      readonly i18nMessage?: MarkedText;
     };
 
 export interface ServerUpdateTarget {
@@ -106,7 +118,16 @@ export class ServerUpdateResumeTimeoutError extends Schema.TaggedError<ServerUpd
   },
 ) {
   override get message(): string {
-    return `Could not confirm that the server resumed on t3@${this.targetVersion}. Reconnect to check the update outcome.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg(
+        "Could not confirm that the server resumed on t3@{version}. Reconnect to check the update outcome.",
+        { version: this.targetVersion },
+      ),
+    ];
   }
 }
 
@@ -117,9 +138,21 @@ export class ServerUpdateProgressIncompleteError extends Schema.TaggedError<Serv
   },
 ) {
   override get message(): string {
-    return `The t3@${this.targetVersion} update ended before the server accepted the restart.`;
+    return markedTextEnglish(this.i18nMessage);
+  }
+
+  get i18nMessage(): MarkedText {
+    return [
+      msg("The t3@{version} update ended before the server accepted the restart.", {
+        version: this.targetVersion,
+      }),
+    ];
   }
 }
+
+const DESKTOP_RESUMED_WITHOUT_UPDATE = msg(
+  "The desktop app resumed without installing the prepared update.",
+);
 
 export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTerminalError>()(
   "ServerUpdateTerminalError",
@@ -130,7 +163,27 @@ export class ServerUpdateTerminalError extends Schema.TaggedError<ServerUpdateTe
   },
 ) {
   override get message(): string {
-    return this.reason ?? `The t3@${this.targetVersion} update ${this.status}.`;
+    return this.reason ?? markedTextEnglish(this.statusText);
+  }
+
+  get i18nMessage(): MarkedText | undefined {
+    return this.reason === undefined
+      ? this.statusText
+      : this.reason === DESKTOP_RESUMED_WITHOUT_UPDATE
+        ? [DESKTOP_RESUMED_WITHOUT_UPDATE]
+        : undefined;
+  }
+
+  private get statusText(): MarkedText {
+    const version = this.targetVersion;
+    switch (this.status) {
+      case "committed":
+        return [msg("The t3@{version} update committed.", { version })];
+      case "rolled-back":
+        return [msg("The t3@{version} update rolled-back.", { version })];
+      case "failed":
+        return [msg("The t3@{version} update failed.", { version })];
+    }
   }
 }
 
@@ -284,7 +337,7 @@ export const waitForDesktopUpdateTarget = Effect.fn("waitForDesktopUpdateTarget"
   return yield* new ServerUpdateTerminalError({
     targetVersion,
     status: "failed",
-    reason: "The desktop app resumed without installing the prepared update.",
+    reason: DESKTOP_RESUMED_WITHOUT_UPDATE,
   });
 });
 
@@ -318,8 +371,31 @@ export function serverUpdateStateForServerVersion(
     : IDLE_SERVER_UPDATE_STATE;
 }
 
-export function serverUpdateFailureMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Server update failed.";
+function serverUpdateFailureMessage(error: unknown, resolve: MFunctionType = mFallback): string {
+  return error instanceof Error
+    ? (thrownErrorMessage(error, resolve) ?? error.message)
+    : resolve(msg("Server update failed."));
+}
+
+/** The failed state's `message` and, when the text is ours, its marked text. */
+export function serverUpdateFailure(error: unknown): {
+  readonly message: string;
+  readonly i18nMessage?: MarkedText;
+} {
+  const i18nMessage =
+    error instanceof Error ? errorI18nMessage(error) : [msg("Server update failed.")];
+  return i18nMessage === undefined
+    ? { message: serverUpdateFailureMessage(error) }
+    : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+export function serverUpdateFailureText(
+  state: Extract<ServerUpdateState, { status: "failed" }>,
+  resolve: MFunctionType = mFallback,
+): string {
+  return state.i18nMessage === undefined
+    ? state.message
+    : resolveMarkedText(state.i18nMessage, resolve);
 }
 
 function isRpcSocketError(error: unknown): boolean {
@@ -378,6 +454,45 @@ export interface ServerConfigSubscriptionOptions {
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
+  readonly providerCatalogDigests?: boolean;
+  readonly providerStatusDeltas?: boolean;
+}
+
+type ServerProviderEntry = ServerConfig["providers"][number];
+
+/** Machine slash commands and skills a cwd snapshot reply carried, with the digest they belong to. */
+export interface FetchedMachineCatalog {
+  readonly instanceId: ProviderInstanceId;
+  readonly digest: string;
+  readonly slashCommands: ServerProviderEntry["slashCommands"];
+  readonly skills: ServerProviderEntry["skills"];
+}
+
+function withFetchedMachineCatalogs(
+  projection: ServerConfigProjection,
+  catalogs: ReadonlyArray<FetchedMachineCatalog>,
+): ServerConfigProjection {
+  let changed = false;
+  const providers = projection.config.providers.map((provider) => {
+    const catalog = catalogs.find((entry) => entry.instanceId === provider.instanceId);
+    // Only the lists of the live catalog apply. A reply for an older one is dropped, and a
+    // reply that lands before the config names its digest applies when the config does.
+    if (
+      catalog === undefined ||
+      catalog.digest !== provider.catalogDigest ||
+      provider.loadedCatalogDigest === catalog.digest
+    ) {
+      return provider;
+    }
+    changed = true;
+    return {
+      ...provider,
+      slashCommands: catalog.slashCommands,
+      skills: catalog.skills,
+      loadedCatalogDigest: catalog.digest,
+    };
+  });
+  return changed ? { ...projection, config: { ...projection.config, providers } } : projection;
 }
 
 // Configs are JSON-shaped. Missing and undefined object fields persist identically.
@@ -416,7 +531,11 @@ function sameCacheValue(previous: unknown, next: unknown): boolean {
 }
 
 export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConfigState.make")(
-  function* (subscription: ServerConfigSubscriptionOptions) {
+  function* (
+    subscription: ServerConfigSubscriptionOptions,
+    // Merged into the state, so the cache keeps the lists for the next launch and for offline.
+    machineCatalogs: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>> = Stream.empty,
+  ) {
     const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
     const cache = yield* Persistence.EnvironmentCacheStore;
     const environmentId = supervisor.target.environmentId;
@@ -445,11 +564,13 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
     const persist = Effect.fn("EnvironmentServerConfigState.persist")(function* (
       config: ServerConfig,
     ) {
-      // A cached stall would read as a fresh freeze on the next launch.
+      // A cached stall would read as a fresh freeze on the next launch, and
+      // serverTime changes every connect, which would rewrite the cache each time.
       const {
         environmentThemes: _themes,
         usageLimitSources: _sources,
         lastEventLoopStall: _stall,
+        serverTime: _serverTime,
         ...cacheable
       } = config;
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
@@ -495,16 +616,44 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 
     yield* runCachePersistence(persistence, persistPending).pipe(Effect.forkScoped);
 
-    yield* subscribe(WS_METHODS.subscribeServerConfig, {
+    type Update = (
+      current: Option.Option<ServerConfigProjection>,
+    ) => Option.Option<ServerConfigProjection>;
+    // Written and read inside the one update loop below.
+    let fetchedCatalogs: ReadonlyArray<FetchedMachineCatalog> = [];
+    const configUpdates = subscribe(WS_METHODS.subscribeServerConfig, {
       ...(subscription.environmentThemes === true ? { environmentThemes: true } : {}),
       ...(subscription.usageLimitSources === true ? { usageLimitSources: true } : {}),
       ...(subscription.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
       ...(subscription.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
+      ...(subscription.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+      ...(subscription.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
     }).pipe(
-      Stream.runForEach((event) =>
+      Stream.map((event): Update => (current) => {
+        const next = applyServerConfigProjection(current, event);
+        return fetchedCatalogs.length === 0
+          ? next
+          : Option.map(next, (projection) =>
+              withFetchedMachineCatalogs(projection, fetchedCatalogs),
+            );
+      }),
+    );
+    const catalogUpdates = machineCatalogs.pipe(
+      Stream.map((catalogs): Update => (current) => {
+        fetchedCatalogs = catalogs;
+        return Option.map(current, (projection) =>
+          withFetchedMachineCatalogs(projection, catalogs),
+        );
+      }),
+    );
+
+    // One loop for both sources, so a fetched catalog never overwrites a newer config event.
+    yield* Stream.merge(configUpdates, catalogUpdates).pipe(
+      Stream.runForEach((update) =>
         Effect.gen(function* () {
-          const next = applyServerConfigProjection(yield* SubscriptionRef.get(state), event);
-          if (Option.isNone(next)) {
+          const current = yield* SubscriptionRef.get(state);
+          const next = update(current);
+          if (Option.isNone(next) || next.value === Option.getOrUndefined(current)) {
             return;
           }
           yield* Ref.set(pendingPersistence, Option.some(next.value.config));
@@ -522,11 +671,12 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 function serverConfigStateChanges(
   environmentId: EnvironmentId,
   subscription: ServerConfigSubscriptionOptions,
+  machineCatalogs: Stream.Stream<ReadonlyArray<FetchedMachineCatalog>>,
 ) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(
-      makeEnvironmentServerConfigState(subscription).pipe(
+      makeEnvironmentServerConfigState(subscription, machineCatalogs).pipe(
         Effect.map((state) =>
           SubscriptionRef.changes(state).pipe(
             Stream.filterMap((projection) =>
@@ -671,17 +821,22 @@ export function resolveServerConfigValue(
   return initialConfig ?? projection?.config ?? null;
 }
 
-type ServerProviderEntry = ServerConfig["providers"][number];
-
 /**
- * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, or a
- * /usage-limits change shows up here, so a snapshot fetched before it no longer applies.
+ * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, a
+ * /usage-limits change, or a server rescan that changed the skills shows up here, so a snapshot
+ * fetched before it no longer applies.
  */
 const snapshotBasis = (provider: ServerProviderEntry | undefined) =>
   provider && {
     enabled: provider.enabled,
-    slashCommands: provider.slashCommands,
-    skills: provider.skills,
+    models: provider.models,
+    // The digest stands for the lists, which load with a snapshot and must not unseat it.
+    ...(provider.catalogDigest === undefined
+      ? { slashCommands: provider.slashCommands, skills: provider.skills }
+      : { catalogDigest: provider.catalogDigest }),
+    ...(provider.workspaceRescannedAt === undefined
+      ? {}
+      : { workspaceRescannedAt: provider.workspaceRescannedAt }),
   };
 
 interface FetchedWorkspaceSnapshot {
@@ -770,6 +925,10 @@ export function createServerEnvironmentAtoms<R, E>(
     readonly usageLimitSources?: boolean;
     readonly usageLimitsCommand?: boolean;
     readonly providerCatalogsOnDemand?: boolean;
+    readonly providerCatalogDigests?: boolean;
+    readonly providerStatusDeltas?: boolean;
+    /** Machine refresh replies carry no providers; the config stream already delivers them. */
+    readonly omitRefreshedProviders?: boolean;
   },
 ) {
   const configScheduler = createAtomCommandScheduler();
@@ -778,15 +937,30 @@ export function createServerEnvironmentAtoms<R, E>(
     mode: "serial" as const,
     key: ({ environmentId }: { readonly environmentId: string }) => environmentId,
   };
+  const fetchedMachineCatalogsAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make<ReadonlyArray<FetchedMachineCatalog>>([]).pipe(
+      Atom.keepAlive,
+      Atom.withLabel(`environment-data:server:fetched-machine-catalogs:${environmentId}`),
+    ),
+  );
   const configProjectionFamily = Atom.family((environmentId: EnvironmentId) =>
     runtime
-      .atom(
-        serverConfigStateChanges(environmentId, {
-          ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
-          ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
-          ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
-          ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
-        }),
+      .atom((get) =>
+        serverConfigStateChanges(
+          environmentId,
+          {
+            ...(options.environmentThemes === true ? { environmentThemes: true } : {}),
+            ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
+            ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
+            ...(options.providerCatalogsOnDemand === true
+              ? { providerCatalogsOnDemand: true }
+              : {}),
+            ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+            ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
+          },
+          // Scoped to the stream, which restarts with every new session.
+          AtomRegistry.toStream(get.registry, fetchedMachineCatalogsAtom(environmentId)),
+        ),
       )
       .pipe(
         Atom.setIdleTTL(5 * 60_000),
@@ -1132,7 +1306,7 @@ export function createServerEnvironmentAtoms<R, E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
-              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
+              ...serverUpdateFailure(Cause.squash(exit.cause)),
             });
           }),
         ),
@@ -1388,6 +1562,9 @@ export function createServerEnvironmentAtoms<R, E>(
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,
+      staleTimeMs: 5_000,
+      refreshIntervalMs: 5_000,
+      idleTtlMs: 0,
     }),
     scheduledTaskWebhookDeliveries: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:scheduled-task:webhook-deliveries",
@@ -1402,30 +1579,42 @@ export function createServerEnvironmentAtoms<R, E>(
       tag: WS_METHODS.scheduledTasksSubscribe,
     }),
     // A cold transcript scan is measured in seconds, so keep the result around
-    // long enough that switching windows or re-rendering does not rescan.
+    // long enough that switching windows or re-rendering does not rescan. With
+    // nothing to show yet, the server's last scan answers first, then a plain
+    // read, then a read that waits for slow sources.
     usageSummary: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:usage-summary",
       tag: WS_METHODS.serverGetUsageSummary,
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
-      execute: (input, emit) =>
-        request(WS_METHODS.serverGetUsageSummary, input).pipe(
-          Effect.filterOrElse(
-            (summary) => !summary.sources.some((source) => source.refreshing === true),
-            (summary) =>
-              emit(summary).pipe(
-                Effect.andThen(
-                  request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
-                ),
-                Effect.catch((error) =>
-                  Effect.logWarning("Could not refresh slow usage sources.").pipe(
-                    Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
-                    Effect.as(summary),
-                  ),
+      execute: (input, emit, previous) => {
+        const settled = (summary: UsageSummary) =>
+          !summary.sources.some((source) => source.refreshing === true);
+        const read = request(WS_METHODS.serverGetUsageSummary, input).pipe(
+          Effect.filterOrElse(settled, (summary) =>
+            emit(summary).pipe(
+              Effect.andThen(
+                request(WS_METHODS.serverGetUsageSummary, { ...input, awaitRefresh: true }),
+              ),
+              Effect.catch((error) =>
+                Effect.logWarning("Could not refresh slow usage sources.").pipe(
+                  Effect.annotateLogs({ ...safeErrorLogAttributes(error) }),
+                  Effect.as(summary),
                 ),
               ),
+            ),
           ),
-        ),
+        );
+        if (Option.isSome(previous)) return read;
+        return request(WS_METHODS.serverGetUsageSummary, { ...input, provisional: true }).pipe(
+          Effect.matchEffect({
+            // The saved answer only speeds things up; without it the plain read still answers.
+            onFailure: () => read,
+            onSuccess: (saved) =>
+              settled(saved) ? Effect.succeed(saved) : emit(saved).pipe(Effect.andThen(read)),
+          }),
+        );
+      },
     }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
@@ -1472,25 +1661,55 @@ export function createServerEnvironmentAtoms<R, E>(
     refreshProviders: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:refresh-providers",
       tag: WS_METHODS.serverRefreshProviders,
-      execute: (input) =>
-        requestGuarded(WS_METHODS.serverRefreshProviders, {
+      // A rescan during the request must leave the stored basis behind the new stamp.
+      onStart: ({ environmentId, input }, registry) =>
+        registry
+          .get(configValueAtom(environmentId))
+          ?.providers.find((provider) => provider.instanceId === input.instanceId),
+      execute: (input, registry, environmentId) => {
+        const { instanceId, cwd } = input;
+        const provider =
+          instanceId === undefined || cwd === undefined
+            ? undefined
+            : registry
+                .get(configValueAtom(environmentId))
+                ?.providers.find((candidate) => candidate.instanceId === instanceId);
+        return requestGuarded(WS_METHODS.serverRefreshProviders, {
           ...input,
           workspaceSnapshotsOnDemand: true,
           ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
           ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
-        }),
-      onSuccess: ({ environmentId, input }, registry, result) =>
+          ...(options.omitRefreshedProviders === true ? { omitProviders: true } : {}),
+          // The held lists are stale or missing, so the cwd snapshot brings the current ones.
+          ...(provider?.catalogDigest !== undefined &&
+          provider.loadedCatalogDigest !== provider.catalogDigest
+            ? { machineCatalog: true }
+            : {}),
+        });
+      },
+      onSuccess: ({ environmentId, input }, registry, result, startedProvider) =>
         Effect.sync(() => {
           const { instanceId, cwd } = input;
           if (instanceId === undefined || cwd === undefined) return;
+          const refreshed = result.providers.find((provider) => provider.instanceId === instanceId);
+          if (refreshed?.catalogDigest !== undefined) {
+            const catalog = {
+              instanceId,
+              digest: refreshed.catalogDigest,
+              slashCommands: refreshed.slashCommands,
+              skills: refreshed.skills,
+            };
+            registry.update(fetchedMachineCatalogsAtom(environmentId), (current) => [
+              ...current.filter((entry) => entry.instanceId !== instanceId),
+              catalog,
+            ]);
+          }
           registry.update(fetchedWorkspaceSnapshotsAtom(environmentId), (current) =>
             recordFetchedWorkspaceSnapshot(
               current,
               { instanceId, cwd, fresh: input.fresh === true },
               result.providers,
-              registry
-                .get(configValueAtom(environmentId))
-                ?.providers.find((provider) => provider.instanceId === instanceId),
+              startedProvider,
             ),
           );
         }),
@@ -1510,10 +1729,12 @@ export function createServerEnvironmentAtoms<R, E>(
     updateProvider: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:update-provider",
       tag: WS_METHODS.serverUpdateProvider,
-      scheduler: configScheduler,
-      concurrency: configConcurrency,
     }),
     updateServer,
+    stageServerUpdate: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:stage-update",
+      tag: WS_METHODS.serverUpdateServer,
+    }),
     upsertKeybinding: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:upsert-keybinding",
       tag: WS_METHODS.serverUpsertKeybinding,
@@ -1676,6 +1897,10 @@ export function createServerEnvironmentAtoms<R, E>(
     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:check-otlp-endpoint",
       tag: WS_METHODS.serverCheckOtlpEndpoint,
+    }),
+    checkSecretSource: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:check-secret-source",
+      tag: WS_METHODS.serverCheckSecretSource,
     }),
     listTextGeneratorModels: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:list-text-generator-models",

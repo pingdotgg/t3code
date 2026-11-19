@@ -21,6 +21,31 @@ it("excludes review attachments rendered as context chips", () => {
   ]);
 });
 
+it("indexes single tildes in user paths as typed", () => {
+  const text = "Install as ~/a/x, then read (~/a/guide.md).";
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })?.join("")).toBe(text);
+  expect(
+    searchableMessageSegments({ role: "user", text: "Drop ~~old~~", streaming: false })?.join(""),
+  ).toBe("Drop old");
+});
+
+it("indexes the spaces typed at the start of a user's lines, as the bubble shows them", () => {
+  const text = "Plan\n   Step one\n\tDetail";
+  // Each line ending reads as one space, as the text after a rendered line break does.
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
+    "Plan",
+    "    Step one",
+    " \tDetail",
+  ]);
+  const indexed = (text: string) =>
+    searchableMessageSegments({ role: "user", text, streaming: false });
+  // A task's checkbox does not move where its continuation lines start.
+  expect(indexed("- [ ] task\n    detail")).toEqual([" task", "   detail"]);
+  // A space or tab written as a character reference is dropped there, as without the indentation.
+  expect(indexed("a\n &#32;b")).toEqual(["a", "  b"]);
+  expect(indexed("a  \n\t&Tab;b")).toEqual(["a", " \tb"]);
+});
+
 it("excludes structured context chips without joining text across them", () => {
   expect(
     searchableMessageSegments({
@@ -79,6 +104,41 @@ it("searches displayed prose and file-chip labels without hidden paths", () => {
     "label main.ts · L3:C2",
   ]);
   expect(assistantSegments("[label](src/main.ts#L3C2)")).toEqual(["label"]);
+  for (const text of [
+    "[a](/repo/app/(a)/page.tsx) and [b](/repo/app/(b)/page.tsx)",
+    String.raw`[a](/repo/app/\(a\)/page.tsx) and [b](/repo/app/\(b\)/page.tsx)`,
+  ]) {
+    expect(assistantSegments(text, "/repo")).toEqual([
+      "a page.tsx · app/(a) and b page.tsx · app/(b)",
+    ]);
+  }
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\page.tsx) and [b](C:\repo\.b\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · repo/.a and b page.tsx · repo/.b"]);
+  expect(
+    assistantSegments(
+      String.raw`[a](C:\repo\.a\x&amp;y\page.tsx) and [b](C:\repo\.b\x&amp;y\page.tsx)`,
+      String.raw`C:\repo`,
+    ),
+  ).toEqual(["a page.tsx · .a/x&y and b page.tsx · .b/x&y"]);
+  expect(
+    assistantSegments("[a](/repo/a&amp;b/page.tsx) and [b](/repo/c&amp;d/page.tsx)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b and b page.tsx · repo/c&d"]);
+  expect(
+    assistantSegments("[a](</repo/a&b)/page.tsx>) and [b](</repo/c&d)/page.tsx>)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b) and b page.tsx · repo/c&d)"]);
+  expect(
+    assistantSegments("[a](/repo/a&b>c/page.tsx) and [b](/repo/c&d>e/page.tsx)", "/repo"),
+  ).toEqual(["a page.tsx · repo/a&b>c and b page.tsx · repo/c&d>e"]);
+  expect(
+    assistantSegments(
+      String.raw`[a](</repo/a\<b &amp;c/page.tsx>) and [b](</repo/d\<e &amp;f/page.tsx>)`,
+      "/repo",
+    ),
+  ).toEqual(["a page.tsx · repo/a<b &c and b page.tsx · repo/d<e &f"]);
 });
 
 it("keeps fence paths literal and indexes file-chip labels in user messages", () => {
@@ -96,7 +156,7 @@ it("indexes nested disclosure summaries and bodies in rendered order", () => {
   ).toEqual(["Outer", "first", "Inner", "second"]);
 });
 
-it("indexes the citation chip label instead of its link text", () => {
+it("indexes a citation by its comment, not its quote or link text", () => {
   const citation = {
     version: 1 as const,
     environmentId: EnvironmentId.make("environment"),
@@ -110,12 +170,13 @@ it("indexes the citation chip label instead of its link text", () => {
   };
   const text = `Please fix ${serializeAssistantCitation(citation)} thanks`;
   expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
-    "Please fix cited needle thanks",
+    "Please fix ",
+    " thanks",
   ]);
-  const commented = serializeAssistantCitation({ ...citation, comment: "my note" });
-  expect(searchableMessageSegments({ role: "user", text: commented, streaming: false })).toEqual([
-    "my note",
-  ]);
+  const commented = serializeAssistantCitation({ ...citation, comment: "my\nnote" });
+  expect(
+    searchableMessageSegments({ role: "user", text: `fix ${commented} thanks`, streaming: false }),
+  ).toEqual(["fix ", "my note thanks"]);
 });
 
 it("indexes insight bodies without hidden fences and keeps user and plan text literal", () => {
