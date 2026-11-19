@@ -1322,6 +1322,16 @@ const program = Effect.gen(function* () {
             rawInput: { path: "src/env.ts" },
             locations: [{ path: "src/env.ts" }],
           },
+          // Antigravity reports an image read with only a text result, never the image bytes.
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-image-read",
+            title: "Read `mockup.png`",
+            kind: "read",
+            status: "completed",
+            rawInput: { file_path: "/workspace/mockup.png", start_line: 0, end_line: 799 },
+            rawOutput: "View mockup.png",
+          },
           {
             sessionUpdate: "tool_call_update",
             toolCallId: "structured-search",

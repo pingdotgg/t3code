@@ -70,6 +70,7 @@ import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { formatReadToolLabel, formatSearchToolLabel } from "@t3tools/shared/toolActivity";
+import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { makeAcpMcpOverAcpBridge, type AcpMcpOverAcpBridge } from "./mcpOverAcpBridge.ts";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
@@ -4724,6 +4725,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   title: path ? formatReadToolLabel(path) : (title ?? "Read file"),
                   type: "dynamic_tool",
                   toolName: "Read",
+                  ...(path !== undefined &&
+                  path.length <= 4096 &&
+                  !/[\r\n]/.test(path) &&
+                  isWorkspaceImagePreviewPath(path)
+                    ? { viewedImagePath: path }
+                    : {}),
                   input:
                     path === undefined ||
                     ["path", "filePath", "file_path"].some((key) => rawInputRecord?.[key] === path)
