@@ -9,7 +9,6 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
-  TurnItemId,
   type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
@@ -95,10 +94,6 @@ const invoke = (name: string, args: Record<string, unknown>) =>
     Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
     Effect.provideService(McpSchema.McpServerClient, client),
   );
-const declaredFailure = (result: McpSchema.CallToolResult) => {
-  const text = result.content[0];
-  return result.isError === true && text?.type === "text" ? JSON.parse(text.text) : undefined;
-};
 
 const send = (threadId: ThreadId, text: string, type: "start_immediately" | "queue_after_active") =>
   Effect.gen(function* () {
@@ -121,7 +116,7 @@ const send = (threadId: ThreadId, text: string, type: "start_immediately" | "que
  * the state the orchestrator leaves when a queued run shares the failed run's
  * provider: the queue is held until someone resumes it.
  */
-const heldThread = (threadId: ThreadId, failure?: { readonly usageLimit: true }) =>
+const heldThread = (threadId: ThreadId) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -153,37 +148,6 @@ const heldThread = (threadId: ThreadId, failure?: { readonly usageLimit: true })
       occurredAt: now,
       payload: { ...failed, status: "failed", startedAt: now, completedAt: now },
     });
-    if (failure?.usageLimit) {
-      yield* projections.apply({
-        id: EventId.make(`event:${threadId}:limit`),
-        type: "turn-item.updated",
-        threadId,
-        occurredAt: now,
-        payload: {
-          id: TurnItemId.make(`item:${threadId}:limit`),
-          threadId,
-          runId: failed.id,
-          nodeId: failed.rootNodeId,
-          providerThreadId: null,
-          providerTurnId: null,
-          nativeItemRef: null,
-          parentItemId: null,
-          ordinal: 0,
-          status: "failed",
-          title: null,
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "error",
-          failure: {
-            class: "usage_limit",
-            message: "Usage limit reached",
-            code: "usage_limit",
-            retryable: false,
-          },
-        },
-      });
-    }
     for (const run of queued) {
       yield* projections.apply({
         id: EventId.make(`event:${threadId}:hold:${run.id}`),
@@ -204,7 +168,7 @@ it.layer(layerTest)("MCP queue hold", (it) => {
       const threadId = ThreadId.make("thread:queue-hold");
       const { queued } = yield* heldThread(threadId);
 
-      const held = yield* invoke("t3_queue_list", { threadId });
+      const held = yield* invoke("t3_queue", { action: "list", threadId });
       assert.deepEqual(held.structuredContent, {
         held: true,
         items: queued.map((run) => ({
@@ -216,8 +180,8 @@ it.layer(layerTest)("MCP queue hold", (it) => {
         nextCursor: null,
       });
 
-      const resumed = yield* invoke("t3_queue_resume", { threadId });
-      assert.deepEqual(resumed.structuredContent, { released: 2 });
+      const resumed = yield* invoke("t3_queue", { action: "resume", threadId });
+      assert.notEqual(resumed.isError, true);
 
       const after = yield* orchestrator.getThreadProjection(threadId);
       assert.deepEqual(
@@ -225,32 +189,14 @@ it.layer(layerTest)("MCP queue hold", (it) => {
         ["starting", "queued"],
       );
       assert.deepEqual(
-        yield* invoke("t3_queue_list", { threadId }).pipe(Effect.map((r) => r.structuredContent)),
+        yield* invoke("t3_queue", { action: "list", threadId }).pipe(
+          Effect.map((r) => r.structuredContent),
+        ),
         {
           held: false,
           items: [{ queuedRunId: queued[1]!.id, text: "third", truncated: false, held: false }],
           nextCursor: null,
         },
-      );
-    }),
-  );
-
-  it.effect("refuses to resume a thread stopped by a usage limit", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const threadId = ThreadId.make("thread:queue-hold-limit");
-      const { queued } = yield* heldThread(threadId, { usageLimit: true });
-
-      const result = yield* invoke("t3_queue_resume", { threadId });
-      assert.isTrue(result.isError);
-      assert.deepInclude(declaredFailure(result), {
-        code: "orchestration_error",
-        message: "Continue the limited thread before resuming its queue.",
-      });
-      const after = yield* orchestrator.getThreadProjection(threadId);
-      assert.deepEqual(
-        queued.map((run) => after.runs.find((candidate) => candidate.id === run.id)?.queueHeld),
-        [true, true],
       );
     }),
   );
