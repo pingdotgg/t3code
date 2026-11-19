@@ -48,6 +48,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
+import { THEME_GUIDE } from "@t3tools/shared/themeCss";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
@@ -56,6 +57,8 @@ import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
 import { HtmlToolkit } from "../../apps/server/src/mcp/toolkits/html/tools.ts";
+import { IssuesToolkit } from "../../apps/server/src/mcp/toolkits/issues/tools.ts";
+import { MessageToolkit } from "../../apps/server/src/mcp/toolkits/message/tools.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { PreviewToolkit } from "../../apps/server/src/mcp/toolkits/preview/tools.ts";
 import { PreviewControlsToolkit } from "../../apps/server/src/mcp/toolkits/previewControls/tools.ts";
@@ -64,6 +67,7 @@ import {
   CHILD_PULL_REQUEST_REPORT_NEXT,
   PullRequestsToolkit,
 } from "../../apps/server/src/mcp/toolkits/pullRequests/tools.ts";
+import { ThemeToolkit } from "../../apps/server/src/mcp/toolkits/theme/tools.ts";
 import { ThreadToolkit } from "../../apps/server/src/mcp/toolkits/thread/tools.ts";
 import { WorktreeToolkit } from "../../apps/server/src/mcp/toolkits/worktree/tools.ts";
 import {
@@ -72,6 +76,7 @@ import {
 } from "../../apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts";
 import { proxyConfig } from "../shared/proxy.ts";
 import { changeRequestsCreatedBy } from "../../apps/server/src/orchestration-v2/PullRequestSyncReactor.ts";
+import { type BackgroundWait, makeBackgroundWait } from "./backgroundWait.ts";
 import { DeviceExpect, gradeDevice } from "./device-grading.ts";
 import { FileLinksExpect, gradeFileLinks } from "./file-link-grading.ts";
 import {
@@ -168,7 +173,10 @@ const Rest = [Schema.Record(Schema.String, Schema.Unknown)] as const;
 const PriorToolCall = Schema.Struct({
   tool: Schema.String,
   input: Schema.Unknown,
-  /** For a device tool, `"default"` runs the call on the world's devices for T3's result. */
+  /**
+   * For a device tool or t3_background_wait, `"default"` runs the call on the world's devices or
+   * background tasks for T3's result.
+   */
   result: Schema.Unknown,
   /** Repository-relative file whose current contents supply this tool result. */
   resultFile: Schema.optional(Schema.String),
@@ -182,16 +190,24 @@ const McpToolUseCall = Schema.Struct({
   tool: Schema.String,
   args: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
 });
-type McpToolUseCall = typeof McpToolUseCall.Type;
+const McpToolUseCallWithAlternatives = Schema.Struct({
+  ...McpToolUseCall.fields,
+  argsAnyOf: Schema.optional(Schema.Array(Schema.Record(Schema.String, Schema.Unknown))),
+});
+const McpToolUseExpectedCall = Schema.Struct({
+  ...McpToolUseCallWithAlternatives.fields,
+  success: Schema.optional(Schema.Literal(true)),
+});
+type McpToolUseCall = typeof McpToolUseExpectedCall.Type;
 
 /** Grading rules. Tool names are bare: `delegate_task`, `Bash`, `Agent`. */
 const McpToolUseExpect = Schema.Struct({
   /** Each entry needs one matching call. */
-  calls: Schema.optional(Schema.Array(McpToolUseCall)),
+  calls: Schema.optional(Schema.Array(McpToolUseExpectedCall)),
   /** Each entry matches a different call, and no call matches two entries; tool names are exact. */
   distinctCalls: Schema.optional(Schema.Array(McpToolUseCall)),
   /** No call may match any entry. */
-  callsMustNot: Schema.optional(Schema.Array(McpToolUseCall)),
+  callsMustNot: Schema.optional(Schema.Array(McpToolUseCallWithAlternatives)),
   notCalls: Schema.optional(Schema.Array(Schema.String)),
   /** First calls of these tools happen in this order. */
   order: Schema.optional(Schema.Array(Schema.String)),
@@ -273,6 +289,13 @@ const McpToolUseWorld = Schema.StructWithRest(
     deviceInvalidCapture: Schema.optional(Schema.Boolean),
     /** Devices another thread's agent-device session holds, by device id: that thread's id. */
     deviceOwners: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    /**
+     * Task IDs of the background commands and Monitors still running on the agent's Claude
+     * session. With them, T3's own t3_background_wait handler answers from this world.
+     */
+    backgroundTasks: Schema.optional(Schema.Array(Schema.String)),
+    /** The world's `prs`, bottom first, form one native stack with this number. */
+    stack: Schema.optional(Schema.Number),
     /** PRs already linked to the thread, with the state T3 last saw. */
     linkedPullRequests: Schema.optional(
       Schema.Array(
@@ -298,6 +321,8 @@ export const McpToolUseCase = Schema.Struct({
     harness: Schema.optional(Schema.Literals(["claude", "codex"])),
     /** The Linked environments beta is on, so T3 lists its link tools. */
     linkedEnvironments: Schema.optional(Schema.Boolean),
+    /** false: the project is on no forge T3 reads, so T3 hides its forge tools. */
+    forge: Schema.optional(Schema.Boolean),
     /** delegate_task `role` for a delegated child. T3 builds the child's first message from it. */
     delegateRole: Schema.optional(OrchestratorMcpTaskRole),
     context: Schema.optional(Schema.String),
@@ -441,12 +466,15 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
   AttachmentToolkit,
   ProjectToolkit,
   EnvironmentToolkit,
+  ThemeToolkit,
   PreviewControlsToolkit,
   WorktreeToolkit,
   PullRequestsToolkit,
   PreviewToolkit,
+  IssuesToolkit,
   DeviceToolkit,
   HtmlToolkit,
+  MessageToolkit,
 ].flatMap((toolkit): ReadonlyArray<Tool.Any> => Object.values(toolkit.tools));
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
@@ -502,10 +530,17 @@ const pastedSecret = (name: string, input: Readonly<Record<string, unknown>>) =>
 const hiddenFromSubagents = enabledWhen(McpInvocationContext.hiddenFromSubagents);
 // The Linked environments beta starts off, and T3 lists its tools only while it is on.
 const hiddenWhileLinksOff = enabledWhen(McpInvocationContext.hiddenWhileLinksOff);
-const visibleT3Tools = (options: { readonly subagent?: boolean; readonly links?: boolean }) =>
+// T3 lists PR and CI tools only to a thread whose project is on a forge it reads.
+const hiddenWithoutForge = enabledWhen(McpInvocationContext.hiddenWithoutForge);
+const visibleT3Tools = (options: {
+  readonly subagent?: boolean;
+  readonly links?: boolean;
+  readonly forge?: boolean;
+}) =>
   t3Tools.filter(
     (tool) =>
       (options.links === true || !hiddenWhileLinksOff.has(tool.name)) &&
+      (options.forge !== false || !hiddenWithoutForge.has(tool.name)) &&
       !(options.subagent === true && hiddenFromSubagents.has(tool.name)),
   );
 
@@ -616,6 +651,7 @@ export const buildBase = (
     readonly keepUserInstructions: boolean;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly forge?: boolean;
     /** A native subagent starts from its task: T3 appends nothing to its system prompt. */
     readonly nativeSubagent?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
@@ -712,6 +748,7 @@ const buildCodexBase = (
     readonly effort?: string | undefined;
     readonly subagent?: boolean;
     readonly links?: boolean;
+    readonly forge?: boolean;
     /** false: the thread has no agent device access, so T3's text leaves devices out. */
     readonly deviceAccess?: boolean;
     /** false: the thread has no agent browser access, so T3's text leaves the browser out. */
@@ -836,6 +873,35 @@ const createdPullRequests = ({ tool, input, output }: ShellEntry) =>
   tool === "Bash" && isRecord(input) && typeof input.command === "string"
     ? changeRequestsCreatedBy(input.command, output).map(({ url }) => url)
     : [];
+
+/** The PR number a shell command opened for `branch`; `--head` naming another branch is not it. */
+const branchPullRequestCreatedBy = (entry: ShellEntry, branch: string | undefined) => {
+  const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+  const head = /--head[=\s]+["']?([^\s"']+)/.exec(command)?.[1];
+  if (head !== undefined && branch !== undefined && head.split(":").at(-1) !== branch) {
+    return undefined;
+  }
+  return createdPullRequests(entry)
+    .map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]))
+    .find((number) => number > 0);
+};
+/** The branch the agent last checked out or switched to in the shell, else the world's. */
+const checkedOutBranch = (sample: Sample) => {
+  let branch = sample.testCase.setup.world?.branch ?? "";
+  for (const entry of sample.shell) {
+    const command = isRecord(entry.input) ? valueText(entry.input.command) : "";
+    for (const part of command.replace(/\s\d?>&\d/g, "").split(/[;&|\n]+/)) {
+      // `git checkout <ref> -- <paths>` restores files and stays on the branch.
+      if (/\s--(\s|$)/.test(part)) continue;
+      const match = /\bgit (?:checkout|switch)\s+(?:-[bcBC]\s+)?([A-Za-z0-9][\w./-]*)\s*$/.exec(
+        part.trim(),
+      );
+      if (match !== null) branch = match[1]!;
+    }
+  }
+  return branch;
+};
+
 /**
  * One sample's state. ToolSearch adds loaded schemas to `tools`, like Claude Code. `shell` is the
  * history the simulator keeps consistent with; `linked`, `nextTask` and `threads` do the same for
@@ -849,6 +915,14 @@ type Sample = {
   readonly shell: Array<ShellEntry>;
   readonly shellUsage: Usage;
   readonly linked: Set<string>;
+  /** The branch PR the agent opened in this sample, which links alone do not prove. */
+  openedPullRequest: number | undefined;
+  /** PRs pull_request_create opened from branches other than the world's, by branch. */
+  readonly openedByBranch: Map<string, number>;
+  /** PR changes the agent made through T3's tools, which gh and the host show from then on. */
+  readonly forgeChanges: Array<string>;
+  /** PRs pull_request_merge merged, as `repo#number`, which reads show as merged from then on. */
+  readonly merged: Set<string>;
   readonly codeStore: Record<string, unknown>;
   nextTask: number;
   /** Threads the agent launched in this sample, by id, so reading one shows its own brief. */
@@ -860,6 +934,10 @@ type Sample = {
   devices?: DeviceTools;
   /** T3's results for prior device calls whose case result is "default". */
   readonly priorResults: Map<unknown, string>;
+  /** Prior calls whose T3 result is an error, so the agent sees it as one. */
+  readonly priorErrors: Set<unknown>;
+  /** T3's t3_background_wait, once `withBackgroundWait` builds it for `world.backgroundTasks`. */
+  backgroundWait?: BackgroundWait;
   /** Calls so far per mocked tool, for mocks that answer in sequence. */
   readonly mockCalls: Map<string, number>;
 };
@@ -900,12 +978,24 @@ export const makeSample = (testCase: McpToolUseCase, base: Base): Sample => {
     shell,
     shellUsage: emptyUsage(),
     linked: new Set([...urls, ...shell.flatMap(createdPullRequests)]),
+    openedByBranch: new Map(),
+    forgeChanges: [],
+    merged: new Set(),
+    openedPullRequest:
+      shell
+        .map((entry) => branchPullRequestCreatedBy(entry, testCase.setup.world?.branch))
+        .find((number) => number !== undefined) ??
+      priorCalls
+        .filter((call) => call.tool === "pull_request_create")
+        .map((call) => Number(/\/pull\/(\d+)/.exec(valueText(call.result))?.[1]))
+        .find((number) => number > 0),
     codeStore: {},
     nextTask: Math.max(0, ...taskNumbers) + 1,
     threads: new Map(),
     secretFiles: [],
     secretRequests: 0,
     priorResults: new Map(),
+    priorErrors: new Set(),
     mockCalls: new Map(),
   };
 };
@@ -934,6 +1024,25 @@ export const withDevices = Effect.fn("evaluateMcpToolUse.withDevices")(function*
   for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
     if (call.result !== "default" || !isDeviceTool(call.tool)) continue;
     sample.priorResults.set(call, (yield* sample.devices.call(call.tool, call.input)).text);
+  }
+});
+
+/**
+ * Builds T3's t3_background_wait for a world with background tasks, and answers prior waits whose
+ * result is "default" with T3's result.
+ */
+export const withBackgroundWait = Effect.fn("evaluateMcpToolUse.withBackgroundWait")(function* (
+  sample: Sample,
+) {
+  const running = sample.testCase.setup.world?.backgroundTasks;
+  if (running === undefined) return;
+  const backgroundWait = yield* makeBackgroundWait(running);
+  sample.backgroundWait = backgroundWait;
+  for (const call of (sample.testCase.setup.priorTurns ?? []).flatMap((t) => t.toolCalls ?? [])) {
+    if (call.result !== "default" || call.tool !== "t3_background_wait") continue;
+    const result = yield* backgroundWait(call.input);
+    sample.priorResults.set(call, result.text);
+    if (result.isError) sample.priorErrors.add(call);
   }
 });
 
@@ -1024,8 +1133,13 @@ export const buildMessages = (sample: Sample) => {
     const calls = (turn.toolCalls ?? []).map((call) => {
       const tool = findTool(base, call.tool);
       if (tool === undefined) throw new Error(`${testCase.id}: unknown prior tool ${call.tool}.`);
-      if (call.result === "default" && isDeviceTool(call.tool) && !sample.priorResults.has(call)) {
-        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run withDevices.`);
+      const builder = isDeviceTool(call.tool)
+        ? "withDevices"
+        : call.tool === "t3_background_wait"
+          ? "withBackgroundWait"
+          : undefined;
+      if (call.result === "default" && builder && !sample.priorResults.has(call)) {
+        throw new Error(`${testCase.id}: prior ${call.tool} needs T3's result; run ${builder}.`);
       }
       return { ...call, id: `toolu_prior_${nextId++}`, name: tool.name, tool, prior: call };
     });
@@ -1047,7 +1161,8 @@ export const buildMessages = (sample: Sample) => {
         normalizeToolName(tool.name) === "orchestrator_capabilities"
           ? capabilities(sample, result)
           : (sample.priorResults.get(prior) ?? result);
-      push("user", toolResult(id, replayed));
+      const answer = toolResult(id, replayed);
+      push("user", sample.priorErrors.has(prior) ? { ...answer, is_error: true } : answer);
     }
     if (turn.text) push(turn.role, text(turn.text));
   }
@@ -1127,7 +1242,79 @@ const linkedEntry = (sample: Sample, url: string) => {
   const seeded = sample.testCase.setup.world?.linkedPullRequests?.find(
     ({ number }) => number === pr.number && pr.repository === sample.repo,
   );
-  return { ...pr, state: seeded?.state ?? "open", title: seeded?.title ?? null };
+  const state = mergedIn(sample, pr.repository, pr.number) ? "merged" : (seeded?.state ?? "open");
+  return { ...pr, state, title: seeded?.title ?? null };
+};
+
+const mergedIn = (sample: Sample, repository: string, number: unknown) =>
+  sample.merged.has(`${repository.toLowerCase()}#${Number(number)}`);
+
+/** The world's PRs. `prs` is free-form world data: number, title, headRefName, checks. */
+const worldPullRequests = (sample: Sample) => {
+  const prs = sample.testCase.setup.world?.prs;
+  return Array.isArray(prs) ? prs.filter(isRecord) : [];
+};
+
+/** World fixtures spell states as GitHub does (`MERGED`) or as T3 does (`merged`). */
+const worldState = (pr: Readonly<Record<string, unknown>> | undefined) => {
+  const state = valueText(pr?.state ?? "open").toLowerCase();
+  return state === "merged" || state === "closed" ? state : "open";
+};
+
+/**
+ * The PR for the sample's branch: the world's, else the one a create would open. A case that
+ * mocks `gh pr create` names that URL, so the T3 tool opens the same number.
+ */
+const worldBranchPullRequest = (sample: Sample) => {
+  const branch = sample.testCase.setup.world?.branch;
+  const prs = worldPullRequests(sample);
+  const own = prs.find((pr) => pr.headRefName === branch);
+  if (own !== undefined) return { number: Number(own.number), created: false, pr: own };
+  if (sample.openedPullRequest !== undefined) {
+    return { number: sample.openedPullRequest, created: false, pr: undefined };
+  }
+  const mocked = (sample.testCase.setup.shellMocks ?? []).find((mock) =>
+    /\b(pr|mr) create\b/.test(mock.match),
+  );
+  const fromMock = Number(/\/pull\/(\d+)/.exec(mocked?.output ?? "")?.[1]);
+  const number =
+    fromMock > 0 ? fromMock : Math.max(123, ...prs.map((pr) => Number(pr.number) || 0)) + 1;
+  return { number, created: true, pr: undefined };
+};
+
+/** The PR for the checked-out branch: a stack layer's own, or the world branch's. */
+const branchPullRequest = (sample: Sample) => {
+  const checkedOut = checkedOutBranch(sample);
+  if (checkedOut === sample.testCase.setup.world?.branch) return worldBranchPullRequest(sample);
+  const known = worldPullRequests(sample).find((pr) => pr.headRefName === checkedOut);
+  if (known !== undefined) return { number: Number(known.number), created: false, pr: known };
+  const opened = sample.openedByBranch.get(checkedOut);
+  if (opened !== undefined) return { number: opened, created: false, pr: undefined };
+  const number =
+    Math.max(
+      worldBranchPullRequest(sample).number,
+      ...sample.openedByBranch.values(),
+      ...worldPullRequests(sample).map((pr) => Number(pr.number) || 0),
+      ...[...sample.linked].map((url) => Number(/\/pull\/(\d+)/.exec(url)?.[1]) || 0),
+    ) + 1;
+  return { number, created: true, pr: undefined };
+};
+
+/** PullRequestService reads this many logs when no check is named. */
+const DEFAULT_CHECK_LOGS = 5;
+
+/** The checks `ci_logs` and `ci_rerun` act on, selected as PullRequestService does. */
+const selectedWorldChecks = (sample: Sample, input: Readonly<Record<string, unknown>>) => {
+  const number = typeof input.number === "number" ? input.number : branchPullRequest(sample).number;
+  const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+  const all = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+  const named = typeof input.check === "string" ? input.check.trim().toLowerCase() : null;
+  const checks = all.filter((check) =>
+    named === null
+      ? check.state === "fail" || check.state === "cancelled"
+      : valueText(check.name).toLowerCase() === named,
+  );
+  return { number, all, checks, named };
 };
 
 /** A believable T3 result for a tool the case does not mock. */
@@ -1226,6 +1413,171 @@ export const t3Default = (
         ...(invalidUrls.length > 0 ? { invalidUrls } : {}),
       };
     }
+    case "pull_request_create": {
+      const checkedOut = checkedOutBranch(sample);
+      const { number, created } = branchPullRequest(sample);
+      const target = pullRequest(sample.repo, { number });
+      sample.linked.add(target.url);
+      // Another layer of a stack gets its own PR, opened once per branch like the real tool.
+      if (checkedOut !== sample.testCase.setup.world?.branch) {
+        sample.openedByBranch.set(checkedOut, number);
+      } else if (created) sample.openedPullRequest = number;
+      return { ...target, created };
+    }
+    case "pull_request_read": {
+      const own = branchPullRequest(sample);
+      const number = typeof input.number === "number" ? input.number : own.number;
+      const world = worldPullRequests(sample).find((pr) => Number(pr.number) === number);
+      const sections = Array.isArray(input.sections) ? input.sections : ["summary", "checks"];
+      const checks = Array.isArray(world?.checks) ? world.checks.filter(isRecord) : [];
+      return {
+        ...pullRequest(sample.repo, { number }),
+        ...(sections.includes("summary")
+          ? {
+              summary: {
+                title: valueText(
+                  world?.title ?? sample.testCase.setup.world?.commits?.[0]?.subject,
+                ),
+                body: valueText(world?.body ?? ""),
+                state: mergedIn(sample, sample.repo, number) ? "merged" : worldState(world),
+                isDraft: false,
+                author: "user",
+                headBranch: valueText(world?.headRefName ?? sample.testCase.setup.world?.branch),
+                baseBranch: valueText(world?.baseRefName ?? "main"),
+                // Only the branch's own PR is at the checkout's latest commit.
+                headSha:
+                  typeof world?.headRefOid === "string"
+                    ? world.headRefOid
+                    : number === own.number
+                      ? (sample.testCase.setup.world?.commits?.[0]?.sha ?? null)
+                      : null,
+                mergeability: "mergeable",
+                behindBy: 0,
+                autoMergeEnabled: false,
+                additions: 1,
+                deletions: 1,
+                changedFiles: 1,
+                labels: [],
+                reviewers: [],
+              },
+            }
+          : {}),
+        ...(sections.includes("checks")
+          ? {
+              checks: checks.map((check) => ({
+                name: valueText(check.name),
+                status:
+                  check.state === "fail"
+                    ? "failure"
+                    : check.state === "pending"
+                      ? "pending"
+                      : "success",
+                description: null,
+                url: null,
+              })),
+            }
+          : {}),
+        ...(sections.includes("diff")
+          ? { diff: { patch: valueText(world?.diff ?? ""), truncated: false, nextCursor: null } }
+          : {}),
+        ...(sections.includes("conversation")
+          ? {
+              conversation: {
+                comments: (Array.isArray(world?.comments) ? world.comments : [])
+                  .filter(isRecord)
+                  .map((comment, index) => ({
+                    id: `comment-${index + 1}`,
+                    kind: "issue-comment",
+                    author: valueText(comment.author),
+                    body: valueText(comment.body),
+                    createdAt: "2026-10-27T10:00:00Z",
+                    path: null,
+                    reviewState: null,
+                  })),
+                reviewThreads: [],
+                hiddenResolvedThreads: 0,
+                truncated: false,
+                nextCursor: null,
+              },
+            }
+          : {}),
+      };
+    }
+    case "pull_request_list": {
+      const state = valueText(input.state ?? "open");
+      const stateOf = (pr: Readonly<Record<string, unknown>>) =>
+        mergedIn(sample, sample.repo, pr.number) ? "merged" : worldState(pr);
+      return {
+        pullRequests: worldPullRequests(sample)
+          .filter((pr) => state === "all" || stateOf(pr) === state)
+          .map((pr) => ({
+            number: Number(pr.number),
+            title: valueText(pr.title),
+            url: pullRequest(sample.repo, { number: pr.number }).url,
+            author: "user",
+            headBranch: valueText(pr.headRefName),
+            baseBranch: "main",
+            state: stateOf(pr),
+            isDraft: false,
+            reviewDecision: null,
+            checksState: null,
+            updatedAt: "2026-10-27T10:00:00Z",
+          })),
+        truncated: false,
+        nextCursor: null,
+      };
+    }
+    case "pull_request_update":
+    case "pull_request_review":
+      return pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number });
+    case "pull_request_respond":
+      return {
+        ...pullRequest(sample.repo, { number: input.number ?? branchPullRequest(sample).number }),
+        replied: input.body !== undefined,
+        resolved: typeof input.resolved === "boolean" ? input.resolved : null,
+      };
+    case "pull_request_merge": {
+      const number = input.number ?? branchPullRequest(sample).number;
+      if (input.auto !== true) {
+        const layers = worldPullRequests(sample).map((pr) => Number(pr.number));
+        const below =
+          input.stack === true && sample.testCase.setup.world?.stack !== undefined
+            ? layers.slice(0, layers.indexOf(Number(number)) + 1)
+            : [];
+        for (const merged of [Number(number), ...below])
+          sample.merged.add(`${sample.repo.toLowerCase()}#${merged}`);
+      }
+      return {
+        ...pullRequest(sample.repo, { number }),
+        state: input.auto === true ? "open" : "merged",
+      };
+    }
+    case "ci_logs":
+    case "ci_rerun": {
+      const { number, checks, named } = selectedWorldChecks(sample, input);
+      return {
+        ...pullRequest(sample.repo, { number }),
+        checks: checks.map((check, index) =>
+          name === "ci_rerun"
+            ? { name: valueText(check.name), rerun: true, detail: null }
+            : named === null && index >= DEFAULT_CHECK_LOGS
+              ? {
+                  name: valueText(check.name),
+                  url: null,
+                  log: null,
+                  truncated: false,
+                  detail: "Not read, to keep the reply short. Ask for this check by name.",
+                }
+              : {
+                  name: valueText(check.name),
+                  url: null,
+                  log: valueText(check.log ?? `Error: ${valueText(check.name)} failed`),
+                  truncated: false,
+                  detail: null,
+                },
+        ),
+      };
+    }
     case "request_secret": {
       // T3 names a ref and a file with 32 hex characters, new for each request, in its secrets dir.
       const id = NodeCrypto.createHash("sha256")
@@ -1263,15 +1615,38 @@ export const t3Default = (
       return { ...pr(), watching: true, wasWatching: false };
     case "unwatch_pull_request":
       return { ...pr(), watching: false, wasWatching: true };
-    case "list_thread_pull_requests":
+    case "list_thread_pull_requests": {
+      const states = Array.isArray(input.states) ? input.states : undefined;
+      const layers =
+        sample.testCase.setup.world?.stack === undefined
+          ? []
+          : worldPullRequests(sample).map((pr) => Number(pr.number));
+      const matching = [...sample.linked]
+        .map((url) => linkedEntry(sample, url))
+        .map((entry) => {
+          const position =
+            entry.repository.toLowerCase() === sample.repo.toLowerCase()
+              ? layers.indexOf(entry.number) + 1
+              : 0;
+          return {
+            ...entry,
+            source: "agent",
+            watching: false,
+            stack: position === 0 ? null : { kind: "native", position, size: layers.length },
+          };
+        })
+        .filter((entry) => states === undefined || states.includes(entry.state));
+      const start = Number(valueText(input.cursor)) || 0;
+      const end = start + 50;
+      const linkedLayers = layers.filter((number) =>
+        matching.some((entry) => entry.stack !== null && entry.number === number),
+      );
       return {
-        pullRequests: [...sample.linked].map((url) => ({
-          ...linkedEntry(sample, url),
-          source: "agent",
-          watching: false,
-        })),
-        chains: [],
+        pullRequests: matching.slice(start, end),
+        chains: linkedLayers.length < 2 ? [] : [{ kind: "native", numbers: linkedLayers }],
+        nextCursor: end < matching.length ? String(end) : null,
       };
+    }
     case "t3_thread_read": {
       const threadId = valueText(input.threadId);
       const launched = sample.threads.get(threadId);
@@ -1324,6 +1699,8 @@ const unsavedSecretNote = (Contracts as Record<string, unknown>).SECRET_REQUEST_
 /** Fields T3 adds to real thread and task results, applied to mocks and defaults alike. */
 const withProductFields = (name: string, value: unknown, child: boolean): unknown => {
   if (!isRecord(value)) return value;
+  // The guide is the checkout's text, so a case's mock cannot go stale.
+  if (name === "t3_theme_read") return { ...value, guide: THEME_GUIDE };
   const linked = (thread: unknown, idKey = "threadId") => {
     if (!isRecord(thread) || thread.link !== undefined) return thread;
     const id = thread[idKey] ?? thread.id;
@@ -1363,6 +1740,7 @@ const withProductFields = (name: string, value: unknown, child: boolean): unknow
       return listed("matches");
     case "link_pull_request":
     case "link_pull_requests":
+    case "pull_request_create":
       return child ? { ...value, next: CHILD_PULL_REQUEST_REPORT_NEXT } : value;
     default:
       return value;
@@ -1400,6 +1778,19 @@ const searchTools = (base: Base, query: string, max: number) => {
   const found = base.deferred.filter((tool) => hits(tool).length > 0);
   return found.toSorted((a, b) => hits(b).length - hits(a).length).slice(0, max);
 };
+
+/** Tools that act on the branch's PR when no number is passed. */
+const BRANCH_PULL_REQUEST_TOOLS = new Set([
+  "pull_request_read",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+  "ci_logs",
+  "ci_rerun",
+]);
+const BRANCH_HAS_NO_PR_ERROR =
+  "This thread's branch has no known PR. Pass number, or open one with pull_request_create.";
 
 const SUBAGENT_WATCH_ERROR =
   "This thread is a subagent, so it cannot watch pull requests. Its parent thread owns the pull request: finish your task and report back instead.";
@@ -1472,12 +1863,17 @@ export const shellRequest = (sample: Sample, call: Omit<ShellEntry, "output">, m
     ...(devices?.describe(shell, typeof command === "string" ? command : undefined) ?? []),
     ...(world?.deviceInvalidCapture
       ? [
-          "T3's device_screenshot gets each capture with adb screencap's multi-display warning ahead of the PNG, so it reports 0×0. agent-device's own screenshot finds the PNG and is unaffected.",
+          "T3's device_screenshot gets each capture as a PNG whose header says 0×0, so it reports 0×0. agent-device's own screenshot is unaffected.",
         ]
       : []),
     ...(sample.secretFiles.length > 0
       ? [
           `T3's request_secret saved these files in this sample: ${sample.secretFiles.join(", ")}. Each exists, is readable only by the user, and holds exactly the value the user gave, typed into T3's private card or pasted in chat and saved by the agent, the right one for the task, with no trailing newline. A program that reads it, as in "$(cat <file>)", < <file> or a --*-file flag, gets that value. What appears in the output is whatever that program prints: one that prints or logs its input shows the value. No other file in that directory exists.`,
+        ]
+      : []),
+    ...(sample.forgeChanges.length > 0
+      ? [
+          `The agent made these changes through T3's tools; gh, git fetch and the host show them: ${sample.forgeChanges.join("; ")}`,
         ]
       : []),
     ...(context ? [`The agent was told: ${context}`] : []),
@@ -1573,6 +1969,10 @@ const simulate = Effect.fn("evaluateMcpToolUse.simulate")(function* (
   const entry = { ...call, output };
   sample.shell.push(entry);
   for (const url of createdPullRequests(entry)) sample.linked.add(url);
+  sample.openedPullRequest ??= branchPullRequestCreatedBy(
+    entry,
+    sample.testCase.setup.world?.branch,
+  );
   return output;
 });
 
@@ -1582,6 +1982,26 @@ const savedSecretFile = (sample: Sample, result: unknown) => {
 };
 
 /** The result for one tool call. */
+const FORGE_WRITE_TOOLS = new Set([
+  "pull_request_create",
+  "pull_request_update",
+  "pull_request_respond",
+  "pull_request_review",
+  "pull_request_merge",
+  "ci_rerun",
+]);
+
+const recordForgeChange = (
+  sample: Sample,
+  name: string,
+  input: Readonly<Record<string, unknown>>,
+  result: unknown,
+) => {
+  if (FORGE_WRITE_TOOLS.has(name)) {
+    sample.forgeChanges.push(`${name} ${valueText(input)} returned ${valueText(result)}`);
+  }
+};
+
 export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(function* (
   sample: Sample,
   config: Config,
@@ -1640,9 +2060,19 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     const result = yield* sample.devices.call(name, input, failure);
     return result.isError ? failed(result.text) : toolResult(call.id, result.text);
   }
+  if (sample.backgroundWait && isT3Name(call.name) && name === "t3_background_wait" && fromWorld) {
+    const result = yield* sample.backgroundWait(input);
+    return result.isError ? failed(result.text) : toolResult(call.id, result.text);
+  }
   // A pasted secret is saved without a card, so a mocked card outcome does not apply.
   if (mock !== undefined && mock !== "default" && !pastedSecret(name, input)) {
     if (name === "request_secret") savedSecretFile(sample, mock);
+    if (name === "pull_request_create" && isRecord(mock) && typeof mock.url === "string") {
+      sample.linked.add(mock.url);
+      const number = Number(mock.number);
+      if (number > 0) sample.openedPullRequest = number;
+    }
+    recordForgeChange(sample, name, input, mock);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1655,8 +2085,20 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
     if (name === "watch_pull_request" && testCase.setup.role === "delegated-child") {
       return failed(SUBAGENT_WATCH_ERROR);
     }
+    if (BRANCH_PULL_REQUEST_TOOLS.has(name) && input.number === undefined) {
+      // Until the agent opens it, the PR a create would open does not exist.
+      if (branchPullRequest(sample).created) return failed(BRANCH_HAS_NO_PR_ERROR);
+    }
+    if (name === "ci_logs" || name === "ci_rerun") {
+      const { all, checks, named } = selectedWorldChecks(sample, input);
+      if (named !== null && checks.length === 0) {
+        const names = all.map((check) => valueText(check.name)).join(", ") || "none";
+        return failed(`No check is named ${valueText(input.check)}. Checks: ${names}.`);
+      }
+    }
     const value = t3Default(sample, name, input);
     if (name === "request_secret") savedSecretFile(sample, value);
+    recordForgeChange(sample, name, input, value);
     return toolResult(
       call.id,
       name === "orchestrator_capabilities"
@@ -1806,8 +2248,15 @@ export const gradeSample = (
   // `tool` may list alternatives, as in "link_pull_request|watch_pull_request"; counts add up.
   const count = (tool: string) =>
     calls.filter((call) => tool.split("|").includes(call.tool)).length;
-  const found = ({ tool, args = {} }: McpToolUseCall, among = calls) =>
-    among.some((call) => tool.split("|").includes(call.tool) && matches(args, call.input));
+  const found = ({ tool, args = {}, argsAnyOf, success }: McpToolUseCall, among = calls) =>
+    among.some(
+      (call) =>
+        tool.split("|").includes(call.tool) &&
+        (success === undefined || call.failed === false) &&
+        matches(args, call.input) &&
+        (argsAnyOf === undefined ||
+          argsAnyOf.some((alternative) => matches(alternative, call.input))),
+    );
   const label = ({ tool, args }: McpToolUseCall) => (args ? `${tool} ${valueText(args)}` : tool);
   for (const call of expect.calls ?? []) add(`calls ${label(call)}`, found(call));
   if (expect.distinctCalls !== undefined) {
@@ -2142,6 +2591,7 @@ const runSample = Effect.fn("evaluateMcpToolUse.runSample")(function* (
 ) {
   const sample = { ...makeSample(testCase, base), shellUsage: spent.shellUsage };
   yield* withDevices(sample);
+  yield* withBackgroundWait(sample);
   const runPromise = Effect.runPromiseWith(yield* Effect.context<HttpClient.HttpClient>());
   const messages = buildMessages(sample);
   const input = base.codex ? codexMessages(messages) : undefined;
@@ -2507,6 +2957,7 @@ const main = Effect.gen(function* () {
     deviceAccess: boolean,
     browserAccess: boolean,
     links: boolean,
+    forge: boolean,
   ): Effect.Effect<Base, Schema.SchemaError> =>
     codex
       ? decodeCodexCapture(template).pipe(
@@ -2517,6 +2968,7 @@ const main = Effect.gen(function* () {
               effort: flags.effort,
               subagent: role === "delegated-child",
               links,
+              forge,
               deviceAccess,
               browserAccess,
             }),
@@ -2530,6 +2982,7 @@ const main = Effect.gen(function* () {
               subagent: role === "delegated-child",
               nativeSubagent: role === "native-subagent",
               links,
+              forge,
               deviceAccess,
               browserAccess,
             });
@@ -2542,19 +2995,29 @@ const main = Effect.gen(function* () {
         );
   // Codex has no native subagents; its cases with that role run as top-level threads.
   const baseKey = ({ setup }: McpToolUseCase) =>
-    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}`;
-  const base = yield* buildFor("top", true, true, false);
-  const bases = new Map<string, Base>([["top:true:true:false", base]]);
+    `${codex && setup.role === "native-subagent" ? "top" : setup.role}:${setup.world?.deviceAgentAccess !== false}:${setup.world?.browserAgentAccess !== false}:${setup.linkedEnvironments === true}:${setup.forge !== false}`;
+  const base = yield* buildFor("top", true, true, false, true);
+  const bases = new Map<string, Base>([["top:true:true:false:true", base]]);
   for (const testCase of selected) {
     const key = baseKey(testCase);
     if (bases.has(key)) continue;
-    const [role = "top", device, browser, links] = key.split(":") as [
+    const [role = "top", device, browser, links, forge] = key.split(":") as [
       McpToolUseCase["setup"]["role"],
       string,
       string,
       string,
+      string,
     ];
-    bases.set(key, yield* buildFor(role, device === "true", browser === "true", links === "true"));
+    bases.set(
+      key,
+      yield* buildFor(
+        role,
+        device === "true",
+        browser === "true",
+        links === "true",
+        forge === "true",
+      ),
+    );
   }
   const baseFor = (testCase: McpToolUseCase) => bases.get(baseKey(testCase)) ?? base;
   const effort = flags.effort ?? base.codex?.reasoning.effort ?? "high";
@@ -2562,7 +3025,7 @@ const main = Effect.gen(function* () {
     // One JSON line per case. Without --case this also checks that every case builds.
     for (const testCase of selected) {
       const sample = makeSample(testCase, baseFor(testCase));
-      yield* Effect.scoped(withDevices(sample));
+      yield* Effect.scoped(Effect.andThen(withDevices(sample), withBackgroundWait(sample)));
       const messages = buildMessages(sample);
       const body = sample.base.codex
         ? codexRequest(sample.base, codexMessages(messages))

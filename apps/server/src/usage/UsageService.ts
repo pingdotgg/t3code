@@ -40,10 +40,17 @@ import type {
   UsageRecord,
 } from "@t3tools/provider-core/server/usage";
 import { canonicalModelFilter, resolveModelAliases, UsageAggregator } from "./usageAggregation.ts";
-import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
+  createOverrideRateTable,
+  isUnlistedModel,
+  parseRateTable,
+  type RateTable,
+} from "./usagePricing.ts";
+import {
+  DESKTOP_HOST_SCOPE_ENV,
   listTranscriptFiles,
   readDirectoryVolumeId,
+  readPhysicalSourceId,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
 import {
@@ -70,7 +77,6 @@ const RATES_REFRESH_FLOOR_MS = 60 * 1000;
 const MTIME_SLACK_MS = 36 * 60 * 60 * 1000;
 const MAX_HOURLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-const CACHE_RETENTION_DAYS = 92;
 const STALE_TEMP_DIRECTORY_MS = 60 * 60 * 1000;
 
 const TRANSCRIPT_READ_CONCURRENCY = 4;
@@ -83,6 +89,12 @@ const scanReaders = BUILT_IN_USAGE_DRIVERS.flatMap((driver) =>
   driver.usage?.kind === "scan" ? [{ driver, reader: driver.usage }] : [],
 );
 
+const providerRateModels = new Map(
+  BUILT_IN_USAGE_DRIVERS.flatMap(({ usage }) =>
+    usage?.rateModel === undefined ? [] : [[usage.provider, usage.rateModel] as const],
+  ),
+);
+
 const transcriptFormats = new Map(
   transcriptReaders.map(({ reader }) => [reader.provider, reader.format] as const),
 );
@@ -92,6 +104,7 @@ interface TranscriptSource {
   readonly format: TranscriptUsageFormat<unknown>;
   readonly dir: string;
   readonly volumeId: string;
+  readonly physicalSourceId?: string;
   readonly fileName?: string;
 }
 
@@ -158,6 +171,24 @@ export const make = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const httpClient = yield* HttpClient.HttpClient;
   const hostEnvironment = yield* HostProcess.Environment;
+  const hostPlatform = yield* HostProcess.Platform;
+  const hostScope = hostEnvironment[DESKTOP_HOST_SCOPE_ENV]?.trim();
+  // A mount or a directory's on-disk name does not change under a running server.
+  // A miss is not cached: the directory may not exist yet.
+  const physicalSourceIds = new Map<string, Promise<string | undefined>>();
+  const physicalSourceId = (dir: string) =>
+    Effect.promise(() => {
+      const cached = physicalSourceIds.get(dir);
+      if (cached !== undefined) return cached;
+      const id = readPhysicalSourceId(dir, hostScope, hostPlatform);
+      physicalSourceIds.set(dir, id);
+      void id.then((resolved) => {
+        if (resolved === undefined && physicalSourceIds.get(dir) === id) {
+          physicalSourceIds.delete(dir);
+        }
+      });
+      return id;
+    });
   const hostname = yield* HostProcess.Hostname;
   const readerContext = yield* Effect.context<BuiltInUsageReadersEnv>();
 
@@ -291,6 +322,24 @@ export const make = Effect.gen(function* () {
 
   const ensureRates = (force: boolean) => ratesLock.withPermit(loadRates(force));
 
+  // Rates are kept for RATES_TTL_MS, so a model released after the table was fetched would stay unpriced
+  // that long. A scan that meets a model the table does not list refetches early: once per model against
+  // a fresh table, with loadRates keeping RATES_REFRESH_FLOOR_MS between attempts.
+  const checkedUnlistedModels = new Set<string>();
+  const refreshForUnlistedModels = Effect.fn("UsageService.refreshForUnlistedModels")(function* (
+    models: ReadonlySet<string>,
+  ) {
+    const unlisted = [...models].filter(
+      (model) => !checkedUnlistedModels.has(model) && isUnlistedModel(rates, model),
+    );
+    if (unlisted.length === 0) return;
+    yield* ensureRates(true);
+    const now = yield* Clock.currentTimeMillis;
+    // A failed fetch leaves the models unchecked, so a later scan tries again.
+    if (ratesFetchedAtMs === null || now - ratesFetchedAtMs >= RATES_REFRESH_FLOOR_MS) return;
+    for (const model of unlisted) checkedUnlistedModels.add(model);
+  });
+
   const refreshRates = ensureRates(true).pipe(
     Effect.map(pricing),
     Effect.withSpan("UsageService.refreshRates"),
@@ -316,9 +365,8 @@ export const make = Effect.gen(function* () {
     > = Object.entries(settings.providerInstances)
       .filter(([, instance]) => instance.driver === driver.driverKind)
       .map(([id, instance]) => [ProviderInstanceId.make(id), instance, true] as const);
-    if (!Object.hasOwn(settings.providerInstances, driver.driverKind)) {
-      entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
-    }
+    // History in the driver's default home stays counted after every instance moves elsewhere; readers dedupe shared directories.
+    entries.push([ProviderInstanceId.make(driver.driverKind), {}, false]);
     const decodeConfig = Schema.decodeUnknownOption(driver.configSchema);
     return yield* Effect.forEach(
       entries,
@@ -385,11 +433,13 @@ export const make = Effect.gen(function* () {
         const key = `${provider}\0${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
+        const sourceId = yield* physicalSourceId(dir);
         dirs.push({
           provider,
           format,
           dir,
           volumeId,
+          ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
           ...(fileName === undefined ? {} : { fileName }),
         });
       }
@@ -553,21 +603,44 @@ export const make = Effect.gen(function* () {
         failed: true,
       };
 
+    const identity = (record: UsageRecord) =>
+      encodeUsageRecordKey([
+        record.provider,
+        record.sessionId,
+        record.timestampMs,
+        record.model,
+        record.rateModel,
+        record.totals,
+        record.reportedCostUsd,
+        record.dedupeKey,
+      ]);
+    if (!parsed.resumed && cached !== undefined && cached.provider === provider) {
+      // A whole-file re-parse re-emits saved requests unresolved. Keep their saved tier
+      // corrections, since the history that resolved them may no longer be available.
+      // Equal requests keep their own corrections by matching occurrences in order.
+      const saved = new Map<string, UsageRecord[]>();
+      for (const previous of [...cached.records, ...cached.tailRecords]) {
+        const corrected = correctedRecord(previous);
+        const key = identity(corrected);
+        const occurrences = saved.get(key);
+        if (occurrences === undefined) saved.set(key, [corrected]);
+        else occurrences.push(corrected);
+      }
+      for (const record of [...parsed.records, ...parsed.tailRecords]) {
+        const corrected = saved.get(identity(record))?.shift();
+        if (
+          record.unresolvedServiceTierTurnId !== undefined &&
+          corrected !== undefined &&
+          corrected.unresolvedServiceTierTurnId === undefined
+        ) {
+          resolvedRecords.set(record, corrected);
+        }
+      }
+    }
     if (parsed.resumed && cached !== undefined && cached.tailRecords.length > 0) {
       // Completing a tentative line reparses it. Reuse its saved correction only when the
       // same usage is emitted again, without putting inferred tiers in the parser state.
       const reparsed = [...parsed.records, ...parsed.tailRecords];
-      const identity = (record: UsageRecord) =>
-        encodeUsageRecordKey([
-          record.provider,
-          record.sessionId,
-          record.timestampMs,
-          record.model,
-          record.rateModel,
-          record.totals,
-          record.reportedCostUsd,
-          record.dedupeKey,
-        ]);
       for (const [index, previous] of cached.tailRecords.entries()) {
         const record = reparsed[index];
         const corrected = correctedRecord(previous);
@@ -606,6 +679,7 @@ export const make = Effect.gen(function* () {
     readonly provider: UsageProviderKind;
     readonly dir: string;
     readonly volumeId: string;
+    readonly physicalSourceId?: string;
     readonly hostId?: string;
     readonly status?: UsageSource["status"];
     readonly message?: string;
@@ -626,16 +700,22 @@ export const make = Effect.gen(function* () {
     windowStartMs: number,
     fromMemory: boolean,
   ) {
-    const { provider, format, dir, volumeId, fileName } = source;
+    const { provider, format, dir, volumeId, physicalSourceId, fileName } = source;
+    const identity = {
+      provider,
+      dir,
+      volumeId,
+      ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
+    };
     const exists = yield* fileSystem
       .exists(dir)
       .pipe(Effect.catchCause(() => Effect.succeed(false)));
     if (!exists) {
       cover(source, windowStartMs);
-      return { provider, dir, volumeId, files: null } satisfies ScannedDir;
+      return { ...identity, files: null } satisfies ScannedDir;
     }
     // scanSummary aggregates the saved files, as it does for a deleted directory.
-    if (fromMemory) return { provider, dir, volumeId, files: [] } satisfies ScannedDir;
+    if (fromMemory) return { ...identity, files: [] } satisfies ScannedDir;
     const { files, walked, failedPaths } = yield* Effect.promise(() =>
       listTranscriptFiles(dir, windowStartMs, fileName === undefined ? undefined : { fileName }),
     );
@@ -681,9 +761,7 @@ export const make = Effect.gen(function* () {
       "usage.files_parsed": read.filter((file) => file.update !== undefined).length,
     });
     return {
-      provider,
-      dir,
-      volumeId,
+      ...identity,
       files: parsedFiles,
       walked,
       ...(unread > 0
@@ -713,14 +791,19 @@ export const make = Effect.gen(function* () {
           Effect.flatMap((sources) =>
             Effect.forEach(sources, ({ volumeId, ...source }) =>
               Effect.map(
+                // A reader's own volumeId names a remote account, not a local directory.
                 volumeId === undefined
-                  ? Effect.promise(() => readDirectoryVolumeId(source.dir))
-                  : Effect.succeed(volumeId),
-                (resolved): ScannedDir => ({
+                  ? Effect.all([
+                      Effect.promise(() => readDirectoryVolumeId(source.dir)),
+                      physicalSourceId(source.dir),
+                    ])
+                  : Effect.succeed<[string, string | undefined]>([volumeId, undefined]),
+                ([resolved, sourceId]): ScannedDir => ({
                   ...source,
                   files: source.files?.map((file) => ({ ...file, malformedRecords: 0 })) ?? null,
                   provider: reader.provider,
                   volumeId: resolved,
+                  ...(sourceId === undefined ? {} : { physicalSourceId: sourceId }),
                 }),
               ),
             ),
@@ -788,7 +871,10 @@ export const make = Effect.gen(function* () {
     const windowStartMs =
       (hourlyWindow?.sinceTimeMs ?? DateTime.toEpochMillis(windowStart.value)) - MTIME_SLACK_MS;
 
-    const retentionCutoffMs = startedAtMs - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const retentionCutoffMs =
+      settings.usageHistoryRetentionDays === "unlimited"
+        ? 0
+        : Math.max(0, startedAtMs - settings.usageHistoryRetentionDays * 24 * 60 * 60 * 1000);
 
     const awaitRefresh = input.awaitRefresh === true;
     const collect = Effect.gen(function* () {
@@ -825,18 +911,8 @@ export const make = Effect.gen(function* () {
       { concurrency: 2 },
     );
 
-    const aggregator = new UsageAggregator({
-      timeZone: input.timeZone,
-      sinceDay: input.sinceDay,
-      untilDay: input.untilDay,
-      resolution: input.resolution ?? "day",
-      ...hourlyWindow,
-      rates,
-      priceOverrides: createOverrideRateTable(settings.usagePriceOverrides),
-      modelAliases: resolveModelAliases(settings.usageModelAliases),
-      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
-    });
-
+    const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
+    const modelAliases = resolveModelAliases(settings.usageModelAliases);
     const sources: UsageSource[] = [];
 
     // Deleted transcripts' saved usage still aggregates and deduplicates normally.
@@ -902,6 +978,37 @@ export const make = Effect.gen(function* () {
       for (const filePath of ordered) fileCache.set(filePath, entries.get(filePath)!);
       cacheDirty = true;
     }
+
+    // The models priced below, as UsageAggregator resolves them: an alias replaces rateModel.
+    const rateModels = new Set<string>();
+    for (const files of filesByDir) {
+      for (const file of files) {
+        for (const record of file.records) {
+          const alias = modelAliases.get(record.model);
+          const model = alias ?? record.model;
+          if (priceOverrides.has(model.trim())) continue;
+          rateModels.add(alias === undefined ? (record.rateModel ?? model) : model);
+        }
+      }
+    }
+    // A saved answer prices with saved rates and the full scan after it refetches.
+    if (!fromMemory) yield* refreshForUnlistedModels(rateModels);
+
+    const summaryPricing = pricing();
+
+    const aggregator = new UsageAggregator({
+      timeZone: input.timeZone,
+      sinceDay: input.sinceDay,
+      untilDay: input.untilDay,
+      resolution: input.resolution ?? "day",
+      ...hourlyWindow,
+      rates,
+      priceOverrides,
+      modelAliases,
+      rateModel: (provider, model) => providerRateModels.get(provider)?.(model),
+      ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
+    });
+
     const windowEndMs =
       hourlyWindow?.untilTimeMs ??
       Date.parse(`${input.untilDay}T00:00:00Z`) + 86400000 + MTIME_SLACK_MS;
@@ -949,7 +1056,17 @@ export const make = Effect.gen(function* () {
 
     for (const [
       index,
-      { provider, dir, volumeId, files, status, message, refreshing, hostId: sourceHostId },
+      {
+        provider,
+        dir,
+        volumeId,
+        physicalSourceId,
+        files,
+        status,
+        message,
+        refreshing,
+        hostId: sourceHostId,
+      },
     ] of scannedDirs.entries()) {
       let scannedFiles = 0;
       let skippedFiles = 0;
@@ -996,7 +1113,13 @@ export const make = Effect.gen(function* () {
       const sourceMessage =
         message ?? (files === null ? "No transcript directory on this environment." : null);
       sources.push({
-        fingerprint: { hostId: sourceHostId ?? hostId, provider, resolvedHomePath: dir, volumeId },
+        fingerprint: {
+          hostId: sourceHostId ?? hostId,
+          provider,
+          resolvedHomePath: dir,
+          volumeId,
+          ...(physicalSourceId === undefined ? {} : { physicalSourceId }),
+        },
         status:
           files === null && scannedFiles === 0
             ? "missing"
@@ -1023,14 +1146,26 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const pruned = pruneScanCache(fileCache, retentionCutoffMs);
-    if (pruned > 0) {
-      cacheDirty = true;
-      // Pruned files are no longer saved, so nothing before the cutoff stays covered.
-      for (const [key, since] of coveredSince) {
-        if (since < retentionCutoffMs) coveredSince.set(key, retentionCutoffMs);
-      }
-    }
+    yield* settingsService
+      .withSettingsSnapshot((currentSettings) =>
+        Effect.sync(() => {
+          if (settings.usageHistoryRetentionDays === currentSettings.usageHistoryRetentionDays) {
+            const pruned = pruneScanCache(fileCache, retentionCutoffMs);
+            if (pruned > 0) {
+              cacheDirty = true;
+              // Pruned files are no longer saved, so nothing before the cutoff stays covered.
+              for (const [key, since] of coveredSince) {
+                if (since < retentionCutoffMs) coveredSince.set(key, retentionCutoffMs);
+              }
+            }
+          }
+        }),
+      )
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to read settings before pruning the usage cache", { cause }),
+        ),
+      );
 
     const aggregated = aggregator.finish();
     const readAt = yield* DateTime.now;
@@ -1044,7 +1179,7 @@ export const make = Effect.gen(function* () {
       untilDay: input.untilDay,
       buckets: aggregated.buckets,
       sources,
-      pricing: pricing(),
+      pricing: summaryPricing,
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;

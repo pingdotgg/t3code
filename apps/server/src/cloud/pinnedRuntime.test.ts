@@ -7,9 +7,10 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as NodePath from "node:path";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientResponse } from "effect/http";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -189,7 +190,224 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
           validate: () => Effect.die("must not validate a missing archive"),
         }).pipe(Effect.flip);
       assert.isTrue(isUnpublishedRelease(yield* failsWith(404)));
-      assert.isFalse(isUnpublishedRelease(yield* failsWith(500)));
+      assert.isFalse(isUnpublishedRelease(yield* failsWith(403)));
+    }),
+  );
+
+  it.effect("retries a release download that GitHub answers with a gateway timeout", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-" });
+      const checksums = yield* validChecksums;
+      const requests: string[] = [];
+      const gatewayTimeoutServed = yield* Deferred.make<void>();
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          requests.push(request.url);
+          const isChecksums = request.url.endsWith("/SHA256SUMS");
+          if (requests.length === 1) {
+            Deferred.doneUnsafe(gatewayTimeoutServed, Effect.void);
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(request, new Response("", { status: 504 })),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(isChecksums ? checksums : archiveBytes),
+            ),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(gatewayTimeoutServed);
+      yield* TestClock.adjust(Duration.seconds(2));
+      const paths = yield* Fiber.join(install);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.equal(requests.filter((url) => url.endsWith("/SHA256SUMS")).length, 2);
+    }),
+  );
+
+  it.effect.each([
+    { name: "body fails after the host answered", first: "body fails", honorsRange: true },
+    {
+      name: "body stalls and its resume ends early",
+      first: "body stalls",
+      honorsRange: true,
+      shortResume: true,
+    },
+    { name: "body stalls on a host that ignores Range", first: "body stalls", honorsRange: false },
+    { name: "response headers stall", first: "headers stall", honorsRange: true },
+    {
+      name: "whole body arrives and then stalls",
+      first: "body stalls",
+      honorsRange: true,
+      wholeArchive: true,
+    },
+  ] as const)("resumes a release archive download when its $name", (row) =>
+    Effect.gen(function* () {
+      const { first, honorsRange } = row;
+      const shortResume = "shortResume" in row;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-retry-body-" });
+      const checksums = yield* validChecksums;
+      const ranges: Array<string | undefined> = [];
+      const checksumRanges: Array<string | undefined> = [];
+      const progress: PinnedRuntimeProgress[] = [];
+      const checksumsRequested = yield* Deferred.make<void>();
+      const archiveRequested = yield* Deferred.make<void>();
+      const shortResumeRequested = yield* Deferred.make<void>();
+      const total = archiveBytes.length;
+      const heldBytes = "wholeArchive" in row ? archiveBytes : archiveBytes.slice(0, 4);
+      const install = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          if (request.url.endsWith("/SHA256SUMS")) {
+            checksumRanges.push(request.headers["range"]);
+            const response = HttpClientResponse.fromWeb(request, new Response(checksums));
+            if (checksumRanges.length > 1) return Effect.succeed(response);
+            Deferred.doneUnsafe(checksumsRequested, Effect.void);
+            // The checksums fail once after a prefix, which their retry must not resume from.
+            const failingBody = Stream.concat(
+              Stream.make(new TextEncoder().encode(checksums).slice(0, 8)),
+              Stream.fail(
+                new HttpClientError.HttpClientError({
+                  reason: new HttpClientError.DecodeError({ request, response }),
+                }),
+              ),
+            );
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: failingBody } }),
+              ),
+            );
+          }
+          const range = request.headers["range"];
+          ranges.push(range);
+          if (ranges.length > 1) {
+            const start = honorsRange ? Number(/^bytes=(\d+)-$/.exec(range ?? "")?.[1] ?? 0) : 0;
+            // A short resume stops one byte early; the next retry asks for that byte.
+            const end = shortResume && ranges.length === 2 ? total - 1 : total;
+            const response = HttpClientResponse.fromWeb(
+              request,
+              start >= total
+                ? new Response("", {
+                    status: 416,
+                    headers: { "content-range": `bytes */${total}` },
+                  })
+                : start > 0
+                  ? new Response(archiveBytes.slice(start, end), {
+                      status: 206,
+                      headers: { "content-range": `bytes ${start}-${end - 1}/${total}` },
+                    })
+                  : new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+            );
+            if (end === total) return Effect.succeed(response);
+            Deferred.doneUnsafe(shortResumeRequested, Effect.void);
+            // An Effect stream keeps the body, and so the retry wait after it, on the test clock.
+            const body = Stream.make(archiveBytes.slice(start, end));
+            return Effect.sleep("1 second").pipe(
+              Effect.as<HttpClientResponse.HttpClientResponse>(
+                Object.create(response, { stream: { value: body } }),
+              ),
+            );
+          }
+          Deferred.doneUnsafe(archiveRequested, Effect.void);
+          if (first === "headers stall") return Effect.never;
+          const response = HttpClientResponse.fromWeb(
+            request,
+            new Response(archiveBytes, { headers: { "content-length": `${total}` } }),
+          );
+          const failingBody = Stream.concat(
+            Stream.make(heldBytes),
+            first === "body stalls"
+              ? Stream.never
+              : Stream.fail(
+                  new HttpClientError.HttpClientError({
+                    reason: new HttpClientError.DecodeError({ request, response }),
+                  }),
+                ),
+          );
+          // TestClock follows the work a woken sleep starts, so one adjust reaches the retry wait.
+          return Effect.sleep("1 second").pipe(
+            Effect.as<HttpClientResponse.HttpClientResponse>(
+              Object.create(response, { stream: { value: failingBody } }),
+            ),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.void,
+        onProgress: (event) => progress.push(event),
+      }).pipe(Effect.forkScoped);
+      yield* Deferred.await(checksumsRequested);
+      yield* TestClock.adjust(Duration.seconds(3));
+      yield* Deferred.await(archiveRequested);
+      // The one-minute stall bound, then the first two-second retry backoff.
+      yield* TestClock.adjust(Duration.seconds(first === "body fails" ? 3 : 63));
+      if (shortResume) {
+        yield* Deferred.await(shortResumeRequested);
+        // Its one-second delay, then the second, four-second backoff.
+        yield* TestClock.adjust(Duration.seconds(5));
+      }
+      const paths = yield* Fiber.join(install);
+      assert.deepEqual(checksumRanges, [undefined, undefined]);
+      assert.deepEqual(ranges, [
+        undefined,
+        first === "headers stall" ? undefined : `bytes=${heldBytes.length}-`,
+        ...(shortResume ? [`bytes=${total - 1}-`] : []),
+      ]);
+      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      assert.deepEqual(
+        progress.findLast((event) => event.stage === "download"),
+        {
+          stage: "download",
+          received: total,
+          total,
+        },
+      );
+    }),
+  );
+
+  it.effect("fails at once when the release host cannot be reached", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-offline-" });
+      let requests = 0;
+      const error = yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: HttpClient.make((request) => {
+          requests += 1;
+          return Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({ request }),
+            }),
+          );
+        }),
+        runner: extractingRunner(fs, path),
+        validate: () => Effect.die("must not validate without a download"),
+      }).pipe(Effect.flip);
+      assert.instanceOf(error, PinnedRuntimeInstallError);
+      assert.equal(requests, 1);
     }),
   );
 

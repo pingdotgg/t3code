@@ -37,6 +37,8 @@ import {
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  decodeMarkdownLinkEscapes,
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
@@ -94,6 +96,7 @@ const insightBreaksProcessor = assistantTextProcessor(true, true);
 const userProcessor = unified()
   .use(remarkParse)
   .use(CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS)
+  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS)
   .use(remarkRehype, { allowDangerousHtml: true });
 
 interface TextTree {
@@ -128,7 +131,9 @@ function markdownThreadFindText(
     : processor;
   const tree = renderer.runSync(renderer.parse(markdown), markdown);
   const paths = [
-    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)),
+    ...extractMarkdownLinkHrefs(renderCodexInlineDirectivesAsMarkdown(markdown)).map(
+      decodeMarkdownLinkEscapes,
+    ),
     ...extractInlineCodeSpans(markdown).flatMap((span) => inlineCodeFilePathCandidate(span) ?? []),
   ].flatMap((href) => {
     const target = resolveMarkdownFileLinkTarget(href, cwd);

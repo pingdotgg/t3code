@@ -8,7 +8,9 @@ import {
   type ProjectSnapshot,
   type ThreadId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { isWslSharePath } from "@t3tools/shared/path";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -33,8 +35,11 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ThreadCommandExecutor from "../orchestration-v2/ThreadCommandExecutor.ts";
 import { planThreadDeletion } from "../orchestration-v2/ThreadDeletion.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { deletedProjectOverridePatch } from "../provider/ProjectSettingsOverrideSweep.ts";
 import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
+import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
+import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
@@ -182,6 +187,9 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const fileSystem = yield* FileSystem.FileSystem;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
+  const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
+    Effect.provide(ProcessRunner.layer),
+  );
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
@@ -243,6 +251,30 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+
+  const rejectWorktreeContainer = Effect.fn("ProjectService.rejectWorktreeContainer")(function* (
+    projectId: ProjectId,
+    workspaceRoot: string,
+  ) {
+    if (!(yield* isWorktreeContainer(workspaceRoot))) return;
+    return yield* new ProjectInvalidError({
+      projectId,
+      detail: `${workspaceRoot} holds a repository's worktrees but is not a checkout itself. Add one of its worktrees as the project instead.`,
+    });
+  });
+
+  // Git for Windows can't trust an index written inside the distro and rereads every file across the
+  // share, so git status can hit its timeout. Checked before normalizing, which already stats the share.
+  const rejectWslSharePath = Effect.fn("ProjectService.rejectWslSharePath")(function* (
+    projectId: ProjectId,
+    workspaceRoot: string,
+  ) {
+    if (!isWslSharePath(workspaceRoot) || !(yield* HostProcess.isWindows)) return;
+    return yield* new ProjectInvalidError({
+      projectId,
+      detail: `${workspaceRoot.trim()} is inside WSL. Add it to the WSL backend instead of the Windows one.`,
+    });
+  });
 
   const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
     const { projectId } = command;
@@ -378,11 +410,13 @@ export const make = Effect.gen(function* () {
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
     function* (input) {
+      yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
       const workspaceRoot = yield* normalizeWorkspaceRoot({
         projectId: input.projectId,
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
+      yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
       yield* commit({
         type: "project.create",
         commandId: input.commandId,
@@ -403,6 +437,9 @@ export const make = Effect.gen(function* () {
         return yield* new ProjectNotFoundError({ projectId: input.projectId });
       }
       const previousRoot = existing.value.workspaceRoot;
+      if (input.workspaceRoot !== undefined && input.workspaceRoot !== previousRoot) {
+        yield* rejectWslSharePath(input.projectId, input.workspaceRoot);
+      }
       const workspaceRoot =
         input.workspaceRoot === undefined
           ? previousRoot
@@ -410,6 +447,9 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
+      if (workspaceRoot !== previousRoot) {
+        yield* rejectWorktreeContainer(input.projectId, workspaceRoot);
+      }
       yield* commit({
         type: "project.meta.update",
         commandId: input.commandId,
@@ -429,7 +469,7 @@ export const make = Effect.gen(function* () {
         ...(input.pinned === undefined ? {} : { pinned: input.pinned }),
         ...(input.archived === undefined ? {} : { archived: input.archived }),
       });
-      if (workspaceRoot !== previousRoot) {
+      if (workspaceRoot !== previousRoot || input.faviconPath !== undefined) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
       return yield* readCommitted(input.projectId);
@@ -517,7 +557,7 @@ export const make = Effect.gen(function* () {
       projectThreads,
       (thread) =>
         threadCommands
-          .withLock(thread.id, deleteChildThread(input, thread.id))
+          .withDeletionLock(threadCommands.withLock(thread.id, deleteChildThread(input, thread.id)))
           .pipe(
             Effect.mapError(
               (cause) =>
@@ -530,7 +570,14 @@ export const make = Effect.gen(function* () {
 
   // Best-effort cleanup releases disabled instances kept alive by overrides; crashes have no replay to revisit deletion.
   const clearProjectSettingsOverrides = (projectId: ProjectId) =>
-    serverSettings.updateSettings({ projectSettingsOverrides: { [projectId]: null } }).pipe(
+    serverSettings.getSettings.pipe(
+      Effect.flatMap(({ projectSettingsOverrides }) =>
+        serverSettings.updateSettings({
+          projectSettingsOverrides: {
+            [projectId]: deletedProjectOverridePatch(projectSettingsOverrides[projectId]),
+          },
+        }),
+      ),
       Effect.asVoid,
       Effect.catchCause((cause) =>
         Effect.logWarning(

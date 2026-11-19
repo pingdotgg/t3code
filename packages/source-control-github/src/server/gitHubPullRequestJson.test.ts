@@ -393,6 +393,8 @@ describe("pull request detail decoding", () => {
             createdAt: "2026-07-01T00:00:00Z",
             updatedAt: "2026-07-05T00:00:00Z",
             mergedAt: null,
+            mergeCommit: null,
+            mergedBy: null,
             closedAt: null,
             headRefName: "feat/detail",
             baseRefName: "main",
@@ -551,12 +553,48 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it("reads a merged pull request's merge commit and who merged it", () => {
+    expect(
+      detailOf([], {
+        state: "MERGED",
+        mergedAt: "2026-07-05T00:00:00Z",
+        mergeCommit: { oid: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9" },
+        mergedBy: {
+          __typename: "User",
+          login: "octocat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+          name: "Octo Cat",
+        },
+      }),
+    ).toMatchObject({
+      state: "merged",
+      mergeCommitSha: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9",
+      mergedBy: { login: "octocat", name: "Octo Cat" },
+    });
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+  });
+
+  it("reads the newest merge queue removal, and none where the queue was not asked about", () => {
+    const removal = {
+      __typename: "RemovedFromMergeQueueEvent",
+      id: "RMQE_1",
+      createdAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    };
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [removal] } }).mergeQueueRemoval).toEqual({
+      id: "RMQE_1",
+      removedAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    });
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [] } }).mergeQueueRemoval).toBeUndefined();
+    expect(detailOf([]).mergeQueueRemoval).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -1753,12 +1791,14 @@ describe("pull request lookups", () => {
 });
 
 describe("pull request watch fingerprints", () => {
-  it("moves status with checks and remarks with comments, each without the other", () => {
+  it("moves status with checks and queue removals, and remarks with comments, not across", () => {
     const pullRequest = (input: {
       readonly running: number;
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly removals: number;
+      readonly timelineItems: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1766,6 +1806,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
+      mergeQueueRemovals: { totalCount: input.timelineItems, filteredCount: input.removals },
       commits: {
         nodes: [
           {
@@ -1787,7 +1828,14 @@ describe("pull request watch fingerprints", () => {
     });
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
       toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
+    const base = {
+      running: 2,
+      failed: 0,
+      commentEditedAt: null,
+      reviews: 1,
+      removals: 0,
+      timelineItems: 3,
+    };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -1798,5 +1846,12 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    // Queued and dropped between two passes leaves the head and its checks as they were.
+    const dropped = fingerprint({ ...base, removals: 1, timelineItems: 5 });
+    expect(dropped.status).not.toBe(before.status);
+    expect(dropped.remarks).toBe(before.remarks);
+    // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
+    const queued = fingerprint({ ...base, timelineItems: 4 });
+    expect(queued.status).toBe(before.status);
   });
 });
