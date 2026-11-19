@@ -1993,6 +1993,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         steered.messages.find((message) => message.id === steerMessageId)?.runId,
         run.id,
       );
+      const steerItem = steered.turnItems.find(
+        (item) => item.type === "user_message" && item.messageId === steerMessageId,
+      );
+      assert.isDefined(steerItem);
       assert.deepEqual(
         (yield* outbox.listByCommandId(steerCommandId)).map((effect) => effect.request),
         [
@@ -2026,6 +2030,14 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             runId: run.id,
             occurredAt: now,
             payload: { ...providerTurn, status: "completed", completedAt: now },
+          },
+          {
+            id: EventId.make("runtime-delivery-intent-steer-consumed"),
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...steerItem, status: "completed", completedAt: now, updatedAt: now },
           },
         ],
       });
