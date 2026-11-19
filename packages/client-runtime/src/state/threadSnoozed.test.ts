@@ -421,6 +421,28 @@ describe("resolveSnoozePresets", () => {
     ).toEqual(["In 3 hours 23:00", "In 6 hours Thu 2:00", "Tomorrow 21:00", "Next week Mon 18:00"]);
   });
 
+  it("uses the German weekday with the caller's clock format", () => {
+    const options = {
+      locale: "de",
+      formatTime,
+      presets: [{ kind: "at", day: "monday", time: "18:00" }] as const,
+    };
+    const [preset] = resolveSnoozePresets(localDate(2026, 4, 8, 20), options);
+
+    expect(preset?.whenLabel).toMatch(/^Mo\.? 18:00$/);
+  });
+
+  it("uses the runtime locale when no locale is supplied", () => {
+    const wake = localDate(2026, 4, 13, 18);
+    const now = localDate(2026, 4, 8, 20);
+    const presets = [{ kind: "at", day: "monday", time: "18:00" }] as const;
+    const [preset] = resolveSnoozePresets(now, { presets });
+    const weekday = wake.toLocaleDateString(undefined, { weekday: "short" });
+    const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+
+    expect(preset?.whenLabel).toBe(`${weekday} ${time}`);
+  });
+
   it("drops a today preset once its time passes and moves a weekday on that day to next week", () => {
     // Monday 18:30.
     const now = localDate(2026, 4, 13, 18, 30);
