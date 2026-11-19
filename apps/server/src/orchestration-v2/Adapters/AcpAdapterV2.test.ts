@@ -4647,6 +4647,28 @@ describe("AcpAdapterV2", () => {
         search?.type === "file_search" ? { title: search.title, pattern: search.pattern } : null,
         { title: "Searched TODO in web", pattern: "apps/web" },
       );
+      const fileSearch = (nativeId: string) => {
+        const item = items.find(
+          (candidate) =>
+            candidate.type === "file_search" &&
+            candidate.nativeItemRef?.nativeId?.endsWith(nativeId) === true,
+        );
+        return item?.type === "file_search"
+          ? { pattern: item.pattern, results: item.results }
+          : null;
+      };
+      assert.deepEqual(fileSearch("structured-search-explicit-location"), {
+        pattern: "README.md",
+        results: [{ fileName: "README.md", preview: "# Title" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-only"), {
+        pattern: "TODO",
+        results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-no-output"), {
+        pattern: "FIXME",
+        results: undefined,
+      });
       const webItem = (nativeId: string, status: string) => {
         const item = items.findLast(
           (candidate) =>
@@ -4672,6 +4694,25 @@ describe("AcpAdapterV2", () => {
         title: "Web search: t3 code",
         patterns: ["t3 code"],
         results: [{ url: "https://t3.codes" }, { url: "https://github.com/pingdotgg/t3code" }],
+      });
+      assert.deepEqual(webItem("antigravity-web-search", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: [
+          {
+            url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
+          },
+        ],
+      });
+      assert.deepEqual(webItem("antigravity-run-search-web", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: undefined,
+      });
+      assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
+        title: "Web search: streamed citations",
+        patterns: ["streamed citations"],
+        results: [{ url: "https://example.com/streamed_(detail)" }],
       });
       assert.deepEqual(webItem("grok-web-fetch", "completed")?.results, [
         { url: "https://t3.codes", snippet: "T3 Code page" },
@@ -7440,6 +7481,26 @@ describe("AcpAdapterV2", () => {
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          extractSubagentUpdate: (tool) =>
+            tool.toolCallId === "native-failed-tool"
+              ? {
+                  nativeTaskId: tool.toolCallId,
+                  childSessionId: null,
+                  prompt: "Run a command",
+                  title: null,
+                  model: null,
+                  status: tool.status === "failed" ? "failed" : "running",
+                  result: tool.status === "failed" ? "Permission denied" : null,
+                  suppressNormalTool: tool.status !== "failed",
+                }
+              : undefined,
+          isCancelledToolCall: Schema.is(
+            Schema.Struct({
+              update: Schema.Struct({
+                toolCallId: Schema.Literals(["native-cancel-tool", "native-unseen-cancel-tool"]),
+              }),
+            }),
+          ),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath: yield* bundledMockAgentPath,
@@ -7508,15 +7569,57 @@ describe("AcpAdapterV2", () => {
       );
       yield* native.current.request("_test/finish-cancel", {});
       yield* Fiber.join(interrupt);
-      const terminal = Option.getOrThrow(
+      const untilTerminal = Array.from(
         yield* runtime.events.pipe(
-          Stream.filter(
+          Stream.takeUntil(
             (event) => event.type === "turn.terminal" && event.providerTurnId === providerTurnId,
           ),
-          Stream.runHead,
+          Stream.runCollect,
         ),
       );
-      assert.equal(terminal.type === "turn.terminal" && terminal.status, "interrupted");
+      const terminal = untilTerminal.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "interrupted");
+      // The agent fails the command Stop cut off, then updates its output.
+      const command = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      const unseenCommand = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-unseen-cancel-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(unseenCommand?.status, "interrupted");
+      assert.equal(command?.status, "interrupted");
+      assert.include(command?.type === "command_execution" ? command.output : "", "exit 130");
+      const failure = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === "native-failed-tool"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(failure?.status, "failed");
+      const subagent = untilTerminal
+        .flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "subagent"
+            ? [event.turnItem]
+            : [],
+        )
+        .at(-1);
+      assert.equal(subagent?.status, "failed");
+      assert.include(
+        failure?.type === "command_execution" ? failure.output : "",
+        "Permission denied",
+      );
       yield* runtime.startTurn(
         makeTurnInput({ threadId, providerThread, instanceId, runtimePolicy, now, ordinal: 2 }),
       );

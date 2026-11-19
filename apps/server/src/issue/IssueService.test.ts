@@ -548,15 +548,20 @@ describe("IssueService with a standalone tracker", () => {
       const projects = [project({ id: "web", repository: "acme/web" }), project({ id: "notes" })];
       const trackers = [fakeTracker(record(GITHUB)), fakeStandaloneTracker(record(LINEAR))];
       const bound = yield* makeService({
-        projects,
+        projects: [...projects, project({ id: "api", repository: "acme/api" })],
         trackers,
         bindings: { ["web" as ProjectId]: { tracker: LINEAR, scope: "ENG" } },
       });
 
       const result = yield* bound.list({ state: "open" });
-      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(listed.sort()).toEqual([
+        "github github.com acme/api",
+        "github github.com acme/web",
+        "linear linear.app ENG",
+      ]);
       expect(result.entries.map((entry) => [entry.tracker, entry.scope, entry.key]).sort()).toEqual(
         [
+          ["github", "acme/api", "1"],
           ["github", "acme/web", "1"],
           ["linear", "ENG", "ENG-1"],
         ],
@@ -571,6 +576,14 @@ describe("IssueService with a standalone tracker", () => {
         host: "linear.app",
         scope: "ENG",
       });
+      // Narrowed to one project, both of its trackers are still read.
+      listed.length = 0;
+      const selected = yield* bound.list({ state: "open", projectId: "web" as ProjectId });
+      expect(listed.sort()).toEqual(["github github.com acme/web", "linear linear.app ENG"]);
+      expect(selected.entries.map((entry) => [entry.projectId, entry.scope]).sort()).toEqual([
+        ["web", "ENG"],
+        ["web", "acme/web"],
+      ]);
       // A reference picks the project's tracker by kind; both are the project's own, so writable.
       const linearRef = {
         projectId: "web" as ProjectId,

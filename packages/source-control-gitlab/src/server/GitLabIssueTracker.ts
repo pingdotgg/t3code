@@ -22,7 +22,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
   decodeUserIdsJson,
-  decodeIssueDetailJson,
+  decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
   decodeLabelEventsJson,
@@ -464,6 +464,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               : [["assignee_username", input.assignee] as const]),
             ["order_by", input.sort === "created" ? "created_at" : "updated_at"],
             ["sort", "desc"],
+            ["with_labels_details", "true"],
             ["per_page", String(perPage)],
             ["page", String(page)],
           ])}`,
@@ -490,9 +491,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   cwd: input.cwd,
                   host: input.host,
                   operation: "getIssue",
-                  path,
-                  decode: decodeIssueDetailJson,
-                }),
+                  path: `projects/${projectPath(input.scope)}/issues?${query([
+                    ["iids[]", String(number)],
+                    ["with_labels_details", "true"],
+                    ["per_page", "1"],
+                  ])}`,
+                  decode: decodeIssueDetailListJson,
+                }).pipe(
+                  Effect.filterOrFail(
+                    (issue) => issue !== null,
+                    () => notFound("getIssue"),
+                  ),
+                ),
                 viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
                 notesPage({
                   cwd: input.cwd,
