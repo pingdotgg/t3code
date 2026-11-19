@@ -80,10 +80,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imp
       const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
       yield* persistServerRuntimeState({
         path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
+        // An owner id skips the legacy liveness probe, so only the free lock decides.
+        state: {
+          ...(yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: 3_773,
+          })),
+          ownerId: "dead-server",
+        },
       });
       const unreachable: typeof globalThis.fetch = () =>
         Promise.reject(
