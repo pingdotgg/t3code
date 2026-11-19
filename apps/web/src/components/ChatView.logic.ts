@@ -1,11 +1,7 @@
 import { toServerClock } from "@t3tools/client-runtime/clock";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "../i18n/messages";
-import {
-  type OrchestrationV2ProviderTurn,
-  type OrchestrationV2Run,
-  type RunAttemptId,
-} from "@t3tools/contracts";
+import { type OrchestrationV2ProviderTurn, type RunAttemptId } from "@t3tools/contracts";
 import {
   deriveLatestThreadRun,
   deriveThreadRuntime,
@@ -1256,38 +1252,6 @@ export function threadErrorIsServerRuntime(input: {
     input.isServerThread &&
     (input.localServerError === null || input.localServerError === input.runtimeError)
   );
-}
-
-/**
- * Which failure a thread's error banner shows: a run failure is the presented latest run's, and a
- * session error belongs to the latest run that failed or completed, ranked by ordinal as the
- * presented run is, so a newer run starting keeps it. The failure time tells a retried run apart.
- */
-export function threadErrorBannerSource(input: {
-  readonly runtime: {
-    readonly lastError: string | null;
-    readonly lastErrorClass?: string | null;
-  } | null;
-  readonly latestRun: { readonly runId: RunId; readonly completedAt: string | null } | null;
-  readonly runs: ReadonlyArray<
-    Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">
-  >;
-}): string | null {
-  if (!input.runtime?.lastError) return null;
-  // A failure class means the error is the presented run's own failure.
-  if (input.runtime.lastErrorClass) {
-    return input.latestRun === null
-      ? null
-      : `${input.latestRun.runId}@${input.latestRun.completedAt ?? ""}`;
-  }
-  let ended: (typeof input.runs)[number] | null = null;
-  for (const run of input.runs) {
-    if (run.status !== "failed" && run.status !== "completed") continue;
-    if (ended === null || run.ordinal > ended.ordinal) ended = run;
-  }
-  return ended === null
-    ? null
-    : `${ended.id}@${ended.completedAt === null ? "" : DateTime.formatIso(ended.completedAt)}`;
 }
 
 export function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | null }>(

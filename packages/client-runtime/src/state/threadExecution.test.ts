@@ -179,7 +179,35 @@ describe("thread execution presentation", () => {
     expect(deriveThreadRuntime(projection)).toMatchObject({
       lastError: "Plan limit reached",
       lastErrorClass: "usage_limit",
+      lastErrorSource: "limit-error@2026-07-28T10:00:00.000Z",
     });
+    // A retried run fails again through the same item, so only the failure time tells it apart.
+    const refailedAt = DateTime.makeUnsafe("2026-07-28T10:05:00.000Z");
+    expect(
+      deriveThreadRuntime({ ...projection, turnItems: [{ ...item, updatedAt: refailedAt }] })
+        ?.lastErrorSource,
+    ).toBe("limit-error@2026-07-28T10:05:00.000Z");
+    const session = {
+      id: ProviderSessionId.make("failed-session"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: v2Projection.thread.providerInstanceId,
+      status: "error" as const,
+      cwd: "/repo",
+      model: null,
+      capabilities: {} as never,
+      createdAt: now,
+      updatedAt: refailedAt,
+      lastError: "Session failed",
+    };
+    // The text is the session's, so the source is too, and a newer run starting keeps it.
+    const withSession = { ...projection, providerSessions: [session] };
+    expect(deriveThreadRuntime(withSession)?.lastErrorSource).toBe(
+      "failed-session@2026-07-28T10:05:00.000Z",
+    );
+    expect(
+      deriveThreadRuntime({ ...withSession, runs: [failed, run("next", 2, "starting")] })
+        ?.lastErrorSource,
+    ).toBe("failed-session@2026-07-28T10:05:00.000Z");
     expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     expect(
       deriveThreadRuntime({
