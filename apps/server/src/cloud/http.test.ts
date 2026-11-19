@@ -43,7 +43,6 @@ import * as ServerSettings from "../serverSettings.ts";
 
 const DESKTOP_BOOTSTRAP_TOKEN = "test-desktop-bootstrap-token";
 const NON_LOOPBACK_ORIGIN = "http://172.24.162.233:3773";
-const LOOPBACK_ORIGIN = "http://127.0.0.1:3773";
 const proofRequest: RelayLinkProofRequest = {
   challenge: "test-challenge",
   relayIssuer: "https://relay.example.test",
@@ -160,10 +159,10 @@ const linkProofClient = Effect.gen(function* () {
     const payload = (yield* responseJson(response)) as { access_token: string };
     return payload.access_token;
   });
-  const linkableHere = (token: string, origin = NON_LOOPBACK_ORIGIN) =>
+  const linkableHere = (token: string) =>
     Effect.promise(() =>
       handler(
-        new Request(`${origin}/api/connect/link-state`, {
+        new Request(`${NON_LOOPBACK_ORIGIN}/api/connect/link-state`, {
           headers: { authorization: `Bearer ${token}` },
         }),
       ),
@@ -217,21 +216,18 @@ describe("link proof over a non-loopback transport", () => {
       }).pipe(Effect.provide(NodeCrypto.layerSignature)),
   );
 
-  it.effect("offers Turn on only to the desktop app's own session", () =>
+  it.effect("offers Turn on to any session allowed to configure the relay", () =>
     Effect.gen(function* () {
       const { post, exchange, linkableHere } = yield* linkProofClient;
       const desktop = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
-      const paired = yield* post(
-        "/api/auth/pairing-token",
-        { scopes: ["relay:read", "relay:configure"], subject: "desktop-bootstrap" },
-        { authorization: `Bearer ${desktop}` },
-      );
-      const { credential } = (yield* responseJson(paired)) as { credential: string };
-      const token = yield* exchange(credential);
-      // SSH port forwards look like loopback, so a loopback address alone does not count.
+      const pair = (scopes: ReadonlyArray<string>) =>
+        post("/api/auth/pairing-token", { scopes }, { authorization: `Bearer ${desktop}` }).pipe(
+          Effect.flatMap(responseJson),
+          Effect.flatMap((paired) => exchange((paired as { credential: string }).credential)),
+        );
       expect(yield* linkableHere(desktop)).toBe(true);
-      expect(yield* linkableHere(token)).toBe(false);
-      expect(yield* linkableHere(token, LOOPBACK_ORIGIN)).toBe(false);
+      expect(yield* linkableHere(yield* pair(["relay:read", "relay:configure"]))).toBe(true);
+      expect(yield* linkableHere(yield* pair(["relay:read", "relay:write"]))).toBe(false);
     }),
   );
 

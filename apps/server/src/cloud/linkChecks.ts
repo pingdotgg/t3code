@@ -4,7 +4,6 @@ import type {
   RelayManagedEndpointOrigin,
   RelayManagedEndpointRuntimeConfig,
 } from "@t3tools/contracts/relay";
-import type { HttpServerRequest } from "effect/http";
 
 const CLOUD_PROOF_MAX_LIFETIME_SECONDS = 5 * 60;
 const CLOUD_PROOF_CLOCK_SKEW_SECONDS = 60;
@@ -19,31 +18,6 @@ function normalizeHostname(hostname: string): string {
 
 function isLoopbackHostname(hostname: string): boolean {
   return LOOPBACK_HOSTNAMES.has(normalizeHostname(hostname));
-}
-
-function firstForwardedHeaderValue(value: string | undefined): string | undefined {
-  const first = value?.split(",")[0]?.trim();
-  return first && first.length > 0 ? first : undefined;
-}
-
-function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest): string | null {
-  try {
-    return new URL(request.originalUrl).href;
-  } catch {
-    const host = firstForwardedHeaderValue(request.headers.host) ?? "127.0.0.1";
-    try {
-      return new URL(request.originalUrl, `http://${host}`).href;
-    } catch {
-      return null;
-    }
-  }
-}
-
-function hasForwardedAuthorityHeaders(request: HttpServerRequest.HttpServerRequest): boolean {
-  return (
-    firstForwardedHeaderValue(request.headers["x-forwarded-host"]) !== undefined ||
-    firstForwardedHeaderValue(request.headers["x-forwarded-proto"]) !== undefined
-  );
 }
 
 function endpointRequestPort(url: URL): number {
@@ -75,22 +49,6 @@ export function parseManagedEndpointLocalOrigin(localOrigin: string) {
       localHttpPort: endpointRequestPort(url),
     } satisfies RelayManagedEndpointOrigin,
   };
-}
-
-/**
- * Whether clients should offer to turn on T3 Connect over this session: only the desktop app's
- * own bootstrap session, from any address (WSL answers on a distro IP), never through a proxy.
- * A loopback address alone does not count, since SSH port forwards look like loopback too.
- */
-export function canLinkHere(
-  request: HttpServerRequest.HttpServerRequest,
-  subject: string,
-): boolean {
-  return (
-    subject === "desktop-bootstrap" &&
-    requestAbsoluteUrl(request) !== null &&
-    !hasForwardedAuthorityHeaders(request)
-  );
 }
 
 export function isLoopbackEndpointOrigin(origin: RelayManagedEndpointOrigin): boolean {

@@ -4,7 +4,6 @@ import {
   managedCapabilityDenial,
 } from "@t3tools/contracts";
 
-import { isElectron } from "../env";
 import { useManagedPolicy } from "../state/managedPolicy";
 import { useEnvironmentCanConfigureRelay, useEnvironmentScope } from "../state/session";
 import { useCloudLinkState } from "./cloudLinkState";
@@ -18,7 +17,6 @@ export function useT3ConnectTurnOn(environmentId: EnvironmentId | null) {
   const connectDenial = managedCapabilityDenial(useManagedPolicy(environmentId), "connect");
   const linkState = useCloudLinkState(environmentId).data;
   return resolveT3ConnectTurnOn({
-    desktopApp: isElectron,
     // Unknown while loading and on older servers, which keep today's switch in Settings.
     linkableHere: linkState?.linkableHere ?? true,
     cloudConfigured: hasCloudPublicConfig(),
