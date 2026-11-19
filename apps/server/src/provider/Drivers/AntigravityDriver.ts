@@ -152,6 +152,12 @@ export const AntigravityDriver: ProviderDriver<
       gcpLocation: settings.gcpLocation,
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
+    const rejectCliAuthIssue = (harnessPath: string | null) => {
+      const detail = antigravityAuthConfigIssue(auth, { isCliRuntime: harnessPath === null });
+      return detail === null
+        ? Effect.void
+        : Effect.fail(new ProviderSetupError({ instanceId, operation: "configure", detail }));
+    };
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
     const userHome = resolveAntigravityUserHome(
       yield* HostProcess.Platform,
@@ -226,16 +232,7 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      const cliIssue = antigravityAuthConfigIssue(auth, {
-        isCliRuntime: executable.harnessPath === null,
-      });
-      if (cliIssue !== null) {
-        return yield* new ProviderSetupError({
-          instanceId,
-          operation: "configure",
-          detail: cliIssue,
-        });
-      }
+      yield* rejectCliAuthIssue(executable.harnessPath);
       const profile = yield* prepareAntigravityProfile({
         profileDirectory,
         baseEnv: processEnvironment,
@@ -443,16 +440,7 @@ export const AntigravityDriver: ProviderDriver<
             }),
         ),
       );
-      const cliIssue = antigravityAuthConfigIssue(auth, {
-        isCliRuntime: executable.harnessPath === null,
-      });
-      if (cliIssue !== null) {
-        return yield* new ProviderSetupError({
-          instanceId,
-          operation: "configure",
-          detail: cliIssue,
-        });
-      }
+      yield* rejectCliAuthIssue(executable.harnessPath);
       return {
         protocolVersion: 1,
         agentCapabilities: {

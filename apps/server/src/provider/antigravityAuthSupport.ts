@@ -513,8 +513,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   return {
     command: input.installation.executablePath,
     // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand. It ignores
-    // GEMINI_HOME, so these flags point it at the profile and its settings.json. The app data path
-    // must be relative to --gemini-dir.
+    // GEMINI_HOME, so these flags point it at the profile and its settings.json.
     args:
       input.installation.harnessPath === null
         ? [

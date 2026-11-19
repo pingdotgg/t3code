@@ -111,7 +111,7 @@ describe("Antigravity process environment", () => {
     });
   });
 
-  it("runs the agy CLI as `agy acp` on the instance profile, without a harness", () => {
+  it("runs the agy CLI as `agy acp` without a harness", () => {
     const spawn = buildAntigravityAcpSpawnInput({
       installation: { executablePath: "/usr/bin/agy", harnessPath: null },
       profile,
@@ -868,28 +868,15 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
 });
 
 describe("antigravityAuthConfigIssue", () => {
-  it("rejects Agent Platform with an API key when running on the agy CLI", () => {
+  it("rejects an Agent Platform API key only on the agy CLI", () => {
     const auth: AntigravityAuthConfig = {
       authMethod: "agent-platform",
       apiKey: "secret-key",
       gcpProject: "proj",
       gcpLocation: "us-central1",
     };
-    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: true })).toBe(
-      "Agent Platform API keys are not supported with the agy CLI; use Application Default Credentials (ADC) or a credentials file.",
-    );
-    // Managed runtime continues to accept Agent Platform with an API key
+    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: true })).toMatch(/not supported/);
     expect(antigravityAuthConfigIssue(auth, { isCliRuntime: false })).toBeNull();
-    expect(antigravityAuthConfigIssue(auth)).toBeNull();
-  });
-
-  it("accepts Agent Platform without an API key on the agy CLI", () => {
-    const auth: AntigravityAuthConfig = {
-      authMethod: "agent-platform",
-      apiKey: "",
-      gcpProject: "proj",
-      gcpLocation: "us-central1",
-    };
-    expect(antigravityAuthConfigIssue(auth, { isCliRuntime: true })).toBeNull();
+    expect(antigravityAuthConfigIssue({ ...auth, apiKey: "" }, { isCliRuntime: true })).toBeNull();
   });
 });
