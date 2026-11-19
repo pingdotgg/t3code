@@ -707,6 +707,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   return Workflows.of({
     start,
     hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
+    unfinished: store.unfinished,
     deliver,
     signal,
     resume,

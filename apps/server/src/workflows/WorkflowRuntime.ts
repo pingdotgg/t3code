@@ -306,9 +306,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const unfinished = Effect.suspend(() =>
     running.length === 0
       ? Effect.succeed([])
-      : Effect.flatMap(Deferred.await(ready), (service) => service.list()).pipe(
-          Effect.map((runs) => runs.filter((run) => run.endedAt === null)),
-        ),
+      : Effect.flatMap(Deferred.await(ready), (service) => service.unfinished),
   );
   /** The workflows the file at `from` defines, or what is wrong with it as the file `name`. */
   const load = Effect.fn("WorkflowRuntime.load")(function* (from: string, name: string) {
@@ -451,6 +449,7 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       }
     }),
     questions: Effect.flatMap(current, (live) => live.questions),
+    unfinished: Effect.flatMap(current, (live) => live.unfinished),
     hooks: Effect.flatMap(current, (live) => live.hooks),
     deliver: Effect.fn("Workflows.deliver")(function* (...input) {
       return yield* (yield* current).deliver(...input);
