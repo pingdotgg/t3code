@@ -1,4 +1,4 @@
-import { ProviderInstanceId } from "@t3tools/contracts";
+import { ProviderInstanceId, type TextGenerationError } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
@@ -326,11 +326,11 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
   );
 
   it.effect.each([
-    ["checkFactStanding", "answer"],
-    ["checkFactStanding", "tool activity"],
-    ["curateProjectMemory", "answer"],
-    ["curateProjectMemory", "tool activity"],
-  ] as const)("runs %s on an isolated deny-all server (%s)", (operation, reply) =>
+    { operation: "checkFactStanding", reply: "answer" },
+    { operation: "checkFactStanding", reply: "tool activity" },
+    { operation: "curateProjectMemory", reply: "answer" },
+    { operation: "curateProjectMemory", reply: "tool activity" },
+  ] as const)("runs $operation on an isolated deny-all server ($reply)", ({ operation, reply }) =>
     Effect.gen(function* () {
       const answer =
         operation === "checkFactStanding"
@@ -357,7 +357,7 @@ it.layer(layer)("OpenCode2TextGeneration blind evaluation", (it) => {
           },
         } as unknown as OpenCode2Client.OpenCode2StreamEvent);
       const textGeneration = yield* make();
-      const request =
+      const request: Effect.Effect<unknown, TextGenerationError> =
         operation === "checkFactStanding"
           ? textGeneration.checkFactStanding({
               cwd: "/empty-check-directory",

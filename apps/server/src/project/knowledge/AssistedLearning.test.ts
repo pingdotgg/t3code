@@ -354,17 +354,16 @@ it.effect("stores what the blind check set aside without making it recallable", 
     assert.notEqual(checks[0]!.cwd, `/work/${projectId}`);
     const saved = (yield* knowledge.list({ projectId, status: "saved" })).facts;
     assert.deepEqual(
-      saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]).toSorted(),
-      [
-        [snakeCase.content, "standing", "check"],
-        [scopeLimit.content, "task", "check"],
-      ],
+      saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]),
+      [[snakeCase.content, "standing", "check"]],
     );
     assert.deepEqual(
-      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map(
-        (fact) => fact.content,
-      ),
-      [scopeLimit.content],
+      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map((fact) => [
+        fact.content,
+        fact.verdict?.value,
+        fact.verdict?.by,
+      ]),
+      [[scopeLimit.content, "task", "check"]],
     );
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
     assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 set aside: 1 task note."]);
