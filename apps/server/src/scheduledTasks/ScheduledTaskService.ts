@@ -943,9 +943,13 @@ export const layer = Layer.effect(
           return;
         }
         if (run.status === "cancelled" && currentRunId == null) return;
-        const { turnItems } = yield* threadManagement.getProjectThreadRecords(thread, [
-          "turnItems",
-        ]);
+        // Only the run's failed errors feed latestRootProviderFailure; a long-lived task
+        // thread holds tens of thousands of items.
+        const { turnItems } = yield* threadManagement.getProjectThreadRecords(
+          thread,
+          ["turnItems"],
+          { turnItemRunId: run.id, turnItemTypes: ["error"], turnItemStatuses: ["failed"] },
+        );
         const error =
           latestRootProviderFailure(run, turnItems)?.message ?? UNSUCCESSFUL_RUN_ERRORS[run.status];
         const updated = yield* sql`
