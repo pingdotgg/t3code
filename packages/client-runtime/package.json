@@ -271,6 +271,10 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/previewTunnel": {
+      "types": "./src/state/previewTunnel.ts",
+      "default": "./src/state/previewTunnel.ts"
+    },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
       "default": "./src/state/peerLinks.ts"
