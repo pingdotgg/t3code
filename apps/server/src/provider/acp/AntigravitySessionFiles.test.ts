@@ -5,7 +5,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 
-import { retireAntigravityRuntimeTempDirs } from "./AntigravitySessionFiles.ts";
+import {
+  linkAntigravityRuntimeTemp,
+  retireAntigravityRuntimeTempDirs,
+} from "./AntigravitySessionFiles.ts";
 
 it.layer(NodeServices.layer)("retireAntigravityRuntimeTempDirs", (it) => {
   it.effect("moves leftovers aside at once and deletes them, plus older retirees, later", () =>
@@ -59,6 +62,32 @@ it.layer(NodeServices.layer)("retireAntigravityRuntimeTempDirs", (it) => {
         ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
         yield* removeRetired;
         expect(removed).toEqual(["/state/antigravity-tmp/abc123"]);
+      }),
+  );
+});
+
+it.layer(NodeServices.layer)("linkAntigravityRuntimeTemp", (it) => {
+  it.effect(
+    "links to the store, replaces a stale link, and falls back when the name is taken",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const parent = yield* fs.makeTempDirectoryScoped();
+        const store = path.join(parent, "store");
+        const link = path.join(parent, "link");
+        expect(yield* linkAntigravityRuntimeTemp(link, store)).toBe(link);
+        expect(yield* fs.readLink(link)).toBe(store);
+        expect(yield* linkAntigravityRuntimeTemp(link, store)).toBe(link);
+
+        yield* fs.remove(link);
+        yield* fs.symlink(path.join(parent, "elsewhere"), link);
+        expect(yield* linkAntigravityRuntimeTemp(link, store)).toBe(link);
+        expect(yield* fs.readLink(link)).toBe(store);
+
+        yield* fs.remove(link);
+        yield* fs.makeDirectory(link);
+        expect(yield* linkAntigravityRuntimeTemp(link, store)).toBe(store);
       }),
   );
 });

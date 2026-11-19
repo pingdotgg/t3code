@@ -177,7 +177,12 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
-  /** Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  /** Holds the unpacked runtime. Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  readonly runtimeTempStore: string;
+  /**
+   * Parent of the agent's TMPDIR. Off Windows, a short /tmp symlink to the store, so tools that put
+   * a Unix socket under TMPDIR stay within the 104-byte sun_path while the data stays on disk.
+   */
   readonly runtimeTemp: string;
 }
 
@@ -187,10 +192,19 @@ export const resolveAntigravityInstanceDirectories = Effect.fn(
 )(function* (stateDir: string, instanceId: ProviderInstanceId) {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
-  const key = Hex.encode(yield* digest.digest(Digest.sha256, new TextEncoder().encode(instanceId)));
+  const hash = (value: string) =>
+    digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.map(Hex.encode));
+  const key = yield* hash(instanceId);
+  const runtimeTempStore = path.join(stateDir, "antigravity-tmp", key.slice(0, 12));
+  // /tmp is shared by every T3 home, so the link name also covers the state directory.
+  const linkKey = path.sep === "\\" ? undefined : yield* hash(`${stateDir}\0${instanceId}`);
   return {
     profile: path.join(stateDir, "providers", "antigravity", key),
-    runtimeTemp: path.join(stateDir, "antigravity-tmp", key.slice(0, 12)),
+    runtimeTempStore,
+    runtimeTemp:
+      linkKey === undefined
+        ? runtimeTempStore
+        : path.join("/tmp", `t3-agy-${linkKey.slice(0, 12)}`),
   } satisfies AntigravityInstanceDirectories;
 });
 

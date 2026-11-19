@@ -54,6 +54,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   removeAntigravitySessionFiles,
+  linkAntigravityRuntimeTemp,
   retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -175,7 +176,7 @@ export const AntigravityDriver: ProviderDriver<
     );
     const profileDirectory = directories.profile;
     for (const directory of [
-      directories.runtimeTemp,
+      directories.runtimeTempStore,
       path.join(profileDirectory, "antigravity-acp", "tmp"),
     ]) {
       const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
@@ -184,6 +185,10 @@ export const AntigravityDriver: ProviderDriver<
       );
       yield* Effect.forkScoped(removeRetired);
     }
+    const runtimeTempParent = yield* linkAntigravityRuntimeTemp(
+      directories.runtimeTemp,
+      directories.runtimeTempStore,
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
       instanceId,
@@ -230,7 +235,7 @@ export const AntigravityDriver: ProviderDriver<
         baseEnv: processEnvironment,
         auth,
         userHome,
-        tempDirectory: directories.runtimeTemp,
+        tempDirectory: directories.runtimeTempStore,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -288,7 +293,7 @@ export const AntigravityDriver: ProviderDriver<
           cwd: runtimeInput.cwd,
           baseEnv: spawnEnvironment,
           auth,
-          runtimeTempDirectory,
+          runtimeTempDirectory: path.join(runtimeTempParent, path.basename(runtimeTempDirectory)),
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {
