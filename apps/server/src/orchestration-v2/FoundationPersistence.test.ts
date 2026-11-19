@@ -491,7 +491,13 @@ it.effect("commits other threads' writes ahead of a thread's queued provider sna
       .pipe(Effect.forkScoped({ startImmediately: true }));
     yield* Queue.offer(input, snapshot);
     yield* Deferred.await(started);
-    yield* Queue.offerAll(input, [snapshot, snapshot]);
+    yield* Queue.offerAll(
+      input,
+      [2, 3].map((n) => ({
+        ...snapshot,
+        node: { ...busyNode.payload, id: NodeId.make(`node:busy:${n}`) },
+      })),
+    );
     yield* Deferred.await(pulled);
     yield* TestClock.adjust(0);
     const writeTo = (event: OrchestrationV2DomainEvent, id: string) =>

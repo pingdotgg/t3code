@@ -96,6 +96,7 @@ export interface EventSinkV2Shape {
     process: (event: A) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2>,
+    priority?: ProviderCommitBatch.StreamPriority,
   ) => Effect.Effect<
     void,
     E | E2 | ProviderCommitBatch.CommitBatchError | Schema.SchemaError,
