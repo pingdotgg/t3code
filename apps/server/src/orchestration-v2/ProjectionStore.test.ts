@@ -10273,6 +10273,12 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
       }
+      const withoutItemCounts = yield* projectionStore.getShellSnapshot({
+        projectId,
+        includeItemCounts: false,
+      });
+      const forkShell = withoutItemCounts.threads.find((thread) => thread.id === targetThreadId);
+      assert.equal(forkShell?.visibleItemCount, 0);
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {
         view: "activity",
         limit: 2,

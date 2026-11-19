@@ -8842,6 +8842,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const readShellSnapshotRows = Effect.fn("ProjectionStore.readShellSnapshotRows")(function* (
       options: ShellSnapshotOptions | undefined,
     ) {
+      const includeItemCounts = options?.includeItemCounts !== false;
       const targetThreadRows = yield* selectShellThreadRows(undefined, options);
       const targetThreadIds = new Set(targetThreadRows.map((row) => ThreadId.make(row.thread_id)));
       const rowsByThreadId = new Map(
@@ -8878,14 +8879,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pendingTurnItemRows,
       ] = yield* Effect.all([
         readForThreadIds(selectShellRunRows, forkSourceIds),
-        readForThreadIds(
-          selectShellRunItemCounts,
-          options?.includeItemCounts === false ? [] : forkSourceIds,
-        ),
-        readForThreadIds(
-          selectShellItemCounts,
-          options?.includeItemCounts === false ? [] : threadIds,
-        ),
+        readForThreadIds(selectShellRunItemCounts, includeItemCounts ? forkSourceIds : []),
+        readForThreadIds(selectShellItemCounts, includeItemCounts ? threadIds : []),
         sql<{ readonly snapshot_sequence: number | null }>`
         SELECT MAX(sequence) AS snapshot_sequence
         FROM orchestration_events
@@ -8905,6 +8900,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       ]);
       return {
+        includeItemCounts,
         targetThreadIds,
         threadRows,
         runRows,
@@ -8917,6 +8913,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
 
     const decodeShellSnapshot = Effect.fn("ProjectionStore.decodeShellSnapshot")(function* ({
+      includeItemCounts,
       targetThreadIds,
       threadRows,
       runRows,
@@ -8950,10 +8947,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         .map((state) =>
           shellFromState({
             state,
-            visibleItemCount: visibleItemCountForShell({
-              threadId: state.thread.id,
-              statesByThreadId,
-            }),
+            visibleItemCount: includeItemCounts
+              ? visibleItemCountForShell({ threadId: state.thread.id, statesByThreadId })
+              : 0,
           }),
         );
 
