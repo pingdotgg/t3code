@@ -36,6 +36,10 @@ const CURSOR_USAGE_WINDOW_COPY: Readonly<
     label: msg("Other Models"),
     description: msg("Usage allowance for third-party models such as Claude, GPT, and Gemini."),
   },
+  spendLimit: {
+    label: msg("Spend"),
+    description: msg("Spending this billing cycle against your Cursor spend limit."),
+  },
 };
 
 /** @public */
