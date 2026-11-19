@@ -219,10 +219,7 @@ export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
-  return acpPermissionDisposition(
-    policy.runtimeMode === "auto" ? { ...policy, runtimeMode: "approval-required" } : policy,
-    request,
-  );
+  return policy.runtimeMode === "auto" ? "ask" : acpPermissionDisposition(policy, request);
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */

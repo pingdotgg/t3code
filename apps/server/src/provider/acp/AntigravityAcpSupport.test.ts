@@ -114,10 +114,10 @@ describe("Antigravity Auto", () => {
     expect(antigravitySessionMode("auto", { cli: true, modeState })).toBe(expected);
   });
 
-  it("asks about the commands agy's Auto review sends", () => {
+  it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
     const request = {
       sessionId: "session-1",
-      toolCall: { toolCallId: "command-1", title: "Run command", kind: "execute" },
+      toolCall: { toolCallId: "call-1", title: "Tool call", kind },
       options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
     } satisfies EffectAcpSchema.RequestPermissionRequest;
     expect(antigravityPermissionDisposition({ runtimeMode: "auto", cwd: null }, request)).toBe(
