@@ -129,6 +129,11 @@ describe("provider compatibility", () => {
     const supported = resolveProviderCompatibility(policies, antigravity, "1.5.11");
     assert.strictEqual(supported?.status, "supported");
     assert.strictEqual(supported?.recommendedRange, ">=1.5.12 <2");
+    // Releases before 0.1.10 cannot install the CLI, so they keep the policy they shipped with.
+    assert.strictEqual(
+      resolveProviderCompatibility(policies, antigravity, "1.4.5", "0.1.9")?.status,
+      "supported",
+    );
   });
 
   it("classifies boundaries and treats unlisted versions and release tags as unknown", () => {
