@@ -1,5 +1,6 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -17,6 +18,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -126,6 +128,52 @@ describe("sidebar header new thread", () => {
       expect(openCommandPalette).not.toHaveBeenCalled();
       expect(startThread).toHaveBeenCalledExactlyOnceWith(currentProjectRef);
     }
+  });
+});
+
+// regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
+describe("sidebar numbered jumps", () => {
+  it("numbers the unsent draft at the top before the threads below it", async () => {
+    const initial = useComposerDraftStore.getState();
+    using stack = new DisposableStack();
+    stack.defer(() => useComposerDraftStore.setState(initial, true));
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("Linux x86_64");
+    const web = project("web");
+    vi.mocked(useProjects).mockReturnValue([web]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([threadShell(web.id, 0)]);
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    const draftId = DraftId.make("unsent-draft");
+    initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
+      threadId: ThreadId.make("unsent-draft-thread"),
+      createdAt: "2026-01-02T00:00:00.000Z",
+    });
+    initial.setPrompt(draftId, "Unsent prompt");
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const draftRow = screen.getByTestId("sidebar-draft-row");
+    await expect.element(draftRow).toBeInTheDocument();
+    await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+    await userEvent.keyboard("{Control>}");
+    await expect.element(screen.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(draftRow.getByText("Ctrl+1")).toBeVisible();
+    await expect.element(screen.getByText("Ctrl+2")).toBeVisible();
+    await userEvent.keyboard("{/Control}");
   });
 });
 
