@@ -116,6 +116,43 @@ const withCloudServices = <A, E>(
   >,
 ) => effect.pipe(Effect.provide(layerCloudClient()));
 
+const linkedSupervisor = Effect.gen(function* () {
+  const target = new PrimaryConnectionTarget({
+    environmentId: savedConnection.environmentId,
+    label: savedConnection.environmentLabel,
+    httpBaseUrl: savedConnection.httpBaseUrl,
+    wsBaseUrl: savedConnection.wsBaseUrl,
+  });
+  return EnvironmentSupervisor.EnvironmentSupervisor.of({
+    target,
+    state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+    session: yield* SubscriptionRef.make(Option.none<RpcSession>()),
+    prepared: yield* SubscriptionRef.make(
+      Option.some<PreparedConnection>({
+        environmentId: savedConnection.environmentId,
+        label: savedConnection.environmentLabel,
+        httpBaseUrl: savedConnection.httpBaseUrl,
+        socketUrl: savedConnection.wsBaseUrl,
+        httpAuthorization: { _tag: "Bearer", token: "local-bearer" },
+        target,
+      }),
+    ),
+    connect: Effect.void,
+    disconnect: Effect.void,
+    retryNow: Effect.void,
+  });
+});
+
+const linkPreparedEnvironment = (liveActivitiesEnabled: boolean) =>
+  Effect.flatMap(linkedSupervisor, (supervisor) =>
+    withCloudServices(
+      linkEnvironmentToCloudWithPreference({
+        clerkToken: "clerk-token",
+        liveActivitiesEnabled,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor)),
+    ),
+  );
+
 function validLinkProof() {
   return "signed-environment-link-jwt";
 }
@@ -199,13 +236,7 @@ describe("mobile cloud link environment client", () => {
         });
         vi.stubGlobal("fetch", fetchMock);
 
-        const error = yield* withCloudServices(
-          linkEnvironmentToCloudWithPreference({
-            clerkToken: "clerk-token",
-            connection: savedConnection,
-            liveActivitiesEnabled: true,
-          }),
-        ).pipe(Effect.flip);
+        const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
         expect(error).toMatchObject({
           _tag: "CloudEnvironmentLinkError",
           message: "Relay returned credentials for a different environment.",
@@ -235,13 +266,7 @@ describe("mobile cloud link environment client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      const error = yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: true,
-        }),
-      ).pipe(Effect.flip);
+      const error = yield* linkPreparedEnvironment(true).pipe(Effect.flip);
       expect(error).toMatchObject({
         _tag: "CloudEnvironmentLinkError",
         message: "Relay returned credentials for a different endpoint provider.",
@@ -272,13 +297,7 @@ describe("mobile cloud link environment client", () => {
       });
       vi.stubGlobal("fetch", fetchMock);
 
-      yield* withCloudServices(
-        linkEnvironmentToCloudWithPreference({
-          clerkToken: "clerk-token",
-          connection: savedConnection,
-          liveActivitiesEnabled: false,
-        }),
-      );
+      yield* linkPreparedEnvironment(false);
 
       expect(bodies[1]).toMatchObject({
         endpoint: {

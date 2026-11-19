@@ -26,7 +26,7 @@ function firstForwardedHeaderValue(value: string | undefined): string | undefine
   return first && first.length > 0 ? first : undefined;
 }
 
-export function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest): string | null {
+function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest): string | null {
   try {
     return new URL(request.originalUrl).href;
   } catch {
@@ -39,9 +39,7 @@ export function requestAbsoluteUrl(request: HttpServerRequest.HttpServerRequest)
   }
 }
 
-export function hasForwardedAuthorityHeaders(
-  request: HttpServerRequest.HttpServerRequest,
-): boolean {
+function hasForwardedAuthorityHeaders(request: HttpServerRequest.HttpServerRequest): boolean {
   return (
     firstForwardedHeaderValue(request.headers["x-forwarded-host"]) !== undefined ||
     firstForwardedHeaderValue(request.headers["x-forwarded-proto"]) !== undefined
@@ -95,21 +93,8 @@ export function canLinkHere(
   );
 }
 
-export function isAllowedEndpointOrigin(input: {
-  readonly origin: RelayManagedEndpointOrigin;
-  readonly requestUrl: string;
-  readonly allowNonLoopbackRequestHost?: boolean;
-}): boolean {
-  if (!isLoopbackHostname(input.origin.localHttpHost)) {
-    return false;
-  }
-
-  const url = new URL(input.requestUrl);
-  if (!input.allowNonLoopbackRequestHost && !isLoopbackHostname(url.hostname)) {
-    return false;
-  }
-
-  return input.origin.localHttpPort === endpointRequestPort(url);
+export function isLoopbackEndpointOrigin(origin: RelayManagedEndpointOrigin): boolean {
+  return isLoopbackHostname(origin.localHttpHost);
 }
 
 export function isSupportedLinkProviderKind(request: RelayLinkProofRequest): boolean {

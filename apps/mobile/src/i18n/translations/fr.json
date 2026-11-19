@@ -1853,7 +1853,6 @@
   "c15d8570b0ac8ae5": "L’environnement a renvoyé HTTP {status}.",
   "b87f2217123b4cbf": "Impossible de mettre à jour la préférence d’activités en direct de l’environnement.",
   "2f18d65ea9f178da": "Impossible de mettre à jour la préférence d’activités en direct de l’environnement : {detail}",
-  "024b0e4154ca9170": "Seule une connexion bearer appairée localement peut être associée au cloud.",
   "52c4bcf188d1af36": "Impossible de charger l’ID de l’appareil mobile.",
   "473457b89661c874": "Impossible de charger l’ID de l’appareil mobile : {detail}",
   "01da8c5b0a52e84a": "Impossible d’obtenir la preuve d’association de l’environnement.",

@@ -119,8 +119,7 @@ export const layer = HttpApiBuilder.group(
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
           yield* requireEnvironmentScope(AuthRelayConfigureScope);
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
+          const proof = yield* toHttpError(cloudLink.linkProof(payload));
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),

@@ -1853,7 +1853,6 @@
   "c15d8570b0ac8ae5": "Die Umgebung meldete HTTP {status}.",
   "b87f2217123b4cbf": "Die Live-Aktivitätseinstellung der Umgebung konnte nicht geändert werden.",
   "2f18d65ea9f178da": "Die Live-Aktivitätseinstellung der Umgebung konnte nicht geändert werden: {detail}",
-  "024b0e4154ca9170": "Nur eine lokal gekoppelte Bearer-Verbindung kann mit der Cloud verknüpft werden.",
   "52c4bcf188d1af36": "Die ID des Mobilgeräts konnte nicht geladen werden.",
   "473457b89661c874": "Die ID des Mobilgeräts konnte nicht geladen werden: {detail}",
   "01da8c5b0a52e84a": "Der Nachweis für die Umgebungsverknüpfung konnte nicht abgerufen werden.",

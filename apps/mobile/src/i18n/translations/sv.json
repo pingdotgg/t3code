@@ -1853,7 +1853,6 @@
   "c15d8570b0ac8ae5": "Miljön returnerade HTTP {status}.",
   "b87f2217123b4cbf": "Det gick inte att uppdatera miljöns inställning för liveaktiviteter.",
   "2f18d65ea9f178da": "Det gick inte att uppdatera miljöns inställning för liveaktiviteter: {detail}",
-  "024b0e4154ca9170": "Bara en lokalt parkopplad bearer-anslutning kan länkas till molnet.",
   "52c4bcf188d1af36": "Kunde inte läsa in den mobila enhetens id.",
   "473457b89661c874": "Kunde inte läsa in den mobila enhetens id: {detail}",
   "01da8c5b0a52e84a": "Kunde inte hämta bevis för miljölänken.",
