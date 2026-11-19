@@ -134,13 +134,28 @@ export function pickProjectLinkMatch(
   }>,
   canonicalPathsFor?: (paths: ReadonlyArray<string>) => CanonicalPaths | Promise<CanonicalPaths>,
 ): string | null | Promise<string | null> {
-  const matches = new Map<string, string>();
-  for (const { root, entries } of searches) {
+  const rankedPaths = searches.flatMap(({ root, entries }) => {
     const match = pickWorkspaceLinkMatch(relativePath, root, entries);
-    if (match === null) continue;
-    const path = resolveWorkspaceFilePath(match, root);
+    return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
+  });
+  if (rankedPaths.length <= 1) return rankedPaths[0] ?? null;
+
+  const matches = new Map<string, string>();
+  const addMatch = (path: string) => {
     const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
     if (!matches.has(key)) matches.set(key, path);
+  };
+  rankedPaths.forEach(addMatch);
+  // A root's highest-ranked basename can hide another file before overlapping hits are merged.
+  if (needsWorkspaceBasenameLookup(relativePath)) {
+    const basename = relativePath.trim();
+    for (const { root, entries } of searches) {
+      for (const entry of entries) {
+        if (entry.kind === "file" && basenameOfPath(entry.path) === basename) {
+          addMatch(resolveWorkspaceFilePath(entry.path, root));
+        }
+      }
+    }
   }
   const paths = [...matches.values()];
   const [first] = paths;

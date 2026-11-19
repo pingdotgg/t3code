@@ -142,6 +142,24 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
+  it("opens nothing when overlapping projects also list a second exact basename match", () => {
+    expect(
+      pickProjectLinkMatch("handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: "docs/handoff.txt", kind: "file" },
+            { path: "archive/handoff.txt", kind: "file" },
+          ],
+        },
+        {
+          root: "/home/user/reports/docs",
+          entries: [{ path: "handoff.txt", kind: "file" }],
+        },
+      ]),
+    ).toBeNull();
+  });
+
   it("keeps Windows case twins ambiguous unless the server confirms the same target", async () => {
     const searches = [
       { root: "C:\\Reports", entries: [{ path: "Docs/handoff.txt", kind: "file" as const }] },
