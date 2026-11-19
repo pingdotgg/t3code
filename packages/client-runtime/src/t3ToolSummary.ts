@@ -1721,6 +1721,72 @@ export function summarizeT3ToolCalls(
               );
       break;
     }
+    case "ci-logs": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg(
+              "{count, plural, one {Read CI logs {count} time} other {Read CI logs {count} times}}",
+              { count },
+            ),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read CI logs {count} time} other {Tried to read CI logs {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
+    case "ci-rerun": {
+      // A host can refuse a check it cannot re-run, such as one outside its CI.
+      const outcomes = selected.flatMap((call) =>
+        Array.isArray(call.output?.checks)
+          ? call.output.checks.map((check) => asRecord(check)?.rerun === true)
+          : [],
+      );
+      const rerun = outcomes.filter(Boolean).length;
+      const refused = outcomes.length - rerun;
+      failedCount += refused;
+      if (!done) {
+        label = resolve(
+          msg(
+            "{count, plural, one {Tried to re-run CI {count} time} other {Tried to re-run CI {count} times}}",
+            { count: selected.length },
+          ),
+        );
+      } else if (outcomes.length === 0) {
+        // An empty list means no check had failed, so nothing was asked of the host.
+        label = selected.some((call) => Array.isArray(call.output?.checks))
+          ? resolve(msg("Found no failed checks to re-run"))
+          : resolve(
+              msg("{count, plural, one {Re-ran CI {count} time} other {Re-ran CI {count} times}}", {
+                count: selected.length,
+              }),
+            );
+      } else if (rerun === 0) {
+        label = resolve(
+          msg(
+            "{count, plural, one {Could not re-run {count} check} other {Could not re-run {count} checks}}",
+            { count: refused },
+          ),
+        );
+      } else if (refused === 0) {
+        label = resolve(
+          msg("{count, plural, one {Re-ran {count} check} other {Re-ran {count} checks}}", {
+            count: rerun,
+          }),
+        );
+      } else {
+        label = resolve(
+          msg(
+            "{rerun, plural, one {Re-ran {rerun} check, {refused} refused} other {Re-ran {rerun} checks, {refused} refused}}",
+            { rerun, refused },
+          ),
+        );
+      }
+      break;
+    }
     case "review-pr": {
       const count = selected.length;
       label = done
