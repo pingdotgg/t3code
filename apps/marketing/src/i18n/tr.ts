@@ -1,0 +1,106 @@
+import type { Messages } from "./en";
+
+export const tr: Messages = {
+  layout: {
+    defaultTitle: "T3 Code",
+    defaultDescription: "T3 Code. Kodlama ajanları için açık kaynaklı kontrol düzlemi.",
+    socialImageAlt:
+      "T3 Code: Claude Code, Codex, Cursor, OpenCode, Grok ve Antigravity ile kodlama ajanları için açık kaynaklı kontrol düzlemi.",
+    homeLabel: "T3 Code ana sayfası",
+    download: "İndir",
+    starsLabel: "T3 Code'a GitHub'da yıldız ver, {stars} yıldız",
+    githubStars: "{stars} GitHub yıldızı",
+    language: "Dil",
+    mitLicensed: "MIT lisanslı",
+    iosApp: "iOS uygulaması",
+    androidApp: "Android uygulaması",
+    terms: "Koşullar",
+    privacy: "Gizlilik",
+    security: "Güvenlik",
+  },
+  home: {
+    title: "T3 Code | Kodlama ajanları için açık kaynaklı kontrol düzlemi",
+    description: "T3 Code. Kodlama ajanları için açık kaynaklı kontrol düzlemi.",
+    heroTitle: ["Kodlama ajanları için", "açık kaynaklı", "kontrol düzlemi."],
+    heroSub:
+      "Claude Code, Codex, Antigravity, OpenCode, Cursor ve Grok'u tek bir yüzeyden yönetin. Kendi aboneliğinizi getirin. Her şeyi çatallayın.",
+    downloadForMac: "macOS için indir",
+    downloadForWindows: "Windows için indir",
+    downloadForLinux: "Linux için indir",
+    downloadForIos: "iOS için indir",
+    downloadForAndroid: "Android için indir",
+    sourceLink: "Kodumuzu (yasal olarak) alın",
+    alsoOnPhone: "Telefonunuzda da:",
+    screenshotAlt:
+      "Tek bir iş parçacığında Claude, Codex, Muse ve Gemini alt ajanlarını çalıştıran T3 Code",
+    endorsementsTitle: "{users} üzeri geliştiricinin tahammül ettiği araç",
+    endorsementsSub: "Bazıları bunun hakkında tweet bile attı.",
+    endorsementsLabel: "Geliştirici yorumları",
+    readPost: "{handle} kullanıcısının X gönderisini oku",
+    harnessTitle: "Kendi aboneliğini getir",
+    harnessBody:
+      "T3 Code token satmaz. Claude Code, Codex, Antigravity, OpenCode, Cursor veya Grok'u mevcut kimlik bilgilerinizle bağlayın. Biz onları yönetelim, planınız sizde kalsın.",
+    googleSignIn: "Google ile giriş",
+    harnessPoints: [
+      "Anahtar satışı yok. Kota sınırı yok.",
+      "İş parçacığı ortasında model değiştirin.",
+      "Her hafta yeni entegrasyonlar.",
+    ],
+    gitVisualLabel:
+      "T3 Code Git iş akışı görseli: farkı inceleyin, değişiklikleri commit edip gönderin ve pull request açın.",
+    prReady: "Hazır",
+    prCommits: "3 commit",
+    viewDiff: "Farkı görüntüle",
+    openPullRequest: "Pull request aç",
+    commitPush: "Commit & push",
+    gitTitle: "Commit, push ve PR için tek düğme.",
+    gitBody:
+      "Her ajan iş parçacığı kendi dalına yazar. Hazır olduğunda tek bir düğme, otomatik oluşturulan başlık, açıklama ve değişiklik günlüğüyle GitHub'da PR açar. Terminal dansına gerek yok.",
+    gitPoints: [
+      "Otomatik oluşturulan PR başlıkları ve açıklamaları",
+      "Push öncesi satır içi fark incelemesi",
+      "Taslak PR'lar, yığın PR'lar, PR düzeltmeleri",
+      "Mevcut GitHub kimlik doğrulamanızla çalışır",
+    ],
+    openTitle: "Bir şeyi beğenmezseniz çatallayın.",
+    openPoints: [
+      { lead: "Arayüzü değiştirin.", rest: "Her yüzeyi kendi zevkinize göre yeniden tasarlayın." },
+      {
+        lead: "Ajan ekleyin.",
+        rest: "Kendi araçlarınızı, modellerinizi ve akışlarınızı bağlayın.",
+      },
+      {
+        lead: "Kendi derlemenizi yayınlayın.",
+        rest: "Kendi sunucunuzda barındırın veya kendinizinmiş gibi dağıtın.",
+      },
+    ],
+    stars: "{stars} yıldız",
+    forkOnGithub: "GitHub'da çatalla",
+    browseSource: "Kaynak koda göz at",
+    ctaTitle: "Ajanlarınız bir terminalden daha iyisini hak ediyor.",
+    ctaSub:
+      "T3 Code ücretsiz, açık kaynaklı ve hızlıdır. Kurun, zaten ödeme yaptığınız aracı bağlayın ve ajanlarınızın işe koyulmasını izleyin.",
+    otherPlatforms: "Diğer platformlar",
+  },
+  download: {
+    title: "macOS, Windows ve Linux için T3 Code İndir | T3 Code",
+    description:
+      "macOS, Windows veya Linux için resmi T3 Code masaüstü uygulamasını indirin ya da iOS ve Android uygulamalarını edinin. t3.codes tek resmi indirme sitesidir.",
+    breadcrumb: "İndir",
+    heading: "T3 Code İndir",
+    channelLabel: "Sürüm kanalı",
+    stable: "Kararlı",
+    nightly: "Gecelik",
+    intelNote: "Intel Mac mi kullanıyorsunuz? {link}.",
+    intelLink: "x64 derlemesini indirin",
+    armNote: "ARM mı kullanıyorsunuz? arm64 {deb} veya {appimage} indirin.",
+    mobile: "Mobil",
+    iphoneIpad: "iPhone ve iPad",
+    terminal: "Terminal",
+    tryOnce: "Veya kurmadan bir kez deneyin:",
+    allBuilds: "Tüm derlemeler {link} üzerinde",
+    releasesPage: "GitHub sürümler sayfası",
+    builtAgo: "{age} önce derlendi",
+    releasesFallback: "Sürümler",
+  },
+};

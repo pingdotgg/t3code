@@ -1,6 +1,6 @@
 {
   "defaultLocale": "en",
-  "locales": ["de", "es", "fr", "ja", "ko", "pt-BR", "ru", "sv", "zh"],
+  "locales": ["de", "es", "fr", "ja", "ko", "pt-BR", "ru", "sv", "tr", "zh"],
   "src": ["src/**/*.ts", "!**/*.test.ts"],
   "files": {
     "gt": {
