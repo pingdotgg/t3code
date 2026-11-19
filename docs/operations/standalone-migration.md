@@ -90,21 +90,25 @@ newer server starts, so a version rollback must use a backup made before that st
    ```dotenv
    T3CODE_TELEMETRY_ENABLED=false
    T3CODE_OTEL_SDK_DISABLED=true
+   T3CODE_MODEL_MANIFEST_URL=off
    ```
 
    Set these in the process environment or the fork's `service.env` before it starts. The server
    otherwise defaults product telemetry to `https://ingest.t3.codes`; see
    [telemetry](../user/telemetry.md) and [service environment](../user/background-service.md#configure-the-service-environment).
-   Turn off provider update checks in the server settings until the model manifest is served by
-   the fork: the current check fetches `model-manifest.json` from `pingdotgg/t3code` on GitHub.
+   On fork revisions that support `T3CODE_MODEL_MANIFEST_URL`, `off` uses the bundled model
+   catalog without a background fetch. An HTTPS URL can instead point to a catalog you operate.
+   Older revisions fetch `model-manifest.json` from `pingdotgg/t3code` on GitHub before the
+   provider update checks can be turned off in Settings; do not use them for a strict no-T3 build.
 
-   For a foreground staging server built from this source tree, use an absolute path to a copied,
-   isolated home:
+   For a foreground staging server built from a revision supporting that setting, use an absolute
+   path to a copied, isolated home:
 
    ```sh
    T3CODE_HOME=/absolute/path/to/staging-home \
      T3CODE_TELEMETRY_ENABLED=false \
      T3CODE_OTEL_SDK_DISABLED=true \
+     T3CODE_MODEL_MANIFEST_URL=off \
      node apps/server/dist/bin.mjs serve --lan
    ```
 
@@ -131,10 +135,11 @@ distribution destinations, and release ownership; a fork checkout alone does not
 
 ## Remaining network dependencies to close in the fork
 
-These are implementation tasks, not settings that the current checkout has verified end to end:
+These paths need configuration, implementation, or an egress test before declaring independence:
 
-- **Model manifest:** make the refresh URL configurable or bundle-only. Disabling provider update
-  checks prevents the regular fetch but also stops new compatibility information.
+- **Model manifest:** use `T3CODE_MODEL_MANIFEST_URL=off` on a revision that supports it, or point
+  it at an HTTPS catalog you operate. With `off`, the bundled catalog and any newer disk cache
+  remain available, but new compatibility information is not fetched.
 - **Updates and installers:** make the CLI release index, desktop feed, npm launcher, installer
   scripts, and SSH runtime downloads use the fork's release source. Until then, keep automatic
   updates off and use controlled builds.
