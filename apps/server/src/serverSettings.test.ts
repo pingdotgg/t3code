@@ -3471,10 +3471,10 @@ it.effect("reloads edits made while a repointed settings watch is registering", 
       const replacement = `${config.settingsPath}.replacement`;
       yield* fs.symlink(target, replacement);
       yield* fs.rename(replacement, config.settingsPath);
-      yield* Deferred.succeed(repointed, { _tag: "Update", path: config.settingsPath }).pipe(
-        Effect.delay(1),
-        Effect.forkScoped({ startImmediately: true }),
-      );
+      yield* Deferred.succeed<FileSystem.WatchEvent, never>(repointed, {
+        _tag: "Update",
+        path: config.settingsPath,
+      }).pipe(Effect.delay(1), Effect.forkScoped({ startImmediately: true }));
       yield* TestClock.adjust("1 second");
       const beforeEdit = yield* service.withSettingsSnapshot(Effect.succeed);
       assert.equal(beforeEdit.responseStreamingMode, "paragraph");
