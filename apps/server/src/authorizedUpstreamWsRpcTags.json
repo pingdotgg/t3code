@@ -78,6 +78,7 @@
   "issues.update",
   "issues.setState",
   "issues.react",
+  "issues.linkedThreads",
   "issueTrackers.list",
   "issueTrackers.connect",
   "issueTrackers.bindProject",

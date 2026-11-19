@@ -120,9 +120,7 @@ describe("right panel new-tab shortcut", () => {
         platform === "MacIntel" ? { metaKey: true } : { ctrlKey: true },
       );
       expect(event.defaultPrevented).toBe(true);
-      expect(document.querySelector('[role="menu"]')?.textContent).toContain(
-        "Linked pull requests",
-      );
+      expect(document.querySelector('[role="menu"]')?.textContent).toContain("Linked items");
       expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
       expect(
         (
