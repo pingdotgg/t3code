@@ -51,14 +51,9 @@ export function asLaunchingThread<T extends EnvironmentThreadShell>(thread: T): 
 
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
-  | "id"
-  | "environmentId"
-  | "createdAt"
-  | "updatedAt"
-  | "latestUserMessageAt"
-  | "unsettledAt"
-  | "latestRun"
->;
+  "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
+> &
+  Partial<Pick<EnvironmentThreadShell, "updatedAt" | "latestUserMessageAt">>;
 
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
