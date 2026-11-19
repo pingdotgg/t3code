@@ -88,8 +88,8 @@ test(
       return null;
     });
 
+    await screen.getByText("Server settings write-file failed at settings.json.").waitFor();
     await app.screenshot("action-draft-after-import-fails");
-    // Keep the original repro callback intact for the test-commit check.
     // oxfmt-ignore
     const name = await browser.evaluate(
       () => {

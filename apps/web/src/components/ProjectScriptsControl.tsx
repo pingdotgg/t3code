@@ -47,6 +47,7 @@ import {
   MenuSubTrigger,
   MenuSubPopup,
 } from "./ui/menu";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
 import {
@@ -152,18 +153,24 @@ export default function ProjectScriptsControl({
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
     const result = await onAddScript(payload);
-    if (
-      requestId === editorRequestIdRef.current &&
-      result._tag === "Failure" &&
-      !isAtomCommandInterrupted(result)
-    ) {
-      const error = squashAtomCommandFailure(result);
-      setEditorRequest({
-        scriptId: null,
-        initial: payload,
-        error: thrownErrorMessage(error, m) ?? gt("Failed to import action."),
-      });
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+
+    const message = thrownErrorMessage(squashAtomCommandFailure(result), m);
+    if (requestId !== editorRequestIdRef.current) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: gt("Failed to import action."),
+          ...(message ? { description: message } : {}),
+        }),
+      );
+      return;
     }
+    setEditorRequest({
+      scriptId: null,
+      initial: payload,
+      error: message ?? gt("Failed to import action."),
+    });
   };
 
   const importMenuItems = importableScripts.length > 0 && (
