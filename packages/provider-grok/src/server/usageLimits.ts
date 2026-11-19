@@ -29,6 +29,7 @@ export const GrokUsageResponse = Schema.Struct({
   config: Schema.optional(
     Schema.Struct({
       creditUsagePercent: Schema.optional(Schema.Number),
+      isUnifiedBillingUser: Schema.optional(Schema.Boolean),
       currentPeriod: Schema.optional(
         Schema.Struct({
           type: Schema.optional(Schema.String),
@@ -73,8 +74,14 @@ export function grokUsageResponseToLimits(
   const end = parsePeriodBoundary(period?.end);
   const windowDurationMins = Math.round((end - start) / 60_000);
   let usedPercent = response.config?.creditUsagePercent;
-  if (usedPercent === undefined && (kind === "weekly" || kind === "monthly") && start < end) {
-    // Grok omits a zero percentage while retaining the complete subscription period.
+  // Grok omits a zero percentage while retaining the complete subscription period. Unified
+  // billing omits it at any usage, so there a missing percentage is unknown, not zero.
+  if (
+    usedPercent === undefined &&
+    !response.config?.isUnifiedBillingUser &&
+    (kind === "weekly" || kind === "monthly") &&
+    start < end
+  ) {
     usedPercent = 0;
   }
   if (usedPercent === undefined || !Number.isFinite(usedPercent)) {
