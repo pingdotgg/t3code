@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   players: [] as ReturnType<typeof createPlayer>[],
   refresh: vi.fn<() => Promise<string | null>>(),
   replace: vi.fn<() => Promise<void>>(),
-  thumbnail: vi.fn<(key: string, source: unknown, signal: AbortSignal) => Promise<null>>(),
+  thumbnail: vi.fn<(key: string, source: unknown, signal: AbortSignal) => Promise<string | null>>(),
+  posters: new Map<string, string>(),
 }));
 vi.mock("@react-navigation/native", () => ({ useIsFocused: () => mocks.focused }));
 vi.mock("react-native", () => ({
@@ -81,7 +82,17 @@ vi.mock("expo-audio", () => ({
   setAudioModeAsync: vi.fn().mockResolvedValue(undefined),
   setIsAudioActiveAsync: vi.fn().mockResolvedValue(undefined),
 }));
-vi.mock("expo-image", () => ({ Image: () => null }));
+vi.mock("expo-image", () => ({
+  Image: ({ source, onLayout }: { source: string | null; onLayout: () => void }) => (
+    <img
+      src={source ?? undefined}
+      alt=""
+      ref={(node) => {
+        if (node) onLayout();
+      }}
+    />
+  ),
+}));
 vi.mock("../components/ui/AppActivityIndicator", () => ({ AppActivityIndicator: () => null }));
 vi.mock("../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../components/ui/AppText", () => ({
@@ -102,7 +113,7 @@ vi.mock("../state/assets", () => ({
 }));
 vi.mock("./localAttachmentPreview", () => ({ loadLocalAttachmentPreview: vi.fn() }));
 vi.mock("./videoThumbnails", () => ({
-  cachedVideoThumbnail: () => null,
+  cachedVideoThumbnail: (key: string) => mocks.posters.get(key) ?? null,
   loadVideoThumbnail: mocks.thumbnail,
 }));
 vi.mock("../components/ui/FilePreviewGallery", () => ({
@@ -162,6 +173,7 @@ function setup(kind: "thread" | "workspace-embed" | "PR" | "files", compact = fa
   mocks.refresh.mockReset().mockResolvedValue("https://media.example/clip.mp4");
   mocks.replace.mockReset().mockResolvedValue();
   mocks.thumbnail.mockReset().mockResolvedValue(null);
+  mocks.posters.clear();
   const container = document.createElement("div");
   const root = createRoot(container);
   // Configured like the app's registry: the React default keeps unmounted atoms for 400ms,
@@ -169,6 +181,9 @@ function setup(kind: "thread" | "workspace-embed" | "PR" | "files", compact = fa
   const registry = AtomRegistry.make();
   const environmentId = EnvironmentId.make("test");
   return {
+    poster() {
+      return container.querySelector("img")?.getAttribute("src") ?? null;
+    },
     render(visible = true) {
       if (kind === "files") mocks.focused = visible;
       act(() =>
@@ -247,6 +262,35 @@ function setup(kind: "thread" | "workspace-embed" | "PR" | "files", compact = fa
     },
   };
 }
+
+it("keeps a workspace video poster visible while signing reloads or reconnects", async () => {
+  using screen = setup("workspace-embed");
+  mocks.asset = {
+    _tag: "Success",
+    url: "https://media.example/clip.mp4",
+    expiresAt: Number.MAX_SAFE_INTEGER,
+    fileRevision: "original",
+  };
+  mocks.thumbnail.mockImplementation(async (key) => {
+    const poster = "file:///poster.jpg";
+    mocks.posters.set(key, poster);
+    return poster;
+  });
+  await act(async () => screen.render());
+  expect(screen.poster()).toBe("file:///poster.jpg");
+
+  mocks.asset = { _tag: "Loading" };
+  screen.render();
+  expect(screen.poster()).toBe("file:///poster.jpg");
+
+  mocks.asset = { _tag: "Failure", reason: "disconnected" };
+  screen.render();
+  expect(screen.poster()).toBe("file:///poster.jpg");
+
+  mocks.asset = { _tag: "Failure", reason: "missing-file-access" };
+  screen.render();
+  expect(screen.poster()).toBeNull();
+});
 
 it("keeps an open workspace video playing when signing disconnects and recovers", async () => {
   using screen = setup("workspace-embed");

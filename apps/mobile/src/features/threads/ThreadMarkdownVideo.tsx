@@ -1,5 +1,5 @@
 import { useGT } from "gt-react-native";
-import { createContext, useContext, useId } from "react";
+import { createContext, useContext, useId, useState } from "react";
 import { MediaVideoPlayer } from "../../components/MediaVideoPlayer";
 import { workspaceMediaAssetRevision } from "../../state/asset-url-state";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
@@ -38,11 +38,25 @@ export function ThreadMarkdownVideo(props: {
     workspaceMediaAssetRevision(resource, workspaceMutationId, visitId ?? mountId),
   );
   const playbackKey = props.thumbnailKey ?? mediaVideoThumbnailKey(source);
-  const thumbnailKey =
-    props.thumbnailKey ??
-    (asset._tag === "Success" && asset.fileRevision !== undefined
-      ? mediaVideoThumbnailKey(source, asset.fileRevision)
-      : playbackKey);
+  const disconnected = asset._tag === "Failure" && asset.reason === "disconnected";
+  const [lastPoster, setLastPoster] = useState<{
+    playbackKey: string;
+    thumbnailKey: string;
+  } | null>(null);
+  const posterKey =
+    props.thumbnailKey !== undefined
+      ? null
+      : asset._tag === "Success" && asset.fileRevision !== undefined
+        ? mediaVideoThumbnailKey(source, asset.fileRevision)
+        : (asset._tag === "Loading" || disconnected) && lastPoster?.playbackKey === playbackKey
+          ? lastPoster.thumbnailKey
+          : null;
+  if (
+    posterKey !== (lastPoster?.thumbnailKey ?? null) ||
+    (lastPoster && lastPoster.playbackKey !== playbackKey)
+  ) {
+    setLastPoster(posterKey === null ? null : { playbackKey, thumbnailKey: posterKey });
+  }
   const refreshAssetUrl = useRefreshAssetUrl(environmentId, resource);
   const uri = mediaVideoPreviewUri(source, asset._tag === "Success" ? asset.url : null);
   return (
@@ -55,8 +69,9 @@ export function ThreadMarkdownVideo(props: {
           : undefined
       }
       name={source.name}
-      thumbnailKey={thumbnailKey}
+      thumbnailKey={posterKey ?? playbackKey}
       thumbnailVisible={visible}
+      showPosterWhenUnavailable={disconnected && posterKey !== null}
       visible={visible}
       onPlaybackStart={props.onPlaybackStart}
       unavailable={"resource" in source && asset._tag === "Failure"}

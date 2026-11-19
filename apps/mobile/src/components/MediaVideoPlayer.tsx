@@ -144,6 +144,7 @@ interface MediaVideoPlayerProps {
   /** Set when the poster can change without changing the playback source's identity. */
   readonly playbackKey?: string;
   readonly thumbnailVisible?: boolean;
+  readonly showPosterWhenUnavailable?: boolean;
   readonly visible?: boolean;
   readonly unavailable?: boolean;
   readonly unavailableDetail?: string | undefined;
@@ -232,10 +233,10 @@ function MediaVideoPlayerContent(props: MediaVideoPlayerProps) {
             }}
             className="flex-1 items-center justify-center px-4"
           >
-            {!props.unavailable ? (
+            {!props.unavailable || props.showPosterWhenUnavailable ? (
               <VideoThumbnailImage
                 cacheKey={props.thumbnailKey}
-                source={props.thumbnailVisible === false ? null : props.uri}
+                source={props.unavailable || props.thumbnailVisible === false ? null : props.uri}
                 contentFit="contain"
               />
             ) : null}
