@@ -12569,6 +12569,7 @@
   "1c635faa2fb45b8b": "Har inte körts än.",
   "156ff7b625287a1e": "Dölj överhoppade",
   "69b985b97ab45e6b": "Visa överhoppade ({count})",
+  "d57c35d43b0f163a": "Den här körningen finns inte här",
   "2400254d362de84d": "Läser in arbetsflödeskörningar…",
   "783e616cb0476c17": [
     "Ett arbetsflöde knyter ihop agenter, kod, scheman och frågor till dig i en enda körning som överlever omstarter. Skriv ett under",
@@ -12597,6 +12598,15 @@
   ],
   "ed8ce6ebc73dc12d": "Öppna filen",
   "5d8d278ff828102d": "Alla arbetsflöden",
+  "145e1f7503ba3b2c": [
+    "Den här miljön har ingen körning med den länken.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Tillbaka till körningarna"
+    }
+  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Öppna som en hel tråd",
   "7783d914a4670f44": "Stäng transkriptet",
@@ -12604,6 +12614,8 @@
   "ed169d23683fb6ac": "Läser in tråden…",
   "290e0ab40b87dc17": "Brödsmulor för arbetsflöden",
   "683dd9831e54edc0": "Miljö",
+  "c89624a2e9af1793": "{name} är inte ansluten",
+  "b5a352a43adb4c17": "Dess arbetsflöden visas igen när den ansluter igen. Välj en annan miljö för att se dess körningar.",
   "8f6589c9e0ac5d4e": "Ingen miljö ansluten",
   "744127f8dfad7d22": "Anslut en miljö för att se dess arbetsflödeskörningar.",
   "87df46e106c4a277": "Agentens transkript",

@@ -12561,6 +12561,7 @@
   "1c635faa2fb45b8b": "Pas encore exécuté.",
   "156ff7b625287a1e": "Masquer les éléments ignorés",
   "69b985b97ab45e6b": "Afficher {count} ignorés",
+  "d57c35d43b0f163a": "Cette exécution n’est pas ici",
   "2400254d362de84d": "Chargement des exécutions de workflow…",
   "783e616cb0476c17": [
     "Un workflow réunit agents, code, planifications et questions qui vous sont posées en une seule exécution qui survit aux redémarrages. Écrivez-en un dans",
@@ -12589,6 +12590,15 @@
   ],
   "ed8ce6ebc73dc12d": "Ouvrir le fichier",
   "5d8d278ff828102d": "Tous les workflows",
+  "145e1f7503ba3b2c": [
+    "Cet environnement n’a aucune exécution avec ce lien.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Retour aux exécutions"
+    }
+  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Ouvrir comme fil complet",
   "7783d914a4670f44": "Fermer la transcription",
@@ -12596,6 +12606,8 @@
   "ed169d23683fb6ac": "Chargement du fil…",
   "290e0ab40b87dc17": "Fil d’Ariane des workflows",
   "683dd9831e54edc0": "Environnement",
+  "c89624a2e9af1793": "{name} n’est pas connecté",
+  "b5a352a43adb4c17": "Ses workflows réapparaissent quand il se reconnecte. Choisis un autre environnement pour voir ses exécutions.",
   "8f6589c9e0ac5d4e": "Aucun environnement connecté",
   "744127f8dfad7d22": "Connectez un environnement pour voir ses exécutions de workflow.",
   "87df46e106c4a277": "Transcription de l’agent",

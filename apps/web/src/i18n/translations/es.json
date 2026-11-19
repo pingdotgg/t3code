@@ -12556,6 +12556,7 @@
   "1c635faa2fb45b8b": "Aún no se ha ejecutado.",
   "156ff7b625287a1e": "Ocultar omitidos",
   "69b985b97ab45e6b": "Mostrar {count} omitidos",
+  "d57c35d43b0f163a": "Esta ejecución no está aquí",
   "2400254d362de84d": "Cargando ejecuciones de flujos de trabajo…",
   "783e616cb0476c17": [
     "Un flujo de trabajo une agentes, código, programaciones y preguntas para ti en una sola ejecución que sobrevive a los reinicios. Escribe uno en",
@@ -12584,6 +12585,15 @@
   ],
   "ed8ce6ebc73dc12d": "Abrir el archivo",
   "5d8d278ff828102d": "Todos los flujos de trabajo",
+  "145e1f7503ba3b2c": [
+    "Este entorno no tiene ninguna ejecución con ese enlace.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Volver a las ejecuciones"
+    }
+  ],
   "39459da07479f482": "Agente",
   "1e25265f2758fce3": "Abrir como hilo completo",
   "7783d914a4670f44": "Cerrar transcripción",
@@ -12591,6 +12601,8 @@
   "ed169d23683fb6ac": "Cargando el hilo…",
   "290e0ab40b87dc17": "Ruta de navegación de flujos de trabajo",
   "683dd9831e54edc0": "Entorno",
+  "c89624a2e9af1793": "{name} no está conectado",
+  "b5a352a43adb4c17": "Sus flujos de trabajo vuelven a mostrarse cuando se reconecta. Elige otro entorno para ver sus ejecuciones.",
   "8f6589c9e0ac5d4e": "Ningún entorno conectado",
   "744127f8dfad7d22": "Conecta un entorno para ver sus ejecuciones de flujos de trabajo.",
   "87df46e106c4a277": "Transcripción del agente",

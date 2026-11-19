@@ -12571,6 +12571,7 @@
   "1c635faa2fb45b8b": "Has not run yet.",
   "156ff7b625287a1e": "Hide skipped",
   "69b985b97ab45e6b": "Show {count} skipped",
+  "d57c35d43b0f163a": "This run is not here",
   "2400254d362de84d": "Loading workflow runs…",
   "783e616cb0476c17": [
     "A workflow ties agents, code, schedules and questions to you into one run that survives restarts. Write one under",
@@ -12599,6 +12600,15 @@
   ],
   "ed8ce6ebc73dc12d": "Open the file",
   "5d8d278ff828102d": "All workflows",
+  "145e1f7503ba3b2c": [
+    "This environment has no run with that link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Back to the runs"
+    }
+  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Open as a full thread",
   "7783d914a4670f44": "Close transcript",
@@ -12606,6 +12616,8 @@
   "ed169d23683fb6ac": "Loading the thread…",
   "290e0ab40b87dc17": "Workflows breadcrumb",
   "683dd9831e54edc0": "Environment",
+  "c89624a2e9af1793": "{name} is not connected",
+  "b5a352a43adb4c17": "Its workflows show again when it reconnects. Pick another environment to see its runs.",
   "8f6589c9e0ac5d4e": "No environment connected",
   "744127f8dfad7d22": "Connect an environment to see its workflow runs.",
   "87df46e106c4a277": "Agent transcript",

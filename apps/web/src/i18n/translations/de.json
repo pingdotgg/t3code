@@ -12563,6 +12563,7 @@
   "1c635faa2fb45b8b": "Noch nie gelaufen.",
   "156ff7b625287a1e": "Übersprungene ausblenden",
   "69b985b97ab45e6b": "{count} übersprungene anzeigen",
+  "d57c35d43b0f163a": "Diesen Lauf gibt es hier nicht",
   "2400254d362de84d": "Workflow-Ausführungen werden geladen…",
   "783e616cb0476c17": [
     "Ein Workflow verbindet Agenten, Code, Zeitpläne und Fragen an dich zu einer Ausführung, die Neustarts übersteht. Schreib einen unter",
@@ -12591,6 +12592,15 @@
   ],
   "ed8ce6ebc73dc12d": "Datei öffnen",
   "5d8d278ff828102d": "Alle Workflows",
+  "145e1f7503ba3b2c": [
+    "Diese Umgebung hat keinen Lauf mit diesem Link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Zurück zu den Läufen"
+    }
+  ],
   "39459da07479f482": "Agent",
   "1e25265f2758fce3": "Als vollständigen Thread öffnen",
   "7783d914a4670f44": "Transkript schließen",
@@ -12598,6 +12608,8 @@
   "ed169d23683fb6ac": "Thread wird geladen…",
   "290e0ab40b87dc17": "Workflows-Breadcrumb",
   "683dd9831e54edc0": "Umgebung",
+  "c89624a2e9af1793": "{name} ist nicht verbunden",
+  "b5a352a43adb4c17": "Ihre Workflows erscheinen wieder, sobald sie sich neu verbindet. Wähle eine andere Umgebung, um deren Läufe zu sehen.",
   "8f6589c9e0ac5d4e": "Keine Umgebung verbunden",
   "744127f8dfad7d22": "Verbinde eine Umgebung, um ihre Workflow-Ausführungen zu sehen.",
   "87df46e106c4a277": "Agenten-Transkript",

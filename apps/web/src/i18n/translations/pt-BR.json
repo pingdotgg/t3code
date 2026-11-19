@@ -12561,6 +12561,7 @@
   "1c635faa2fb45b8b": "Ainda não foi executado.",
   "156ff7b625287a1e": "Ocultar puladas",
   "69b985b97ab45e6b": "Mostrar puladas ({count})",
+  "d57c35d43b0f163a": "Esta execução não está aqui",
   "2400254d362de84d": "Carregando execuções de workflow…",
   "783e616cb0476c17": [
     "Um workflow reúne agentes, código, agendamentos e perguntas para você em uma única execução que sobrevive a reinicializações. Escreva um em",
@@ -12589,6 +12590,15 @@
   ],
   "ed8ce6ebc73dc12d": "Abrir o arquivo",
   "5d8d278ff828102d": "Todos os workflows",
+  "145e1f7503ba3b2c": [
+    "Este ambiente não tem nenhuma execução com esse link.",
+    " ",
+    {
+      "t": "button",
+      "i": 1,
+      "c": "Voltar às execuções"
+    }
+  ],
   "39459da07479f482": "Agente",
   "1e25265f2758fce3": "Abrir como thread completa",
   "7783d914a4670f44": "Fechar transcrição",
@@ -12596,6 +12606,8 @@
   "ed169d23683fb6ac": "Carregando a thread…",
   "290e0ab40b87dc17": "Trilha de navegação de workflows",
   "683dd9831e54edc0": "Ambiente",
+  "c89624a2e9af1793": "{name} não está conectado",
+  "b5a352a43adb4c17": "Os fluxos de trabalho dele voltam a aparecer quando ele se reconectar. Escolha outro ambiente para ver as execuções dele.",
   "8f6589c9e0ac5d4e": "Nenhum ambiente conectado",
   "744127f8dfad7d22": "Conecte um ambiente para ver as execuções de workflow dele.",
   "87df46e106c4a277": "Transcrição do agente",
