@@ -119,4 +119,19 @@ describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
       }),
     ),
   );
+
+  it.effect("starts once a slow-exiting owner releases the lock after the grace", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        // An old server that takes ~45 s to exit (an update restart whose server outlived its desktop).
+        const lock = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        lock.exec("BEGIN EXCLUSIVE;");
+        const released = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
+        yield* TestClock.adjust("45 seconds");
+        lock.close();
+        yield* TestClock.adjust("1 second");
+        assert.isTrue(yield* Fiber.join(released));
+      }),
+    ),
+  );
 });
