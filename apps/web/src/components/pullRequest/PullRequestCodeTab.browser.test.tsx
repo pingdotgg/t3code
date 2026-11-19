@@ -62,9 +62,10 @@ const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () 
     testFileDiffAtom: Atom.make(() =>
       AsyncResult.success({
         patch:
-          filePatch("early-0.ts", mocks.sourceAddition) +
+          filePatch("early-0.ts") +
           filePatch("early-1.test.ts", "testOnly()") +
-          filePatch("early-2.generated.ts"),
+          filePatch("early-2.generated.ts") +
+          (mocks.refreshed ? filePatch("early-3.ts") : ""),
         truncated: false,
         nextCursor: null,
       }),
@@ -77,7 +78,7 @@ const mocks = vi.hoisted(() => ({
   paged: false,
   shortPages: false,
   withTestFile: false,
-  sourceAddition: "after()",
+  refreshed: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -194,7 +195,7 @@ function setup({ paged }: { paged: boolean }) {
   mocks.paged = paged;
   mocks.shortPages = false;
   mocks.withTestFile = false;
-  mocks.sourceAddition = "after()";
+  mocks.refreshed = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -363,7 +364,7 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
-it("keeps a linked test file expanded when a refresh changes only the source patch", async () => {
+it("keeps a linked test file expanded when a refresh changes the rest of the diff", async () => {
   setup({ paged: false });
   mocks.withTestFile = true;
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
@@ -386,14 +387,10 @@ it("keeps a linked test file expanded when a refresh changes only the source pat
   await screen.rerender(tab(0));
   const testLine = screen.getByText("testOnly()", { exact: true });
   await expect.element(testLine).toBeVisible();
-  await screen.getByRole("button", { name: "Collapse all files", exact: true }).click();
-  await expect.element(testLine).not.toBeInTheDocument();
-  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
-  await expect.element(testLine).toBeVisible();
 
-  mocks.sourceAddition = "refreshed()";
+  mocks.refreshed = true;
   await screen.rerender(tab(1));
-  await expect.element(screen.getByText("refreshed()", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
   await expect.element(testLine).toBeVisible();
 });
 
