@@ -1,3 +1,4 @@
+import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
@@ -13,6 +14,7 @@ import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
+  issuesSupported: false,
   isDraft: false,
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
@@ -39,13 +41,15 @@ vi.mock(import("~/state/entities"), async (importOriginal) => ({
     new Map([
       [
         EnvironmentId.make("environment"),
-        { environment: { capabilities: { pullRequests: true } } },
+        { environment: { capabilities: { pullRequests: true, issues: state.issuesSupported } } },
       ],
     ])) as never,
   useProjects: (() => state.projects) as never,
   useQuietThreadShell: ((ref: unknown) =>
     ref === null ? null : { branch: null, pullRequests: state.pullRequests }) as never,
 }));
+vi.mock(import("~/state/issues"), () => ({ useLinkedIssueDetail: () => null }));
+
 const queryData = () => ({
   projectId: ProjectId.make("project"),
   workspaceRoot: "/workspace",
@@ -125,7 +129,6 @@ import { act, render as renderUi } from "../../../test/render";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useUiStateStore } from "~/uiStateStore";
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
-import { ThreadDetailsIssueRows } from "./ThreadDetailsIssueRows";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
 
 const threadRef: ScopedThreadRef = {
@@ -255,6 +258,7 @@ async function setup() {
   state.addToast.mockReset().mockReturnValue("checkout-toast");
   state.updateToast.mockReset();
 
+  state.issuesSupported = false;
   state.isDraft = false;
   state.status = "success";
   state.extraStatus = null;
@@ -402,18 +406,26 @@ it("names a linked issue row by its kind, number and title, not its URL", async 
             title: "Sidebar flickers on resize",
           },
         ]}
-        onOpenLink={vi.fn()}
+        threadRef={{
+          environmentId: EnvironmentId.make("environment"),
+          threadId: ThreadId.make("thread"),
+        }}
       />,
     );
   });
-  const row = [...screen.container.querySelectorAll("button")].find((button) =>
-    button.textContent?.includes("Sidebar flickers on resize"),
+  const row = [...screen.container.querySelectorAll("a")].find((anchor) =>
+    anchor.textContent?.includes("Sidebar flickers on resize"),
   )!;
   const name = row.getAttribute("aria-label") ?? row.textContent ?? "";
   expect(name).not.toContain("https://");
   expect(name).toMatch(/issue/i);
   expect(name).toContain("#123");
   expect(name).toContain("Sidebar flickers on resize");
+  const externalClick = new MouseEvent("click", { bubbles: true, cancelable: true });
+  await act(async () => {
+    row.dispatchEvent(externalClick);
+  });
+  expect(externalClick.defaultPrevented).toBe(false);
 });
 
 it("keeps Ready pending when refreshed detail becomes mergeable before the action settles", async () => {
