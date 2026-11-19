@@ -182,4 +182,22 @@ describe("terminalUiStateStore actions", () => {
       ).terminalIds,
     ).toEqual(["term-2", "term-1"]);
   });
+
+  it("drops terminals the server stops reporting but keeps ones it has not reported yet", () => {
+    const store = useTerminalUiStateStore.getState();
+    store.setTerminalOpen(THREAD_REF, true);
+    store.newTerminal(THREAD_REF, "term-2");
+    store.newTerminal(THREAD_REF, "term-3");
+    const terminalIds = () =>
+      selectThreadTerminalUiState(
+        useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+        THREAD_REF,
+      ).terminalIds;
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID, "term-2"]);
+    expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-2", "term-3"]);
+
+    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
+    expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-3"]);
+  });
 });
