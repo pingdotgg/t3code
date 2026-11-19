@@ -2304,146 +2304,156 @@ it.effect("recall keeps the most trusted fact when more than the bound match equ
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("recall and default retrieval exclude set-aside facts until explicitly requested", () =>
-  Effect.gen(function* () {
-    const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
-    const sql = yield* SqlClient.SqlClient;
-    const projectId = ProjectId.make("recall-set-aside");
-    yield* createProject(projectId);
-    const standing = ProjectFactId.make("standing");
-    const setAside = ProjectFactId.make("set-aside");
-    const unchecked = ProjectFactId.make("unchecked");
-    for (const factId of [standing, setAside, unchecked])
-      yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
-    for (const [factId, verdict] of [
-      [standing, "standing"],
-      [setAside, "task"],
-    ] as const)
-      yield* sql`UPDATE project_knowledge_facts
-        SET verdict = ${verdict}, verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
+it.effect.each(["check", "agent"] as const)(
+  "recall and default retrieval exclude facts set aside by %s until explicitly requested",
+  (verdictBy) =>
+    Effect.gen(function* () {
+      const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("recall-set-aside");
+      yield* createProject(projectId);
+      const standing = ProjectFactId.make("standing");
+      const setAside = ProjectFactId.make("set-aside");
+      const unchecked = ProjectFactId.make("unchecked");
+      for (const factId of [standing, setAside, unchecked])
+        yield* knowledge.mutate(createFact(projectId, factId), { kind: "user" });
+      for (const [factId, verdict] of [
+        [standing, "standing"],
+        [setAside, "task"],
+      ] as const)
+        yield* sql`UPDATE project_knowledge_facts
+        SET verdict = ${verdict}, verdict_by = ${verdictBy}, verdict_at = '2026-11-16T00:00:00.000Z'
         WHERE id = ${factId}`;
-    const recall = (id: string, query: string) =>
-      knowledge.recall({
+      const recall = (id: string, query: string) =>
+        knowledge.recall({
+          projectId,
+          threadId: ThreadId.make(id),
+          requestId: CommandId.make(id),
+          query,
+          composer: { text: query, records: [] },
+          knowledgeAllowance: 48000,
+        });
+      const tenantQuery = "Should tenant IDs be part of the new cache keys?";
+      assert.deepEqual(attachedFactIds(yield* recall("recall-set-aside", tenantQuery)).toSorted(), [
+        standing,
+        unchecked,
+      ]);
+      const searched = yield* knowledge.search({
         projectId,
-        threadId: ThreadId.make(id),
-        requestId: CommandId.make(id),
-        query,
-        composer: { text: query, records: [] },
-        knowledgeAllowance: 48000,
+        query: "tenant cache",
+        requestId: CommandId.make("search-set-aside"),
       });
-    const tenantQuery = "Should tenant IDs be part of the new cache keys?";
-    assert.deepEqual(attachedFactIds(yield* recall("recall-set-aside", tenantQuery)).toSorted(), [
-      standing,
-      unchecked,
-    ]);
-    const searched = yield* knowledge.search({
-      projectId,
-      query: "tenant cache",
-      requestId: CommandId.make("search-set-aside"),
-    });
-    assert.deepEqual(
-      searched.facts.state === "available"
-        ? searched.facts.matches.map((match) => match.fact.id).toSorted()
-        : [],
-      [standing, unchecked],
-    );
-    assert.deepEqual(
-      (yield* knowledge.list({ projectId })).facts.map((fact) => fact.id),
-      [standing, unchecked],
-    );
-    assert.deepEqual(
-      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map((fact) => fact.id),
-      [setAside],
-    );
-    const edit = (commandId: string, content: string, actor: KnowledgeOrigin) =>
-      Effect.gen(function* () {
-        const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
-        yield* knowledge.mutate(
-          {
-            ...createFact(projectId, setAside),
-            action: "edit",
-            commandId: CommandId.make(commandId),
-            expectedRevision: fact.revision,
-            content,
-            // Agents cannot cite the user; an agent's edit may carry no sources.
-            sources: actor.kind === "user" ? [{ kind: "user" }] : [],
-          },
-          actor,
-        );
-        return (yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict?.value;
-      });
-    // An agent rewording a set-aside fact has not decided that it should be recalled.
-    assert.equal(
-      yield* edit("agent-edit-set-aside", "Cache keys include tenant IDs and regions.", {
-        kind: "agent-thread",
-        threadId: ThreadId.make("editing-agent"),
-        providerInstanceId,
-      }),
-      "task",
-    );
-    assert.deepEqual(
-      attachedFactIds(yield* recall("recall-after-agent-edit", "Add regions to cache keys.")),
-      [],
-    );
-    // A person's edit is the owner's way back: the fact is unchecked and recallable again.
-    assert.isUndefined(
-      yield* edit("edit-set-aside", "Cache keys include tenant IDs and region codes.", {
-        kind: "user",
-      }),
-    );
-    assert.deepEqual(
-      attachedFactIds(yield* recall("recall-after-edit", "Add region codes to cache keys.")),
-      [setAside],
-    );
-    // Nor does an agent's replacement of a set-aside fact make it recallable.
-    yield* sql`UPDATE project_knowledge_facts
-      SET verdict = 'task', verdict_by = 'check', verdict_at = '2026-11-16T00:00:00.000Z'
-      WHERE id = ${setAside}`;
-    const replacement = ProjectFactId.make("agent-replacement");
-    yield* knowledge.mutate(
-      {
-        ...createFact(projectId, setAside),
-        action: "supersede",
-        commandId: CommandId.make("agent-supersede-set-aside"),
-        expectedRevision: (yield* knowledge.readFact({ projectId, factId: setAside })).fact
-          .revision,
-        replacementFactId: replacement,
-        content: "Cache keys include tenant IDs, region codes and shard numbers.",
-        sources: [],
-      },
-      { kind: "agent-thread", threadId: ThreadId.make("editing-agent"), providerInstanceId },
-    );
-    assert.equal(
-      (yield* knowledge.readFact({ projectId, factId: replacement })).fact.verdict?.value,
-      "task",
-    );
-    assert.deepEqual(
-      attachedFactIds(yield* recall("recall-after-supersede", "Add shard numbers to cache keys.")),
-      [],
-    );
-  }).pipe(
-    Effect.provide(
-      knowledgeTestLayer(
-        Layer.succeed(HolographicMemory.HolographicMemory, {
-          scoreCandidates: (input) =>
-            Effect.succeed(
-              input.candidates.map((candidate) => ({
-                id: candidate.id,
-                rawCosine: 1,
-                holographic: 1,
-                decay: 1,
-                reinforcement: 0,
-                score: 1,
-                scoreMillionths: 1_000_000,
-                tokenOverlap: 1,
-                fts: 1,
-                coverage: 1,
-              })),
-            ),
+      assert.deepEqual(
+        searched.facts.state === "available"
+          ? searched.facts.matches.map((match) => match.fact.id).toSorted()
+          : [],
+        [standing, unchecked],
+      );
+      assert.deepEqual(
+        (yield* knowledge.list({ projectId })).facts.map((fact) => fact.id),
+        [standing, unchecked],
+      );
+      assert.deepEqual(
+        (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map((fact) => fact.id),
+        [setAside],
+      );
+      const edit = (commandId: string, content: string, actor: KnowledgeOrigin) =>
+        Effect.gen(function* () {
+          const { fact } = yield* knowledge.readFact({ projectId, factId: setAside });
+          yield* knowledge.mutate(
+            {
+              ...createFact(projectId, setAside),
+              action: "edit",
+              commandId: CommandId.make(commandId),
+              expectedRevision: fact.revision,
+              content,
+              // Agents cannot cite the user; an agent's edit may carry no sources.
+              sources: actor.kind === "user" ? [{ kind: "user" }] : [],
+            },
+            actor,
+          );
+          return (yield* knowledge.readFact({ projectId, factId: setAside })).fact.verdict?.value;
+        });
+      // An agent rewording a set-aside fact has not decided that it should be recalled.
+      assert.equal(
+        yield* edit("agent-edit-set-aside", "Cache keys include tenant IDs and regions.", {
+          kind: "agent-thread",
+          threadId: ThreadId.make("editing-agent"),
+          providerInstanceId,
         }),
+        "task",
+      );
+      assert.deepEqual(
+        attachedFactIds(yield* recall("recall-after-agent-edit", "Add regions to cache keys.")),
+        [],
+      );
+      assert.equal(
+        yield* edit("edit-unchanged-set-aside", "Cache keys include tenant IDs and regions.", {
+          kind: "user",
+        }),
+        "task",
+      );
+      // A person's edit is the owner's way back: the fact is unchecked and recallable again.
+      assert.isUndefined(
+        yield* edit("edit-set-aside", "Cache keys include tenant IDs and region codes.", {
+          kind: "user",
+        }),
+      );
+      assert.deepEqual(
+        attachedFactIds(yield* recall("recall-after-edit", "Add region codes to cache keys.")),
+        [setAside],
+      );
+      // Nor does an agent's replacement of a set-aside fact make it recallable.
+      yield* sql`UPDATE project_knowledge_facts
+      SET verdict = 'task', verdict_by = ${verdictBy}, verdict_at = '2026-11-16T00:00:00.000Z'
+      WHERE id = ${setAside}`;
+      const replacement = ProjectFactId.make("agent-replacement");
+      yield* knowledge.mutate(
+        {
+          ...createFact(projectId, setAside),
+          action: "supersede",
+          commandId: CommandId.make("agent-supersede-set-aside"),
+          expectedRevision: (yield* knowledge.readFact({ projectId, factId: setAside })).fact
+            .revision,
+          replacementFactId: replacement,
+          content: "Cache keys include tenant IDs, region codes and shard numbers.",
+          sources: [],
+        },
+        { kind: "agent-thread", threadId: ThreadId.make("editing-agent"), providerInstanceId },
+      );
+      assert.equal(
+        (yield* knowledge.readFact({ projectId, factId: replacement })).fact.verdict?.value,
+        "task",
+      );
+      assert.deepEqual(
+        attachedFactIds(
+          yield* recall("recall-after-supersede", "Add shard numbers to cache keys."),
+        ),
+        [],
+      );
+    }).pipe(
+      Effect.provide(
+        knowledgeTestLayer(
+          Layer.succeed(HolographicMemory.HolographicMemory, {
+            scoreCandidates: (input) =>
+              Effect.succeed(
+                input.candidates.map((candidate) => ({
+                  id: candidate.id,
+                  rawCosine: 1,
+                  holographic: 1,
+                  decay: 1,
+                  reinforcement: 0,
+                  score: 1,
+                  scoreMillionths: 1_000_000,
+                  tokenOverlap: 1,
+                  fts: 1,
+                  coverage: 1,
+                })),
+              ),
+          }),
+        ),
       ),
     ),
-  ),
 );
 
 it.effect("recall does not score with the holographic kernel", () =>
@@ -3567,7 +3577,30 @@ it.effect("automatic corroboration appends validated sources without rewriting c
       runOutcome: "completed" as const,
     };
     const candidate = { ...createFact(projectId, "automatic"), sources: [citation.source] };
-    assert.equal((yield* knowledge.saveAutomatic(candidate, actor, "task")).outcome, "duplicate");
+    assert.equal((yield* knowledge.saveAutomatic(candidate, actor, "task")).outcome, "discarded");
+    for (const verdict of ["task", "code"] as const) {
+      const factId = ProjectFactId.make(`automatic-${verdict}`);
+      assert.equal(
+        (yield* knowledge.saveAutomatic(
+          { ...candidate, factId, content: `The ${verdict} describes the current implementation.` },
+          actor,
+          verdict,
+        )).outcome,
+        "discarded",
+      );
+      assert.equal(
+        (yield* knowledge.readFact({ projectId, factId }).pipe(Effect.flip)).reason,
+        "missing_fact",
+      );
+    }
+    assert.deepEqual(
+      (yield* knowledge.readFact({ projectId, factId: original.id })).fact,
+      original,
+    );
+    assert.equal(
+      (yield* knowledge.saveAutomatic(candidate, actor, "standing")).outcome,
+      "duplicate",
+    );
     const merged = (yield* knowledge.readFact({ projectId, factId: original.id })).fact;
     // A verdict is written once: a duplicate's check does not reclassify the fact it joins.
     assert.isUndefined(merged.verdict);
@@ -4120,18 +4153,33 @@ it.effect(
     }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("curation retires project facts reversibly and preserves the owner's restoration", () =>
+it.effect("curation automatically erases retired memories and their retained copies", () =>
   Effect.gen(function* () {
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
     const projectId = ProjectId.make("curation-lifecycle");
+    const threadId = ThreadId.make("curation-source-thread");
+    const messageId = MessageId.make("curation-source-message");
     yield* createProject(projectId);
+    yield* projections.apply(thread(threadId, projectId));
+    yield* projections.apply(
+      message(
+        threadId,
+        messageId,
+        "user",
+        "For this cache task, wait for tests. Cache keys now include regions, replacing the previous policy.",
+      ),
+    );
+    const source = yield* knowledge.readSource({ projectId, threadId, messageId });
+    if (source.state !== "available") return assert.fail("Source must be available");
     const actor = {
       kind: "agent-client",
       sessionId: "curation-test",
       label: "Test agent",
     } as const;
     const old = yield* knowledge.mutate(
-      { ...createFact(projectId, "curation-old"), sources: [] },
+      { ...createFact(projectId, "curation-old"), sources: [source.source] },
       actor,
     );
     const replacement = yield* knowledge.mutate(
@@ -4145,7 +4193,7 @@ it.effect("curation retires project facts reversibly and preserves the owner's r
     const task = yield* knowledge.mutate(
       {
         ...createFact(projectId, "curation-task"),
-        sources: [],
+        sources: [source.source],
         content: "For this cache task, wait for the current test run before merging.",
       },
       actor,
@@ -4153,9 +4201,41 @@ it.effect("curation retires project facts reversibly and preserves the owner's r
     const person = yield* knowledge.mutate(createFact(projectId, "curation-person"), {
       kind: "user",
     });
+    const records = [old, task, replacement].map((fact) => ({
+      version: 1 as const,
+      kind: "project-knowledge" as const,
+      contextId: ComposerContextId.make(`curation-${fact.id}`),
+      label: fact.id,
+      knowledge: {
+        environmentId,
+        projectId,
+        selections: [{ kind: "fact" as const, factId: fact.id, revision: fact.revision }],
+        maxBytes: 48000,
+      },
+    }));
+    const composer = yield* resolveKnowledgeComposer({
+      projectId,
+      text: records.map(formatComposerContextReference).join(" "),
+      records,
+    });
+    yield* knowledge.recordDelivery({
+      attemptId: RunAttemptId.make("curation-delivery"),
+      runId: RunId.make("curation-run"),
+      threadId,
+      messageId,
+      projectId,
+      providerInstanceId,
+      status: "sent",
+      items: composer.items,
+      omissions: composer.omissions,
+      createdAt: DateTime.formatIso(at(1)),
+      updatedAt: DateTime.formatIso(at(1)),
+    });
     const facts = [old, replacement, task, person].map(({ id, revision }) => ({ id, revision }));
+    yield* sql`UPDATE project_knowledge_fact_history SET reason = ${task.content},
+      reviewed_fact_ids_json = ${JSON.stringify([task.id])} WHERE fact_id = ${person.id}`;
     const result = yield* knowledge.applyCuration({
-      reviewedSources: [],
+      reviewedSources: [source.source],
       projectId,
       facts,
       decisions: [
@@ -4165,7 +4245,7 @@ it.effect("curation retires project facts reversibly and preserves the owner's r
           expectedRevision: old.revision,
           replacementFactId: replacement.id,
           replacementRevision: replacement.revision,
-          reason: `The replacement says: ${replacement.content}`,
+          reason: `The replacement replaces this statement: ${old.content}`,
           confidence: 0.95,
         },
         {
@@ -4173,42 +4253,60 @@ it.effect("curation retires project facts reversibly and preserves the owner's r
           factId: task.id,
           expectedRevision: task.revision,
           verdict: "task",
-          reason: "The instruction applies only to the current cache task.",
+          reason: `The previous fact said ${old.content}; this task said ${task.content}`,
           confidence: 0.95,
         },
       ],
     });
     assert.deepEqual(result, { changed: 2, skipped: 0 });
     const retired = yield* knowledge.readFact({ projectId, factId: old.id });
-    assert.equal(retired.fact.content, old.content);
+    const discarded = yield* knowledge.readFact({ projectId, factId: task.id });
+    for (const detail of [retired, discarded]) {
+      assert.equal(detail.fact.status, "forgotten");
+      assert.isNull(detail.fact.content);
+      assert.deepEqual(detail.fact.sources, []);
+      assert.deepEqual(detail.fact.entities, []);
+      assert.deepEqual(detail.fact.tags, []);
+      assert.equal(detail.fact.revision, 2);
+      assert.equal(detail.history.at(-1)?.memoryAction, "curated");
+      assert.equal(detail.history.at(-1)?.actor.kind, "curator");
+      assert.isTrue(
+        detail.history.every(
+          (entry) =>
+            entry.content === null && entry.sources.length === 0 && entry.reason === undefined,
+        ),
+      );
+      assert.equal(
+        (yield* knowledge
+          .mutate(
+            {
+              action: "restore",
+              commandId: CommandId.make(`restore:${detail.fact.id}`),
+              projectId,
+              factId: detail.fact.id,
+              expectedRevision: detail.fact.revision,
+            },
+            { kind: "user" },
+          )
+          .pipe(Effect.flip)).reason,
+        "forgotten",
+      );
+    }
     assert.equal(retired.fact.supersededBy, replacement.id);
-    assert.equal(retired.history.at(-1)?.event, "superseded");
-    assert.equal(retired.history.at(-1)?.memoryAction, "curated");
-    assert.equal(retired.history.at(-1)?.actor.kind, "curator");
-    assert.include(retired.history.at(-1)?.reason ?? "", "replacement");
-    const asideDetail = yield* knowledge.readFact({ projectId, factId: task.id });
-    const aside = asideDetail.fact;
-    assert.equal(aside.verdict?.value, "task");
-    assert.equal(asideDetail.history.at(-1)?.event, "edited");
-    assert.equal(asideDetail.history.at(-1)?.memoryAction, "curated");
     assert.deepEqual(
-      (yield* knowledge.list({ projectId })).facts.map(({ id }) => id).toSorted(),
+      (yield* knowledge.readFact({ projectId, factId: replacement.id })).fact,
+      replacement,
+    );
+    const retainedPerson = yield* knowledge.readFact({ projectId, factId: person.id });
+    assert.deepEqual(retainedPerson.fact, person);
+    assert.isTrue(retainedPerson.history.every((entry) => entry.reason === undefined));
+    assert.deepEqual(yield* knowledge.readSource({ projectId, threadId, messageId }), source);
+    assert.deepEqual((yield* knowledge.list({ projectId, verdict: "set_aside" })).facts, []);
+    assert.deepEqual(
+      (yield* knowledge.list({ projectId, includeSuperseded: true })).facts
+        .map(({ id }) => id)
+        .toSorted(),
       [replacement.id, person.id].toSorted(),
-    );
-    const searched = yield* knowledge.search({
-      projectId,
-      query: "cache",
-      requestId: CommandId.make("curation-search"),
-    });
-    assert.isTrue(searched.facts.state === "available");
-    if (searched.facts.state !== "available") return;
-    assert.notInclude(
-      searched.facts.matches.map(({ fact }) => fact.id),
-      task.id,
-    );
-    assert.notInclude(
-      searched.facts.matches.map(({ fact }) => fact.id),
-      old.id,
     );
     const explicit = yield* knowledge.search({
       projectId,
@@ -4218,116 +4316,27 @@ it.effect("curation retires project facts reversibly and preserves the owner's r
       includeSuperseded: true,
     });
     assert.isTrue(explicit.facts.state === "available");
-    if (explicit.facts.state !== "available") return;
-    assert.include(
-      explicit.facts.matches.map(({ fact }) => fact.id),
-      task.id,
+    if (explicit.facts.state === "available") {
+      assert.notInclude(
+        explicit.facts.matches.map(({ fact }) => fact.id),
+        task.id,
+      );
+      assert.notInclude(
+        explicit.facts.matches.map(({ fact }) => fact.id),
+        old.id,
+      );
+    }
+    const { deliveries } = yield* knowledge.readDeliveries({ projectId, threadId, messageId });
+    assert.deepEqual(
+      deliveries[0]?.items.map((item) => [item.text, item.contentRemoved ?? false]),
+      [
+        ["", true],
+        ["", true],
+        [composer.items[2]!.text, false],
+      ],
     );
-    assert.include(
-      explicit.facts.matches.map(({ fact }) => fact.id),
-      old.id,
-    );
-    const restore = {
-      action: "restore",
-      projectId,
-      factId: task.id,
-      expectedRevision: aside.revision,
-      commandId: CommandId.make("restore-curated"),
-    } as const;
-    assert.equal(
-      (yield* knowledge.mutate(restore, actor).pipe(Effect.flip)).reason,
-      "user_required",
-    );
-    const restored = yield* knowledge.mutate(restore, { kind: "user" });
-    assert.equal(restored.verdict?.value, "standing");
-    assert.equal(restored.verdict?.by, "person");
-    assert.equal(restored.content, task.content);
-    const restoredDetail = yield* knowledge.readFact({ projectId, factId: task.id });
-    assert.equal(restoredDetail.history.at(-1)?.event, "edited");
-    assert.equal(restoredDetail.history.at(-1)?.memoryAction, "restored");
-    // Installed older clients still decode every history event returned by the new server.
     yield* decodeLegacyHistoryEvents(
-      [...retired.history, ...asideDetail.history, ...restoredDetail.history].map(
-        ({ event }) => event,
-      ),
-    );
-    assert.equal(
-      (yield* knowledge
-        .applyCuration({
-          reviewedSources: [],
-          projectId,
-          facts: [{ id: restored.id, revision: restored.revision }],
-          decisions: [
-            {
-              action: "set_aside",
-              factId: restored.id,
-              expectedRevision: restored.revision,
-              verdict: "task",
-              reason: "Ignore the person's restoration.",
-              confidence: 1,
-            },
-          ],
-        })
-        .pipe(Effect.flip)).reason,
-      "invalid_curation",
-    );
-    yield* knowledge.mutate(
-      {
-        action: "forget",
-        commandId: CommandId.make("forget-curation-evidence"),
-        projectId,
-        factId: replacement.id,
-        expectedRevision: replacement.revision,
-      },
-      { kind: "user" },
-    );
-    assert.isTrue(
-      (yield* knowledge.readFact({ projectId, factId: old.id })).history.every(
-        (entry) => entry.reason === undefined,
-      ),
-    );
-    assert.isTrue(
-      (yield* knowledge.readFact({ projectId, factId: task.id })).history.every(
-        (entry) => entry.reason === undefined,
-      ),
-    );
-    const restoredOld = yield* knowledge.mutate(
-      {
-        ...restore,
-        commandId: CommandId.make("restore-superseded"),
-        factId: old.id,
-        expectedRevision: retired.fact.revision,
-      },
-      { kind: "user" },
-    );
-    assert.isNull(restoredOld.supersededBy);
-    yield* knowledge.mutate(
-      {
-        action: "forget",
-        commandId: CommandId.make("forget-curated"),
-        projectId,
-        factId: old.id,
-        expectedRevision: restoredOld.revision,
-      },
-      { kind: "user" },
-    );
-    const forgotten = yield* knowledge.readFact({ projectId, factId: old.id });
-    assert.isTrue(
-      forgotten.history.every((entry) => entry.reason === undefined && entry.content === null),
-    );
-    assert.equal(
-      (yield* knowledge
-        .mutate(
-          {
-            ...restore,
-            commandId: CommandId.make("restore-forgotten"),
-            factId: old.id,
-            expectedRevision: forgotten.fact.revision,
-          },
-          { kind: "user" },
-        )
-        .pipe(Effect.flip)).reason,
-      "forgotten",
+      [...retired.history, ...discarded.history].map(({ event }) => event),
     );
   }).pipe(Effect.provide(layerTest)),
 );

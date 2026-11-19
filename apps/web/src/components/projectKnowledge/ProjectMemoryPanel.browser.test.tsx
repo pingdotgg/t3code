@@ -715,12 +715,12 @@ it("shows real score components and sends the viewed revision for feedback", asy
   });
 });
 
-it("restores a set-aside fact using the inspected revision", async () => {
+it("restores a manually superseded fact using the inspected revision", async () => {
   const registry = await setup();
   let currentFact: ProjectFact = {
     ...fact,
     revision: 3,
-    verdict: { value: "task", by: "agent", at: fact.updatedAt },
+    supersededBy: ProjectFactId.make("replacement"),
   };
   state.config = Atom.make({
     environment: {
@@ -737,18 +737,19 @@ it("restores a set-aside fact using the inspected revision", async () => {
     currentFact = {
       ...currentFact,
       revision: 4,
+      supersededBy: null,
       verdict: { value: "standing", by: "person", at: fact.updatedAt },
     };
     return { _tag: "Success", value: currentFact };
   });
   await using screen = await mount(registry);
   await openMemory(screen);
-  await page.getByRole("button", { name: "Set aside", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Show superseded" }).click();
   await page.getByRole("searchbox", { name: "Search project knowledge" }).fill("tenant cache");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   expect(state.searchRequest).toHaveBeenLastCalledWith({
     environmentId: scope.environmentId,
-    input: expect.objectContaining({ includeSetAside: true, recordRetrieval: false }),
+    input: expect.objectContaining({ includeSuperseded: true, recordRetrieval: false }),
   });
   await factRow(fact.content!).click();
   await inspector().getByRole("button", { name: "Restore to recall", exact: true }).click();
@@ -1258,11 +1259,6 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
   await expect.element(toggle).toBeChecked();
   await expect.element(page.getByText("Last run: saved 1.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Set aside", exact: true }).click();
-  expect(state.listRequest).toHaveBeenLastCalledWith({
-    environmentId: scope.environmentId,
-    input: { projectId: scope.projectId, status: "saved", verdict: "set_aside" },
-  });
   await page.getByRole("button", { name: "Automatic", exact: true }).click();
   expect(state.listRequest).toHaveBeenLastCalledWith({
     environmentId: scope.environmentId,

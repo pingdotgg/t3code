@@ -35,14 +35,13 @@ import { KnowledgeHealthRow } from "./ProjectKnowledgeFactDetail";
 import { AppText, AppTextInput } from "./ui/AppText";
 import { Button } from "./ui/Button";
 
-type StatusFilter = "saved" | "automatic" | "set_aside" | "forgotten";
+type StatusFilter = "saved" | "automatic" | "forgotten";
 
 /** Filters, search and paging for the fact list. The sheet reads its results for draft labels. */
 export function useProjectKnowledgeBrowse(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
   readonly history: boolean;
-  readonly curation: boolean;
   readonly onArchivedChange: () => void;
 }) {
   const [status, setStatus] = useState<StatusFilter>("saved");
@@ -61,9 +60,7 @@ export function useProjectKnowledgeBrowse(props: {
           ? { sourceState: "unavailable" as const }
           : status === "automatic"
             ? { status: "saved" as const, origin: "assisted" as const }
-            : status === "set_aside"
-              ? { status: "saved" as const, verdict: "set_aside" as const }
-              : { status }),
+            : { status }),
         ...(afterId ? { afterId } : {}),
         ...(props.history && showSuperseded ? { includeSuperseded: true } : {}),
       },
@@ -95,7 +92,6 @@ export function useProjectKnowledgeBrowse(props: {
             includeArchived: current.includeArchived ?? false,
             requestId: CommandId.make(uuidv4()),
             ...(current.includeSuperseded ? { includeSuperseded: true } : {}),
-            ...(current.includeSetAside ? { includeSetAside: true } : {}),
           },
     );
   const showList = (change: () => void) => {
@@ -163,7 +159,6 @@ export function useProjectKnowledgeBrowse(props: {
               includeArchived,
               requestId: CommandId.make(uuidv4()),
               ...(props.history && showSuperseded ? { includeSuperseded: true } : {}),
-              ...(props.curation && status === "set_aside" ? { includeSetAside: true } : {}),
             },
       );
     },
@@ -207,7 +202,6 @@ export function ProjectKnowledgeFactList(props: {
   readonly projectId: ProjectId;
   readonly browse: ProjectKnowledgeBrowse;
   readonly assisted: boolean;
-  readonly standingCheck: boolean;
   readonly canMutate: boolean;
   readonly busy: boolean;
   readonly selectionState: (current: KnowledgeSelection) => SelectionState;
@@ -246,25 +240,20 @@ export function ProjectKnowledgeFactList(props: {
       </View>
 
       <View className="flex-row flex-wrap gap-2">
-        {(
-          [
-            "saved",
-            ...(props.assisted ? (["automatic"] as const) : []),
-            ...(props.standingCheck ? (["set_aside"] as const) : []),
-            "forgotten",
-          ] as const
-        ).map((value) => (
-          <Button
-            key={value}
-            label={value === "set_aside" ? "set aside" : value}
-            tone={
-              browse.status === value && !searchInput && !browse.lostSourcesOnly
-                ? "primary"
-                : "secondary"
-            }
-            onPress={() => browse.selectStatus(value)}
-          />
-        ))}
+        {(["saved", ...(props.assisted ? (["automatic"] as const) : []), "forgotten"] as const).map(
+          (value) => (
+            <Button
+              key={value}
+              label={value}
+              tone={
+                browse.status === value && !searchInput && !browse.lostSourcesOnly
+                  ? "primary"
+                  : "secondary"
+              }
+              onPress={() => browse.selectStatus(value)}
+            />
+          ),
+        )}
       </View>
       {browse.history ? (
         <View className="flex-row items-center gap-3">

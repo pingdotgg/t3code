@@ -421,7 +421,7 @@ const make = Effect.gen(function* () {
             return yield* finish("skipped", "Automatic memory is off for this project.");
           let saved = 0;
           let duplicates = 0;
-          const setAside = { task: 0, code: 0 };
+          const discarded = { task: 0, code: 0, unsupported: 0 };
           for (const [index, { create, actor }] of proposed.entries()) {
             if (yield* knowledge.hasAssistedRun(projectId, actor.runId)) continue;
             const verdict = checked.verdicts[index] ?? "task";
@@ -433,7 +433,8 @@ const make = Effect.gen(function* () {
                     : Effect.succeed({ outcome: "dropped" as const }),
               }),
             );
-            if (result.outcome === "saved" && verdict !== "standing") setAside[verdict] += 1;
+            if (result.outcome === "discarded")
+              discarded[verdict === "standing" ? "unsupported" : verdict] += 1;
             else if (result.outcome === "saved") {
               saved += 1;
               savedByRun.set(actor.runId, (savedByRun.get(actor.runId) ?? 0) + 1);
@@ -442,13 +443,16 @@ const make = Effect.gen(function* () {
           }
           const plural = (count: number, noun: string) =>
             `${count} ${noun}${count === 1 ? "" : "s"}`;
-          const asideTotal = setAside.task + setAside.code;
+          const discardedTotal = discarded.task + discarded.code + discarded.unsupported;
           const notes = [
-            ...(asideTotal > 0
+            ...(discardedTotal > 0
               ? [
-                  `${asideTotal} set aside: ${[
-                    ...(setAside.task > 0 ? [plural(setAside.task, "task note")] : []),
-                    ...(setAside.code > 0 ? [plural(setAside.code, "code description")] : []),
+                  `${discardedTotal} discarded: ${[
+                    ...(discarded.task > 0 ? [plural(discarded.task, "task note")] : []),
+                    ...(discarded.code > 0 ? [plural(discarded.code, "code description")] : []),
+                    ...(discarded.unsupported > 0
+                      ? [plural(discarded.unsupported, "unsupported assertion")]
+                      : []),
                   ].join(", ")}.`,
                 ]
               : []),

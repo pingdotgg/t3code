@@ -327,7 +327,7 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("stores what the blind check set aside without making it recallable", () => {
+it.effect("discards task-only proposals without saving a review queue", () => {
   const scopeLimit = {
     kind: "constraint" as const,
     content: "Keep this change limited to the API handlers.",
@@ -357,16 +357,10 @@ it.effect("stores what the blind check set aside without making it recallable", 
       saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]),
       [[snakeCase.content, "standing", "check"]],
     );
-    assert.deepEqual(
-      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map((fact) => [
-        fact.content,
-        fact.verdict?.value,
-        fact.verdict?.by,
-      ]),
-      [[scopeLimit.content, "task", "check"]],
-    );
+    assert.deepEqual((yield* knowledge.list({ projectId, verdict: "set_aside" })).facts, []);
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "forgotten" })).facts, []);
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
-    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 set aside: 1 task note."]);
+    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 discarded: 1 task note."]);
   }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
 });
 

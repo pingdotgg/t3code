@@ -139,7 +139,7 @@ it("labels memory actions carried by legacy-compatible history events", () => {
   const edited = historyEntry(2, "edited", null, 0.5);
   expect(projectFactHistoryLabel(edited)).toBe("Edited to revision 2");
   expect(projectFactHistoryLabel({ ...edited, memoryAction: "curated" })).toBe(
-    "Set aside by the memory curator",
+    "Removed automatically",
   );
   expect(
     projectFactHistoryLabel({
@@ -148,7 +148,7 @@ it("labels memory actions carried by legacy-compatible history events", () => {
       memoryAction: "curated",
       relatedFactId: ProjectFactId.make("replacement"),
     }),
-  ).toBe("Superseded by the memory curator");
+  ).toBe("Removed automatically");
   expect(projectFactHistoryLabel({ ...edited, memoryAction: "restored" })).toBe(
     "Restored to recall",
   );
