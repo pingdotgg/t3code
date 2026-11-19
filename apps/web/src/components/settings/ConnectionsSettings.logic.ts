@@ -16,6 +16,8 @@ import {
   AuthTerminalOperateScope,
   AuthTerminalReadScope,
   type DesktopBridge,
+  type DesktopEnvironmentBootstrap,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
   type DesktopServerExposureState,
   type DesktopSshEnvironmentTarget,
   type DesktopUpdateState,
@@ -372,6 +374,14 @@ export function selectPairingEndpoint(
     availableEndpoints.find((endpoint) => endpoint.reachability !== "loopback") ??
     availableEndpoints.find((endpoint) => endpoint.compatibility.hostedHttpsApp === "compatible") ??
     null
+  );
+}
+
+export function hasExternallyManagedPrimary(
+  bootstraps: ReadonlyArray<DesktopEnvironmentBootstrap>,
+) {
+  return bootstraps.some(
+    (entry) => entry.id === PRIMARY_LOCAL_ENVIRONMENT_ID && entry.externallyManaged === true,
   );
 }
 

@@ -200,7 +200,8 @@ const startLocalBackend = Effect.gen(function* () {
     return false;
   }
 
-  const primaryBackend = yield* (yield* DesktopBackendPool.DesktopBackendPool).primary;
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const primaryBackend = yield* pool.primary;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
@@ -212,16 +213,8 @@ const startLocalBackend = Effect.gen(function* () {
     !(settings.wslOnly && settings.wslBackendEnabled) &&
     !(yield* DesktopHomeOwner.awaitHomeOwnershipRelease())
   ) {
-    const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
-    yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
-      owner: Option.getOrNull(owner),
-    });
-    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      "This T3 home is unavailable",
-      DesktopHomeOwner.homeOwnedMessage(owner),
-    );
-    yield* (yield* ElectronApp.ElectronApp).quit;
-    return false;
+    yield* logBootstrapInfo("connecting to the server that owns the T3 home");
+    return yield* pool.connectToHomeOwner;
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);

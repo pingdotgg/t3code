@@ -1,7 +1,7 @@
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Compare against Node HMAC independently.
 import * as NodeCrypto from "node:crypto";
 import { describe, expect, it } from "vite-plus/test";
-import { verifyLanDiscoveryProof } from "./lanDiscoveryProof.ts";
+import { verifyLanDiscoveryProof, verifyLoopbackDiscoveryProof } from "./lanDiscoveryProof.ts";
 
 const signature = Buffer.alloc(32, 0x41).toString("base64url");
 const token = `cGF5bG9hZA.${signature}`;
@@ -88,4 +88,33 @@ describe("LAN discovery proof", () => {
       }),
     ).toBe(false);
   });
+});
+
+it("authenticates a local owner on its recorded port without admitting loopback through LAN discovery", async () => {
+  const calls: string[] = [];
+  const input = {
+    token,
+    nonce,
+    environmentId: "home",
+    port: 3773,
+    fetchProof: async (url: string, init: RequestInit) => {
+      calls.push(url);
+      expect(init.body).toBe(JSON.stringify({ payload: "cGF5bG9hZA", nonce }));
+      return Response.json({ proof: expectedProof("home", "127.0.0.1", 3773) });
+    },
+  };
+  expect(await verifyLoopbackDiscoveryProof(input)).toBe(true);
+  expect(await verifyLoopbackDiscoveryProof({ ...input, environmentId: "other" })).toBe(false);
+  expect(await verifyLoopbackDiscoveryProof({ ...input, port: 3774 })).toBe(false);
+  for (const port of [0, 65536, 1.5]) {
+    expect(await verifyLoopbackDiscoveryProof({ ...input, port })).toBe(false);
+  }
+  expect(await verifyLanDiscoveryProof({ ...input, candidate: "http://127.0.0.1:3773/" })).toBe(
+    false,
+  );
+  expect(calls).toEqual([
+    "http://127.0.0.1:3773/api/lan-discovery/proof",
+    "http://127.0.0.1:3773/api/lan-discovery/proof",
+    "http://127.0.0.1:3774/api/lan-discovery/proof",
+  ]);
 });

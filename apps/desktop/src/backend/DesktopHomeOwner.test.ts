@@ -1,6 +1,11 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The fixture signs a challenge on the actual TCP listener the desktop verifies.
+import * as NodeCrypto from "node:crypto";
+import * as NodeHttp from "node:http";
 import * as NodeSqlite from "node:sqlite";
 
+import * as NodeCryptoServices from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { lanDiscoveryProofMessage } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -12,15 +17,16 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 
-const withTempHome = <A, E>(
+const withTempHome = <A, E, R>(
   run: (
     userdata: string,
   ) => Effect.Effect<
     A,
     E,
-    DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem | Path.Path
+    DesktopEnvironment.DesktopEnvironment | FileSystem.FileSystem | Path.Path | R
   >,
 ) =>
   Effect.gen(function* () {
@@ -35,7 +41,7 @@ const withTempHome = <A, E>(
           platform: "linux",
           processArch: "x64",
           appVersion: "0.0.0",
-          appPath: "/repo",
+          appPath: home,
           isPackaged: true,
           resourcesPath: "/missing/resources",
           runningUnderArm64Translation: false,
@@ -117,6 +123,101 @@ describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
         assert.isFalse(yield* Fiber.join(owned));
         held.close();
       }),
+    ),
+  );
+});
+
+describe("DesktopHomeOwner.authenticateHomeOwner", () => {
+  it.live("attaches only to the home that signed the session and revokes it at exit", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const env = yield* DesktopEnvironment.DesktopEnvironment;
+        const environmentId = "bde15824-93d9-4339-a70a-599fcbe36b27";
+        const sessionId = "9f907b0c-c099-47b3-8568-eb4594cf5ef1";
+        const key = Buffer.alloc(32, 1);
+        const token = `YQ.${key.toString("base64url")}`;
+        yield* fs.makeDirectory(env.path.dirname(env.backendEntryPath), { recursive: true });
+        yield* fs.writeFileString(env.path.join(userdata, "environment-id"), environmentId);
+        yield* fs.writeFileString(
+          env.backendEntryPath,
+          `
+          import { appendFileSync } from "node:fs";
+          const args = process.argv.slice(2);
+          const home = args[args.indexOf("--base-dir") + 1];
+          appendFileSync(home + "/commands", args.slice(0, 3).join(" ") + "\\n");
+          if (args[2] === "issue") console.log(JSON.stringify(${JSON.stringify({ sessionId, token })}));
+          else if (!args.includes("${sessionId}")) process.exit(1);
+        `,
+        );
+
+        let correctHome = false;
+        const server = NodeHttp.createServer(async (request, response) => {
+          const chunks = [];
+          for await (const chunk of request) chunks.push(chunk);
+          const { nonce, payload } = JSON.parse(Buffer.concat(chunks).toString());
+          const address = server.address();
+          if (!address || typeof address === "string" || payload !== "YQ") {
+            response.writeHead(400).end();
+            return;
+          }
+          const proof = NodeCrypto.createHmac("sha256", correctHome ? key : Buffer.alloc(32, 2))
+            .update(lanDiscoveryProofMessage(nonce, environmentId, "127.0.0.1", address.port))
+            .digest("base64url");
+          response.end(JSON.stringify({ proof }));
+        });
+        yield* Effect.acquireRelease(
+          Effect.promise(
+            () => new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve)),
+          ),
+          () =>
+            Effect.promise(
+              () =>
+                new Promise<void>((resolve) => {
+                  server.close(() => resolve());
+                  server.closeAllConnections();
+                }),
+            ),
+        );
+        const address = server.address();
+        assert(address !== null && typeof address !== "string");
+        const legacy = { pid: process.pid, port: address.port };
+        assert.isTrue(Option.isNone(yield* DesktopHomeOwner.authenticateHomeOwner(legacy)));
+        const owner = { ...legacy, managedPolicy: null };
+        const attach = DesktopHomeOwner.authenticateHomeOwner(owner);
+        assert.isTrue(
+          Option.isNone(
+            yield* attach.pipe(
+              Effect.provide(
+                DesktopManagedPolicy.layerTest({
+                  schemaVersion: 1,
+                  organization: "Managed",
+                }),
+              ),
+            ),
+          ),
+        );
+        assert.isTrue(
+          Option.isNone(
+            yield* DesktopHomeOwner.authenticateHomeOwner({
+              ...owner,
+              managedPolicy: { organization: "Managed" },
+            }),
+          ),
+        );
+        assert.isTrue(Option.isNone(yield* attach));
+        correctHome = true;
+        assert.deepEqual(yield* Effect.scoped(attach), Option.some({ port: address.port, token }));
+        assert.deepEqual(
+          (yield* fs.readFileString(env.path.join(env.baseDir, "commands"))).trim().split("\n"),
+          [
+            "auth session issue",
+            "auth session revoke",
+            "auth session issue",
+            "auth session revoke",
+          ],
+        );
+      }).pipe(Effect.provide([DesktopManagedPolicy.layerTest(), NodeCryptoServices.layer])),
     ),
   );
 });

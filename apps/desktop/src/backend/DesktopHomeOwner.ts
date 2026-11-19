@@ -1,15 +1,23 @@
 // @effect-diagnostics nodeBuiltinImport:off - Probes the server's native SQLite ownership lock.
 import * as NodeSqlite from "node:sqlite";
 
+import { verifyLoopbackDiscoveryProof } from "@t3tools/client-runtime/connection";
+import { AuthSessionId } from "@t3tools/contracts";
 import { CLI_RELEASES_PAGE_URL } from "@t3tools/shared/cliRelease";
+import * as Hex from "effect/encoding/Hex";
+import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import { BACKEND_QUIT_STOP_TIMEOUT } from "./DesktopBackendManager.ts";
 
 // The fields of the server's `server-runtime.json` that identify the owner of a T3 home.
@@ -18,6 +26,7 @@ const HomeOwnerRuntimeState = Schema.Struct({
   port: Schema.Int,
   serviceManaged: Schema.optional(Schema.Boolean),
   serverVersion: Schema.optional(Schema.String),
+  managedPolicy: Schema.optional(Schema.NullOr(Schema.Unknown)),
 });
 export type HomeOwner = typeof HomeOwnerRuntimeState.Type;
 
@@ -89,6 +98,89 @@ export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")
     Option.filter((owner) => isProcessAlive(owner.pid)),
   );
 });
+
+const decodeSession = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ sessionId: AuthSessionId, token: Schema.String })),
+);
+
+export type HomeOwnerSession = { readonly port: number; readonly token: string };
+
+export const authenticateHomeOwner = Effect.fn("DesktopHomeOwner.authenticateHomeOwner")(
+  function* (owner: HomeOwner) {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    if (
+      environment.isDevelopment ||
+      owner.port < 1 ||
+      owner.port > 65535 ||
+      owner.managedPolicy !== null
+    ) {
+      return Option.none<HomeOwnerSession>();
+    }
+    // Only the server can attest its enforced policy. A separately launched CLI cannot.
+    if (yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read)
+      return Option.none<HomeOwnerSession>();
+    const fs = yield* FileSystem.FileSystem;
+    const environmentId = (yield* fs.readFileString(
+      environment.path.join(environment.stateDir, "environment-id"),
+    )).trim();
+    if (!environmentId) return Option.none<HomeOwnerSession>();
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const sessionCommand = (args: ReadonlyArray<string>) =>
+      spawner
+        .string(
+          ChildProcess.make(
+            process.execPath,
+            [
+              environment.backendEntryPath,
+              "auth",
+              "session",
+              ...args,
+              "--base-dir",
+              environment.baseDir,
+            ],
+            {
+              env: { ELECTRON_RUN_AS_NODE: "1" },
+              extendEnv: true,
+              stdin: "ignore",
+              stderr: "ignore",
+            },
+          ),
+        )
+        .pipe(Effect.timeout("15 seconds"));
+    const nonce = Hex.encode(yield* (yield* SecureRandom.SecureRandom).randomBytes(32));
+    const desktopScope = yield* Scope.Scope;
+    return yield* Effect.acquireUseRelease(
+      sessionCommand(["issue", "--label", "T3 Code Desktop", "--json"]).pipe(
+        Effect.flatMap(decodeSession),
+      ),
+      (session) =>
+        Effect.promise((signal) =>
+          verifyLoopbackDiscoveryProof({
+            token: session.token,
+            environmentId,
+            port: owner.port,
+            nonce,
+            fetchProof: fetch,
+            signal,
+          }),
+        ).pipe(
+          Effect.timeout("3 seconds"),
+          Effect.map((verified) =>
+            verified
+              ? Option.some({ port: owner.port, token: session.token })
+              : Option.none<HomeOwnerSession>(),
+          ),
+        ),
+      ({ sessionId }, exit) => {
+        const revoke = sessionCommand(["revoke", sessionId]).pipe(Effect.ignore);
+        return Exit.isSuccess(exit) && Option.isSome(exit.value)
+          ? Scope.addFinalizer(desktopScope, revoke)
+          : revoke;
+      },
+    );
+  },
+  Effect.orElseSucceed(() => Option.none<HomeOwnerSession>()),
+);
 
 export const homeOwnedMessage = (owner: Option.Option<HomeOwner>): string =>
   Option.match(owner, {

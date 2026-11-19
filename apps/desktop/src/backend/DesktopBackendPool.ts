@@ -3,6 +3,7 @@ import {
   DESKTOP_UPDATE_IN_PROGRESS_TTL_MS,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as FiberHandle from "effect/FiberHandle";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -26,6 +28,7 @@ import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
+import * as DesktopManagedPolicy from "../app/DesktopManagedPolicy.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
@@ -74,6 +77,8 @@ export class DesktopBackendPool extends Context.Service<
     readonly get: (id: BackendInstanceId) => Effect.Effect<Option.Option<DesktopBackendInstance>>;
     readonly list: Effect.Effect<readonly DesktopBackendInstance[]>;
     readonly primary: Effect.Effect<DesktopBackendInstance>;
+    readonly attachedHomeOwner: Effect.Effect<Option.Option<DesktopHomeOwner.HomeOwnerSession>>;
+    readonly connectToHomeOwner: Effect.Effect<boolean>;
     readonly register: (
       spec: BackendInstanceSpec,
     ) => Effect.Effect<DesktopBackendInstance, DesktopBackendPoolInstanceAlreadyRegisteredError>;
@@ -129,7 +134,12 @@ export const layer = Layer.effect(
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
     const homeOwnerContext = yield* Effect.context<
-      FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
+      | FileSystem.FileSystem
+      | Path.Path
+      | DesktopEnvironment.DesktopEnvironment
+      | DesktopManagedPolicy.DesktopManagedPolicy
+      | SecureRandom.SecureRandom
+      | ChildProcessSpawner.ChildProcessSpawner
     >();
 
     const updateMarkerPath = environment.path.join(
@@ -219,6 +229,32 @@ export const layer = Layer.effect(
       },
     );
 
+    const attachedHomeOwner = yield* Ref.make(Option.none<DesktopHomeOwner.HomeOwnerSession>());
+    const connectToHomeOwner = Effect.gen(function* () {
+      const owner = yield* DesktopHomeOwner.readLiveHomeOwner();
+      const session = Option.isSome(owner)
+        ? yield* DesktopHomeOwner.authenticateHomeOwner(owner.value)
+        : Option.none();
+      if (Option.isNone(session)) {
+        yield* electronDialog.showErrorBox(
+          "This T3 home is unavailable",
+          DesktopHomeOwner.homeOwnedMessage(owner),
+        );
+        yield* electronApp.quit;
+        return false;
+      }
+      yield* Ref.set(attachedHomeOwner, session);
+      yield* reloadStaleMain;
+      yield* desktopWindow.handleBackendReady(new URL(`http://127.0.0.1:${session.value.port}/`));
+      yield* SubscriptionRef.set(primaryBackendStartup, { _tag: "Ready" });
+      return true;
+    }).pipe(
+      Scope.provide(layerScope),
+      Effect.provideContext(homeOwnerContext),
+      Effect.orDie,
+      Effect.withSpan("desktop.backendPool.connectToHomeOwner"),
+    );
+
     const primary = yield* DesktopBackendManager.makeBackendInstance({
       id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
       // Resolve lazily: startup loads persisted settings after pool initialization.
@@ -244,17 +280,11 @@ export const layer = Layer.effect(
           Effect.andThen(desktopWindow.handleBackendNotReady),
         ),
       onPreflightFailed: handlePrimaryPreflightFailure,
-      onStateDirOwned: () =>
-        DesktopHomeOwner.readLiveHomeOwner().pipe(
-          Effect.flatMap((owner) =>
-            electronDialog.showErrorBox(
-              "This T3 home is unavailable",
-              DesktopHomeOwner.homeOwnedMessage(owner),
-            ),
-          ),
-          Effect.provideContext(homeOwnerContext),
-          Effect.andThen(electronApp.quit),
-        ),
+      onStateDirOwned: () => {
+        // The window may already have read the endpoint selected for the child that lost the lock.
+        reloadMainOnReady = true;
+        return connectToHomeOwner.pipe(Effect.asVoid);
+      },
     });
 
     const instancesRef = yield* SynchronizedRef.make<
@@ -389,6 +419,8 @@ export const layer = Layer.effect(
         ),
       ),
       primary: Effect.succeed(primary),
+      attachedHomeOwner: Ref.get(attachedHomeOwner),
+      connectToHomeOwner,
       register,
       unregister,
     });
@@ -414,6 +446,8 @@ export const layerTest = (
         }),
         list: Effect.succeed(Array.from(byId.values())),
         primary: Effect.succeed(primary),
+        attachedHomeOwner: Effect.succeedNone,
+        connectToHomeOwner: Effect.die("unexpected home owner"),
         register: Effect.fn("DesktopBackendPool.register")(function () {
           return Effect.die("DesktopBackendPool.layerTest does not support register");
         }),

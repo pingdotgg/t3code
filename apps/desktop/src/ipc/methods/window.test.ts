@@ -97,6 +97,34 @@ const bootstrapsLayer = (instances: ReadonlyArray<DesktopBackendManager.DesktopB
   Layer.merge(DesktopBackendPool.layerTest([...instances]), backendConfigurationLayer);
 
 describe("getLocalEnvironmentBootstraps", () => {
+  it.effect("connects the primary renderer to the verified home owner after a port collision", () =>
+    Effect.gen(function* () {
+      const primary = {
+        ...defaultWslInstance,
+        id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+        label: Effect.succeed("Local"),
+      };
+      const result = yield* getLocalEnvironmentBootstraps.handler().pipe(
+        Effect.provide([
+          Layer.mock(DesktopBackendPool.DesktopBackendPool, {
+            list: Effect.succeed([primary]),
+            attachedHomeOwner: Effect.succeedSome({ port: 3782, token: "private-session" }),
+          }),
+          backendConfigurationLayer,
+        ]),
+      );
+      assert.deepEqual(result, [
+        {
+          id: primary.id,
+          label: "Local",
+          runningDistro: null,
+          externallyManaged: true,
+          httpBaseUrl: "http://127.0.0.1:3782/",
+          wsBaseUrl: "ws://127.0.0.1:3782/",
+        },
+      ]);
+    }),
+  );
   it.effect("hands out the current window's token to a backend launched with the secret", () =>
     Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
