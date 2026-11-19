@@ -1775,8 +1775,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
-  // Codex still asks before commands it deems dangerous (`rm -f`, `curl | bash`) under the
-  // granular full-access policy; only `never` skips that check.
   it.effect("accepts every Codex approval request in full access without asking", () =>
     Effect.gen(function* () {
       const nativeThreadId = "full-access-approval-thread";
