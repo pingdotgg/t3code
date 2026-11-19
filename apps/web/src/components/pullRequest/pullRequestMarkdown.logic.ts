@@ -15,6 +15,8 @@ import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import { unified, type PluggableList } from "unified";
 
+import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases";
+
 export {
   splitPullRequestBody,
   type PullRequestBodySegment,
@@ -78,6 +80,40 @@ function remarkChangeRequestMediaUrls(options: { readonly changeRequestUrl: stri
   return (tree: MarkdownNode) => visit(tree);
 }
 
+let githubEmojiByAlias: ReadonlyMap<string, string> | undefined;
+const githubEmojiAlias = /:([a-z\d_+-]+)(?=:)/gu;
+
+function expandGithubEmoji(value: string): string {
+  githubEmojiByAlias ??= new Map(
+    GITHUB_EMOJI_ALIASES.trim()
+      .split("\n")
+      .map((line) => {
+        const space = line.indexOf(" ");
+        return [line.slice(0, space), line.slice(space + 1)] as const;
+      }),
+  );
+  let expanded = "";
+  let start = 0;
+  for (const match of value.matchAll(githubEmojiAlias)) {
+    const emoji = githubEmojiByAlias.get(match[1]!);
+    // A colon closes one alias only, so `:tada:tada:` expands the first.
+    if (emoji === undefined || match.index < start) continue;
+    expanded += value.slice(start, match.index) + emoji;
+    start = match.index + match[0].length + 1;
+  }
+  return start === 0 ? value : expanded + value.slice(start);
+}
+
+/** GitHub renders `:alias:` emoji in prose; code keeps them, being `inlineCode`/`code`, not `text`. */
+function remarkGithubEmoji() {
+  const visit = (node: MarkdownNode): void => {
+    if (node.type === "text" && node.value !== undefined)
+      node.value = expandGithubEmoji(node.value);
+    node.children?.forEach(visit);
+  };
+  return (tree: MarkdownNode) => visit(tree);
+}
+
 const NO_PLUGINS: PluggableList = [];
 const markdownPlugins = new Map<string, PluggableList>();
 
@@ -97,18 +133,23 @@ export function pullRequestMarkdownPlugins(
   if (plugins === undefined) {
     const autolinks = changeRequestReferenceAutolinker(changeRequest);
     plugins = [[remarkChangeRequestMediaUrls, { changeRequestUrl: repositoryUrl }]];
+    if (changeRequest.provider === "github") plugins.push(remarkGithubEmoji);
     if (autolinks) plugins.push([remarkPullRequestAutolinks, { autolinks }]);
     markdownPlugins.set(key, plugins);
   }
   return plugins;
 }
 
-const commentPreviewProcessor = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(remarkRehype, { allowDangerousHtml: true })
-  .use(CHAT_MARKDOWN_REHYPE_PLUGINS)
-  .freeze();
+const commentPreviewProcessor = (plugins: PluggableList) =>
+  unified()
+    .use(remarkParse)
+    .use(CHAT_MARKDOWN_REMARK_PLUGINS)
+    .use(plugins)
+    .use(remarkRehype, { allowDangerousHtml: true })
+    .use(CHAT_MARKDOWN_REHYPE_PLUGINS)
+    .freeze();
+const commentPreview = commentPreviewProcessor(NO_PLUGINS);
+const githubCommentPreview = commentPreviewProcessor([remarkGithubEmoji]);
 
 const PREVIEW_BLOCK_TAGS = new Set([
   "blockquote",
@@ -147,7 +188,8 @@ function commentPreviewText(node: Nodes): string {
   return node.type === "element" && PREVIEW_BLOCK_TAGS.has(node.tagName) ? ` ${text} ` : text;
 }
 
-export function pullRequestCommentPreview(body: string): string {
-  const tree = commentPreviewProcessor.runSync(commentPreviewProcessor.parse(body), body);
+export function pullRequestCommentPreview(body: string, provider: string): string {
+  const processor = provider === "github" ? githubCommentPreview : commentPreview;
+  const tree = processor.runSync(processor.parse(body), body);
   return commentPreviewText(tree).replace(/\s+/gu, " ").trim();
 }
