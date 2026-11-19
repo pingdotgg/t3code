@@ -142,6 +142,28 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
+  it("opens nothing when overlapping projects also list a second suffix match", () => {
+    expect(
+      pickProjectLinkMatch("docs/handoff.txt", [
+        {
+          root: "/home/user/reports",
+          entries: [
+            { path: "quarter/docs/handoff.txt", kind: "file" },
+            { path: "archive/docs/handoff.txt", kind: "file" },
+          ],
+        },
+        {
+          root: "/home/user/reports/quarter",
+          entries: [{ path: "docs/handoff.txt", kind: "file" }],
+        },
+        {
+          root: "/home/user/reports/quarter/docs",
+          entries: [{ path: "handoff.txt", kind: "file" }],
+        },
+      ]),
+    ).toBeNull();
+  });
+
   it("opens nothing when overlapping projects also list a second exact basename match", () => {
     expect(
       pickProjectLinkMatch("handoff.txt", [

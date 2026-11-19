@@ -2,6 +2,7 @@ import { FILESYSTEM_METADATA_BATCH_LIMIT } from "@t3tools/contracts";
 import {
   isAbsolutePath,
   isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
   resolveWorkspaceFilePath,
 } from "@t3tools/shared/path";
 
@@ -91,18 +92,25 @@ export function pickWorkspaceLinkMatch(
 ): string | null {
   const trimmed = relativePath.trim();
   if (needsWorkspaceBasenameLookup(trimmed)) return pickWorkspaceBasenameMatch(trimmed, entries);
-  const stripped = stripRepeatedWorkspacePrefix(trimmed, cwd);
+  const matches = workspaceQualifiedPathMatches(trimmed, cwd, entries);
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+
+function workspaceQualifiedPathMatches(
+  relativePath: string,
+  cwd: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): ReadonlyArray<string> {
+  const stripped = stripRepeatedWorkspacePrefix(relativePath, cwd);
   const strippedMatch =
     stripped === null ? null : pickStrippedWorkspaceMatch(stripped, cwd, entries);
-  if (strippedMatch !== null) return strippedMatch;
-  const suffix = trimmed.replaceAll("\\", "/");
-  const matches = entries.filter(
-    (entry) =>
-      entry.kind === "file" &&
-      (entry.path.replaceAll("\\", "/") === suffix ||
-        entry.path.replaceAll("\\", "/").endsWith(`/${suffix}`)),
-  );
-  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+  if (strippedMatch !== null) return [strippedMatch];
+  const suffix = relativePath.replaceAll("\\", "/");
+  return entries.flatMap((entry) => {
+    if (entry.kind !== "file") return [];
+    const path = entry.path.replaceAll("\\", "/");
+    return path === suffix || path.endsWith(`/${suffix}`) ? [entry.path] : [];
+  });
 }
 
 function pickStrippedWorkspaceMatch(
@@ -134,8 +142,15 @@ export function pickProjectLinkMatch(
   }>,
   canonicalPathsFor?: (paths: ReadonlyArray<string>) => CanonicalPaths | Promise<CanonicalPaths>,
 ): string | null | Promise<string | null> {
+  const target = relativePath.trim();
+  const isBasename = needsWorkspaceBasenameLookup(target);
   const rankedPaths = searches.flatMap(({ root, entries }) => {
-    const match = pickWorkspaceLinkMatch(relativePath, root, entries);
+    if (!isBasename) {
+      return workspaceQualifiedPathMatches(target, root, entries).map((match) =>
+        resolveWorkspaceFilePath(match, root),
+      );
+    }
+    const match = pickWorkspaceBasenameMatch(target, entries);
     return match === null ? [] : [resolveWorkspaceFilePath(match, root)];
   });
   if (rankedPaths.length <= 1) return rankedPaths[0] ?? null;
@@ -147,11 +162,10 @@ export function pickProjectLinkMatch(
   };
   rankedPaths.forEach(addMatch);
   // A root's highest-ranked basename can hide another file before overlapping hits are merged.
-  if (needsWorkspaceBasenameLookup(relativePath)) {
-    const basename = relativePath.trim();
+  if (isBasename) {
     for (const { root, entries } of searches) {
       for (const entry of entries) {
-        if (entry.kind === "file" && basenameOfPath(entry.path) === basename) {
+        if (entry.kind === "file" && basenameOfPath(entry.path) === target) {
           addMatch(resolveWorkspaceFilePath(entry.path, root));
         }
       }
@@ -171,8 +185,8 @@ export function pickProjectLinkMatch(
   ) {
     return null;
   }
-  const folded = first.replaceAll("/", "\\").toLowerCase();
-  if ([...matches.keys()].some((key) => key.toLowerCase() !== folded)) return null;
+  const folded = normalizeProjectPathForComparison(first);
+  if (paths.some((path) => normalizeProjectPathForComparison(path) !== folded)) return null;
   const pickConfirmedMatch = (canonicalPaths: CanonicalPaths) => {
     const [target] = canonicalPaths;
     return target !== undefined &&
