@@ -10273,10 +10273,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       ]) {
         assert.equal(shell?.visibleItemCount, targetAfterRollback.visibleTurnItems.length);
       }
-      const withoutItemCounts = yield* projectionStore.getShellSnapshot({
-        projectId,
-        includeItemCounts: false,
-      });
+      const lightweightRead = traceSqlStatements();
+      const withoutItemCounts = yield* projectionStore
+        .getShellSnapshot({ projectId, includeItemCounts: false })
+        .pipe(Effect.withTracer(lightweightRead.tracer));
+      assert.isNotEmpty(lightweightRead.statements);
+      assert.isFalse(
+        lightweightRead.statements.some((query) => query.includes("AS rolled_back_at")),
+      );
       const forkShell = withoutItemCounts.threads.find((thread) => thread.id === targetThreadId);
       assert.equal(forkShell?.visibleItemCount, 0);
       const forwardPage = yield* projectionStore.getTimelinePage(targetThreadId, {

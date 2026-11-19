@@ -8865,7 +8865,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }
       const threadRows = [...rowsByThreadId.values()];
       const threadIds = [...rowsByThreadId.keys()];
-      const forkSourceIds = shellForkSourceIds(threadRows);
+      const forkSourceIds = includeItemCounts ? shellForkSourceIds(threadRows) : [];
       const readForThreadIds = <A>(
         read: (ids: ReadonlyArray<ThreadId>) => Effect.Effect<ReadonlyArray<A>, unknown>,
         ids: ReadonlyArray<ThreadId> = threadIds,
@@ -8879,7 +8879,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         pendingTurnItemRows,
       ] = yield* Effect.all([
         readForThreadIds(selectShellRunRows, forkSourceIds),
-        readForThreadIds(selectShellRunItemCounts, includeItemCounts ? forkSourceIds : []),
+        readForThreadIds(selectShellRunItemCounts, forkSourceIds),
         readForThreadIds(selectShellItemCounts, includeItemCounts ? threadIds : []),
         sql<{ readonly snapshot_sequence: number | null }>`
         SELECT MAX(sequence) AS snapshot_sequence
