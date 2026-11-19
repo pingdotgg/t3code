@@ -9,7 +9,7 @@ import { Button } from "~/components/ui/button";
 import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import {
   iphoneDisplayHardware,
-  iphoneHardwareStyle,
+  iphoneHardwareOverlayStyle,
 } from "@t3tools/client-runtime/device/iphone-display-hardware";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
@@ -397,7 +397,11 @@ export function DeviceStreamView(props: {
             />
           ) : null}
           {hardware && !showPhone && (hasFrame || mjpegUrl) ? (
-            <div aria-hidden style={iphoneHardwareStyle(hardware, screen)} />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-1/2 bg-stretch"
+              style={iphoneHardwareOverlayStyle(hardware, screen)}
+            />
           ) : null}
           {axElements.length > 0 ? (
             <div className="pointer-events-none absolute inset-0" aria-hidden>

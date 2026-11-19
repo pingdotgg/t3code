@@ -180,23 +180,29 @@ const cssStyles = new WeakMap<Hardware, Map<number, ReturnType<typeof hardwareSt
 function hardwareStyle(hardware: Hardware, rotation: number) {
   const sideways = Math.abs(rotation) === 90;
   return {
-    position: "absolute",
-    left: "50%",
-    top: "50%",
     width: sideways ? "100cqh" : "100%",
     height: sideways ? "100cqw" : "100%",
     backgroundImage: `url("${iphoneHardwareImage(hardware).toDataURL()}")`,
-    backgroundSize: "100% 100%",
     transform: `translate(-50%, -50%) rotate(${rotation}deg)`,
-    pointerEvents: "none",
   } as const;
 }
 
-export function iphoneHardwareStyle(hardware: Hardware, screen: DeviceScreenSize | null) {
+export function iphoneHardwareOverlayStyle(hardware: Hardware, screen: DeviceScreenSize | null) {
   const rotation = orientations[screen?.orientation ?? "portrait"];
   const styles = cssStyles.get(hardware) ?? new Map();
   const style = styles.get(rotation) ?? hardwareStyle(hardware, rotation);
   styles.set(rotation, style);
   cssStyles.set(hardware, styles);
   return style;
+}
+
+export function iphoneHardwareStyle(hardware: Hardware, screen: DeviceScreenSize | null) {
+  return {
+    position: "absolute",
+    left: "50%",
+    top: "50%",
+    backgroundSize: "100% 100%",
+    pointerEvents: "none",
+    ...iphoneHardwareOverlayStyle(hardware, screen),
+  } as const;
 }
