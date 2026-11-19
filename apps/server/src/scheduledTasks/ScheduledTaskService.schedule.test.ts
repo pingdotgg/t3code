@@ -246,7 +246,10 @@ it.effect("keeps one queued occurrence of a recurring task while its bound threa
           }),
         getThreadRecords: (_id, fields) =>
           Effect.gen(function* () {
-            if (fields.includes("messages") && (yield* Ref.get(outcomeDuringLookup))) {
+            if (
+              fields.some((field) => field === "messages") &&
+              (yield* Ref.get(outcomeDuringLookup))
+            ) {
               yield* Ref.set(outcomeDuringLookup, false);
               yield* sql`UPDATE scheduled_tasks SET last_run_status = 'failed',
                 last_run_error = 'Provider failed' WHERE task_id = 'scheduled-task:busy-thread'`;
