@@ -29,6 +29,23 @@ it("indexes single tildes in user paths as typed", () => {
   ).toBe("Drop old");
 });
 
+it("indexes the spaces typed at the start of a user's lines, as the bubble shows them", () => {
+  const text = "Plan\n   Step one\n\tDetail";
+  // Each line ending reads as one space, as the text after a rendered line break does.
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
+    "Plan",
+    "    Step one",
+    " \tDetail",
+  ]);
+  const indexed = (text: string) =>
+    searchableMessageSegments({ role: "user", text, streaming: false });
+  // A task's checkbox does not move where its continuation lines start.
+  expect(indexed("- [ ] task\n    detail")).toEqual([" task", "   detail"]);
+  // A space or tab written as a character reference is dropped there, as without the indentation.
+  expect(indexed("a\n &#32;b")).toEqual(["a", "  b"]);
+  expect(indexed("a  \n\t&Tab;b")).toEqual(["a", " \tb"]);
+});
+
 it("excludes structured context chips without joining text across them", () => {
   expect(
     searchableMessageSegments({
