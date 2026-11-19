@@ -209,7 +209,7 @@ type ModelCardProps = {
 function ModelBadge(props: { icon: ReactNode; label: string; tooltip: string }) {
   return (
     <Tooltip>
-      <TooltipTrigger render={<Badge variant="outline" />}>
+      <TooltipTrigger render={<Badge variant="secondary" />}>
         {props.icon}
         {props.label}
       </TooltipTrigger>
@@ -235,10 +235,10 @@ function ModelCard(props: ModelCardProps) {
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-sm font-medium leading-5">{model.name}</span>
+            <span className="text-label">{model.name}</span>
             {props.recommendation ? (
               <ModelBadge
-                icon={<StarIcon className="mr-1 size-3" />}
+                icon={<StarIcon />}
                 label={
                   props.recommendation === "recommended"
                     ? gt("Recommended")
@@ -261,7 +261,7 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
             {model.supportsStreaming ? (
               <ModelBadge
-                icon={<AudioLinesIcon className="mr-1 size-3" />}
+                icon={<AudioLinesIcon />}
                 label={gt("Live preview")}
                 tooltip={gt(
                   "Shows words in your draft as you speak, before the recording finishes.",
@@ -270,7 +270,7 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
             {model.supportsTranslation ? (
               <ModelBadge
-                icon={<LanguagesIcon className="mr-1 size-3" />}
+                icon={<LanguagesIcon />}
                 label={gt("Translate")}
                 tooltip={gt(
                   "Can write English text from speech in another language. Turn on Translate to English to use it.",
@@ -279,12 +279,10 @@ function ModelCard(props: ModelCardProps) {
             ) : null}
           </div>
           {model.description ? (
-            <p className="mt-0.5 text-xs leading-normal text-muted-foreground">
-              {model.description}
-            </p>
+            <p className="mt-0.5 text-meta text-muted-foreground">{model.description}</p>
           ) : null}
           {model.linkedFrom ? (
-            <p className="mt-0.5 break-all text-2xs text-muted-foreground">
+            <p className="mt-0.5 break-all text-caption text-muted-foreground">
               <T>
                 Using your file at <Var>{model.linkedFrom}</Var>
               </T>
@@ -322,7 +320,7 @@ function ModelCard(props: ModelCardProps) {
                   style={{ width: `${progress}%` }}
                 />
               </div>
-              <p className="mt-1 text-2xs text-muted-foreground">
+              <p className="mt-1 text-caption text-muted-foreground">
                 {model.state === "verifying"
                   ? gt("Verifying download…")
                   : gt("{percent}% downloaded", { percent: Math.round(progress) })}
@@ -340,7 +338,7 @@ function ModelCard(props: ModelCardProps) {
               disabled={!props.canCancel}
               onClick={props.onCancel}
             >
-              <XIcon className="size-3.5" />
+              <XIcon />
             </Button>
           ) : model.state === "downloadable" ? (
             <Button size="sm" variant="secondary" disabled={props.busy} onClick={props.onDownload}>
@@ -457,9 +455,9 @@ function DictionaryEditor(props: {
           {words.map(({ term, aliases }) => (
             <li
               key={term}
-              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-xs"
+              className="flex items-center gap-1 rounded-md border border-border/60 bg-muted/30 py-0.5 pl-2 pr-0.5 text-meta"
             >
-              <span className="font-medium">{term}</span>
+              <span className="text-meta text-strong-foreground">{term}</span>
               {aliases.length > 0 ? (
                 <span className="text-muted-foreground">← {aliases.join(", ")}</span>
               ) : null}
@@ -612,13 +610,13 @@ function CleanupModelRow() {
       )}
       control={
         connectedEnvironments.length === 0 ? (
-          <span className="text-sm text-muted-foreground">
+          <span className="text-body text-muted-foreground">
             <T>Connect an environment first.</T>
           </span>
         ) : (
           <div className="flex min-w-0 flex-wrap items-center gap-2 @min-[32rem]/settings-row:justify-end">
             {dedicated && (!hasProvider || !instanceEntry) ? (
-              <span className="text-sm text-muted-foreground">
+              <span className="text-body text-muted-foreground">
                 <T>No text generation providers available.</T>
               </span>
             ) : null}
@@ -1046,7 +1044,7 @@ function SpeechModelBrowser(props: {
                 </MenuCheckboxItem>
               ))}
               {visibleLanguages.length === 0 && (
-                <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                <p className="px-2 py-1.5 text-body text-muted-foreground">
                   <T>No languages match.</T>
                 </p>
               )}
@@ -1102,7 +1100,7 @@ function SpeechModelBrowser(props: {
         tabIndex={0}
       >
         {sortedModels.length === 0 && (
-          <p className="px-3 py-3 text-sm text-muted-foreground">
+          <p className="px-3 py-3 text-body text-muted-foreground">
             <T>No models match.</T>
           </p>
         )}
@@ -1244,7 +1242,7 @@ function TranscriptionTest(props: {
                 </Button>
               ) : null
             ) : (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-meta text-muted-foreground">
                 {speech.status?.supported === false
                   ? speech.status.reason
                   : gt("Waiting for the environment to connect")}
@@ -1257,7 +1255,7 @@ function TranscriptionTest(props: {
           <div className="mt-3 flex items-start gap-3 rounded-lg border border-border/60 bg-muted/30 py-1 ps-3 pe-1">
             <div className="min-w-0 flex-1 py-1.5">
               {speech.preview || transcript !== null ? null : (
-                <p className="text-xs text-muted-foreground">
+                <p className="text-meta text-muted-foreground">
                   <T>
                     Say a sentence. Cleanup is skipped, so you see exactly what the model heard.
                   </T>
@@ -1267,7 +1265,7 @@ function TranscriptionTest(props: {
                 <p
                   role="status"
                   aria-label={gt("Test transcript")}
-                  className="select-text whitespace-pre-wrap break-words text-sm leading-relaxed"
+                  className="select-text whitespace-pre-wrap break-words text-body leading-relaxed"
                 >
                   {speech.preview ? (
                     <>
@@ -1472,7 +1470,7 @@ export function VoiceSettingsPanel() {
                   <SelectItem key={mode} value={mode}>
                     <span className="flex flex-col">
                       {messages(SHORTCUT_MODES[mode].label)}
-                      <span className="text-xs text-muted-foreground">
+                      <span className="text-meta text-muted-foreground">
                         {messages(SHORTCUT_MODES[mode].hint)}
                       </span>
                     </span>

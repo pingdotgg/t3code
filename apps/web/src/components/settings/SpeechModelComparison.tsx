@@ -1,6 +1,7 @@
 import type { EnvironmentSpeechModel, SpeechBenchmarkTier } from "@t3tools/contracts";
 import { T, useLocale, Var } from "gt-react";
 
+import { Text } from "../ui/text";
 import { languageLabel } from "./SpeechLanguageSelect";
 
 const commonLanguages = [
@@ -71,7 +72,7 @@ export function ModelBenchmarks({
           (code): code is string => code !== undefined,
         );
   return (
-    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-meta text-muted-foreground tabular-nums">
       {visible.map((code) => {
         const score = data?.accuracy[code];
         return (
@@ -79,9 +80,9 @@ export function ModelBenchmarks({
             {score ? (
               <T>
                 <Var>{languageLabel(code, locale)}</Var>:{" "}
-                <strong className="font-medium text-foreground">
+                <Text variant="meta" tone="strong" emphasis>
                   <Var>{score.grade}</Var>
-                </strong>{" "}
+                </Text>{" "}
                 (<Var>{score.errorPercent}</Var>% error)
               </T>
             ) : (
@@ -101,9 +102,9 @@ export function ModelBenchmarks({
           ) : (
             <T>
               Speed:{" "}
-              <strong className="font-medium text-foreground">
+              <Text variant="meta" tone="strong" emphasis>
                 <Var>{Number(seconds.toFixed(2))}</Var> s
-              </strong>{" "}
+              </Text>{" "}
               / 30 s
             </T>
           )}

@@ -9,6 +9,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { requestMicrophone } from "../../speech/requestMicrophone";
 import workletUrl from "../../speech/pcmWorklet.ts?worker&url";
 import { VoiceWaveform } from "../chat/VoiceInputPill";
+import { MediaScrubber } from "../media/MediaTransport";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
@@ -220,11 +221,11 @@ export function MicrophoneTest({
       </Button>
     );
   const panel = error ? (
-    <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
+    <p role="alert" className="min-w-0 flex-1 text-meta text-destructive-foreground">
       {error}
     </p>
   ) : phase === "starting" ? (
-    <span role="status" className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+    <span role="status" className="min-w-0 flex-1 truncate text-meta text-muted-foreground">
       <T>Opening microphone…</T>
     </span>
   ) : phase === "recording" ? (
@@ -234,7 +235,7 @@ export function MicrophoneTest({
         <VoiceWaveform level={level} />
       </div>
       <span
-        className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground"
+        className="ms-auto shrink-0 text-meta tabular-nums text-muted-foreground"
         aria-label={gt("Recording time")}
       >
         {formatTime(elapsed)} / {formatTime(LOOPBACK_SECONDS)}
@@ -261,7 +262,7 @@ export function MicrophoneTest({
       {panel ? (
         <div
           className={cn(
-            "mt-3 mb-2 flex min-h-10 items-center gap-3 rounded-lg border border-border/60 bg-muted/30 py-1 pe-1",
+            "mt-3 mb-2 flex min-h-10 items-center gap-3 rounded-control surface-well py-1 pe-1",
             phase === "ready" && !error ? "ps-1" : "ps-3",
           )}
         >
@@ -286,7 +287,6 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
   const [playing, setPlaying] = useState(false);
   const [position, setPosition] = useState(0);
   const [failed, setFailed] = useState(false);
-  const progress = duration > 0 ? Math.min(position / duration, 1) * 100 : 0;
 
   const togglePlayback = async () => {
     const player = audio.current;
@@ -325,27 +325,24 @@ function MicrophonePlayback({ src, duration }: { src: string; duration: number }
         {playing ? <PauseIcon /> : <PlayIcon />}
       </Button>
       {failed ? (
-        <p role="alert" className="min-w-0 flex-1 text-xs text-destructive">
+        <p role="alert" className="min-w-0 flex-1 text-meta text-destructive-foreground">
           <T>Could not play this recording. Try recording again.</T>
         </p>
       ) : (
-        <input
-          type="range"
-          aria-label={gt("Recording playback position")}
-          min={0}
-          max={duration}
-          step={0.01}
-          value={Math.min(position, duration)}
-          style={{
-            background: `linear-gradient(to right, var(--primary) ${progress}%, var(--muted) ${progress}%)`,
+        <MediaScrubber
+          state={{
+            paused: !playing,
+            currentTime: Math.min(position, duration),
+            duration,
+            muted: false,
           }}
-          disabled={duration <= 0}
-          onChange={(event) => {
-            const next = Number(event.target.value);
+          label={gt("Recording playback position")}
+          trackClassName="bg-muted"
+          playedClassName="bg-primary"
+          onSeek={(next) => {
             if (audio.current) audio.current.currentTime = next;
             setPosition(next);
           }}
-          className="h-1 min-w-0 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring [&::-webkit-slider-thumb]:size-2.5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-moz-range-thumb]:size-2.5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary"
         />
       )}
       <span className="shrink-0 text-meta tabular-nums text-muted-foreground">

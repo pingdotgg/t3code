@@ -114,17 +114,17 @@ function MicrophoneRow(props: {
         isDragging && "relative z-10 rounded-lg bg-background shadow-md",
       )}
     >
-      <span className="text-xs tabular-nums text-muted-foreground">{props.position}</span>
-      <span className="col-span-2 text-sm leading-5 break-words @min-[32rem]/settings-row:col-span-1">
+      <span className="text-meta tabular-nums text-muted-foreground">{props.position}</span>
+      <span className="col-span-2 text-body break-words @min-[32rem]/settings-row:col-span-1">
         {name}
       </span>
       <span className="col-start-2 flex @min-[32rem]/settings-row:col-start-auto">
         {props.inUse ? (
-          <span className="rounded-sm bg-success/12 px-1 text-2xs text-success-foreground">
+          <span className="rounded-sm bg-success/12 px-1 text-caption text-success-foreground">
             <T>In use</T>
           </span>
         ) : props.notConnected ? (
-          <span className="text-2xs text-muted-foreground">
+          <span className="text-caption text-muted-foreground">
             <T>Not connected</T>
           </span>
         ) : null}
