@@ -74,6 +74,9 @@ describe("summarizeT3ToolCalls", () => {
     expect(
       summarizeT3ToolCalls("merge-pr", [merge(true, "merged"), merge(true, "open")]).label,
     ).toBe("Merged 1 pull request, queued 1");
+    expect(summarizeT3ToolCalls("review-pr", [completed({ verdict: "approve" }, {})]).label).toBe(
+      "Reviewed 1 pull request",
+    );
   });
 
   it("excludes failed and unfinished sends even if the provider reports completed", () => {

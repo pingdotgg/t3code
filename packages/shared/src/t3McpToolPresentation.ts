@@ -81,6 +81,7 @@ export type T3McpToolSummaryAction =
   | "update-pr"
   | "respond-pr"
   | "merge-pr"
+  | "review-pr"
   | "browser"
   | "device"
   | "html-preview"
@@ -188,6 +189,11 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   pull_request_respond: tool(
     ["Respond", "Responding", "Responded", "on a pull request"],
     "respond-pr",
+    "pull-request",
+  ),
+  pull_request_review: tool(
+    ["Review", "Reviewing", "Reviewed", "a pull request"],
+    "review-pr",
     "pull-request",
   ),
   pull_request_merge: tool(

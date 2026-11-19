@@ -1618,20 +1618,36 @@ export function summarizeT3ToolCalls(
       break;
     }
     case "create-pr": {
-      const count = selected.length;
-      label = done
+      // An open PR for the branch is returned rather than duplicated.
+      const existing = selected.filter((call) => call.output?.created === false).length;
+      const opened = selected.length - existing;
+      label = !done
         ? resolve(
             msg(
-              "{count, plural, one {Opened {count} pull request} other {Opened {count} pull requests}}",
-              { count },
+              "{count, plural, one {Tried to open {count} pull request} other {Tried to open {count} pull requests}}",
+              { count: selected.length },
             ),
           )
-        : resolve(
-            msg(
-              "{count, plural, one {Tried to open {count} pull request} other {Tried to open {count} pull requests}}",
-              { count },
-            ),
-          );
+        : opened === 0
+          ? resolve(
+              msg(
+                "{count, plural, one {Found {count} open pull request} other {Found {count} open pull requests}}",
+                { count: existing },
+              ),
+            )
+          : existing === 0
+            ? resolve(
+                msg(
+                  "{count, plural, one {Opened {count} pull request} other {Opened {count} pull requests}}",
+                  { count: opened },
+                ),
+              )
+            : resolve(
+                msg(
+                  "{opened, plural, one {Opened {opened} pull request, found {existing} open} other {Opened {opened} pull requests, found {existing} open}}",
+                  { opened, existing },
+                ),
+              );
       break;
     }
     case "update-pr": {
@@ -1669,17 +1685,54 @@ export function summarizeT3ToolCalls(
       break;
     }
     case "merge-pr": {
+      // Auto-merge and merge queues leave the PR open until it lands.
+      const queued = selected.filter((call) =>
+        call.output?.state === undefined
+          ? call.input?.auto === true
+          : call.output.state !== "merged",
+      ).length;
+      const merged = selected.length - queued;
+      label = !done
+        ? resolve(
+            msg(
+              "{count, plural, one {Tried to merge {count} pull request} other {Tried to merge {count} pull requests}}",
+              { count: selected.length },
+            ),
+          )
+        : merged === 0
+          ? resolve(
+              msg(
+                "{count, plural, one {Queued {count} pull request to merge} other {Queued {count} pull requests to merge}}",
+                { count: queued },
+              ),
+            )
+          : queued === 0
+            ? resolve(
+                msg(
+                  "{count, plural, one {Merged {count} pull request} other {Merged {count} pull requests}}",
+                  { count: merged },
+                ),
+              )
+            : resolve(
+                msg(
+                  "{merged, plural, one {Merged {merged} pull request, queued {queued}} other {Merged {merged} pull requests, queued {queued}}}",
+                  { merged, queued },
+                ),
+              );
+      break;
+    }
+    case "review-pr": {
       const count = selected.length;
       label = done
         ? resolve(
             msg(
-              "{count, plural, one {Merged {count} pull request} other {Merged {count} pull requests}}",
+              "{count, plural, one {Reviewed {count} pull request} other {Reviewed {count} pull requests}}",
               { count },
             ),
           )
         : resolve(
             msg(
-              "{count, plural, one {Tried to merge {count} pull request} other {Tried to merge {count} pull requests}}",
+              "{count, plural, one {Tried to review {count} pull request} other {Tried to review {count} pull requests}}",
               { count },
             ),
           );
