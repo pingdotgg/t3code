@@ -432,6 +432,22 @@ describe("EnvironmentSupervisor", () => {
     }),
   );
 
+  it.effect("still tries while the device keeps reporting offline", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ networkStatus: "offline" });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "offline");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(0);
+      // The report never changes, but the host is reachable.
+      yield* TestClock.adjust("30 seconds");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+    }),
+  );
+
   it.effect("connects to the primary environment while the device reports offline", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ networkStatus: "offline" });
