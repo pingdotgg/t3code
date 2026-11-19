@@ -203,6 +203,7 @@ it("names a row and the docked header in full on hover", async () => {
       [
         { slug: "glm-5.3", name: "GLM-5.3", subProvider: longSubProvider },
         { slug: "kimi-k2-0905", name: "Kimi K2 0905", shortName: "Kimi K2", subProvider: "Pi" },
+        { slug: "qwen-max", name: "Qwen Max" },
       ],
     ],
   ]);
@@ -217,18 +218,27 @@ it("names a row and the docked header in full on hover", async () => {
       modelOptionsByInstance={options}
       triggerAriaLabel="Choose model"
       onInstanceModelChange={() => {}}
+      getModelDisabledReason={(_, model) => (model === "qwen-max" ? "Not here." : null)}
       effortColumn={<ComposerEffortColumn traits={null} />}
     />,
   );
   await screen.getByRole("button", { name: "Choose model" }).click();
 
+  // A disabled row's reason tooltip still names the model.
+  await userEvent.hover(page.getByRole("option", { name: /Qwen Max/ }));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
+      "Not here.Qwen Max · OpenCode Zen · qwen-max",
+    ),
+  );
+
   const option = page.getByRole("option", { name: /GLM-5\.3/ });
   await expect.element(option).toBeVisible();
   await userEvent.hover(option.getByText(longSubProvider));
   await vi.waitFor(() =>
-    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
-      `GLM-5.3 · ${longSubProvider} · OpenCode Zen · glm-5.3`,
-    ),
+    expect(
+      [...document.querySelectorAll('[data-slot="tooltip-popup"]')].map((el) => el.textContent),
+    ).toContain(`GLM-5.3 · ${longSubProvider} · OpenCode Zen · glm-5.3`),
   );
 
   // The header shows the short name; its hover names the full model and slug.

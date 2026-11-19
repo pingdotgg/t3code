@@ -75,7 +75,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
       <Tooltip
-        // A disabled row's reason tooltip covers it.
+        // A disabled row's reason tooltip names the model instead.
         disabled={Boolean(props.disabledReason)}
       >
         <TooltipTrigger
@@ -157,7 +157,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        {props.disabledReason}
+        <div>{props.disabledReason}</div>
+        <div className="text-muted-foreground">{identity}</div>
       </TooltipPopup>
     </Tooltip>
   );
