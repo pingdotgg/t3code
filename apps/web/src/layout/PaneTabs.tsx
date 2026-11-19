@@ -121,6 +121,9 @@ interface PaneStrip {
   motionMs: number;
   readonly litProperties: readonly [start: string, end: string];
   lit: { host: HTMLElement; offset: number; width: number } | null;
+  width: number;
+  scrollLeft: number;
+  restoreScroll: boolean;
 }
 
 const paneStrips = new Map<string, PaneStrip>();
@@ -128,6 +131,7 @@ const paneStrips = new Map<string, PaneStrip>();
 const stripPlacers = new WeakMap<HTMLElement, (motionMs: number) => void>();
 const stripEntries = new WeakMap<HTMLElement, PaneStrip>();
 const pendingPlacements = new Map<HTMLElement, number>();
+const pendingReveals = new WeakSet<HTMLElement>();
 let placementFrame: number | null = null;
 
 /**
@@ -196,6 +200,9 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         ? ["--pane-lit-panel-start", "--pane-lit-panel-end"]
         : ["--pane-lit-start", "--pane-lit-end"],
     lit: null,
+    width: 0,
+    scrollLeft: 0,
+    restoreScroll: false,
   };
   stripEntries.set(strip, entry);
   strip.addEventListener(
@@ -215,7 +222,14 @@ function createPaneStrip(role?: "panel"): PaneStrip {
     },
     { passive: false },
   );
-  strip.addEventListener("scroll", () => markStripOverflow(strip), { passive: true });
+  strip.addEventListener(
+    "scroll",
+    () => {
+      if (!entry.restoreScroll) entry.scrollLeft = strip.scrollLeft;
+      markStripOverflow(strip);
+    },
+    { passive: true },
+  );
   // The shape leaves on the press, before the switch's render: a click lands
   // on its release, after the incoming chat has been laid out.
   strip.addEventListener("pointerdown", (event) => slideOnPress(entry, event));
@@ -224,7 +238,10 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   // Not observeResize: no React state changes, and its flushSync would force the
   // incoming chat's pending render into the tab switch's task.
   // oxlint-disable-next-line t3code/no-raw-resize-observer -- Places a DOM node only; see above.
-  const resize = new ResizeObserver(() => {
+  const resize = new ResizeObserver((entries) => {
+    if (entries.some((resized) => resized.target === strip) && activeTabInView(entry)) {
+      pendingReveals.add(strip);
+    }
     stripPlacers.get(strip)?.(0);
     markStripOverflow(strip);
   });
@@ -255,8 +272,14 @@ function markStripOverflow(strip: HTMLElement): void {
   strip.style.setProperty("--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
   const entry = stripEntries.get(strip);
   if (!entry) return;
+  entry.width = clientWidth;
   markJoinAtStart(entry);
   markPaneLit(entry, scrollLeft);
+}
+
+function activeTabInView({ strip, shown, width }: PaneStrip): boolean {
+  if (shown === null || width === 0) return true;
+  return shown.x + shown.w > strip.scrollLeft && shown.x < strip.scrollLeft + width;
 }
 
 /**
@@ -345,7 +368,19 @@ function holdPaneStrip(
 ): void {
   stripPlacers.set(entry.strip, place);
   entry.motionMs = motionMs;
+  pendingReveals.add(entry.strip);
   schedulePlacement(entry.strip, motionMs);
+}
+
+function attachPaneStrip(entry: PaneStrip, slot: HTMLElement): void {
+  if (!entry.strip.isConnected) entry.restoreScroll = true;
+  if (entry.strip.parentNode !== slot) moveInto(slot, entry.strip);
+}
+
+function restorePaneStripScroll(entry: PaneStrip): void {
+  if (!entry.restoreScroll) return;
+  entry.restoreScroll = false;
+  entry.strip.scrollLeft = entry.scrollLeft;
 }
 
 /** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
@@ -531,9 +566,9 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
 }
 
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
-function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
+function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null {
   const tab = findStripTab(strip, tabId);
-  if (!tab) return;
+  if (!tab) return null;
   const bounds = strip.getBoundingClientRect();
   const rect = tab.getBoundingClientRect();
   // Room for the joined tab's ears inside the strip's clip, and at the end for
@@ -545,10 +580,32 @@ function revealPaneTab(strip: HTMLElement, tabId: string | null): void {
   const start = bounds.left + clipped + PANE_JOIN_EAR_PX + PANE_STRIP_FADE_PX;
   const end = bounds.right - PANE_JOIN_EAR_PX - PANE_JOIN_TAIL_PX;
   // A file tab's trailing breadcrumb names the file; reveal it before its thread label.
-  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end")
-    strip.scrollLeft += rect.right - end;
-  else if (rect.left < start) strip.scrollLeft -= start - rect.left;
-  else if (rect.right > end) strip.scrollLeft += rect.right - end;
+  if (rect.width > end - start && tab.dataset.layoutTabReveal === "end") return rect.right - end;
+  if (rect.left < start) return rect.left - start;
+  if (rect.right > end) return rect.right - end;
+  return 0;
+}
+
+function scrollWithSlide(entry: PaneStrip, left: number): void {
+  const { strip, slide } = entry;
+  const from = strip.scrollLeft;
+  const to = Math.min(Math.max(0, left), strip.scrollWidth - strip.clientWidth);
+  const start = slide?.effect?.getComputedTiming().progress;
+  if (!slide || start == null || start >= 1) {
+    strip.scrollLeft = to;
+    return;
+  }
+  let written = from;
+  const follow = () => {
+    if (Math.abs(strip.scrollLeft - written) > 1) return;
+    const progress =
+      slide.playState === "finished" ? 1 : slide.effect?.getComputedTiming().progress;
+    if (progress == null) return;
+    written = from + ((to - from) * (progress - start)) / (1 - start);
+    strip.scrollLeft = written;
+    if (progress < 1) requestAnimationFrame(follow);
+  };
+  requestAnimationFrame(follow);
 }
 
 /**
@@ -588,11 +645,14 @@ export function LayoutPaneTabStrip({
       showStripLayer(layer, slot, false);
       return;
     }
-    if (strip.parentNode !== slot) moveInto(slot, strip);
+    attachPaneStrip(entry, slot);
     showStripLayer(layer, strip, true);
     const place = (motion: number) => {
-      revealPaneTab(strip, tabId);
+      restorePaneStripScroll(entry);
+      const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
+      if (reveal !== null) pendingReveals.delete(strip);
       placePaneJoin(entry, tabId, motion);
+      if (reveal) scrollWithSlide(entry, strip.scrollLeft + reveal);
     };
     holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
