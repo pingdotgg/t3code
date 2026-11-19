@@ -9247,12 +9247,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       });
                     }
                     if (context.finalized || followsAgentWorkState) return;
-                    const effectiveHiddenFailure = context.interrupted ? undefined : hiddenFailure;
-                    if (effectiveHiddenFailure !== undefined) {
+                    if (hiddenFailure !== undefined) {
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
                     const failure =
-                      effectiveHiddenFailure?.failure ??
+                      hiddenFailure?.failure ??
                       (context.interrupted
                         ? undefined
                         : stopReasonFailure(result.stopReason, result.error));
@@ -9278,9 +9277,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       // background tools and subagents keep reporting to this run.
                       yield* finalizeTurn(context, "failed", failure, {
                         childTurnsContinue: hasSurvivingBackgroundWork(context),
-                        ...(effectiveHiddenFailure === undefined
+                        ...(hiddenFailure === undefined
                           ? {}
-                          : { threadDisposition: effectiveHiddenFailure.threadDisposition }),
+                          : { threadDisposition: hiddenFailure.threadDisposition }),
                       });
                       return;
                     }
