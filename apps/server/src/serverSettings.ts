@@ -1299,34 +1299,42 @@ const make = Effect.gen(function* () {
 
   // A directory watch follows the directory's inode, so when the target's
   // directory is renamed away and another takes its path, watch the new one.
-  const watchLinkTargetChanges = (
-    linkTargetPath: string,
-    ready: readonly [Deferred.Deferred<void>, Deferred.Deferred<void>],
-  ) => {
-    const directoryReplacements = watchFileChanges(
-      pathService.dirname(linkTargetPath),
-      ready[0],
-    ).pipe(Stream.ignore({ log: true }));
-    const fileChanges = watchFileChanges(linkTargetPath, ready[1]).pipe(
-      Stream.ignore({ log: true }),
-    );
-    const replacementChanges = Stream.unwrap(
+  const watchLinkTargetChanges = (linkTargetPath: string, ready: Deferred.Deferred<void>) =>
+    Stream.unwrap(
       Effect.gen(function* () {
-        const registered = yield* Deferred.make<void>();
-        return Stream.merge(
-          watchFileChanges(linkTargetPath, registered).pipe(Stream.ignore({ log: true })),
-          // Reload after registration so writes made during the handoff are picked up.
-          Stream.fromEffect(Deferred.await(registered)).pipe(
-            Stream.tap(() => Deferred.succeed(ready[1], undefined)),
-          ),
+        const parentReady = yield* Deferred.make<void>();
+        const replacements = yield* watchFileChanges(
+          pathService.dirname(linkTargetPath),
+          parentReady,
+        ).pipe(
+          // Native watch registration can throw, including when the OS runs out of watches.
+          Stream.ignoreCause({ log: true }),
+          Stream.toQueue({ capacity: 1, strategy: "sliding" }),
+        );
+        // Start buffering replacements before attaching to the target directory's inode.
+        yield* Deferred.await(parentReady);
+
+        const fileChanges = watchFileChanges(linkTargetPath, ready).pipe(
+          Stream.ignoreCause({ log: true }),
+        );
+        const replacementChanges = Stream.unwrap(
+          Effect.gen(function* () {
+            const registered = yield* Deferred.make<void>();
+            return Stream.merge(
+              watchFileChanges(linkTargetPath, registered).pipe(Stream.ignoreCause({ log: true })),
+              // Reload after registration so writes made during the handoff are picked up.
+              Stream.fromEffect(Deferred.await(registered)).pipe(
+                Stream.tap(() => Deferred.succeed(ready, undefined)),
+              ),
+            );
+          }),
+        );
+        return Stream.make(fileChanges).pipe(
+          Stream.concat(Stream.fromQueue(replacements).pipe(Stream.as(replacementChanges))),
+          Stream.switchMap((changes) => changes),
         );
       }),
     );
-    return Stream.make(fileChanges).pipe(
-      Stream.concat(directoryReplacements.pipe(Stream.as(replacementChanges))),
-      Stream.switchMap((changes) => changes),
-    );
-  };
 
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
@@ -1362,9 +1370,9 @@ const make = Effect.gen(function* () {
     const initialLinkTarget = yield* watchLinkTarget;
     // Later link targets complete these again, which does nothing.
     const settingsReady = yield* Deferred.make<void>();
-    const linkTargetReady = [yield* Deferred.make<void>(), yield* Deferred.make<void>()] as const;
+    const linkTargetReady = yield* Deferred.make<void>();
     const startupWatches = Option.isSome(initialLinkTarget)
-      ? [settingsReady, ...linkTargetReady]
+      ? [settingsReady, linkTargetReady]
       : [settingsReady];
     const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
       Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),

@@ -3213,3 +3213,64 @@ it.effect("starts with symlinked settings when the settings directory watch fail
     }).pipe(Effect.provide(settingsLayer));
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
+
+it.live.each(["restoring the directory", "failing with ENOSPC"] as const)(
+  "observes symlink target edits after the parent watch starts by %s",
+  (parentRegistration) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dotfiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-settings-dotfiles-" });
+      const active = path.join(dotfiles, "active");
+      const restored = path.join(dotfiles, "restored");
+      const target = path.join(active, "settings.json");
+      yield* fs.makeDirectory(active);
+      yield* fs.makeDirectory(restored);
+      yield* fs.writeFileString(target, `{ "responseStreamingMode": "turn" }`);
+      yield* fs.writeFileString(
+        path.join(restored, "settings.json"),
+        `{ "responseStreamingMode": "turn" }`,
+      );
+
+      const settingsLayer = layerServerSettings().pipe(
+        Layer.provide(
+          Layer.succeed(
+            FileSystem.FileSystem,
+            FileSystem.FileSystem.of({
+              ...fs,
+              watch: (directory, options) => {
+                if (directory !== dotfiles) return fs.watch(directory, options);
+                return Stream.unwrap(
+                  Effect.gen(function* () {
+                    if (parentRegistration === "failing with ENOSPC") {
+                      return yield* Effect.die(new Error("ENOSPC"));
+                    }
+                    yield* fs.rename(active, path.join(dotfiles, "previous"));
+                    yield* fs.rename(restored, active);
+                    return fs.watch(directory, options);
+                  }),
+                );
+              },
+            }),
+          ),
+        ),
+      );
+
+      yield* Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        yield* fs.remove(config.settingsPath, { force: true });
+        yield* fs.symlink(target, config.settingsPath);
+        yield* service.start;
+        const changes = yield* service.subscribeChanges;
+
+        yield* fs.writeFileString(target, `{ "responseStreamingMode": "paragraph" }`);
+
+        const reloaded = yield* changes.pipe(
+          Stream.filter((settings) => settings.responseStreamingMode === "paragraph"),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(reloaded));
+      }).pipe(Effect.provide(settingsLayer));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
