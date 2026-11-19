@@ -1,5 +1,5 @@
 // A project bound to a standalone tracker (Linear) in settings lists it beside its git host's.
-// References outside the project's canonical repository may be read on the same host,
+// References outside the project's own repositories (upstream and fork) may be read on the host,
 // but every write must pass through requireWritable.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -83,18 +83,14 @@ interface SupportedProject extends ProjectTrackerBinding {
 
 /**
  * The git-host path of resolution: the tracker is the host's own, named like the remote's
- * provider kind. Null for a project with no remote or a kind no tracker claims.
+ * provider kind. A fork reads its upstream and its own repository.
  */
-function resolveGitHostBinding(project: OrchestrationProjectShell): ProjectTrackerBinding | null {
-  const identity = project.repositoryIdentity;
-  const scope = sourceControlDefinitions.issueScope(identity);
-  const kind = identity?.provider;
-  if (!identity || kind === undefined || kind === "unknown" || scope === null) return null;
-  return {
-    tracker: IssueTrackerKind.make(kind),
-    host: sourceControlDefinitions.changeRequestHost(identity, kind),
-    scope,
-  };
+function resolveGitHostBindings(
+  project: OrchestrationProjectShell,
+): ReadonlyArray<ProjectTrackerBinding> {
+  return sourceControlDefinitions
+    .issueBindings(project.repositoryIdentity)
+    .map((binding) => ({ ...binding, tracker: IssueTrackerKind.make(binding.tracker) }));
 }
 
 function findStandaloneIssueUrl(trackers: ReadonlyArray<StandaloneIssueTrackerApi>, value: string) {
@@ -209,12 +205,11 @@ const make = Effect.gen(function* () {
       ? Effect.succeed(project.repositoryIdentity)
       : repositoryIdentities.resolve(project.workspaceRoot)
     ).pipe(
-      Effect.map((repositoryIdentity) =>
-        [
-          resolveStandaloneBinding(binding),
-          resolveGitHostBinding({ ...project, repositoryIdentity }),
-        ].filter((candidate) => candidate !== null),
-      ),
+      Effect.map((repositoryIdentity) => {
+        const standalone = resolveStandaloneBinding(binding);
+        const gitHost = resolveGitHostBindings({ ...project, repositoryIdentity });
+        return standalone === null ? gitHost : [standalone, ...gitHost];
+      }),
     );
 
   const listProjects = (filter: {
@@ -267,7 +262,7 @@ const make = Effect.gen(function* () {
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
-          { tracker: IssueTrackerKind; projectCount: number }
+          { tracker: IssueTrackerKind; projectIds: Set<ProjectId> }
         >();
         for (const candidate of bound.flat()) {
           if (host !== undefined && candidate.host !== host && candidate.host !== filter.authority)
@@ -276,8 +271,11 @@ const make = Effect.gen(function* () {
           if (api === null) {
             const counted = unimplemented.get(candidate.host);
             if (counted === undefined)
-              unimplemented.set(candidate.host, { tracker: candidate.tracker, projectCount: 1 });
-            else counted.projectCount += 1;
+              unimplemented.set(candidate.host, {
+                tracker: candidate.tracker,
+                projectIds: new Set([candidate.project.id]),
+              });
+            else counted.projectIds.add(candidate.project.id);
             continue;
           }
           supported.push({ ...candidate, api });
@@ -288,26 +286,29 @@ const make = Effect.gen(function* () {
 
   /**
    * The project whose checkout and credentials serve a reference, and whether the reference is
-   * the project's own scope. A reference naming another scope on the same tracker and host is
-   * served by the project but marked read-only. A project with two trackers serves the one the
-   * reference names.
+   * one of the project's own scopes. A reference naming another scope on the same tracker and
+   * host is served by the project but marked read-only. A project with two trackers serves the
+   * one the reference names.
    */
   const requireProject = (
     ref: IssueScopeRef,
   ): Effect.Effect<SupportedProject & { readonly writable: boolean }, IssueError> =>
     listProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }) => {
-        const own = supported.find((candidate) => candidate.tracker === ref.tracker);
-        if (own === undefined) {
-          return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
-        }
-        const host = ref.host?.trim().toLowerCase() ?? own.host;
-        if (host !== own.host) {
-          return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
-        }
+        const host = ref.host?.trim().toLowerCase();
+        const onHost = supported.filter(
+          (candidate) =>
+            candidate.tracker === ref.tracker && (host === undefined || candidate.host === host),
+        );
         const scope = ref.scope.trim();
-        const writable = scope.toLowerCase() === own.scope.toLowerCase();
-        return Effect.succeed({ ...own, scope, writable });
+        const own = onHost.find(
+          (candidate) => candidate.scope.toLowerCase() === scope.toLowerCase(),
+        );
+        const served = own ?? onHost[0];
+        if (served === undefined) {
+          return Effect.fail(new IssueUnavailableError({ reason: "tracker-unsupported" }));
+        }
+        return Effect.succeed({ ...served, scope, writable: own !== undefined });
       }),
     );
 
@@ -353,8 +354,12 @@ const make = Effect.gen(function* () {
       viewerRequests.set(project.host, request);
     }
 
-    // Every project counts, including worktrees of a scope read once below.
+    // Every project counts once, including worktrees of a scope read once below and forks.
+    const counted = new Set<string>();
     for (const project of supported) {
+      const countKey = `${project.host} ${project.project.id}`;
+      if (counted.has(countKey)) continue;
+      counted.add(countKey);
       const existing = trackers.get(project.host);
       trackers.set(
         project.host,
@@ -416,9 +421,15 @@ const make = Effect.gen(function* () {
           if (page._tag === "Failure") {
             if (cursor !== undefined) nextCursors[key] = cursor;
             recordFailure(project, page.failure);
+            // A fork reads two repositories, so its failure names the one that failed.
+            const forked = supported.some(
+              (other) => other.project.id === project.project.id && other.scope !== project.scope,
+            );
             errors.push({
               projectId: project.project.id,
-              projectTitle: project.project.title,
+              projectTitle: forked
+                ? `${project.project.title} (${project.scope})`
+                : project.project.title,
               message: trackerDetail(page.failure),
             });
             return;
@@ -438,11 +449,11 @@ const make = Effect.gen(function* () {
       { concurrency: SCOPE_CONCURRENCY, discard: true },
     );
 
-    for (const [host, { tracker, projectCount }] of unimplemented) {
+    for (const [host, { tracker, projectIds }] of unimplemented) {
       trackers.set(host, {
         tracker,
         host,
-        projectCount,
+        projectCount: projectIds.size,
         capabilities: null,
         configured: false,
         detail: "Issues cannot be browsed for this host yet.",
