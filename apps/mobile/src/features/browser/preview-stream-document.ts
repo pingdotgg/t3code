@@ -33,6 +33,8 @@ export type PreviewStreamMessage =
   | { readonly type: "gone" }
   | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
+  /** The direction a drag scrolls the page, sent every few dozen pixels of it. */
+  | { readonly type: "scroll"; readonly direction: "up" | "down" }
   | { readonly type: "clipboard"; readonly text: string }
   | ({ readonly type: "copyOffer" } & PreviewStreamCopyOffer)
   | ({ readonly type: "download" } & PreviewStreamDownload)

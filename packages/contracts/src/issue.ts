@@ -266,6 +266,8 @@ export const IssueListInput = Schema.Struct({
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
   /** Carry on from an earlier answer: only the scopes named here are read, one slice each. */
   cursors: Schema.optional(IssueListCursors),
+  /** An explicit refresh of the first page may also refresh tracker metadata. */
+  refresh: Schema.optional(Schema.Boolean),
   /** Free text the trackers themselves are asked to match. */
   query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))),
   /** Label names an issue must carry, every one of them. */
@@ -590,6 +592,8 @@ export const IssueTrackerConnection = Schema.Struct({
   account: Schema.NullOr(TrimmedNonEmptyString),
   /** Why a stored credential did not work, when it did not. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The workspace the credential reaches, as its issue URLs name it; links elsewhere are foreign. */
+  workspace: Schema.optional(TrimmedNonEmptyString),
   scopes: Schema.Array(IssueTrackerScope),
 });
 export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
