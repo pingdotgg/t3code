@@ -2,6 +2,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ThreadId,
+  type ScopedThreadRef,
   type SpeechOutputDestination,
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -13,18 +15,21 @@ import type { EnvironmentPresentation } from "../../state/environments";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { SettingsSpeechRouteScreen } from "./SettingsSpeechRouteScreen";
 import { SpeechOutputSettings } from "./SpeechOutputSettings";
+import { useSpeechOutputDestination } from "../voice-output/useSpeechOutputDestination";
 
 vi.mock("gt-react-native", async (importOriginal) => {
   const gt = await importOriginal<typeof import("gt-react-native")>();
   return { ...gt, useGT: () => gt.mFallback };
 });
-vi.mock("../../state/entities", () => ({ useQuietThreadShell: () => null }));
+vi.mock("../../state/entities", () => ({ useQuietThreadShell: () => mocks.thread }));
 vi.mock("../../state/presentation", () => ({
-  useEnvironmentPresentation: () => ({ presentation: null }),
+  useEnvironmentPresentation: () => ({ presentation: mocks.presentation }),
 }));
 vi.mock("./SystemSpeechSettings", () => ({ SystemSpeechSettings: () => null }));
 const mocks = vi.hoisted(() => ({
   preferences: {} as { speechOutputDestination?: SpeechOutputDestination | null },
+  thread: null as { projectId: ProjectId } | null,
+  presentation: null as EnvironmentPresentation | null,
   save: vi.fn(),
   update: vi.fn(),
   alert: vi.fn(),
@@ -56,7 +61,9 @@ vi.mock("../voice-output/SpeechPlaybackSpeed", async () => {
 });
 vi.mock("../../components/ui/AppText", () => ({ AppTextInput: () => null }));
 vi.mock("../../components/ui/SecretTextInput", () => ({ SecretTextInput: () => null }));
-vi.mock("../voice-output/voiceOutput", () => ({ voiceOutput: { stop: () => {} } }));
+vi.mock("../voice-output/voiceOutput", () => ({
+  voiceOutput: { stop: () => {}, getSnapshot: () => ({ owner: null }) },
+}));
 vi.mock("../voice-output/useSpeechVoiceCatalog", () => ({
   useSpeechVoiceCatalog: () => ({
     runtime: { state: "not-installed", platform: "linux-x64" },
@@ -161,6 +168,8 @@ vi.mock("../../state/use-atom-command", async () => {
 });
 
 it("defaults off and changes the playback destination on this device without changing server settings", async () => {
+  mocks.thread = null;
+  mocks.presentation = null;
   mocks.preferences = {};
   mocks.alert.mockReset();
   mocks.update.mockReset();
@@ -265,6 +274,8 @@ it("defaults off and changes the playback destination on this device without cha
 });
 
 it("keeps a closing speed picker's update when a project destination save is pending", async () => {
+  mocks.thread = null;
+  mocks.presentation = null;
   mocks.preferences = {};
   mocks.save.mockReset();
   mocks.update.mockReset();
@@ -342,5 +353,105 @@ it("keeps a closing speed picker's update when a project destination save is pen
   } finally {
     act(() => root.unmount());
     reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
+  }
+});
+
+it("preserves pending thread speech changes until settings refresh and drops failed writes", async () => {
+  mocks.preferences = {};
+  mocks.save.mockReset();
+  mocks.update.mockReset();
+  const environmentId = EnvironmentId.make("thread-speech");
+  const projectId = ProjectId.make("thread-project");
+  const threadRef: ScopedThreadRef = { environmentId, threadId: ThreadId.make("speech-thread") };
+  const original = { environmentId, engine: "piper" as const, voice: "original" };
+  const chosen = { environmentId, engine: "piper" as const, voice: "chosen" };
+  let persisted = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+    projectSettingsOverrides: {
+      [projectId]: {
+        defaultAutoPull: false,
+        speechPlaybackDestination: original,
+        speechPlaybackRate: 1,
+      },
+    },
+  });
+  mocks.thread = { projectId };
+  mocks.presentation = {
+    environmentId,
+    serverConfig: { settings: persisted },
+  } as unknown as EnvironmentPresentation;
+  mocks.update.mockImplementation(
+    async ({ input }: { input: { patch: Parameters<typeof applyServerSettingsPatch>[1] } }) => {
+      persisted = applyServerSettingsPatch(persisted, input.patch);
+      return AsyncResult.success(persisted);
+    },
+  );
+  function ThreadControls() {
+    const controls = useSpeechOutputDestination(threadRef);
+    return (
+      <>
+        <button onClick={() => controls.choose(chosen)}>Choose voice</button>
+        {([1, 1.5, 2] as const).map((rate) => (
+          <button key={rate} onClick={() => controls.setPlaybackRate(rate)}>
+            {`Speed ${rate}`}
+          </button>
+        ))}
+      </>
+    );
+  }
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const click = (label: string) => {
+    const button = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === label,
+    );
+    if (!button) throw new Error(`Missing ${label}`);
+    button.click();
+  };
+  const reactEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previous = reactEnvironment.IS_REACT_ACT_ENVIRONMENT;
+  reactEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+  try {
+    act(() => root.render(<ThreadControls />));
+    await act(async () => {
+      click("Choose voice");
+      click("Speed 1.5");
+    });
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: false,
+      speechPlaybackDestination: chosen,
+      speechPlaybackRate: 1.5,
+    });
+
+    persisted = applyServerSettingsPatch(persisted, {
+      projectSettingsOverrides: {
+        [projectId]: { defaultAutoPull: true, speechPlaybackDestination: original },
+      },
+    });
+    mocks.presentation = {
+      ...mocks.presentation!,
+      serverConfig: { ...mocks.presentation!.serverConfig!, settings: persisted },
+    };
+    act(() => root.render(<ThreadControls />));
+    await act(async () => click("Speed 2"));
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      speechPlaybackDestination: original,
+      speechPlaybackRate: 2,
+    });
+
+    mocks.update.mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))));
+    await act(async () => click("Choose voice"));
+    await act(async () => click("Speed 1"));
+    expect(persisted.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      speechPlaybackDestination: original,
+      speechPlaybackRate: 1,
+    });
+    expect(mocks.save).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());
+    reactEnvironment.IS_REACT_ACT_ENVIRONMENT = previous;
+    mocks.thread = null;
+    mocks.presentation = null;
   }
 });

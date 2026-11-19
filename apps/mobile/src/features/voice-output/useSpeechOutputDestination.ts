@@ -1,7 +1,7 @@
 import { useGT } from "gt-react-native";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomValue } from "@effect/atom-react";
-import { createContext, useContext } from "react";
+import { createContext, useContext, useRef } from "react";
 import type { SpeechPlaybackControls } from "@t3tools/client-runtime/voice-output";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useQuietThreadShell } from "../../state/entities";
@@ -9,6 +9,7 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import {
   AuthSettingsWriteScope,
   type ScopedThreadRef,
+  type ProjectSettingsOverrides,
   SpeechPlaybackRate,
   SpeechOutputDestination,
 } from "@t3tools/contracts";
@@ -49,23 +50,33 @@ export function useSpeechOutputDestination(
       ? localDestination
       : effective.speechPlaybackDestination;
   const playbackRate = effective?.speechPlaybackRate ?? localRate;
+  const pending = useRef<{
+    key: string;
+    source: ProjectSettingsOverrides | undefined;
+    value: ProjectSettingsOverrides;
+  } | null>(null);
   const persist = (patch: {
     speechPlaybackDestination?: SpeechOutputDestination | null;
     speechPlaybackRate?: SpeechPlaybackRate;
   }) => {
     if (!threadRef || !thread?.projectId || !settings) return false;
+    const key = `${threadRef.environmentId}:${thread.projectId}`;
+    const source = settings.projectSettingsOverrides[thread.projectId];
+    const previous = pending.current;
+    const base = previous?.key === key && previous.source === source ? previous : null;
+    const staged = { key, source, value: { ...(base?.value ?? source), ...patch } };
+    pending.current = staged;
     void update({
       environmentId: threadRef.environmentId,
       input: {
         patch: {
           projectSettingsOverrides: {
-            [thread.projectId]: {
-              ...settings.projectSettingsOverrides[thread.projectId],
-              ...patch,
-            },
+            [thread.projectId]: staged.value,
           },
         },
       },
+    }).then((result) => {
+      if (result._tag === "Failure" && pending.current === staged) pending.current = base;
     });
     return true;
   };
