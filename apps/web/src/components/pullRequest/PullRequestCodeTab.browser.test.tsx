@@ -15,7 +15,7 @@ import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { setAppearanceMode } from "../../hooks/useTheme";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, testFileDiffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -52,6 +52,13 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    testFileDiffAtom: Atom.make(() =>
+      AsyncResult.success({
+        patch: filePatch("a.ts") + filePatch("a.test.ts"),
+        truncated: false,
+        nextCursor: null,
+      }),
+    ),
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
@@ -60,6 +67,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
 
 const mocks = vi.hoisted(() => ({
   paged: false,
+  withTestFile: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -108,7 +116,8 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
-        return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
+        if (mocks.paged) return pagedDiffAtom(input.cursor ?? "first");
+        return mocks.withTestFile ? testFileDiffAtom : diffAtom;
       }) as never,
     },
   };
@@ -173,6 +182,7 @@ function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.withTestFile = false;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -342,7 +352,8 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
 });
 
 it("keeps a hidden test file open when all shown files collapse", async () => {
-  setup({ paged: true });
+  setup({ paged: false });
+  mocks.withTestFile = true;
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
   using _preferences = {
     [Symbol.dispose]() {
@@ -350,7 +361,9 @@ it("keeps a hidden test file open when all shown files collapse", async () => {
       __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
     },
   };
-  await using screen = await render(tab(0), { container: pagedContainer() });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
   const filter = screen.getByRole("button", { name: "Hide test files" });
   await filter.click();
   await expect.element(filter).toHaveAttribute("aria-pressed", "true");
@@ -361,8 +374,8 @@ it("keeps a hidden test file open when all shown files collapse", async () => {
     .toBeVisible();
   await filter.click();
 
-  await expect.element(filter).toHaveAttribute("aria-pressed", "false");
-  // Files keep their order, so the second header is early-1.test.ts's.
+  await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
+  // Test files sort after the others, so the second header is a.test.ts's.
   await expect
     .element(screen.getByRole("button", { name: /^(Expand|Collapse) diff$/ }).nth(1))
     .toHaveAttribute("aria-expanded", "true");
