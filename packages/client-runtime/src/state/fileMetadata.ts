@@ -263,6 +263,8 @@ export function createFileMetadataAtoms<R, E>(
     const now = yield* Clock.currentTimeMillis;
     if (isCurrent && !isCurrent(session.value)) return;
     for (const entry of entries) {
+      // A listing knows a file's kind but not its size or MIME type, so files still get a stat.
+      if (entry.kind !== "directory") continue;
       const path = resolveWorkspaceFilePath(entry.path, cwd);
       const previous = knownEntry(session.value, path, now);
       if (previous?.value?.kind === entry.kind) continue;
