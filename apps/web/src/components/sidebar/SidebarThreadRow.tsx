@@ -406,7 +406,7 @@ function SidebarThreadTooltip({
   const gt = useGT();
   const m = useMessages();
   return (
-    <ThreadHoverCardPopup side="right" align="start" sideOffset={4} className="w-75">
+    <ThreadHoverCardPopup side="right" align="start" sideOffset={4} className="w-80">
       <ThreadHoverCard
         title={thread.title}
         footer={
