@@ -139,14 +139,7 @@ const deferred = () => {
 let container: HTMLDivElement;
 // Fixed key and a changing threadRef, as the retained device surface mounts it.
 const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
-  <DevicePanel
-    key="device-panel"
-    mode="embedded"
-    threadRef={threadRef}
-    surface={surface}
-    visible
-    onDismissSetup={() => undefined}
-  />
+  <DevicePanel key="device-panel" mode="embedded" threadRef={threadRef} surface={surface} visible />
 );
 const startButton = () => container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
 const click = (button: HTMLButtonElement | null) =>

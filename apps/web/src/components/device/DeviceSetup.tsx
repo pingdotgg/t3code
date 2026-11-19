@@ -1,6 +1,6 @@
 import { DeviceHostUpdates } from "./DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, EnvironmentId } from "@t3tools/contracts";
-import { Check, CircleAlert } from "lucide-react";
+import { Check, CircleAlert, Smartphone } from "lucide-react";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useAtomMount } from "@effect/atom-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -16,6 +16,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { cn } from "~/lib/utils";
 import { m, type MessageResolver } from "~/i18n/messages";
+import { PreviewEmptyHero } from "../preview/PreviewEmptyHero";
 
 const platformName = (platform: DevicePlatform) => (platform === "ios" ? "iOS" : "Android");
 
@@ -182,10 +183,15 @@ export function platformSetupStatus(
   };
 }
 
+/**
+ * The device setup steps. `dialog` renders them inside a `WizardPopup`; `pane`
+ * renders them as a Device tab's own content, which its tab closes instead of Cancel.
+ */
 export function DeviceSetup(props: {
   readonly environmentId: EnvironmentId;
   readonly state: DeviceServiceState;
   readonly onComplete?: () => void;
+  readonly layout?: "dialog" | "pane";
 }) {
   const canConfigure = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const gt = useGT();
@@ -213,124 +219,149 @@ export function DeviceSetup(props: {
     if (kind === "complete" && result._tag === "Success") props.onComplete?.();
   };
 
+  const title = gt("Set up devices");
+  const description = gt(
+    "Review what runs on this environment before using simulators and emulators.",
+  );
+  const steps = (
+    <WizardSteps
+      steps={[gt("Device hub"), gt("Simulators"), gt("Agent access")]}
+      currentStep={step}
+      onStepChange={setStep}
+      isStepDisabled={(requested) => busy || pending !== null || requested > step}
+    />
+  );
+  const body = (
+    <>
+      <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
+      {step === 0 ? (
+        <section className="space-y-3 text-sm">
+          <h3 className="font-medium">
+            <T>Enable the device hub</T>
+          </h3>
+          <div className="flex items-start justify-between gap-4">
+            <p className="text-muted-foreground">{m(deviceHubDescription)}</p>
+            <Switch
+              checked={enabled}
+              disabled={!canConfigure || busy || pending !== null}
+              aria-label={gt("Enable device hub")}
+              onCheckedChange={(checked) =>
+                void update("hub", {
+                  enabled: Boolean(checked),
+                  ...(checked ? {} : { agentAccessEnabled: false }),
+                })
+              }
+            />
+          </div>
+          <DeviceHubSetupStatus
+            state={props.state}
+            pending={pending === "hub" || (busy && pending !== "agent")}
+          />
+        </section>
+      ) : null}
+
+      {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
+        <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
+          <h3 className="font-medium">
+            <T>Check simulator support</T>
+          </h3>
+          <DevicePlatformSetup
+            state={props.state}
+            checking={pending === "check"}
+            disabled={!enabled || busy || pending !== null}
+            onCheck={() => {
+              setPending("check");
+              void list({ environmentId: props.environmentId, input: {} }).finally(() =>
+                setPending(null),
+              );
+            }}
+          />
+        </section>
+      ) : null}
+
+      {step === 2 ? (
+        <section className="space-y-3 text-sm">
+          <h3 className="font-medium">
+            <T>Allow agent control</T>
+          </h3>
+          <div className="flex items-start justify-between gap-4">
+            <p className="text-muted-foreground">{m(agentDeviceDescription)}</p>
+            <Switch
+              checked={props.state.agentAccessEnabled}
+              disabled={!canConfigure || !enabled || busy || pending !== null}
+              aria-label={gt("Allow agents to control devices")}
+              onCheckedChange={(checked) =>
+                void update("agent", { agentAccessEnabled: Boolean(checked) })
+              }
+            />
+          </div>
+          <AgentDeviceSetupStatus state={props.state} pending={pending === "agent"} />
+          <p className="text-xs text-muted-foreground">
+            <T>Leave this off to keep manual device controls without giving agents access.</T>
+          </p>
+        </section>
+      ) : null}
+      {props.state.hostStatus === "failed" && props.state.hostStatusDetail ? (
+        <p role="alert" className="mt-3 text-xs text-error-foreground">
+          {props.state.hostStatusDetail}
+        </p>
+      ) : null}
+    </>
+  );
+  const back =
+    step === 0 ? null : (
+      <Button
+        variant="secondary"
+        disabled={busy || pending !== null}
+        onClick={() => setStep(step - 1)}
+      >
+        <T>Back</T>
+      </Button>
+    );
+  const next =
+    step < 2 ? (
+      <Button disabled={!ready || pending !== null} onClick={() => setStep(step + 1)}>
+        <T>Continue</T>
+      </Button>
+    ) : (
+      <Button
+        disabled={!canConfigure || !ready || pending !== null}
+        onClick={() => void update("complete", { onboardingCompleted: true })}
+      >
+        {pending === "complete" ? gt("Saving…") : gt("Done")}
+      </Button>
+    );
+
+  if (props.layout === "pane") {
+    return (
+      <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-4 pt-4 pb-6">
+        <div className="mx-auto flex w-full max-w-xl flex-col gap-4.5">
+          <PreviewEmptyHero icon={<Smartphone />} title={title} description={description} strong>
+            {steps}
+          </PreviewEmptyHero>
+          <div className="rounded-card surface-card-settings px-4 py-4">{body}</div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {back}
+            {next}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      <WizardHeader
-        title={gt("Set up devices")}
-        description={gt(
-          "Review what runs on this environment before using simulators and emulators.",
-        )}
-      >
-        <WizardSteps
-          steps={[gt("Device hub"), gt("Simulators"), gt("Agent access")]}
-          currentStep={step}
-          onStepChange={setStep}
-          isStepDisabled={(requested) => busy || pending !== null || requested > step}
-        />
+      <WizardHeader title={title} description={description}>
+        {steps}
       </WizardHeader>
-
-      <WizardPanel>
-        <DeviceHostUpdates state={props.state} environmentId={props.environmentId} />
-        {step === 0 ? (
-          <section className="space-y-3 text-sm">
-            <h3 className="font-medium">
-              <T>Enable the device hub</T>
-            </h3>
-            <div className="flex items-start justify-between gap-4">
-              <p className="text-muted-foreground">{m(deviceHubDescription)}</p>
-              <Switch
-                checked={enabled}
-                disabled={!canConfigure || busy || pending !== null}
-                aria-label={gt("Enable device hub")}
-                onCheckedChange={(checked) =>
-                  void update("hub", {
-                    enabled: Boolean(checked),
-                    ...(checked ? {} : { agentAccessEnabled: false }),
-                  })
-                }
-              />
-            </div>
-            <DeviceHubSetupStatus
-              state={props.state}
-              pending={pending === "hub" || (busy && pending !== "agent")}
-            />
-          </section>
-        ) : null}
-
-        {step === 1 || (step === 0 && enabled && localPlatformsUnavailable) ? (
-          <section className={cn("space-y-3 text-sm", step === 0 && "mt-4")}>
-            <h3 className="font-medium">
-              <T>Check simulator support</T>
-            </h3>
-            <DevicePlatformSetup
-              state={props.state}
-              checking={pending === "check"}
-              disabled={!enabled || busy || pending !== null}
-              onCheck={() => {
-                setPending("check");
-                void list({ environmentId: props.environmentId, input: {} }).finally(() =>
-                  setPending(null),
-                );
-              }}
-            />
-          </section>
-        ) : null}
-
-        {step === 2 ? (
-          <section className="space-y-3 text-sm">
-            <h3 className="font-medium">
-              <T>Allow agent control</T>
-            </h3>
-            <div className="flex items-start justify-between gap-4">
-              <p className="text-muted-foreground">{m(agentDeviceDescription)}</p>
-              <Switch
-                checked={props.state.agentAccessEnabled}
-                disabled={!canConfigure || !enabled || busy || pending !== null}
-                aria-label={gt("Allow agents to control devices")}
-                onCheckedChange={(checked) =>
-                  void update("agent", { agentAccessEnabled: Boolean(checked) })
-                }
-              />
-            </div>
-            <AgentDeviceSetupStatus state={props.state} pending={pending === "agent"} />
-            <p className="text-xs text-muted-foreground">
-              <T>Leave this off to keep manual device controls without giving agents access.</T>
-            </p>
-          </section>
-        ) : null}
-        {props.state.hostStatus === "failed" && props.state.hostStatusDetail ? (
-          <p role="alert" className="mt-3 text-xs text-error-foreground">
-            {props.state.hostStatusDetail}
-          </p>
-        ) : null}
-      </WizardPanel>
-
+      <WizardPanel>{body}</WizardPanel>
       <WizardFooter>
-        {step === 0 ? (
+        {back ?? (
           <DialogClose render={<Button variant="secondary" />}>
             <T>Cancel</T>
           </DialogClose>
-        ) : (
-          <Button
-            variant="secondary"
-            disabled={busy || pending !== null}
-            onClick={() => setStep(step - 1)}
-          >
-            <T>Back</T>
-          </Button>
         )}
-        {step < 2 ? (
-          <Button disabled={!ready || pending !== null} onClick={() => setStep(step + 1)}>
-            <T>Continue</T>
-          </Button>
-        ) : (
-          <Button
-            disabled={!canConfigure || !ready || pending !== null}
-            onClick={() => void update("complete", { onboardingCompleted: true })}
-          >
-            {pending === "complete" ? gt("Saving…") : gt("Done")}
-          </Button>
-        )}
+        {next}
       </WizardFooter>
     </>
   );

@@ -885,7 +885,6 @@ function ThreadSurfaceContent({
             key={surface.id}
             surface={surface}
             visible={visible}
-            onDismissSetup={() => void closeThreadSurface(threadRef, surface.id)}
           />
         </Suspense>
       );
