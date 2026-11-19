@@ -419,6 +419,37 @@ describe("Antigravity tool results", () => {
       expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
     }
+    // Older runtimes send the edit's snippets as the diff. Over 8 KB they are cut, and a patch
+    // made from them would number the hunk from the snippet's first line instead of the file's.
+    const rows = (changed: string) =>
+      Array.from({ length: 150 }, (_, i) =>
+        (i === 75 ? changed : `row ${i + 1} `).padEnd(82, "x"),
+      ).join("\n");
+    const snippets = {
+      TargetContent: rows("old "),
+      ReplacementContent: rows("new "),
+      TargetFile: path,
+      StartLine: 201,
+      EndLine: 350,
+    };
+    const pending = frame(snippets, 201);
+    const snippetDiff = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...pending,
+        update: {
+          ...pending.update,
+          content: [
+            {
+              type: "diff",
+              path,
+              oldText: snippets.TargetContent,
+              newText: snippets.ReplacementContent,
+            },
+          ],
+        },
+      }).toolCall,
+    );
+    expect(snippetDiff.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
   });
 
   it("shows a 1.5 edit_file edit while it runs and places it from the completion's whole-file texts", () => {

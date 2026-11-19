@@ -342,13 +342,22 @@ export function makeAntigravityReadRepair() {
 }
 
 const WHOLE_FILE_PATCH_META_KEY = "t3code.wholeFilePatch";
+const decodeEditFileInput = Schema.decodeUnknownOption(
+  Schema.Struct({ Target: Schema.String, Replacement: Schema.String }),
+);
 
-/** 1.5 runtimes complete an edit with the whole file before and after it; over 8 KB both are cut. */
+/**
+ * 1.5 runtimes complete `edit_file` with the whole file before and after it; over 8 KB both are
+ * cut. Any other diff may hold the edit's snippets, whose lines are not the file's.
+ */
 function wholeFilePatchBeforeCut(
+  update: { readonly status?: string | null; readonly rawInput?: unknown },
   entry: EffectAcpSchema.ToolCallContent,
   budget: ToolPayloadBudget,
 ): string | undefined {
   if (
+    update.status !== "completed" ||
+    Option.isNone(decodeEditFileInput(update.rawInput)) ||
     entry.type !== "diff" ||
     !("path" in entry) ||
     typeof entry.oldText !== "string" ||
@@ -372,7 +381,7 @@ export function normalizeAntigravitySessionUpdate(
   const contentBudget = { nodes: 512, text: 32_000 };
   const wholeFilePatches: Record<string, string> = {};
   const content = update.content?.flatMap((entry) => {
-    const patch = wholeFilePatchBeforeCut(entry, contentBudget);
+    const patch = wholeFilePatchBeforeCut(update, entry, contentBudget);
     if (patch !== undefined && "path" in entry) wholeFilePatches[entry.path] = patch;
     const decoded = Option.getOrUndefined(
       decodeToolCallContent(sanitizeToolValue(entry, contentBudget, 0)),
@@ -486,10 +495,6 @@ function withAntigravityEditPatches(
     };
   });
 }
-
-const decodeEditFileInput = Schema.decodeUnknownOption(
-  Schema.Struct({ Target: Schema.String, Replacement: Schema.String }),
-);
 
 /**
  * 1.5 runtimes announce `edit_file` already running, with its arguments and no diff. The write
