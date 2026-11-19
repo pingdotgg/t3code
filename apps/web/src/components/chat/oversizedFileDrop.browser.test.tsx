@@ -53,10 +53,13 @@ function largeArchive() {
 
 async function renderThread(name: string) {
   const thread = threadWithHistory(name, 1);
-  const environment = installFakeEnvironment([thread], {
-    acceptCommands: true,
-    maxFileUploadBytes: 50 * MB,
-  });
+  await using stack = new AsyncDisposableStack();
+  stack.use(
+    installFakeEnvironment([thread], {
+      acceptCommands: true,
+      maxFileUploadBytes: 50 * MB,
+    }),
+  );
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -65,19 +68,19 @@ async function renderThread(name: string) {
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
   );
   await router.load();
-  const app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
+  stack.use(
+    await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    }),
+  );
   await expect.element(page.getByText(`Answer 0 for ${thread.id}.`)).toBeVisible();
   const editor = page.getByRole("textbox", { name: `Message ${thread.title}`, exact: true });
+  const owned = stack.move();
   return {
     editor,
     threadRef: scopeThreadRef(ENVIRONMENT_ID, thread.id),
-    [Symbol.asyncDispose]: async () => {
-      await app[Symbol.asyncDispose]();
-      environment[Symbol.dispose]();
-    },
+    [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
 }
 

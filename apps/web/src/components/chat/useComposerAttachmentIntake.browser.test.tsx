@@ -287,12 +287,12 @@ const linkerThatLinks = () => {
 };
 
 it("links a file over the upload limit by path when the server shares this computer", async () => {
-  const toast = vi.spyOn(toastManager, "add");
   const linker = linkerThatLinks();
   const { intake, threadErrors, stored, screen } = await renderFileIntake({
     resolveLocalFileLinker: linker.resolve,
   });
   await using _screen = screen;
+  using toast = vi.spyOn(toastManager, "add");
 
   const inserted = await act(() =>
     intake().addComposerAttachments([fileOfSize("device-firmware-build.tar.gz", 8192 * MB)]),
@@ -308,7 +308,6 @@ it("links a file over the upload limit by path when the server shares this compu
       title: expect.stringContaining("device-firmware-build.tar.gz"),
     }),
   );
-  toast.mockRestore();
 });
 
 it("keeps refusing a file over the upload limit when the server is elsewhere", async () => {
@@ -374,11 +373,11 @@ it("links a large file even when the draft has no attachment slots left", async 
 });
 
 it("refuses a large file as before when its path cannot be read", async () => {
-  const toast = vi.spyOn(toastManager, "add");
   const { intake, threadErrors, screen } = await renderFileIntake({
     resolveLocalFileLinker: () => async (files) => ({ linked: [], missing: files }),
   });
   await using _screen = screen;
+  using toast = vi.spyOn(toastManager, "add");
 
   const inserted = await act(() =>
     intake().addComposerAttachments([fileOfSize("big.tar.gz", 60 * MB)]),
@@ -387,5 +386,4 @@ it("refuses a large file as before when its path cannot be read", async () => {
   expect(inserted).toBe(false);
   expect(threadErrors.at(-1)).toBe(tooLarge("big.tar.gz"));
   expect(toast).not.toHaveBeenCalledWith(expect.objectContaining({ type: "info" }));
-  toast.mockRestore();
 });
