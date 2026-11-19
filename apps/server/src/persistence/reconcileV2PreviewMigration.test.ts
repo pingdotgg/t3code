@@ -85,6 +85,14 @@ describe("V2 preview upgrade", () => {
         [103, "IssueTrackerAdditionalScopes"],
         [104, "ProjectionProjectsTrackedFolders"],
         [105, "TaskFolders"],
+        [106, "Workflows"],
+        [107, "WorkflowTriggers"],
+        [108, "WorkflowStepEnvironment"],
+        [109, "WorkflowRunInput"],
+        [110, "WorkflowStore"],
+        [111, "WorkflowRunParent"],
+        [112, "WorkflowStepResult"],
+        [113, "WorkflowWaitWatch"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -213,6 +221,14 @@ describe("V2 preview upgrade", () => {
         [103, "IssueTrackerAdditionalScopes"],
         [104, "ProjectionProjectsTrackedFolders"],
         [105, "TaskFolders"],
+        [106, "Workflows"],
+        [107, "WorkflowTriggers"],
+        [108, "WorkflowStepEnvironment"],
+        [109, "WorkflowRunInput"],
+        [110, "WorkflowStore"],
+        [111, "WorkflowRunParent"],
+        [112, "WorkflowStepResult"],
+        [113, "WorkflowWaitWatch"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

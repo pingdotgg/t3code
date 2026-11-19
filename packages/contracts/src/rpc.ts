@@ -421,6 +421,22 @@ import {
   TextGeneratorError,
 } from "./settings.ts";
 import {
+  WorkflowAnswerInput,
+  WorkflowRequestError,
+  WorkflowDefinitionChangeResult,
+  WorkflowDefinitionDeleteInput,
+  WorkflowDefinitionFiles,
+  WorkflowDefinitionGetInput,
+  WorkflowDefinitionSaveInput,
+  WorkflowRunCancelInput,
+  WorkflowRunDetail,
+  WorkflowRunGetInput,
+  WorkflowRunResumeInput,
+  WorkflowCounts,
+  WorkflowRunsSnapshot,
+  WorkflowRunsSubscribeInput,
+} from "./workflow.ts";
+import {
   ScheduledTaskDeleteInput,
   ScheduledTaskDeleteResult,
   ScheduledTaskError,
@@ -615,6 +631,16 @@ export const WS_METHODS = {
   serverReportClientActivity: "server.reportClientActivity",
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
+
+  workflowsSubscribe: "workflows.subscribe",
+  workflowsCounts: "workflows.counts",
+  workflowsGet: "workflows.get",
+  workflowsAnswer: "workflows.answer",
+  workflowsResume: "workflows.resume",
+  workflowsCancel: "workflows.cancel",
+  workflowsGetDefinition: "workflows.getDefinition",
+  workflowsSaveDefinition: "workflows.saveDefinition",
+  workflowsDeleteDefinition: "workflows.deleteDefinition",
 
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
@@ -2282,6 +2308,59 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const WsWorkflowsSubscribeRpc = Rpc.make(WS_METHODS.workflowsSubscribe, {
+  payload: WorkflowRunsSubscribeInput,
+  success: WorkflowRunsSnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsWorkflowsCountsRpc = Rpc.make(WS_METHODS.workflowsCounts, {
+  payload: WorkflowRunsSubscribeInput,
+  success: WorkflowCounts,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
+const WsWorkflowsGetRpc = Rpc.make(WS_METHODS.workflowsGet, {
+  payload: WorkflowRunGetInput,
+  success: WorkflowRunDetail,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsAnswerRpc = Rpc.make(WS_METHODS.workflowsAnswer, {
+  payload: WorkflowAnswerInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsResumeRpc = Rpc.make(WS_METHODS.workflowsResume, {
+  payload: WorkflowRunResumeInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsCancelRpc = Rpc.make(WS_METHODS.workflowsCancel, {
+  payload: WorkflowRunCancelInput,
+  error: Schema.Union([WorkflowRequestError, EnvironmentAuthorizationError]),
+});
+
+const WsWorkflowsGetDefinitionRpc = Rpc.make(WS_METHODS.workflowsGetDefinition, {
+  payload: WorkflowDefinitionGetInput,
+  success: WorkflowDefinitionFiles,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsSaveDefinitionRpc = Rpc.make(WS_METHODS.workflowsSaveDefinition, {
+  payload: WorkflowDefinitionSaveInput,
+  success: WorkflowDefinitionChangeResult,
+  error: EnvironmentAuthorizationError,
+});
+
+const WsWorkflowsDeleteDefinitionRpc = Rpc.make(WS_METHODS.workflowsDeleteDefinition, {
+  payload: WorkflowDefinitionDeleteInput,
+  success: WorkflowDefinitionChangeResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2452,6 +2531,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsWorkflowsSubscribeRpc,
+  WsWorkflowsCountsRpc,
+  WsWorkflowsGetRpc,
+  WsWorkflowsAnswerRpc,
+  WsWorkflowsResumeRpc,
+  WsWorkflowsCancelRpc,
+  WsWorkflowsGetDefinitionRpc,
+  WsWorkflowsSaveDefinitionRpc,
+  WsWorkflowsDeleteDefinitionRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,
