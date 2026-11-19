@@ -8,6 +8,7 @@ import type {
   OrchestrationV2NativeChildStep,
   OrchestrationV2NativeChildWork,
 } from "@t3tools/contracts";
+import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -25,6 +26,24 @@ const STEP_INVOKE_SUBAGENT = 143;
 const INVOKE_SPECS = 9;
 const INVOKE_RESULTS = 10;
 const INVOKE_SUBAGENT_STEP_TYPE = 127;
+// Cortex step types for shell commands (exa.cortex_pb): RUN_COMMAND=21, GENERIC=132.
+const MAX_COMMAND_SCAN_ROWS = 256;
+
+export type AntigravityCommandNativeState = "running" | "completed" | "failed" | "cancelled";
+
+// CortexStepStatus (exa.cortex_pb, verified against agy 1.5.11 embedded proto descriptor):
+// In-flight: PENDING=1, RUNNING=2, GENERATING=8, WAITING=9, QUEUED=11
+// Terminal:  DONE=3, INVALID=4, CLEARED=5, CANCELED=6, ERROR=7, INTERRUPTED=12
+// Unlisted/UNSPECIFIED=0 return undefined so unknown future codes are never assumed running.
+function decodeNativeCommandStatus(status: number): AntigravityCommandNativeState | undefined {
+  if (status === 3) return "completed";
+  if (status === 5 || status === 6 || status === 12) return "cancelled";
+  if (status === 4 || status === 7) return "failed";
+  if (status === 1 || status === 2 || status === 8 || status === 9 || status === 11) {
+    return "running";
+  }
+  return undefined;
+}
 
 // One open reads at most this much; past any bound the batch view stays as it was.
 const MAX_STEP_BYTES = 1024 * 1024;
@@ -476,3 +495,198 @@ export const readAntigravityChildWork = Effect.fn("readAntigravityChildWork")(fu
     catch: (cause) => new AntigravityChildWorkReadError({ cause }),
   });
 });
+
+/**
+ * Reads native `steps.status` for Antigravity shell commands, caching `toolCallId -> idx` so
+ * repeat checks run a single primary-key lookup per command.
+ */
+export function makeAntigravityCommandStatusReader(
+  profileDirectory: string,
+  rootSessionId: string,
+) {
+  const stepIndexByToolCallId = new Map<string, number>();
+  const stepIndexByCallId = new Map<string, number>();
+  const seenUnknownStatuses = new Set<string>();
+  let lastScannedMaxIdx = -1;
+
+  const plannerCommandCallIdAt = (database: NodeSqlite.DatabaseSync, plannerIdx: number) => {
+    const planner = payloadOf(
+      database
+        .prepare(
+          "SELECT step_payload FROM steps WHERE idx = ? AND step_format = 0 AND length(step_payload) <= ?",
+        )
+        .get(plannerIdx, MAX_STEP_BYTES),
+    );
+    if (planner === undefined) return undefined;
+    const calls = safely((payload) => {
+      const response = message(payload, STEP_PLANNER_RESPONSE);
+      if (response === undefined) return [];
+      return messages(response, PLANNER_TOOL_CALLS).flatMap((call) => {
+        const id = text(call, 1);
+        return text(call, 2) === "run_command" && id !== undefined ? [id] : [];
+      });
+    })(planner);
+    return calls?.length === 1 ? calls[0] : undefined;
+  };
+
+  return Effect.fn("readAntigravityCommandStatuses")(function* (
+    tools: ReadonlyArray<Pick<AcpToolCallState, "toolCallId">>,
+  ) {
+    const result = new Map<string, AntigravityCommandNativeState>();
+    if (!NATIVE_ID.test(rootSessionId) || tools.length === 0) return result;
+    const unknownStatuses: Array<{ readonly toolCallId: string; readonly status: number }> = [];
+    const recordStatus = (toolCallId: string, status: number) => {
+      const decoded = decodeNativeCommandStatus(status);
+      if (decoded !== undefined) {
+        result.set(toolCallId, decoded);
+        return;
+      }
+      const key = `${toolCallId}:${status}`;
+      if (!seenUnknownStatuses.has(key)) {
+        seenUnknownStatuses.add(key);
+        unknownStatuses.push({ toolCallId, status });
+      }
+    };
+    const statuses = yield* Effect.tryPromise({
+      try: async (): Promise<ReadonlyMap<string, AntigravityCommandNativeState>> => {
+        const root = await antigravityProfileRoot(profileDirectory);
+        if (root === undefined) return result;
+        const file =
+          (await antigravityManagedPath(
+            root,
+            ["antigravity-cli", "conversations", `${rootSessionId}.db`],
+            "file",
+          )) ??
+          (await antigravityManagedPath(
+            root,
+            ["antigravity-acp", "conversations", `${rootSessionId}.db`],
+            "file",
+          ));
+        if (file === undefined) return result;
+
+        const database = new NodeSqlite.DatabaseSync(file.path, { readOnly: true });
+        try {
+          database.exec("PRAGMA busy_timeout = 100");
+          const columns = new Set(
+            database
+              .prepare("PRAGMA table_info(steps)")
+              .all()
+              .flatMap((row) =>
+                row !== null &&
+                typeof row === "object" &&
+                "name" in row &&
+                typeof row.name === "string"
+                  ? [row.name]
+                  : [],
+              ),
+          );
+          if (!columns.has("status")) return result;
+          const hasMetadata = columns.has("metadata");
+
+          const statusByIndex = database.prepare("SELECT status FROM steps WHERE idx = ?");
+          const unresolved = new Map<string, string>();
+          for (const { toolCallId } of tools) {
+            const cachedIdx = stepIndexByToolCallId.get(toolCallId);
+            if (cachedIdx !== undefined) {
+              const row = statusByIndex.get(cachedIdx);
+              if (row !== undefined && typeof row.status === "number") {
+                recordStatus(toolCallId, row.status);
+              }
+              continue;
+            }
+            const stepRef = /^(.+):(\d+)$/.exec(toolCallId);
+            const lookupCallId =
+              stepRef !== null && stepRef[1] === rootSessionId
+                ? plannerCommandCallIdAt(database, Number(stepRef[2]))
+                : toolCallId;
+            if (lookupCallId === undefined) continue;
+            const knownIdx = stepIndexByCallId.get(lookupCallId);
+            if (knownIdx !== undefined) {
+              stepIndexByToolCallId.set(toolCallId, knownIdx);
+              const row = statusByIndex.get(knownIdx);
+              if (row !== undefined && typeof row.status === "number") {
+                recordStatus(toolCallId, row.status);
+              }
+              continue;
+            }
+            unresolved.set(lookupCallId, toolCallId);
+          }
+
+          if (unresolved.size > 0) {
+            let scannedBytes = 0;
+            let scannedRows = 0;
+            let scannedMaxIdx = lastScannedMaxIdx;
+            let hitScanCap = false;
+            let sawUnmappedRow = false;
+            const query = hasMetadata
+              ? database.prepare(
+                  "SELECT idx, status, CASE WHEN length(metadata) <= ? THEN metadata END AS metadata FROM steps WHERE step_type IN (21, 132) AND step_format = 0 AND idx > ? ORDER BY idx DESC LIMIT ?",
+                )
+              : database.prepare(
+                  "SELECT idx, status, CASE WHEN length(step_payload) <= ? THEN step_payload END AS step_payload FROM steps WHERE step_type IN (21, 132) AND step_format = 0 AND idx > ? ORDER BY idx DESC LIMIT ?",
+                );
+            for (const row of query.iterate(
+              MAX_STEP_BYTES,
+              lastScannedMaxIdx,
+              MAX_COMMAND_SCAN_ROWS,
+            )) {
+              scannedRows += 1;
+              if (typeof row.idx !== "number" || typeof row.status !== "number") continue;
+              if (row.idx > scannedMaxIdx) scannedMaxIdx = row.idx;
+              const blob = hasMetadata ? row.metadata : row.step_payload;
+              if (!(blob instanceof Uint8Array)) {
+                sawUnmappedRow = true;
+                continue;
+              }
+              scannedBytes += blob.length;
+              if (scannedBytes > MAX_SCAN_BYTES) {
+                hitScanCap = true;
+                break;
+              }
+              const callId = hasMetadata
+                ? safely((data) => text(message(data, METADATA_TOOL_CALL), 1))(blob)
+                : safely((data) =>
+                    text(message(message(data, STEP_METADATA), METADATA_TOOL_CALL), 1),
+                  )(blob);
+              if (callId === undefined) {
+                sawUnmappedRow = true;
+                continue;
+              }
+              stepIndexByCallId.set(callId, row.idx);
+              const ownerToolCallId = unresolved.get(callId);
+              if (ownerToolCallId === undefined) continue;
+              stepIndexByToolCallId.set(ownerToolCallId, row.idx);
+              recordStatus(ownerToolCallId, row.status);
+              unresolved.delete(callId);
+              if (unresolved.size === 0) break;
+            }
+            // Advance the watermark only when every row above it was scanned and mapped
+            // without hitting the row/byte caps, so neither >256-row backlogs nor rows whose
+            // metadata is written asynchronously are skipped permanently.
+            if (
+              unresolved.size > 0 &&
+              !hitScanCap &&
+              !sawUnmappedRow &&
+              scannedRows < MAX_COMMAND_SCAN_ROWS &&
+              scannedMaxIdx > lastScannedMaxIdx
+            ) {
+              lastScannedMaxIdx = scannedMaxIdx;
+            }
+          }
+
+          return result;
+        } finally {
+          database.close();
+        }
+      },
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    });
+    if (unknownStatuses.length > 0) {
+      yield* Effect.logDebug("antigravity.unknown-command-step-status", {
+        sessionId: rootSessionId,
+        unknownStatuses,
+      });
+    }
+    return statuses;
+  });
+}

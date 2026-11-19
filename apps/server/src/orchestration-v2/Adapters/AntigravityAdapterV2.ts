@@ -31,6 +31,7 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  makeAntigravityCommandStatusReader,
 } from "../../provider/acp/AntigravityChildWork.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
@@ -39,6 +40,7 @@ import {
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
   extractAntigravityUserInputQuestion,
+  isAntigravityOpenForegroundCommand,
   makeAntigravityReadRepair,
   makeAntigravityUserInputResponse,
   normalizeAntigravityToolCall,
@@ -98,6 +100,12 @@ export interface AntigravityAdapterV2Options {
   readonly continuationRequests?: Parameters<typeof makeAcpAdapterV2>[0]["continuationRequests"];
   /** The agent's GEMINI_HOME. Its session logs show turns that ended on an upstream error. */
   readonly profileDirectory?: string;
+  readonly foregroundCommandSettlement?: Partial<
+    Pick<
+      NonNullable<AcpAdapterV2Flavor["foregroundCommandSettlement"]>,
+      "maxWait" | "pollInterval" | "maxContinuations" | "makeStatusReader"
+    >
+  >;
 }
 
 /**
@@ -186,7 +194,11 @@ export function makeAntigravityAcpAdapterFlavor(
             ),
           ),
         prompt: (payload, promptOptions) =>
-          Effect.sync(reads.reset).pipe(Effect.andThen(runtime.prompt(payload, promptOptions))),
+          Effect.sync(reads.reset).pipe(
+            Effect.andThen(runtime.prompt(payload, promptOptions)),
+            // Wait for any in-flight update/read-repair callback before prompt settlement checks tool state.
+            Effect.tap(() => updates.withPermit(Effect.void)),
+          ),
         handleSessionUpdate: (handler) => {
           projectUpdate = handler;
           return runtime.handleSessionUpdate((notification) =>
@@ -218,6 +230,45 @@ export function makeAntigravityAcpAdapterFlavor(
     supportsNativeGoals: options.supportsNativeGoals ?? Effect.succeed(false),
     // Agents that advertise HTTP MCP skip the stdio bridge process; others keep stdio.
     mcpOverHttp: true,
+    foregroundCommandSettlement: {
+      isOpenForegroundCommand: isAntigravityOpenForegroundCommand,
+      ...(profileDirectory === undefined
+        ? {}
+        : {
+            makeStatusReader: (sessionId: string) =>
+              makeAntigravityCommandStatusReader(profileDirectory, sessionId),
+          }),
+      ...options.foregroundCommandSettlement,
+      buildContinuationPrompt: ({ settled, stillRunning }) => {
+        const formatSummary = (
+          tools: ReadonlyArray<{ readonly command?: string; readonly title?: string }>,
+        ) => {
+          const commands = tools
+            .map((tool) => tool.command ?? tool.title)
+            .filter((value): value is string => Boolean(value?.trim()))
+            .slice(0, 3);
+          return commands.length > 0 ? ` (${commands.join("; ")})` : "";
+        };
+        const lines: Array<string> = [];
+        if (settled.length > 0) {
+          lines.push(
+            `The background command${formatSummary(settled)} finished without delivering a final wakeup reply over ACP. Report its verified result without re-running completed commands.`,
+          );
+        }
+        if (stillRunning.length > 0) {
+          lines.push(
+            `The background command${formatSummary(stillRunning)} was still running when your turn ended. Check its status in this turn and report its result once complete.`,
+          );
+        }
+        lines.push("Finish the user's request once all relevant results are reported.");
+        return [
+          {
+            type: "text",
+            text: `<t3_background_continuation>\n${lines.join("\n")}\n</t3_background_continuation>`,
+          },
+        ];
+      },
+    },
     sessionCarriesPullRequestLinking: antigravityAppendsSystemPrompt,
     makeRuntime,
     buildAttachmentPrompt: ({

@@ -8,6 +8,7 @@ import {
   antigravityApprovalOptions,
   antigravitySubagentOutput,
   classifyAntigravitySubagentToolCall,
+  isAntigravityOpenForegroundCommand,
   isAntigravityUserInputRequest,
   makeAntigravityUserInputResponse,
   normalizeAntigravitySessionUpdate,
@@ -621,5 +622,32 @@ describe("Antigravity served reads", () => {
       toolCallId: "call_current",
       status: "completed",
     });
+  });
+});
+
+describe("Antigravity foreground command classification", () => {
+  it("preserves IsDaemon and classifies only open non-daemon execute tools as foreground commands", () => {
+    const fg = normalizeAntigravityToolCall({
+      toolCallId: "call_fg",
+      kind: "execute",
+      status: "inProgress",
+      data: { rawInput: { CommandLine: "npm test", IsDaemon: false } },
+    });
+    const daemon = normalizeAntigravityToolCall({
+      toolCallId: "call_daemon",
+      kind: "execute",
+      status: "inProgress",
+      data: { rawInput: { CommandLine: "npm run dev", IsDaemon: true } },
+    });
+    const done = normalizeAntigravityToolCall({
+      toolCallId: "call_done",
+      kind: "execute",
+      status: "completed",
+      data: { rawInput: { CommandLine: "npm test" } },
+    });
+    expect(isAntigravityOpenForegroundCommand(fg)).toBe(true);
+    expect(daemon.data.isDaemon).toBe(true);
+    expect(isAntigravityOpenForegroundCommand(daemon)).toBe(false);
+    expect(isAntigravityOpenForegroundCommand(done)).toBe(false);
   });
 });

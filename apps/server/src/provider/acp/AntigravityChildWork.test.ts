@@ -11,6 +11,7 @@ import {
   ANTIGRAVITY_SUBAGENT_BATCH_TITLE,
   antigravitySubagentLaunches,
   describeAntigravitySubagentLaunches,
+  makeAntigravityCommandStatusReader,
   readAntigravityChildWork,
 } from "./AntigravityChildWork.ts";
 import { sanitizeAntigravityToolPayload } from "./AntigravityProtocol.ts";
@@ -339,6 +340,147 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
       expect(children).toHaveLength(16);
       expect(children.every((child) => child.truncated)).toBe(true);
       expect(JSON.stringify(children).length).toBeLessThan(600 * 1024);
+    }),
+  );
+
+  it.effect("reads native command steps.status values and tracks cached transitions", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cmd-status-" });
+      const conversations = path.join(profile, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const dbPath = path.join(conversations, `${ROOT}.db`);
+      const varint = (value: number): number[] => {
+        const bytes: number[] = [];
+        let current = value;
+        while (current >= 0x80) {
+          bytes.push((current & 0x7f) | 0x80);
+          current = Math.floor(current / 0x80);
+        }
+        return [...bytes, current];
+      };
+      const field = (num: number, value: string | Uint8Array) => {
+        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+        return [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+      };
+      const metadataFor = (callId: string) =>
+        Uint8Array.from(
+          field(4, Uint8Array.from([...field(1, callId), ...field(2, "run_command")])),
+        );
+      const { DatabaseSync } = yield* Effect.promise(() => import("node:sqlite"));
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec(
+          "CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer NOT NULL DEFAULT 0, status integer NOT NULL DEFAULT 0, metadata blob, step_payload blob, step_format integer NOT NULL DEFAULT 0)",
+        );
+        const insert = db.prepare(
+          "INSERT INTO steps (idx, step_type, status, metadata, step_payload, step_format) VALUES (?, ?, ?, ?, ?, 0)",
+        );
+        const plannerPayload = Uint8Array.from(
+          field(
+            20,
+            Uint8Array.from(
+              field(
+                7,
+                Uint8Array.from([...field(1, "call_via_planner"), ...field(2, "run_command")]),
+              ),
+            ),
+          ),
+        );
+        insert.run(9, 15, 3, new Uint8Array(), plannerPayload);
+        insert.run(10, 132, 2, metadataFor("call_run"), new Uint8Array());
+        insert.run(11, 132, 6, metadataFor("call_cancel"), new Uint8Array());
+        insert.run(12, 132, 7, metadataFor("call_err"), new Uint8Array());
+        insert.run(13, 21, 5, metadataFor("call_cleared"), new Uint8Array());
+        insert.run(14, 132, 99, metadataFor("call_unknown"), new Uint8Array());
+        insert.run(15, 21, 2, metadataFor("call_via_planner"), new Uint8Array());
+      } finally {
+        db.close();
+      }
+      const readStatuses = makeAntigravityCommandStatusReader(profile, ROOT);
+      const initial = yield* readStatuses([
+        { toolCallId: "call_run" },
+        { toolCallId: "call_cancel" },
+        { toolCallId: "call_err" },
+        { toolCallId: "call_cleared" },
+        { toolCallId: "call_unknown" },
+        { toolCallId: `${ROOT}:9` },
+        { toolCallId: "call_missing" },
+      ]);
+      expect(initial.get("call_run")).toBe("running");
+      expect(initial.get("call_cancel")).toBe("cancelled");
+      expect(initial.get("call_err")).toBe("failed");
+      expect(initial.get("call_cleared")).toBe("cancelled");
+      expect(initial.get("call_unknown")).toBeUndefined();
+      expect(initial.get(`${ROOT}:9`)).toBe("running");
+      expect(initial.get("call_missing")).toBeUndefined();
+
+      const updateDb = new DatabaseSync(dbPath);
+      try {
+        updateDb.prepare("UPDATE steps SET status = 3 WHERE idx = 10").run();
+        updateDb
+          .prepare(
+            "INSERT INTO steps (idx, step_type, status, metadata, step_payload, step_format) VALUES (16, 132, 3, ?, ?, 0)",
+          )
+          .run(metadataFor("call_late_insert"), new Uint8Array());
+      } finally {
+        updateDb.close();
+      }
+      const next = yield* readStatuses([
+        { toolCallId: "call_run" },
+        { toolCallId: "call_late_insert" },
+      ]);
+      expect(next.get("call_run")).toBe("completed");
+      expect(next.get("call_late_insert")).toBe("completed");
+    }),
+  );
+
+  it.effect("reads native command statuses from step_payload when metadata column is absent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cmd-nometa-" });
+      const conversations = path.join(profile, "antigravity-acp", "conversations");
+      yield* fs.makeDirectory(conversations, { recursive: true });
+      const dbPath = path.join(conversations, `${ROOT}.db`);
+      const varint = (value: number): number[] => {
+        const bytes: number[] = [];
+        let current = value;
+        while (current >= 0x80) {
+          bytes.push((current & 0x7f) | 0x80);
+          current = Math.floor(current / 0x80);
+        }
+        return [...bytes, current];
+      };
+      const field = (num: number, value: string | Uint8Array) => {
+        const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+        return [...varint(num * 8 + 2), ...varint(bytes.length), ...bytes];
+      };
+      const stepPayloadFor = (callId: string) =>
+        Uint8Array.from(
+          field(
+            5,
+            Uint8Array.from(
+              field(4, Uint8Array.from([...field(1, callId), ...field(2, "run_command")])),
+            ),
+          ),
+        );
+      const { DatabaseSync } = yield* Effect.promise(() => import("node:sqlite"));
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec(
+          "CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer NOT NULL DEFAULT 0, status integer NOT NULL DEFAULT 0, step_payload blob, step_format integer NOT NULL DEFAULT 0)",
+        );
+        db.prepare(
+          "INSERT INTO steps (idx, step_type, status, step_payload, step_format) VALUES (20, 132, 3, ?, 0)",
+        ).run(stepPayloadFor("call_nometa"));
+      } finally {
+        db.close();
+      }
+      const readStatuses = makeAntigravityCommandStatusReader(profile, ROOT);
+      const statuses = yield* readStatuses([{ toolCallId: "call_nometa" }]);
+      expect(statuses.get("call_nometa")).toBe("completed");
     }),
   );
 });

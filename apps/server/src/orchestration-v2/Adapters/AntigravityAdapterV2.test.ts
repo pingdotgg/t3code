@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- fixtures write a native session database.
+import * as NodeSqlite from "node:sqlite";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
@@ -1272,5 +1274,686 @@ describe("AntigravityAdapterV2 session system prompt", () => {
           assert.include(sent, "<pull_request_linking>");
         }
       }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 foreground command settlement", () => {
+  const encodeVarint = (value: number): number[] => {
+    const out: number[] = [];
+    let current = value;
+    while (current >= 0x80) {
+      out.push((current & 0x7f) | 0x80);
+      current = Math.floor(current / 0x80);
+    }
+    return [...out, current];
+  };
+  const encodeBytesField = (fieldNumber: number, value: string | Uint8Array): number[] => {
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+    return [...encodeVarint(fieldNumber * 8 + 2), ...encodeVarint(bytes.length), ...bytes];
+  };
+  const commandMetadataBlob = (callId: string) =>
+    Uint8Array.from(
+      encodeBytesField(
+        4,
+        Uint8Array.from([...encodeBytesField(1, callId), ...encodeBytesField(2, "run_command")]),
+      ),
+    );
+
+  const createNativeStepsDb = Effect.fn("createNativeStepsDb")(function* (
+    sessionId: string,
+    rows: ReadonlyArray<{ readonly idx: number; readonly callId: string; readonly status: number }>,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const profileDirectory = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-ag-fg-profile-",
+    });
+    const conversationsDir = path.join(profileDirectory, "antigravity-acp", "conversations");
+    yield* fileSystem.makeDirectory(conversationsDir, { recursive: true });
+    const dbPath = path.join(conversationsDir, `${sessionId}.db`);
+    const db = new NodeSqlite.DatabaseSync(dbPath);
+    try {
+      db.exec(
+        "CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer NOT NULL DEFAULT 0, status integer NOT NULL DEFAULT 0, metadata blob, step_payload blob, step_format integer NOT NULL DEFAULT 0)",
+      );
+      const insert = db.prepare(
+        "INSERT INTO steps (idx, step_type, status, metadata, step_payload, step_format) VALUES (?, ?, ?, ?, ?, 0)",
+      );
+      for (const row of rows) {
+        insert.run(row.idx, 132, row.status, commandMetadataBlob(row.callId), new Uint8Array());
+      }
+    } finally {
+      db.close();
+    }
+    return { profileDirectory, dbPath };
+  });
+
+  const makeForegroundFixture = Effect.fn("makeForegroundFixture")(function* (input: {
+    readonly name: string;
+    readonly profileDirectory: string;
+    readonly sessionId: string;
+    readonly foregroundCommandSettlement?: Parameters<
+      typeof makeAntigravityAdapterV2
+    >[0]["foregroundCommandSettlement"];
+    readonly onDrainEvents?: () => Effect.Effect<void>;
+    readonly onPrompt: (args: {
+      readonly promptIndex: number;
+      readonly payload: Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0];
+      readonly emit: (update: EffectAcpSchema.SessionUpdate) => Effect.Effect<void>;
+    }) => Effect.Effect<EffectAcpSchema.PromptResponse>;
+  }) {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const crypto = yield* SecureRandom.SecureRandom;
+    const mockAgentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+    );
+    const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: `t3-ag-${input.name}-` });
+    type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+    type SessionUpdateHandler = Parameters<RuntimeService["handleSessionUpdate"]>[0];
+    let sessionUpdate: SessionUpdateHandler | undefined;
+    const receivedPrompts: Array<string> = [];
+    const instanceId = ProviderInstanceId.make(`antigravity-${input.name}`);
+    const adapter = yield* makeAntigravityAdapterV2({
+      instanceId,
+      profileDirectory: input.profileDirectory,
+      ...(input.foregroundCommandSettlement === undefined
+        ? {}
+        : { foregroundCommandSettlement: input.foregroundCommandSettlement }),
+      selfInvocation: yield* resolveSelfInvocation(),
+      makeRuntime: (runtimeInput) =>
+        makeAntigravityAcpRuntime({
+          ...runtimeInput,
+          childProcessSpawner,
+          spawn: {
+            command: process.execPath,
+            args: [mockAgentPath],
+            cwd: runtimeInput.cwd,
+            env: { T3_ACP_ANTIGRAVITY: "1" },
+          },
+        }).pipe(
+          Effect.provideService(SecureRandom.SecureRandom, crypto),
+          Effect.map((runtime): RuntimeService => ({
+            ...runtime,
+            start: () =>
+              runtime
+                .start()
+                .pipe(Effect.map((started) => ({ ...started, sessionId: input.sessionId }))),
+            handleSessionUpdate: (handler) =>
+              Effect.sync(() => {
+                sessionUpdate = handler;
+              }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            drainEvents:
+              input.onDrainEvents === undefined
+                ? runtime.drainEvents
+                : runtime.drainEvents.pipe(Effect.tap(input.onDrainEvents)),
+            prompt: (payload, promptOptions) =>
+              Effect.gen(function* () {
+                receivedPrompts.push(JSON.stringify(payload.prompt));
+                if (promptOptions?.dispatched !== undefined) {
+                  yield* Deferred.succeed(promptOptions.dispatched, undefined);
+                }
+                const emit = (update: EffectAcpSchema.SessionUpdate) => emitUpdate(update);
+                return yield* input.onPrompt({
+                  promptIndex: receivedPrompts.length,
+                  payload,
+                  emit,
+                });
+              }),
+          })),
+        ),
+      withProcess: (_stop, task) => task,
+      defaultModel: Effect.undefined,
+    });
+
+    const emitUpdate = (update: EffectAcpSchema.SessionUpdate): Effect.Effect<void> => {
+      const send = sessionUpdate;
+      if (send === undefined) {
+        return Effect.die(new Error("sessionUpdate handler was not registered"));
+      }
+      return send(
+        normalizeAntigravitySessionUpdate({
+          sessionId: input.sessionId,
+          update,
+        }),
+      ).pipe(Effect.orDie);
+    };
+
+    const threadId = ThreadId.make(`thread-antigravity-${input.name}`);
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      cwd: workspace,
+    });
+    const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+    const session = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make(`provider-session-antigravity-${input.name}`),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* session.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    const startedTurnId =
+      yield* Deferred.make<
+        NonNullable<
+          Extract<
+            ProviderAdapter.ProviderAdapterV2Event,
+            { type: "turn_item.updated" }
+          >["turnItem"]["providerTurnId"]
+        >
+      >();
+    const eventsFiber = yield* session.events.pipe(
+      Stream.tap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.providerTurnId !== null
+          ? Deferred.succeed(startedTurnId, event.turnItem.providerTurnId).pipe(Effect.asVoid)
+          : Effect.void,
+      ),
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runCollect,
+      Effect.forkScoped,
+    );
+    const now = yield* DateTime.now;
+    const startTurn = () =>
+      session.startTurn({
+        appThread: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make(`project-antigravity-${input.name}`),
+          title: `Antigravity ${input.name}`,
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: workspace,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        threadId,
+        runId: RunId.make(`run-antigravity-${input.name}`),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make(`attempt-antigravity-${input.name}`),
+        rootNodeId: NodeId.make(`node-antigravity-${input.name}`),
+        providerThread,
+        message: {
+          createdBy: "user",
+          creationSource: "web",
+          messageId: MessageId.make(`message-antigravity-${input.name}`),
+          text: "run the build",
+          attachments: [],
+        },
+        modelSelection,
+        runtimePolicy,
+      });
+
+    return {
+      session,
+      providerThread,
+      eventsFiber,
+      startedTurnId,
+      receivedPrompts,
+      startTurn,
+      emitUpdate,
+    };
+  });
+
+  it.live(
+    "waits for a backgrounded foreground command to finish natively, sends one continuation without spinning, and ignores IsDaemon",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa1";
+        const { profileDirectory, dbPath } = yield* createNativeStepsDb(sessionId, [
+          { idx: 45, callId: "call_build", status: 2 },
+        ]);
+        const firstPromptReturned = yield* Deferred.make<void>();
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-detached-done",
+          profileDirectory,
+          sessionId,
+          onPrompt: ({ promptIndex, emit }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_dev",
+                  title: "Dev server",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run dev", IsDaemon: true },
+                });
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_build",
+                  title: "Build",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run build", IsDaemon: false },
+                });
+                yield* Deferred.succeed(firstPromptReturned, undefined);
+                return { stopReason: "end_turn" as const };
+              }
+              // Simulates agy 1.5.11: never re-emits tool_call_update(completed) for call_build.
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Build finished." },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        yield* Deferred.await(firstPromptReturned);
+        // Transition native SQLite step 45 from RUNNING (2) to DONE (3) while detached.
+        const db = new NodeSqlite.DatabaseSync(dbPath);
+        try {
+          db.prepare("UPDATE steps SET status = 3 WHERE idx = 45").run();
+        } finally {
+          db.close();
+        }
+
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        assert.equal(fixture.receivedPrompts.length, 2);
+        assert.include(fixture.receivedPrompts[1] ?? "", "<t3_background_continuation>");
+        assert.include(fixture.receivedPrompts[1] ?? "", "npm run build");
+        assert.notInclude(fixture.receivedPrompts[1] ?? "", "npm run dev");
+        const assistantText = events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text ?? ""]
+              : [],
+          )
+          .join("");
+        assert.include(assistantText, "Build finished.");
+        const terminals = events.filter((event) => event.type === "turn.terminal");
+        assert.equal(terminals.length, 1);
+        assert.equal(terminals[0]?.status, "completed");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "settles a detached failed foreground command as failed instead of fabricating completed",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa2";
+        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+          { idx: 46, callId: "call_fail", status: 7 },
+        ]);
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-detached-fail",
+          profileDirectory,
+          sessionId,
+          onPrompt: ({ promptIndex, emit }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_fail",
+                  title: "Tests",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm test", IsDaemon: false },
+                });
+                return { stopReason: "end_turn" as const };
+              }
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Tests failed." },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        assert.equal(fixture.receivedPrompts.length, 2);
+        const settledTool = events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === "call_fail",
+        );
+        assert.equal(
+          settledTool?.type === "turn_item.updated" ? settledTool.turnItem.status : null,
+          "failed",
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "aborts waiting on a running native foreground command when Stop is requested without re-prompting",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa3";
+        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+          { idx: 47, callId: "call_long", status: 2 },
+        ]);
+        const firstPromptReturned = yield* Deferred.make<void>();
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-stop-waiting",
+          profileDirectory,
+          sessionId,
+          onPrompt: ({ emit }) =>
+            Effect.gen(function* () {
+              yield* emit({
+                sessionUpdate: "tool_call",
+                toolCallId: "call_long",
+                title: "Long job",
+                kind: "execute",
+                status: "in_progress",
+                rawInput: { CommandLine: "npm run e2e", IsDaemon: false },
+              });
+              yield* Deferred.succeed(firstPromptReturned, undefined);
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        const providerTurnId = yield* Deferred.await(fixture.startedTurnId);
+        yield* Deferred.await(firstPromptReturned);
+        yield* fixture.session.interruptTurn({
+          providerThread: fixture.providerThread,
+          providerTurnId,
+        });
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        assert.equal(fixture.receivedPrompts.length, 1);
+        const terminal = events.find((event) => event.type === "turn.terminal");
+        assert.equal(terminal?.type === "turn.terminal" ? terminal.status : null, "interrupted");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "still sends one continuation when ACP completes the command after end_turn while waiting",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa4";
+        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+          { idx: 48, callId: "call_late_acp", status: 2 },
+        ]);
+        const enteredWait = yield* Deferred.make<void>();
+        let firstPromptDone = false;
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-late-acp",
+          profileDirectory,
+          sessionId,
+          onDrainEvents: () =>
+            firstPromptDone
+              ? Deferred.succeed(enteredWait, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          onPrompt: ({ promptIndex, emit }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_late_acp",
+                  title: "Late ACP command",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run test", IsDaemon: false },
+                });
+                firstPromptDone = true;
+                return { stopReason: "end_turn" as const };
+              }
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Late ACP result delivered." },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        yield* Deferred.await(enteredWait);
+        yield* Effect.sleep("50 millis");
+        // Simulate agy 1.5.11 emitting tool_call_update(completed) after end_turn while adapter waits.
+        yield* fixture.emitUpdate({
+          sessionUpdate: "tool_call_update",
+          toolCallId: "call_late_acp",
+          status: "completed",
+          rawOutput: "OK",
+        });
+
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        assert.equal(fixture.receivedPrompts.length, 2);
+        const assistantText = events
+          .flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? [event.turnItem.text ?? ""]
+              : [],
+          )
+          .join("");
+        assert.include(assistantText, "Late ACP result delivered.");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "keeps waiting when native status reader throws or returns empty, never mislabels interrupted, and sends still_running continuation on maxWait",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa5";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const emptyProfile = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-ag-empty-profile-",
+        });
+        let readerCalls = 0;
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-reader-errors",
+          profileDirectory: emptyProfile,
+          sessionId,
+          foregroundCommandSettlement: {
+            maxWait: "120 millis",
+            pollInterval: "25 millis",
+            maxContinuations: 1,
+            makeStatusReader: () => () => {
+              readerCalls += 1;
+              if (readerCalls === 1) {
+                return Effect.fail(
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "SQLITE_BUSY",
+                    cause: new Error("SQLITE_BUSY"),
+                  }),
+                );
+              }
+              return Effect.succeed(new Map());
+            },
+          },
+          onPrompt: ({ promptIndex, emit }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_unknown_native",
+                  title: "Opaque command",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run opaque", IsDaemon: false },
+                });
+                return { stopReason: "end_turn" as const };
+              }
+              yield* emit({
+                sessionUpdate: "tool_call_update",
+                toolCallId: "call_unknown_native",
+                status: "completed",
+                rawOutput: "DONE",
+              });
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "Checked status and finished." },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        assert.isAtLeast(readerCalls, 2);
+        assert.equal(fixture.receivedPrompts.length, 2);
+        assert.include(fixture.receivedPrompts[1] ?? "", "still running");
+        const toolStatuses = events
+          .filter(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === "call_unknown_native",
+          )
+          .map((event) => (event.type === "turn_item.updated" ? event.turnItem.status : null));
+        assert.notInclude(toolStatuses, "interrupted");
+        assert.equal(toolStatuses.at(-1), "completed");
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live(
+    "reports both settled and still-running commands on mixed timeout and honestly terminates tracking at maxContinuations cap",
+    () =>
+      Effect.gen(function* () {
+        const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa6";
+        const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+          { idx: 50, callId: "call_done_a", status: 3 },
+          { idx: 51, callId: "call_still_b", status: 2 },
+        ]);
+        const fixture = yield* makeForegroundFixture({
+          name: "fg-mixed-cap",
+          profileDirectory,
+          sessionId,
+          foregroundCommandSettlement: {
+            maxWait: "80 millis",
+            pollInterval: "20 millis",
+            maxContinuations: 1,
+          },
+          onPrompt: ({ promptIndex, emit }) =>
+            Effect.gen(function* () {
+              if (promptIndex === 1) {
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_done_a",
+                  title: "Build A",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run build-a", IsDaemon: false },
+                });
+                yield* emit({
+                  sessionUpdate: "tool_call",
+                  toolCallId: "call_still_b",
+                  title: "Tests B",
+                  kind: "execute",
+                  status: "in_progress",
+                  rawInput: { CommandLine: "npm run test-b", IsDaemon: false },
+                });
+                return { stopReason: "end_turn" as const };
+              }
+              yield* emit({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "A finished; B is still running." },
+              });
+              return { stopReason: "end_turn" as const };
+            }),
+        });
+
+        yield* fixture.startTurn();
+        const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+        // Initial prompt + 1 continuation (capped at maxContinuations = 1).
+        assert.equal(fixture.receivedPrompts.length, 2);
+        assert.include(fixture.receivedPrompts[1] ?? "", "npm run build-a");
+        assert.include(fixture.receivedPrompts[1] ?? "", "npm run test-b");
+
+        const lastItemOf = (nativeId: string) => {
+          const last = events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === nativeId,
+          );
+          return last?.type === "turn_item.updated" ? last.turnItem : null;
+        };
+        assert.equal(lastItemOf("call_done_a")?.status, "completed");
+        // At the cap, B terminates honestly as interrupted with a detached notice (never a permanent spinner or fake completed).
+        const itemB = lastItemOf("call_still_b");
+        assert.equal(itemB?.status, "interrupted");
+        assert.include(
+          itemB?.type === "command_execution" ? (itemB.output ?? "") : "",
+          "still be running natively",
+        );
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
+  );
+
+  it.live("sums per-turn prompt usage across continuation prompts", () =>
+    Effect.gen(function* () {
+      const sessionId = "6063c071-f83e-427d-ab35-6caf4c8dbfa7";
+      const { profileDirectory } = yield* createNativeStepsDb(sessionId, [
+        { idx: 52, callId: "call_usage", status: 3 },
+      ]);
+      const fixture = yield* makeForegroundFixture({
+        name: "fg-usage-sum",
+        profileDirectory,
+        sessionId,
+        onPrompt: ({ promptIndex, emit }) =>
+          Effect.gen(function* () {
+            if (promptIndex === 1) {
+              yield* emit({
+                sessionUpdate: "tool_call",
+                toolCallId: "call_usage",
+                title: "Build",
+                kind: "execute",
+                status: "in_progress",
+                rawInput: { CommandLine: "npm run build", IsDaemon: false },
+              });
+              return {
+                stopReason: "end_turn" as const,
+                usage: {
+                  inputTokens: 100,
+                  outputTokens: 40,
+                  totalTokens: 140,
+                  cachedReadTokens: 20,
+                },
+              };
+            }
+            yield* emit({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Done." },
+            });
+            return {
+              stopReason: "end_turn" as const,
+              usage: {
+                inputTokens: 150,
+                outputTokens: 60,
+                totalTokens: 210,
+                cachedReadTokens: 30,
+              },
+            };
+          }),
+      });
+
+      yield* fixture.startTurn();
+      const events = Array.from(yield* Fiber.join(fixture.eventsFiber));
+      const completedTurn = events.findLast(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.deepEqual(
+        completedTurn?.type === "provider_turn.updated"
+          ? completedTurn.providerTurn.turnTokenUsage
+          : null,
+        {
+          usageScope: "main_agent",
+          usageStatus: "complete",
+          hasSubagents: false,
+          // Gemini usage.inputTokens excludes cachedReadTokens, so TurnTokenUsage sums both: (100+150) + (20+30).
+          inputTokens: 300,
+          outputTokens: 100,
+          cachedInputTokens: 50,
+        },
+      );
+    }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });
