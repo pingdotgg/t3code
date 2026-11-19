@@ -2194,6 +2194,7 @@
   "63977cd5e4535393": "Lossa {name}",
   "c4c2d240ffe55dec": "Fäst {name}",
   "a1190e56375f2032": "{action} ({shortcut})",
+  "f16b6d8ef68bab61": "Det gick inte att importera {name}.",
   "924d4b8e011c9127": "Det gick inte att importera åtgärden.",
   "0421f870f82997bc": "Importera",
   "06690d4ce0d19c30": "Redigera {name}",
