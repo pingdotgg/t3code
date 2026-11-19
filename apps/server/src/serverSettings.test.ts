@@ -3167,7 +3167,10 @@ it.live("reloads a symlinked settings file after its target directory is replace
     assert.isTrue(Option.isSome(yield* nextMode("turn")));
   }).pipe(
     Effect.scoped,
-    Effect.provide(layerServerSettings()),
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+    Effect.provide(
+      layerServerSettings().pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
   ),
 );
