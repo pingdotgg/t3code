@@ -413,7 +413,7 @@ describe("makeManagedServerProvider", () => {
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
 
-  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+  it.effect("rechecks a ready provider after one failed check before publishing it", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const checkCalls = yield* Ref.make(0);
@@ -436,7 +436,7 @@ describe("makeManagedServerProvider", () => {
                 ? Deferred.succeed(initialCheckDone, undefined).pipe(Effect.ignore)
                 : Effect.void,
             ),
-            Effect.map((count) => (count === 2 ? failedSnapshot : refreshedSnapshot)),
+            Effect.map((count) => ([2, 4, 5].includes(count) ? failedSnapshot : refreshedSnapshot)),
           ),
           refreshInterval: "5 minutes",
         });
@@ -456,6 +456,13 @@ describe("makeManagedServerProvider", () => {
           (yield* Ref.get(published)).filter((snapshot) => snapshot.status === "error"),
           [],
         );
+
+        yield* provider.refresh;
+        assert.strictEqual((yield* provider.getSnapshot).status, "ready");
+
+        yield* TestClock.adjust("30 seconds");
+        assert.strictEqual(yield* Ref.get(checkCalls), 5);
+        assert.strictEqual((yield* provider.getSnapshot).status, "error");
       }),
     ).pipe(Effect.provide(Layer.mergeAll(layerAlwaysRunTest, TestClock.layer()))),
   );
