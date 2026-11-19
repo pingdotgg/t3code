@@ -55,40 +55,41 @@ export type PersistedAttachmentVerification =
   | { readonly status: "missing" }
   | { readonly status: "failed"; readonly error: unknown };
 
-export function verifyPersistedAttachmentUpload<A, E>(input: {
-  readonly registry: AtomRegistry.AtomRegistry;
-  readonly createAssetUrl: (query: {
+export const verifyPersistedAttachmentUpload = Effect.fn("Attachments.verifyPersistedUpload")(
+  function* <A, E>(input: {
+    readonly registry: AtomRegistry.AtomRegistry;
+    readonly createAssetUrl: (query: {
+      readonly environmentId: EnvironmentId;
+      readonly input: {
+        readonly resource: { readonly _tag: "attachment"; readonly attachmentId: string };
+      };
+    }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>;
     readonly environmentId: EnvironmentId;
-    readonly input: {
-      readonly resource: { readonly _tag: "attachment"; readonly attachmentId: string };
-    };
-  }) => Atom.Atom<AsyncResult.AsyncResult<A, E>>;
-  readonly environmentId: EnvironmentId;
-  readonly attachmentId: string;
-}): Effect.Effect<PersistedAttachmentVerification> {
-  return awaitAtomResult(
-    input.registry,
-    input.createAssetUrl({
-      environmentId: input.environmentId,
-      input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
-    }),
-    // `refresh` forces a server round trip: the asset URL query atom caches
-    // results (SWR), so a retry right after a transient failure would
-    // otherwise re-observe the cached failure and never ask the server.
-    { refresh: true },
-  ).pipe(
-    Effect.matchCause({
-      onSuccess: (): PersistedAttachmentVerification => ({ status: "verified" }),
-      onFailure: (cause): PersistedAttachmentVerification => {
-        const error = Cause.squash(cause);
-        return isAssetAttachmentNotFoundFailure(error)
-          ? { status: "missing" }
-          : { status: "failed", error };
-      },
-    }),
-    Effect.withSpan("Attachments.verifyPersistedUpload"),
-  );
-}
+    readonly attachmentId: string;
+  }) {
+    return yield* awaitAtomResult(
+      input.registry,
+      input.createAssetUrl({
+        environmentId: input.environmentId,
+        input: { resource: { _tag: "attachment", attachmentId: input.attachmentId } },
+      }),
+      // `refresh` forces a server round trip: the asset URL query atom caches
+      // results (SWR), so a retry right after a transient failure would
+      // otherwise re-observe the cached failure and never ask the server.
+      { refresh: true },
+    ).pipe(
+      Effect.matchCause({
+        onSuccess: (): PersistedAttachmentVerification => ({ status: "verified" }),
+        onFailure: (cause): PersistedAttachmentVerification => {
+          const error = Cause.squash(cause);
+          return isAssetAttachmentNotFoundFailure(error)
+            ? { status: "missing" }
+            : { status: "failed", error };
+        },
+      }),
+    );
+  },
+);
 
 type AttachmentCreateUploadUrlCommand<E> = AtomCommand<
   { readonly environmentId: EnvironmentId; readonly input: AttachmentCreateUploadUrlInput },

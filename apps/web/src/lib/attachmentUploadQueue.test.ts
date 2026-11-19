@@ -22,11 +22,32 @@ const mocks = vi.hoisted(() => ({
   readPreparedConnection: vi.fn(),
 }));
 
-vi.mock("@t3tools/client-runtime/state/runtime", () => ({
-  executeAtomQuery: mocks.executeAtomQuery,
-  runAtomCommand: mocks.runAtomCommand,
-  squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
-}));
+vi.mock("@t3tools/client-runtime/state/runtime", async () => {
+  const Effect = await import("effect/Effect");
+  const Cause = await import("effect/Cause");
+  return {
+    // Verification awaits the query in Effect; tests steer it through the executeAtomQuery mock.
+    awaitAtomResult: (...args: ReadonlyArray<unknown>) =>
+      Effect.promise(
+        () =>
+          mocks.executeAtomQuery(...args) as Promise<{
+            readonly _tag: string;
+            readonly value?: unknown;
+            readonly error?: unknown;
+            readonly cause?: import("effect/Cause").Cause<never>;
+          }>,
+      ).pipe(
+        Effect.flatMap((result) =>
+          result._tag === "Success"
+            ? Effect.succeed(result.value)
+            : Effect.failCause(result.cause ?? Cause.die(result.error)),
+        ),
+      ),
+    executeAtomQuery: mocks.executeAtomQuery,
+    runAtomCommand: mocks.runAtomCommand,
+    squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
+  };
+});
 
 vi.mock("../rpc/atomRegistry", async () => {
   const { AtomRegistry } = await import("effect/reactivity");
