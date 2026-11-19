@@ -1,13 +1,18 @@
 import * as Dialog from "../components/ui/Dialog";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import { useServerConfigs } from "./entities";
 import {
   questionAttachmentDraftKey,
   questionAttachmentDraftPrefix,
   questionAttachmentPreparationAtom,
 } from "./question-attachments";
+import { scopedThreadKey } from "../lib/scopedEntities";
 import {
+  appendComposerDraftAttachments,
   clearComposerDraft,
   composerDraftsAtom,
+  getComposerDraftSnapshot,
   questionAttachmentDraftsAtom,
 } from "./use-composer-drafts";
 import {
@@ -36,7 +41,7 @@ import {
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
-import { environmentThreadDetails, threadEnvironment } from "../state/threads";
+import { environmentThreadDetails, threadEnvironment } from "./threads";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -134,11 +139,39 @@ function pruneResolvedRequestDrafts(
   if (changed) appAtomRegistry.set(questionAttachmentPreparationAtom, counts);
 }
 
+/**
+ * Stop cancels an open question and a provider timeout expires it; neither sent
+ * its attachments, so they move to the thread's own draft before pruning.
+ */
+function returnUnsentAttachmentsToThreadDraft(
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  unansweredRequestIds: ReadonlyArray<RuntimeRequestId>,
+): void {
+  if (unansweredRequestIds.length === 0) return;
+  const prefix = questionAttachmentDraftPrefix(environmentId, threadId);
+  const drafts = appAtomRegistry.get(questionAttachmentDraftsAtom(prefix));
+  const otherRequestKeys = new Set(
+    resolvedQuestionDraftKeys(Object.keys(drafts), prefix, unansweredRequestIds),
+  );
+  const attachments = Object.entries(drafts).flatMap(([key, draft]) =>
+    otherRequestKeys.has(key) ? [] : draft.attachments,
+  );
+  const threadKey = scopedThreadKey(environmentId, threadId);
+  const { text } = getComposerDraftSnapshot(threadKey);
+  // Chips go after the draft's text, never over a selection the user left in it.
+  appendComposerDraftAttachments(threadKey, attachments, {
+    appendReference: true,
+    insertion: { text, start: text.length, end: text.length },
+  });
+}
+
 // Resolution can come from anywhere: another device, an interrupt, the turn
 // ending, or a reload over drafts for requests that resolved meanwhile.
-onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds }) =>
-  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds),
-);
+onThreadRequestsResolved(({ environmentId, threadId, pendingRequestIds, unansweredRequestIds }) => {
+  returnUnsentAttachmentsToThreadDraft(environmentId, threadId, unansweredRequestIds);
+  pruneResolvedRequestDrafts(environmentId, threadId, pendingRequestIds);
+});
 
 /**
  * Drops `answeredRequestId`'s drafts as soon as the server accepts the
@@ -360,8 +393,8 @@ export function useSelectedThreadRequests() {
         )
       ) {
         Dialog.alert(
-          "Attachments are not ready",
-          "Wait for uploads to finish, or retry failed uploads.",
+          m(msg("Attachments are not ready")),
+          m(msg("Wait for uploads to finish, or retry failed uploads.")),
         );
         return;
       }

@@ -12,6 +12,13 @@ import * as AcpWireSchema from "effect-acp/schema-v1";
 
 import type { AcpToolCallState } from "@t3tools/provider-acp/server/runtimeModel";
 
+import {
+  ANTIGRAVITY_EDIT_DIFF_OMITTED,
+  antigravityEditPatch,
+  isAntigravitySnippetPatch,
+  readAntigravityPreEditFile,
+} from "./AntigravityEditLocation.ts";
+
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
 const QUESTION_LABEL_LIMIT = 512;
@@ -37,6 +44,15 @@ const decodeSingleAnswer = Schema.decodeUnknownOption(
   Schema.Union([Schema.String, Schema.Tuple([Schema.String])]),
 );
 const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallContent);
+
+/**
+ * The agent goes on running a command after its prompt ends, and replies by itself when the
+ * command finishes. A daemon may never finish.
+ */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  const input = toolCall.data.rawInput;
+  return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
+}
 
 /** Native questions share the permission method, but their choices are not approvals. */
 export function isAntigravityUserInputRequest(
@@ -163,12 +179,37 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+function boundCommandOutput(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + TOOL_TEXT_TRUNCATED.length && text.startsWith(TOOL_TEXT_TRUNCATED))
+  ) {
+    return text;
+  }
+  const tail = text.slice(-limit).replace(/^[\uDC00-\uDFFF]/u, "");
+  return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
+}
+
+// 1.5 runtimes report command output as `output` and repeat it as content `text`.
+const OUTPUT_TEXT_FIELDS = new Set(["combinedOutput", "combined_output", "output", "text"]);
+
+/** Keeps the tail of long tool text, as every bounded tool payload does. */
+export { boundText as boundAntigravityToolText };
+
+/** True when bounding cut some of this text. */
+export const isCutAntigravityToolText = (text: string) => text.includes(TOOL_TEXT_TRUNCATED);
+
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
 }
 
-function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: number): unknown {
+function sanitizeToolValue(
+  value: unknown,
+  budget: ToolPayloadBudget,
+  depth: number,
+  field?: string,
+): unknown {
   if (depth > 12 || budget.nodes-- <= 0) {
     return undefined;
   }
@@ -176,7 +217,9 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     if (/^data:image\//i.test(value) || budget.text <= 0) {
       return undefined;
     }
-    const text = boundText(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
+    const bound =
+      field !== undefined && OUTPUT_TEXT_FIELDS.has(field) ? boundCommandOutput : boundText;
+    const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
   }
@@ -205,7 +248,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     ) {
       continue;
     }
-    const sanitized = sanitizeToolValue(entry, budget, depth + 1);
+    const sanitized = sanitizeToolValue(entry, budget, depth + 1, key);
     if (sanitized !== undefined) entries.push([key, sanitized]);
   }
   return Object.fromEntries(entries);
@@ -350,7 +393,58 @@ function localImagePath(imagePath: string | undefined): string | undefined {
   return /^[a-z][a-z\d+.-]*:/i.test(path) && !/^[a-z]:[\\/]/i.test(path) ? undefined : path;
 }
 
-export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToolCallState {
+function hasTruncatedText(value: unknown): boolean {
+  if (typeof value === "string") return value.startsWith(TOOL_TEXT_TRUNCATED);
+  return Predicate.isObject(value) && Object.values(value).some(hasTruncatedText);
+}
+
+/** The ACP adapter renders a diff's `patch.text` ahead of its bare old/new snippets. */
+function withAntigravityEditPatches(
+  content: ReadonlyArray<unknown>,
+  data: Record<string, unknown>,
+  readPreEditFile: ((path: string) => string | undefined) | undefined,
+) {
+  return content.map((entry) => {
+    if (!Predicate.isObject(entry) || entry.type !== "diff" || typeof entry.path !== "string")
+      return entry;
+    // Keep the first patch: once the edit runs, the file no longer holds the old text. A later
+    // update's shared text budget can cut or drop it, and a cut patch would misplace the hunk.
+    if (entry.patch !== undefined) {
+      const patch: unknown = entry.patch;
+      const cut =
+        Predicate.isObject(patch) &&
+        patch.format !== "omitted" &&
+        (typeof patch.text !== "string" || patch.text.startsWith(TOOL_TEXT_TRUNCATED));
+      return cut ? { ...entry, patch: { format: "omitted" } } : entry;
+    }
+    // Bounding keeps only the tail of long text, so a cut snippet cannot be located and a cut
+    // old or new text would render the cut as file content.
+    if ([data.rawInput, entry.oldText, entry.newText].some(hasTruncatedText))
+      return { ...entry, patch: { format: "omitted" } };
+    const text = antigravityEditPatch({
+      path: entry.path,
+      rawInput: data.rawInput,
+      locations: data.locations,
+      readPreEditFile,
+    });
+    // A truncated patch would no longer parse, and bare snippets would render at line 1.
+    if (
+      text === ANTIGRAVITY_EDIT_DIFF_OMITTED ||
+      (text !== undefined && text.length > TOOL_TEXT_LIMIT)
+    )
+      return { ...entry, patch: { format: "omitted" } };
+    if (text === undefined) return entry;
+    return {
+      ...entry,
+      patch: isAntigravitySnippetPatch(text) ? { format: "snippet", text } : { text },
+    };
+  });
+}
+
+export function normalizeAntigravityToolCall(
+  toolCall: AcpToolCallState,
+  readPreEditFile = readAntigravityPreEditFile,
+): AcpToolCallState {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
   const nativeCommand =
@@ -372,7 +466,8 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
     output?.working_dir;
   const cwd = nativeCwd?.trim() ? boundText(nativeCwd.trim()) : undefined;
   const nativeOutput = output?.combinedOutput ?? output?.combined_output;
-  const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
+  const aggregatedOutput =
+    nativeOutput === undefined ? undefined : boundCommandOutput(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
@@ -382,6 +477,17 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   if (command !== undefined) data.command = command;
   if (cwd !== undefined) data.cwd = cwd;
   if (imagePath !== undefined) data.imagePath = imagePath;
+  if (kind === "edit") {
+    const content = Array.isArray(data.content) ? data.content : [];
+    // Full-access edits report only a path; without a hunk the checkpoint diff is the review.
+    data.content = content.some((entry) => Predicate.isObject(entry) && entry.type === "diff")
+      ? withAntigravityEditPatches(
+          content,
+          data,
+          toolCall.status === "pending" ? readPreEditFile : undefined,
+        )
+      : [...content, { type: "diff", patch: { format: "omitted" } }];
+  }
   if (kind === "execute") {
     data.item = {
       ...(Predicate.isObject(data.item) ? data.item : {}),
@@ -410,6 +516,8 @@ const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
   "Run start_subagent?",
   "Running invoke_subagent",
   "Run invoke_subagent?",
+  // agy 1.5 auto-approved calls.
+  "Run invoke_subagent",
 ]);
 
 /** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */

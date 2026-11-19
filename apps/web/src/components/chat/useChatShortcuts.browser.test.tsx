@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { useEffect, useState } from "react";
 import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -131,4 +132,116 @@ it.each([
 
   expect(composerKeys).toEqual(composer);
   expect(received).toEqual(launcher);
+});
+
+const ctrlShift = (key: string, command: KeybindingCommand) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
+});
+const sideChatKeybindings: ResolvedKeybindingsConfig = [
+  ctrlShift("m", "modelPicker.toggle"),
+  ctrlShift("x", "thread.stop"),
+];
+
+// A side chat in the main chat's panel: no window listeners, only its composer's own chords.
+function SideChat(props: { toggles: string[]; stops: string[] }) {
+  const [composerElement, setComposerElement] = useState<HTMLDivElement | null>(null);
+  useChatShortcuts({
+    enabled: false,
+    embedded: true,
+    composerElement,
+    keybindings: sideChatKeybindings,
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        toggleModelPicker: () => props.toggles.push("model"),
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: { "thread.stop": () => void props.stops.push("stop") },
+    fallback: () => undefined,
+  });
+  return (
+    <>
+      <div ref={setComposerElement}>
+        <textarea aria-label="Side chat composer" />
+      </div>
+      <textarea aria-label="Main composer" />
+    </>
+  );
+}
+
+it("runs a side chat's composer chords only from its composer, and never thread commands", async () => {
+  const toggles: string[] = [];
+  const stops: string[] = [];
+  await using screen = await render(<SideChat toggles={toggles} stops={stops} />, options);
+
+  await userEvent.click(screen.getByLabelText("Side chat composer"));
+  await userEvent.keyboard("{Control>}{Shift>}MX{/Shift}{/Control}");
+  await userEvent.click(screen.getByLabelText("Main composer"));
+  await userEvent.keyboard("{Control>}{Shift>}M{/Shift}{/Control}");
+
+  expect(toggles).toEqual(["model"]);
+  expect(stops).toEqual([]);
+});
+
+const ctrlAlt = (key: string, command: KeybindingCommand) => ({
+  command,
+  shortcut: { key, metaKey: false, ctrlKey: true, shiftKey: false, altKey: true, modKey: false },
+});
+
+// The main chat's window listener while focus sits in a side chat pane in its right panel.
+function ChatWithSideChatPane(props: { ran: string[] }) {
+  useChatShortcuts({
+    enabled: true,
+    keybindings: [
+      ctrlAlt("b", "rightPanel.toggle"),
+      ctrlAlt("k", "rightPanel.close"),
+      ctrlShift("x", "thread.stop"),
+    ],
+    scriptKeybindings: [],
+    getShortcutContext: () => shortcutContext,
+    threadFindActive: false,
+    composerRef: {
+      current: {
+        insertTextAtEnd: (key: string) => {
+          props.ran.push(`typed ${key}`);
+          return true;
+        },
+      } as Partial<ChatComposerHandle> as ChatComposerHandle,
+    },
+    branchToolbarRef: { current: null },
+    closeThreadFind: () => {},
+    commands: {
+      "rightPanel.toggle": () => void props.ran.push("toggle"),
+      "rightPanel.close": () => void props.ran.push("close"),
+      "thread.stop": () => void props.ran.push("stop"),
+    },
+    fallback: () => undefined,
+  });
+  return (
+    <div data-side-chat-pane>
+      <div role="region" aria-label="Conversation" tabIndex={0}>
+        A side chat message
+      </div>
+      <textarea aria-label="Message Side chat" />
+    </div>
+  );
+}
+
+it("runs right panel commands from inside a side chat pane, but not thread commands", async () => {
+  const ran: string[] = [];
+  await using screen = await render(<ChatWithSideChatPane ran={ran} />, options);
+
+  await userEvent.click(screen.getByLabelText("Message Side chat"));
+  await userEvent.keyboard("{Control>}{Alt>}BK{/Alt}{/Control}");
+  await userEvent.keyboard("{Control>}{Shift>}X{/Shift}{/Control}");
+  await userEvent.click(screen.getByRole("region", { name: "Conversation" }));
+  await userEvent.keyboard("{Control>}{Alt>}B{/Alt}{/Control}");
+  await userEvent.keyboard("q");
+
+  expect(ran).toEqual(["toggle", "close", "toggle"]);
 });

@@ -19,6 +19,7 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
+import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -291,6 +292,135 @@ describe("Antigravity tool results", () => {
     expect(commandCompleted.update.rawOutput.formatted_output).toBe("after\n");
   });
 
+  it("keeps the captured edit location through approval and completion", () => {
+    const path = "/workspace/app.ts";
+    const replace = {
+      TargetContent: "const target = 10;",
+      ReplacementContent: "const target = 100;",
+      TargetFile: path,
+    };
+    const frame = (rawInput: Record<string, unknown>, line?: number) =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-1",
+          title: "Run edit_file?",
+          kind: "edit",
+          status: "pending",
+          content: [
+            {
+              type: "diff",
+              path,
+              oldText: replace.TargetContent,
+              newText: replace.ReplacementContent,
+            },
+          ],
+          locations: [line === undefined ? { path } : { path, line }],
+          rawInput,
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    const running = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        kind: "edit",
+        status: "in_progress",
+        title: "Running edit_file",
+        locations: [{ path }],
+        rawInput: { file_path: path },
+      },
+    }).toolCall;
+    const completed = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "edit-1",
+        status: "completed",
+        rawOutput: "Tool execution",
+      },
+    }).toolCall;
+    const preEdit = Array.from({ length: 12 }, (_, i) =>
+      i === 9 ? replace.TargetContent : `line ${i + 1}`,
+    ).join("\n");
+    const postEdit = preEdit.replace(replace.TargetContent, replace.ReplacementContent);
+    for (const [pending, readFile] of [
+      [frame({ ...replace, StartLine: 5, EndLine: 12 }, 5), () => preEdit],
+      [frame(replace), () => preEdit],
+    ] as const) {
+      let toolCall = normalizeAntigravityToolCall(parseToolUpdate(pending).toolCall, readFile);
+      for (const next of [running, completed]) {
+        toolCall = normalizeAntigravityToolCall(mergeToolCallState(toolCall, next), () => postEdit);
+      }
+      expect(toolCall.status).toBe("completed");
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBe(
+        `--- ${path}\n+++ ${path}\n@@ -10,1 +10,1 @@\n-const target = 10;\n+const target = 100;\n`,
+      );
+    }
+    // Full-access edits arrive path-only; no hunk is offered instead of the tool's status text.
+    let pathOnly = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-2",
+          kind: "edit",
+          status: "in_progress",
+          title: "Running edit_file",
+          locations: [{ path }],
+          rawInput: { file_path: path },
+        },
+      }).toolCall,
+    );
+    pathOnly = normalizeAntigravityToolCall(mergeToolCallState(pathOnly, completed));
+    expect(pathOnly.data.content).toEqual([{ type: "diff", patch: { format: "omitted" } }]);
+    expect(acpToolCallDiffPatch(pathOnly.data.content)).toBeUndefined();
+    // A captured patch that a later update's shared text budget cut or dropped is omitted.
+    for (const patch of [{ text: "[Earlier output truncated]\n\n@@ -80,1 +80,1 @@" }, {}]) {
+      const kept = normalizeAntigravityToolCall({
+        toolCallId: "edit-cut",
+        kind: "edit",
+        status: "completed",
+        data: { content: [{ type: "diff", path, patch }] },
+      });
+      expect(kept.data.content).toEqual([{ type: "diff", path, patch: { format: "omitted" } }]);
+    }
+    // A whole-file write whose old text was cut to its tail must not show the cut as deletions.
+    const overwrite = normalizeAntigravityToolCall({
+      toolCallId: "edit-overwrite",
+      kind: "edit",
+      status: "completed",
+      data: {
+        rawInput: { TargetFile: path, CodeContent: "one line\n" },
+        content: [
+          {
+            type: "diff",
+            path,
+            oldText: "[Earlier output truncated]\n\nrow 999\n",
+            newText: "one line\n",
+          },
+        ],
+      },
+    });
+    expect(acpToolCallDiffPatch(overwrite.data.content)).toBeUndefined();
+    // A patch too long to keep, or input cut to its tail, must not fall back to line-1 snippets.
+    for (const width of [60, 120]) {
+      const block = (value: string) =>
+        Array.from({ length: 120 }, (_, i) => `${value} ${i} `.padEnd(width, "x")).join("\n");
+      const long = {
+        TargetContent: block("old"),
+        ReplacementContent: block("new"),
+        TargetFile: path,
+      };
+      const toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame({ ...long, StartLine: 80, EndLine: 199 }, 80)).toolCall,
+      );
+      expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
+  });
+
   it.each([
     { CommandLine: "pwd", Cwd: "/one" },
     { CommandLine: "pwd", WorkingDirectory: "/one" },
@@ -330,27 +460,55 @@ describe("Antigravity tool results", () => {
     });
   });
 
-  it("bounds both canonical output and retained raw output", () => {
-    const output = `${"output line\n".repeat(20_000)}last line\n`;
+  it.each([
+    { name: "ASCII", boundary: "x", kept: "x", field: "combinedOutput" },
+    { name: "split emoji", boundary: "🚀", kept: "", field: "combinedOutput" },
+    { name: "split emoji (snake case)", boundary: "🚀", kept: "", field: "combined_output" },
+  ])("bounds both canonical and retained raw output at $name", ({ boundary, kept, field }) => {
+    const tail = `${"x".repeat(7_989)}last line\n`;
+    const output = `${"output line\n".repeat(20_000)}${boundary}${tail}`;
+    const expected = `[Earlier output truncated]\n\n${kept}${tail}`;
+    const { combinedOutput: _combinedOutput, ...rawOutput } = commandCompleted.update.rawOutput;
     const event = parseToolUpdate({
       ...commandCompleted,
       update: {
         ...commandCompleted.update,
         rawOutput: {
-          ...commandCompleted.update.rawOutput,
-          combinedOutput: output,
+          ...rawOutput,
+          [field]: output,
           formatted_output: output,
         },
       },
     });
     const toolCall = normalizeAntigravityToolCall(event.toolCall);
     expect(toolCall.data).toMatchObject({
-      item: { aggregatedOutput: expect.stringContaining("last line\n") },
-      rawOutput: { combinedOutput: expect.stringContaining("last line\n") },
+      item: { aggregatedOutput: expected },
+      rawOutput: { [field]: expected },
     });
+    expect(event.toolCall.data.rawOutput).toMatchObject({ [field]: expected });
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
+  });
+
+  it("keeps 1.5 command output and its content text valid Unicode when cut", () => {
+    const tail = `${"x".repeat(7_982)}build completed\r\n`;
+    const output = `Command output:\nprefix\r\n🚀${tail}`;
+    const expected = `[Earlier output truncated]\n\n${tail}`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandCompleted,
+        update: {
+          ...commandCompleted.update,
+          rawOutput: { output, exit_code: 0 },
+          content: [{ type: "content", content: { type: "text", text: output } }],
+        },
+      }).toolCall,
+    );
+    expect(toolCall.data).toMatchObject({
+      rawOutput: { output: expected },
+      content: [{ content: { text: expected.trimEnd() } }],
+    });
   });
 
   it("removes inline images while preserving valid tool content and the local image path", () => {

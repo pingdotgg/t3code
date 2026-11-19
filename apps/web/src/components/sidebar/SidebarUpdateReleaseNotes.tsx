@@ -1,10 +1,12 @@
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
 
 import {
   getDesktopUpdateReleaseHistoryUrl,
   getDesktopUpdateReleaseUrl,
 } from "../desktopUpdate.logic";
+import type { MessageResolver } from "../../i18n/messages";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 
@@ -20,15 +22,15 @@ function keyReleaseNoteItems(items: ReadonlyArray<string>) {
 }
 
 /** Feed times read "3h ago"; build days from a prerelease version read "today" or "2d ago". */
-function formatReleaseAge(releasedAt: string): string {
+function formatReleaseAge(releasedAt: string, resolve: MessageResolver): string {
   const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(releasedAt);
-  if (!day) return formatRelativeTimeLabel(releasedAt);
+  if (!day) return formatRelativeTimeLabel(releasedAt, undefined, resolve);
   const now = new Date();
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const days = Math.round(
     (today - Date.UTC(Number(day[1]), Number(day[2]) - 1, Number(day[3]))) / 86_400_000,
   );
-  return days <= 0 ? "today" : `${days}d ago`;
+  return days <= 0 ? resolve(msg("today")) : resolve(msg("{days}d ago", { days }));
 }
 
 function ReleaseLink({
@@ -64,6 +66,8 @@ export function SidebarUpdateReleaseNotes({
   readonly state: DesktopUpdateState;
   readonly tooltip: string;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   if (state.releaseNotes.length === 0) {
     return <>{tooltip}</>;
   }
@@ -77,12 +81,12 @@ export function SidebarUpdateReleaseNotes({
         {state.status === "available" ? (
           <div>
             <div className="whitespace-nowrap text-sm leading-5 font-medium">
-              Update ready to download
+              <T>Update ready to download</T>
             </div>
             {state.availableVersion ? (
               <div className="mt-0.5 text-xs leading-4 text-muted-foreground">
                 {releasedAt
-                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt)}`
+                  ? `${state.availableVersion} · ${formatReleaseAge(releasedAt, m)}`
                   : state.availableVersion}
               </div>
             ) : null}
@@ -98,57 +102,74 @@ export function SidebarUpdateReleaseNotes({
           const linkLabel =
             releaseNote.stats ??
             (omittedItemCount === 0
-              ? "View release on GitHub"
-              : `${omittedItemCount} more ${omittedItemCount === 1 ? "change" : "changes"} on GitHub`);
+              ? gt("View release on GitHub")
+              : gt(
+                  "{count, plural, one {{count} more change on GitHub} other {{count} more changes on GitHub}}",
+                  { count: omittedItemCount },
+                ));
 
-          if (releaseNote.intro !== undefined) {
-            return (
-              <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-                {releaseNote.version !== state.availableVersion ? (
+          const generated = releaseNote.stats !== undefined || releaseNote.intro !== undefined;
+          return (
+            <section className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
+              {generated ? (
+                releaseNote.version !== state.availableVersion && (
                   <h3 className="mb-1 text-xs leading-4 font-medium text-muted-foreground">
                     {releaseNote.releasedAt
-                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt)}`
+                      ? `${releaseNote.version} · ${formatReleaseAge(releaseNote.releasedAt, m)}`
                       : releaseNote.version}
                   </h3>
-                ) : null}
+                )
+              ) : (
+                <h3 className="mb-2 text-foreground text-xs leading-4 font-semibold">
+                  {index === 0 ? (
+                    <T>What's changed</T>
+                  ) : (
+                    <T>
+                      Changes in <Var>{releaseNote.version}</Var>
+                    </T>
+                  )}
+                </h3>
+              )}
+              {releaseNote.intro ? (
                 <p className="break-words text-xs leading-5 text-popover-foreground">
                   {releaseNote.intro}
                 </p>
-                {releaseUrl ? (
-                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                    {releaseNote.stats ?? "View release on GitHub"}
-                  </ReleaseLink>
-                ) : null}
-              </section>
-            );
-          }
-
-          return (
-            <div className={index > 0 ? "mt-4" : undefined} key={releaseNote.version}>
-              <section>
-                <h3 className="text-foreground text-xs leading-4 font-semibold">
-                  {index === 0 ? "What's changed" : `Changes in ${releaseNote.version}`}
-                </h3>
-                <ul className="mt-2 space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
-                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => (
-                    <li className="list-disc break-words" key={key}>
-                      {item}
-                    </li>
-                  ))}
+              ) : releaseNote.items.length > 0 ? (
+                <ul className="space-y-1.5 pl-4 text-xs leading-5 text-popover-foreground/90">
+                  {keyReleaseNoteItems(releaseNote.items).map(({ item, key }) => {
+                    const highlight = /^\*\*([^*]+)\*\* (.+)$/.exec(item);
+                    return (
+                      <li className="list-disc break-words" key={key}>
+                        {highlight ? (
+                          <>
+                            <strong>{highlight[1]}</strong> {highlight[2]}
+                          </>
+                        ) : (
+                          item
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
-                {releaseUrl ? (
-                  <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
-                    {linkLabel}
-                  </ReleaseLink>
-                ) : null}
-              </section>
-            </div>
+              ) : null}
+              {releaseNote.footer && (
+                <p className="mt-2 text-xs leading-5 font-semibold">{releaseNote.footer}</p>
+              )}
+              {releaseUrl && (
+                <ReleaseLink releaseUrl={releaseUrl} shell={shell}>
+                  {linkLabel}
+                </ReleaseLink>
+              )}
+            </section>
           );
         })}
         {state.omittedReleaseCount > 0 ? (
           <div className="mt-3">
             <ReleaseLink releaseUrl={getDesktopUpdateReleaseHistoryUrl()} shell={shell}>
-              {`${state.omittedReleaseCount} older ${state.omittedReleaseCount === 1 ? "release" : "releases"} on GitHub`}
+              {gt(
+                "{count, plural, one {{count} older release on GitHub} other {{count} older releases on GitHub}}",
+                { count: state.omittedReleaseCount },
+              )}
             </ReleaseLink>
           </div>
         ) : null}

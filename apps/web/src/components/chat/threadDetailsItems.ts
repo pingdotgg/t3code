@@ -1,17 +1,32 @@
 import type { ClientSettings } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 // Ids are stored in client settings, so never rename one.
 export const THREAD_DETAILS_ITEMS = [
-  { id: "environment", label: "Environment and worktree", defaultVisible: true },
-  { id: "openIn", label: "Open in editor", defaultVisible: true },
-  { id: "scripts", label: "Project scripts", defaultVisible: true },
-  { id: "branch", label: "Branch and pull request", defaultVisible: true },
-  { id: "gitActions", label: "Git actions", defaultVisible: true },
-  { id: "changes", label: "Changes", defaultVisible: true },
-  { id: "servers", label: "Servers", defaultVisible: true },
-  { id: "automations", label: "Automations", defaultVisible: true },
-  { id: "lineage", label: "Lineage", defaultVisible: true },
-  { id: "usage", label: "Usage", defaultVisible: false },
+  { id: "environment", label: msg("Environment and worktree"), defaultVisible: true },
+  { id: "openIn", label: msg("Open in editor"), defaultVisible: true },
+  { id: "scripts", label: msg("Project scripts"), defaultVisible: true },
+  { id: "branch", label: msg("Branch and pull request"), defaultVisible: true },
+  { id: "gitActions", label: msg("Git actions"), defaultVisible: true },
+  {
+    id: "changes",
+    label: msg("Changes", { $context: "thread details item: version control changes" }),
+    defaultVisible: true,
+  },
+  {
+    id: "servers",
+    label: msg("Servers", { $context: "thread details item: running dev servers" }),
+    defaultVisible: true,
+  },
+  { id: "automations", label: msg("Automations"), defaultVisible: true },
+  {
+    id: "lineage",
+    label: msg("Lineage", { $context: "thread details item: parent and child agents" }),
+    defaultVisible: true,
+  },
+  { id: "sideChats", label: msg("Side chats"), defaultVisible: true },
+  { id: "usage", label: msg("Usage limits"), defaultVisible: false },
+  { id: "context", label: msg("Context window"), defaultVisible: false },
 ] as const;
 
 export type ThreadDetailsItemId = (typeof THREAD_DETAILS_ITEMS)[number]["id"];
@@ -23,9 +38,11 @@ type ThreadDetailsItemSettings = Pick<
   "threadDetailsItems" | "threadDetailsUsageEnabled"
 >;
 
-// People who turned on the retired Labs toggle keep Usage until they change it here.
+// People who turned on the retired Labs toggle keep Usage and Context until they change them here.
 function defaultVisible(item: ThreadDetailsItem, settings: ThreadDetailsItemSettings) {
-  return item.id === "usage" ? settings.threadDetailsUsageEnabled : item.defaultVisible;
+  return item.id === "usage" || item.id === "context"
+    ? settings.threadDetailsUsageEnabled
+    : item.defaultVisible;
 }
 
 export function resolveThreadDetailsVisibility(
@@ -53,7 +70,7 @@ export function isDefaultThreadDetailsVisibility(visibility: ThreadDetailsVisibi
   return THREAD_DETAILS_ITEMS.every((item) => visibility[item.id] === item.defaultVisible);
 }
 
-/** Also clears the retired Labs flag, so Usage returns to off. */
+/** Also clears the retired Labs flag, so Usage and Context return to off. */
 export const RESET_THREAD_DETAILS_ITEMS = {
   threadDetailsItems: {},
   threadDetailsUsageEnabled: false,

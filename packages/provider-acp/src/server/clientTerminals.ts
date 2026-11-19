@@ -1,3 +1,4 @@
+import * as Channel from "effect/Channel";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as NodeBuffer from "node:buffer";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const MAX_LIVE_TERMINALS = 16;
 const MAX_UNRELEASED_TERMINALS = 64;
@@ -18,6 +20,7 @@ const MAX_RETAINED_TERMINALS = 32;
 const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
+const OUTPUT_DRAIN_GRACE = "1 second";
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -135,15 +138,30 @@ function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
   readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
-  readonly environment?: NodeJS.ProcessEnv | undefined;
+  readonly environment: NodeJS.ProcessEnv;
   readonly forceKillAfter: Duration.Input;
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
-    ...(input.environment === undefined ? {} : { env: input.environment }),
+    env: input.environment,
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter,
   });
+}
+
+// Windows variable names are case-insensitive and Node passes only one spelling to the child,
+// so a later layer's `Path` must replace an earlier `PATH` rather than sit beside it.
+function mergeEnvironments(
+  isWindows: boolean,
+  layers: ReadonlyArray<Iterable<readonly [string, string | undefined]>>,
+) {
+  const variables = new Map<string, readonly [string, string | undefined]>();
+  for (const layer of layers) {
+    for (const [name, value] of layer) {
+      variables.set(isWindows ? name.toUpperCase() : name, [name, value]);
+    }
+  }
+  return Object.fromEntries(variables.values());
 }
 
 export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(function* (
@@ -151,6 +169,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
+  const isWindows = yield* HostProcess.isWindows;
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
   let nextTerminalNumber = 1;
@@ -213,16 +232,20 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
               `ACP terminal/create exceeded the limit of ${MAX_LIVE_TERMINALS} concurrent terminals.`,
             );
           }
-          const requestEnvironment = Object.fromEntries(
-            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+          // Thread credentials and identity must come from the requesting session.
+          const inheritedEnvironment = Object.fromEntries(
+            Object.entries(options.environment ?? (yield* HostProcess.Environment)).filter(
+              ([name]) =>
+                !name.toUpperCase().startsWith("T3_ACP_MCP_") &&
+                name.toUpperCase() !== "T3CODE_THREAD_ID",
+            ),
           );
           const sessionEnvironment = options.environmentForSession?.(request.sessionId);
-          const environment =
-            options.environment === undefined &&
-            sessionEnvironment === undefined &&
-            (request.env?.length ?? 0) === 0
-              ? undefined
-              : { ...options.environment, ...sessionEnvironment, ...requestEnvironment };
+          const environment = mergeEnvironments(isWindows, [
+            Object.entries(inheritedEnvironment),
+            Object.entries(sessionEnvironment ?? {}),
+            (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
+          ]);
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
@@ -277,6 +300,9 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 
           const pump = (stream: typeof child.stdout) =>
             stream.pipe(
+              // Keep each pipe's UTF-8 decoder independent and preserve literal BOMs.
+              Stream.pipeThroughChannel(Channel.decodeText("utf-8", { ignoreBOM: true })),
+              Stream.encodeText,
               Stream.runForEach((chunk) =>
                 Effect.sync(() => {
                   appendOutput(record.buffer, chunk);
@@ -297,6 +323,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                 Effect.all([Fiber.join(stdoutPump), Fiber.join(stderrPump)], {
                   discard: true,
                 }).pipe(
+                  // A background child can inherit the pipes and hold them open indefinitely.
+                  Effect.timeoutOption(OUTPUT_DRAIN_GRACE),
                   Effect.andThen(
                     Effect.sync(() => {
                       record.exitStatus = status;

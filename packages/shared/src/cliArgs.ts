@@ -5,10 +5,12 @@ export interface ParsedCliArgs {
 
 export interface ParseCliArgsOptions {
   readonly booleanFlags?: readonly string[];
+  /** Flags that always take the next token as their value, even one starting with `--`. */
+  readonly valueFlags?: readonly string[];
 }
 
 export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
-  const input = args?.trim();
+  const input = args;
   if (!input) return [];
 
   const tokens: string[] = [];
@@ -41,7 +43,7 @@ export function tokenizeCliArgs(args?: string): ReadonlyArray<string> {
     if (char === "'" || char === '"') {
       quote = char;
       quoted = true;
-    } else if (/\s/.test(char)) {
+    } else if (/[ \t\n\r\f\v]/.test(char)) {
       if (current || quoted) {
         tokens.push(current);
         current = "";
@@ -70,6 +72,7 @@ export function parseCliArgs(
 ): ParsedCliArgs {
   const tokens = typeof args === "string" ? tokenizeCliArgs(args) : Array.from(args);
   const booleanSet = options?.booleanFlags ? new Set(options.booleanFlags) : undefined;
+  const valueSet = options?.valueFlags ? new Set(options.valueFlags) : undefined;
 
   const flags: Record<string, string | null> = {};
   const positionals: string[] = [];
@@ -97,7 +100,7 @@ export function parseCliArgs(
       }
 
       const next = tokens[i + 1];
-      if (next !== undefined && !next.startsWith("--")) {
+      if (next !== undefined && (valueSet?.has(rest) || !next.startsWith("--"))) {
         flags[rest] = next;
         i++;
       } else {
