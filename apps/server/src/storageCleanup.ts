@@ -574,6 +574,7 @@ const make = Effect.gen(function* () {
       return result;
     });
     // Let the first walk time out and cache unmeasurable folders; later walks share the remaining budget.
+    // Measured folders are walked again, and keep their last size only when the budget runs out.
     const now = yield* Clock.currentTimeMillis;
     const measurementDeadline = now + 30_000;
     let firstMeasurement = true;
@@ -594,7 +595,7 @@ const make = Effect.gen(function* () {
         const linked = (yield* fs.exists(gitPath)) && (yield* isLinkedWorktree(worktreePath));
         reported.add(key);
         const remaining = measurementDeadline - (yield* Clock.currentTimeMillis);
-        if (!orphanSizes.has(key) && (firstMeasurement || remaining > 0)) {
+        if (orphanSizes.get(key) !== null && (firstMeasurement || remaining > 0)) {
           const measured = yield* measureWorktree(worktreePath).pipe(
             firstMeasurement ? Effect.asSome : Effect.timeoutOption(remaining),
           );
