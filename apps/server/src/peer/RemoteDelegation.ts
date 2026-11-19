@@ -13,6 +13,7 @@ import {
   type OrchestratorMcpThreadTimelineItem,
   type OrchestrationV2RemoteTaskChild,
   type OrchestrationV2Subagent,
+  type OrchestrationV2ThreadLaunchWorkspaceStrategy,
   type ProjectId,
   type ProviderInstanceId,
   ProviderDriverKind,
@@ -47,6 +48,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as PeerForwarding from "./PeerForwarding.ts";
 import * as PeerLinks from "./PeerLinks.ts";
 
@@ -160,6 +162,7 @@ const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectService.ProjectService;
   const repositoryIdentities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+  const git = yield* GitVcsDriver.GitVcsDriver;
   const random = yield* SecureRandom.SecureRandom;
   const hereId = yield* ServerEnvironment.ServerEnvironment.pipe(
     Effect.flatMap((environment) => environment.getEnvironmentId),
@@ -288,15 +291,6 @@ const make = Effect.gen(function* () {
       }
       const parentNodeId = parentRun.rootNodeId;
       const { target } = input;
-      // A worktree there would branch from a commit this checkout has and the
-      // other may not, so a remote task runs in that project's checkout.
-      if (input.isolation === "worktree") {
-        return yield* new OrchestratorMcpFailure({
-          code: "invalid_request",
-          message:
-            'A task in a linked environment runs in that project\'s checkout; isolation "worktree" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.',
-        });
-      }
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
@@ -338,6 +332,40 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
+      let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
+      if (input.isolation === "worktree") {
+        const project = yield* projects.getById(parent.thread.projectId).pipe(
+          Effect.map(Option.getOrUndefined),
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message: "Unable to read the parent project for worktree isolation.",
+              }),
+          ),
+        );
+        if (project === undefined) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "The parent project was not found.",
+          });
+        }
+        const base = yield* git
+          .resolveCommit({
+            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+            revision: "HEAD",
+          })
+          .pipe(
+            Effect.mapError(
+              () =>
+                new OrchestratorMcpFailure({
+                  code: "invalid_request",
+                  message: "Unable to resolve the parent checkout commit for worktree isolation.",
+                }),
+            ),
+          );
+        workspaceStrategy = { type: "worktree", baseRef: base.commitSha, startFromOrigin: false };
+      }
       // One key for the launch there and the record here, so a retry finds both.
       // Both are scoped to the provider session, as every key a caller passes is:
       // the forwarder scopes the launch's, and the record's names it.
@@ -351,6 +379,7 @@ const make = Effect.gen(function* () {
         {
           projectId,
           title,
+          ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
           modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
