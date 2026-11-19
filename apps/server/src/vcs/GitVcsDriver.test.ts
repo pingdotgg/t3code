@@ -745,6 +745,48 @@ it.effect("checkpoint capture skips untracked nested repositories without a comm
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// Root reads mode-000 files, so the permission failure only exists for other users.
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
+  "checkpoint capture keeps the indexed version of files it cannot read",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-checkpoint-unreadable-",
+      });
+      const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "committed\n");
+      yield* git(["add", "locked.txt"]);
+      yield* git(["commit", "-m", "locked"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "locked.txt"), "changed\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "secret.txt"), "untracked\n");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new\n");
+      yield* Effect.acquireRelease(
+        Effect.all([
+          fileSystem.chmod(path.join(cwd, "locked.txt"), 0),
+          fileSystem.chmod(path.join(cwd, "secret.txt"), 0),
+        ]),
+        () =>
+          Effect.all([
+            fileSystem.chmod(path.join(cwd, "locked.txt"), 0o644),
+            fileSystem.chmod(path.join(cwd, "secret.txt"), 0o644),
+          ]).pipe(Effect.orDie),
+      );
+
+      yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+      assert.strictEqual((yield* git(["show", `${checkpointRef}:untracked.txt`])).stdout, "new\n");
+      assert.strictEqual(
+        (yield* git(["show", `${checkpointRef}:locked.txt`])).stdout,
+        "committed\n",
+      );
+      assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "secret.txt"])).stdout, "");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 it.effect.skipIf(!symlinksSupported)(
   "checkpoint capture writes its index into the real git dir when cwd is a symlinked subdirectory",
   () =>

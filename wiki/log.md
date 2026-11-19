@@ -1,5 +1,9 @@
 # Wiki update log
 
+## 2026-11-19
+
+- **Integration**: Recorded [PR #86](https://github.com/NicholasZolton/t3code/pull/86) and the [compatibility decisions](upstream-integration.md) for the 186 commits through `e37e45fd5b`.
+
 ## 2026-11-17
 
 - **Integration**: [PR #84](https://github.com/NicholasZolton/t3code/pull/84) reached fork `main` at `092507e48b`. Refreshed [upstream integration](upstream-integration.md#completed-november-17-sync): both merges and all 205 commits through `b46edac5c1` are retained, with zero main gap. Recovery keeps upstream's empty-directory fix alongside Git/Jujutsu ownership; the overlapping PR action stays a single implementation. The 18 remaining failures reproduce upstream, native access is blocked, and GitHub registered no checks. No live deployment occurred.

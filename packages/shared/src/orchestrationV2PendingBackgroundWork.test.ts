@@ -412,6 +412,12 @@ describe("derivePendingBackgroundWork kinds", () => {
           awaited: true,
         },
         {
+          taskId: "pull-request-watch:github.com/acme/app#4",
+          description: "Watching pull request #4",
+          kind: "monitor",
+          awaited: true,
+        },
+        {
           taskId: "pull-request-watch:github.com/acme/app#5",
           description: "Watching pull request #5",
           kind: "monitor",
@@ -431,6 +437,7 @@ describe("derivePendingBackgroundWork kinds", () => {
         }).map((task) => task.taskId),
       ).toEqual([
         "pull-request-watch:github.com/acme/app#1",
+        "pull-request-watch:github.com/acme/app#4",
         "pull-request-watch:github.com/acme/app#5",
       ]);
     });
@@ -471,6 +478,33 @@ describe("derivePendingBackgroundWork kinds", () => {
       });
       expect(unwatched).toEqual([]);
       expect(backgroundWorkHoldsCompletion(unwatched)).toBe(false);
+
+      // Its watch has yet to wake the agent with the merge, so settling on merge waits for it.
+      const merged = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [
+          {
+            ...link(1, { state: "merged" }),
+            watch: { ...watch, passed: true, checksPending: false },
+          },
+        ],
+      });
+      expect(backgroundWorkHoldsCompletion(merged)).toBe(true);
+
+      const untilMerged = derivePendingBackgroundWork({
+        latestRun: { id: "run-1" as never, ordinal: 1, status: "completed" },
+        providerThreads: [],
+        turnItems: [],
+        pullRequests: [
+          {
+            ...link(1, { state: "open" }),
+            watch: { ...watch, passed: true, checksPending: false, until: "merged" as const },
+          },
+        ],
+      });
+      expect(backgroundWorkHoldsCompletion(untilMerged)).toBe(true);
     });
 
     it.each([

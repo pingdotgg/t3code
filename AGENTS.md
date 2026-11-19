@@ -236,3 +236,4 @@ Architecture and its constraints: `docs/internals/overview.md`. Glossary: `docs/
 ## Additional tips
 
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+- Before a security audit or triaging a vulnerability report, read [SECURITY.md](SECURITY.md) for the trust model and what is intended.
