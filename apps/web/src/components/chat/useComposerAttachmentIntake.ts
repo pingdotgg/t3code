@@ -151,7 +151,6 @@ export function useComposerAttachmentIntake(input: {
         data: { hideCopyButton: true },
       });
     }
-    // Without a path there is nothing to link, so the file is refused as it was before.
     const unlinked = missing.at(-1);
     if (unlinked)
       setThreadError(threadId, fileAttachmentTooLargeMessage(unlinked.name, stagingLimit, m));
@@ -203,21 +202,25 @@ export function useComposerAttachmentIntake(input: {
     const acceptedFiles: ComposerFileAttachment[] = [];
     const filesToLink: File[] = [];
     // Question answers carry attachments beside the answer, where a path link would not show.
-    const localFileLinker =
-      isLiteralPendingAnswer || pendingUserInputs.length > 0 ? null : resolveLocalFileLinker();
+    const canLinkByPath = !isLiteralPendingAnswer && pendingUserInputs.length === 0;
+    // Resolved on the first oversized file, so ordinary attachments skip the connection lookup.
+    let localFileLinker: LocalFileLinker | null | undefined;
     let error: string | null = null;
     for (const file of files) {
       const attachmentKind = classifyComposerAttachmentFile(file);
       // A file too large to upload is linked by path instead. A link takes no attachment slot,
       // so this runs before the per-message cap.
       if (
-        localFileLinker !== null &&
+        canLinkByPath &&
         attachmentKind === "file" &&
         fileStagingLimit !== null &&
         file.size > fileStagingLimit
       ) {
-        filesToLink.push(file);
-        continue;
+        localFileLinker ??= resolveLocalFileLinker();
+        if (localFileLinker !== null) {
+          filesToLink.push(file);
+          continue;
+        }
       }
       const fileMimeType =
         attachmentKind === "file" ? composerFileAttachmentMimeType(file) : file.type;
@@ -289,7 +292,7 @@ export function useComposerAttachmentIntake(input: {
     // Started before any await, but settled last: linking may wait on a path conversion, and
     // that must not delay reserving the attached files' slots.
     const linking =
-      localFileLinker !== null && fileStagingLimit !== null && filesToLink.length > 0
+      localFileLinker != null && fileStagingLimit !== null && filesToLink.length > 0
         ? linkFilesByPath(localFileLinker, filesToLink, fileStagingLimit, threadId)
         : Promise.resolve(false);
     setThreadError(threadId, error);
