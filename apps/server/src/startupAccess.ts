@@ -242,6 +242,13 @@ export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): 
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,
     `App link: ${buildPairingAppLink(accessInfo.pairingUrl)}`,
+    ...(isLoopbackHost(new URL(accessInfo.connectionString).hostname)
+      ? []
+      : [
+          "",
+          "Warning: this address uses plain HTTP. Anyone on the same network can read the",
+          "token and control this machine. Use it over a VPN or tailnet you trust.",
+        ]),
     "",
     renderTerminalQrCode(accessInfo.pairingUrl),
     "",

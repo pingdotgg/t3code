@@ -1,5 +1,4 @@
 import {
-  EnvironmentAuthenticatedPrincipal,
   type EnvironmentCloudLinkStateResult,
   type EnvironmentCloudPreferencesRequest,
   type EnvironmentCloudRelayConfigResult,
@@ -38,7 +37,7 @@ import {
   RELAY_MINT_RESPONSE_TYP,
   verifyRelayJwt,
 } from "@t3tools/shared/relayJwt";
-import { isSecureRelayUrl } from "@t3tools/shared/relayUrl";
+import { isSecureRelayUrl, normalizeSecureRelayUrl } from "@t3tools/shared/relayUrl";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Signature from "effect/crypto/Signature";
@@ -46,6 +45,7 @@ import * as Jwk from "effect/jose/Jwk";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -54,12 +54,7 @@ import type * as PlatformError from "effect/PlatformError";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import {
-  HttpClient,
-  HttpClientRequest,
-  HttpClientResponse,
-  type HttpServerRequest,
-} from "effect/http";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpServer from "effect/http/HttpServer";
 
@@ -110,13 +105,11 @@ import {
 import {
   hasBoundedCloudProofLifetime,
   hasExactScope,
-  hasForwardedAuthorityHeaders,
-  isAllowedEndpointOrigin,
+  isLoopbackEndpointOrigin,
   isSupportedLinkProviderKind,
   linkProofScopes,
   managedEndpointRuntimeConfigsMatch,
   parseManagedEndpointLocalOrigin,
-  requestAbsoluteUrl,
 } from "./linkChecks.ts";
 import { desktopUpdateRestartPending, pendingUpdateHandoffExists } from "./updateHandoff.ts";
 
@@ -251,6 +244,7 @@ const INTERNAL_OPERATION_MESSAGES = {
   "persist-recovered-tunnel": "Could not persist the recovered managed tunnel configuration.",
   "read-relay-config": "Could not read environment relay configuration.",
   "remove-relay-config": "Could not remove environment relay configuration.",
+  "update-live-activity-preference": "Could not update T3 Connect Live Activity preferences.",
   "update-webhook-settings": "Could not update T3 Connect webhook settings.",
   "read-preferences": "Could not read environment cloud preferences.",
   "persist-preferences": "Could not persist environment cloud preferences.",
@@ -414,21 +408,15 @@ type ManagedTunnelRegistration =
 export class CloudLink extends Context.Service<
   CloudLink,
   {
-    /**
-     * Signs the proof the relay asks for to link this environment. The request
-     * must reach this server directly. Desktop bootstrap sessions may use the
-     * WSL IP; all other sessions must use the loopback origin they name.
-     */
+    /** Signs the proof the relay asks for to link this environment, for this server's own origin. */
     readonly linkProof: (
       request: RelayLinkProofRequest,
-      httpRequest: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<
       RelayEnvironmentLinkProof,
       | CloudLinkOriginInvalidError
       | CloudLinkInternalError
       | EnvironmentAuth.ServerAuthInternalError
-      | ManagedLimits.ManagedPolicyRefusedError,
-      EnvironmentAuthenticatedPrincipal
+      | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly applyRelayConfig: (
       payload: RelayEnvironmentConfigRequest,
@@ -454,6 +442,12 @@ export class CloudLink extends Context.Service<
     ) => Effect.Effect<
       EnvironmentCloudLinkStateResult,
       CloudLinkNotLinkedError | CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
+    >;
+    readonly updateLiveActivityPreference: (
+      enabled: boolean,
+    ) => Effect.Effect<
+      RelayOkResponse,
+      CloudLinkInternalError | ManagedLimits.ManagedPolicyRefusedError
     >;
     readonly answerHealthRequest: (
       request: RelayCloudEnvironmentHealthRequest,
@@ -578,21 +572,28 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  // The tunnel must reach this server, so the signed origin is its own loopback address, never the caller's.
+  const serverLoopbackOrigin = Effect.gen(function* () {
+    const address = httpServer.address;
+    if (typeof address === "string" || !("port" in address)) {
+      return yield* new CloudLinkInternalError({ operation: "resolve-server-origin" });
+    }
+    const { origin } = parseManagedEndpointLocalOrigin(
+      `http://${loopbackUrlHostForAddress(address)}:${address.port}`,
+    );
+    if (!isLoopbackEndpointOrigin(origin)) {
+      return yield* new CloudLinkOriginInvalidError({ origin: "local" });
+    }
+    return origin;
+  });
+
   const makeCloudLinkProof = Effect.fn("environment.cloud.makeLinkProof")(function* (
     request: RelayLinkProofRequest,
-    requestUrl: string,
-    allowNonLoopbackRequestHost = false,
   ) {
-    if (
-      !isSupportedLinkProviderKind(request) ||
-      !isAllowedEndpointOrigin({
-        origin: request.origin,
-        requestUrl,
-        allowNonLoopbackRequestHost,
-      })
-    ) {
+    if (!isSupportedLinkProviderKind(request)) {
       return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
     }
+    const origin = yield* serverLoopbackOrigin;
     const now = yield* DateTime.now;
     const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
     // Borrow only the relay clock; the relay still verifies and consumes the challenge.
@@ -615,7 +616,7 @@ const make = Effect.gen(function* () {
       environmentId: descriptor.environmentId,
       environmentPublicKey: normalizePemForSignedPayload(signingKey.publicKey),
       endpoint: request.endpoint,
-      origin: request.origin,
+      origin,
       scopes: linkProofScopes(request),
     } satisfies RelayEnvironmentLinkProofPayload;
     return yield* signingKey
@@ -634,18 +635,8 @@ const make = Effect.gen(function* () {
   });
 
   const linkProof = Effect.fn("environment.cloud.linkProof")(
-    function* (request: RelayLinkProofRequest, httpRequest: HttpServerRequest.HttpServerRequest) {
-      const requestUrl = requestAbsoluteUrl(httpRequest);
-      if (requestUrl === null || hasForwardedAuthorityHeaders(httpRequest)) {
-        return yield* new CloudLinkOriginInvalidError({ origin: "endpoint" });
-      }
-      const principal = yield* EnvironmentAuthenticatedPrincipal;
-      // WSL desktop requests use the distro IP; only the server-issued bootstrap subject qualifies.
-      return yield* makeCloudLinkProof(
-        request,
-        requestUrl,
-        principal.subject === "desktop-bootstrap",
-      );
+    function* (request: RelayLinkProofRequest) {
+      return yield* makeCloudLinkProof(request);
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("generate-link-proof")),
   );
@@ -869,19 +860,16 @@ const make = Effect.gen(function* () {
         },
         schema: RelayEnvironmentLinkChallengeResponse,
       });
-      const proof = yield* makeCloudLinkProof(
-        {
-          challenge: challenge.challenge,
-          relayIssuer: relayUrl,
-          endpoint: {
-            httpBaseUrl: parsedOrigin.httpBaseUrl,
-            wsBaseUrl: parsedOrigin.wsBaseUrl,
-            providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
-          },
-          origin: parsedOrigin.origin,
+      const proof = yield* makeCloudLinkProof({
+        challenge: challenge.challenge,
+        relayIssuer: relayUrl,
+        endpoint: {
+          httpBaseUrl: parsedOrigin.httpBaseUrl,
+          wsBaseUrl: parsedOrigin.wsBaseUrl,
+          providerKind: managedTunnelsEnabled ? "cloudflare_tunnel" : "manual",
         },
-        parsedOrigin.httpBaseUrl,
-      );
+        origin: parsedOrigin.origin,
+      });
       const link = yield* relayClientRequest({
         url: `${relayUrl}/v1/client/environment-links`,
         token: token.accessToken,
@@ -1232,22 +1220,27 @@ const make = Effect.gen(function* () {
       yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
       return false;
     }
-    const token = yield* cliTokenManager.getExisting;
-    if (Option.isNone(token)) {
+    const relayUrl = yield* requireRelayUrl.pipe(Effect.option);
+    const installedRelayUrl = yield* secrets.get(RELAY_URL_SECRET);
+    if (
+      Option.isNone(relayUrl) ||
+      Option.isNone(installedRelayUrl) ||
+      normalizeSecureRelayUrl(bytesToString(installedRelayUrl.value)) !== relayUrl.value
+    ) {
       return false;
     }
-    // Use the persisted relay URL; T3CODE_RELAY_URL may have changed since linking.
-    const relayUrl = yield* secrets.get(RELAY_URL_SECRET);
-    if (Option.isNone(relayUrl)) {
+    const token = yield* cliTokenManager.getExisting;
+    if (Option.isNone(token)) {
       return false;
     }
     const environmentId = yield* environment.getEnvironmentId;
     yield* endpointRuntime.applyConfig(null);
     const response = yield* HttpClientRequest.delete(
-      `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
+      `${relayUrl.value}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
       httpClient.execute,
+      Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.flatMap(filterRelayResponse),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
@@ -1423,6 +1416,37 @@ const make = Effect.gen(function* () {
       return yield* readCloudLinkState();
     },
     Effect.catchIf(ServerSecretStore.isSecretStoreError, internalError("read-preferences")),
+  );
+
+  const updateLiveActivityPreference = Effect.fn("environment.cloud.updateLiveActivityPreference")(
+    function* (liveActivitiesEnabled: boolean) {
+      return yield* endpointRuntime.withLinkStateLock(
+        Effect.gen(function* () {
+          const connection = yield* readRelayConnection.pipe(withSecrets);
+          const cloudUserId = yield* secrets.get(CLOUD_LINKED_USER_ID);
+          const revoked = yield* secrets.get(CLOUD_LINK_REVOKED);
+          if (connection === null || Option.isNone(cloudUserId) || Option.isSome(revoked)) {
+            return { ok: false };
+          }
+          const environmentId = yield* environment.getEnvironmentId;
+          const client = yield* makeRelayEnvironmentClient(connection);
+          return yield* client.server
+            .updateLiveActivityPreference({
+              params: { environmentId },
+              payload: { cloudUserId: bytesToString(cloudUserId.value), liveActivitiesEnabled },
+            })
+            .pipe(
+              Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+              Effect.timeout("10 seconds"),
+              Effect.catch(internalError("update-live-activity-preference")),
+            );
+        }),
+      );
+    },
+    Effect.catchIf(
+      ServerSecretStore.isSecretStoreError,
+      internalError("update-live-activity-preference"),
+    ),
   );
 
   const answerHealthRequest = Effect.fn("environment.cloud.health")(
@@ -1654,6 +1678,7 @@ const make = Effect.gen(function* () {
       linkState,
       unlink,
       updatePreferences: refused,
+      updateLiveActivityPreference: refused,
       answerHealthRequest: refused,
       mintCredential: refused,
       reconcileDesiredLinkIfStillDesired: notDesired,
@@ -1670,6 +1695,7 @@ const make = Effect.gen(function* () {
     linkState,
     unlink,
     updatePreferences,
+    updateLiveActivityPreference,
     answerHealthRequest,
     mintCredential,
     reconcileDesiredLinkIfStillDesired,
