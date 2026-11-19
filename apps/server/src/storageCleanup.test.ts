@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
 import type * as Digest from "effect/crypto/Digest";
@@ -2411,6 +2412,85 @@ describe("orphan worktree reports", () => {
         );
         expect(yield* orphanBytes).toBe(yield* allocatedBytes(fixture.fs, bundle));
         yield* fixture.fs.remove(bundle);
+        expect(yield* orphanBytes).toBe(0);
+      }),
+    ),
+  );
+
+  it.effect("measures a new orphan before refreshing a cached size", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const clock = yield* Clock.Clock;
+        let now = NOW_MS;
+        let parent: string | undefined;
+        let slowDirectory: string | undefined;
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(Clock.Clock, {
+            ...clock,
+            currentTimeMillis: Effect.sync(() => now),
+          }),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) =>
+              fs.readDirectory(directory, options).pipe(
+                Effect.map((names) => {
+                  if (directory === slowDirectory) now += 30_000;
+                  return directory === parent ? names.sort() : names;
+                }),
+              ),
+          }),
+        );
+        fixture.setThreads([]);
+        parent = `${fixture.config.worktreesDir}/repository`;
+        const cached = `${parent}/a-cached`;
+        const discovered = `${parent}/b-discovered`;
+        yield* fs.makeDirectory(`${cached}/build`, { recursive: true });
+        yield* fs.utimes(cached, 1, 1);
+        const first = yield* fixture.service.runNow;
+        expect(first.entries.find((entry) => entry.path === cached)?.bytes).toBe(0);
+
+        slowDirectory = `${cached}/build`;
+        yield* fs.makeDirectory(discovered);
+        yield* fs.utimes(discovered, 1, 1);
+        const second = yield* fixture.service.runNow;
+        expect(second.entries.find((entry) => entry.path === discovered)?.bytes).toBe(0);
+      }),
+    ),
+  );
+
+  it.live("retains the last orphan size on a failed refresh and can refresh it later", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        let unreadable: string | undefined;
+        const fixture = yield* cleanupFixture().pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            readDirectory: (directory, options) =>
+              fs.readDirectory(
+                directory === unreadable ? `${directory}/missing-directory` : directory,
+                options,
+              ),
+          }),
+        );
+        fixture.setThreads([]);
+        const orphan = `${fixture.config.worktreesDir}/repository/orphan`;
+        const build = `${orphan}/build`;
+        const bundle = `${build}/bundle.js`;
+        yield* fs.makeDirectory(build, { recursive: true });
+        yield* fs.writeFileString(bundle, "build output");
+        yield* fs.utimes(orphan, 1, 1);
+        const size = yield* allocatedBytes(fs, bundle);
+        const orphanBytes = Effect.map(
+          fixture.service.runNow,
+          (report) => report.entries.find((entry) => entry.path === orphan)?.bytes,
+        );
+        expect(yield* orphanBytes).toBe(size);
+        yield* fs.remove(bundle);
+        unreadable = build;
+        expect(yield* orphanBytes).toBe(size);
+        unreadable = undefined;
         expect(yield* orphanBytes).toBe(0);
       }),
     ),

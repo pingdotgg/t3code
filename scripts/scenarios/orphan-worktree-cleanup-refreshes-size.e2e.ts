@@ -48,6 +48,10 @@ test(
       await runCleanup.tap();
       await screen.getByRole("button", /^Last run/).tap();
       await screen.getByText(/^8\.\d{2} MB$/).waitFor();
+      const orphanRow = browser
+        .locator('#storage-cleanup-last-run [data-slot="settings-row"]')
+        .filter({ has: screen.getByText(worktree, { exact: true }) });
+      await orphanRow.getByText(/^8\.\d{2} MB$/).waitFor();
 
       await runPromise(
         Effect.gen(function* () {
@@ -59,6 +63,7 @@ test(
       await runCleanup.waitFor();
       await screen.getByText("No thread uses this worktree", { exact: true }).scrollIntoView();
       try {
+        await expect(orphanRow.getByText(/^\d+(?:\.\d+)? KB$/)).toBeVisible();
         await expect(browser.locator("#storage-cleanup-last-run")).toContainText(
           /\b\d+(?:\.\d+)? KB\b/,
         );
