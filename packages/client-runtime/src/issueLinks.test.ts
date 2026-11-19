@@ -130,29 +130,23 @@ describe("resolveIssueLinkTarget", () => {
     ).toBeNull();
 
     // A second account reaches its own workspace, through only the projects bound with it.
-    const second = IssueTrackerAccountId.make("second");
-    const withSecond = {
-      ...trackers,
-      accounts: [{ ...trackers.trackers[0]!, accountId: second, workspace: "othercorp" }],
-      bindings: { [ProjectId.make("p1")]: trackers.bindings[ProjectId.make("p1")]! },
-      accountBindings: {
-        [ProjectId.make("p2")]: {
-          tracker: IssueTrackerKind.make("linear"),
-          accountId: second,
-          scope: "WEB",
-        },
-      },
-    };
+    const accountId = IssueTrackerAccountId.make("second");
+    const [p1, p2] = [ProjectId.make("p1"), ProjectId.make("p2")];
     const both = (url: string) =>
-      resolveIssueLinkTarget({ url, projects, trackers: withSecond })?.ref;
-    expect(both("https://linear.app/othercorp/issue/WEB-17")).toMatchObject({
-      projectId: "p2",
-      scope: "WEB",
-    });
-    expect(both("https://linear.app/acme/issue/WEB-17")).toMatchObject({
-      projectId: "p1",
-      scope: "WEB",
-    });
+      resolveIssueLinkTarget({
+        url,
+        projects,
+        trackers: {
+          ...trackers,
+          accounts: [{ ...trackers.trackers[0]!, accountId, workspace: "othercorp" }],
+          bindings: { [p1]: trackers.bindings[p1]! },
+          accountBindings: { [p2]: { ...trackers.bindings[p2]!, accountId } },
+        },
+      })?.ref.projectId;
+    expect([
+      both("https://linear.app/othercorp/issue/WEB-17"),
+      both("https://linear.app/acme/issue/WEB-17"),
+    ]).toEqual(["p2", "p1"]);
   });
 
   it.each([

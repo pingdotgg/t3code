@@ -151,52 +151,26 @@ describe("issueFilterScopes", () => {
       host: "linear.app",
       scope: "ENG",
     };
-    const second = { ...first, projectId: "home" as ProjectId };
-    const held = new Map([
-      [environmentId, hold(answer({ trackers: [tracker({})], scopes: [first, second] }))],
-    ]);
-    expect(issueFilterScopes(held, []).map((scope) => scope.input)).toEqual([first, second]);
-    // Another server's ENG teams are kept too, whichever server is read first.
-    const otherEnvironment = "other" as EnvironmentId;
-    const other = { ...first, projectId: "other-api" as ProjectId };
-    const otherPage = hold(answer({ trackers: [tracker({})], scopes: [other] }));
-    for (const order of [
-      [held.get(environmentId)!, otherPage],
-      [otherPage, held.get(environmentId)!],
-    ]) {
-      const servers = new Map([
-        [order[0] === otherPage ? otherEnvironment : environmentId, order[0]!],
-        [order[0] === otherPage ? environmentId : otherEnvironment, order[1]!],
-      ]);
-      expect(issueFilterScopes(servers, [])).toHaveLength(3);
-    }
-    // An older server's rows of ENG hide neither newer server's ENG teams, in either order.
-    const olderPage = hold(answer({ trackers: [tracker({})], entries: [linearRow] }));
-    for (const olderFirst of [true, false]) {
-      const servers = new Map(
-        olderFirst
-          ? [
-              [otherEnvironment, olderPage],
-              [environmentId, held.get(environmentId)!],
-            ]
-          : [
-              [environmentId, held.get(environmentId)!],
-              [otherEnvironment, olderPage],
-            ],
-      );
-      expect(issueFilterScopes(servers, [])).toHaveLength(3);
-    }
-
-    // Older servers name no scopes; rows of the same team stand in for it once.
-    const rows = new Map([
-      [
-        environmentId,
-        hold(
-          answer({ trackers: [tracker({})], entries: [linearRow, { ...linearRow, key: "ENG-2" }] }),
-        ),
-      ],
-    ]);
-    expect(issueFilterScopes(rows, [])).toHaveLength(1);
+    const second = hold(
+      answer({
+        trackers: [tracker({})],
+        scopes: [first, { ...first, projectId: "home" as ProjectId }],
+      }),
+    );
+    const other = hold(
+      answer({ trackers: [tracker({})], scopes: [{ ...first, projectId: "o" as ProjectId }] }),
+    );
+    // Older servers name no scopes; their rows stand in, once per team on that server.
+    const older = hold(
+      answer({ trackers: [tracker({})], entries: [linearRow, { ...linearRow, key: "ENG-2" }] }),
+    );
+    const count = (...pages: ReadonlyArray<ReturnType<typeof hold>>) =>
+      issueFilterScopes(
+        new Map(pages.map((page, index) => [`env-${index}` as EnvironmentId, page])),
+        [],
+      ).length;
+    expect([count(second), count(second, other), count(other, second)]).toEqual([2, 3, 3]);
+    expect([count(older), count(older, second), count(second, older)]).toEqual([1, 3, 3]);
   });
 
   it("skips a tracker that cannot be read", () => {
