@@ -39,9 +39,11 @@ Choose **Sign-in method** in the Antigravity provider settings:
 | Method                     | Credentials                                                                                  |
 | -------------------------- | -------------------------------------------------------------------------------------------- |
 | Google account             | Personal Google sign-in in the browser                                                       |
-| Gemini Enterprise          | Browser sign-in, GCP project, and GCP location                                               |
+| Gemini Enterprise          | Browser sign-in; optionally set both GCP project and location                                |
 | Gemini API key             | API key; choose Connect without a browser                                                    |
 | Agent Platform / Vertex AI | API key, or GCP project and location with Application Default Credentials on the environment |
+
+For Gemini Enterprise, leave both GCP fields empty to choose a license during sign-in. The license picker runs on the environment machine; open its link there. Your selection is kept for later sessions. An explicit GCP project and location override the saved selection.
 
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;

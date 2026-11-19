@@ -1,9 +1,14 @@
+// @effect-diagnostics nodeBuiltinImport:off - callback forwarding needs a real loopback HTTP response.
+import * as NodeHttp from "node:http";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 
-import { validateAntigravityCallbackUrl } from "./antigravityCallback.ts";
+import {
+  forwardAntigravityCallback,
+  validateAntigravityCallbackUrl,
+} from "./antigravityCallback.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-callback-test");
 const pending = { redirectUri: "http://127.0.0.1:51234/", state: "owned-state" };
@@ -45,4 +50,33 @@ it.effect("rejects different targets, credentials, fragments, and duplicate OAut
       assert.isTrue(Exit.isFailure(result), callback);
     }
   }),
+);
+
+it.live("accepts the license redirect without following it and rejects failed callbacks", () =>
+  Effect.gen(function* () {
+    for (const status of [200, 302, 500]) {
+      const server = yield* Effect.acquireRelease(
+        Effect.callback<NodeHttp.Server>((resume) => {
+          const listener = NodeHttp.createServer((_request, response) => {
+            response.writeHead(status, { Location: "http://127.0.0.1:1/" });
+            response.end();
+          });
+          listener.once("error", (error) => resume(Effect.die(error)));
+          listener.listen(0, "127.0.0.1", () => resume(Effect.succeed(listener)));
+        }),
+        (listener) =>
+          Effect.callback<void>((resume) => {
+            listener.close(() => resume(Effect.void));
+          }),
+      );
+      const address = server.address();
+      assert.isNotNull(address);
+      if (!address || typeof address === "string") return yield* Effect.die("Missing port");
+      const result = yield* forwardAntigravityCallback(
+        instanceId,
+        new URL(`http://127.0.0.1:${address.port}/?code=test`),
+      ).pipe(Effect.exit);
+      assert.equal(Exit.isSuccess(result), status !== 500);
+    }
+  }).pipe(Effect.scoped),
 );

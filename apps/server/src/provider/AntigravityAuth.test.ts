@@ -152,6 +152,40 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("AntigravityAuth", (it) => {
+  it.effect(
+    "continues OAuth into license selection without accepting an OAuth callback there",
+    () =>
+      Effect.gen(function* () {
+        const picker = "http://127.0.0.1:49152/";
+        for (const initial of [authorizationUrl, picker]) {
+          const h = yield* makeHarness({ authorizationUrls: [initial] });
+          const started = yield* h.auth.controller.start(owner);
+          yield* phase(h.auth, "waiting");
+          if (initial === authorizationUrl) {
+            yield* h.auth.controller.complete(owner, { flowId: started.flowId!, callbackUrl });
+          }
+          yield* h.receiveAuthorizationUrl(picker);
+          yield* h.receiveAuthorizationUrl(picker);
+          const state = yield* h.auth.controller.subscribe(owner).pipe(
+            Stream.filter((value) => value.authorizationUrl === picker),
+            Stream.runHead,
+            Effect.map(Option.getOrThrow),
+          );
+          assert.deepInclude(state.interaction, { acceptsCallback: false });
+          const rejected = yield* h.auth.controller
+            .complete(owner, {
+              flowId: started.flowId!,
+              callbackUrl,
+            })
+            .pipe(Effect.exit);
+          assert.isTrue(Exit.isFailure(rejected));
+          yield* Deferred.succeed(h.authenticated, undefined);
+          yield* Deferred.succeed(h.discovered, undefined);
+          yield* phase(h.auth, "succeeded");
+        }
+      }),
+  );
+
   it.effect("accepts a delayed duplicate after callback completion starts", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
