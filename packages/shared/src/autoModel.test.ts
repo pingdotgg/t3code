@@ -341,6 +341,13 @@ describe("resolveAutoModelSelection", () => {
     });
     const b = withWeekly(claude("claudeAutoB", 10), 20, inHours(48));
     expect(routeTo([a, b])).toBe("claudeAuto");
+    const spentPastPlan = withWindow(claude("claudeAuto", 92), {
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 99,
+    });
+    expect(routeTo([claude("claudeAutoB", 95), spentPastPlan])).toBe("claudeAuto");
   });
 
   it("ignores a window whose reset has already passed when checking room", () => {
@@ -399,6 +406,14 @@ describe("resolveAutoModelSelection", () => {
     expect(routeTo([noReport, claude("claudeAuto", 95)])).toBe("claudeAutoB");
     expect(routeTo([unknown, claude("claudeAuto", 95)])).toBe("claudeAutoB");
     expect(routeTo([noReport])).toBe("claudeAutoB");
+    // A known window past 90% outranks an unknown one: the account has no room.
+    const partlyUnknown = withWindow(claude("claudeAutoB", 95), {
+      id: "seven_day",
+      kind: "weekly",
+      label: "Weekly",
+      resetsAt: inHours(100),
+    });
+    expect(routeTo([partlyUnknown, claude("claudeAuto", 92)])).toBe("claudeAuto");
   });
 
   it("ranks an account with no session window after one with a known session", () => {
