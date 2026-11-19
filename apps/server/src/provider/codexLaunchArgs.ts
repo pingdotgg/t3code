@@ -43,8 +43,9 @@ const filterLaunchArgs = (launchArgs: string | undefined, allowed: LaunchArgFilt
   const kept: Array<string> = [];
 
   for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
-    if (arg === undefined) continue;
+    const rawArg = args[index];
+    if (rawArg === undefined) continue;
+    const arg = rawArg.replace(/^(-[cp])(?=[^=])/u, "$1=");
 
     if (allowed.switches.has(arg)) {
       kept.push(arg);

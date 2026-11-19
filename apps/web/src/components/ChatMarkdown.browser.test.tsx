@@ -10,7 +10,11 @@ import { act, render } from "../../test/render";
 import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
-import { useRightPanelStore } from "../rightPanelStore";
+import {
+  hostRightPanel,
+  selectActiveRightPanelSurface,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import {
   CHAT_USER_MARKDOWN_REMARK_PLUGINS,
   remarkEnableOrderedListNumbers,
@@ -47,7 +51,7 @@ vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const noConfig = Atom.make(null);
   const modelsConfig = Atom.make({
-    environment: { platform: { os: "darwin" } },
+    environment: { platform: { os: "darwin" }, capabilities: {} },
     availableEditors: [],
     settings: { providerInstances: {} },
     providers: [
@@ -508,9 +512,7 @@ describe("ChatMarkdown workspace file opens", () => {
       resolvePending = resolve;
     });
     workspaceSearch.mockReturnValueOnce(pending);
-    using openFile = vi
-      .spyOn(useRightPanelStore.getState(), "openFile")
-      .mockImplementation(() => {});
+    using openFile = vi.spyOn(useRightPanelStore.getState(), "openFile");
     await using screen = await renderText(
       "[Notes](physics/notes/a.md) and [Other](/elsewhere/b.md:9)",
       {
@@ -529,6 +531,86 @@ describe("ChatMarkdown workspace file opens", () => {
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/elsewhere/b.md", 9);
     expect(workspaceSearch).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["its own panel", "thread-own-panel", false],
+    ["its parent's panel from a side chat", "thread-side-chat", true],
+  ])(
+    "keeps a file opened elsewhere in %s when an earlier link lookup finishes",
+    async (_, threadId, sideChat) => {
+      setup();
+      const host = { environmentId: threadRef.environmentId, threadId: ThreadId.make(threadId) };
+      const linkRef = sideChat ? { ...host, threadId: ThreadId.make(`${threadId}-guest`) } : host;
+      using _hosted = { [Symbol.dispose]: sideChat ? hostRightPanel(linkRef, host) : () => {} };
+      const result = AsyncResult.success({
+        entries: [{ path: "notes/cited-note.txt", kind: "file" }],
+        truncated: false,
+      });
+      const { promise: pending, resolve: resolvePending } = Promise.withResolvers<typeof result>();
+      workspaceSearch.mockReturnValueOnce(pending);
+      await using screen = await renderText("[Cited](cited-note.txt)", {
+        cwd: "/repo",
+        threadRef: linkRef,
+      });
+      await act(async () => screen.container.querySelector("a")!.click());
+      expect(workspaceSearch).toHaveBeenCalledOnce();
+
+      useRightPanelStore.getState().openFile(host, "picker-note.txt");
+      await act(async () => resolvePending(result));
+
+      expect(
+        selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, host),
+      ).toMatchObject({ kind: "file", relativePath: "picker-note.txt" });
+    },
+  );
+
+  it.each([
+    ["open a link in another panel", "separate-panels"],
+    ["unhost the side chat", "unhosted-side-chat"],
+  ] as const)("keeps a citation in its original panel scope if you %s", async (action, scope) => {
+    setup();
+    const host = { ...threadRef, threadId: ThreadId.make(`${scope}-host`) };
+    const guest = { ...threadRef, threadId: ThreadId.make(`${scope}-guest`) };
+    const other = { ...threadRef, threadId: ThreadId.make(`${scope}-other`) };
+    const unhost = hostRightPanel(guest, host);
+    using _hosted = { [Symbol.dispose]: unhost };
+    const result = AsyncResult.success({
+      entries: [{ path: "notes/cited-note.txt", kind: "file" }],
+      truncated: false,
+    });
+    const { promise: pending, resolve: resolvePending } = Promise.withResolvers<typeof result>();
+    workspaceSearch.mockReturnValueOnce(pending);
+    await using screen = await render(
+      <>
+        <ChatMarkdown cwd="/repo" threadRef={guest} text="[Cited](cited-note.txt)" />
+        <ChatMarkdown cwd="/repo" threadRef={other} text="[Other](/elsewhere/other.md)" />
+      </>,
+    );
+    const [cited, otherLink] = screen.container.querySelectorAll("a");
+    await act(async () => cited!.click());
+    expect(workspaceSearch).toHaveBeenCalledOnce();
+    if (action === "open a link in another panel") {
+      await act(async () => otherLink!.click());
+    } else {
+      unhost();
+    }
+    await act(async () => resolvePending(result));
+
+    const { byThreadKey } = useRightPanelStore.getState();
+    expect(selectActiveRightPanelSurface(byThreadKey, guest)).toBeNull();
+    if (action === "unhost the side chat") {
+      expect(selectActiveRightPanelSurface(byThreadKey, host)).toBeNull();
+    } else {
+      expect(selectActiveRightPanelSurface(byThreadKey, host)).toMatchObject({
+        kind: "file",
+        relativePath: "notes/cited-note.txt",
+      });
+      expect(selectActiveRightPanelSurface(byThreadKey, other)).toMatchObject({
+        kind: "file",
+        relativePath: "/elsewhere/other.md",
+      });
+    }
   });
 });
 
