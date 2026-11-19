@@ -291,7 +291,8 @@ describe("ForgejoIssueTracker", () => {
           return input.path.endsWith("page=1")
             ? {
                 stdout: encode([{ id: 3, name: "bug" }]),
-                stderr: 'link: <https://forgejo.test:3000/api/v1/x?page=2>; rel="next"\n',
+                // A server capping pages below the limit, as labels answer: a total and no `Link`.
+                stderr: "x-total-count: 2\n",
               }
             : { stdout: encode([{ id: 9, name: "urgent" }]), stderr: "link: \n" };
         }

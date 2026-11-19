@@ -189,8 +189,8 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
       );
 
     /**
-     * One page of a listing, and whether another follows. Some endpoints (labels) never send a
-     * `Link` header, so without one only a full page implies more.
+     * One page of a listing, and whether another follows. Some endpoints (labels, timelines) send
+     * `X-Total-Count` but no `Link`, and a server may cap pages below `PAGE_SIZE`.
      */
     const readPage = <A>(
       target: Target,
@@ -214,7 +214,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, ForgejoCli.ForgejoCli> 
           }
           const rows = decoded.success ?? [];
           const links = /^link:\s*(.*)$/im.exec(result.stderr)?.[1];
-          const more = links === undefined ? rows.length >= PAGE_SIZE : /rel="?next"?/i.test(links);
+          const total = /^x-total-count:\s*(\d+)/im.exec(result.stderr)?.[1];
+          const more =
+            links !== undefined
+              ? /rel="?next"?/i.test(links)
+              : total !== undefined
+                ? rows.length > 0 && page * rows.length < Number(total)
+                : rows.length >= PAGE_SIZE;
           return Effect.succeed({ rows, nextCursor: more ? String(page + 1) : null });
         }),
       );
