@@ -124,6 +124,28 @@ describe("Antigravity Auto", () => {
       "ask",
     );
   });
+
+  it.each([{ type: "readOnly" }, { type: "workspaceWrite", writableRoots: [] }])(
+    "keeps the $type sandbox's denials in Auto",
+    (sandboxPolicy) => {
+      const request = {
+        sessionId: "session-1",
+        toolCall: {
+          toolCallId: "call-1",
+          title: "Edit",
+          kind: "edit",
+          locations: [{ path: "/outside-workspace/file.txt" }],
+        },
+        options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+      } satisfies EffectAcpSchema.RequestPermissionRequest;
+      expect(
+        antigravityPermissionDisposition(
+          { runtimeMode: "auto", cwd: "/workspace", sandboxPolicy },
+          request,
+        ),
+      ).toBe("deny");
+    },
+  );
 });
 
 describe("applyAntigravityAcpModelSelection", () => {

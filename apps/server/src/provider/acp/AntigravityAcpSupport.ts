@@ -199,9 +199,9 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
 }
 
 /**
- * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`. It stays in `default`, where
- * it asks before acting and T3 answers from the live runtime policy, so permission changes apply
- * on the next turn without a restart.
+ * The agy CLI rejects the managed runtime's `yolo` and `auto_edit`, and sessions without native
+ * Auto reject `auto`. Those stay in `default`, where it asks before acting and T3 answers from the
+ * live runtime policy, so permission changes apply on the next turn without a restart.
  */
 export function antigravitySessionMode(
   modeId: string,
@@ -219,7 +219,9 @@ export function antigravityPermissionDisposition(
   policy: AcpRuntimePolicy,
   request: EffectAcpSchema.RequestPermissionRequest,
 ) {
-  return policy.runtimeMode === "auto" ? "ask" : acpPermissionDisposition(policy, request);
+  const disposition = acpPermissionDisposition(policy, request);
+  // agy's Auto has already reviewed what it sends; the user decides unless the sandbox forbids it.
+  return policy.runtimeMode === "auto" && disposition !== "deny" ? "ask" : disposition;
 }
 
 /** The runtime mode an Antigravity session mode grants; the inverse of `antigravityPermissionMode`. */
