@@ -1,42 +1,21 @@
 # Workflows
 
-A workflow is a script that ties agents, plain code, schedules, webhooks and questions to you into
-one run that survives restarts. Each step's result is stored: a restart continues the run where it
-was, and a step that fails pauses the run until it is resumed, instead of losing the work before
-it. Workflows are an early feature: you start them from the `t3` command and follow them in
-the app.
+A workflow is a TypeScript script that chains agents, plain code, schedules, webhooks, issue and pull request events, and questions to you into one durable run that survives server restarts. Each step's result is saved when it succeeds, so restarts pick up where the run left off and failures do not lose earlier work. Workflows are an early feature: start runs from the `t3` CLI or a trigger, and follow them in the app.
 
-For one prompt on a timer or from a webhook, use a scheduled task. Reach for a workflow when the
-work has stages, such as triage, then a fix, then your approval, then a release.
+For one prompt on a timer or webhook, use a scheduled task. Use a workflow when work has stages — such as triage, a fix, your approval, and a release.
 
-## Write a workflow
+## Create a workflow
 
-Workflows are TypeScript files in the `workflows` folder of your T3 home, `~/.t3/workflows/` by
-default. Each file defines one or more workflows, and there is nothing to turn on.
+Workflow files live in `~/.t3/workflows/` (or wherever `T3CODE_WORKFLOWS` points — a folder or a single file). Nothing needs to be enabled; the server watches the folder and reloads changes without a restart.
 
-- **In the app:** open **Definitions** on the Workflows page. It lists the files, makes new ones
-  and edits them. Saving checks the file first: one with a mistake is not saved and says what is
-  wrong, and one that passes runs from then on without a restart.
-- **With an agent:** the [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md) describes the
-  format with a full example. Copy that folder into your agent's skills directory (for example
-  `~/.claude/skills/` or `~/.agents/skills/`) and ask the agent to write the workflow.
-- **In your own editor:** the server picks up a changed file the same way.
+- **Ask an agent (recommended):** copy the [`t3-workflows` skill](../../skills/t3-workflows/SKILL.md) into your agent's skills folder (such as `~/.claude/skills/` or `~/.agents/skills/`) and describe what you want.
+- **Edit directly:** edit files in `~/.t3/workflows/`, or use **Definitions** on the Workflows page (saving and deleting in the app require terminal access).
 
-A file that is wrong never stops the others: its last good version keeps running, and the page
-says what is wrong with it. The check finds a file that does not load, a workflow defined twice,
-and a version removed while its runs are unfinished. It does not find a mistake inside a
-workflow's body; that shows when a run reaches it and pauses. To change the steps of a workflow
-that has unfinished runs, add the new body under a higher `version` and keep the old one until
-those runs end.
+Saving checks that the file loads, does not duplicate a workflow name and version, and does not remove a version with unfinished runs. A broken file does not stop other workflows: its last working version keeps running while the Workflows page shows the error. Mistakes inside a workflow body surface when a run hits them and pauses. To change steps while runs are unfinished, add the new body under a higher `version` and keep the old one until those runs end.
 
-Saving and deleting files in the app need a connection that may use the terminal, since the
-server runs these files. To keep the files somewhere else, start the server with
-`T3CODE_WORKFLOWS` set to that folder, or to a single file.
+Dot-files and subfolders are ignored. Keep shared helpers in a subfolder and restart the server after editing an imported file.
 
-Runs live on the machine that started them and only make progress while its server is running. For
-a schedule that must not be missed, run the server on a machine that stays on.
-
-## Run and steer
+## Start and steer
 
 ```sh
 t3 workflow start <name> --input '<json>' --key <key>
@@ -45,50 +24,42 @@ t3 workflow show <run>
 t3 workflow resume <run>
 t3 workflow cancel <run>
 t3 workflow questions
-t3 workflow signal '{"choice":"yes"}' --run <run> --wait <question>
+t3 workflow signal '{"choice":"yes"}' --run <run> --wait <name>
+t3 workflow signal '<json>' --workflow <name> --channel <channel>
 t3 workflow hooks
+t3 workflow store list
+t3 workflow store set <key> '<json>'
 ```
 
-Starting twice with the same key gives the same run, so a script that retries does not start a
-second one. A paused run names the step that failed and why; fix the cause and resume it, and only
-that step runs again.
+Starting twice with the same `--key` returns the same run — even after a version bump — so retries do not duplicate work. Use `signal` with `--run` and `--wait` to answer a question or wake a run, or with `--workflow` and `--channel` to wake whichever run waits on that channel. Use `store` to read or change state kept between runs.
 
-Each agent step works in an ordinary thread. Open it to read what the agent did or to help it.
+## Triggers
+
+- **Schedules:** `every` runs on an interval; `daily` runs at a local time of day (a time missed by more than 10 minutes while the server is down is skipped).
+- **Webhooks:** `t3 workflow hooks` prints each hook's path; prepend your server's address (the same origin scheduled task webhooks use). The path contains the hook's secret, so share it only with the sender. Organization policies blocking webhook tasks block workflow webhooks too.
+- **Issues and pull requests:** workflows can start on new issues or pull requests and read, comment on, or update them via **Settings → Source control & issues** — no webhook needed. T3 Code checks roughly once a minute, and only items opened after the workflow was first loaded start runs.
 
 ## Follow runs in the app
 
-Once a server has workflow runs, a **Workflows** button appears at the bottom of the sidebar. A
-number on it says how many runs wait on you: a question to answer, or a run paused by a failing
-step.
+Once a server has runs, **Workflows** appears in the sidebar with a count of open questions and paused runs waiting on you; on mobile, use the **Workflows** tab. Filter by **Needs you**, **Running**, or **All** (skipped runs stay hidden unless toggled on), open child runs from their parent, and answer questions, resume paused runs, or cancel active runs (requires permission to operate threads).
 
-The page lists runs under **Needs you**, **Running** and **All**, and can narrow to one workflow.
-Select a run to read it from top to bottom: each agent with what it said and returned, questions
-where they were asked, and the quick steps between them folded into a line. A run another run
-invoked is opened from that run. From a run you can answer its question, resume it when it is
-paused, or cancel it. **Transcript** on an agent opens its thread beside the run, where you can
-read its work and talk to it before you answer. Answering, resuming and cancelling need a
-connection that may operate threads.
+### Agent threads
 
-An agent's thread does not appear in the thread list. Open it from its run; the thread itself
-links back to the run.
+Each `agent` step runs in an ordinary thread hidden from the main thread list. Open it from the run to watch it live, read its transcript, or send follow-up messages; the thread links back to the run.
 
-An agent step can run on another machine: give it the id of a
-[linked environment](remote-access.md#link-another-environment) and a project there. The run itself stays on the
-server that started it.
+An `agent` step can launch a new thread with its own `workspace` (such as a worktree), `runtimeMode`, `interactionMode`, `title`, and typed `returns`, or continue an earlier step's thread. Runs can set their display name with `title(text)`. An `agent` step can also target a project on a [linked environment](remote-access.md#link-another-environment) (requires **Settings → Labs → Linked environments**); the run itself stays on the server that started it.
 
-Workflows can keep state between runs, such as a switch or a cursor. `t3 workflow store list`
-shows it, and `t3 workflow store set <key> '<json>'` changes it.
+### Failures, pause, and cancel
 
-## Issues and pull requests
+A plain code step runs once unless it asks for retries. When a step fails, the run pauses there instead of losing earlier work:
 
-A workflow can start for each new issue or pull request of a project, and can read, comment on and
-change them. It uses the tracker and git host the project is already connected to under Settings,
-Source control & issues, so there is no webhook to set up. Only issues and pull requests opened
-after the workflow was first loaded start a run.
+- **Code step failures** retry automatically after 5, 20, and 80 minutes by default, or immediately when you resume; only that step runs again.
+- **Agent failures** — when an agent gives up or times out — pause and wait for you to resume rather than retrying automatically.
 
-## Webhooks
+Cancelling a run stops its active agent turns and cancels child runs it invoked. A cancelled run cannot be resumed.
 
-`t3 workflow hooks` prints a URL path for each webhook a workflow listens on. Add your server's
-address in front of it, the same one a scheduled task's webhook uses. The path contains the hook's
-secret, so share it only with the sender. An organization policy that blocks webhook tasks blocks
-these too.
+## Limits
+
+- Runs live on the server that started them and only advance while it is running; use an always-on machine for schedules or webhooks you cannot miss.
+- Keep older workflow versions defined until their unfinished runs end or are cancelled.
+- Signals sent to a `channel` before a run waits on it are kept for 7 days by default.
