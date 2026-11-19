@@ -43,6 +43,7 @@ pub(super) const SCOPES: &[(&str, &str)] = &[
     ("issues.comments", "orchestration:read"),
     ("issues.create", "source-control:write"),
     ("issues.detail", "orchestration:read"),
+    ("issues.linkedThreads", "orchestration:read"),
     ("issues.list", "orchestration:read"),
     ("issues.react", "source-control:write"),
     ("issues.setState", "source-control:write"),

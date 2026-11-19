@@ -1,11 +1,11 @@
-{"key":"AuthAccessSnapshot","value":{"pairingLinks":[{"id":"lSiu","scopes":["relay:read","orchestration:operate","terminal:read"],"subject":"j_0","createdAt":"7981-12-27T07:22:11.138Z","expiresAt":"-124427-06-07T20:25:02.939Z"},{"id":"�","scopes":[],"subject":"F/74","createdAt":"-102572-02-20T13:06:29.218Z","expiresAt":"1969-12-31T23:59:59.953Z"}],"clientSessions":[]}}
+{"key":"AuthAccessSnapshot","value":{"pairingLinks":[{"id":"lSiu","scopes":["relay:write","settings:write","terminal:operate"],"subject":"j_0","createdAt":"7981-12-27T07:22:11.138Z","expiresAt":"-124427-06-07T20:25:02.939Z"},{"id":"�","scopes":[],"subject":"F/74","createdAt":"-102572-02-20T13:06:29.218Z","expiresAt":"1969-12-31T23:59:59.953Z"}],"clientSessions":[]}}
 {"key":"AuthAccessStreamClientRemovedEvent","value":{"version":1,"revision":14052062833061786000,"type":"clientRemoved","payload":{"sessionId":"0"}}}
 {"key":"AuthAccessStreamClientUpsertedEvent","value":{"version":1,"revision":-8.4e-323,"type":"clientUpserted","payload":{"sessionId":"\u0000","subject":"\u0000","scopes":["orchestration:read"],"method":"browser-session-cookie","client":{"deviceType":"bot"},"issuedAt":"-271821-04-20T00:00:00.024Z","expiresAt":"1970-01-01T00:00:00.001Z","lastConnectedAt":null,"connected":false,"current":false}}}
 {"key":"AuthAccessStreamError","value":{"_tag":"AuthAccessStreamError","message":"a1Sc"}}
 {"key":"AuthAccessStreamEvent","value":{"version":1,"revision":-5.4e-323,"type":"snapshot","payload":{"pairingLinks":[],"clientSessions":[],"connectDevices":[]}}}
 {"key":"AuthAccessStreamEvent","value":{"version":1,"revision":1.7976931348623155e+308,"type":"pairingLinkUpserted","payload":{"id":"9","scopes":[],"subject":";","createdAt":"1969-12-31T23:59:59.956Z","expiresAt":"+275760-09-12T23:59:59.986Z"}}}
 {"key":"AuthAccessStreamEvent","value":{"version":1,"revision":2.9446609266347794e+88,"type":"pairingLinkRemoved","payload":{"id":"O"}}}
-{"key":"AuthAccessStreamEvent","value":{"version":1,"revision":6.722288962829326e+220,"type":"clientUpserted","payload":{"sessionId":"�","subject":"�","scopes":["diagnostics:read","providers:manage","terminal:operate","filesystem:read"],"method":"browser-session-cookie","client":{"deviceType":"tablet"},"issuedAt":"-107093-07-16T23:47:55.118Z","expiresAt":"+249304-01-17T10:05:22.141Z","lastConnectedAt":"1970-01-01T00:00:00.028Z","connected":false,"current":false}}}
+{"key":"AuthAccessStreamEvent","value":{"version":1,"revision":6.722288962829326e+220,"type":"clientUpserted","payload":{"sessionId":"�","subject":"�","scopes":["diagnostics:read","providers:manage","terminal:operate","filesystem:write"],"method":"browser-session-cookie","client":{"deviceType":"tablet"},"issuedAt":"-107093-07-16T23:47:55.118Z","expiresAt":"+249304-01-17T10:05:22.141Z","lastConnectedAt":"1970-01-01T00:00:00.028Z","connected":false,"current":false}}}
 {"key":"AuthAccessStreamEvent","value":{"version":1,"revision":6.4e-323,"type":"clientRemoved","payload":{"sessionId":"$"}}}
 {"key":"AuthAccessStreamPairingLinkRemovedEvent","value":{"version":1,"revision":1.797693134862313e+308,"type":"pairingLinkRemoved","payload":{"id":"-1"}}}
 {"key":"AuthAccessStreamPairingLinkUpsertedEvent","value":{"version":1,"revision":3.1785994913251244e-29,"type":"pairingLinkUpserted","payload":{"id":"QAyA","scopes":[],"subject":"😀","createdAt":"-153726-06-29T08:46:20.179Z","expiresAt":"+247815-11-28T07:40:55.938Z"}}}
@@ -14,7 +14,7 @@
 {"key":"AuthApproveConnectDeviceInput","value":{"pairingLinkId":"3*)W"}}
 {"key":"AuthApproveConnectDeviceResult","value":{"approved":true}}
 {"key":"AuthBrowserSessionRequest","value":{"credential":"a"}}
-{"key":"AuthBrowserSessionResult","value":{"authenticated":true,"scopes":["terminal:operate","settings:write","filesystem:write","relay:read"],"sessionMethod":"bearer-access-token","expiresAt":"+165924-06-08T07:12:33.392Z"}}
+{"key":"AuthBrowserSessionResult","value":{"authenticated":true,"scopes":["filesystem:read","providers:manage","review:write","relay:write"],"sessionMethod":"bearer-access-token","expiresAt":"+165924-06-08T07:12:33.392Z"}}
 {"key":"AuthClientMetadata","value":{"ipAddress":"_SO","deviceType":"tablet","browser":"-1"}}
 {"key":"AuthClientMetadataDeviceType","value":"desktop"}
 {"key":"AuthClientMetadataDeviceType","value":"mobile"}
@@ -44,7 +44,8 @@
 {"key":"AuthEnvironmentScope","value":"access:write"}
 {"key":"AuthEnvironmentScope","value":"relay:read"}
 {"key":"AuthEnvironmentScope","value":"relay:write"}
-{"key":"AuthEnvironmentScopes","value":["settings:write","orchestration:operate","access:write","diagnostics:read"]}
+{"key":"AuthEnvironmentScope","value":"relay:configure"}
+{"key":"AuthEnvironmentScopes","value":["providers:manage","orchestration:operate","relay:read","diagnostics:read"]}
 {"key":"AuthGrantScope","value":"orchestration:read"}
 {"key":"AuthGrantScope","value":"orchestration:operate"}
 {"key":"AuthGrantScope","value":"settings:write"}
@@ -61,6 +62,7 @@
 {"key":"AuthGrantScope","value":"access:write"}
 {"key":"AuthGrantScope","value":"relay:read"}
 {"key":"AuthGrantScope","value":"relay:write"}
+{"key":"AuthGrantScope","value":"relay:configure"}
 {"key":"AuthGrantScopes","value":[]}
 {"key":"AuthMcpApprovalDecision","value":{"_tag":"deny"}}
 {"key":"AuthMcpApprovalDecision","value":{"_tag":"pairing-code","access":"full-access","code":"-1"}}
@@ -70,14 +72,14 @@
 {"key":"AuthMcpApprovalError","value":{"_tag":"AuthMcpApprovalError","message":"i/B+"}}
 {"key":"AuthMcpApprovalRedirect","value":{"redirectTo":""}}
 {"key":"AuthMcpAuthorizationRequest","value":{"client_id":"X"}}
-{"key":"AuthMcpAuthorizationServerMetadata","value":{"issuer":"]bV","authorization_endpoint":"-1","token_endpoint":"@I$Z","registration_endpoint":"AR-h","response_types_supported":["code","code"],"grant_types_supported":["authorization_code","authorization_code","authorization_code"],"code_challenge_methods_supported":["S256","S256","S256","S256"],"token_endpoint_auth_methods_supported":["none"],"scopes_supported":["diagnostics:read"],"authorization_response_iss_parameter_supported":true}}
+{"key":"AuthMcpAuthorizationServerMetadata","value":{"issuer":"]bV","authorization_endpoint":"-1","token_endpoint":"@I$Z","registration_endpoint":"AR-h","response_types_supported":["code","code"],"grant_types_supported":["authorization_code","authorization_code","authorization_code"],"code_challenge_methods_supported":["S256","S256","S256","S256"],"token_endpoint_auth_methods_supported":["none"],"scopes_supported":["terminal:read"],"authorization_response_iss_parameter_supported":true}}
 {"key":"AuthMcpClientAccess","value":"read-only"}
 {"key":"AuthMcpClientAccess","value":"approval-required"}
 {"key":"AuthMcpClientAccess","value":"auto-accept-edits"}
 {"key":"AuthMcpClientAccess","value":"auto"}
 {"key":"AuthMcpClientAccess","value":"full-access"}
 {"key":"AuthMcpClientRegistration","value":{"software_id":"","redirect_uris":[],"token_endpoint_auth_method":"\n"}}
-{"key":"AuthMcpProtectedResourceMetadata","value":{"resource":"�","authorization_servers":["-1","😀","0",""],"scopes_supported":["relay:read","terminal:read","environment:maintain","relay:read"],"bearer_methods_supported":["header","header","header"],"resource_name":"�"}}
+{"key":"AuthMcpProtectedResourceMetadata","value":{"resource":"�","authorization_servers":["-1","😀","0",""],"scopes_supported":["relay:write","terminal:operate","environment:maintain","relay:write"],"bearer_methods_supported":["header","header","header"],"resource_name":"�"}}
 {"key":"AuthMcpRegisteredClient","value":{"client_id":"0","client_name":"K","redirect_uris":["","",""],"grant_types":["authorization_code","authorization_code","authorization_code"],"response_types":["code","code","code","code"],"token_endpoint_auth_method":"none"}}
 {"key":"AuthMcpRegistrationError","value":{"error":"invalid_redirect_uri","error_description":"2"}}
 {"key":"AuthMcpTokenError","value":{"error":"unsupported_grant_type","error_description":"Hbi{"}}
@@ -95,7 +97,7 @@
 {"key":"AuthWebSocketTicketResult","value":{"ticket":"C","expiresAt":"1969-12-31T23:59:59.990Z"}}
 {"key":"AuthWebSocketTicketUse","value":"rpc"}
 {"key":"AuthWebSocketTicketUse","value":"media"}
-{"key":"EnvironmentAuthorizationError","value":{"_tag":"EnvironmentAuthorizationError","message":"%","requiredScope":"filesystem:read"}}
+{"key":"EnvironmentAuthorizationError","value":{"_tag":"EnvironmentAuthorizationError","message":"%","requiredScope":"filesystem:write"}}
 {"key":"ServerAuthBootstrapMethod","value":"desktop-bootstrap"}
 {"key":"ServerAuthBootstrapMethod","value":"one-time-token"}
 {"key":"ServerAuthDescriptor","value":{"policy":"loopback-browser","bootstrapMethods":["one-time-token","one-time-token","one-time-token"],"sessionMethods":[],"sessionCookieName":"-1"}}
@@ -137,7 +139,7 @@
 {"key":"EnvironmentHttpBadRequestError","value":{"_tag":"EnvironmentHttpBadRequestError","message":"X{^M"}}
 {"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentRequestInvalidError","code":"invalid_request","reason":"speech_unavailable","traceId":"EQ?"}}
 {"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentAuthInvalidError","code":"auth_invalid","reason":"invalid_credential","traceId":"b"}}
-{"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentScopeRequiredError","code":"insufficient_scope","requiredScope":"settings:write","traceId":"/}bp"}}
+{"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentScopeRequiredError","code":"insufficient_scope","requiredScope":"providers:manage","traceId":"/}bp"}}
 {"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentOperationForbiddenError","code":"operation_forbidden","reason":"current_session_revoke_not_allowed","traceId":"😀"}}
 {"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentResourceNotFoundError","code":"not_found","reason":"thread_not_found","traceId":"8=*D"}}
 {"key":"EnvironmentHttpCommonError","value":{"_tag":"EnvironmentInternalError","code":"internal_error","reason":"project_snapshot_failed","traceId":"G"}}
@@ -182,7 +184,7 @@
 {"key":"EnvironmentRequestInvalidReason","value":"speech_busy"}
 {"key":"EnvironmentResourceNotFoundError","value":{"_tag":"EnvironmentResourceNotFoundError","code":"not_found","reason":"thread_not_found","traceId":"o:8P"}}
 {"key":"EnvironmentResourceNotFoundReason","value":"thread_not_found"}
-{"key":"EnvironmentScopeRequiredError","value":{"_tag":"EnvironmentScopeRequiredError","code":"insufficient_scope","requiredScope":"filesystem:read","traceId":"\u0000"}}
+{"key":"EnvironmentScopeRequiredError","value":{"_tag":"EnvironmentScopeRequiredError","code":"insufficient_scope","requiredScope":"filesystem:write","traceId":"\u0000"}}
 {"key":"ModelSelection","value":{"instanceId":"mJFF","model":";"}}
 {"key":"ModelSelection","value":{"instanceId":"O","model":"0E","options":[{"id":"G","value":"]'tK"},{"id":"_","value":true},{"id":"Z","value":"-1"},{"id":"�","value":"0"}]}}
 {"key":"ModelSelection","value":{"instanceId":"xe","model":"V2b)"}}
@@ -1684,7 +1686,7 @@
 {"key":"rpc::agent_sessions::import::Error","value":{"_tag":"AgentSessionImportProjectChangedError","projectId":"wE$b"}}
 {"key":"rpc::agent_sessions::import::Error","value":{"_tag":"AgentSessionImportProjectNotFoundError","projectId":"0"}}
 {"key":"rpc::agent_sessions::import::Error","value":{"_tag":"AgentSessionScanError","operation":"read-settings","cause":"\t"}}
-{"key":"rpc::agent_sessions::import::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"xWM%","requiredScope":"filesystem:read","requiredPermission":"9oT)"}}
+{"key":"rpc::agent_sessions::import::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"xWM%","requiredScope":"filesystem:write","requiredPermission":"9oT)"}}
 {"key":"rpc::agent_sessions::scan::Payload","value":{}}
 {"key":"rpc::agent_sessions::scan::Success","value":{"candidates":[{"path":"0","title":"�","sources":[],"threadCount":3,"lastActiveAt":"\n","alreadyImported":true},{"path":"-1","title":"7 D","sources":[],"threadCount":2,"lastActiveAt":"","alreadyImported":false},{"path":".s","title":"Lp_}","sources":[],"threadCount":16,"lastActiveAt":"","alreadyImported":false},{"path":"�","title":"�","sources":["pi","claudeAgent","claudeAgent"],"threadCount":3,"lastActiveAt":"","alreadyImported":true}],"scannedAt":"\u0000","truncated":true}}
 {"key":"rpc::agent_sessions::scan::Error","value":{"_tag":"AgentSessionScanError","operation":"read-projects","cause":-294933326720421760}}
@@ -1705,10 +1707,10 @@
 {"key":"rpc::annotations::subscribe::Item","value":{"annotations":[]}}
 {"key":"rpc::annotations::subscribe::Error","value":{"_tag":"AnnotationProjectNotFoundError","projectId":"a"}}
 {"key":"rpc::annotations::subscribe::Error","value":{"_tag":"AnnotationStoreError","reason":"0"}}
-{"key":"rpc::annotations::subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"terminal:operate"}}
+{"key":"rpc::annotations::subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"filesystem:read"}}
 {"key":"rpc::assets::create_url::Payload","value":{"resource":{"_tag":"tool-output-image","threadId":"aaYM","itemId":"�","index":4}}}
 {"key":"rpc::assets::create_url::Error","value":{"_tag":"AssetGitHubMediaUrlValidationError"}}
-{"key":"rpc::assets::create_url::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write","requiredPermission":"\n"}}
+{"key":"rpc::assets::create_url::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:read","requiredPermission":"\n"}}
 {"key":"rpc::assets::persist_chat_attachments::Payload","value":{"threadId":"�","messageId":"\u0000","attachments":[]}}
 {"key":"rpc::assets::persist_chat_attachments::Success","value":{"attachments":[]}}
 {"key":"rpc::assets::persist_chat_attachments::Error","value":{"_tag":"PersistChatAttachmentsError","message":"�"}}
@@ -1719,7 +1721,7 @@
 {"key":"rpc::attachments::create_upload_url::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:write"}}
 {"key":"rpc::attachments::delete::Payload","value":{"attachmentId":"Ut.R"}}
 {"key":"rpc::attachments::delete::Success","value":null}
-{"key":"rpc::attachments::delete::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate","requiredPermission":""}}
+{"key":"rpc::attachments::delete::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read","requiredPermission":""}}
 {"key":"rpc::cloud::get_relay_client_status::Payload","value":{}}
 {"key":"rpc::cloud::get_relay_client_status::Success","value":{"status":"available","executablePath":"\t","source":"path","version":"\t"}}
 {"key":"rpc::cloud::get_relay_client_status::Success","value":{"status":"missing","version":" "}}
@@ -1729,7 +1731,7 @@
 {"key":"rpc::cloud::install_relay_client::Item","value":{"type":"progress","stage":"downloading"}}
 {"key":"rpc::cloud::install_relay_client::Item","value":{"type":"complete","status":{"status":"available","executablePath":"","source":"path","version":"�"}}}
 {"key":"rpc::cloud::install_relay_client::Error","value":{"_tag":"RelayClientInstallFailedError","reason":"managed_by_policy","message":"\n"}}
-{"key":"rpc::cloud::install_relay_client::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"orchestration:read","requiredPermission":"+S"}}
+{"key":"rpc::cloud::install_relay_client::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"orchestration:operate","requiredPermission":"+S"}}
 {"key":"rpc::credentials::fill_for_site::Payload","value":{"environmentId":"]","threadId":"😀","tabId":"8D5d","itemId":"pijma6lzple76d2qp5q3ph2trw","fields":["otp","username","password"]}}
 {"key":"rpc::credentials::fill_for_site::Success","value":{"results":[{"field":"password","status":"item_not_found"},{"field":"password","status":"origin_mismatch"},{"field":"username","status":"insert_failed"},{"field":"otp","status":"item_not_found"}]}}
 {"key":"rpc::credentials::fill_for_site::Error","value":{"_tag":"PreviewAutomationRecordingTransferError","threadId":"X2l:","cause":",X]`"}}
@@ -1757,11 +1759,11 @@
 {"key":"rpc::device::close::Payload","value":{"hostId":"$","threadId":"ES"}}
 {"key":"rpc::device::close::Success","value":null}
 {"key":"rpc::device::close::Error","value":{"_tag":"DeviceOperationError","operation":" ","reason":"hub_rejected","cause":[]}}
-{"key":"rpc::device::close::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:read","requiredPermission":"😀"}}
+{"key":"rpc::device::close::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:write","requiredPermission":"😀"}}
 {"key":"rpc::device::configure::Payload","value":{}}
 {"key":"rpc::device::configure::Success","value":{"hostStatus":"ready","hostStatuses":{},"devices":[],"sessions":[{"threadId":"�","hostId":"dQ7<","deviceId":"42Ee","platform":"ios","openedAt":" "}],"onboardingCompleted":false,"agentAccessEnabled":true,"hubBasePath":"","revision":-2,"hosts":[{"id":"3d","label":"7[[g","platforms":[{"platform":"android","available":true}],"hubInstalled":false,"agentDeviceInstalled":true,"kind":"ssh"},{"id":"7","label":"A+:G","platforms":[{"platform":"ios","available":false},{"platform":"android","available":true},{"platform":"ios","available":false},{"platform":"ios","available":false}],"hubInstalled":true,"agentDeviceInstalled":false,"kind":"local"}],"easHosts":[{"id":"Mr","label":"H)[b","platforms":[{"platform":"android","available":true,"reason":" Ox"},{"platform":"android","available":false,"reason":"v3\\+"},{"platform":"android","available":true}],"hubInstalled":true,"agentDeviceInstalled":true,"kind":"eas"}],"simlockHosts":[{"id":"'x","label":"�","platforms":[{"platform":"ios","available":false},{"platform":"android","available":true,"reason":" "},{"platform":"android","available":true},{"platform":"ios","available":false,"reason":""}],"hubInstalled":false,"agentDeviceInstalled":true,"kind":"simlock"}]}}
 {"key":"rpc::device::configure::Error","value":{"_tag":"DeviceNotFoundError","hostId":"�","deviceId":"😀"}}
-{"key":"rpc::device::configure::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write","requiredPermission":"-1"}}
+{"key":"rpc::device::configure::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read","requiredPermission":"-1"}}
 {"key":"rpc::device::detail::Payload","value":{"deviceId":"0"}}
 {"key":"rpc::device::detail::Success","value":{"hostId":"f?","deviceId":"eLv","settings":{"appearance":"light"},"foregroundApp":null,"readAt":""}}
 {"key":"rpc::device::detail::Error","value":{"_tag":"DevicePlatformUnavailableError","hostId":"c2k","platform":"android","reason":"\t"}}
@@ -1773,11 +1775,11 @@
 {"key":"rpc::device::list::Payload","value":{}}
 {"key":"rpc::device::list::Success","value":{"hostStatus":"failed","hostStatuses":{},"devices":[],"sessions":[],"onboardingCompleted":false,"agentAccessEnabled":false,"hubBasePath":"(%=B","revision":-13,"hosts":[],"easHosts":[],"simlockHosts":[]}}
 {"key":"rpc::device::list::Error","value":{"_tag":"DeviceActionUnavailableError","operation":"","platform":"ios","reason":"unsupported"}}
-{"key":"rpc::device::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"zG$","requiredScope":"source-control:write"}}
+{"key":"rpc::device::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"zG$","requiredScope":"access:read"}}
 {"key":"rpc::device::open::Payload","value":{"threadId":"M=XT","deviceId":"�","platform":"android"}}
 {"key":"rpc::device::open::Success","value":{"threadId":"�","hostId":"-1","deviceId":"m","platform":"android","openedAt":"(tg"}}
 {"key":"rpc::device::open::Error","value":{"_tag":"DevicePlatformUnavailableError","hostId":"K12=","platform":"ios","reason":"Cu"}}
-{"key":"rpc::device::open::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":""}}
+{"key":"rpc::device::open::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":""}}
 {"key":"rpc::device::shutdown::Payload","value":{"deviceId":"1","platform":"android"}}
 {"key":"rpc::device::shutdown::Success","value":null}
 {"key":"rpc::device::shutdown::Error","value":{"_tag":"DeviceHostUnavailableError","hostId":"`1","hostLabel":"CH)M","reason":"o"}}
@@ -1785,7 +1787,7 @@
 {"key":"rpc::device::simlock_identity::Payload","value":{}}
 {"key":"rpc::device::simlock_identity::Success","value":{"gatewayUrl":"O","signedInAs":")b2h","tokenSource":"env"}}
 {"key":"rpc::device::simlock_identity::Error","value":{"_tag":"DeviceSimlockIdentityError","reason":"\u0000"}}
-{"key":"rpc::device::simlock_identity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
+{"key":"rpc::device::simlock_identity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
 {"key":"rpc::device::test_host::Payload","value":{"kind":"ssh","id":"V","label":"P","target":"㊼鮡Z0"}}
 {"key":"rpc::device::test_host::Success","value":{"id":"\u0000","label":"-1","platforms":[],"hubInstalled":true,"agentDeviceInstalled":false,"kind":"local"}}
 {"key":"rpc::device::test_host::Success","value":{"id":"_2","label":"2jU","platforms":[],"hubInstalled":true,"agentDeviceInstalled":true,"kind":"eas"}}
@@ -1795,14 +1797,14 @@
 {"key":"rpc::filesystem::browse::Payload","value":{"partialPath":"f[:N"}}
 {"key":"rpc::filesystem::browse::Success","value":{"parentPath":"BD~k","entries":[{"name":",","fullPath":"%JP8"}]}}
 {"key":"rpc::filesystem::browse::Error","value":{"_tag":"FilesystemBrowseError","partialPath":"�","platform":"OqAd","message":"$hVS"}}
-{"key":"rpc::filesystem::browse::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write"}}
+{"key":"rpc::filesystem::browse::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read"}}
 {"key":"rpc::filesystem::get_metadata::Payload","value":{"paths":["K*?U","@","�","o"]}}
 {"key":"rpc::filesystem::get_metadata::Success","value":{"entries":[{"kind":"directory","byteLength":8},{"kind":"file"},{"kind":"directory","mimeType":"\u0000"},null]}}
 {"key":"rpc::filesystem::get_metadata::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read"}}
 {"key":"rpc::git::prepare_pull_request_thread::Payload","value":{"cwd":"iFWB","reference":"6h3","mode":"local"}}
 {"key":"rpc::git::prepare_pull_request_thread::Success","value":{"pullRequest":{"number":13,"title":"tfb","url":"-1","baseBranch":"😀","headBranch":"j#","state":"merged"},"branch":";","worktreePath":null,"isOnPullRequestHead":true}}
 {"key":"rpc::git::prepare_pull_request_thread::Error","value":{"_tag":"GitCommandError","operation":">~c3","command":"\t","cwd":"","detail":""}}
-{"key":"rpc::git::prepare_pull_request_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"terminal:read"}}
+{"key":"rpc::git::prepare_pull_request_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"terminal:operate"}}
 {"key":"rpc::git::resolve_pull_request::Payload","value":{"cwd":"(p","reference":"0"}}
 {"key":"rpc::git::resolve_pull_request::Success","value":{"pullRequest":{"number":14,"title":"�","url":"😀","baseBranch":"4","headBranch":"@@","state":"merged"}}}
 {"key":"rpc::git::resolve_pull_request::Error","value":{"_tag":"SourceControlProviderError","provider":"z","operation":"","cwd":"","detail":"j`S7"}}
@@ -1824,7 +1826,7 @@
 {"key":"rpc::issue_trackers::bind_project::Payload","value":{"projectId":"9+SN","binding":{"tracker":"d6a9","scope":"$K"}}}
 {"key":"rpc::issue_trackers::bind_project::Success","value":null}
 {"key":"rpc::issue_trackers::bind_project::Error","value":{"_tag":"IssueTrackerConnectionError","tracker":"b","reason":"failed","detail":"A"}}
-{"key":"rpc::issue_trackers::bind_project::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"oA*K","requiredScope":"filesystem:read","requiredPermission":"s\\?4"}}
+{"key":"rpc::issue_trackers::bind_project::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"oA*K","requiredScope":"filesystem:write","requiredPermission":"s\\?4"}}
 {"key":"rpc::issue_trackers::connect::Payload","value":{"tracker":"m","token":null}}
 {"key":"rpc::issue_trackers::connect::Success","value":{"tracker":"z","displayName":"1)","host":"[=,","scopeNoun":"g","credential":{"label":"�","helpUrl":null},"connected":true,"account":null,"detail":"t","scopes":[]}}
 {"key":"rpc::issue_trackers::connect::Error","value":{"_tag":"IssueTrackerConnectionError","tracker":"h","reason":"unknown-tracker","detail":"0"}}
@@ -1837,27 +1839,32 @@
 {"key":"rpc::issues::candidates::Success","value":{"labels":[{"name":"VQ","color":"\u0000","description":null},{"name":"u","color":"","description":null},{"name":"s","color":null,"description":null},{"name":"B","color":"😀","description":null}],"assignees":[],"truncated":false}}
 {"key":"rpc::issues::candidates::Error","value":{"_tag":"IssueUnavailableError","reason":"tool-missing","cause":"~]4~"}}
 {"key":"rpc::issues::candidates::Error","value":{"_tag":"IssueOperationError","operation":"","detail":"Zp=b"}}
-{"key":"rpc::issues::candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"source-control:write"}}
+{"key":"rpc::issues::candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"access:read"}}
 {"key":"rpc::issues::comment::Payload","value":{"projectId":"0","tracker":"iuci","scope":"�","key":"v","body":" "}}
 {"key":"rpc::issues::comment::Success","value":null}
 {"key":"rpc::issues::comment::Error","value":{"_tag":"IssueUnavailableError","reason":"unauthenticated","cause":{"0":null,"FS":1.7976931348623123e+308}}}
 {"key":"rpc::issues::comment::Error","value":{"_tag":"IssueOperationError","operation":"�","detail":"~"}}
-{"key":"rpc::issues::comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"F'(U"}}
+{"key":"rpc::issues::comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":"F'(U"}}
 {"key":"rpc::issues::comments::Payload","value":{"projectId":"7Rit","tracker":"il","scope":"-1","key":"J","cursor":"0"}}
 {"key":"rpc::issues::comments::Success","value":{"comments":[{"id":"m","author":null,"body":"\n","createdAt":"`3ht","url":"ZF"},{"id":"8UZ|","author":null,"body":"-1","createdAt":"�","url":"\u0000"},{"id":"5","author":{"isBot":true,"login":"FE","name":"\t","avatarUrl":"-1"},"body":"\u0000","createdAt":"N","url":"0"},{"id":"😀","author":null,"body":"�","createdAt":"😀","url":null}],"nextCursor":null}}
 {"key":"rpc::issues::comments::Error","value":{"_tag":"IssueUnavailableError","reason":"tracker-unsupported","cause":"6"}}
 {"key":"rpc::issues::comments::Error","value":{"_tag":"IssueOperationError","operation":"-1","detail":"B_9X"}}
-{"key":"rpc::issues::comments::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"7Z5@","requiredScope":"relay:read"}}
+{"key":"rpc::issues::comments::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"7Z5@","requiredScope":"relay:write"}}
 {"key":"rpc::issues::create::Payload","value":{"projectId":"-1","tracker":"i","scope":"m","title":"Q<6F","body":"U","labels":["1vY","�"],"assignees":["-"]}}
 {"key":"rpc::issues::create::Success","value":{"key":"😀","displayKey":"�","url":"h BK"}}
 {"key":"rpc::issues::create::Error","value":{"_tag":"IssueUnavailableError","reason":"tracker-unsupported","cause":[]}}
 {"key":"rpc::issues::create::Error","value":{"_tag":"IssueOperationError","operation":"$/8","detail":"!","cause":{"k`&T":false,"G&yi":"😀"}}}
-{"key":"rpc::issues::create::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"access:read","requiredPermission":"&Fc#"}}
+{"key":"rpc::issues::create::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"access:write","requiredPermission":"&Fc#"}}
 {"key":"rpc::issues::detail::Payload","value":{"projectId":"H","tracker":"phv0","scope":"G2","key":"Ht4w"}}
 {"key":"rpc::issues::detail::Success","value":{"tracker":"xx-s","host":"/\\Tg","scope":"]>f","key":"2","displayKey":"AGOt","title":"MMB'","url":"gv","author":null,"state":{"category":"closed","name":"d="},"createdAt":"Rw@N","updatedAt":"","closedAt":null,"assignees":[],"labels":[{"name":"U|","color":null}],"commentCount":1,"projectId":"q?","projectTitle":"J$H","writable":false,"capabilities":{"create":false,"edit":true,"comment":true,"labels":true,"assignees":false,"reactions":true,"templates":false,"linkedPullRequests":true,"events":false,"search":false},"viewerPermissions":{"setState":true,"comment":true,"edit":true,"labels":false,"assignees":true},"states":[{"category":"open","name":"A/"},{"category":"open","name":"*BAW"},{"category":"closed","name":"e+j;"},{"category":"closed","name":"S&qb"}],"viewer":null,"body":"-1","comments":[{"id":"9","author":{"isBot":false,"login":"pm*","name":"m0NP","avatarUrl":null},"body":"\n","createdAt":"%0)f","url":null},{"id":"😀","author":{"login":"-1","name":null,"avatarUrl":"�"},"body":"*","createdAt":"-1","url":null}],"commentsCursor":"😀","events":[{"id":"I >`","kind":"closed","actor":{"login":"e","name":null,"avatarUrl":null},"createdAt":"\u0000","detail":"%8}"},{"id":"I($\\","kind":"labeled","actor":null,"createdAt":"/","detail":null}],"linkedPullRequests":[{"repository":">6d-","number":6,"title":"F\\t","url":"0","state":"merged","isDraft":true,"closesIssue":true},{"repository":"0","number":7,"title":"X3","url":"Aok;","state":"open","isDraft":true,"closesIssue":false}]}}
 {"key":"rpc::issues::detail::Error","value":{"_tag":"IssueUnavailableError","reason":"tool-missing"}}
 {"key":"rpc::issues::detail::Error","value":{"_tag":"IssueOperationError","operation":"-1","detail":"w"}}
-{"key":"rpc::issues::detail::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"\n"}}
+{"key":"rpc::issues::detail::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":"\n"}}
+{"key":"rpc::issues::linked_threads::Payload","value":{"tracker":"m","host":"😀","scope":"s","key":"."}}
+{"key":"rpc::issues::linked_threads::Success","value":{"threads":[]}}
+{"key":"rpc::issues::linked_threads::Error","value":{"_tag":"IssueUnavailableError","reason":"tracker-unsupported"}}
+{"key":"rpc::issues::linked_threads::Error","value":{"_tag":"IssueOperationError","operation":"-1","detail":"g"}}
+{"key":"rpc::issues::linked_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write","requiredPermission":"W"}}
 {"key":"rpc::issues::list::Payload","value":{"state":"open"}}
 {"key":"rpc::issues::list::Success","value":{"viewers":{"�":":","Ha":"ZD{c","2Va":"iShh"},"trackers":[{"tracker":"t","host":"Zd","projectCount":5,"capabilities":null,"configured":false,"detail":null},{"tracker":"z","host":"-Ik3","projectCount":5,"capabilities":null,"configured":true,"detail":null},{"tracker":"gkvp","host":"=","projectCount":15,"capabilities":{"create":true,"edit":false,"comment":true,"labels":false,"assignees":true,"reactions":false,"templates":true,"linkedPullRequests":true,"events":true,"search":true},"configured":true,"detail":"N"},{"tracker":"i8dj","host":")s~1","projectCount":2,"capabilities":{"create":false,"edit":false,"comment":false,"labels":false,"assignees":true,"reactions":true,"templates":true,"linkedPullRequests":true,"events":true,"search":true},"configured":false,"detail":"Vvkr"}],"entries":[],"errors":[],"nextCursors":{"1#f":"@","-1":"Q|g","s":"R"}}}
 {"key":"rpc::issues::list::Error","value":{"_tag":"IssueUnavailableError","reason":"tool-missing"}}
@@ -1877,7 +1884,7 @@
 {"key":"rpc::issues::templates::Success","value":{"templates":[],"blankIssuesEnabled":false}}
 {"key":"rpc::issues::templates::Error","value":{"_tag":"IssueUnavailableError","reason":"tool-missing"}}
 {"key":"rpc::issues::templates::Error","value":{"_tag":"IssueOperationError","operation":"!,eJ","detail":"/P&"}}
-{"key":"rpc::issues::templates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write"}}
+{"key":"rpc::issues::templates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:configure"}}
 {"key":"rpc::issues::update::Payload","value":{"projectId":"#l#q","tracker":"u","scope":"�","key":"😀"}}
 {"key":"rpc::issues::update::Success","value":null}
 {"key":"rpc::issues::update::Error","value":{"_tag":"IssueUnavailableError","reason":"unauthenticated","cause":-1.6325531068112254e+49}}
@@ -1898,7 +1905,7 @@
 {"key":"rpc::mcp_apps::update_model_context::Payload","value":{"threadId":"�","itemId":"�","conversationThreadId":"D7"}}
 {"key":"rpc::mcp_apps::update_model_context::Success","value":null}
 {"key":"rpc::mcp_apps::update_model_context::Error","value":{"_tag":"McpAppRequestError","threadId":"-","reason":"session-stopped"}}
-{"key":"rpc::mcp_apps::update_model_context::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read"}}
+{"key":"rpc::mcp_apps::update_model_context::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.stop","commandId":"4","threadId":"78u","reason":"c`jA"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.stop","commandId":"o","threadId":"m[^w"}}
 {"key":"rpc::orchestration::dispatch_command::Payload","value":{"type":"thread.stop","commandId":"0","threadId":"😀"}}
@@ -2079,8 +2086,8 @@
 {"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"OrchestrationV2DispatchCommandError","commandId":"�","commandType":"","message":""}}
 {"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"OrchestrationV2DispatchCommandError","commandId":"T%Y?","commandType":"\t","message":"-1"}}
 {"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"OrchestrationV2DispatchCommandError","commandId":"R+4K","commandType":"�","message":"\t"}}
-{"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"source-control:write","requiredPermission":""}}
-{"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"preview:operate"}}
+{"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"access:read","requiredPermission":""}}
+{"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"diagnostics:read"}}
 {"key":"rpc::orchestration::dispatch_command::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"environment:maintain"}}
 {"key":"rpc::orchestration::force_stop_thread::Payload","value":{"threadId":"U"}}
 {"key":"rpc::orchestration::force_stop_thread::Payload","value":{"threadId":"X"}}
@@ -2103,8 +2110,8 @@
 {"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"a","cause":1e-323}}
 {"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":""}}
 {"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":""}}
-{"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read"}}
-{"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write","requiredPermission":""}}
+{"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:write"}}
+{"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:read","requiredPermission":""}}
 {"key":"rpc::orchestration::get_archived_shell_snapshot::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"environment:maintain","requiredPermission":"!o[."}}
 {"key":"rpc::orchestration::get_full_thread_diff::Payload","value":{"threadId":"-1","toTurnCount":4}}
 {"key":"rpc::orchestration::get_full_thread_diff::Payload","value":{"threadId":"0","toTurnCount":11}}
@@ -2117,7 +2124,7 @@
 {"key":"rpc::orchestration::get_full_thread_diff::Error","value":{"_tag":"OrchestrationGetFullThreadDiffError","message":"�","cause":true}}
 {"key":"rpc::orchestration::get_full_thread_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"E","requiredScope":"preview:operate","requiredPermission":""}}
 {"key":"rpc::orchestration::get_full_thread_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"terminal:read"}}
-{"key":"rpc::orchestration::get_full_thread_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"F)<,","requiredScope":"filesystem:read"}}
+{"key":"rpc::orchestration::get_full_thread_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"F)<,","requiredScope":"filesystem:write"}}
 {"key":"rpc::orchestration::get_native_child_work::Payload","value":{"threadId":"😀"}}
 {"key":"rpc::orchestration::get_native_child_work::Payload","value":{"threadId":"0"}}
 {"key":"rpc::orchestration::get_native_child_work::Payload","value":{"threadId":"�"}}
@@ -2127,9 +2134,9 @@
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"OrchestrationV2GetNativeChildWorkError","threadId":"]*OG"}}
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"OrchestrationV2GetNativeChildWorkError","threadId":"h&h","cause":null}}
 {"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"OrchestrationV2GetNativeChildWorkError","threadId":"0"}}
-{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"5o9y","requiredScope":"access:write"}}
-{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"source-control:write"}}
-{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"relay:read","requiredPermission":"}n("}}
+{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"5o9y","requiredScope":"relay:read"}}
+{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"access:read"}}
+{"key":"rpc::orchestration::get_native_child_work::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"relay:write","requiredPermission":"}n("}}
 {"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"-1","threadId":"r>"},"limit":41}}
 {"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"/*)"},"limit":1}}
 {"key":"rpc::orchestration::get_older_settled_threads::Payload","value":{"before":{"settledAt":"\t"},"projectIds":[],"limit":3}}
@@ -2139,9 +2146,9 @@
 {"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"�"}}
 {"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"😀"}}
 {"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"�"}}
-{"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"environment:maintain"}}
+{"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"preview:operate"}}
 {"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"<U*'","requiredScope":"providers:manage"}}
-{"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
+{"key":"rpc::orchestration::get_older_settled_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
 {"key":"rpc::orchestration::get_thread_family::Payload","value":{"threadId":"D"}}
 {"key":"rpc::orchestration::get_thread_family::Payload","value":{"threadId":"Q"}}
 {"key":"rpc::orchestration::get_thread_family::Payload","value":{"threadId":"�"}}
@@ -2151,8 +2158,8 @@
 {"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"\n","cause":[]}}
 {"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"�"}}
 {"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"o*^="}}
-{"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read","requiredPermission":"> K"}}
-{"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"providers:manage"}}
+{"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:write","requiredPermission":"> K"}}
+{"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"environment:maintain"}}
 {"key":"rpc::orchestration::get_thread_family::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:write","requiredPermission":"-1"}}
 {"key":"rpc::orchestration::get_thread_link_metadata::Payload","value":{"threadIds":["-1","\u0000","aDMM","�"]}}
 {"key":"rpc::orchestration::get_thread_link_metadata::Payload","value":{"threadIds":[]}}
@@ -2165,7 +2172,7 @@
 {"key":"rpc::orchestration::get_thread_link_metadata::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"bOtt"}}
 {"key":"rpc::orchestration::get_thread_link_metadata::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"%","requiredScope":"source-control:write","requiredPermission":""}}
 {"key":"rpc::orchestration::get_thread_link_metadata::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"diagnostics:read","requiredPermission":"I/TP"}}
-{"key":"rpc::orchestration::get_thread_link_metadata::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
+{"key":"rpc::orchestration::get_thread_link_metadata::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read"}}
 {"key":"rpc::orchestration::get_thread_projection::Payload","value":{"threadId":"\"re6"}}
 {"key":"rpc::orchestration::get_thread_projection::Payload","value":{"threadId":"o"}}
 {"key":"rpc::orchestration::get_thread_projection::Payload","value":{"threadId":"B{bz"}}
@@ -2175,9 +2182,9 @@
 {"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"u}w+","message":"M."}}
 {"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"H>(","message":"."}}
 {"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"yg~\"","message":"-1"}}
-{"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"H_","requiredScope":"terminal:read","requiredPermission":"-E6"}}
+{"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"H_","requiredScope":"terminal:operate","requiredPermission":"-E6"}}
 {"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"U","requiredScope":"relay:read"}}
-{"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"0"}}
+{"key":"rpc::orchestration::get_thread_projection::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":"0"}}
 {"key":"rpc::orchestration::get_thread_titles::Payload","value":{"threadIds":[]}}
 {"key":"rpc::orchestration::get_thread_titles::Payload","value":{"threadIds":["90","7Y9v",",QAR","8o=A"]}}
 {"key":"rpc::orchestration::get_thread_titles::Payload","value":{"threadIds":[]}}
@@ -2187,7 +2194,7 @@
 {"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"\t","cause":[true,[true,true]]}}
 {"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"","cause":[]}}
 {"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":" ","cause":".\"s"}}
-{"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"providers:manage","requiredPermission":"[_,$"}}
+{"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"environment:maintain","requiredPermission":"[_,$"}}
 {"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*","requiredScope":"diagnostics:read"}}
 {"key":"rpc::orchestration::get_thread_titles::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0Z","requiredScope":"orchestration:read","requiredPermission":"😀"}}
 {"key":"rpc::orchestration::get_turn_diff::Payload","value":{"fromTurnCount":13,"toTurnCount":14,"threadId":"😀","ignoreWhitespace":false}}
@@ -2199,8 +2206,8 @@
 {"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"OrchestrationGetTurnDiffError","message":"Htu&"}}
 {"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"OrchestrationGetTurnDiffError","message":"`yX"}}
 {"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"OrchestrationGetTurnDiffError","message":")"}}
-{"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"providers:manage"}}
-{"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"filesystem:write","requiredPermission":"'kM"}}
+{"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"environment:maintain"}}
+{"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"review:write","requiredPermission":"'kM"}}
 {"key":"rpc::orchestration::get_turn_diff::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"preview:operate","requiredPermission":"v@s="}}
 {"key":"rpc::orchestration::get_turn_item::Payload","value":{"threadId":"_","itemId":"�"}}
 {"key":"rpc::orchestration::get_turn_item::Payload","value":{"threadId":"ir","itemId":"5C"}}
@@ -2213,7 +2220,7 @@
 {"key":"rpc::orchestration::get_turn_item::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"t","message":"x6r@"}}
 {"key":"rpc::orchestration::get_turn_item::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
 {"key":"rpc::orchestration::get_turn_item::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"environment:maintain","requiredPermission":"\n"}}
-{"key":"rpc::orchestration::get_turn_item::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:write","requiredPermission":"w'5z"}}
+{"key":"rpc::orchestration::get_turn_item::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:read","requiredPermission":"w'5z"}}
 {"key":"rpc::orchestration::get_workflow_script::Payload","value":{"threadId":"~YZL","scriptPath":"-Ty"}}
 {"key":"rpc::orchestration::get_workflow_script::Payload","value":{"threadId":"/","scriptPath":"ZrgE"}}
 {"key":"rpc::orchestration::get_workflow_script::Payload","value":{"threadId":"n","scriptPath":"�"}}
@@ -2224,8 +2231,8 @@
 {"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"OrchestrationGetWorkflowScriptError","reason":"not-regular-file","scriptPath":"","cause":5e-323}}
 {"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"OrchestrationGetWorkflowScriptError","reason":"not-js","scriptPath":"�"}}
 {"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"orchestration:operate"}}
-{"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:write","requiredPermission":""}}
-{"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"relay:write"}}
+{"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:configure","requiredPermission":""}}
+{"key":"rpc::orchestration::get_workflow_script::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"relay:configure"}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Payload","value":{"worktreePath":"�"}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Payload","value":{"worktreePath":"_PE}"}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Payload","value":{"worktreePath":"6"}}
@@ -2235,9 +2242,9 @@
 {"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"�"}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"-1","cause":2e-323}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"p4s1"}}
-{"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"review:write"}}
-{"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read","requiredPermission":"\u0000"}}
 {"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"source-control:write"}}
+{"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"\u0000"}}
+{"key":"rpc::orchestration::get_worktree_thread_ids::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:read"}}
 {"key":"rpc::orchestration::launch_thread::Payload","value":{"commandId":"ud!?","projectId":"0","title":"n","modelSelection":{"instanceId":"Es","model":"rF8R","options":[]},"runtimeMode":"approval-required","interactionMode":"default","workspaceStrategy":{"type":"root"}}}
 {"key":"rpc::orchestration::launch_thread::Payload","value":{"commandId":"wkh","projectId":"�","title":"\u0000","modelSelection":{"instanceId":"EUB","model":"\u0000"},"runtimeMode":"auto","interactionMode":"default","workspaceStrategy":{"type":"root"}}}
 {"key":"rpc::orchestration::launch_thread::Payload","value":{"commandId":"6r.(","projectId":"&=:","title":"c","modelSelection":{"instanceId":"Hgql","model":"l"},"runtimeMode":"auto","interactionMode":"default","workspaceStrategy":{"type":"worktree","baseRef":"b","startFromOrigin":false}}}
@@ -2247,7 +2254,7 @@
 {"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"OrchestrationV2ThreadLaunchError","commandId":"9f","projectId":"�","message":"7"}}
 {"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"OrchestrationV2ThreadLaunchError","commandId":"c=8^","projectId":"\u0000","message":"oZ"}}
 {"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"OrchestrationV2ThreadLaunchError","commandId":"ExC","projectId":"�","message":"�"}}
-{"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
+{"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read"}}
 {"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"1","requiredScope":"diagnostics:read","requiredPermission":"\n"}}
 {"key":"rpc::orchestration::launch_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"^aZ!","requiredScope":"filesystem:read"}}
 {"key":"rpc::orchestration::search_thread::Payload","value":{"threadId":"-1","query":"L","start":{"entryId":"\u0000","occurrence":1}}}
@@ -2271,8 +2278,8 @@
 {"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"OrchestrationV2SearchThreadError","cause":{}}}
 {"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"OrchestrationV2SearchThreadError","cause":[]}}
 {"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"OrchestrationV2SearchThreadError","cause":-7e-323}}
-{"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:read","requiredPermission":"�"}}
-{"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read"}}
+{"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:write","requiredPermission":"�"}}
+{"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write"}}
 {"key":"rpc::orchestration::search_thread_stream::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"settings:write"}}
 {"key":"rpc::orchestration::search_threads::Payload","value":{"query":"😀","projectIds":[]}}
 {"key":"rpc::orchestration::search_threads::Payload","value":{"query":"^K"}}
@@ -2284,8 +2291,8 @@
 {"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"OrchestrationSearchThreadsError","message":"\u0000"}}
 {"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"OrchestrationSearchThreadsError","message":"r"}}
 {"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"B{)","requiredScope":"terminal:read","requiredPermission":"�"}}
-{"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"]\\/4","requiredScope":"filesystem:read"}}
-{"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"environment:maintain","requiredPermission":"qm^m"}}
+{"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"]\\/4","requiredScope":"filesystem:write"}}
+{"key":"rpc::orchestration::search_threads::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"preview:operate","requiredPermission":"qm^m"}}
 {"key":"rpc::orchestration::stop_workflow::Payload","value":{"threadId":")la'","subagentId":"0"}}
 {"key":"rpc::orchestration::stop_workflow::Payload","value":{"threadId":"g>xn","subagentId":"�"}}
 {"key":"rpc::orchestration::stop_workflow::Payload","value":{"threadId":"q","subagentId":"0"}}
@@ -2295,8 +2302,8 @@
 {"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"OrchestrationV2StopWorkflowError","threadId":"U,","subagentId":"0","reason":"stop-failed"}}
 {"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"OrchestrationV2StopWorkflowError","threadId":"g","subagentId":"}B`R","reason":"unavailable"}}
 {"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"OrchestrationV2StopWorkflowError","threadId":"7","subagentId":"-1","reason":"unsupported"}}
-{"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write"}}
-{"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"access:write"}}
+{"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:configure"}}
+{"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read"}}
 {"key":"rpc::orchestration::stop_workflow::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*y(","requiredScope":"settings:write","requiredPermission":""}}
 {"key":"rpc::orchestration::subscribe_command_output::Payload","value":{"threadId":"�","itemId":"[vD"}}
 {"key":"rpc::orchestration::subscribe_command_output::Payload","value":{"threadId":"9Vw","itemId":"-1"}}
@@ -2308,8 +2315,8 @@
 {"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"OrchestrationV2CommandOutputError","threadId":"�","message":"xcm."}}
 {"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"OrchestrationV2CommandOutputError","threadId":"+","message":"c;FP"}}
 {"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"orchestration:read","requiredPermission":"\t"}}
-{"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"terminal:operate","requiredPermission":"fLSo"}}
-{"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:write","requiredPermission":"�"}}
+{"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"filesystem:read","requiredPermission":"fLSo"}}
+{"key":"rpc::orchestration::subscribe_command_output::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:configure","requiredPermission":"�"}}
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Payload","value":{"threadId":"�"}}
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Payload","value":{"threadId":"ed"}}
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Payload","value":{"threadId":"😀"}}
@@ -2321,7 +2328,7 @@
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Item","value":null}
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"orchestration:read"}}
 {"key":"rpc::orchestration::subscribe_prompt_suggestion::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"filesystem:write","requiredPermission":"😀"}}
-{"key":"rpc::orchestration::subscribe_prompt_suggestion::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"O","requiredScope":"relay:read"}}
+{"key":"rpc::orchestration::subscribe_prompt_suggestion::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"O","requiredScope":"relay:write"}}
 {"key":"rpc::orchestration::subscribe_shell::Payload","value":{"httpSnapshotFallback":true,"knownProjectIdentities":"-1","omitOlderSettled":true}}
 {"key":"rpc::orchestration::subscribe_shell::Payload","value":{"knownProjectIdentities":"","requestCompletionMarker":false,"omitIdleSubagents":false}}
 {"key":"rpc::orchestration::subscribe_shell::Payload","value":{}}
@@ -2349,9 +2356,9 @@
 {"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"�"}}
 {"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"H>=A"}}
 {"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"OrchestrationV2GetShellSnapshotError","message":"-1"}}
-{"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:read"}}
+{"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write"}}
 {"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"O","requiredScope":"terminal:read","requiredPermission":""}}
-{"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write"}}
+{"key":"rpc::orchestration::subscribe_shell::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read"}}
 {"key":"rpc::orchestration::subscribe_thread::Payload","value":{"threadId":"|i8W","afterSequence":4,"acceptCompactTurnItems":true}}
 {"key":"rpc::orchestration::subscribe_thread::Payload","value":{"threadId":"�"}}
 {"key":"rpc::orchestration::subscribe_thread::Payload","value":{"threadId":"�","requestCompletionMarker":false,"acceptCompactTurnItems":true}}
@@ -2368,14 +2375,14 @@
 {"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"0","message":" "}}
 {"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"OrchestrationV2GetThreadProjectionError","threadId":"0","message":"<;tg"}}
 {"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"orchestration:operate"}}
-{"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"?","requiredScope":"relay:write"}}
+{"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"?","requiredScope":"relay:configure"}}
 {"key":"rpc::orchestration::subscribe_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"environment:maintain","requiredPermission":"�"}}
 {"key":"rpc::panels::requests::Payload","value":{"deviceName":"+!x'"}}
 {"key":"rpc::panels::requests::Item","value":{"requestId":"33_","threadId":"\u0000","panel":"mcp","focusWindow":false}}
 {"key":"rpc::panels::requests::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"preview:operate"}}
 {"key":"rpc::panels::respond::Payload","value":{"requestId":"😀","ok":false,"database":{"connection":"\t","columns":[],"rowCount":-4.4e-323,"rows":[{" ":null,"&2N=":[]},{},{"�":[{},{},null,-383609671240789800000],"\n":"�","*qQi":"\t"},{"0":false,"😀":{},"":null,"�":-1.7976931348623145e+308}],"truncated":true}}}
 {"key":"rpc::panels::respond::Success","value":null}
-{"key":"rpc::panels::respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"HSUw","requiredScope":"terminal:read","requiredPermission":"PM[L"}}
+{"key":"rpc::panels::respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"HSUw","requiredScope":"terminal:operate","requiredPermission":"PM[L"}}
 {"key":"rpc::peer_links::answer_request::Payload","value":{"threadId":"|2rS","turnItemId":"z3,O","answer":{"type":"decline"}}}
 {"key":"rpc::peer_links::answer_request::Success","value":null}
 {"key":"rpc::peer_links::answer_request::Error","value":{"_tag":"PeerLinkRequestError","reason":"already_answered"}}
@@ -2387,11 +2394,11 @@
 {"key":"rpc::peer_links::list::Payload","value":{}}
 {"key":"rpc::peer_links::list::Success","value":{"links":[]}}
 {"key":"rpc::peer_links::list::Error","value":{"_tag":"PeerLinkError","reason":"expired","message":"-1"}}
-{"key":"rpc::peer_links::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"$Um","requiredScope":"relay:write","requiredPermission":"WT*_"}}
+{"key":"rpc::peer_links::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"$Um","requiredScope":"relay:configure","requiredPermission":"WT*_"}}
 {"key":"rpc::peer_links::unlink::Payload","value":{"environmentId":"�"}}
 {"key":"rpc::peer_links::unlink::Success","value":{"removed":true}}
 {"key":"rpc::peer_links::unlink::Error","value":{"_tag":"PeerLinkError","reason":"unreachable","message":""}}
-{"key":"rpc::peer_links::unlink::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:write","requiredPermission":"V\\Q)"}}
+{"key":"rpc::peer_links::unlink::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:configure","requiredPermission":"V\\Q)"}}
 {"key":"rpc::preview::adjust::Payload","value":{"threadId":"�","tabId":"�"}}
 {"key":"rpc::preview::adjust::Success","value":{"threadId":"{}","tabId":"'*X6","navStatus":{"_tag":"Loading","url":"😀","title":"!a@"},"canGoBack":true,"canGoForward":true,"updatedAt":""}}
 {"key":"rpc::preview::adjust::Error","value":{"_tag":"PreviewControlRequiredError","tabId":" "}}
@@ -2399,25 +2406,25 @@
 {"key":"rpc::preview::clear_profile::Payload","value":{"profileId":"Hq-("}}
 {"key":"rpc::preview::clear_profile::Success","value":null}
 {"key":"rpc::preview::clear_profile::Error","value":{"_tag":"PreviewClearProfileError","profileId":"0","cause":false}}
-{"key":"rpc::preview::clear_profile::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"relay:write","requiredPermission":"\n"}}
+{"key":"rpc::preview::clear_profile::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"relay:configure","requiredPermission":"\n"}}
 {"key":"rpc::preview::close::Payload","value":{"threadId":"�","tabId":"0"}}
 {"key":"rpc::preview::close::Success","value":null}
 {"key":"rpc::preview::close::Error","value":{"_tag":"PreviewControlRequiredError","tabId":""}}
-{"key":"rpc::preview::close::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"RE","requiredScope":"filesystem:write","requiredPermission":"�"}}
+{"key":"rpc::preview::close::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"RE","requiredScope":"review:write","requiredPermission":"�"}}
 {"key":"rpc::preview::desktop_register::Payload","value":{"environmentId":"KF4=","threadId":"�","tabId":"/","deviceName":")T!P","snapshot":{"threadId":"tRqb","tabId":"u","navStatus":{"_tag":"Success","url":"<[J\\","title":"-1"},"canGoBack":true,"canGoForward":false,"updatedAt":"�"}}}
 {"key":"rpc::preview::desktop_register::Success","value":{"connectionId":"Y"}}
 {"key":"rpc::preview::desktop_register::Error","value":{"_tag":"DesktopTabRelayError","reason":"binding"}}
-{"key":"rpc::preview::desktop_register::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"oM","requiredScope":"filesystem:write"}}
+{"key":"rpc::preview::desktop_register::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"oM","requiredScope":"review:write"}}
 {"key":"rpc::preview::desktop_requests::Payload","value":{"connectionId":"�"}}
 {"key":"rpc::preview::desktop_requests::Item","value":{"type":"connected","connectionId":"-1"}}
 {"key":"rpc::preview::desktop_requests::Item","value":{"type":"request","connectionId":"�","request":{"requestId":"1","threadId":"`\\","operation":"drag","input":null,"timeoutMs":11}}}
 {"key":"rpc::preview::desktop_requests::Error","value":{"_tag":"DesktopTabRelayError","reason":"session"}}
-{"key":"rpc::preview::desktop_requests::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"IE","requiredScope":"filesystem:read"}}
+{"key":"rpc::preview::desktop_requests::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"IE","requiredScope":"filesystem:write"}}
 {"key":"rpc::preview::desktop_respond::Payload","value":{"clientId":"�","connectionId":"|?)p","requestId":"😀","ok":false}}
 {"key":"rpc::preview::desktop_respond::Success","value":null}
 {"key":"rpc::preview::desktop_respond::Error","value":{"_tag":"DesktopTabRelayError","reason":"binding"}}
 {"key":"rpc::preview::desktop_respond::Error","value":{"_tag":"PreviewAutomationControlInterruptedError","operation":"close","environmentId":"b","threadId":"�","providerSessionId":"x","providerInstanceId":"vEmA","clientId":"-1","connectionId":"😀","requestId":"}z8","timeoutMs":7,"remoteTag":"(","remoteMessageLength":11,"cause":""}}
-{"key":"rpc::preview::desktop_respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"M{g&","requiredScope":"access:write","requiredPermission":""}}
+{"key":"rpc::preview::desktop_respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"M{g&","requiredScope":"relay:read","requiredPermission":""}}
 {"key":"rpc::preview::list::Payload","value":{"threadId":"-1"}}
 {"key":"rpc::preview::list::Success","value":{"sessions":[],"serverEpoch":"\u0000","revision":12}}
 {"key":"rpc::preview::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Tw7","requiredScope":"settings:write"}}
@@ -2439,23 +2446,23 @@
 {"key":"rpc::preview::stop_local_server::Payload","value":{"pid":3,"port":7}}
 {"key":"rpc::preview::stop_local_server::Success","value":null}
 {"key":"rpc::preview::stop_local_server::Error","value":{"_tag":"PreviewStopLocalServerError","reason":"signal-failed"}}
-{"key":"rpc::preview::stop_local_server::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"review:write","requiredPermission":"�"}}
+{"key":"rpc::preview::stop_local_server::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"source-control:write","requiredPermission":"�"}}
 {"key":"rpc::project_clone::cancel::Payload","value":{"projectId":"+"}}
 {"key":"rpc::project_clone::cancel::Success","value":{"applied":false}}
 {"key":"rpc::project_clone::cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"terminal:read"}}
 {"key":"rpc::project_clone::retry::Payload","value":{"projectId":"😀"}}
 {"key":"rpc::project_clone::retry::Success","value":{"applied":false}}
 {"key":"rpc::project_clone::retry::Error","value":{"_tag":"SourceControlRepositoryError","provider":"o","operation":"\n","detail":""}}
-{"key":"rpc::project_clone::retry::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"UI/M","requiredScope":"relay:write"}}
+{"key":"rpc::project_clone::retry::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"UI/M","requiredScope":"relay:configure"}}
 {"key":"rpc::project_clone::start::Payload","value":{"projectId":"�","title":"AQ>a","createdAt":"","destinationPath":"456B"}}
 {"key":"rpc::project_clone::start::Success","value":{"projectId":"8","cwd":"-1","remoteUrl":":=(G","repository":{"provider":"u","nameWithOwner":"�","url":"�","sshUrl":"[8<V"}}}
 {"key":"rpc::project_clone::start::Error","value":{"_tag":"SourceControlRepositoryError","provider":"bg3g","operation":"\n","detail":"-1"}}
 {"key":"rpc::project_clone::start::Error","value":{"_tag":"OrchestrationDispatchCommandError","message":"p"}}
-{"key":"rpc::project_clone::start::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"review:write"}}
+{"key":"rpc::project_clone::start::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"source-control:write"}}
 {"key":"rpc::projects::create_from_thread::Payload","value":{"threadId":"R22"}}
 {"key":"rpc::projects::create_from_thread::Success","value":{"projectId":"o{UP"}}
 {"key":"rpc::projects::create_from_thread::Error","value":{"_tag":"OrchestrationDispatchCommandError","message":"Qn"}}
-{"key":"rpc::projects::create_from_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"access:write","requiredPermission":"�"}}
+{"key":"rpc::projects::create_from_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"relay:read","requiredPermission":"�"}}
 {"key":"rpc::projects::create_new::Payload","value":{"name":"4"}}
 {"key":"rpc::projects::create_new::Success","value":{"projectId":":","workspaceRoot":"iHEQ","commitError":"?NHp"}}
 {"key":"rpc::projects::create_new::Error","value":{"_tag":"OrchestrationDispatchCommandError","message":"W","bootstrapThreadDisposition":"not-created"}}
@@ -2467,11 +2474,11 @@
 {"key":"rpc::projects::list_entries::Payload","value":{"cwd":"0"}}
 {"key":"rpc::projects::list_entries::Success","value":{"entries":[{"path":"TD","kind":"directory"},{"path":"�","kind":"file"}],"truncated":true}}
 {"key":"rpc::projects::list_entries::Error","value":{"_tag":"ProjectListEntriesError","failure":"workspace_root_not_found","message":"�"}}
-{"key":"rpc::projects::list_entries::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*'k[","requiredScope":"terminal:read","requiredPermission":"�"}}
+{"key":"rpc::projects::list_entries::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*'k[","requiredScope":"terminal:operate","requiredPermission":"�"}}
 {"key":"rpc::projects::list_ignored_files::Payload","value":{"cwd":"Z_c"}}
 {"key":"rpc::projects::list_ignored_files::Success","value":{"files":[],"truncated":true}}
 {"key":"rpc::projects::list_ignored_files::Error","value":{"_tag":"ProjectListEntriesError","message":"I"}}
-{"key":"rpc::projects::list_ignored_files::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"K^80","requiredScope":"relay:read"}}
+{"key":"rpc::projects::list_ignored_files::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"K^80","requiredScope":"relay:write"}}
 {"key":"rpc::projects::mutate::Payload","value":{"type":"project.create","commandId":"zBTh","projectId":"XK03","title":"\u0000","workspaceRoot":"\u0000"}}
 {"key":"rpc::projects::mutate::Payload","value":{"type":"project.update","commandId":"g","projectId":"rJX:"}}
 {"key":"rpc::projects::mutate::Payload","value":{"type":"project.delete","commandId":"�","projectId":"\u0000"}}
@@ -2485,7 +2492,7 @@
 {"key":"rpc::projects::search_contents::Payload","value":{"cwd":"x=e","query":"-1","limit":95,"caseSensitive":false,"wholeWord":false,"useRegex":true}}
 {"key":"rpc::projects::search_contents::Success","value":{"matches":[],"truncated":false}}
 {"key":"rpc::projects::search_contents::Error","value":{"_tag":"ProjectSearchContentsError","queryLength":14,"message":"qt ("}}
-{"key":"rpc::projects::search_contents::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"diagnostics:read","requiredPermission":"|%:R"}}
+{"key":"rpc::projects::search_contents::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"terminal:read","requiredPermission":"|%:R"}}
 {"key":"rpc::projects::search_entries::Payload","value":{"cwd":"-1","query":"0","limit":4,"imageOnly":true}}
 {"key":"rpc::projects::search_entries::Success","value":{"entries":[{"path":"s","kind":"file","ignored":true}],"truncated":true}}
 {"key":"rpc::projects::search_entries::Error","value":{"_tag":"ProjectSearchEntriesError","queryLength":4,"message":"J"}}
@@ -2497,15 +2504,15 @@
 {"key":"rpc::provider::auth_cancel::Payload","value":{"instanceId":"b","flowId":"�"}}
 {"key":"rpc::provider::auth_cancel::Success","value":{"instanceId":"a","phase":"verifying","flowId":";p\\8","authorizationUrl":null,"expiresAt":null,"message":null}}
 {"key":"rpc::provider::auth_cancel::Error","value":{"_tag":"ProviderSetupError","instanceId":"Uk","operation":"aZ3v","detail":"]Go~"}}
-{"key":"rpc::provider::auth_cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"1","requiredScope":"source-control:write","requiredPermission":"yE83"}}
+{"key":"rpc::provider::auth_cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"1","requiredScope":"access:read","requiredPermission":"yE83"}}
 {"key":"rpc::provider::auth_complete::Payload","value":{"instanceId":"mI","flowId":"1OCY","callbackUrl":"0"}}
 {"key":"rpc::provider::auth_complete::Success","value":{"instanceId":"y-T","phase":"waiting","flowId":"H,2C","authorizationUrl":null,"expiresAt":null,"message":null}}
 {"key":"rpc::provider::auth_complete::Error","value":{"_tag":"ProviderSetupError","instanceId":"n","operation":"-1","detail":"😀"}}
-{"key":"rpc::provider::auth_complete::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"w","requiredScope":"relay:read"}}
+{"key":"rpc::provider::auth_complete::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"w","requiredScope":"relay:write"}}
 {"key":"rpc::provider::auth_logout::Payload","value":{"instanceId":"clJy"}}
 {"key":"rpc::provider::auth_logout::Success","value":{"instanceId":"wcjW","phase":"starting","flowId":"�","authorizationUrl":null,"expiresAt":null,"message":null}}
 {"key":"rpc::provider::auth_logout::Error","value":{"_tag":"ProviderSetupError","instanceId":"y","operation":"-XrH","detail":">"}}
-{"key":"rpc::provider::auth_logout::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write"}}
+{"key":"rpc::provider::auth_logout::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"review:write"}}
 {"key":"rpc::provider::auth_remove_method::Payload","value":{"instanceId":"VO","methodId":"JLKx"}}
 {"key":"rpc::provider::auth_remove_method::Success","value":{"instanceId":"r","phase":"idle","flowId":"-1","authorizationUrl":null,"expiresAt":"","message":" "}}
 {"key":"rpc::provider::auth_remove_method::Error","value":{"_tag":"ProviderSetupError","instanceId":"wcv","operation":"","detail":"WflA"}}
@@ -2513,7 +2520,7 @@
 {"key":"rpc::provider::auth_respond::Payload","value":{"instanceId":"NCjG","flowId":":*","interactionId":"'ycF","response":{"type":"terminal","data":"😀","binary":false,"size":{"cols":3,"rows":7}}}}
 {"key":"rpc::provider::auth_respond::Success","value":{"instanceId":"pmc","phase":"failed","flowId":"RoM6","authorizationUrl":null,"expiresAt":null,"message":null}}
 {"key":"rpc::provider::auth_respond::Error","value":{"_tag":"ProviderSetupError","instanceId":"A","operation":"\\?U","detail":" "}}
-{"key":"rpc::provider::auth_respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:write","requiredPermission":",7$'"}}
+{"key":"rpc::provider::auth_respond::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:read","requiredPermission":",7$'"}}
 {"key":"rpc::provider::auth_start::Payload","value":{"instanceId":"VtB","methodId":"�","returnUrl":""}}
 {"key":"rpc::provider::auth_start::Success","value":{"instanceId":"B2","phase":"succeeded","flowId":null,"authorizationUrl":null,"expiresAt":"#UXz","message":""}}
 {"key":"rpc::provider::auth_start::Error","value":{"_tag":"ProviderSetupError","instanceId":"DdD3","operation":"","detail":"\n"}}
@@ -2521,12 +2528,12 @@
 {"key":"rpc::provider::auth_subscribe::Payload","value":{"instanceId":"O_NV"}}
 {"key":"rpc::provider::auth_subscribe::Item","value":{"instanceId":"HNuA","phase":"starting","flowId":null,"authorizationUrl":null,"expiresAt":"n","message":"^/$"}}
 {"key":"rpc::provider::auth_subscribe::Error","value":{"_tag":"ProviderSetupError","instanceId":"HmVe","operation":"zD7","detail":"_.Z+"}}
-{"key":"rpc::provider::auth_subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Np:","requiredScope":"diagnostics:read"}}
+{"key":"rpc::provider::auth_subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Np:","requiredScope":"terminal:read"}}
 {"key":"rpc::provider::chatgpt_handoff_subscribe::Payload","value":{"instanceId":"D","environmentId":"VT':","attemptId":"W4","returnUrl":"G$=S","profile":null}}
 {"key":"rpc::provider::chatgpt_handoff_subscribe::Item","value":{"phase":"auth","state":{"instanceId":"gqIx","phase":"cancelled","flowId":null,"authorizationUrl":null,"expiresAt":null,"message":null}}}
 {"key":"rpc::provider::chatgpt_handoff_subscribe::Item","value":{"phase":"finished","profile":{"registration":{"clientId":"oaiapp_W","subject":" ","redirectUri":"http://127.0.0.1:1/auth/callback","connectionLabel":"$g"},"credentials":{"clientId":"$zN;","accessToken":"{-","refreshToken":null,"idToken":"�","issuer":"😀","expiresAt":2.1742748577665474e-107,"earliestRefreshAt":null,"scopes":["!,$I","-1","�",""],"subject":"\u0000","email":"\t"}}}}
 {"key":"rpc::provider::chatgpt_handoff_subscribe::Error","value":{"_tag":"ProviderSetupError","instanceId":"d","operation":"😀","detail":""}}
-{"key":"rpc::provider::chatgpt_handoff_subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"terminal:read"}}
+{"key":"rpc::provider::chatgpt_handoff_subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"terminal:operate"}}
 {"key":"rpc::provider::chatgpt_import_profile::Payload","value":{"instanceId":"w","profile":{"registration":{"clientId":"oaiapp_8","redirectUri":"http://localhost:6/auth/callback","connectionLabel":"�","idTokenHint":"0"},"credentials":{"clientId":"V1","accessToken":" ","refreshToken":null,"idToken":"aaTF","issuer":"zr4","expiresAt":5e-324,"earliestRefreshAt":null,"scopes":[],"subject":"@","email":null}}}}
 {"key":"rpc::provider::chatgpt_import_profile::Success","value":{"instanceId":"nHqc","phase":"idle","flowId":null,"authorizationUrl":null,"expiresAt":null,"message":"l"}}
 {"key":"rpc::provider::chatgpt_import_profile::Error","value":{"_tag":"ProviderSetupError","instanceId":"yC","operation":"&/a","detail":"B,"}}
@@ -2545,7 +2552,7 @@
 {"key":"rpc::provider::install_cancel::Payload","value":{"instanceId":"V53g","operationId":"�"}}
 {"key":"rpc::provider::install_cancel::Success","value":{"driver":"SSI","operationId":null,"phase":"idle","downloadedBytes":2,"totalBytes":14,"version":"v","installedVersion":"\u0000","canRemove":false,"message":"7m~O"}}
 {"key":"rpc::provider::install_cancel::Error","value":{"_tag":"ProviderSetupError","instanceId":"Y","operation":"g","detail":""}}
-{"key":"rpc::provider::install_cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"1","requiredScope":"source-control:write"}}
+{"key":"rpc::provider::install_cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"1","requiredScope":"access:read"}}
 {"key":"rpc::provider::install_remove::Payload","value":{"instanceId":"p"}}
 {"key":"rpc::provider::install_remove::Success","value":{"driver":"T","operationId":"�","phase":"cancelled","downloadedBytes":13,"totalBytes":null,"version":null,"installedVersion":"P","canRemove":true,"message":"-1"}}
 {"key":"rpc::provider::install_remove::Error","value":{"_tag":"ProviderSetupError","instanceId":"EH","operation":";D6/","detail":"\u0000"}}
@@ -2561,7 +2568,7 @@
 {"key":"rpc::provider::upload_feedback::Payload","value":{"threadId":"\u0000"}}
 {"key":"rpc::provider::upload_feedback::Success","value":{"feedbackId":"\"v"}}
 {"key":"rpc::provider::upload_feedback::Error","value":{"_tag":"ProviderUploadFeedbackError","threadId":"�"}}
-{"key":"rpc::provider::upload_feedback::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"i","requiredScope":"terminal:operate"}}
+{"key":"rpc::provider::upload_feedback::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"i","requiredScope":"filesystem:read"}}
 {"key":"rpc::pull_requests::activity::Payload","value":{"projectId":"-1","repository":"�","number":16}}
 {"key":"rpc::pull_requests::activity::Success","value":{"comments":[{"id":"D'.9","kind":"review-comment","author":null,"body":"�","createdAt":" ","url":null,"path":null,"reviewState":null},{"id":"'XB9","kind":"review","author":null,"body":"'! ;","createdAt":"😀","url":"","path":"😀","reviewState":null},{"id":"G\"X!","kind":"review","author":null,"body":"-1","createdAt":"-1","url":"�","path":null,"reviewState":"J*"}],"commentCount":3,"commentsTruncated":false,"reviewThreads":[],"commits":[]}}
 {"key":"rpc::pull_requests::activity::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
@@ -2572,7 +2579,7 @@
 {"key":"rpc::pull_requests::change_breakdown::Success","value":null}
 {"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"PullRequestOperationError","operation":"\t","detail":"0","cause":"�"}}
-{"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
+{"key":"rpc::pull_requests::change_breakdown::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
 {"key":"rpc::pull_requests::checks::Payload","value":{"projectId":"i","repository":"😀","number":7}}
 {"key":"rpc::pull_requests::checks::Success","value":{"state":"open","checks":[{"name":"�","status":"cancelled","description":"~C0e","url":" "},{"name":"0","status":"pending","description":"","url":null},{"name":"�","status":"pending","description":null,"url":null}]}}
 {"key":"rpc::pull_requests::checks::Success","value":null}
@@ -2598,27 +2605,27 @@
 {"key":"rpc::pull_requests::files_viewed::Success","value":{"files":[{"path":" 3v`","state":"viewed"},{"path":"&c","state":"viewed"},{"path":"😀","state":"viewed"},{"path":"\n","state":"dismissed"}],"truncated":false}}
 {"key":"rpc::pull_requests::files_viewed::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::files_viewed::Error","value":{"_tag":"PullRequestOperationError","operation":"/","detail":"3!Gv","reason":"not-found"}}
-{"key":"rpc::pull_requests::files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"preview:operate","requiredPermission":"+fE-"}}
+{"key":"rpc::pull_requests::files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"diagnostics:read","requiredPermission":"+fE-"}}
 {"key":"rpc::pull_requests::filter_options::Payload","value":{"kind":"references","host":"pMJd"}}
 {"key":"rpc::pull_requests::filter_options::Success","value":{"labels":[],"authors":[],"references":[],"truncated":true}}
 {"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"V"}}
-{"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"filesystem:read"}}
+{"key":"rpc::pull_requests::filter_options::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"filesystem:write"}}
 {"key":"rpc::pull_requests::generate_review_guide::Payload","value":{"projectId":"26Ik","expectedAccountId":"R","repository":"0","number":16}}
 {"key":"rpc::pull_requests::generate_review_guide::Success","value":{"guide":null,"run":null,"currentHeadSha":"�"}}
 {"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","cause":""}}
 {"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"PullRequestOperationError","operation":"\n","detail":"3"}}
-{"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"environment:maintain"}}
+{"key":"rpc::pull_requests::generate_review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"preview:operate"}}
 {"key":"rpc::pull_requests::invalidate::Payload","value":{}}
 {"key":"rpc::pull_requests::invalidate::Success","value":null}
 {"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","provider":"mix","cause":{}}}
 {"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"m"}}
-{"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"9","requiredScope":"access:write","requiredPermission":"-1"}}
+{"key":"rpc::pull_requests::invalidate::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"9","requiredScope":"relay:read","requiredPermission":"-1"}}
 {"key":"rpc::pull_requests::label_candidates::Payload","value":{"projectId":"😀","repository":"0","number":11}}
 {"key":"rpc::pull_requests::label_candidates::Success","value":{"candidates":[],"truncated":false}}
 {"key":"rpc::pull_requests::label_candidates::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::label_candidates::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"m","reason":"not-found"}}
-{"key":"rpc::pull_requests::label_candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"[","requiredScope":"relay:read"}}
+{"key":"rpc::pull_requests::label_candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"[","requiredScope":"relay:write"}}
 {"key":"rpc::pull_requests::linked_threads::Payload","value":{"projectId":"😀","repository":"x","number":8}}
 {"key":"rpc::pull_requests::linked_threads::Success","value":{"threads":[]}}
 {"key":"rpc::pull_requests::linked_threads::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","cause":null}}
@@ -2638,32 +2645,32 @@
 {"key":"rpc::pull_requests::preview::Success","value":{"projectId":"-1","repository":"Mj","number":5,"title":"i_6","url":"\"?Pm","author":null,"state":"merged","isDraft":true,"createdAt":""}}
 {"key":"rpc::pull_requests::preview::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
 {"key":"rpc::pull_requests::preview::Error","value":{"_tag":"PullRequestOperationError","operation":" ","detail":"8"}}
-{"key":"rpc::pull_requests::preview::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"source-control:write","requiredPermission":"�"}}
+{"key":"rpc::pull_requests::preview::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:read","requiredPermission":"�"}}
 {"key":"rpc::pull_requests::reply_to_thread::Payload","value":{"projectId":"0iU%","repository":"7","number":12,"threadId":"�","body":"0"}}
 {"key":"rpc::pull_requests::reply_to_thread::Success","value":null}
 {"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"PullRequestOperationError","operation":"😀","detail":"C"}}
-{"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"filesystem:read"}}
+{"key":"rpc::pull_requests::reply_to_thread::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"filesystem:write"}}
 {"key":"rpc::pull_requests::report_state::Payload","value":{"reference":{"projectId":"bB&r","host":"2+Y","repository":"-1","number":16},"state":"closed","isDraft":false}}
 {"key":"rpc::pull_requests::report_state::Success","value":null}
 {"key":"rpc::pull_requests::report_state::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::report_state::Error","value":{"_tag":"PullRequestOperationError","operation":"JJx","detail":"😀","cause":""}}
-{"key":"rpc::pull_requests::report_state::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"access:write"}}
+{"key":"rpc::pull_requests::report_state::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"relay:read"}}
 {"key":"rpc::pull_requests::request_reviewers::Payload","value":{"projectId":"-1","repository":"0","number":2,"reviewers":[{"id":"�","kind":"user"}],"requested":true}}
 {"key":"rpc::pull_requests::request_reviewers::Success","value":null}
 {"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated","repository":"36j#"}}
 {"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"PullRequestOperationError","operation":"","detail":"%"}}
-{"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"diagnostics:read","requiredPermission":""}}
+{"key":"rpc::pull_requests::request_reviewers::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:read","requiredPermission":""}}
 {"key":"rpc::pull_requests::review_guide::Payload","value":{"projectId":"R","repository":"|_mK","number":11}}
 {"key":"rpc::pull_requests::review_guide::Success","value":{"guide":null,"run":null,"currentHeadSha":null}}
 {"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"PullRequestOperationError","operation":"\u0000","detail":"4A71"}}
-{"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"E:e","requiredScope":"review:write"}}
+{"key":"rpc::pull_requests::review_guide::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"E:e","requiredScope":"source-control:write"}}
 {"key":"rpc::pull_requests::reviewer_candidates::Payload","value":{"projectId":"\u0000","repository":"�","number":1}}
 {"key":"rpc::pull_requests::reviewer_candidates::Success","value":{"candidates":[],"truncated":false}}
 {"key":"rpc::pull_requests::reviewer_candidates::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::reviewer_candidates::Error","value":{"_tag":"PullRequestOperationError","operation":"0","detail":";`"}}
-{"key":"rpc::pull_requests::reviewer_candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"access:write"}}
+{"key":"rpc::pull_requests::reviewer_candidates::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"relay:read"}}
 {"key":"rpc::pull_requests::routing::Payload","value":{"projectId":"-1","repository":"7R","number":5}}
 {"key":"rpc::pull_requests::routing::Success","value":{"accountId":"J~zf","host":"0","provider":"s4","viewer":"A[1S","projectTitle":"6","workspaceRoot":"�"}}
 {"key":"rpc::pull_requests::routing::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
@@ -2673,7 +2680,7 @@
 {"key":"rpc::pull_requests::routing_identity::Success","value":{"accountId":"=y","host":"�","provider":"q78","viewer":"l'-"}}
 {"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","host":"\u0000"}}
 {"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"PullRequestOperationError","operation":"","detail":"�"}}
-{"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:write","requiredPermission":"�"}}
+{"key":"rpc::pull_requests::routing_identity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:configure","requiredPermission":"�"}}
 {"key":"rpc::pull_requests::run_action::Payload","value":{"projectId":"9(?@","repository":"17e.","number":5,"action":"revert"}}
 {"key":"rpc::pull_requests::run_action::Success","value":{"provider":"uati","projectId":"hRE<","repository":"k","number":16,"title":"\u0000","url":"S$","state":"merged","headBranch":"G","baseBranch":">>}l","updatedAt":" "}}
 {"key":"rpc::pull_requests::run_action::Success","value":null}
@@ -2684,22 +2691,22 @@
 {"key":"rpc::pull_requests::set_files_viewed::Success","value":null}
 {"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"PullRequestOperationError","operation":"😀","detail":"�","reason":"not-found"}}
-{"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0HiM","requiredScope":"review:write","requiredPermission":" "}}
+{"key":"rpc::pull_requests::set_files_viewed::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0HiM","requiredScope":"source-control:write","requiredPermission":" "}}
 {"key":"rpc::pull_requests::set_labels::Payload","value":{"projectId":"0","repository":"Z.KM","number":14,"labels":["Qv"],"applied":false}}
 {"key":"rpc::pull_requests::set_labels::Success","value":null}
 {"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing","host":":#F>"}}
 {"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"PullRequestOperationError","operation":"\n","detail":"�"}}
-{"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":""}}
+{"key":"rpc::pull_requests::set_labels::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":""}}
 {"key":"rpc::pull_requests::set_reaction::Payload","value":{"projectId":"Y *6","repository":"Tk","number":7,"content":"rocket","reacted":false}}
 {"key":"rpc::pull_requests::set_reaction::Success","value":null}
 {"key":"rpc::pull_requests::set_reaction::Error","value":{"_tag":"PullRequestUnavailableError","reason":"provider-unsupported"}}
 {"key":"rpc::pull_requests::set_reaction::Error","value":{"_tag":"PullRequestOperationError","operation":"/","detail":"g"}}
-{"key":"rpc::pull_requests::set_reaction::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"KbNP","requiredScope":"access:write"}}
+{"key":"rpc::pull_requests::set_reaction::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"KbNP","requiredScope":"relay:read"}}
 {"key":"rpc::pull_requests::set_thread_resolution::Payload","value":{"projectId":"3%\\","repository":"0","number":1,"threadId":"Lpv]","resolved":false}}
 {"key":"rpc::pull_requests::set_thread_resolution::Success","value":null}
 {"key":"rpc::pull_requests::set_thread_resolution::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-unauthenticated"}}
 {"key":"rpc::pull_requests::set_thread_resolution::Error","value":{"_tag":"PullRequestOperationError","operation":"","detail":"😀"}}
-{"key":"rpc::pull_requests::set_thread_resolution::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"settings:write"}}
+{"key":"rpc::pull_requests::set_thread_resolution::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"providers:manage"}}
 {"key":"rpc::pull_requests::stack::Payload","value":{"projectId":"'","repository":"😀","number":4}}
 {"key":"rpc::pull_requests::stack::Success","value":{"id":"82^r","number":6,"url":"8AU!","base":"1","layers":[]}}
 {"key":"rpc::pull_requests::stack::Success","value":null}
@@ -2721,7 +2728,7 @@
 {"key":"rpc::pull_requests::summary::Success","value":{"provider":"vbux","projectId":"0","repository":"Otm","number":1,"title":"pQ","url":"V%","state":"open","headBranch":"@8Wl","baseBranch":"😀","updatedAt":"-1"}}
 {"key":"rpc::pull_requests::summary::Error","value":{"_tag":"PullRequestUnavailableError","reason":"cli-missing"}}
 {"key":"rpc::pull_requests::summary::Error","value":{"_tag":"PullRequestOperationError","operation":"btS","detail":"z/uV"}}
-{"key":"rpc::pull_requests::summary::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"L{2a","requiredScope":"review:write","requiredPermission":""}}
+{"key":"rpc::pull_requests::summary::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"L{2a","requiredScope":"source-control:write","requiredPermission":""}}
 {"key":"rpc::pull_requests::thread_comments::Payload","value":{"projectId":"RL!Y","repository":"0","number":17,"threadId":"0","cursor":"m"}}
 {"key":"rpc::pull_requests::thread_comments::Success","value":{"comments":[],"nextCursor":"'"}}
 {"key":"rpc::pull_requests::thread_comments::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
@@ -2736,7 +2743,7 @@
 {"key":"rpc::pull_requests::update_comment::Success","value":null}
 {"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"PullRequestUnavailableError","reason":"repository-without-project"}}
 {"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"PullRequestOperationError","operation":"�","detail":"0"}}
-{"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"&g","requiredScope":"relay:read","requiredPermission":"-1"}}
+{"key":"rpc::pull_requests::update_comment::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"&g","requiredScope":"relay:write","requiredPermission":"-1"}}
 {"key":"rpc::review::get_branch_commits::Payload","value":{"cwd":"-1"}}
 {"key":"rpc::review::get_branch_commits::Success","value":{"commits":[{"sha":" ","subject":"","committedAt":"EVo"},{"sha":"�","subject":"-1","committedAt":""},{"sha":"`/","subject":" ","committedAt":"2"},{"sha":"`\"[$","subject":"","committedAt":"j0l"}],"truncated":true}}
 {"key":"rpc::review::get_branch_commits::Error","value":{"_tag":"VcsUnsupportedOperationError","operation":"N(","kind":"unknown","detail":"😀"}}
@@ -2744,11 +2751,11 @@
 {"key":"rpc::review::get_diff_file_contents::Payload","value":{"cwd":"\u0000","sourceKind":"branch-range","changeType":"change","baseRef":null,"headRef":"{","oldPath":" ","newPath":"😀"}}
 {"key":"rpc::review::get_diff_file_contents::Success","value":{"oldContents":"lc!7","newContents":"😀"}}
 {"key":"rpc::review::get_diff_file_contents::Error","value":{"_tag":"VcsProcessExitError","operation":"0","command":"KgI7","cwd":"0","exitCode":-7.4e-323,"detail":"A58F"}}
-{"key":"rpc::review::get_diff_file_contents::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"k{`'","requiredScope":"filesystem:write"}}
+{"key":"rpc::review::get_diff_file_contents::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"k{`'","requiredScope":"review:write"}}
 {"key":"rpc::review::get_diff_preview::Payload","value":{"cwd":"0","sourceKind":"working-tree","trackedOnly":true}}
 {"key":"rpc::review::get_diff_preview::Success","value":{"cwd":"oi","generatedAt":"1969-12-31T23:59:59.968Z","sources":[]}}
 {"key":"rpc::review::get_diff_preview::Error","value":{"_tag":"VcsProcessStdinWriteError","operation":"\n","command":"o","cwd":"\\}\\4","stdinBytes":11,"cause":null}}
-{"key":"rpc::review::get_diff_preview::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Xa{}","requiredScope":"diagnostics:read"}}
+{"key":"rpc::review::get_diff_preview::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"Xa{}","requiredScope":"terminal:read"}}
 {"key":"rpc::scheduled_tasks::delete::Payload","value":{"id":"[gs"}}
 {"key":"rpc::scheduled_tasks::delete::Success","value":{"id":"ix)d"}}
 {"key":"rpc::scheduled_tasks::delete::Error","value":{"_tag":"ScheduledTaskError","message":"\t"}}
@@ -2760,7 +2767,7 @@
 {"key":"rpc::scheduled_tasks::list_webhook_deliveries::Payload","value":{"id":"#"}}
 {"key":"rpc::scheduled_tasks::list_webhook_deliveries::Success","value":{"deliveries":[{"id":"r&q","taskId":"?2\\","receivedAt":"�","method":"E","contentType":null,"bodyBytes":0,"outcome":"dispatch_failed","signatureVerified":true,"missingFields":["\u0000","R}Ib","0","�"],"error":" "}]}}
 {"key":"rpc::scheduled_tasks::list_webhook_deliveries::Error","value":{"_tag":"ScheduledTaskError","message":"\t"}}
-{"key":"rpc::scheduled_tasks::list_webhook_deliveries::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:read"}}
+{"key":"rpc::scheduled_tasks::list_webhook_deliveries::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:write"}}
 {"key":"rpc::scheduled_tasks::rotate_webhook_token::Payload","value":{"id":"\u0000"}}
 {"key":"rpc::scheduled_tasks::rotate_webhook_token::Success","value":{"task":{"id":"😀","title":"-1","prompt":"\u0000","enabled":false,"schedule":{"type":"fixed_time","timeOfDay":"1:59"},"projectId":"v","threadId":null,"workspaceStrategy":{"type":"existing_worktree","worktreePath":"'~F"},"modelSelection":{"instanceId":"SL4q","model":"m","options":[{"id":"L;y","value":"�"},{"id":"0","value":false},{"id":"3GNY","value":true},{"id":"�","value":false}]},"runtimeMode":"auto","interactionMode":"plan","createdBy":"agent","creationSource":"web","createdAt":"xEx","updatedAt":"","nextRunAt":null,"lastRunAt":null,"lastRunStatus":"failed","lastRunError":null,"runCount":14}}}
 {"key":"rpc::scheduled_tasks::rotate_webhook_token::Error","value":{"_tag":"ScheduledTaskError","message":"G*V"}}
@@ -2776,18 +2783,18 @@
 {"key":"rpc::scheduled_tasks::subscribe::Payload","value":{}}
 {"key":"rpc::scheduled_tasks::subscribe::Item","value":{"tasks":[]}}
 {"key":"rpc::scheduled_tasks::subscribe::Error","value":{"_tag":"ScheduledTaskError","message":"7"}}
-{"key":"rpc::scheduled_tasks::subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"terminal:read"}}
+{"key":"rpc::scheduled_tasks::subscribe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"terminal:operate"}}
 {"key":"rpc::scheduled_tasks::upsert::Payload","value":{"title":">VWI","prompt":":","enabled":true,"schedule":{"type":"interval","everyMs":60016},"projectId":"�","workspaceStrategy":{"type":"root"},"modelSelection":{"instanceId":"KA","model":"-1"},"runtimeMode":"approval-required","interactionMode":"plan"}}
 {"key":"rpc::scheduled_tasks::upsert::Success","value":{"task":{"id":"0","title":")","prompt":"-1","enabled":true,"schedule":{"type":"webhook","signature":null},"projectId":"�","threadId":null,"workspaceStrategy":{"type":"root"},"modelSelection":{"instanceId":"R_e7","model":"0","options":[{"id":"B~","value":true},{"id":"dtT","value":false}]},"runtimeMode":"auto-accept-edits","interactionMode":"plan","createdBy":"system","creationSource":"mobile","createdAt":"y)5I","updatedAt":"\t","nextRunAt":"","lastRunAt":"","lastRunStatus":"never","lastRunError":null,"runCount":15}}}
 {"key":"rpc::scheduled_tasks::upsert::Error","value":{"_tag":"ScheduledTaskError","message":""}}
-{"key":"rpc::scheduled_tasks::upsert::Error","value":{"_tag":"EnvironmentAuthorizationError","message":",P4-","requiredScope":"filesystem:write"}}
+{"key":"rpc::scheduled_tasks::upsert::Error","value":{"_tag":"EnvironmentAuthorizationError","message":",P4-","requiredScope":"review:write"}}
 {"key":"rpc::secrets::answer_request::Payload","value":{"threadId":"d","turnItemId":"&+-0","answer":{"type":"decline"}}}
 {"key":"rpc::secrets::answer_request::Success","value":null}
 {"key":"rpc::secrets::answer_request::Error","value":{"_tag":"SecretRequestError","reason":"ref_expired"}}
 {"key":"rpc::secrets::answer_request::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"filesystem:write","requiredPermission":"0"}}
 {"key":"rpc::server::accept_acp_registry_url_auth::Payload","value":{"instanceId":"As","elicitationId":"-1"}}
 {"key":"rpc::server::accept_acp_registry_url_auth::Success","value":{"accepted":false}}
-{"key":"rpc::server::accept_acp_registry_url_auth::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*Lc9","requiredScope":"review:write"}}
+{"key":"rpc::server::accept_acp_registry_url_auth::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"*Lc9","requiredScope":"source-control:write"}}
 {"key":"rpc::server::check_otlp_endpoint::Success","value":{"_tag":"Accepted","latencyMs":-2.346695649999817e+272}}
 {"key":"rpc::server::check_otlp_endpoint::Success","value":{"_tag":"Rejected","status":"NaN"}}
 {"key":"rpc::server::check_otlp_endpoint::Success","value":{"_tag":"Unreachable","timedOut":true}}
@@ -2799,7 +2806,7 @@
 {"key":"rpc::server::commit_desktop_update::Payload","value":{"requestId":"~+`>"}}
 {"key":"rpc::server::commit_desktop_update::Success","value":{"targetVersion":"{+ +","method":"respawn","updateId":"'"}}
 {"key":"rpc::server::commit_desktop_update::Error","value":{"_tag":"ServerSelfUpdateError","reason":"-1"}}
-{"key":"rpc::server::commit_desktop_update::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"kv{V","requiredScope":"terminal:read"}}
+{"key":"rpc::server::commit_desktop_update::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"kv{V","requiredScope":"terminal:operate"}}
 {"key":"rpc::server::delete_acp_registry_session::Payload","value":{"instanceId":"F","projectId":"\"FQ","sessionId":":|A"}}
 {"key":"rpc::server::delete_acp_registry_session::Success","value":{"deleted":true}}
 {"key":"rpc::server::delete_acp_registry_session::Error","value":{"_tag":"AcpRegistryOperationError","reason":"download_failed","message":":"}}
@@ -2807,55 +2814,55 @@
 {"key":"rpc::server::disable_acp_registry_provider::Payload","value":{"instanceId":"l8a","projectId":"�","providerId":"\"cs}"}}
 {"key":"rpc::server::disable_acp_registry_provider::Success","value":{"disabled":true}}
 {"key":"rpc::server::disable_acp_registry_provider::Error","value":{"_tag":"AcpRegistryOperationError","reason":"agent_not_found","message":"2g'"}}
-{"key":"rpc::server::disable_acp_registry_provider::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"jj","requiredScope":"relay:write","requiredPermission":" "}}
+{"key":"rpc::server::disable_acp_registry_provider::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"jj","requiredScope":"relay:configure","requiredPermission":" "}}
 {"key":"rpc::server::discover_source_control::Payload","value":{}}
 {"key":"rpc::server::discover_source_control::Success","value":{"versionControlSystems":[{"kind":"jj","implemented":false,"label":"u","status":"available","version":{"_tag":"None"},"installHint":"Pazp","detail":{"_tag":"None"}}],"sourceControlProviders":[]}}
-{"key":"rpc::server::discover_source_control::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read","requiredPermission":" "}}
+{"key":"rpc::server::discover_source_control::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":" "}}
 {"key":"rpc::server::get_config::Payload","value":{}}
 {"key":"rpc::server::get_config::Success","value":{"environment":{"environmentId":"Q","label":"P","platform":{"os":"darwin","arch":"x64"},"serverVersion":"p","capabilities":{"repositoryIdentity":false}},"auth":{"policy":"loopback-browser","bootstrapMethods":["one-time-token"],"sessionMethods":[],"sessionCookieName":"|"},"cwd":"@","keybindingsConfigPath":"@","keybindings":[],"issues":[],"providers":[],"availableEditors":["datagrip"],"observability":{"logsDirectoryPath":"r","localTracingEnabled":false,"otlpTracesEnabled":false,"otlpMetricsEnabled":false,"otlpLogsEnabled":false},"settings":{"favorites":[],"providerModelPreferences":{},"worktreeCleanup":null,"storageCleanup":{"worktreeKeepWhen":"tracked-changes","worktreeAfterDays":null,"worktreeSettledAfterDays":null,"worktreeOnMerge":true,"worktreeOnDelete":true,"worktreeUnchanged":false,"browserArtifactsAfterDays":2364,"logsAfterDays":null},"worktreesDirectory":"","fastWorktreeCheckout":true,"previousWorktreesDirectories":[],"responseStreamingMode":"turn","enableProviderUpdateChecks":false,"continueThreadsAfterServerUpdate":false,"keepAwakeWhileAgentsWork":true,"requireConnectDeviceApproval":false,"enableAgentBrowserAccess":true,"cloudSpeechCredentials":{"openai":"5","xai":{"provider":"t","reference":"嘤"},"openrouter":"a"},"speechModelId":" ","speechAcceleration":"cpu","speechModelUnloadTimeout":"min_5","speechProjectCustomWords":[],"speechPostProcessingModelSelection":null,"projectAgentBrowserAccessOverrides":{"w":false},"credentialAutofill":{"oneApprovalPerSignIn":true,"approvalTimeoutSeconds":30,"blockScriptsAfterFill":true,"allowSubdomains":false},"defaultAutoPull":false,"defaultProjectScripts":[{"id":")","name":"U","command":"D","icon":"build","runOnWorktreeCreate":false}],"projectScriptOverrides":{"f":[{"id":"0","name":"y","command":"^","icon":"play","runOnWorktreeCreate":true}]},"projectAutoPullOverrides":{"\u0000":false},"defaultModelSelection":null,"fallbackModelSelection":null,"defaultRuntimeMode":"auto","projectSettingsOverrides":{"u":{"worktreeCleanup":null}},"projectSettingsFolded":true,"enableAgentDeviceAccess":true,"enableDeviceSupport":false,"deviceOnboardingCompleted":true,"deviceHosts":[{"kind":"ssh","id":"5","label":"m","target":"肜"}],"easDeviceHosts":[{"kind":"eas","id":"m","label":"`","accessToken":{"provider":"W","reference":"愼"},"maxSessionMinutes":113,"idleMinutes":12,"maxConcurrentSessions":7}],"simlockDeviceHosts":[{"kind":"simlock","id":"B","label":"g","gatewayUrl":"http://ꄳ","agentToken":"","maxLeases":7,"maxLeaseMinutes":147}],"simlockDeviceHostsEnabled":true,"sidebarAutoSettleAfterDays":1.3398811347142903,"compactIdleThreads":false,"snoozeLimitedThreads":false,"autoResumeLimitedThreads":false,"snoozePresets":[{"kind":"after","minutes":14426}],"hiddenThreadTags":[""],"hideTaggedThreads":true,"guestSharingEnabled":true,"linkedEnvironmentsEnabled":false,"promptSuggestionsEnabled":false,"sidebarAutoSettleKeepPullRequests":true,"sidebarAutoSettleOnMerge":false,"backgroundActivity":{"schemaVersion":1,"profile":"balanced","overrides":{}},"automaticGitFetchInterval":0,"providerHealthRefreshInterval":1,"backgroundActivityProfile":"balanced","defaultTheme":"","defaultThemeSetAt":"","defaultAppearance":"light","defaultAppearanceSetAt":"_","environmentIcon":"desktop","defaultThreadEnvMode":"local","newWorktreesStartFromOrigin":false,"worktreeSubmodules":null,"addProjectBaseDirectory":"�","ghqCloneLayout":false,"textGenerationModelSelection":{"instanceId":"m","model":"["},"threadTitleInstructions":";","branchNamingMode":"semantic","branchNamePrefix":"","branchNameInstructions":"_","removeAgentCreditsOnMerge":true,"sourceControlWritingStyle":{"mode":"conventional_commits","customInstructions":"H","followChangeRequestTemplates":false},"sourceControlWriterModelSelection":{"instanceId":"Q","model":"%"},"reviewGuidesEnabled":true,"reviewGuideModelSelection":{"instanceId":"H","model":"H"},"reviewGuideInstructions":"c","pullRequestMergeMethod":"squash","providerInstances":{},"observability":{"otlpTracesUrl":"","otlpMetricsUrl":"","otlpLogsUrl":""},"sourceControlHosts":{},"offeredSourceControlProviders":{"�":false},"usageLimitSources":{"!":{"kind":"cliproxy","url":"U","managementKey":{"provider":"m","reference":"櫍"},"enabled":false}},"textGenerators":{},"secretProviders":{"d":{"kind":"k","label":"`"}},"usageHistoryRetentionDays":1,"usagePriceOverrides":{"<":{"inputCostPerMillionTokens":5.4e-323,"outputCostPerMillionTokens":6.4e-323}},"usageModelAliases":{}}}}
 {"key":"rpc::server::get_config::Error","value":{"_tag":"KeybindingsConfigParseError","configPath":"","detail":""}}
 {"key":"rpc::server::get_config::Error","value":{"_tag":"ServerSettingsError","settingsPath":"😀","operation":"read-project-settings"}}
-{"key":"rpc::server::get_config::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read","requiredPermission":"-1"}}
+{"key":"rpc::server::get_config::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"-1"}}
 {"key":"rpc::server::get_database_storage::Payload","value":{}}
 {"key":"rpc::server::get_database_storage::Item","value":{"databaseBytes":1.0236758161537398e-198,"reclaimableBytes":-3.3877162915619827e-255,"incrementalVacuumEnabled":true,"compactCommand":"I69f"}}
 {"key":"rpc::server::get_database_storage::Item","value":null}
-{"key":"rpc::server::get_database_storage::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:read"}}
+{"key":"rpc::server::get_database_storage::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate"}}
 {"key":"rpc::server::get_host_resources::Payload","value":{}}
 {"key":"rpc::server::get_host_resources::Success","value":{"sampledAt":0,"cpuUtilization":null,"cpuCount":4,"availableMemoryBytes":9,"totalMemoryBytes":3}}
-{"key":"rpc::server::get_host_resources::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"'","requiredScope":"access:write"}}
+{"key":"rpc::server::get_host_resources::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"'","requiredScope":"relay:read"}}
 {"key":"rpc::server::get_npm_release::Payload","value":{"spec":"1.8.5"}}
 {"key":"rpc::server::get_npm_release::Success","value":{"version":"\u0000","databaseMigration":-15}}
 {"key":"rpc::server::get_npm_release::Success","value":null}
 {"key":"rpc::server::get_npm_release::Error","value":{"_tag":"ServerNpmReleaseError","reason":"("}}
-{"key":"rpc::server::get_npm_release::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"access:read","requiredPermission":" "}}
+{"key":"rpc::server::get_npm_release::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"access:write","requiredPermission":" "}}
 {"key":"rpc::server::get_process_diagnostics::Payload","value":{}}
 {"key":"rpc::server::get_process_diagnostics::Success","value":{"serverPid":3,"readAt":"+275760-09-12T23:59:59.980Z","processCount":9,"totalRssBytes":12,"totalCpuPercent":1.7976931348623133e+308,"processes":[],"error":{"_tag":"None"}}}
 {"key":"rpc::server::get_process_diagnostics::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"'A;H","requiredScope":"terminal:read","requiredPermission":" "}}
 {"key":"rpc::server::get_process_resource_history::Payload","value":{"windowMs":1,"bucketMs":13}}
 {"key":"rpc::server::get_process_resource_history::Success","value":{"readAt":"-271821-04-20T00:00:00.000Z","windowMs":2,"bucketMs":2,"sampleIntervalMs":13,"retainedSampleCount":2,"totalCpuSecondsApprox":-7.254274925243286e+89,"buckets":[],"topProcesses":[],"error":{"_tag":"None"}}}
-{"key":"rpc::server::get_process_resource_history::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"access:read"}}
+{"key":"rpc::server::get_process_resource_history::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"access:write"}}
 {"key":"rpc::server::get_resource_telemetry_history::Payload","value":{"windowMs":10,"bucketMs":8}}
 {"key":"rpc::server::get_resource_telemetry_history::Success","value":{"readAt":"-271821-04-20T00:00:00.004Z","windowMs":11,"bucketMs":0,"sampleIntervalMs":13,"retainedSampleCount":0,"buckets":[],"topProcesses":[],"health":{"native":{"status":"healthy","lastSampleAt":{"_tag":"Some","value":"1969-12-31T23:59:59.956Z"},"lastError":{"_tag":"Some","value":"0"}},"desktop":{"status":"starting","lastSampleAt":{"_tag":"None"},"lastError":{"_tag":"Some","value":"m.DU"}},"sidecarVersion":{"_tag":"Some","value":"0F"},"sidecarPid":{"_tag":"None"},"restartCount":12,"collectionDurationMicros":1,"scannedProcessCount":11,"retainedProcessCount":2,"inaccessibleProcessCount":4}}}
 {"key":"rpc::server::get_resource_telemetry_history::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"settings:write","requiredPermission":"\u0000"}}
 {"key":"rpc::server::get_settings::Payload","value":{}}
 {"key":"rpc::server::get_settings::Success","value":{"favorites":[],"providerModelPreferences":{},"worktreeCleanup":{"mode":"off"},"storageCleanup":{"worktreeKeepWhen":"uncommitted-changes","worktreeAfterDays":3642,"worktreeSettledAfterDays":11,"worktreeOnMerge":false,"worktreeOnDelete":true,"worktreeUnchanged":false,"browserArtifactsAfterDays":null,"logsAfterDays":2453},"worktreesDirectory":"E","fastWorktreeCheckout":true,"previousWorktreesDirectories":[""],"responseStreamingMode":"turn","enableProviderUpdateChecks":false,"continueThreadsAfterServerUpdate":false,"keepAwakeWhileAgentsWork":true,"requireConnectDeviceApproval":true,"enableAgentBrowserAccess":true,"cloudSpeechCredentials":{"openai":"Q","xai":"","openrouter":{"provider":"T","reference":"M"}},"speechModelId":"","speechAcceleration":"auto","speechModelUnloadTimeout":"never","speechProjectCustomWords":[{"term":"n","aliases":[]}],"speechPostProcessingModelSelection":null,"projectAgentBrowserAccessOverrides":{"|":false},"credentialAutofill":{"oneApprovalPerSignIn":true,"approvalTimeoutSeconds":90,"blockScriptsAfterFill":true,"allowSubdomains":true},"defaultAutoPull":false,"defaultProjectScripts":[],"projectScriptOverrides":{},"projectAutoPullOverrides":{},"defaultModelSelection":{"instanceId":"N","model":","},"fallbackModelSelection":null,"defaultRuntimeMode":"approval-required","projectSettingsOverrides":{"t":{"providerInstances":{}}},"projectSettingsFolded":true,"enableAgentDeviceAccess":true,"enableDeviceSupport":false,"deviceOnboardingCompleted":false,"deviceHosts":[],"easDeviceHosts":[],"simlockDeviceHosts":[],"simlockDeviceHostsEnabled":false,"sidebarAutoSettleAfterDays":null,"compactIdleThreads":"off","snoozeLimitedThreads":false,"autoResumeLimitedThreads":false,"snoozePresets":[{"kind":"after","minutes":22468}],"hiddenThreadTags":[""],"hideTaggedThreads":false,"guestSharingEnabled":true,"linkedEnvironmentsEnabled":true,"promptSuggestionsEnabled":false,"sidebarAutoSettleKeepPullRequests":true,"sidebarAutoSettleOnMerge":true,"backgroundActivity":{"schemaVersion":1,"profile":"battery-saver","overrides":{"pauseWhenClientLowPower":true}},"automaticGitFetchInterval":1,"providerHealthRefreshInterval":"Infinity","backgroundActivityProfile":"performance","defaultTheme":"","defaultThemeSetAt":"","defaultAppearance":"system","defaultAppearanceSetAt":"\t","environmentIcon":null,"defaultThreadEnvMode":"local","newWorktreesStartFromOrigin":true,"worktreeSubmodules":"none","addProjectBaseDirectory":"i","ghqCloneLayout":true,"textGenerationModelSelection":{"instanceId":"p","model":"u"},"threadTitleInstructions":"=","branchNamingMode":"semantic","branchNamePrefix":"","branchNameInstructions":"\u0000","removeAgentCreditsOnMerge":false,"sourceControlWritingStyle":{"mode":"custom","customInstructions":"#","followChangeRequestTemplates":true},"sourceControlWriterModelSelection":null,"reviewGuidesEnabled":true,"reviewGuideModelSelection":null,"reviewGuideInstructions":"b","pullRequestMergeMethod":null,"providerInstances":{"e":{"driver":"b"}},"observability":{"otlpTracesUrl":"","otlpMetricsUrl":"�","otlpLogsUrl":""},"sourceControlHosts":{"":{}},"offeredSourceControlProviders":{"":false},"usageLimitSources":{" ":{"kind":"cliproxy","url":"\u0000","managementKey":{"provider":"U","reference":"e"},"enabled":false}},"textGenerators":{},"secretProviders":{"C":{"kind":"a","label":"r"}},"usageHistoryRetentionDays":"unlimited","usagePriceOverrides":{},"usageModelAliases":{"�":"/"}}}
 {"key":"rpc::server::get_settings::Error","value":{"_tag":"ServerSettingsError","settingsPath":"\u0000","operation":"use-disallowed-provider"}}
-{"key":"rpc::server::get_settings::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
+{"key":"rpc::server::get_settings::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"source-control:write"}}
 {"key":"rpc::server::get_storage_cleanup_report::Payload","value":{}}
 {"key":"rpc::server::get_storage_cleanup_report::Item","value":{"trigger":"manual","startedAt":"�","finishedAt":"O!]8","entries":[],"counts":{"removed":6.342382548031082e+304,"kept":-5.99190785055992e+146,"failed":1e-323},"omittedCount":-3.992909362429632e-260,"bytesFreed":-6e-323}}
 {"key":"rpc::server::get_storage_cleanup_report::Item","value":null}
-{"key":"rpc::server::get_storage_cleanup_report::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"access:write","requiredPermission":" "}}
+{"key":"rpc::server::get_storage_cleanup_report::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read","requiredPermission":" "}}
 {"key":"rpc::server::get_trace_diagnostics::Payload","value":{}}
 {"key":"rpc::server::get_trace_diagnostics::Success","value":{"traceFilePath":"UL","scannedFilePaths":["|a"],"readAt":"-271821-04-20T00:00:00.027Z","recordCount":0,"parseErrorCount":15,"firstSpanAt":{"_tag":"Some","value":"1970-01-01T00:00:00.049Z"},"lastSpanAt":{"_tag":"Some","value":"+275760-09-12T23:59:59.963Z"},"failureCount":3,"interruptionCount":2,"slowSpanThresholdMs":16,"slowSpanCount":2,"logLevelCounts":{"BH!L":5},"topSpansByCount":[{"name":"VZma","count":12,"failureCount":15,"totalDurationMs":-2.9149411691140934e+101,"averageDurationMs":-2.6173224096145087e-21,"maxDurationMs":-7e-323},{"name":"Pl","count":12,"failureCount":2,"totalDurationMs":-2.984499390976334e+155,"averageDurationMs":-1.7976931348623135e+308,"maxDurationMs":-5.318334680657045e+109},{"name":"tP","count":0,"failureCount":4,"totalDurationMs":-3.620684636111519e+203,"averageDurationMs":-1.0217475454422961e+24,"maxDurationMs":-1.468740717461947e-74}],"slowestSpans":[],"commonFailures":[],"latestFailures":[],"latestWarningAndErrorLogs":[],"partialFailure":{"_tag":"Some","value":true},"error":{"_tag":"Some","value":{"kind":"trace-file-not-found","message":"%_lB"}}}}
-{"key":"rpc::server::get_trace_diagnostics::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"relay:read"}}
+{"key":"rpc::server::get_trace_diagnostics::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"relay:write"}}
 {"key":"rpc::server::get_usage_summary::Payload","value":{"sinceDay":"6976-02-95","untilDay":"2433-47-36","timeZone":"G"}}
 {"key":"rpc::server::get_usage_summary::Success","value":{"contractVersion":-1.3760384237428815e+80,"readAt":"","timeZone":"�","sinceDay":"5067-43-10","untilDay":"9306-60-09","buckets":[],"sources":[],"pricing":{"status":"cached","source":"a","fetchedAt":"","knownModels":15},"scanDurationMs":11}}
-{"key":"rpc::server::get_usage_summary::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"terminal:read","requiredPermission":"-1"}}
+{"key":"rpc::server::get_usage_summary::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\n","requiredScope":"terminal:operate","requiredPermission":"-1"}}
 {"key":"rpc::server::get_usage_summary::Error","value":{"_tag":"UsageReadError","reason":"scanFailed","detail":"2"}}
 {"key":"rpc::server::import_acp_registry_session::Payload","value":{"instanceId":"y2Ng","projectId":"�","sessionId":":A]","updatedAt":"!K3"}}
 {"key":"rpc::server::import_acp_registry_session::Success","value":{"threadId":"PO'","imported":true}}
 {"key":"rpc::server::import_acp_registry_session::Error","value":{"_tag":"AcpRegistryOperationError","reason":"authentication_failed","message":"D>\"","authAction":{"elicitationId":"@","url":"😀","message":" :Jf","expiresAt":"My*]"}}}
-{"key":"rpc::server::import_acp_registry_session::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read"}}
+{"key":"rpc::server::import_acp_registry_session::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write"}}
 {"key":"rpc::server::list_acp_registry_providers::Payload","value":{"instanceId":"s","projectId":"K"}}
 {"key":"rpc::server::list_acp_registry_providers::Success","value":{"providers":[]}}
 {"key":"rpc::server::list_acp_registry_providers::Error","value":{"_tag":"AcpRegistryOperationError","reason":"session_list_unsupported","message":"\u0000"}}
@@ -2863,11 +2870,11 @@
 {"key":"rpc::server::list_acp_registry_sessions::Payload","value":{"instanceId":"KR","projectId":"$/","cursor":" "}}
 {"key":"rpc::server::list_acp_registry_sessions::Success","value":{"sessions":[],"nextCursor":"�","canLoad":true,"canResume":false,"canDelete":true}}
 {"key":"rpc::server::list_acp_registry_sessions::Error","value":{"_tag":"AcpRegistryOperationError","reason":"download_failed","message":""}}
-{"key":"rpc::server::list_acp_registry_sessions::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"access:write","requiredPermission":"😀"}}
+{"key":"rpc::server::list_acp_registry_sessions::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read","requiredPermission":"😀"}}
 {"key":"rpc::server::list_text_generator_models::Payload","value":{"id":"xX0o","refresh":false}}
 {"key":"rpc::server::list_text_generator_models::Success","value":{"models":[]}}
 {"key":"rpc::server::list_text_generator_models::Error","value":{"_tag":"TextGeneratorError","detail":"😀"}}
-{"key":"rpc::server::list_text_generator_models::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:read"}}
+{"key":"rpc::server::list_text_generator_models::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write"}}
 {"key":"rpc::server::logout_acp_registry::Payload","value":{"instanceId":"VL0"}}
 {"key":"rpc::server::logout_acp_registry::Success","value":{"loggedOut":true}}
 {"key":"rpc::server::logout_acp_registry::Error","value":{"_tag":"AcpRegistryOperationError","reason":"probe_failed","message":"","authMethods":[{"id":"i","name":"5&Cv","description":"7|^E","type":"agent"},{"id":"!","name":")251","description":"\t","type":"terminal"},{"id":"�","name":"m","description":"\t","type":"agent"}]}}
@@ -2875,7 +2882,7 @@
 {"key":"rpc::server::prepare_acp_registry_agent::Payload","value":{"agentId":"jh08"}}
 {"key":"rpc::server::prepare_acp_registry_agent::Success","value":{"agentId":"9","version":"0","distribution":"binary","prepared":true}}
 {"key":"rpc::server::prepare_acp_registry_agent::Error","value":{"_tag":"AcpRegistryOperationError","reason":"session_delete_failed","message":"","cause":""}}
-{"key":"rpc::server::prepare_acp_registry_agent::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"_W $","requiredScope":"source-control:write"}}
+{"key":"rpc::server::prepare_acp_registry_agent::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"_W $","requiredScope":"access:read"}}
 {"key":"rpc::server::prepare_triage::Payload","value":{"client":{"deviceType":"mobile","os":"!a5"}}}
 {"key":"rpc::server::prepare_triage::Success","value":{"prompt":"z]a"}}
 {"key":"rpc::server::prepare_triage::Error","value":{"_tag":"ServerPrepareTriageError"}}
@@ -2886,7 +2893,7 @@
 {"key":"rpc::server::reclaim_database_space::Payload","value":{}}
 {"key":"rpc::server::reclaim_database_space::Success","value":null}
 {"key":"rpc::server::reclaim_database_space::Error","value":{"_tag":"DatabaseReclaimError","reason":""}}
-{"key":"rpc::server::reclaim_database_space::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"wp*s","requiredScope":"relay:write","requiredPermission":"Y"}}
+{"key":"rpc::server::reclaim_database_space::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"wp*s","requiredScope":"relay:configure","requiredPermission":"Y"}}
 {"key":"rpc::server::refresh_providers::Payload","value":{"providerCatalogsOnDemand":true}}
 {"key":"rpc::server::refresh_providers::Success","value":{"providers":[]}}
 {"key":"rpc::server::refresh_providers::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"NSx'","requiredScope":"orchestration:read","requiredPermission":"0x"}}
@@ -2897,21 +2904,21 @@
 {"key":"rpc::server::remove_keybinding::Payload","value":{"key":"�","command":"script.3-4h.run","when":"😀"}}
 {"key":"rpc::server::remove_keybinding::Success","value":{"keybindings":[],"issues":[]}}
 {"key":"rpc::server::remove_keybinding::Error","value":{"_tag":"KeybindingsConfigParseError","configPath":" ","detail":""}}
-{"key":"rpc::server::remove_keybinding::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write"}}
+{"key":"rpc::server::remove_keybinding::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"review:write"}}
 {"key":"rpc::server::report_client_activity::Payload","value":{"clientId":"\u0000","clientKind":"desktop-renderer","visible":true,"focused":false,"recentlyInteracted":true,"scopes":[{"type":"git-refs","cwd":"�"},{"type":"provider-status"}],"observedAt":"-127016-08-08T12:13:20.862Z"}}
 {"key":"rpc::server::report_client_activity::Success","value":null}
-{"key":"rpc::server::report_client_activity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"review:write","requiredPermission":""}}
+{"key":"rpc::server::report_client_activity::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\u0000","requiredScope":"source-control:write","requiredPermission":""}}
 {"key":"rpc::server::restart::Payload","value":{}}
 {"key":"rpc::server::restart::Success","value":{"accepted":true}}
 {"key":"rpc::server::restart::Error","value":{"_tag":"ServerRestartError","reason":"$"}}
 {"key":"rpc::server::restart::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"q/i+","requiredScope":"providers:manage"}}
 {"key":"rpc::server::retry_resource_telemetry::Payload","value":{}}
 {"key":"rpc::server::retry_resource_telemetry::Success","value":{"accepted":true,"snapshot":{"readAt":"-202067-08-11T01:48:23.752Z","sampleIntervalMs":2,"processes":[],"groups":{"backend":{"processCount":8,"currentCpuPercent":-5.4e-323,"cpuTimeMs":15,"currentRssBytes":13,"peakRssBytes":1,"ioReadBytes":3,"ioWriteBytes":10,"ioReadBytesPerSecond":-5.4e-323,"ioWriteBytesPerSecond":1.2453364886993004e-12,"processStarts":7,"processExits":1},"electron":{"processCount":2,"currentCpuPercent":8e-323,"cpuTimeMs":4,"currentRssBytes":0,"peakRssBytes":1,"ioReadBytes":1,"ioWriteBytes":13,"ioReadBytesPerSecond":-2.0834071592164124e-238,"ioWriteBytesPerSecond":1.7976931348623125e+308,"processStarts":0,"processExits":1},"monitor":{"processCount":12,"currentCpuPercent":1.7976931348623131e+308,"cpuTimeMs":4,"currentRssBytes":15,"peakRssBytes":3,"ioReadBytes":4,"ioWriteBytes":15,"ioReadBytesPerSecond":1e-323,"ioWriteBytesPerSecond":1.1048405078996153e-226,"processStarts":13,"processExits":4},"allT3":{"processCount":12,"currentCpuPercent":-1.9262512711611844e+23,"cpuTimeMs":1,"currentRssBytes":0,"peakRssBytes":12,"ioReadBytes":4,"ioWriteBytes":15,"ioReadBytesPerSecond":9.4e-323,"ioWriteBytesPerSecond":1.7976931348623127e+308,"processStarts":11,"processExits":2}},"power":{"source":"node-macos-shell","idle":"true","idleSeconds":null,"locked":"unknown","suspended":false,"onBattery":"unknown","lowPowerMode":"unknown","thermalState":"unknown","stale":false,"updatedAt":"-208228-09-29T02:21:12.467Z"},"speedLimitPercent":{"_tag":"Some","value":3.7783931954879423e-141},"attribution":{"readAt":"1969-12-31T23:59:59.987Z","entries":[]},"health":{"native":{"status":"healthy","lastSampleAt":{"_tag":"Some","value":"1969-12-31T23:59:59.970Z"},"lastError":{"_tag":"Some","value":"/ah"}},"desktop":{"status":"unavailable","lastSampleAt":{"_tag":"Some","value":"-174998-09-16T21:45:03.218Z"},"lastError":{"_tag":"Some","value":"x|"}},"sidecarVersion":{"_tag":"None"},"sidecarPid":{"_tag":"Some","value":14},"restartCount":3,"collectionDurationMicros":4,"scannedProcessCount":1,"retainedProcessCount":15,"inaccessibleProcessCount":16}}}}
-{"key":"rpc::server::retry_resource_telemetry::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"access:write","requiredPermission":"�"}}
+{"key":"rpc::server::retry_resource_telemetry::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"relay:read","requiredPermission":"�"}}
 {"key":"rpc::server::run_storage_cleanup::Payload","value":{}}
 {"key":"rpc::server::run_storage_cleanup::Success","value":{"trigger":"manual","startedAt":"","finishedAt":"Sfe7","entries":[{"kind":"logs","outcome":"failed","reason":"\t","path":null,"projectPath":"�","threadId":null,"threadTitle":null,"bytes":null,"files":1.7976931348623131e+308},{"kind":"worktree","outcome":"removed","reason":" ","path":"$/=s","projectPath":null,"threadId":null,"threadTitle":"","bytes":null,"files":null}],"counts":{"removed":2.2698302266052556e+52,"kept":1.0031655540766219e-200,"failed":1e-323},"omittedCount":1.2111068837758592e-10,"bytesFreed":5e-324}}
 {"key":"rpc::server::run_storage_cleanup::Error","value":{"_tag":"ServerSettingsError","settingsPath":"\t","operation":"normalize"}}
-{"key":"rpc::server::run_storage_cleanup::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write","requiredPermission":""}}
+{"key":"rpc::server::run_storage_cleanup::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:configure","requiredPermission":""}}
 {"key":"rpc::server::search_acp_registry::Payload","value":{"query":"B4","limit":410}}
 {"key":"rpc::server::search_acp_registry::Success","value":{"agents":[{"id":"8t-_","name":"�","version":"�","description":"-1","authors":[],"license":null,"website":null,"repository":"","icon":"\n","distribution":"uvx","integrity":"sha256"},{"id":"l73","name":"<w7D","version":"😀","description":"","authors":["BtB",">|q~","I","\t"],"license":null,"website":null,"repository":"0","icon":null,"distribution":"binary","integrity":"sha256"}]}}
 {"key":"rpc::server::search_acp_registry::Error","value":{"_tag":"AcpRegistryOperationError","reason":"probe_failed","message":"\u0000"}}
@@ -2922,7 +2929,7 @@
 {"key":"rpc::server::set_acp_registry_provider::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"@^","requiredScope":"review:write","requiredPermission":""}}
 {"key":"rpc::server::signal_process::Payload","value":{"pid":2,"startTimeMs":0,"signal":"SIGKILL"}}
 {"key":"rpc::server::signal_process::Success","value":{"pid":4,"signal":"SIGKILL","signaled":true,"message":{"_tag":"Some","value":"9"}}}
-{"key":"rpc::server::signal_process::Error","value":{"_tag":"EnvironmentAuthorizationError","message":",w%3","requiredScope":"preview:operate"}}
+{"key":"rpc::server::signal_process::Error","value":{"_tag":"EnvironmentAuthorizationError","message":",w%3","requiredScope":"diagnostics:read"}}
 {"key":"rpc::server::uninstall_acp_registry_managed_binary::Payload","value":{"agentId":"q8"}}
 {"key":"rpc::server::uninstall_acp_registry_managed_binary::Success","value":{"agentId":"anjm","removed":true}}
 {"key":"rpc::server::uninstall_acp_registry_managed_binary::Error","value":{"_tag":"AcpRegistryOperationError","reason":"providers_unsupported","message":"[M>","authAction":{"elicitationId":"-3ID","url":"}mR:","message":"n.b^","expiresAt":"\n"}}}
@@ -2930,20 +2937,20 @@
 {"key":"rpc::server::update_provider::Payload","value":{"provider":"G","instanceId":"S"}}
 {"key":"rpc::server::update_provider::Success","value":{"providers":[]}}
 {"key":"rpc::server::update_provider::Error","value":{"_tag":"ServerProviderUpdateError","provider":"F","reason":"0"}}
-{"key":"rpc::server::update_provider::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:write","requiredPermission":"😀"}}
+{"key":"rpc::server::update_provider::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"relay:configure","requiredPermission":"😀"}}
 {"key":"rpc::server::update_server::Payload","value":{"targetVersion":"2+[$","channel":"nightly","targetDatabaseMigration":4}}
 {"key":"rpc::server::update_server::Success","value":{"targetVersion":"nx","method":"desktop-app"}}
 {"key":"rpc::server::update_server::Error","value":{"_tag":"ServerSelfUpdateError","reason":"😀"}}
-{"key":"rpc::server::update_server::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"providers:manage","requiredPermission":"😀"}}
+{"key":"rpc::server::update_server::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"environment:maintain","requiredPermission":"😀"}}
 {"key":"rpc::server::update_server_with_progress::Payload","value":{"targetVersion":"0","channel":"latest","stageOnly":true}}
 {"key":"rpc::server::update_server_with_progress::Item","value":{"type":"progress","stage":"downloading"}}
 {"key":"rpc::server::update_server_with_progress::Item","value":{"type":"complete","result":{"targetVersion":"Lb","method":"boot-service","desktopUpdateToken":"F\"@"}}}
 {"key":"rpc::server::update_server_with_progress::Error","value":{"_tag":"ServerSelfUpdateError","reason":"T"}}
-{"key":"rpc::server::update_server_with_progress::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"m{k:","requiredScope":"relay:write","requiredPermission":"�"}}
+{"key":"rpc::server::update_server_with_progress::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"m{k:","requiredScope":"relay:configure","requiredPermission":"�"}}
 {"key":"rpc::server::update_settings::Payload","value":{"patch":{}}}
 {"key":"rpc::server::update_settings::Success","value":{"favorites":null,"providerModelPreferences":{},"worktreeCleanup":null,"storageCleanup":{"worktreeKeepWhen":"uncommitted-changes","worktreeAfterDays":null,"worktreeSettledAfterDays":1672,"worktreeOnMerge":true,"worktreeOnDelete":false,"worktreeUnchanged":true,"browserArtifactsAfterDays":5,"logsAfterDays":3645},"worktreesDirectory":"/","fastWorktreeCheckout":false,"previousWorktreesDirectories":[""],"responseStreamingMode":"turn","enableProviderUpdateChecks":true,"continueThreadsAfterServerUpdate":true,"keepAwakeWhileAgentsWork":false,"requireConnectDeviceApproval":true,"enableAgentBrowserAccess":false,"cloudSpeechCredentials":{"openai":"","xai":"","openrouter":{"provider":"k","reference":"≃"}},"speechModelId":"x","speechAcceleration":"gpu:鎷","speechModelUnloadTimeout":"immediately","speechProjectCustomWords":[],"speechPostProcessingModelSelection":null,"projectAgentBrowserAccessOverrides":{"\\":false},"credentialAutofill":{"oneApprovalPerSignIn":false,"approvalTimeoutSeconds":30,"blockScriptsAfterFill":true,"allowSubdomains":false},"defaultAutoPull":false,"defaultProjectScripts":[{"id":"*","name":"'","command":"\\","icon":"play","runOnWorktreeCreate":false}],"projectScriptOverrides":{"\u0000":null},"projectAutoPullOverrides":{"\u0000":false},"defaultModelSelection":null,"fallbackModelSelection":null,"defaultRuntimeMode":"auto-accept-edits","projectSettingsOverrides":{"0":{"sidebarAutoSettleOnMerge":true}},"projectSettingsFolded":false,"enableAgentDeviceAccess":true,"enableDeviceSupport":true,"deviceOnboardingCompleted":true,"deviceHosts":[],"easDeviceHosts":[{"kind":"eas","id":"U","label":"�","accessToken":"","maxSessionMinutes":53,"idleMinutes":27,"maxConcurrentSessions":11}],"simlockDeviceHosts":[{"kind":"simlock","id":"n","label":"u","gatewayUrl":"http://뭳","agentToken":{"provider":"l","reference":"腩"},"maxLeases":19,"maxLeaseMinutes":112}],"simlockDeviceHostsEnabled":false,"sidebarAutoSettleAfterDays":null,"compactIdleThreads":false,"snoozeLimitedThreads":true,"autoResumeLimitedThreads":true,"snoozePresets":[{"kind":"after","minutes":16611}],"hiddenThreadTags":[""],"hideTaggedThreads":true,"guestSharingEnabled":true,"linkedEnvironmentsEnabled":false,"promptSuggestionsEnabled":false,"sidebarAutoSettleKeepPullRequests":true,"sidebarAutoSettleOnMerge":false,"backgroundActivity":{"schemaVersion":1,"profile":"battery-saver","overrides":{}},"automaticGitFetchInterval":"-Infinity","providerHealthRefreshInterval":9007199254.740992,"backgroundActivityProfile":"battery-saver","defaultTheme":"","defaultThemeSetAt":"","defaultAppearance":"dark","defaultAppearanceSetAt":"s","environmentIcon":null,"defaultThreadEnvMode":"local","newWorktreesStartFromOrigin":true,"worktreeSubmodules":"none","addProjectBaseDirectory":"?","ghqCloneLayout":true,"textGenerationModelSelection":{"instanceId":"c","model":"H"},"threadTitleInstructions":"","branchNamingMode":"custom","branchNamePrefix":"","branchNameInstructions":"","removeAgentCreditsOnMerge":true,"sourceControlWritingStyle":{"mode":"repo_conventions","customInstructions":"}","followChangeRequestTemplates":true},"sourceControlWriterModelSelection":null,"reviewGuidesEnabled":false,"reviewGuideModelSelection":{"instanceId":"e","model":"'"},"reviewGuideInstructions":"","pullRequestMergeMethod":null,"providerInstances":{},"observability":{"otlpTracesUrl":"","otlpMetricsUrl":"H","otlpLogsUrl":""},"sourceControlHosts":{"�":{}},"offeredSourceControlProviders":{},"usageLimitSources":{"":{"kind":"cliproxy","url":",","managementKey":"S","enabled":true}},"textGenerators":{},"secretProviders":{},"usageHistoryRetentionDays":2,"usagePriceOverrides":{},"usageModelAliases":{"-":"d"}}}
 {"key":"rpc::server::update_settings::Error","value":{"_tag":"ServerSettingsError","settingsPath":"c!","operation":"read-provider-history"}}
-{"key":"rpc::server::update_settings::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"diagnostics:read","requiredPermission":"\u0000"}}
+{"key":"rpc::server::update_settings::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"terminal:read","requiredPermission":"\u0000"}}
 {"key":"rpc::server::upsert_keybinding::Payload","value":{"key":"?P","command":"preview.zoomOut","when":"�","replace":{"key":"t","command":"script.mk7j.run"}}}
 {"key":"rpc::server::upsert_keybinding::Success","value":{"keybindings":[],"issues":[]}}
 {"key":"rpc::server::upsert_keybinding::Error","value":{"_tag":"KeybindingsConfigParseError","configPath":"","detail":"","cause":false}}
@@ -2951,14 +2958,14 @@
 {"key":"rpc::shell::open_in_editor::Payload","value":{"cwd":"0","editor":"cursor","projectRoot":"TK0","reveal":false}}
 {"key":"rpc::shell::open_in_editor::Success","value":null}
 {"key":"rpc::shell::open_in_editor::Error","value":{"_tag":"ExternalLauncherCommandNotFoundError","editor":"vscode","command":"-1"}}
-{"key":"rpc::shell::open_in_editor::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"source-control:write","requiredPermission":"�"}}
+{"key":"rpc::shell::open_in_editor::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"access:read","requiredPermission":"�"}}
 {"key":"rpc::source_control::app_access::Payload","value":{"provider":"ofzb","host":"0","repository":"-1"}}
 {"key":"rpc::source_control::app_access::Success","value":{"status":"signed-out"}}
-{"key":"rpc::source_control::app_access::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate"}}
+{"key":"rpc::source_control::app_access::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read"}}
 {"key":"rpc::source_control::clone_repository::Payload","value":{"destinationPath":"N[S#"}}
 {"key":"rpc::source_control::clone_repository::Success","value":{"cwd":"�","remoteUrl":"]","repository":null}}
 {"key":"rpc::source_control::clone_repository::Error","value":{"_tag":"SourceControlRepositoryError","provider":"edyd","operation":"\u0000","detail":">m:t"}}
-{"key":"rpc::source_control::clone_repository::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"z8Fv","requiredScope":"source-control:write","requiredPermission":"'"}}
+{"key":"rpc::source_control::clone_repository::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"z8Fv","requiredScope":"access:read","requiredPermission":"'"}}
 {"key":"rpc::source_control::lookup_repository::Payload","value":{"provider":"s8wv","repository":"1"}}
 {"key":"rpc::source_control::lookup_repository::Success","value":{"provider":"c","nameWithOwner":"N(x\\","url":"\u0000","sshUrl":"0"}}
 {"key":"rpc::source_control::lookup_repository::Error","value":{"_tag":"SourceControlRepositoryError","provider":"kdl","operation":"�","detail":"|V]L"}}
@@ -2966,7 +2973,7 @@
 {"key":"rpc::source_control::publish_repository::Payload","value":{"cwd":"p","provider":"h","repository":"}","visibility":"public"}}
 {"key":"rpc::source_control::publish_repository::Success","value":{"repository":{"provider":"vdof","nameWithOwner":"😀","url":"�","sshUrl":"gwX>"},"remoteName":"D@iP","remoteUrl":"NHe","branch":"\u0000","status":"remote_added"}}
 {"key":"rpc::source_control::publish_repository::Error","value":{"_tag":"SourceControlRepositoryError","provider":"zj7l","operation":"","detail":"4?6%"}}
-{"key":"rpc::source_control::publish_repository::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write","requiredPermission":"�"}}
+{"key":"rpc::source_control::publish_repository::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:configure","requiredPermission":"�"}}
 {"key":"rpc::source_control::sign_in_cancel::Payload","value":{"provider":"faie","host":"�"}}
 {"key":"rpc::source_control::sign_in_cancel::Success","value":null}
 {"key":"rpc::source_control::sign_in_cancel::Error","value":{"_tag":"SourceControlSignInError","provider":"u","host":"tI!v","reason":"cancelled","detail":"�"}}
@@ -2974,28 +2981,28 @@
 {"key":"rpc::source_control::sign_in_start::Payload","value":{"provider":"b0s","host":"b"}}
 {"key":"rpc::source_control::sign_in_start::Success","value":{"userCode":"?","verificationUri":".\\","expiresAt":3.8067892846261524e+36}}
 {"key":"rpc::source_control::sign_in_start::Error","value":{"_tag":"SourceControlSignInError","provider":"z","host":"Y&C","reason":"expired","detail":""}}
-{"key":"rpc::source_control::sign_in_start::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"j","requiredScope":"terminal:read"}}
+{"key":"rpc::source_control::sign_in_start::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"j","requiredScope":"terminal:operate"}}
 {"key":"rpc::source_control::sign_in_wait::Payload","value":{"provider":"rkl1","host":"\u0000"}}
 {"key":"rpc::source_control::sign_in_wait::Success","value":{"account":"�"}}
 {"key":"rpc::source_control::sign_in_wait::Error","value":{"_tag":"SourceControlSignInError","provider":"b","host":"�","reason":"failed","detail":"P"}}
-{"key":"rpc::source_control::sign_in_wait::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write","requiredPermission":"\t"}}
+{"key":"rpc::source_control::sign_in_wait::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:read","requiredPermission":"\t"}}
 {"key":"rpc::source_control::star::Payload","value":{"provider":"t","host":"cW`:","repository":"a"}}
 {"key":"rpc::source_control::star::Success","value":false}
-{"key":"rpc::source_control::star::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate","requiredPermission":"\n"}}
+{"key":"rpc::source_control::star::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read","requiredPermission":"\n"}}
 {"key":"rpc::source_control::starred::Payload","value":{"provider":"cq","host":"�","repository":"_Bet"}}
 {"key":"rpc::source_control::starred::Success","value":false}
-{"key":"rpc::source_control::starred::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"review:write","requiredPermission":""}}
+{"key":"rpc::source_control::starred::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"source-control:write","requiredPermission":""}}
 {"key":"rpc::subscribe_auth_access::field::Payload","value":{}}
-{"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":-1.1850789963626251e+154,"type":"snapshot","payload":{"pairingLinks":[{"id":"s\\TI","scopes":[],"subject":"M","createdAt":"-271821-04-20T00:00:00.018Z","expiresAt":"+046776-10-30T19:13:25.131Z"},{"id":"-1","scopes":["terminal:operate","source-control:write"],"subject":"QK&","createdAt":"-271821-04-20T00:00:00.044Z","expiresAt":"-212809-11-23T18:24:57.072Z"},{"id":"i9","scopes":["terminal:read","terminal:operate","relay:write","filesystem:write"],"subject":"-1","createdAt":"+028349-07-11T07:01:07.158Z","expiresAt":"1970-01-01T00:00:00.018Z"},{"id":"6","scopes":["access:write","terminal:read","relay:write","source-control:write"],"subject":"�","createdAt":"-110686-12-31T14:04:29.743Z","expiresAt":"1969-12-31T23:59:59.980Z"}],"clientSessions":[{"sessionId":"'","subject":"d|jn","scopes":["providers:manage","filesystem:read","diagnostics:read","settings:write"],"method":"bearer-access-token","client":{"deviceType":"bot"},"issuedAt":"1969-12-31T23:59:59.966Z","expiresAt":"-271821-04-20T00:00:00.051Z","lastConnectedAt":"1970-01-01T00:00:00.017Z","connected":true,"current":true},{"sessionId":"WS`R","subject":"Hz","scopes":[],"method":"bearer-access-token","client":{"deviceType":"desktop"},"issuedAt":"1969-12-31T23:59:59.993Z","expiresAt":"+250140-05-30T02:14:40.623Z","lastConnectedAt":null,"connected":true,"current":true},{"sessionId":"-1","subject":"B","scopes":[],"method":"browser-session-cookie","client":{"label":"&","deviceType":"tablet"},"issuedAt":"-271821-04-20T00:00:00.008Z","expiresAt":"+275760-09-12T23:59:59.961Z","lastConnectedAt":"1969-12-31T23:59:59.973Z","connected":false,"current":true},{"sessionId":"0","subject":"�","scopes":["review:write","source-control:write","terminal:read"],"method":"dpop-access-token","client":{"userAgent":"😀","deviceType":"tablet","os":"-1"},"issuedAt":"-035587-10-09T06:05:02.431Z","expiresAt":"-163926-08-19T15:15:19.918Z","lastConnectedAt":null,"connected":false,"current":true}]}}}
+{"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":-1.1850789963626251e+154,"type":"snapshot","payload":{"pairingLinks":[{"id":"s\\TI","scopes":[],"subject":"M","createdAt":"-271821-04-20T00:00:00.018Z","expiresAt":"+046776-10-30T19:13:25.131Z"},{"id":"-1","scopes":["filesystem:read","access:read"],"subject":"QK&","createdAt":"-271821-04-20T00:00:00.044Z","expiresAt":"-212809-11-23T18:24:57.072Z"},{"id":"i9","scopes":["terminal:operate","terminal:operate","relay:write","filesystem:write"],"subject":"-1","createdAt":"+028349-07-11T07:01:07.158Z","expiresAt":"1970-01-01T00:00:00.018Z"},{"id":"6","scopes":["relay:read","terminal:operate","relay:configure","access:read"],"subject":"�","createdAt":"-110686-12-31T14:04:29.743Z","expiresAt":"1969-12-31T23:59:59.980Z"}],"clientSessions":[{"sessionId":"'","subject":"d|jn","scopes":["providers:manage","filesystem:write","diagnostics:read","providers:manage"],"method":"bearer-access-token","client":{"deviceType":"bot"},"issuedAt":"1969-12-31T23:59:59.966Z","expiresAt":"-271821-04-20T00:00:00.051Z","lastConnectedAt":"1970-01-01T00:00:00.017Z","connected":true,"current":true},{"sessionId":"WS`R","subject":"Hz","scopes":[],"method":"bearer-access-token","client":{"deviceType":"desktop"},"issuedAt":"1969-12-31T23:59:59.993Z","expiresAt":"+250140-05-30T02:14:40.623Z","lastConnectedAt":null,"connected":true,"current":true},{"sessionId":"-1","subject":"B","scopes":[],"method":"browser-session-cookie","client":{"label":"&","deviceType":"tablet"},"issuedAt":"-271821-04-20T00:00:00.008Z","expiresAt":"+275760-09-12T23:59:59.961Z","lastConnectedAt":"1969-12-31T23:59:59.973Z","connected":false,"current":true},{"sessionId":"0","subject":"�","scopes":["source-control:write","source-control:write","terminal:operate"],"method":"dpop-access-token","client":{"userAgent":"😀","deviceType":"tablet","os":"-1"},"issuedAt":"-035587-10-09T06:05:02.431Z","expiresAt":"-163926-08-19T15:15:19.918Z","lastConnectedAt":null,"connected":false,"current":true}]}}}
 {"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":2.8295506484802275e+224,"type":"pairingLinkUpserted","payload":{"id":"t>","scopes":[],"subject":"oSZC","createdAt":"-087092-12-15T10:56:23.861Z","expiresAt":"1969-12-31T23:59:59.961Z"}}}
 {"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":-6.4e-323,"type":"pairingLinkRemoved","payload":{"id":"kacS"}}}
-{"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":3.5e-323,"type":"clientUpserted","payload":{"sessionId":"�","subject":"n`","scopes":["source-control:write"],"method":"browser-session-cookie","client":{"deviceType":"mobile"},"issuedAt":"1970-01-01T00:00:00.032Z","expiresAt":"-149809-09-29T19:17:32.096Z","lastConnectedAt":null,"connected":true,"current":true}}}
+{"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":3.5e-323,"type":"clientUpserted","payload":{"sessionId":"�","subject":"n`","scopes":["access:read"],"method":"browser-session-cookie","client":{"deviceType":"mobile"},"issuedAt":"1970-01-01T00:00:00.032Z","expiresAt":"-149809-09-29T19:17:32.096Z","lastConnectedAt":null,"connected":true,"current":true}}}
 {"key":"rpc::subscribe_auth_access::field::Item","value":{"version":1,"revision":0,"type":"clientRemoved","payload":{"sessionId":"\u0000"}}}
 {"key":"rpc::subscribe_auth_access::field::Error","value":{"_tag":"AuthAccessStreamError","message":""}}
-{"key":"rpc::subscribe_auth_access::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"access:write","requiredPermission":""}}
+{"key":"rpc::subscribe_auth_access::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"\t","requiredScope":"relay:read","requiredPermission":""}}
 {"key":"rpc::subscribe_device_state::field::Payload","value":{}}
 {"key":"rpc::subscribe_device_state::field::Item","value":{"hostStatus":"idle","hostStatuses":{"VpO":{"status":"installing","incompletePlatforms":["ios"]}},"devices":[],"sessions":[],"onboardingCompleted":true,"agentAccessEnabled":true,"hubBasePath":"�","revision":3,"hosts":[],"easHosts":[{"id":"`ON","label":"!","platforms":[{"platform":"android","available":true,"reason":"oW:_"},{"platform":"android","available":false,"reason":"\t"},{"platform":"ios","available":true},{"platform":"ios","available":true}],"hubInstalled":true,"agentDeviceInstalled":false,"kind":"eas"}],"simlockHosts":[]}}
-{"key":"rpc::subscribe_device_state::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:write","requiredPermission":"jx^"}}
+{"key":"rpc::subscribe_device_state::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"relay:configure","requiredPermission":"jx^"}}
 {"key":"rpc::subscribe_discovered_local_servers::field::Payload","value":{}}
 {"key":"rpc::subscribe_discovered_local_servers::field::Item","value":{"servers":[],"scannedAt":"0"}}
 {"key":"rpc::subscribe_discovered_local_servers::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"orchestration:operate"}}
@@ -3005,13 +3012,13 @@
 {"key":"rpc::subscribe_preview_events::field::Item","value":{"threadId":"B","tabId":"Y-!","createdAt":"","serverEpoch":"`3","revision":14,"type":"resized","snapshot":{"threadId":":","tabId":"-1","navStatus":{"_tag":"Loading","url":"=","title":""},"canGoBack":true,"canGoForward":false,"updatedAt":"dy'x"}}}
 {"key":"rpc::subscribe_preview_events::field::Item","value":{"threadId":"]m","tabId":"we:0","createdAt":".CEj","serverEpoch":"GTtk","revision":7,"type":"failed","url":".","title":"#B#D","code":-4,"description":"1Mo^"}}
 {"key":"rpc::subscribe_preview_events::field::Item","value":{"threadId":"|A4","tabId":"0","createdAt":"","serverEpoch":"v$VY","revision":5,"type":"closed"}}
-{"key":"rpc::subscribe_preview_events::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"qyS ","requiredScope":"filesystem:read","requiredPermission":""}}
+{"key":"rpc::subscribe_preview_events::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"qyS ","requiredScope":"filesystem:write","requiredPermission":""}}
 {"key":"rpc::subscribe_project_clones::field::Payload","value":{}}
 {"key":"rpc::subscribe_project_clones::field::Item","value":[]}
 {"key":"rpc::subscribe_project_clones::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"0","requiredScope":"source-control:write"}}
 {"key":"rpc::subscribe_resource_telemetry::field::Payload","value":{}}
 {"key":"rpc::subscribe_resource_telemetry::field::Item","value":{"readAt":"-044533-01-08T07:58:55.577Z","sampleIntervalMs":2,"processes":[],"groups":{"backend":{"processCount":12,"currentCpuPercent":-1.7976931348623127e+308,"cpuTimeMs":9,"currentRssBytes":4,"peakRssBytes":14,"ioReadBytes":9,"ioWriteBytes":15,"ioReadBytesPerSecond":1.317550642851986e-60,"ioWriteBytesPerSecond":-6.4e-323,"processStarts":3,"processExits":2},"electron":{"processCount":2,"currentCpuPercent":-3.639027814943288e-88,"cpuTimeMs":1,"currentRssBytes":0,"peakRssBytes":0,"ioReadBytes":3,"ioWriteBytes":8,"ioReadBytesPerSecond":-3.450972282316809e-195,"ioWriteBytesPerSecond":-5e-324,"processStarts":13,"processExits":2},"monitor":{"processCount":0,"currentCpuPercent":-2.817761528179961e-221,"cpuTimeMs":2,"currentRssBytes":14,"peakRssBytes":4,"ioReadBytes":0,"ioWriteBytes":13,"ioReadBytesPerSecond":-5.4e-323,"ioWriteBytesPerSecond":-2.8647525293943195e-301,"processStarts":2,"processExits":0},"allT3":{"processCount":4,"currentCpuPercent":1.2316312675594743e-189,"cpuTimeMs":2,"currentRssBytes":9,"peakRssBytes":8,"ioReadBytes":12,"ioWriteBytes":10,"ioReadBytesPerSecond":7.662362743208567e-306,"ioWriteBytesPerSecond":9.4e-323,"processStarts":9,"processExits":0}},"power":{"source":"electron-main","idle":"unknown","idleSeconds":-1.7976931348623131e+308,"locked":"true","suspended":false,"onBattery":"true","lowPowerMode":"false","thermalState":"fair","stale":true,"updatedAt":"+275760-09-12T23:59:59.965Z"},"speedLimitPercent":{"_tag":"Some","value":1.7976931348623145e+308},"attribution":{"readAt":"1970-01-01T00:00:00.015Z","entries":[{"component":"�","operation":"=","logicalReadBytes":9,"logicalWriteBytes":10,"count":0,"durationMs":9},{"component":">","operation":"�","logicalReadBytes":11,"logicalWriteBytes":7,"count":3,"durationMs":14}]},"health":{"native":{"status":"healthy","lastSampleAt":{"_tag":"Some","value":"-094040-05-05T17:01:48.769Z"},"lastError":{"_tag":"Some","value":"l}\"F"}},"desktop":{"status":"degraded","lastSampleAt":{"_tag":"Some","value":"-271821-04-20T00:00:00.011Z"},"lastError":{"_tag":"None"}},"sidecarVersion":{"_tag":"Some","value":"iXZQ"},"sidecarPid":{"_tag":"Some","value":5},"restartCount":16,"collectionDurationMicros":0,"scannedProcessCount":16,"retainedProcessCount":3,"inaccessibleProcessCount":6}}}
-{"key":"rpc::subscribe_resource_telemetry::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:write"}}
+{"key":"rpc::subscribe_resource_telemetry::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"review:write"}}
 {"key":"rpc::subscribe_server_config::field::Payload","value":{"workspaceSnapshotsOnDemand":true}}
 {"key":"rpc::subscribe_server_config::field::Item","value":{"version":1,"type":"snapshot","config":{"environment":{"environmentId":"+","label":"?","platform":{"os":"darwin","arch":"x64"},"serverVersion":"M","capabilities":{"repositoryIdentity":true}},"auth":{"policy":"loopback-browser","bootstrapMethods":[],"sessionMethods":[],"sessionCookieName":"A"},"cwd":"\u0000","keybindingsConfigPath":"?","keybindings":[{"command":"modelPicker.jump.5","shortcut":{"key":"}","metaKey":false,"ctrlKey":true,"shiftKey":false,"altKey":false,"modKey":false}}],"issues":[],"providers":[{"instanceId":"f","driver":"l","enabled":false,"installed":false,"version":null,"status":"error","auth":{"status":"authenticated"},"checkedAt":"�","models":[],"slashCommands":[],"skills":[]}],"availableEditors":["antigravity"],"observability":{"logsDirectoryPath":"'","localTracingEnabled":true,"otlpTracesEnabled":true,"otlpMetricsEnabled":true,"otlpLogsEnabled":false},"settings":{"favorites":[{"provider":"m","model":"9"}],"providerModelPreferences":null,"worktreeCleanup":null,"storageCleanup":{"worktreeKeepWhen":"uncommitted-changes","worktreeAfterDays":null,"worktreeSettledAfterDays":1179,"worktreeOnMerge":false,"worktreeOnDelete":true,"worktreeUnchanged":true,"browserArtifactsAfterDays":1576,"logsAfterDays":null},"worktreesDirectory":"H","fastWorktreeCheckout":true,"previousWorktreesDirectories":[],"responseStreamingMode":"turn","enableProviderUpdateChecks":true,"continueThreadsAfterServerUpdate":false,"keepAwakeWhileAgentsWork":true,"requireConnectDeviceApproval":false,"enableAgentBrowserAccess":true,"cloudSpeechCredentials":{"openai":"0","xai":{"provider":"a","reference":"仼"},"openrouter":""},"speechModelId":"","speechAcceleration":"auto","speechModelUnloadTimeout":"hour_1","speechProjectCustomWords":[],"speechPostProcessingModelSelection":{"instanceId":"O","model":"R"},"projectAgentBrowserAccessOverrides":{",":true},"credentialAutofill":{"oneApprovalPerSignIn":true,"approvalTimeoutSeconds":180,"blockScriptsAfterFill":true,"allowSubdomains":false},"defaultAutoPull":true,"defaultProjectScripts":[{"id":">","name":"S","command":"m","icon":"debug","runOnWorktreeCreate":false}],"projectScriptOverrides":{},"projectAutoPullOverrides":{},"defaultModelSelection":null,"fallbackModelSelection":{"instanceId":"b","model":"5"},"defaultRuntimeMode":"auto","projectSettingsOverrides":{"o":{}},"projectSettingsFolded":false,"enableAgentDeviceAccess":false,"enableDeviceSupport":true,"deviceOnboardingCompleted":true,"deviceHosts":[],"easDeviceHosts":[{"kind":"eas","id":"0","label":"<","accessToken":{"provider":"b","reference":"O"},"maxSessionMinutes":95,"idleMinutes":34,"maxConcurrentSessions":1}],"simlockDeviceHosts":[{"kind":"simlock","id":"p","label":"7","gatewayUrl":"http://镩","agentToken":{"provider":"t","reference":"ퟪ"},"maxLeases":13,"maxLeaseMinutes":100}],"simlockDeviceHostsEnabled":false,"sidebarAutoSettleAfterDays":null,"compactIdleThreads":"off","snoozeLimitedThreads":false,"autoResumeLimitedThreads":true,"snoozePresets":[],"hiddenThreadTags":[""],"hideTaggedThreads":true,"guestSharingEnabled":true,"linkedEnvironmentsEnabled":false,"promptSuggestionsEnabled":true,"sidebarAutoSettleKeepPullRequests":false,"sidebarAutoSettleOnMerge":false,"backgroundActivity":{"schemaVersion":1,"profile":"custom","overrides":{}},"automaticGitFetchInterval":-0.000005,"providerHealthRefreshInterval":"-Infinity","backgroundActivityProfile":"performance","defaultTheme":"D","defaultThemeSetAt":"o","defaultAppearance":"system","defaultAppearanceSetAt":"_","environmentIcon":null,"newWorktreesStartFromOrigin":true,"worktreeSubmodules":"recursive","addProjectBaseDirectory":"","ghqCloneLayout":false,"textGenerationModelSelection":{"instanceId":"M","model":"O"},"threadTitleInstructions":"2","branchNamingMode":"custom","branchNamePrefix":"","branchNameInstructions":"","removeAgentCreditsOnMerge":false,"sourceControlWritingStyle":{"mode":"custom","customInstructions":"P","followChangeRequestTemplates":true},"sourceControlWriterModelSelection":null,"reviewGuidesEnabled":false,"reviewGuideModelSelection":null,"reviewGuideInstructions":"","pullRequestMergeMethod":null,"providerInstances":{},"observability":{"otlpTracesUrl":"s","otlpMetricsUrl":"","otlpLogsUrl":""},"sourceControlHosts":{"":{}},"offeredSourceControlProviders":{},"usageLimitSources":{"":{"kind":"cliproxy","url":"|","managementKey":{"provider":"f","reference":"퍗"},"enabled":true}},"textGenerators":{},"secretProviders":{},"usageHistoryRetentionDays":"unlimited","usagePriceOverrides":{"&":{"inputCostPerMillionTokens":1.7976931348623157e+308,"outputCostPerMillionTokens":4.4e-323}},"usageModelAliases":{}}}}}
 {"key":"rpc::subscribe_server_config::field::Item","value":{"version":1,"type":"keybindingsUpdated","payload":{"keybindings":[],"issues":[]}}}
@@ -3022,27 +3029,27 @@
 {"key":"rpc::subscribe_server_config::field::Item","value":{"version":1,"type":"usageLimitSourcesUpdated","payload":{"sources":[]}}}
 {"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"KeybindingsConfigParseError","configPath":"","detail":"M\"N5","cause":{}}}
 {"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"ServerSettingsError","settingsPath":"\n","operation":"use-disallowed-provider"}}
-{"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read"}}
+{"key":"rpc::subscribe_server_config::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:write"}}
 {"key":"rpc::subscribe_server_lifecycle::field::Payload","value":{}}
-{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":15,"type":"welcome","payload":{"environment":{"environmentId":"%","label":"\u0000","platform":{"os":"unknown","arch":"x64"},"serverVersion":"I","capabilities":{"repositoryIdentity":false,"peerLinkPairingCodes":false,"triage":false,"voiceTranscription":false}},"cwd":"RBA;","projectName":"i"}}}
-{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":14,"type":"ready","payload":{"at":"-1","environment":{"environmentId":"dWn","label":"Ky]","platform":{"os":"darwin","arch":"other","machine":"cloud"},"serverVersion":"eiIz","capabilities":{"repositoryIdentity":false,"settledWorktreeCleanup":false}},"updateOutcome":{"id":"s","fromVersion":"-1","targetVersion":"�","status":"failed"}}}}
+{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":15,"type":"welcome","payload":{"environment":{"environmentId":"%","label":"\u0000","platform":{"os":"unknown","arch":"x64"},"serverVersion":"I","capabilities":{"repositoryIdentity":false,"threadAutoSettlement":false,"threadProjectFromScratch":false,"threadPullRequests":true}},"cwd":"A;","projectName":"i"}}}
+{"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":14,"type":"ready","payload":{"at":"-1","environment":{"environmentId":"dWn","label":"Ky]","platform":{"os":"darwin","arch":"other","machine":"cloud"},"serverVersion":"eiIz","capabilities":{"repositoryIdentity":false,"otlpEndpointCheck":false}},"updateOutcome":{"id":"^","fromVersion":"�","targetVersion":"Gj","status":"failed"}}}}
 {"key":"rpc::subscribe_server_lifecycle::field::Item","value":{"version":1,"sequence":10,"type":"legacyThreadMigration","payload":{"status":"running","totalThreadCount":14}}}
-{"key":"rpc::subscribe_server_lifecycle::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write"}}
+{"key":"rpc::subscribe_server_lifecycle::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"review:write"}}
 {"key":"rpc::subscribe_terminal_metadata::field::Payload","value":{}}
 {"key":"rpc::subscribe_terminal_metadata::field::Item","value":{"type":"snapshot","terminals":[{"threadId":"[6J","terminalId":"😀","cwd":" ","worktreePath":null,"status":"running","pid":null,"exitCode":3,"exitSignal":5,"hasRunningSubprocess":true,"label":"","updatedAt":"0"},{"threadId":"<","terminalId":"8","cwd":"😀","worktreePath":"\u0000","status":"exited","pid":null,"exitCode":-9,"exitSignal":null,"hasRunningSubprocess":false,"label":"\t","updatedAt":"d$"},{"threadId":"0","terminalId":"g0f","cwd":"-1","worktreePath":null,"status":"error","pid":7,"exitCode":null,"exitSignal":null,"hasRunningSubprocess":false,"label":"�","updatedAt":"0"},{"threadId":"@","terminalId":"P)mE","cwd":"Vy","worktreePath":null,"status":"running","pid":null,"exitCode":10,"exitSignal":-2,"hasRunningSubprocess":true,"label":"","updatedAt":"Rpkh"}]}}
 {"key":"rpc::subscribe_terminal_metadata::field::Item","value":{"type":"upsert","terminal":{"threadId":"😀","terminalId":"ow;j","cwd":"�","worktreePath":null,"status":"error","pid":null,"exitCode":null,"exitSignal":-16,"hasRunningSubprocess":false,"label":"ZsaC","updatedAt":"o9d\\"}}}
 {"key":"rpc::subscribe_terminal_metadata::field::Item","value":{"type":"remove","threadId":"😀","terminalId":" "}}
-{"key":"rpc::subscribe_terminal_metadata::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:read","requiredPermission":"�"}}
+{"key":"rpc::subscribe_terminal_metadata::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"filesystem:write","requiredPermission":"�"}}
 {"key":"rpc::subscribe_vcs_branch::field::Payload","value":{"cwd":"H`cb"}}
 {"key":"rpc::subscribe_vcs_branch::field::Item","value":{"refName":"T+sE"}}
 {"key":"rpc::subscribe_vcs_branch::field::Error","value":{"_tag":"GitPullRequestMaterializationError","cwd":"mO|\\","pullRequestNumber":2,"headRepository":"�","headBranch":"@b:_","localBranch":"😀","cause":{"0":null,"":null," ":true,"|9":-2.183932636539921e+186}}}
-{"key":"rpc::subscribe_vcs_branch::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:read","requiredPermission":""}}
+{"key":"rpc::subscribe_vcs_branch::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"terminal:operate","requiredPermission":""}}
 {"key":"rpc::subscribe_vcs_status::field::Payload","value":{"cwd":"-1","includeRemote":true}}
 {"key":"rpc::subscribe_vcs_status::field::Item","value":{"_tag":"snapshot","local":{"isRepo":false,"hasPrimaryRemote":true,"isDefaultRef":false,"refName":null,"hasWorkingTreeChanges":false,"workingTree":{"files":[],"insertions":1,"deletions":4}},"remote":null}}
 {"key":"rpc::subscribe_vcs_status::field::Item","value":{"_tag":"localUpdated","local":{"isRepo":true,"hasPrimaryRemote":false,"isDefaultRef":true,"refName":null,"hasWorkingTreeChanges":true,"workingTree":{"rootPath":"\u0000","files":[],"insertions":11,"deletions":13}}}}
 {"key":"rpc::subscribe_vcs_status::field::Item","value":{"_tag":"remoteUpdated","remote":null}}
 {"key":"rpc::subscribe_vcs_status::field::Error","value":{"_tag":"TextGenerationError","operation":"","detail":" "}}
-{"key":"rpc::subscribe_vcs_status::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"4`d;","requiredScope":"relay:read","requiredPermission":"😀"}}
+{"key":"rpc::subscribe_vcs_status::field::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"4`d;","requiredScope":"relay:write","requiredPermission":"😀"}}
 {"key":"rpc::subscribe_worktree_setup::field::Payload","value":{"threadId":"B"}}
 {"key":"rpc::subscribe_worktree_setup::field::Item","value":{"threadId":"q","phase":"done","startedAt":"\t","endedAt":null,"branch":null,"baseRef":"KQ~i","worktreePath":null,"setupScript":null,"stages":[],"error":"\t","sequence":4}}
 {"key":"rpc::subscribe_worktree_setup::field::Item","value":null}
@@ -3057,11 +3064,11 @@
 {"key":"rpc::terminal::attach::Item","value":{"threadId":"'YJP","terminalId":"*","type":"restarted","snapshot":{"threadId":"😀","terminalId":"(","cwd":"\u0000","worktreePath":null,"status":"exited","pid":null,"history":"TQ9D","exitCode":-3,"exitSignal":null,"label":"S+'j","updatedAt":""}}}
 {"key":"rpc::terminal::attach::Item","value":{"threadId":"😀","terminalId":"�","type":"activity","hasRunningSubprocess":true,"label":"�"}}
 {"key":"rpc::terminal::attach::Error","value":{"_tag":"TerminalHistoryError","operation":"read","threadId":"N!v","terminalId":"�"}}
-{"key":"rpc::terminal::attach::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"source-control:write"}}
+{"key":"rpc::terminal::attach::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:read"}}
 {"key":"rpc::terminal::clear::Payload","value":{"threadId":"exst","terminalId":"�"}}
 {"key":"rpc::terminal::clear::Success","value":null}
 {"key":"rpc::terminal::clear::Error","value":{"_tag":"TerminalWriteError","threadId":"","terminalId":"","terminalPid":-4.4e-323,"cause":[true]}}
-{"key":"rpc::terminal::clear::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"zM:c","requiredScope":"settings:write"}}
+{"key":"rpc::terminal::clear::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"zM:c","requiredScope":"providers:manage"}}
 {"key":"rpc::terminal::close::Payload","value":{"threadId":"8H"}}
 {"key":"rpc::terminal::close::Success","value":null}
 {"key":"rpc::terminal::close::Error","value":{"_tag":"TerminalSessionLookupError","threadId":"-1","terminalId":" "}}
@@ -3076,7 +3083,7 @@
 {"key":"rpc::terminal::observe::Item","value":{"threadId":",J","terminalId":"KB,","type":"restarted","snapshot":{"threadId":"-1","terminalId":"\t","cwd":"l","worktreePath":null,"status":"running","pid":1,"history":"😀","exitCode":null,"exitSignal":13,"label":"","updatedAt":"-1"}}}
 {"key":"rpc::terminal::observe::Item","value":{"threadId":"-1","terminalId":"f","type":"activity","hasRunningSubprocess":true,"label":"aPJ"}}
 {"key":"rpc::terminal::observe::Error","value":{"_tag":"TerminalProviderEnvironmentError","providerInstanceId":"Lf","cause":true}}
-{"key":"rpc::terminal::observe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:read","requiredPermission":""}}
+{"key":"rpc::terminal::observe::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write","requiredPermission":""}}
 {"key":"rpc::terminal::open::Payload","value":{"threadId":"_","terminalId":"\u0000","cwd":"1ouM"}}
 {"key":"rpc::terminal::open::Success","value":{"threadId":"Q","terminalId":"😀","cwd":"PCSK","worktreePath":"�","status":"error","pid":null,"history":"OY\\A","exitCode":null,"exitSignal":-3,"label":" ","updatedAt":"0"}}
 {"key":"rpc::terminal::open::Error","value":{"_tag":"TerminalWriteError","threadId":",A","terminalId":"","terminalPid":4.4162707779131783e-249,"cause":null}}
@@ -3088,12 +3095,12 @@
 {"key":"rpc::terminal::write::Payload","value":{"threadId":"OJ","terminalId":"�","data":"wD$H","reply":true}}
 {"key":"rpc::terminal::write::Success","value":null}
 {"key":"rpc::terminal::write::Error","value":{"_tag":"TerminalCwdNotFoundError","cwd":"NEtP"}}
-{"key":"rpc::terminal::write::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"terminal:read","requiredPermission":"\n"}}
+{"key":"rpc::terminal::write::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"terminal:operate","requiredPermission":"\n"}}
 {"key":"rpc::test_logins::list::Payload","value":{}}
 {"key":"rpc::test_logins::list::Success","value":{"items":[{"id":"wv7x7jyxq7nfmni0vxbzg3mnwe","label":"0","url":"-1","username":"�","hasOtp":true,"createdAt":"","createdBy":"agent"},{"id":"o6svxk8jj318qpxklytig1rmze","label":"-1","url":"SNAY","username":" )Ry","hasOtp":true,"createdAt":"RS","createdBy":"agent"},{"id":"cl0ud8gnw0sh5udikm7jlxur8e","label":"I[Yp","url":"","username":"sn|","hasOtp":true,"createdAt":"","createdBy":"user"},{"id":"u147qexurss8xwab2o9oblwp80","label":"�","url":"-1","username":"","hasOtp":true,"createdAt":"\n","createdBy":"user"}]}}
 {"key":"rpc::test_logins::list::Error","value":{"_tag":"TestLoginStoreError"}}
 {"key":"rpc::test_logins::list::Error","value":{"_tag":"TestLoginNotFoundError","id":""}}
-{"key":"rpc::test_logins::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"terminal:operate"}}
+{"key":"rpc::test_logins::list::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:read"}}
 {"key":"rpc::test_logins::remove::Payload","value":{"id":"a4o6sgo2gy8dcl4hgs6vrbx0sx"}}
 {"key":"rpc::test_logins::remove::Success","value":null}
 {"key":"rpc::test_logins::remove::Error","value":{"_tag":"TestLoginStoreError"}}
@@ -3108,7 +3115,7 @@
 {"key":"rpc::test_logins::save::Success","value":{"id":"lmzhvx7kgqslwpft6lk5njg9ki","label":"XaCO","url":"","username":"n","hasOtp":false,"createdAt":"\\=","createdBy":"agent"}}
 {"key":"rpc::test_logins::save::Error","value":{"_tag":"TestLoginStoreError"}}
 {"key":"rpc::test_logins::save::Error","value":{"_tag":"TestLoginNotFoundError","id":"😀"}}
-{"key":"rpc::test_logins::save::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"filesystem:write"}}
+{"key":"rpc::test_logins::save::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"review:write"}}
 {"key":"rpc::test_logins::update::Payload","value":{"id":"1da717by2opxsb3gg7lrl55b8d"}}
 {"key":"rpc::test_logins::update::Success","value":{"id":"agplaq05cad1iloc7evxlqaml8","label":"]|NG","url":"","username":" *+(","hasOtp":false,"createdAt":"\n","createdBy":"user"}}
 {"key":"rpc::test_logins::update::Error","value":{"_tag":"TestLoginStoreError"}}
@@ -3125,31 +3132,31 @@
 {"key":"rpc::vcs::init::Payload","value":{"cwd":"/&oQ"}}
 {"key":"rpc::vcs::init::Success","value":null}
 {"key":"rpc::vcs::init::Error","value":{"_tag":"VcsProcessOutputReadError","operation":"1[","command":"\n","cwd":"Bx)I","stream":"stdout","cause":1.7976931348623135e+308}}
-{"key":"rpc::vcs::init::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:read"}}
+{"key":"rpc::vcs::init::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"access:write"}}
 {"key":"rpc::vcs::list_refs::Payload","value":{"cwd":"EQ\\"}}
 {"key":"rpc::vcs::list_refs::Success","value":{"refs":[],"isRepo":true,"hasPrimaryRemote":false,"nextCursor":1,"totalCount":0}}
 {"key":"rpc::vcs::list_refs::Error","value":{"_tag":"GitCommandError","operation":"4","command":"KJ","cwd":"n'[","detail":"0"}}
-{"key":"rpc::vcs::list_refs::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"settings:write","requiredPermission":"zq"}}
+{"key":"rpc::vcs::list_refs::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"","requiredScope":"providers:manage","requiredPermission":"zq"}}
 {"key":"rpc::vcs::pull::Payload","value":{"cwd":"gS"}}
 {"key":"rpc::vcs::pull::Success","value":{"status":"pulled","refName":"0","upstreamRef":null}}
 {"key":"rpc::vcs::pull::Error","value":{"_tag":"GitCommandError","operation":"5","command":"S","cwd":"","detail":"\u0000"}}
-{"key":"rpc::vcs::pull::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"relay:read","requiredPermission":""}}
+{"key":"rpc::vcs::pull::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"-1","requiredScope":"relay:write","requiredPermission":""}}
 {"key":"rpc::vcs::refresh_branch::Payload","value":{"cwd":"\u0000"}}
 {"key":"rpc::vcs::refresh_branch::Success","value":null}
 {"key":"rpc::vcs::refresh_branch::Error","value":{"_tag":"GitCommandError","operation":"SD%","command":"0","cwd":"0","detail":"\n"}}
-{"key":"rpc::vcs::refresh_branch::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"W","requiredScope":"filesystem:read","requiredPermission":"psEj"}}
+{"key":"rpc::vcs::refresh_branch::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"W","requiredScope":"filesystem:write","requiredPermission":"psEj"}}
 {"key":"rpc::vcs::refresh_status::Payload","value":{"cwd":"l"}}
 {"key":"rpc::vcs::refresh_status::Success","value":{"isRepo":true,"hasPrimaryRemote":false,"isDefaultRef":true,"refName":null,"hasWorkingTreeChanges":false,"workingTree":{"files":[],"insertions":4,"deletions":1},"hasUpstream":true,"aheadCount":14,"behindCount":9,"pr":null}}
 {"key":"rpc::vcs::refresh_status::Error","value":{"_tag":"GitManagerError","operation":"fSX ","cwd":"😀","detail":"J~tn"}}
-{"key":"rpc::vcs::refresh_status::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"environment:maintain"}}
+{"key":"rpc::vcs::refresh_status::Error","value":{"_tag":"EnvironmentAuthorizationError","message":" ","requiredScope":"preview:operate"}}
 {"key":"rpc::vcs::remove_worktree::Payload","value":{"cwd":"=","path":"J_\"W","force":true}}
 {"key":"rpc::vcs::remove_worktree::Success","value":null}
 {"key":"rpc::vcs::remove_worktree::Error","value":{"_tag":"GitCommandError","operation":"","command":"0","cwd":"","detail":"\n"}}
-{"key":"rpc::vcs::remove_worktree::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"source-control:write","requiredPermission":"😀"}}
+{"key":"rpc::vcs::remove_worktree::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"�","requiredScope":"access:read","requiredPermission":"😀"}}
 {"key":"rpc::vcs::switch_ref::Payload","value":{"cwd":"m","refName":"w)J"}}
 {"key":"rpc::vcs::switch_ref::Success","value":{"refName":null}}
 {"key":"rpc::vcs::switch_ref::Error","value":{"_tag":"GitCommandError","operation":"0","command":"","cwd":"","detail":" PE"}}
 {"key":"rpc::vcs::switch_ref::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"T","requiredScope":"environment:maintain"}}
 {"key":"rpc::worktree_setup::cancel::Payload","value":{"threadId":"9"}}
 {"key":"rpc::worktree_setup::cancel::Success","value":{"cancelled":true}}
-{"key":"rpc::worktree_setup::cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"terminal:read","requiredPermission":"\u0000"}}
+{"key":"rpc::worktree_setup::cancel::Error","value":{"_tag":"EnvironmentAuthorizationError","message":"😀","requiredScope":"terminal:operate","requiredPermission":"\u0000"}}

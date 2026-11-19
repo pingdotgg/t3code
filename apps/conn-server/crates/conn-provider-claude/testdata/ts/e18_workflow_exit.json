@@ -8,7 +8,7 @@
         "content": "Ultrathink:\nCall the Agent tool once with subagent_type general-purpose and run_in_background false. Tell the subagent: reply with the single word fg-ok. Then repeat its reply to me."
       },
       "parent_tool_use_id": null,
-      "uuid": "b30760aa-3760-4cc5-9fb5-fa3f0fed8b9e"
+      "uuid": "05e00ce6-99cf-4125-bd7f-73092b0dd562"
     }
   ],
   "events": [
@@ -148,6 +148,7 @@
         "lastVisitedAt": null,
         "deletedAt": null,
         "titleRegeneration": null,
+        "titleRenamed": false,
         "linkedPullRequest": null,
         "pullRequests": [],
         "snoozedUntil": null,
@@ -787,6 +788,7 @@
         "lastVisitedAt": null,
         "deletedAt": null,
         "titleRegeneration": null,
+        "titleRenamed": false,
         "linkedPullRequest": null,
         "pullRequests": [],
         "snoozedUntil": null,

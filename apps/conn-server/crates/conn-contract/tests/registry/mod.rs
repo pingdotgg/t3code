@@ -1007,6 +1007,15 @@ pub(crate) fn round_trip(
         "rpc::issues::detail::Error" => go::<conn_contract::rpc::issues::detail::Error>(value),
         "rpc::issues::detail::Payload" => go::<conn_contract::rpc::issues::detail::Payload>(value),
         "rpc::issues::detail::Success" => go::<conn_contract::rpc::issues::detail::Success>(value),
+        "rpc::issues::linked_threads::Error" => {
+            go::<conn_contract::rpc::issues::linked_threads::Error>(value)
+        }
+        "rpc::issues::linked_threads::Payload" => {
+            go::<conn_contract::rpc::issues::linked_threads::Payload>(value)
+        }
+        "rpc::issues::linked_threads::Success" => {
+            go::<conn_contract::rpc::issues::linked_threads::Success>(value)
+        }
         "rpc::issues::list::Error" => go::<conn_contract::rpc::issues::list::Error>(value),
         "rpc::issues::list::Payload" => go::<conn_contract::rpc::issues::list::Payload>(value),
         "rpc::issues::list::Success" => go::<conn_contract::rpc::issues::list::Success>(value),

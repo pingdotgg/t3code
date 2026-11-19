@@ -1,6 +1,6 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at 18e031346e; driver dropped.",
- "capturedOn": "2026-11-16",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/tool_call_read_only_on_request/grok_transcript.ndjson through the orchestrator fixture runner at 7eb4f676cf; driver dropped.",
+ "capturedOn": "2026-11-19",
  "outcome": "passed",
  "gates": [],
  "transcripts": [
@@ -1878,7 +1878,7 @@
        },
        {
         "type": "text",
-        "text": "<runtime_info>In case you're asked: you are running in T3 Code through the Grok harness, as grok-build. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n<pull_request_linking>\nLink each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.\n</pull_request_linking>"
+        "text": "<runtime_info>In case you're asked: you are running in T3 Code through the Grok harness, as grok-build. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n<pull_request_linking>\nLink each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.\nIf available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.\n</pull_request_linking>"
        }
       ],
       "_meta": {
@@ -7184,7 +7184,7 @@
   {
    "method": "respondToRuntimeRequest",
    "input": {
-    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
     "decision": "accept"
    },
    "exit": {
@@ -7582,7 +7582,7 @@
   {
    "type": "node.updated",
    "node": {
-    "id": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "id": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
     "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
     "runId": "run:thread:thread%3Afixture%3Atool_call_read_only_on_request%3Aproject%3Aproject%253Afixture%253Atool_call_read_only_on_request%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
     "parentNodeId": "node:run:run%3Athread%3Athread%253Afixture%253Atool_call_read_only_on_request%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only_on_request%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1:root",
@@ -7597,7 +7597,7 @@
      "nativeId": "call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0",
      "strength": "weak"
     },
-    "runtimeRequestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "runtimeRequestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
     "checkpointScopeId": null,
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null
@@ -7607,8 +7607,8 @@
    "type": "runtime_request.updated",
    "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
    "runtimeRequest": {
-    "id": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
-    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "id": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
+    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
     "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
     "nativeRequestRef": {
      "driver": "grok",
@@ -7628,10 +7628,10 @@
   {
    "type": "turn_item.updated",
    "turnItem": {
-    "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "id": "turn-item:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
     "threadId": "thread:fixture:tool_call_read_only_on_request:project:project%3Afixture%3Atool_call_read_only_on_request%3Af2604e9d-55b7-45de-a716-838867faae7e:0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7",
     "runId": "run:thread:thread%3Afixture%3Atool_call_read_only_on_request%3Aproject%3Aproject%253Afixture%253Atool_call_read_only_on_request%253Af2604e9d-55b7-45de-a716-838867faae7e%3A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7:ordinal:1",
-    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "nodeId": "node:runtime-request:runtime-request%3Aprovider%3Agrok%3Aprovider-turn%3Aprovider-turn%253Aprovider%253Agrok%253Anative-turn%253Aprovider-instance%25253Agrok%25253A00000000-0000-4000-8000-000000000001%25253Aturn%25253A1%3Anative-request%3Acall-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0%3A93cc7724-4120-478e-ac3c-e12809d7e033",
     "providerThreadId": "provider-thread:provider:grok:native-thread:pending%3Arun%3Athread%3Athread%253Afixture%253Atool_call_read_only_on_request%253Aproject%253Aproject%25253Afixture%25253Atool_call_read_only_on_request%25253Af2604e9d-55b7-45de-a716-838867faae7e%253A0f2eb5a3-17c3-45d8-831a-e78b17f6c3d7%3Aordinal%3A1",
     "providerTurnId": "provider-turn:provider:grok:native-turn:provider-instance%3Agrok%3A00000000-0000-4000-8000-000000000001%3Aturn%3A1",
     "nativeItemRef": {
@@ -7647,7 +7647,7 @@
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
     "type": "approval_request",
-    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:5dbefaa2-c267-4efd-b8cd-6c26bbe184e5",
+    "requestId": "runtime-request:provider:grok:provider-turn:provider-turn%3Aprovider%3Agrok%3Anative-turn%3Aprovider-instance%253Agrok%253A00000000-0000-4000-8000-000000000001%253Aturn%253A1:native-request:call-7e5f9458-5b2f-4e1b-aebb-54fa38269e68-0:93cc7724-4120-478e-ac3c-e12809d7e033",
     "requestKind": "file-change",
     "prompt": "Changed files",
     "options": [

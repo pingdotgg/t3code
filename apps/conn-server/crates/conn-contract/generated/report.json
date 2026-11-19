@@ -1,14 +1,14 @@
 {
-  "roots": 1054,
-  "namedSchemas": 1862,
-  "references": 1530,
-  "rustItems": 1822,
-  "literalTypes": 514,
-  "methods": 250,
-  "methodsFullyTyped": 250,
+  "roots": 1057,
+  "namedSchemas": 1865,
+  "references": 1533,
+  "rustItems": 1827,
+  "literalTypes": 513,
+  "methods": 251,
+  "methodsFullyTyped": 251,
   "opaqueFallbacks": 0,
   "lax": 13,
-  "dedupedItems": 835,
+  "dedupedItems": 836,
   "passThroughLinksDropped": 9,
   "opaque": [],
   "laxDetails": [
@@ -66,8 +66,8 @@
     }
   ],
   "fixtures": {
-    "roots": 1050,
-    "samples": 3155,
+    "roots": 1053,
+    "samples": 3162,
     "sampleFailures": 4,
     "encodeForbidden": 6,
     "failed": [
@@ -76,7 +76,7 @@
       "rpc::attachments::create_upload_url::Success#0: SampleError",
       "rpc::server::check_otlp_endpoint::Payload#0: SampleError"
     ],
-    "keys": 1053
+    "keys": 1056
   },
   "methodTypes": [
     {
@@ -409,6 +409,15 @@
       "origin": "official",
       "payload": "IssueRef",
       "success": "IssueDetail",
+      "error": "IssuesCandidatesError",
+      "typed": true
+    },
+    {
+      "tag": "issues.linkedThreads",
+      "stream": false,
+      "origin": "official",
+      "payload": "ThreadIssueKey",
+      "success": "IssueLinkedThreadsResult",
       "error": "IssuesCandidatesError",
       "typed": true
     },

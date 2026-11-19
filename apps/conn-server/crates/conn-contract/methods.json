@@ -1,5 +1,5 @@
 {
-  "contractDigest": "455c4367f9a6a8a0c80229d2d309ea048de6bb61be4bfb12920ee2d374f615c5",
+  "contractDigest": "ef4ddbca7266953623eea3ca0395d4e332ed7a49cec12785b2264dc991dc25fd",
   "methods": [
     {
       "tag": "agentSessions.import",
@@ -183,6 +183,11 @@
     },
     {
       "tag": "issues.detail",
+      "stream": false,
+      "origin": "official"
+    },
+    {
+      "tag": "issues.linkedThreads",
       "stream": false,
       "origin": "official"
     },

@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_v2_nested.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
-  "capturedOn": "2026-11-17",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_v2_nested.ndjson through the orchestrator fixture runner at 7eb4f676cf; driver dropped.",
+  "capturedOn": "2026-11-19",
   "startTurn": [
     {
       "appThread": {
@@ -79,7 +79,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_v2_nested-8J42og"
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_v2_nested-dTDbVP"
       }
     }
   ],
@@ -100,7 +100,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:08.456Z",
+        "startedAt": "2026-11-19T05:05:19.607Z",
         "completedAt": null
       }
     },
@@ -143,6 +143,7 @@
         "lastVisitedAt": null,
         "deletedAt": null,
         "titleRegeneration": null,
+        "titleRenamed": false,
         "linkedPullRequest": null,
         "pinnedAt": null,
         "pinOrderKey": null,
@@ -428,7 +429,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:08.456Z",
+        "startedAt": "2026-11-19T05:05:19.607Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21544,
@@ -530,6 +531,7 @@
         "lastVisitedAt": null,
         "deletedAt": null,
         "titleRegeneration": null,
+        "titleRenamed": false,
         "linkedPullRequest": null,
         "pinnedAt": null,
         "pinOrderKey": null,
@@ -1056,6 +1058,7 @@
         "lastVisitedAt": null,
         "deletedAt": null,
         "titleRegeneration": null,
+        "titleRenamed": false,
         "linkedPullRequest": null,
         "pinnedAt": null,
         "pinOrderKey": null,
@@ -2744,7 +2747,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:08.456Z",
+        "startedAt": "2026-11-19T05:05:19.607Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21600,
@@ -2841,7 +2844,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:08.456Z",
+        "startedAt": "2026-11-19T05:05:19.607Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21673,
@@ -2869,7 +2872,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-17T02:53:08.456Z",
+        "startedAt": "2026-11-19T05:05:19.607Z",
         "completedAt": "2026-09-25T00:38:31.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",

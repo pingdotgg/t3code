@@ -19,6 +19,7 @@
     {"group":"auth","method":"POST","path":"/api/auth/websocket-ticket/:use"},
     {"group":"connect","method":"POST","path":"/api/connect/link-proof"},
     {"group":"connect","method":"GET","path":"/api/connect/link-state"},
+    {"group":"connect","method":"POST","path":"/api/connect/live-activity-preference"},
     {"group":"connect","method":"POST","path":"/api/connect/preferences"},
     {"group":"connect","method":"POST","path":"/api/connect/reachability"},
     {"group":"connect","method":"POST","path":"/api/connect/relay-config"},
