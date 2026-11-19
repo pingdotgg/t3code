@@ -1,8 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -10,6 +14,8 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import type * as CodexClient from "effect-codex-app-server/client";
 
 import {
   applyPreferredCodexDefaultModel,
@@ -17,6 +23,7 @@ import {
   codexRoutesSpendNativeQuota,
   makeCodexSkillsProbe,
   mapCodexModelCapabilities,
+  requestCodexChatGptModels,
 } from "./CodexProvider.ts";
 
 function makeFakeCodexAppServers() {
@@ -143,6 +150,81 @@ it.effect("reuses one Codex skills helper per launch until it idles out", () =>
     yield* Scope.close(providerScope, Exit.void);
     assert.strictEqual(helpers[3]!.closed, true);
   }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+);
+
+const staleCatalogModel = {
+  id: "m1",
+  model: "gpt-6.1-sol",
+  displayName: "GPT-6.1 Sol",
+  description: "",
+  hidden: false,
+  isDefault: true,
+  defaultReasoningEffort: "medium",
+  supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+} as const;
+
+const catalogClientStub = {
+  request: (method: string) => {
+    assert.strictEqual(method, "model/list");
+    return Effect.succeed({ data: [staleCatalogModel] });
+  },
+} as unknown as CodexClient.CodexAppServerClient["Service"];
+
+// regression: #38609 served the pre-spawn cache without saying so
+it.effect("says when the catalog it serves is the pre-spawn cache", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    // the test clock starts at the epoch, where an until of >= can never
+    // read the cache as older than the spawn: run the probe a minute in
+    yield* TestClock.adjust("1 minutes");
+    const codexHome = yield* fileSystem.makeTempDirectory();
+    yield* fileSystem.writeFileString(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({ fetched_at: "1970-01-01T00:00:00.000Z" }),
+    );
+    const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const fiber = yield* requestCodexChatGptModels({
+      client: catalogClientStub,
+      codexHome,
+      spawnedAtMs,
+      deadlineMs: spawnedAtMs + 60_000,
+    }).pipe(Effect.forkScoped);
+    yield* TestClock.adjust("10 seconds");
+    const result = (yield* Fiber.join(fiber)) as unknown as {
+      models: ReadonlyArray<{ slug: string }>;
+      stale: boolean;
+    };
+    assert.strictEqual(result.stale, true);
+    assert.deepStrictEqual(
+      result.models.map((model) => model.slug),
+      ["gpt-6.1-sol"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("says when the catalog it serves is fresh", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const codexHome = yield* fileSystem.makeTempDirectory();
+    yield* fileSystem.writeFileString(
+      path.join(codexHome, "models_cache.json"),
+      JSON.stringify({ fetched_at: "2030-01-01T00:00:00.000Z" }),
+    );
+    const spawnedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+    const result = (yield* requestCodexChatGptModels({
+      client: catalogClientStub,
+      codexHome,
+      spawnedAtMs,
+      deadlineMs: spawnedAtMs + 60_000,
+    })) as unknown as { models: ReadonlyArray<{ slug: string }>; stale: boolean };
+    assert.strictEqual(result.stale, false);
+    assert.deepStrictEqual(
+      result.models.map((model) => model.slug),
+      ["gpt-6.1-sol"],
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it("maps current Codex model capability fields", () => {

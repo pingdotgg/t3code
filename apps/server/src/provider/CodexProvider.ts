@@ -161,6 +161,8 @@ export interface CodexAppServerProviderSnapshot {
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
+  /** The catalog served is the pre-spawn cache; a model released since can be missing. */
+  readonly catalogStale?: boolean | undefined;
   readonly serviceTier?: string | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
@@ -570,7 +572,7 @@ const withCodexDiscoveryDeadline = Effect.fnUntraced(function* <A, E, R>(
  * Ultrafast. App-server refreshes the catalog online at startup, so wait until
  * a write newer than this process's spawn lands, then list again.
  */
-const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
+export const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(function* (input: {
   readonly client: CodexClient.CodexAppServerClient["Service"];
   readonly codexHome: string;
   readonly spawnedAtMs: number;
@@ -595,12 +597,15 @@ const requestCodexChatGptModels = Effect.fn("requestCodexChatGptModels")(functio
     yield* Effect.logWarning(
       "Codex did not refresh its model catalog in time; using the cached catalog.",
     );
-    return models;
+    // The list came from before this process spawned, so a model released
+    // since can be missing from it; say so.
+    return { models, stale: true };
   }
-  return (
-    (yield* withCodexDiscoveryDeadline(requestAllCodexModels(input.client), input.deadlineMs)) ??
-    models
+  const fresh = yield* withCodexDiscoveryDeadline(
+    requestAllCodexModels(input.client),
+    input.deadlineMs,
   );
+  return fresh === undefined ? { models, stale: true } : { models: fresh, stale: false };
 });
 
 /** Set originator at spawn; the pre-initialize refresh otherwise overwrites shared cache with plain-CLI models. */
@@ -768,7 +773,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   // Optional discovery must finish before the outer timeout can discard the account result.
   const deadlineMs = spawnedAtMs + input.probeTimeoutMs - CODEX_DISCOVERY_MARGIN_MS;
-  const [skillsResponse, models, { config, nativeUsage, rateLimits }] = yield* Effect.all(
+  const [skillsResponse, catalog, { config, nativeUsage, rateLimits }] = yield* Effect.all(
     [
       withCodexDiscoveryDeadline(client.request("skills/list", { cwds: [input.cwd] }), deadlineMs),
       accountResponse.account?.type === "chatgpt"
@@ -778,7 +783,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
             spawnedAtMs,
             deadlineMs,
           })
-        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs),
+        : withCodexDiscoveryDeadline(requestAllCodexModels(client), deadlineMs).pipe(
+            Effect.map((models) => models && { models, stale: false }),
+          ),
       // The shared catalog must exclude config from the server's launch project.
       withCodexDiscoveryDeadline(
         client.request("config/read", { includeLayers: false }),
@@ -815,7 +822,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     nativeUsage,
     ...(rateLimits ? { rateLimits } : {}),
     version,
-    models,
+    models: catalog?.models,
+    ...(catalog?.stale ? { catalogStale: true } : {}),
     serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
@@ -1175,7 +1183,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     probe: {
       installed: true,
       version: snapshot.version ?? null,
-      status: snapshot.models === undefined ? "warning" : accountStatus.status,
+      status:
+        snapshot.models === undefined || snapshot.catalogStale === true
+          ? "warning"
+          : accountStatus.status,
       auth: snapshot.endpoint
         ? { ...accountStatus.auth, endpoint: snapshot.endpoint }
         : accountStatus.auth,
@@ -1183,7 +1194,12 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         ? { message: accountStatus.message }
         : snapshot.models === undefined
           ? { message: "Codex did not return its model catalog in time." }
-          : {}),
+          : snapshot.catalogStale === true
+            ? {
+                message:
+                  "Codex's model catalog is stale; a model released recently can be missing from it until Codex refreshes it.",
+              }
+            : {}),
       ...(managedAuth ? {} : { usageLimits }),
     },
   });
