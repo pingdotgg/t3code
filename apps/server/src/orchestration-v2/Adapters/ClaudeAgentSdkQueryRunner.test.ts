@@ -31,6 +31,7 @@ import {
   ClaudeAgentSdkQueryRunner,
   type ClaudeAgentSdkQueryOpenInput,
   layerQueryRunner,
+  makeClaudeDescendantTracker,
   spawnClaudeProcessGroup,
 } from "./ClaudeAdapterV2.ts";
 
@@ -230,6 +231,35 @@ const resumedMcpQueryInput = {
     },
   },
 } satisfies ClaudeAgentSdkQueryOpenInput;
+
+it.effect("resumes a session whose history exceeds the status-probe output limit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-large-history-",
+    });
+    yield* writeClaudeSession(configDir, [
+      sessionEntry("aaaaaaaa-0000-4000-8000-000000000001", null, {
+        role: "user",
+        content: "x".repeat(9 * 1024 * 1024),
+      }),
+    ]);
+    const querySpy = vi
+      .spyOn(ClaudeSdk, "query")
+      .mockImplementation(() => ({ close: vi.fn() }) as unknown as ClaudeSdk.Query);
+    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+    const session = yield* runner.open({
+      ...resumedMcpQueryInput,
+      resume: true,
+      options: { ...options, cwd: "/repo", env: { ...process.env, CLAUDE_CONFIG_DIR: configDir } },
+    });
+    yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+    assert.equal(querySpy.mock.calls.length, 1);
+    assert.equal(querySpy.mock.calls[0]?.[0].options?.resume, FORK_SESSION_ID);
+  }).pipe(Effect.provide(Layer.merge(realQueryRunner, NodeServices.layer))),
+);
 
 it.effect("reopens a stalled MCP registration before delivering the resumed prompt", () =>
   Effect.gen(function* () {
@@ -690,6 +720,124 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* openFakeCli(cli).pipe(Effect.provide(realQueryRunner));
       yield* Effect.promise(() => leftoverStopped);
     }),
+  );
+
+  const processRow = (pid: number, ppid: number, startedSecond: number) => ({
+    pid,
+    ppid,
+    pgid: pid,
+    started: `Sun Nov 15 10:00:0${startedSecond} 2026`,
+  });
+  const byNumber = (left: number, right: number) => left - right;
+
+  it.effect(
+    "keeps only the descendants the CLI still has running, however many jobs it ran",
+    () => {
+      let table: ReadonlyArray<ReturnType<typeof processRow>> = [];
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.sync(() => table),
+      );
+      const jobs = (poll: number) => [0, 1, 2, 3].map((job) => 1100 + poll * 4 + job);
+      return Effect.gen(function* () {
+        for (let poll = 0; poll < 50; poll++) {
+          table = [
+            processRow(1000, 10, 0),
+            processRow(1001, 1000, 0),
+            // A job that outlives the shell that started it is re-parented.
+            ...(poll === 0 ? [processRow(1003, 1000, 0)] : []),
+            processRow(1002, poll === 0 ? 1003 : 1, 0),
+            ...jobs(poll).map((pid) => processRow(pid, 1001, 1)),
+          ];
+          yield* tracker.refresh;
+          // A failed `ps` reads as no rows.
+          table = [];
+          yield* tracker.refresh;
+        }
+        assert.strictEqual(tracker.tracked.size, 6);
+        assert.deepStrictEqual(
+          [...tracker.tracked.values()].map((row) => row.pid).toSorted(byNumber),
+          [1001, 1002, ...jobs(49)],
+        );
+      });
+    },
+  );
+
+  it.effect(
+    "stops at exit only what the CLI left running, never a process that took a job's pid",
+    () => {
+      const orphan = processRow(1300, 1, 1);
+      // Unrelated processes take both finished jobs' pids, one in the second its job started.
+      const unrelated = [processRow(1100, 1, 2), processRow(1200, 1, 1)];
+      const tables = [
+        [
+          processRow(1000, 10, 0),
+          processRow(1001, 1000, 0),
+          processRow(1100, 1001, 1),
+          processRow(1200, 1001, 1),
+          processRow(1300, 1001, 1),
+        ],
+        [processRow(1000, 10, 0), orphan],
+        [processRow(1000, 10, 0), ...unrelated, orphan],
+        [...unrelated, orphan],
+      ];
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.sync(() => tables.shift() ?? []),
+      );
+      return Effect.gen(function* () {
+        yield* tracker.refresh;
+        yield* tracker.refresh;
+        yield* tracker.refresh;
+        assert.deepStrictEqual(
+          (yield* tracker.leftovers).map((row) => row.pid),
+          [1300],
+        );
+      });
+    },
+  );
+
+  // The poll and a session close read the table independently. The older table still lists a
+  // re-parented job and the child it just started; the newer one lists a job started since.
+  it.effect(
+    "stops at exit what the poll and a session close found, reading at the same time",
+    () => {
+      type Table = ReadonlyArray<ReturnType<typeof processRow>>;
+      const cli = processRow(1000, 10, 0);
+      const olderReadStarted = Deferred.makeUnsafe<void>();
+      const olderRead = Deferred.makeUnsafe<Table>();
+      let read: Effect.Effect<Table> = Effect.succeed([
+        cli,
+        processRow(1001, 1000, 0),
+        processRow(1100, 1001, 1),
+      ]);
+      const tracker = makeClaudeDescendantTracker(
+        1000,
+        Effect.suspend(() => read),
+      );
+      return Effect.gen(function* () {
+        yield* tracker.refresh;
+        read = Deferred.succeed(olderReadStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(olderRead)),
+        );
+        const older = yield* tracker.refresh.pipe(Effect.forkChild);
+        yield* Deferred.await(olderReadStarted);
+        read = Effect.succeed([cli, processRow(1200, 1, 1), processRow(1300, 1000, 2)]);
+        const newer = yield* tracker.refresh.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.succeed(olderRead, [
+          cli,
+          processRow(1100, 1, 1),
+          processRow(1200, 1100, 1),
+        ]);
+        yield* Fiber.join(older);
+        yield* Fiber.join(newer);
+        read = Effect.succeed([processRow(1200, 1, 1), processRow(1300, 1, 2)]);
+        assert.deepStrictEqual(
+          (yield* tracker.leftovers).map((row) => row.pid).toSorted(byNumber),
+          [1200, 1300],
+        );
+      });
+    },
   );
 
   const rootRefusal =

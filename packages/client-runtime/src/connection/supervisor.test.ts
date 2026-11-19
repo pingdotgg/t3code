@@ -21,6 +21,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
+import * as ConnectionCredentialStore from "./credentialStore.ts";
 import * as TokenStore from "../authorization/tokenStore.ts";
 import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
@@ -1744,6 +1745,7 @@ describe("EnvironmentSupervisor", () => {
             Layer.succeed(ClientCapabilities.ClientPresentation, {
               metadata: { label: "Test client", deviceType: "desktop" },
             }),
+            ConnectionCredentialStore.layerMemory(),
           ),
         ),
       );
