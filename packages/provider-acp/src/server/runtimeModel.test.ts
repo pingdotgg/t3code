@@ -17,6 +17,7 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  toolCallVisibleOutputChanged,
   withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
@@ -335,7 +336,6 @@ describe("AcpRuntimeModel", () => {
         update: {
           sessionUpdate: "tool_call_update",
           toolCallId: "read-1",
-          kind: "read",
           ...(locations === undefined ? {} : { locations }),
         },
       } satisfies EffectAcpSchema.SessionNotification);
@@ -351,14 +351,21 @@ describe("AcpRuntimeModel", () => {
     const cleared = mergeToolCallState(created, toolCall([]));
     expect(cleared.data.locations).toEqual([]);
     expect(mergeToolCallState(created, toolCall(null)).data.locations).toEqual([]);
-    expect(
+    const emits = (previous: AcpToolCallState, next: AcpToolCallState) =>
       decideToolCallUpdateEmission({
-        previous: created,
-        next: cleared,
+        previous,
+        next,
         lastEmittedDetailLength: 0,
         skippedSinceEmit: 0,
-      }).emit,
-    ).toBe(true);
+      }).emit;
+    expect(emits(created, cleared)).toBe(true);
+    expect(toolCallVisibleOutputChanged(created, cleared)).toBe(true);
+    const relocated = mergeToolCallState(cleared, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(cleared, relocated)).toBe(true);
+    expect(toolCallVisibleOutputChanged(cleared, relocated)).toBe(true);
+    const repeated = mergeToolCallState(relocated, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(relocated, repeated)).toBe(false);
+    expect(toolCallVisibleOutputChanged(relocated, repeated)).toBe(false);
   });
 
   it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
