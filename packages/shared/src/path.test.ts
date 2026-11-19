@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  isWslSharePath,
   workspaceRelativeFilePath,
   newProjectFolderName,
   normalizeProjectPathForComparison,
@@ -9,6 +10,18 @@ import {
 } from "./path.ts";
 
 describe("path helpers", () => {
+  it("recognizes WSL shares and nothing else", () => {
+    expect(isWslSharePath("\\\\wsl.localhost\\Ubuntu\\home")).toBe(true);
+    expect(isWslSharePath("\\\\wsl$\\Ubuntu")).toBe(true);
+    expect(isWslSharePath(" //WSL.LOCALHOST/Ubuntu/home")).toBe(true);
+    expect(isWslSharePath("\\\\?\\UNC\\wsl.localhost\\Ubuntu\\repo")).toBe(true);
+    expect(isWslSharePath("\\\\.\\UNC\\wsl$\\Ubuntu\\repo")).toBe(true);
+    expect(isWslSharePath("\\\\?\\C:\\work\\repo")).toBe(false);
+    expect(isWslSharePath("\\\\wslserver\\share")).toBe(false);
+    expect(isWslSharePath("\\\\fileserver\\wsl.localhost")).toBe(false);
+    expect(isWslSharePath("C:\\work\\repo")).toBe(false);
+  });
+
   // regression: #17923 literal colons in names are kept, not parsed as positions
   it.each([
     ["report:123", "/workspace", "/workspace/report:123"],
@@ -33,6 +46,7 @@ describe("path helpers", () => {
     expect(newProjectFolderName("Straßenbahn GROẞ")).toBe("strassenbahn-gross");
     expect(newProjectFolderName("Łódź sklep")).toBe("lodz-sklep");
     expect(newProjectFolderName("Øl på Þingvellir ı")).toBe("ol-pa-thingvellir-i");
+    expect(newProjectFolderName("Aŉa")).toBe("ana");
     expect(newProjectFolderName("../../etc")).toBe("etc");
     expect(newProjectFolderName("🎱🎱")).toBe("project");
     expect(newProjectFolderName(`${"a".repeat(63)} b`)).toBe("a".repeat(63));
