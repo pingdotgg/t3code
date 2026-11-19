@@ -210,7 +210,7 @@ export function useProjectScriptEditing(input: {
       async () => {
         // The config stream can still be behind the previous edit's acknowledged write.
         const result = await readSettings({ environmentId, input: {} });
-        if (result._tag === "Failure") return result;
+        if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
         const currentProject = readProject(ref);
         if (!currentProject) {
           return AsyncResult.failure(
