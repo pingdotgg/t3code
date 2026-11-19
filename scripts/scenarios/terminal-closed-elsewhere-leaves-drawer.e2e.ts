@@ -1,9 +1,40 @@
-import { ThreadId } from "@t3tools/contracts";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import { ORCHESTRATION_PROTOCOL_VERSION, ThreadId, WsRpcGroup } from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { makeState, runPromise, test, WEB } from "./t3.ts";
+
+const terminalClient = Effect.fn("scenario.terminalClient")(function* (origin: string) {
+  const issued = yield* makeState(T3_HOME).cli(["auth", "session", "issue", "--token-only"]);
+  const { ticket } = yield* HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(issued.stdout.trim()),
+    ),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
+    Effect.provide(FetchHttpClient.layer),
+  );
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
+    ),
+  );
+  return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+});
 
 test("The drawer removes a terminal closed by another client", WEB, async ({ t3, app, screen }) => {
   const cwd = await t3.project("demo");
@@ -15,7 +46,7 @@ test("The drawer removes a terminal closed by another client", WEB, async ({ t3,
 
   await runPromise(
     Effect.gen(function* () {
-      const client = yield* rpcClient(T3_HOME, origin);
+      const client = yield* terminalClient(origin);
       for (const terminalId of [kept, closed]) {
         yield* client["terminal.open"]({ threadId, terminalId, cwd });
       }
@@ -29,7 +60,7 @@ test("The drawer removes a terminal closed by another client", WEB, async ({ t3,
 
   await runPromise(
     Effect.gen(function* () {
-      const client = yield* rpcClient(T3_HOME, origin);
+      const client = yield* terminalClient(origin);
       yield* client["terminal.close"]({ threadId, terminalId: closed, deleteHistory: true });
     }).pipe(Effect.scoped),
   );

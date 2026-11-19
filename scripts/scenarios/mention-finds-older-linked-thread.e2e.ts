@@ -1,16 +1,53 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
-import { CommandId, ThreadId } from "@t3tools/contracts";
+import * as NodeWS from "@effect/platform-node/NodeWS";
+import {
+  CommandId,
+  ORCHESTRATION_PROTOCOL_VERSION,
+  ThreadId,
+  WsRpcGroup,
+} from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { RpcClient, RpcSerialization } from "effect/rpc";
+import { Socket } from "effect/socket";
 
 import { T3_HOME } from "../e2e.config.ts";
 import { SECOND_HOME, startSecondServer } from "./second-server.ts";
-import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { makeState, runPromise, test, WEB } from "./t3.ts";
 
 // A shell keeps an environment's 25 newest settled threads; older ones come from search.
 const NEWER_SETTLED = 25;
+
+/** The typed RPC client of the server on `home` at `origin`, signed in through its own CLI. */
+const rpcClient = Effect.fn("scenario.rpcClient")(function* (home: string, origin: string) {
+  const issued = yield* makeState(home).cli(["auth", "session", "issue", "--token-only"]);
+  const { ticket } = yield* HttpClient.execute(
+    HttpClientRequest.post(`${origin}/api/auth/websocket-ticket`).pipe(
+      HttpClientRequest.bearerToken(issued.stdout.trim()),
+    ),
+  ).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap(HttpClientResponse.schemaBodyJson(Schema.Struct({ ticket: Schema.String }))),
+    Effect.provide(FetchHttpClient.layer),
+  );
+  // Built into the caller's scope: `Effect.provide` would close the socket once `make` returns.
+  const protocol = yield* Layer.build(
+    RpcClient.layerProtocolSocket().pipe(
+      Layer.provide(
+        Socket.layerWebSocket(
+          `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=${ORCHESTRATION_PROTOCOL_VERSION}&wsTicket=${encodeURIComponent(ticket)}`,
+        ),
+      ),
+      Layer.provide(RpcSerialization.layerJson),
+      Layer.provide(NodeWS.layerWebSocketConstructor),
+    ),
+  );
+  return yield* RpcClient.make(WsRpcGroup).pipe(Effect.provideContext(protocol));
+});
 
 const uuid = Effect.flatMap(SecureRandom.SecureRandom, (random) => random.uuidV4());
 const decodePairing = Schema.decodeEffect(
