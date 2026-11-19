@@ -85,11 +85,12 @@ export function useThreadListV2(input: {
     [threads, connectedEnvironmentIds],
   );
   const layoutTime = useMemo(
-    () => threadListV2LayoutTime({
-      threads: visibleThreads,
-      now: input.now,
-      searchQuery: input.searchQuery,
-    }),
+    () =>
+      threadListV2LayoutTime({
+        threads: visibleThreads,
+        now: input.now,
+        searchQuery: input.searchQuery,
+      }),
     [visibleThreads, input.now, input.searchQuery],
   );
   // A thread can stop working when the threads change, or when its exit grace expires.

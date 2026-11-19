@@ -658,20 +658,15 @@ describe("filterSidebarV2VisibleThreads", () => {
   it("hides disconnected threads and restores them when their environment reconnects", () => {
     const threads = [connected, disconnected];
     expect(
-      filterSidebarV2VisibleThreads(
-        threads,
-        null,
-        new Set<string>(),
-        ["environment-connected"],
-      ).map((thread) => String(thread.id)),
+      filterSidebarV2VisibleThreads(threads, null, new Set<string>(), [
+        "environment-connected",
+      ]).map((thread) => String(thread.id)),
     ).toEqual(["thread-connected"]);
     expect(
-      filterSidebarV2VisibleThreads(
-        threads,
-        null,
-        new Set<string>(),
-        ["environment-connected", "environment-disconnected"],
-      ).map((thread) => String(thread.id)),
+      filterSidebarV2VisibleThreads(threads, null, new Set<string>(), [
+        "environment-connected",
+        "environment-disconnected",
+      ]).map((thread) => String(thread.id)),
     ).toEqual(["thread-connected", "thread-disconnected"]);
   });
 });

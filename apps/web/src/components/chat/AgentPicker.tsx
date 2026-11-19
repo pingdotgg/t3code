@@ -1,3 +1,4 @@
+// oxlint-disable t3code/no-untranslated-copy -- fork-only custom-agent copy is English only
 import { memo } from "react";
 import { BotIcon, ChevronDownIcon } from "lucide-react";
 import type { AgentId, AgentSummary } from "@t3tools/contracts";

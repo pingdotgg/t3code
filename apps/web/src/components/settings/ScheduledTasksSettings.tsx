@@ -1970,7 +1970,6 @@ function ScheduledTaskEditorForm({
                   model={traitsSelection.model}
                   modelOptions={traitsSelection.options ?? []}
                   allowPromptInjectedEffort={false}
-                  planModeEnabled={false}
                   disabled={saving || !connected || draft.threadId !== ""}
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                   onModelOptionsChange={(options) =>

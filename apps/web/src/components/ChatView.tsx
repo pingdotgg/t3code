@@ -254,7 +254,7 @@ import { type TerminalContextDraft } from "../lib/terminalContext";
 import { collectInlineContextIds } from "../lib/composerContextReferences";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
-import { useEnvironmentQueryRefresh } from "../state/query";
+import { useEnvironmentQuery, useEnvironmentQueryRefresh } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
@@ -460,10 +460,12 @@ export default function ChatView(props: ChatViewProps) {
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperateTerminal = useEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
-  const [selectedDraftAgentId, setSelectedDraftAgentId] = useState<AgentId | null | undefined>(
-    undefined,
-  );
-  useEffect(() => setSelectedDraftAgentId(undefined), [draftId]);
+  const [draftAgentSelection, setDraftAgentSelection] = useState<{
+    draftId: string;
+    agentId: AgentId | null | undefined;
+  } | null>(null);
+  const selectedDraftAgentId =
+    draftAgentSelection?.draftId === draftId ? draftAgentSelection.agentId : undefined;
   const handleNewThread = useNewThreadHandler();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
   const routeThreadKey = scopedThreadKey(routeThreadRef);
@@ -1156,6 +1158,11 @@ export default function ChatView(props: ChatViewProps) {
     settings,
     activeProject?.id ?? null,
     activeProject ?? undefined,
+  );
+  const draftAgentRoster = useEnvironmentQuery(
+    routeKind === "draft" && activeProject
+      ? agentRosterQuery({ environmentId, input: { projectId: activeProject.id } })
+      : null,
   );
   const activeProjectScripts = activeProject ? resolveProjectScripts(settings, activeProject) : [];
   const { projectCloneBannerItem, projectCloneSendBlockReason } =
@@ -3677,6 +3684,20 @@ export default function ChatView(props: ChatViewProps) {
                             {!composerMounted ? null : (
                               <ChatComposer
                                 canOperateThread={canOperateThread}
+                                agents={
+                                  routeKind === "draft"
+                                    ? (draftAgentRoster.data ?? undefined)
+                                    : undefined
+                                }
+                                selectedAgentId={selectedDraftAgentId}
+                                defaultAgentId={activeProjectSettings.settings.defaultAgentId}
+                                onSelectAgent={
+                                  routeKind === "draft"
+                                    ? (agentId) =>
+                                        draftId !== null &&
+                                        setDraftAgentSelection({ draftId, agentId })
+                                    : undefined
+                                }
                                 reportedModelSelection={reportedModelSelection}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={

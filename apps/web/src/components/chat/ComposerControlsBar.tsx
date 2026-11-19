@@ -1,6 +1,6 @@
 import type { ChatComposerProps } from "./ChatComposer";
 import type { PromptUltrathink } from "./TraitsPicker";
-import { AgentPicker, AgentPickerMenuContent } from "./AgentPicker";
+import { AgentPicker } from "./AgentPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { useGT, useMessages } from "gt-react";
@@ -279,6 +279,15 @@ export function ComposerControlsBar(props: {
   ) : (
     <>
       {composerModelPicker}
+      {onSelectAgent && agents && agents.length > 0 ? (
+        <AgentPicker
+          agents={agents}
+          selectedAgentId={selectedAgentId}
+          defaultAgentId={defaultAgentId}
+          onSelectAgent={onSelectAgent}
+          disabled={agentPickerDisabled}
+        />
+      ) : null}
 
       <>
         {restingBlockDefs.map((def, index) => {

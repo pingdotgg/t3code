@@ -1,13 +1,7 @@
 /**
- * AgentService — filesystem discovery of custom agents for thread startup and
- * delegated tasks. An agent is a markdown file: its YAML
- * frontmatter holds the `AgentDefinition` fields and its body is the
- * instructions. Agents come from `.agents/*.md`, then `.github/agents/*.md`,
- * then the project's `AGENTS.md`, and the first definition of an id wins.
- *
- * A file without frontmatter is project guidance rather than an agent, so it
- * is skipped quietly. Frontmatter that is not a YAML mapping or fails to decode
- * is skipped with a warning, so one broken file never hides the others.
+ * Discovers custom agents (markdown with YAML frontmatter) from `.agents/`,
+ * `.github/agents/`, then `AGENTS.md`; the first definition of an id wins.
+ * Files without frontmatter are skipped; invalid frontmatter warns and is skipped.
  *
  * @module agent/AgentService
  */
@@ -153,11 +147,8 @@ export const getAgentDefinition = Effect.fn("getAgentDefinition")(function* (
 });
 
 /**
- * The model an agent uses at a thread or delegation boundary. An explicit
- * `model` in the agent file wins when that exact instance/model is available.
- * Otherwise an explicit tier picks the first available provider that advertises
- * its default model, preferring the current instance. An omitted model and tier
- * leave the child on its selected or inherited model.
+ * An explicit agent `model` wins when available; otherwise its tier picks the first
+ * provider advertising a default model, preferring the current instance.
  */
 export function resolveModelForAgent(
   agent: AgentDefinition,
