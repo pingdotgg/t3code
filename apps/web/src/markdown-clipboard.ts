@@ -514,7 +514,7 @@ function keepStartListMarkers(range: Range, container: Element): void {
   const withinList =
     ancestor instanceof Element && (ancestor.tagName === "OL" || ancestor.tagName === "UL");
   if (withinList) {
-    const list = ancestor.cloneNode(false);
+    const list = ancestor.cloneNode(false) as Element;
     list.append(...container.childNodes);
     container.replaceChildren(list);
   }
