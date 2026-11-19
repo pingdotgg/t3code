@@ -9637,6 +9637,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
               }),
             );
+            // A session released mid-prompt (worktree handoff) never sees its prompt settle.
+            const openTurn = yield* Ref.get(activeTurn);
+            if (openTurn !== null && !openTurn.finalized) {
+              openTurn.interrupted = true;
+              yield* finalizeTurn(openTurn, "interrupted");
+            }
             const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
             yield* Effect.forEach(
               requests,
@@ -9699,6 +9705,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           },
           canResumeAfterRestart: canLoadSession || canResumeSession,
           events: Stream.fromEffectRepeat(Queue.take(events)),
+          backgroundTasksEndWithProcess: true,
           ...(flavor.getModelContextWindow === undefined
             ? {}
             : {
