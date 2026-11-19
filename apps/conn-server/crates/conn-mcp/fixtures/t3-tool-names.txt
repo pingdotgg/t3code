@@ -77,6 +77,15 @@ watch_pull_request
 unwatch_pull_request
 write_pull_request_guides
 read_pull_request_guide
+pull_request_read
+pull_request_list
+pull_request_create
+pull_request_update
+pull_request_respond
+pull_request_review
+pull_request_merge
+ci_logs
+ci_rerun
 list_issues
 read_issue
 create_issue

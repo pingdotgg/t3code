@@ -7383,12 +7383,16 @@
                   },
                   "hasCss": {
                     "type": "boolean"
+                  },
+                  "hasBackground": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
                   "id",
                   "name",
-                  "hasCss"
+                  "hasCss",
+                  "hasBackground"
                 ],
                 "additionalProperties": true
               }
@@ -7489,7 +7493,7 @@
                   "anyOf": [
                     {
                       "type": "string",
-                      "maxLength": 50000
+                      "maxLength": 100000
                     },
                     {
                       "type": "null"
@@ -7503,6 +7507,9 @@
               ],
               "additionalProperties": true
             },
+            "themesDir": {
+              "type": "string"
+            },
             "guide": {
               "type": "string"
             }
@@ -7511,6 +7518,7 @@
             "current",
             "builtIn",
             "published",
+            "themesDir",
             "guide"
           ],
           "additionalProperties": true
@@ -7569,7 +7577,7 @@
                 },
                 "css": {
                   "type": "string",
-                  "maxLength": 50000
+                  "maxLength": 100000
                 }
               },
               "required": [
@@ -8387,6 +8395,14 @@
             },
             "host": {
               "type": "string"
+            },
+            "until": {
+              "type": "string",
+              "enum": [
+                "checks",
+                "merged"
+              ],
+              "description": "How long this thread stays working. Omit it to keep the current value; a new watch starts at \"checks\". \"checks\": until checks finish, for a PR you hand to the user. \"merged\": until it merges or closes or you unwatch it, when you will act on it yourself, such as merging after someone else approves."
             }
           }
         },
@@ -8947,6 +8963,2237 @@
           "destructiveHint": false,
           "idempotentHint": true,
           "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_read",
+        "title": "Read pull request",
+        "description": "Read a PR's state, checks, review comments, or diff. Use instead of gh or cafe.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "sections": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "summary",
+                  "checks",
+                  "conversation",
+                  "diff"
+                ]
+              },
+              "description": "Default: summary, checks. conversation has review threads."
+            },
+            "includeResolved": {
+              "type": "boolean"
+            },
+            "cursor": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "summary": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "title": {
+                      "type": "string"
+                    },
+                    "body": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "open",
+                        "closed",
+                        "merged"
+                      ]
+                    },
+                    "isDraft": {
+                      "type": "boolean"
+                    },
+                    "author": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "headBranch": {
+                      "type": "string"
+                    },
+                    "baseBranch": {
+                      "type": "string"
+                    },
+                    "headSha": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "mergeability": {
+                      "type": "string",
+                      "enum": [
+                        "mergeable",
+                        "conflicting",
+                        "unknown"
+                      ]
+                    },
+                    "behindBy": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "autoMergeEnabled": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "additions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "deletions": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "changedFiles": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "labels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "reviewers": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "body",
+                    "state",
+                    "isDraft",
+                    "author",
+                    "headBranch",
+                    "baseBranch",
+                    "headSha",
+                    "mergeability",
+                    "behindBy",
+                    "autoMergeEnabled",
+                    "additions",
+                    "deletions",
+                    "changedFiles",
+                    "labels",
+                    "reviewers"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "checks": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "pending",
+                          "action-required",
+                          "success",
+                          "failure",
+                          "skipped",
+                          "neutral",
+                          "cancelled"
+                        ]
+                      },
+                      "description": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "url": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "required": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "placeholder": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "status",
+                      "description",
+                      "url"
+                    ],
+                    "additionalProperties": true
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "conversation": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "comments": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "author": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "body": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "issue-comment",
+                              "review-comment",
+                              "review"
+                            ]
+                          },
+                          "path": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "reviewState": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "author",
+                          "body",
+                          "createdAt",
+                          "id",
+                          "kind",
+                          "path",
+                          "reviewState"
+                        ],
+                        "additionalProperties": true
+                      }
+                    },
+                    "reviewThreads": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "line": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "isResolved": {
+                            "type": "boolean"
+                          },
+                          "isOutdated": {
+                            "type": "boolean"
+                          },
+                          "comments": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "author": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "body": {
+                                  "type": "string"
+                                },
+                                "createdAt": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "author",
+                                "body",
+                                "createdAt"
+                              ],
+                              "additionalProperties": true
+                            }
+                          },
+                          "moreComments": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "path",
+                          "line",
+                          "isResolved",
+                          "isOutdated",
+                          "comments",
+                          "moreComments"
+                        ],
+                        "additionalProperties": true
+                      }
+                    },
+                    "hiddenResolvedThreads": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "comments",
+                    "reviewThreads",
+                    "hiddenResolvedThreads",
+                    "truncated",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diff": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "patch": {
+                      "type": "string"
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "nextCursor": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "patch",
+                    "truncated",
+                    "nextCursor"
+                  ],
+                  "additionalProperties": true
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Read pull request",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_list",
+        "title": "List pull requests",
+        "description": "List PRs in this thread's repository, recently updated first.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open",
+                "closed",
+                "merged"
+              ],
+              "description": "Default: open."
+            },
+            "involvement": {
+              "type": "string",
+              "enum": [
+                "all",
+                "reviewing",
+                "authored"
+              ]
+            },
+            "query": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "cursor": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "pullRequests": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "author": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "headBranch": {
+                    "type": "string"
+                  },
+                  "baseBranch": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "closed",
+                      "merged"
+                    ]
+                  },
+                  "isDraft": {
+                    "type": "boolean"
+                  },
+                  "reviewDecision": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "approved",
+                          "changes-requested",
+                          "review-required"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "checksState": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "passing",
+                          "failing",
+                          "pending"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "number",
+                  "title",
+                  "url",
+                  "author",
+                  "headBranch",
+                  "baseBranch",
+                  "state",
+                  "isDraft",
+                  "reviewDecision",
+                  "checksState",
+                  "updatedAt"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            },
+            "nextCursor": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "pullRequests",
+            "truncated",
+            "nextCursor"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "List pull requests",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_create",
+        "title": "Create pull request",
+        "description": "Open a PR from this thread's pushed branch and link it, or return its open PR.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "base": {
+              "type": "string"
+            },
+            "draft": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "title",
+            "body"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "created": {
+              "type": "boolean",
+              "description": "False when the branch already had an open PR."
+            },
+            "next": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url",
+            "created"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Create pull request",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_update",
+        "title": "Update pull request",
+        "description": "Edit a PR's title, body, labels, or reviewers, close or reopen it, or set ready (false: back to draft).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "ready": {
+              "type": "boolean"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed"
+              ]
+            },
+            "addLabels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 25
+            },
+            "removeLabels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 25
+            },
+            "requestReviewers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "maxItems": 25,
+              "description": "Logins, or org/team for a team."
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Update pull request",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_respond",
+        "title": "Respond on pull request",
+        "description": "Reply to, resolve, or reopen a review thread. Without reviewThreadId, comment on the PR.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "reviewThreadId": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            },
+            "resolved": {
+              "type": "boolean"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "replied": {
+              "type": "boolean"
+            },
+            "resolved": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url",
+            "replied",
+            "resolved"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Respond on pull request",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_review",
+        "title": "Review pull request",
+        "description": "Submit a review: approve, request changes, or comment, with optional line comments.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "comment",
+                "approve",
+                "request-changes"
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "side": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "old"
+                    ],
+                    "description": "Default new. old: line numbers in the base, for removed lines."
+                  },
+                  "body": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "path",
+                  "line",
+                  "body"
+                ]
+              },
+              "maxItems": 50
+            }
+          },
+          "required": [
+            "verdict"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Review pull request",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "pull_request_merge",
+        "title": "Merge pull request",
+        "description": "Merge a PR. Refuses if the head moved from expectedHeadSha (summary.headSha).",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "expectedHeadSha": {
+              "type": "string"
+            },
+            "method": {
+              "type": "string",
+              "enum": [
+                "merge",
+                "squash",
+                "rebase",
+                "fast-forward"
+              ]
+            },
+            "auto": {
+              "type": "boolean",
+              "description": "Merge when required checks pass, including later pushes."
+            },
+            "stack": {
+              "type": "boolean",
+              "description": "Merge this PR and every open stack layer below it at once. Not with auto."
+            }
+          },
+          "required": [
+            "expectedHeadSha"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "open",
+                "closed",
+                "merged"
+              ],
+              "description": "open while auto-merge or a merge queue waits for checks."
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url",
+            "state"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Merge pull request",
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "ci_logs",
+        "title": "Read CI logs",
+        "description": "Read the tail of a PR's failing check logs, or one named check's. Use instead of gh run view.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            },
+            "tailLines": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "description": "Default: 200."
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "log": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  },
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "url",
+                  "log",
+                  "truncated",
+                  "detail"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url",
+            "checks"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Read CI logs",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "ci_rerun",
+        "title": "Re-run CI",
+        "description": "Re-run a PR's failing checks, or one named check.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "environmentId": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Default: the branch's PR."
+            },
+            "repository": {
+              "type": "string"
+            },
+            "check": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "host": {
+              "type": "string"
+            },
+            "repository": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "url": {
+              "type": "string"
+            },
+            "checks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "rerun": {
+                    "type": "boolean"
+                  },
+                  "detail": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "rerun",
+                  "detail"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "host",
+            "repository",
+            "number",
+            "url",
+            "checks"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Re-run CI",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "list_issues",
+        "title": "List issues",
+        "description": "List issues in a project's tracker, newest updated first. Pass the returned nextCursors as cursors for the next page.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "enum": [
+                "all",
+                "open",
+                "closed"
+              ],
+              "description": "Defaults to open."
+            },
+            "query": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "cursors": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string"
+                  },
+                  "tracker": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "displayKey": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "object",
+                    "properties": {
+                      "category": {
+                        "type": "string",
+                        "enum": [
+                          "open",
+                          "closed"
+                        ]
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "closeReason": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "category",
+                      "name"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "author": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "assignees": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "labels": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  },
+                  "commentCount": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "tracker",
+                  "host",
+                  "scope",
+                  "key",
+                  "url",
+                  "displayKey",
+                  "title",
+                  "state",
+                  "author",
+                  "assignees",
+                  "labels",
+                  "updatedAt",
+                  "commentCount"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "nextCursors": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string"
+                  },
+                  "message": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "message"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "issues",
+            "nextCursors",
+            "errors"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "List issues",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "read_issue",
+        "title": "Read issue",
+        "description": "Read an issue: body, state, labels, assignees, recent comments and linked pull requests. Pass its url, or its key.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "displayKey": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "state": {
+              "type": "object",
+              "properties": {
+                "category": {
+                  "type": "string",
+                  "enum": [
+                    "open",
+                    "closed"
+                  ]
+                },
+                "name": {
+                  "type": "string"
+                },
+                "closeReason": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "category",
+                "name"
+              ],
+              "additionalProperties": true
+            },
+            "writable": {
+              "type": "boolean"
+            },
+            "capabilities": {
+              "type": "object",
+              "properties": {
+                "create": {
+                  "type": "boolean"
+                },
+                "edit": {
+                  "type": "boolean"
+                },
+                "comment": {
+                  "type": "boolean"
+                },
+                "labels": {
+                  "type": "boolean"
+                },
+                "assignees": {
+                  "type": "boolean"
+                },
+                "reactions": {
+                  "type": "boolean"
+                },
+                "templates": {
+                  "type": "boolean"
+                },
+                "linkedPullRequests": {
+                  "type": "boolean"
+                },
+                "events": {
+                  "type": "boolean"
+                },
+                "search": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "create",
+                "edit",
+                "comment",
+                "labels",
+                "assignees",
+                "reactions",
+                "templates",
+                "linkedPullRequests",
+                "events",
+                "search"
+              ],
+              "additionalProperties": true
+            },
+            "states": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "category": {
+                    "type": "string",
+                    "enum": [
+                      "open",
+                      "closed"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "closeReason": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "category",
+                  "name"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "author": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assignees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "updatedAt": {
+              "type": "string"
+            },
+            "closedAt": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "body": {
+              "type": "string"
+            },
+            "comments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "author": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "createdAt": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "author",
+                  "body",
+                  "createdAt"
+                ],
+                "additionalProperties": true
+              }
+            },
+            "commentsTruncated": {
+              "type": "boolean"
+            },
+            "linkedPullRequests": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "closesIssue": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "url",
+                  "title",
+                  "state",
+                  "closesIssue"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key",
+            "url",
+            "displayKey",
+            "title",
+            "state",
+            "writable",
+            "capabilities",
+            "states",
+            "author",
+            "assignees",
+            "labels",
+            "createdAt",
+            "updatedAt",
+            "closedAt",
+            "body",
+            "comments",
+            "commentsTruncated",
+            "linkedPullRequests"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Read issue",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "create_issue",
+        "title": "Create issue",
+        "description": "File an issue in a project's tracker.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string",
+              "maxLength": 65536
+            },
+            "labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 50
+            },
+            "assignees": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 25
+            }
+          },
+          "required": [
+            "title"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "displayKey": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key",
+            "url",
+            "displayKey"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Create issue",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "comment_on_issue",
+        "title": "Comment on issue",
+        "description": "Post a comment on an issue.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            }
+          },
+          "required": [
+            "body"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Comment on issue",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": false,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "set_issue_state",
+        "title": "Set issue state",
+        "description": "Move an issue to one of its states. read_issue lists them under states.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            },
+            "state": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "state"
+          ]
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Set issue state",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": true
+        }
+      },
+      {
+        "name": "link_issue",
+        "title": "Link issue to thread",
+        "description": "Link an issue to a thread so T3 Code shows it beside the thread. Link every issue you work on or file.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            },
+            "alreadyLinked": {
+              "type": "boolean",
+              "description": "True when the issue was linked to this thread before the call."
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key",
+            "url",
+            "alreadyLinked"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Link issue to thread",
+          "readOnlyHint": false,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "unlink_issue",
+        "title": "Unlink issue from thread",
+        "description": "Remove an issue link from a thread. The issue itself is not changed.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "projectId": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "projectId": {
+              "type": "string"
+            },
+            "tracker": {
+              "type": "string"
+            },
+            "host": {
+              "type": "string"
+            },
+            "scope": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string"
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "wasLinked": {
+              "type": "boolean",
+              "description": "False when the issue was not linked to this thread to begin with."
+            }
+          },
+          "required": [
+            "projectId",
+            "tracker",
+            "host",
+            "scope",
+            "key",
+            "wasLinked"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "Unlink issue from thread",
+          "readOnlyHint": false,
+          "destructiveHint": true,
+          "idempotentHint": true,
+          "openWorldHint": false
+        }
+      },
+      {
+        "name": "list_thread_issues",
+        "title": "List thread issues",
+        "description": "List the issues linked to a thread.",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "threadId": {
+              "type": "string"
+            }
+          }
+        },
+        "outputSchema": {
+          "type": "object",
+          "properties": {
+            "issues": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "projectId": {
+                    "type": "string"
+                  },
+                  "tracker": {
+                    "type": "string"
+                  },
+                  "host": {
+                    "type": "string"
+                  },
+                  "scope": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  },
+                  "source": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "agent"
+                    ]
+                  },
+                  "displayKey": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "projectId",
+                  "tracker",
+                  "host",
+                  "scope",
+                  "key",
+                  "url",
+                  "source",
+                  "displayKey",
+                  "title"
+                ],
+                "additionalProperties": true
+              }
+            }
+          },
+          "required": [
+            "issues"
+          ],
+          "additionalProperties": true
+        },
+        "annotations": {
+          "title": "List thread issues",
+          "readOnlyHint": true,
+          "destructiveHint": false,
+          "idempotentHint": true,
+          "openWorldHint": false
         }
       }
     ]

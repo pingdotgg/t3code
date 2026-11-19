@@ -216,6 +216,7 @@ pub mod lit {
     literal!(McpApp = "mcp-app");
     literal!(McpAppRequestError = "McpAppRequestError");
     literal!(MediaFile = "media-file");
+    literal!(Merged = "merged");
     literal!(Message = "message");
     literal!(MessageDispatch = "message.dispatch");
     literal!(MessageUpdated = "message.updated");
@@ -2194,6 +2195,8 @@ pub struct ThreadPullRequestWatch {
     pub checks_awaited_since: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub checks_pending: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<lit::Merged>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -3619,6 +3622,14 @@ pub struct OrchestrationV2CommandThreadIssueUnlink {
     pub key: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum OrchestrationV2CommandThreadPullRequestWatchUntil {
+    #[serde(rename = "checks")]
+    Checks,
+    #[serde(rename = "merged")]
+    Merged,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OrchestrationV2CommandThreadPullRequestWatchLink {
@@ -3638,6 +3649,8 @@ pub struct OrchestrationV2CommandThreadPullRequestWatch {
     pub repository: String,
     pub number: i64,
     pub watching: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub until: Option<OrchestrationV2CommandThreadPullRequestWatchUntil>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<OrchestrationV2CommandThreadPullRequestWatchLink>,
 }
@@ -13428,6 +13441,8 @@ pub struct IssueListInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursors: Option<IssueListCursors>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub labels: Option<Vec<String>>,
@@ -16519,6 +16534,10 @@ pub struct PullRequestDetail {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observed_at: Option<f64>,
     pub merged_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merge_commit_sha: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub merged_by: Option<IssueActor>,
     pub closed_at: Option<String>,
     pub reviewers: Vec<IssueActor>,
     pub labels: Vec<IssueLabel>,
@@ -17098,6 +17117,8 @@ pub struct PullRequestActionInput {
     pub stack_number: Option<i64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_stack_heads: Option<Vec<PullRequestStackHead>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_head_sha: Option<String>,
     pub project_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,

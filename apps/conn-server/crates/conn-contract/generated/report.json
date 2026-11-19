@@ -1,9 +1,9 @@
 {
   "roots": 1057,
-  "namedSchemas": 1865,
-  "references": 1533,
-  "rustItems": 1827,
-  "literalTypes": 513,
+  "namedSchemas": 1866,
+  "references": 1534,
+  "rustItems": 1828,
+  "literalTypes": 514,
   "methods": 251,
   "methodsFullyTyped": 251,
   "opaqueFallbacks": 0,

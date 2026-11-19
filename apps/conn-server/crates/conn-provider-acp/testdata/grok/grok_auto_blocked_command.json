@@ -1,5 +1,5 @@
 {
- "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_auto_blocked_command/grok_transcript.ndjson through the orchestrator fixture runner at 7eb4f676cf; driver dropped.",
+ "note": "ProviderAdapterV2 calls and events from T3's grok adapter replaying fixtures/grok_auto_blocked_command/grok_transcript.ndjson through the orchestrator fixture runner at 51f9f0bdab; driver dropped.",
  "capturedOn": "2026-11-19",
  "outcome": "passed",
  "gates": [],
@@ -1823,7 +1823,7 @@
        },
        {
         "type": "text",
-        "text": "<runtime_info>In case you're asked: you are running in T3 Code through the Grok harness, as grok-4.7-build-fast. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n<pull_request_linking>\nLink each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.\nIf available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.\n</pull_request_linking>"
+        "text": "<runtime_info>In case you're asked: you are running in T3 Code through the Grok harness, as grok-4.7-build-fast. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n<pull_request_linking>\nLink each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch. When pull_request_* tools are listed, use them, not gh or cafe, to read, list, open, edit, review, reply on, close, or merge PRs, and ci_logs and ci_rerun for their checks. pull_request_create links for you.\nIf available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.\n</pull_request_linking>"
        }
       ],
       "_meta": {
@@ -6640,7 +6640,7 @@
     "parentItemId": null,
     "ordinal": 103,
     "status": "running",
-    "title": "Run the first permission-test echo",
+    "title": "Ran command",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": null,
     "updatedAt": "1970-01-01T00:00:00.002Z",
@@ -6690,7 +6690,7 @@
     "parentItemId": null,
     "ordinal": 103,
     "status": "completed",
-    "title": "Run the first permission-test echo",
+    "title": "Ran command",
     "startedAt": "1970-01-01T00:00:00.002Z",
     "completedAt": "1970-01-01T00:00:00.002Z",
     "updatedAt": "1970-01-01T00:00:00.002Z",
