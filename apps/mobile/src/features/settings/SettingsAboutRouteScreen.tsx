@@ -16,6 +16,7 @@ import {
   registerHiddenUpdateTap,
   runAppUpdateCheck,
 } from "../updates/app-updates";
+import { useCheckForUpdates } from "../updates/useCheckForUpdates";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -49,6 +50,8 @@ function AppSettingsSection() {
     checkState.state === "current" && confirmationExpired ? "idle" : checkState.state;
   const updateInFlight = useRef(false);
   const hiddenUpdateTapCount = useRef(0);
+  const checkForUpdates = useCheckForUpdates();
+  const [isCheckingEverything, setIsCheckingEverything] = useState(false);
 
   const version = Constants.expoConfig?.version ?? "0.0.0";
   // Match app.config.ts's production fallback to avoid mislabeling builds as development.
@@ -79,6 +82,12 @@ function AppSettingsSection() {
       }),
     );
     updateInFlight.current = false;
+  }
+
+  async function checkEverything() {
+    setIsCheckingEverything(true);
+    await settlePromise(checkForUpdates);
+    setIsCheckingEverything(false);
   }
 
   function handleVersionPress() {
@@ -132,6 +141,13 @@ function AppSettingsSection() {
         target="SettingsOpenSourceLicenses"
       />
       <SettingsRow icon="doc.text" label="License" fullScreenTarget="SettingsLegal" />
+      <SettingsRow
+        icon="arrow.clockwise"
+        label="Check for Updates"
+        value={isCheckingEverything ? "Checking…" : undefined}
+        disabled={isCheckingEverything}
+        onPress={() => void checkEverything()}
+      />
       {updateCheckAvailable ? (
         <Pressable
           accessibilityLabel={`Version ${versionLabel}`}

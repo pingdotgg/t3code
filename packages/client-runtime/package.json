@@ -307,6 +307,10 @@
       "types": "./src/state/projects.ts",
       "default": "./src/state/projects.ts"
     },
+    "./update-check": {
+      "types": "./src/updateCheck.ts",
+      "default": "./src/updateCheck.ts"
+    },
     "./provider-turn-steering": {
       "types": "./src/providerTurnSteering.ts",
       "default": "./src/providerTurnSteering.ts"

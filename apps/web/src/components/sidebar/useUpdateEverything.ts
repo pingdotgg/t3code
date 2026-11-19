@@ -2,8 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 
 import { APP_VERSION } from "~/branding";
-import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
-import { isElectron } from "~/env";
+import { isHostedByThisApp } from "~/connection/desktopLocal";
 import { useEnvironments } from "~/state/environments";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentUpdateStatesAtom, serverEnvironment } from "~/state/server";
@@ -34,17 +33,6 @@ import {
 } from "./updateEverythingRun";
 
 const UPDATE_RESTART_DELAY_MS = 5_000;
-
-/** Servers this desktop app runs; they update with it. */
-export function isHostedByThisApp(
-  environment: ReturnType<typeof useEnvironments>["environments"][number],
-) {
-  return (
-    isElectron &&
-    (environment.entry.target._tag === "PrimaryConnectionTarget" ||
-      isDesktopLocalConnectionTarget(environment.entry.target))
-  );
-}
 
 export type ReportLocalUpdateError = (title: string, description: string) => void;
 

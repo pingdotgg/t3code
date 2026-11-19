@@ -18,7 +18,8 @@ import {
   localSwitchBlockReason,
   type ChannelSwitchRelease,
 } from "../sidebar/updateEverything.logic";
-import { isHostedByThisApp, useUpdateEverything } from "../sidebar/useUpdateEverything";
+import { isHostedByThisApp } from "~/connection/desktopLocal";
+import { useUpdateEverything } from "../sidebar/useUpdateEverything";
 import {
   localUpdaterStaysPut,
   nothingToMove,

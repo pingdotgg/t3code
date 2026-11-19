@@ -46,7 +46,6 @@ import { AboutVersionTitle } from "./AboutVersionTitle";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
 import {
-  canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateDisabledReason,
   getDesktopUpdateInstallConfirmationMessage,
@@ -126,6 +125,7 @@ import {
 } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
 import { AdvancedSettings } from "./AdvancedSettings";
@@ -135,12 +135,12 @@ import { StorageCleanupSections } from "./StorageSettings";
 import { UpdateTrackSwitchDialog } from "./UpdateTrackSwitchDialog";
 import { environmentIdsKey } from "~/state/environmentAtomList";
 import { environmentSessionStatesAtom } from "~/state/session";
-import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
+import { useCheckForUpdates } from "../useCheckForUpdates";
 import { canUpdateServer } from "../ServerUpdateAction";
 import { downloadLocalUpdate } from "../sidebar/SidebarUpdatePill";
 import { useUpdateEverythingRun } from "../sidebar/updateEverythingRun";
 import { awaitsTrackSwitch, channelSwitchLabel } from "../sidebar/updateEverything.logic";
-import { isHostedByThisApp } from "../sidebar/useUpdateEverything";
+import { isHostedByThisApp } from "~/connection/desktopLocal";
 import { APP_NAME } from "@t3tools/shared/branding";
 
 const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
@@ -190,7 +190,8 @@ function AboutVersionSection() {
   );
   // A second run would replace the first run's progress and local download.
   const updateRun = useUpdateEverythingRun();
-  const checkProviderUpdates = useCheckProviderUpdates();
+  const checkForUpdates = useCheckForUpdates();
+  const [isChecking, setIsChecking] = useState(false);
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -224,16 +225,14 @@ function AboutVersionSection() {
 
   const handleButtonClick = async () => {
     const bridge = window.desktopBridge;
-    if (!bridge) return;
-
     const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
 
-    if (action === "download") {
+    if (bridge && action === "download") {
       void downloadLocalUpdate(bridge, { notifyDownloaded: false });
       return;
     }
 
-    if (action === "install") {
+    if (bridge && action === "install") {
       if (isUpdateActionPending) return;
       setIsUpdateActionPending(true);
       let confirmed = false;
@@ -274,40 +273,18 @@ function AboutVersionSection() {
       return;
     }
 
-    if (typeof bridge.checkForUpdate !== "function") return;
-    void checkProviderUpdates();
-    void bridge
-      .checkForUpdate()
-      .then((result) => {
-        if (!result.checked) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not check for updates",
-              description:
-                updatesDenial ??
-                result.state.message ??
-                "Automatic updates are not available in this build.",
-            }),
-          );
-        }
-      })
-      .catch((error: unknown) => {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not check for updates",
-            description: error instanceof Error ? error.message : "Update check failed.",
-          }),
-        );
-      });
+    if (isChecking) return;
+    setIsChecking(true);
+    await settlePromise(() => checkForUpdates());
+    setIsChecking(false);
   };
 
   const action = updateState ? resolveDesktopUpdateButtonAction(updateState) : "none";
   const buttonTooltip = updateState ? getDesktopUpdateButtonTooltip(updateState) : null;
+  // With this app's updater off, a check still covers servers and providers.
   const buttonDisabled =
     action === "none"
-      ? !canCheckForUpdate(updateState)
+      ? isChecking || updateState?.status === "checking" || updateState?.status === "downloading"
       : isDesktopUpdateButtonDisabled(updateState);
 
   const actionLabel: Record<string, string> = { download: "Download", install: "Install" };
@@ -318,7 +295,9 @@ function AboutVersionSection() {
     ...(appOffTrack ? {} : { "up-to-date": "Up to Date" }),
   };
   const buttonLabel =
-    actionLabel[action] ?? statusLabel[updateState?.status ?? ""] ?? "Check for Updates";
+    actionLabel[action] ??
+    (isChecking ? "Checking…" : statusLabel[updateState?.status ?? ""]) ??
+    "Check for Updates";
   const description =
     action === "download" || action === "install"
       ? "Update available."
@@ -2502,17 +2481,7 @@ export function AboutSettingsPanel() {
             }
           />
         ) : null}
-        {isElectron || HOSTED_APP_CHANNEL ? (
-          <AboutVersionSection />
-        ) : (
-          <>
-            <SettingsRow
-              id={searchableSetting("app-version").id}
-              title={<AboutVersionTitle />}
-              description={`Current version of ${APP_NAME}.`}
-            />
-          </>
-        )}
+        <AboutVersionSection />
         <MobileAppSettingsRow />
         {primaryEnvironmentId === null ? null : (
           <SettingsRow

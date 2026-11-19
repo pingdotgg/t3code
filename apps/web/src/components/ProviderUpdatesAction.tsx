@@ -1,15 +1,16 @@
 import { AuthProvidersManageScope, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import {
-  isAtomCommandInterrupted,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
+  checkEnvironmentUpdates,
+  type UpdateCheckItem,
+} from "@t3tools/client-runtime/update-check";
 import { useRef, useState } from "react";
 
 import { useEnvironmentProviders, useEnvironments } from "~/state/environments";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentsWithScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { isHostedByThisApp } from "~/connection/desktopLocal";
 import {
   canOneClickUpdateProviderCandidate,
   collectProviderUpdateCandidates,
@@ -20,62 +21,33 @@ import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-const PROVIDER_REFRESH_TIMEOUT_MS = 60_000;
-
-function withRefreshTimeout<A>(refresh: Promise<A>): Promise<A | "timeout"> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => resolve("timeout"), PROVIDER_REFRESH_TIMEOUT_MS);
-  });
-  return Promise.race([refresh, timeout]).finally(() => clearTimeout(timer));
-}
-
 // `refreshModels` always drops the server's hour-long latest-version cache. `modelCatalogOnly`
 // drops it only when the model manifest changed.
-export function useCheckProviderUpdates() {
+export function useCheckEnvironmentUpdates() {
   const { environments } = useEnvironments();
   const manageableIds = useEnvironmentsWithScope(environments, AuthProvidersManageScope);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
-  const inFlight = useRef<Promise<void> | null>(null);
+  const lookupNpmRelease = useAtomCommand(serverEnvironment.lookupNpmRelease, {
+    reportFailure: false,
+  });
+  const inFlight = useRef<Promise<UpdateCheckItem[]> | null>(null);
 
-  const check = async (quiet: boolean) => {
-    const failures = await Promise.all(
-      environments
-        .filter(
-          (environment) =>
-            environment.connection.phase === "connected" &&
-            manageableIds.has(environment.environmentId),
-        )
-        .map(async ({ environmentId, label }) => {
-          // A hung refresh must not hold the check, and the spinner, forever.
-          const result = await withRefreshTimeout(
-            refreshProviders({ environmentId, input: { refreshModels: true } }),
-          );
-          if (result === "timeout") {
-            return [`${label}: No answer after ${PROVIDER_REFRESH_TIMEOUT_MS / 1000} seconds.`];
-          }
-          if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return [];
-          const error = squashAtomCommandFailure(result);
-          return [`${label}: ${error instanceof Error ? error.message : "Refresh failed."}`];
-        }),
+  const check = () =>
+    checkEnvironmentUpdates(
+      environments.map((environment) => ({
+        ...environment,
+        hostedByThisApp: isHostedByThisApp(environment),
+        canManageProviders: manageableIds.has(environment.environmentId),
+      })),
+      { lookupNpmRelease, refreshProviders },
     );
-    const lines = failures.flat();
-    if (quiet || lines.length === 0) return;
-    toastManager.add(
-      stackedThreadToast({
-        type: "error",
-        title: "Could not check provider updates",
-        description: <span className="whitespace-pre-line">{lines.join("\n")}</span>,
-      }),
-    );
-  };
 
   // A repeat click must not start a second model rediscovery while one is running.
-  return ({ quiet = false }: { readonly quiet?: boolean } = {}) => {
+  return () => {
     if (inFlight.current) return inFlight.current;
-    const running = check(quiet).finally(() => {
+    const running = check().finally(() => {
       inFlight.current = null;
     });
     inFlight.current = running;

@@ -1526,6 +1526,11 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshIntervalMs: 5 * 60_000,
     }),
+    /** An explicit update check asks again instead of reading the cached `npmRelease`. */
+    lookupNpmRelease: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:npm-release-lookup",
+      tag: WS_METHODS.serverGetNpmRelease,
+    }),
     processDiagnostics: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-diagnostics",
       tag: WS_METHODS.serverGetProcessDiagnostics,

@@ -1,4 +1,5 @@
 import { APP_NAME } from "@t3tools/shared/branding";
+import type { UpdateCheckItem } from "@t3tools/client-runtime/update-check";
 import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -7,8 +8,9 @@ import "~/index.css";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 import { act, render } from "../../../test/render";
-import { DesktopUpdateButton, SidebarUpdatePill } from "./SidebarUpdatePill";
+import { UpdateButton, SidebarUpdatePill } from "./SidebarUpdatePill";
 import type { UpdateEverythingRow } from "./updateEverything.logic";
+import { toastManager } from "../ui/toast";
 import { setUpdateEverythingRun } from "./updateEverythingRun";
 
 const mocks = vi.hoisted(() => {
@@ -17,7 +19,7 @@ const mocks = vi.hoisted(() => {
     update: null as DesktopUpdateState | null,
     hasUpdates: false,
     rows: [] as ReadonlyArray<UpdateEverythingRow>,
-    checkProviders: (): Promise<void> => Promise.resolve(),
+    checkEnvironments: (): Promise<UpdateCheckItem[]> => Promise.resolve([]),
     subscribe: (listener: () => void) => {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -51,7 +53,7 @@ vi.mock("./useUpdateEverything", () => ({
   }),
 }));
 vi.mock("../ProviderUpdatesAction", () => ({
-  useCheckProviderUpdates: () => mocks.checkProviders,
+  useCheckEnvironmentUpdates: () => mocks.checkEnvironments,
 }));
 
 function nightlyUpdate(releaseNotes: DesktopUpdateState["releaseNotes"]): DesktopUpdateState {
@@ -84,17 +86,17 @@ function setup(
   {
     hasUpdates = false,
     rows = [],
-    checkProviders = () => Promise.resolve(),
+    checkEnvironments = () => Promise.resolve([]),
   }: {
     hasUpdates?: boolean;
     rows?: ReadonlyArray<UpdateEverythingRow>;
-    checkProviders?: () => Promise<void>;
+    checkEnvironments?: () => Promise<UpdateCheckItem[]>;
   } = {},
 ) {
   mocks.update = update;
   mocks.hasUpdates = hasUpdates;
   mocks.rows = rows;
-  mocks.checkProviders = checkProviders;
+  mocks.checkEnvironments = checkEnvironments;
   delete window.desktopBridge;
   setUpdateEverythingRun(() => null);
 }
@@ -166,6 +168,21 @@ describe("SidebarUpdatePill update everything", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(button.element()));
   });
 
+  it("checks this app too, so a newer build joins the update", async () => {
+    const upToDate = {
+      ...nightlyUpdate([]),
+      status: "up-to-date",
+      availableVersion: null,
+    } as const;
+    setup(upToDate, { hasUpdates: true });
+    const checkForUpdate = vi.fn(async () => ({ checked: true, state: upToDate }));
+    window.desktopBridge = { checkForUpdate } as Partial<DesktopBridge> as DesktopBridge;
+    await using screen = await render(<SidebarUpdatePill />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Update everything" }));
+    await vi.waitFor(() => expect(checkForUpdate).toHaveBeenCalledTimes(1));
+  });
+
   it("exposes the machines as a table with each value in its column", async () => {
     const label = "DESKTOP-WORKSTATION-UPSTAIRS";
     setup(null, {
@@ -215,7 +232,7 @@ describe("SidebarUpdatePill check", () => {
       status: "up-to-date",
       availableVersion: null,
     } as const;
-    setup(upToDate, { checkProviders: () => new Promise<void>(() => {}) });
+    setup(upToDate, { checkEnvironments: () => new Promise<UpdateCheckItem[]>(() => {}) });
     window.desktopBridge = {
       checkForUpdate: async () => {
         await publish(nightlyUpdate([]));
@@ -232,13 +249,32 @@ describe("SidebarUpdatePill check", () => {
     await expect.element(available).not.toHaveAttribute("aria-disabled");
   });
 
+  it("checks servers and providers without the desktop app's updater", async () => {
+    setup(null);
+    const checkEnvironments = vi.fn(async () => [
+      {
+        subject: "Codex on studio",
+        result: { status: "available", version: "1.1.0" },
+      } satisfies UpdateCheckItem,
+    ]);
+    mocks.checkEnvironments = checkEnvironments;
+    await using screen = await render(<SidebarUpdatePill />);
+    using toast = vi.spyOn(toastManager, "add");
+
+    await userEvent.click(screen.getByRole("button", { name: "Check for updates" }));
+    await vi.waitFor(() =>
+      expect(toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Updates available" })),
+    );
+    expect(checkEnvironments).toHaveBeenCalledTimes(1);
+  });
+
   it("can check again when the app is up to date but a provider check hangs", async () => {
     const upToDate = {
       ...nightlyUpdate([]),
       status: "up-to-date",
       availableVersion: null,
     } as const;
-    setup(upToDate, { checkProviders: () => new Promise<void>(() => {}) });
+    setup(upToDate, { checkEnvironments: () => new Promise<UpdateCheckItem[]>(() => {}) });
     const checkForUpdate = vi.fn(async () => ({ checked: true, state: upToDate }));
     window.desktopBridge = { checkForUpdate } as Partial<DesktopBridge> as DesktopBridge;
     await using screen = await render(<SidebarUpdatePill />);
@@ -253,7 +289,7 @@ describe("SidebarUpdatePill check", () => {
   });
 });
 
-describe("DesktopUpdateButton update run", () => {
+describe("UpdateButton update run", () => {
   it("shows a finished run's failure and lets it be dismissed", async () => {
     setup(nightlyUpdate([]));
     setUpdateEverythingRun(() => ({
@@ -276,7 +312,7 @@ describe("DesktopUpdateButton update run", () => {
     }));
     await using screen = await render(
       <AppAtomRegistryProvider>
-        <DesktopUpdateButton />
+        <UpdateButton />
       </AppAtomRegistryProvider>,
     );
 
@@ -313,7 +349,7 @@ describe("DesktopUpdateButton update run", () => {
     }));
     await using screen = await render(
       <AppAtomRegistryProvider>
-        <DesktopUpdateButton />
+        <UpdateButton />
       </AppAtomRegistryProvider>,
     );
 

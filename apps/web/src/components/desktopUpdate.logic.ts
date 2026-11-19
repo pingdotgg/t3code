@@ -1,4 +1,9 @@
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopUpdateActionResult,
+  DesktopUpdateCheckResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
+import type { UpdateCheckResult } from "@t3tools/client-runtime/update-check";
 import { APP_NAME } from "@t3tools/shared/branding";
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
@@ -144,13 +149,6 @@ export function shouldToastDesktopUpdateActionResult(result: DesktopUpdateAction
   return getDesktopUpdateActionError(result) !== null;
 }
 
-export function canCheckForUpdate(state: DesktopUpdateState | null): boolean {
-  if (!state || !state.enabled) return false;
-  return (
-    state.status !== "checking" && state.status !== "downloading" && state.status !== "disabled"
-  );
-}
-
 /** `managedDenial` is this machine's policy refusing updates (`managedUpdatesDenial`); it wins. */
 export function getDesktopUpdateDisabledReason(
   state: Pick<DesktopUpdateState, "enabled" | "status" | "message"> | null,
@@ -169,4 +167,29 @@ export function getDesktopUpdateIdleTooltip(
   return disabledReason
     ? { title: "Updates unavailable", detail: disabledReason }
     : { title: "Check for updates", detail: null };
+}
+
+/** `managedDenial` is this machine's policy refusing updates; it explains a check that did not run. */
+export function getDesktopUpdateCheckResult(
+  { checked, state }: DesktopUpdateCheckResult,
+  managedDenial?: string,
+): UpdateCheckResult {
+  const offered = getDesktopUpdateDownloadedVersion(state);
+  if (
+    offered !== null &&
+    (state.status === "available" ||
+      state.status === "downloading" ||
+      state.status === "downloaded")
+  ) {
+    return { status: "available", version: offered };
+  }
+  if (!checked) {
+    return {
+      status: "error",
+      reason:
+        managedDenial ?? state.message ?? "Automatic updates are not available in this build.",
+    };
+  }
+  if (state.status === "up-to-date") return { status: "up-to-date" };
+  return { status: "error", reason: state.message ?? "The check did not finish." };
 }

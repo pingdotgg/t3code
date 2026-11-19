@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useEffectEvent,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -39,6 +40,7 @@ import {
 } from "../panelAnimations";
 import { BackgroundThreadAnnouncer } from "./BackgroundThreadAnnouncer";
 import { HistorySwipeNavigation } from "./HistorySwipeNavigation";
+import { useCheckForUpdates } from "./useCheckForUpdates";
 import ThreadSidebar from "./Sidebar";
 import { SidebarBrandWidthProbe } from "./sidebar/SidebarChrome";
 import { useThreadShell } from "../state/entities";
@@ -417,6 +419,10 @@ export function AppSidebarLayout({
       node === null ? undefined : registerAppShellCommands(router, node),
   );
   const toggleWorkspaceView = useToggleWorkspaceView();
+  const checkForUpdates = useCheckForUpdates();
+  const runMenuUpdateCheck = useEffectEvent(() => void checkForUpdates());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers the desktop menu's update check while the shell is mounted
+  useEffect(() => registerMenuAction("check-for-updates", () => runMenuUpdateCheck()), []);
   const routeRef = useParams({ strict: false, select: resolveThreadRouteRef });
   const routeThread = useThreadShell(routeRef);
   const pathname = useLocation({ select: (location) => location.pathname });
