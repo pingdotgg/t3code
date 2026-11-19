@@ -20,6 +20,10 @@ const MAX_ERROR_PAYLOAD_BYTES = 16_384;
 // The Go harness's rendering of a Google API error, as the agent's api_errors.py reads it.
 const API_ERROR = /Error (\d{3}), Message: (.+?), Status: ([A-Z_]+)/s;
 const QUOTA_EXHAUSTED = /\breason:QUOTA_EXHAUSTED\b/;
+// Claude rejects a saved thinking block without a valid signature. It sits in the native
+// history, so every later prompt to that session fails the same way.
+const INVALID_THINKING_SIGNATURE =
+  /\bmessages\.\d+\.content\.\d+(?:\.thinking\.signature: Field required|: Invalid `signature` in `thinking` block)/;
 // The runtime stores a failed context-summarization step and replays it on every later
 // prompt to that session, whatever first made it fail.
 const FAILED_CHECKPOINT = /\bcontext summarization: checkpoint step \d+ failed\b/;
@@ -109,7 +113,12 @@ function turnFailure(
   stopReason: EffectAcpSchema.StopReason,
   step: LastStep | undefined,
   now: DateTime.Utc,
-): OrchestrationV2ProviderFailure | undefined {
+):
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | undefined {
   const errorText =
     step?.type === ERROR_STEP_TYPE
       ? new TextDecoder().decode(step.payload ?? new Uint8Array())
@@ -118,63 +127,66 @@ function turnFailure(
   if (errorText === undefined && stopReason !== "refusal") return undefined;
   const text = errorText ?? "";
   const apiError = API_ERROR.exec(text);
+  const failedCheckpoint = FAILED_CHECKPOINT.test(text);
+  const settle = (failure: OrchestrationV2ProviderFailure) =>
+    failedCheckpoint
+      ? {
+          // A quota failure keeps its reset time so usage-limit recovery can resume the thread.
+          failure:
+            failure.class === "usage_limit"
+              ? failure
+              : makeProviderFailure({
+                  class: "provider_error",
+                  message:
+                    "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
+                  code: "CHECKPOINT_FAILED",
+                  retryable: true,
+                }),
+          threadDisposition: "broken" as const,
+        }
+      : ({ failure, threadDisposition: "reusable" } as const);
   if (stopReason === "refusal" || QUOTA_EXHAUSTED.test(text)) {
-    return makeProviderFailure({
-      class: "usage_limit",
-      message: "You have reached your Antigravity quota for this period.",
-      code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
-      retryable: true,
-      resetAt: resetAtFrom(text, now) ?? null,
-    });
+    return settle(
+      makeProviderFailure({
+        class: "usage_limit",
+        message: "You have reached your Antigravity quota for this period.",
+        code: apiError?.[3] ?? "QUOTA_EXHAUSTED",
+        retryable: true,
+        resetAt: resetAtFrom(text, now) ?? null,
+      }),
+    );
+  }
+  if (INVALID_THINKING_SIGNATURE.test(text)) {
+    return {
+      failure: makeProviderFailure({
+        class: "provider_error",
+        message:
+          "Antigravity's saved conversation can no longer be sent to the model. The next message starts a fresh Antigravity session with this thread's context.",
+        code: "INVALID_THINKING_SIGNATURE",
+        retryable: true,
+      }),
+      threadDisposition: "broken",
+    };
   }
   if (apiError === null) {
-    return makeProviderFailure({
-      class: "provider_error",
-      message: "Antigravity stopped this turn because of an error.",
-    });
+    return settle(
+      makeProviderFailure({
+        class: "provider_error",
+        message: "Antigravity stopped this turn because of an error.",
+      }),
+    );
   }
   const [, httpStatus, message, status] = apiError;
   const rateLimited = httpStatus === "429" || status === "RESOURCE_EXHAUSTED";
-  return makeProviderFailure({
-    class: rateLimited ? "usage_limit" : "provider_error",
-    message: message!.trim(),
-    code: status ?? null,
-    retryable: rateLimited || Number(httpStatus) >= 500,
-    resetAt: resetAtFrom(text, now) ?? null,
-  });
-}
-
-function turnOutcome(
-  stopReason: EffectAcpSchema.StopReason,
-  step: LastStep | undefined,
-  now: DateTime.Utc,
-):
-  | {
-      readonly failure: OrchestrationV2ProviderFailure;
-      readonly threadDisposition: "reusable" | "broken";
-    }
-  | undefined {
-  const failure = turnFailure(stopReason, step, now);
-  if (failure === undefined) return undefined;
-  const text =
-    step?.type === ERROR_STEP_TYPE
-      ? new TextDecoder().decode(step.payload ?? new Uint8Array())
-      : "";
-  if (!FAILED_CHECKPOINT.test(text)) return { failure, threadDisposition: "reusable" };
-  return {
-    // A quota failure keeps its reset time so usage-limit recovery can resume the thread.
-    failure:
-      failure.class === "usage_limit"
-        ? failure
-        : makeProviderFailure({
-            class: "provider_error",
-            message:
-              "Antigravity could not summarize this conversation, so its saved session can no longer continue. The next message starts a fresh Antigravity session with this thread's context.",
-            code: "CHECKPOINT_FAILED",
-            retryable: true,
-          }),
-    threadDisposition: "broken",
-  };
+  return settle(
+    makeProviderFailure({
+      class: rateLimited ? "usage_limit" : "provider_error",
+      message: message!.trim(),
+      code: status ?? null,
+      retryable: rateLimited || Number(httpStatus) >= 500,
+      resetAt: resetAtFrom(text, now) ?? null,
+    }),
+  );
 }
 
 const conversationSegments = ["antigravity-acp", "conversations"];
@@ -190,7 +202,7 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
   sessionId: string,
 ) {
   const typedOnly = (result: EffectAcpSchema.PromptResponse) =>
-    DateTime.now.pipe(Effect.map((now) => turnOutcome(result.stopReason, undefined, now)));
+    DateTime.now.pipe(Effect.map((now) => turnFailure(result.stopReason, undefined, now)));
   if (!NATIVE_SESSION_ID.test(sessionId)) return typedOnly;
   const segments = [...conversationSegments, `${sessionId}.db`];
   const before = yield* Effect.tryPromise({
@@ -247,6 +259,6 @@ export const watchAntigravityPromptOutcome = Effect.fn("AntigravityTurnOutcome.w
           Effect.orElseSucceed(() => undefined),
         )
       : undefined;
-    return turnOutcome(result.stopReason, step, yield* DateTime.now);
+    return turnFailure(result.stopReason, step, yield* DateTime.now);
   });
 });

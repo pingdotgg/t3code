@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as PeerForwarding from "../../../peer/PeerForwarding.ts";
 import * as PeerLinkRequests from "../../../peer/PeerLinkRequests.ts";
 import * as PeerLinks from "../../../peer/PeerLinks.ts";
+import * as RemoteDelegation from "../../../peer/RemoteDelegation.ts";
 import { readCaller } from "../../threadAccess.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
@@ -74,7 +75,10 @@ const handlers = {
           Effect.mapError(
             (cause) =>
               new OrchestratorMcpFailure({
-                code: cause.reason === "unsupported" ? "invalid_request" : "orchestration_error",
+                code:
+                  cause.reason === "unsupported" || cause.reason === "unmatched"
+                    ? "invalid_request"
+                    : "orchestration_error",
                 message: cause.message,
               }),
           ),
@@ -101,7 +105,7 @@ const handlers = {
       { refused: "schedule tasks in this environment" },
     ),
     McpToolAccess.writes(
-      ({ scheduledTaskId, prompt, title, schedule, enabled, bindToCurrentThread }) =>
+      ({ scheduledTaskId, prompt, title, schedule, enabled, freshSession, bindToCurrentThread }) =>
         Effect.gen(function* () {
           if (scheduledTaskId === undefined) return yield* Effect.die("unreachable");
           const scope = yield* McpInvocationContext.McpInvocationContext;
@@ -112,6 +116,7 @@ const handlers = {
             title,
             schedule,
             enabled,
+            freshSession,
             bindToCurrentThread,
           });
         }),
@@ -168,13 +173,22 @@ const handlers = {
         return yield* service.update(scope, input);
       }),
   ),
-  t3_thread_send: McpToolAccess.writesThreads(
-    (input) => [input.threadId],
-    (input) =>
+  t3_thread_send: McpToolAccess.afterForwarding(
+    McpToolAccess.writesThreads(
+      (input) => [input.threadId],
+      (input) =>
+        Effect.gen(function* () {
+          const scope = yield* McpInvocationContext.McpInvocationContext;
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          return yield* service.sendToThread(scope, input);
+        }),
+    ),
+    // There the thread's parent is here, so only this side can make a follow-up a task.
+    (input, environmentId, sent) =>
       Effect.gen(function* () {
         const scope = yield* McpInvocationContext.McpInvocationContext;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        return yield* service.sendToThread(scope, input);
+        const remote = yield* RemoteDelegation.RemoteDelegation;
+        return yield* remote.followUp(scope, environmentId, input, sent);
       }),
   ),
   t3_thread_wait: McpToolAccess.reads((input) =>
