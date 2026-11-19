@@ -2692,11 +2692,8 @@ export default function ChatView(props: ChatViewProps) {
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     // An approval's feedback goes to that approval; the armed session waits for the next message.
-    // An approval held while you type doesn't own the composer, so a send still starts fresh.
     const freshSessionItems =
-      freshSessionPending &&
-      (activePendingApproval === null ||
-        heldApprovalRequestIds.has(activePendingApproval.requestId))
+      freshSessionPending && activePendingApproval === null
         ? [freshSessionBannerItem(() => disarmFreshSession(routeThreadKey), messages)]
         : [];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
