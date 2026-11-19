@@ -3,6 +3,11 @@ import {
   type DeviceScreenSize,
 } from "@t3tools/client-runtime/device/stream";
 
+import {
+  iphoneDisplayHardware,
+  iphoneHardwareStyle,
+} from "@t3tools/client-runtime/device/iphone-display-hardware";
+
 import type { DeviceStreamConfiguration } from "./device-stream-document";
 
 declare global {
@@ -83,6 +88,14 @@ export function start(configuration: DeviceStreamConfiguration) {
     background: colors.background,
   });
   frame.append(canvas, image);
+  const hardware = platform === "ios" ? iphoneDisplayHardware(configuration.deviceName) : undefined;
+  const hardwareLayer = document.createElement("div");
+  hardwareLayer.hidden = true;
+  if (hardware) {
+    frame.style.containerType = "size";
+    hardwareLayer.setAttribute("aria-hidden", "true");
+    frame.append(hardwareLayer);
+  }
   container.append(frame);
   document.body.replaceChildren(container, inputStatus);
 
@@ -92,6 +105,7 @@ export function start(configuration: DeviceStreamConfiguration) {
   const reportStatus = (status: "connecting" | "streaming" | "error", detail?: string) => {
     if (activeClient !== client) return;
     streaming = status === "streaming";
+    hardwareLayer.hidden = !streaming;
     inputStatus.style.display = streaming && !inputConnected ? "block" : "none";
     post({ type: "status", status, detail });
   };
@@ -113,6 +127,7 @@ export function start(configuration: DeviceStreamConfiguration) {
               ? 180
               : 0
         : 0;
+    if (hardware) Object.assign(hardwareLayer.style, iphoneHardwareStyle(hardware, screen));
     const sideways = Math.abs(rotation) === 90;
     frame.style.width = `min(100cqw, ${aspect * 100}cqh)`;
     frame.style.height = `min(100cqh, ${100 / aspect}cqw)`;

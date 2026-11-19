@@ -19,6 +19,7 @@ import {
   type BufferGeometry,
   type Texture,
 } from "three";
+import { createIphoneHardwareMesh } from "./iphoneHardwareMesh.ts";
 import type { DeviceScreenSize } from "./stream.ts";
 import { IOS_PHONE_SHAPE, type DeviceShapeProfile } from "./shapeProfile.ts";
 
@@ -135,6 +136,10 @@ export function createPhoneScene(
   const display = new Mesh(screenGeometry, screenMaterial);
   display.position.z = 0.043;
   orientation.add(display);
+  const hardware = profile.hardware
+    ? createIphoneHardwareMesh(profile.hardware, screenWidth, SCREEN_HEIGHT, display.position.z)
+    : null;
+  if (hardware) orientation.add(hardware.mesh);
 
   for (const { edge, offset, length } of profile.buttons) {
     const button = new Mesh(
@@ -221,6 +226,10 @@ export function createPhoneScene(
       updateDisplayUv(screenGeometry, screenWidth, SCREEN_HEIGHT, activeLayout);
     },
     dispose() {
+      if (hardware) {
+        hardware.mesh.removeFromParent();
+        hardware.dispose();
+      }
       root.traverse((object) => {
         if (object instanceof Mesh) object.geometry.dispose();
       });

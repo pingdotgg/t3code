@@ -1,10 +1,12 @@
 import type { DevicePlatform } from "@t3tools/contracts";
+import { iphoneDisplayHardware } from "./iphoneDisplayHardware.ts";
 
 export interface DeviceShapeProfile {
   readonly id: "ios-phone" | "ios-tablet" | "android-phone" | "android-tablet";
   readonly bezel: number;
   readonly bodyRadius: number;
   readonly screenRadius: number;
+  readonly hardware?: ReturnType<typeof iphoneDisplayHardware>;
   readonly depth: number;
   readonly backColor: number;
   readonly buttons: ReadonlyArray<{
@@ -112,6 +114,8 @@ export function resolveDeviceShape(options: {
   const namedTablet = /\b(ipad|tablet)\b/i.test(name);
   const namedPhone = /\b(iphone|phone)\b/i.test(name);
   const tablet = namedTablet || (!namedPhone && options.portraitAspect >= 0.6);
+  const hardware = options.platform === "ios" ? iphoneDisplayHardware(name) : undefined;
+  if (hardware) return { ...IOS_PHONE_SHAPE, hardware };
   return options.platform === "ios"
     ? tablet
       ? IOS_TABLET_SHAPE

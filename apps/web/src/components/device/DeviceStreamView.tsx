@@ -7,6 +7,10 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import {
+  iphoneDisplayHardware,
+  iphoneHardwareStyle,
+} from "@t3tools/client-runtime/device/iphone-display-hardware";
 import { resolveDeviceShape } from "@t3tools/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
 import { fitDeviceFrame } from "./deviceFrameLayout";
@@ -237,6 +241,7 @@ export function DeviceStreamView(props: {
             ? gt("Turn off accessibility frames to use 3D")
             : null;
 
+  const hardware = props.platform === "ios" ? iphoneDisplayHardware(props.deviceName) : undefined;
   const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
   const resetView = () => {
     if (!isDuo) {
@@ -351,7 +356,11 @@ export function DeviceStreamView(props: {
         }}
       >
         <div
-          className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
+          className={cn(
+            "relative select-none",
+            showPhone && "invisible pointer-events-none",
+            hardware && "@container-size",
+          )}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
             if (event.button !== 0 || !inputState.connected || activePointer.current !== null)
@@ -386,6 +395,9 @@ export function DeviceStreamView(props: {
               className="absolute top-0 left-0 object-contain"
               style={mediaStyle}
             />
+          ) : null}
+          {hardware && !showPhone && (hasFrame || mjpegUrl) ? (
+            <div aria-hidden style={iphoneHardwareStyle(hardware, screen)} />
           ) : null}
           {axElements.length > 0 ? (
             <div className="pointer-events-none absolute inset-0" aria-hidden>

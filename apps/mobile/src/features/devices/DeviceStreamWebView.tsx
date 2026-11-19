@@ -66,6 +66,7 @@ export function DeviceStreamWebView({
     access: props.access,
     platform: props.platform,
     deviceId: props.deviceId,
+    ...(props.deviceName ? { deviceName: props.deviceName } : {}),
     ...(props.serveSimOnly ? { serveSimOnly: true } : {}),
     colors: props.colors,
     labels: {
