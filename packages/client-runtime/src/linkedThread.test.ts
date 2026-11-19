@@ -1,9 +1,12 @@
 import {
+  EnvironmentId,
   EventId,
   type OrchestrationV2ThreadHistoryPage,
   type OrchestrationV2ThreadStreamItem,
+  type PeerLinkClientPairingResult,
 } from "@t3tools/contracts";
-import { expect, it } from "@effect/vitest";
+import { describe, expect, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
@@ -11,6 +14,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 
 import {
+  connectLinkedEnvironment,
   followLinkedThread,
   keepLinkedThreadView,
   LINKED_THREAD_RETRY_MS,
@@ -158,3 +162,78 @@ it.effect("loads the turns before a snapshot's window once per request", () =>
     expect(asked).toEqual(["cursor-1"]);
   }).pipe(Effect.scoped),
 );
+
+describe("connectLinkedEnvironment", () => {
+  const lan = "http://192.168.1.20:3773";
+  const tailnet = "https://vm.tail.ts.net";
+  const target = {
+    environmentId: EnvironmentId.make("environment-vm"),
+    label: "VM",
+    urls: [lan, tailnet],
+  };
+  const credential: PeerLinkClientPairingResult = {
+    type: "credential",
+    ...target,
+    credential: "ONE-TIME",
+    expiresAt: DateTime.makeUnsafe(0),
+  };
+  const connect = (
+    pairing: PeerLinkClientPairingResult | null,
+    reachable: ReadonlyArray<string>,
+    paired = true,
+  ) => {
+    const pairs: Array<{ host: string; pairingCode: string }> = [];
+    return connectLinkedEnvironment({
+      label: "vm (saved name)",
+      requestPairing: async () => pairing,
+      reaches: async (host) => reachable.includes(host),
+      pair: async (input) => {
+        pairs.push(input);
+        return paired;
+      },
+    }).then((outcome) => ({ outcome, pairs }));
+  };
+
+  it("redeems the pairing at the first address this device reaches", async () => {
+    expect(await connect(credential, [tailnet])).toEqual({
+      outcome: { type: "connected" },
+      pairs: [{ host: tailnet, pairingCode: "ONE-TIME" }],
+    });
+    expect((await connect(credential, [tailnet, lan])).pairs[0]?.host).toBe(lan);
+  });
+
+  it("says the machine is out of reach, and spends nothing, when no address answers", async () => {
+    expect(await connect(credential, [])).toEqual({
+      outcome: { type: "unreachable", label: "VM" },
+      pairs: [],
+    });
+  });
+
+  it("leaves pairing to the user when the link cannot do it, with an address filled in", async () => {
+    const unsupported: PeerLinkClientPairingResult = {
+      type: "unsupported",
+      reason: "link_access",
+      ...target,
+    };
+    const manual = (host: string | null) => ({
+      outcome: { type: "manual", label: "VM", host },
+      pairs: [],
+    });
+    expect(await connect(unsupported, [tailnet])).toEqual(manual(tailnet));
+    // An address the user can correct beats an empty field.
+    expect(await connect(unsupported, [])).toEqual(manual(lan));
+    expect(await connect({ ...unsupported, urls: [] }, [])).toEqual(manual(null));
+    // The linking environment never answered, so only the client's own name is known.
+    expect((await connect(null, [lan])).outcome).toEqual({
+      type: "manual",
+      label: "vm (saved name)",
+      host: null,
+    });
+    // The one-time pairing was refused where it was redeemed.
+    expect((await connect(credential, [lan], false)).outcome).toEqual({
+      type: "manual",
+      label: "VM",
+      host: lan,
+    });
+  });
+});
