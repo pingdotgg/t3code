@@ -375,6 +375,7 @@ export function NewTaskDraftScreen(props: {
   const isImportingContext = flow.draftKey ? contextImports[flow.draftKey] === true : false;
   const isComposerInteractionLocked =
     isIncomingShareTransferPending || flow.submitting || isImportingContext;
+  const isDraftContentLocked = isComposerInteractionLocked || flow.draftKey === null;
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
@@ -1002,6 +1003,7 @@ export function NewTaskDraftScreen(props: {
             value={flow.prompt}
             onChangeText={flow.setPrompt}
             placeholder={gt("Ask anything")}
+            readOnly={isDraftContentLocked}
             multiline
             style={{ minHeight: 64 }}
           />
@@ -1035,7 +1037,7 @@ export function NewTaskDraftScreen(props: {
           controls: draftControls,
           editorRef: promptInputRef,
           sendBlockedReason: setupBlockReason,
-          interactionLocked: isComposerInteractionLocked,
+          interactionLocked: isDraftContentLocked,
         }}
         canOperateThread={canOperate}
         selectedThread={thread}
