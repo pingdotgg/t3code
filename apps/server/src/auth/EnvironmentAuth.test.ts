@@ -7,6 +7,7 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import { onTestFinished, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -278,13 +279,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       ),
     );
 
-    it.effect("authenticates requests without credentials through WebSocket setup", () => {
+    it.effect("authenticates requests without credentials and never ends that session", () => {
       vi.stubEnv("T3CODE_UNSAFE_NO_AUTH", "1");
       onTestFinished(() => {
         vi.unstubAllEnvs();
       });
       return Effect.gen(function* () {
         const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+        const sessions = yield* SessionStore.SessionStore;
         const request = { cookies: {}, headers: {} };
         const session = yield* serverAuth.authenticateHttpRequest(request as never);
         const ticket = yield* serverAuth.issueWebSocketTicket(session);
@@ -299,7 +301,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         expect(session.subject).toBe("unsafe-no-auth");
         expect(session.scopes).toEqual(AuthStandardClientScopes);
         expect(websocketSession).toEqual(session);
-      }).pipe(Effect.provide(layerEnvironmentAuth()));
+
+        const unsafeInvalidated = yield* Deferred.make<void>();
+        yield* sessions
+          .awaitInvalidation(session.sessionId)
+          .pipe(
+            Effect.exit,
+            Effect.andThen(Deferred.succeed(unsafeInvalidated, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
+        const control = yield* sessions.issue({ subject: "control" });
+        yield* sessions.revoke(control.sessionId);
+        yield* sessions.awaitInvalidation(control.sessionId);
+        expect(yield* Deferred.isDone(unsafeInvalidated)).toBe(false);
+      }).pipe(Effect.scoped, Effect.provide(layerEnvironmentAuth()));
     });
 
     it.effect("prefers a bearer token over a stale legacy cookie", () =>
