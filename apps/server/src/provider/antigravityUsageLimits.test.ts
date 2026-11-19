@@ -654,6 +654,34 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("reads the native CLI's stored sign-in when acp_token.json is absent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { probe, tokenPath } = yield* fixture({ missingToken: true });
+      // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-a",
+            expiry: "2099-01-01T00:00:00Z",
+            expires_in: 3600,
+          },
+          auth_method: "consumer",
+          id_token_email: "someone@example.com",
+        }),
+      );
+      const limits = yield* probe;
+      expect(limits.unavailable?.message).not.toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {
       for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {
