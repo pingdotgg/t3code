@@ -1,14 +1,14 @@
 # Agent Board build plan
 
 Agent Board is a desktop app for running projects through an orchestrator on the T3 Code engine. The sidebar lists T3 projects, each project lists its boards, and each board shows one orchestrator, its tickets in lanes, the agents working each ticket, artifact cards, and For-you cards. The workflow it shows is the XEO-3330 run from November 2026.
-The rule the program enforces is that the engine stays upstream. No PR edits `apps/server`, `packages/*`, `apps/web`, or `apps/desktop`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`.
-The PRs, in stack order, are B0, B1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, and B12.
+The rule the program enforces is that the engine stays upstream. No PR edits a file that exists upstream, except `pnpm-lock.yaml`. Every PR passes `apps/board/scripts/check-engine-untouched.mjs`. The repo's lint and dependency standards apply to every file in the repo, and fail only on lines we add or change.
+The PRs, in stack order, are B0, B1, S1, K1, B2, B3, B4, B5, B6, B7, B8, B9, B10, B11, and B12.
 
 ## How to read this
 
 One box is one unit of work. Every box names the evidence that checks it. A nested box is a sub-step of the box above it. Check a box only when its evidence exists, a file, a log line, a screenshot, a test run, or a SHA. The body is a how-to. The appendices explain and record.
 
-The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator lands every PR. Every PR from B0 to B12 is an operator item that stops at STACK-READY, because the operator wants review before landing and each PR builds on the one below it.
+The program runs `skill://poteto-mode/playbooks/autopilot-stack.md`. The operator lands every PR. Every PR in the stack is an operator item that stops at STACK-READY, because the operator wants review before landing and each PR builds on the one below it.
 
 Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -23,7 +23,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
   - [ ] the OMP browser or terminal verification surface, with Orca's embedded browser through `orca-ide` as the default for web lanes
   - [ ] `skill://poteto-mode/playbooks/opening-a-pr.md`
   - [ ] `skill://architect`, `skill://how`, `skill://interrogate`, `skill://no-comments`, `skill://unslop`, and `skill://technical-writing`
-  - [ ] `skill://poteto-mode/playbooks/authoring-a-skill.md` for B12
+  - [ ] `skill://poteto-mode/playbooks/authoring-a-skill.md` for K1 and B12
 - [ ] On the operator's go, arm the audit tick every 1h as a bounded `scout` watcher task, or as the hourly timed wake from the job control in `skill://pstack-omp` in a long-lived root, with the tick prompt below. Never leave the cadence to memory.
 - [ ] Use this tick prompt, verbatim. "Re-read the execution playbook from trunk. Audit the operation against it and fix drift in this tick. Probe every active lane and judge progress by side effects only. Stand down a stuck lane and dispatch its replacement now. Then post a short status message to the operator in chat only when the audit found a tracked change that no earlier status message reported, such as a PR opened, a code-ready head, a round launched or closed, a verdict, a merge, a stuck agent and the action taken, a blocker added or cleared, or a decision only the operator can make. Name every such change and nothing else. Do not repeat a table, the merged list, or an unchanged blocker. If the audit found none, end the turn with no reply text. Either way, log this tick's row in your decision trail. The row names the items reported, or none."
 - [ ] On the operator's hold or stand-down, send every owner a zero-writes order at once.
@@ -33,9 +33,9 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 - [ ] Spawn one owner per PR with the full lifecycle the execution playbook names.
 - [ ] Follow this dependency graph. Base each PR on its parent's branch, because the execution playbook stacks.
   - [ ] B0 is first. It branches from `main` of `13kparkin/t3code`.
-  - [ ] B1 after B0. B2 after B1. B3 after B2. B4 after B3. B5 after B4. B6 after B5.
+  - [ ] B1 after B0. S1 after B1. K1 after S1. B2 after K1. B3 after B2. B4 after B3. B5 after B4. B6 after B5.
   - [ ] B7 after B6. B8 after B7. B9 after B8. B10 after B9. B11 after B10. B12 after B11.
-- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. B12 also writes outside the repo only through `apps/board/scripts/install-skills.mjs`.
+- [ ] Hold the file boundaries. Every PR touches only `apps/board/**`, `.github/workflows/agent-board.yml`, and `pnpm-lock.yaml`. S1 also adds `standards/**`, `.vite-hooks/pre-push`, and `.claude/settings.json`, which upstream does not have. K1 and B12 write outside the repo only through their install scripts.
 - [ ] Hold the review gate. B1, B2, B4, B5, B6, B7, B8, B9, B10, and B11 change an interaction. They wait for the operator's review in chat with screenshots and a video before merge.
 - [ ] Cap building agents at 2 at once, and run a push as the only heavy job, because this machine has 15 GB of RAM and 4 cores.
 
@@ -43,7 +43,7 @@ Tests alone are not sufficient verification. A PR is verified only when its unit
 
 - [ ] Resolve the repository forge once. Use `gh` against `13kparkin/t3code`, which is the configured forge for this fork. Record that choice in the decision trail.
 - [ ] Open the PR ready, never draft, with the configured forge's create command, per `skill://poteto-mode/playbooks/opening-a-pr.md`. A stack child targets its parent branch.
-- [ ] Run the repo's lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. Push with hooks on.
+- [ ] Run lint and typecheck once before the PR-facing push, as `vp lint apps/board` and `vp run --filter @agent-board/app typecheck`. From S1 on, also run `node standards/check-added-diagnostics.mjs`. Push with hooks on.
 - [ ] Run `skill://unslop` before each commit and `skill://no-comments` before review.
 - [ ] Triage every Bugbot and security-reviewer comment per `skill://poteto-mode/references/bugbot-triage.md`.
 - [ ] Rebase onto current trunk before the code-ready report and babysit. Keep that merge base in fix rounds. Rebase again only at merge prep, on a `git merge-tree` conflict with trunk, or on a CI failure that comes from a change on trunk.
@@ -143,6 +143,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 - [ ] In `electron/main.ts`, open one window that loads the Vite dev server in development and the `agentboard://app` protocol in production. Turn on remote debugging when `AGENT_BOARD_CDP_PORT` is set.
 - [ ] In `theme.css`, set the dark tokens from the approved prototype at `artifacts/agent-board-prototype/index.html`, and draw the dot grid on the board canvas.
+- [ ] Replace the default OS title bar with T3 Code's. Copy T3 desktop's hidden title bar with dark overlay window controls, the hidden menu bar, and the dark background before first paint from `apps/desktop/src/window/DesktopWindow.ts`. Draw a dark top bar at the overlay height with a drag region, so the close, minimize, and maximize buttons sit on dark.
 - [ ] In `viewport.ts`, implement pan, zoom around the cursor between 0.3 and 2, and fit to content with a 0.7 floor. `Viewport.tsx` renders the dotted canvas with zoom buttons.
 - [ ] In `Sidebar.tsx`, render the empty Projects and Workspace sections and a footer slot.
 - [ ] Make `dev:web` run the renderer in a plain browser for web lanes.
@@ -188,9 +189,142 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
 - [ ] The root appends B1 to the base-branch stack and the operator lands it bottom-up.
 
-## Connect to the local engine and list its projects (B2)
+## Enforce the repo's lint and dependency standards (S1)
 
 **Depends on.** B1.
+
+**Files.**
+
+- [ ] Create `standards/oxlint.config.ts` with the ZAIkai rule set, every rule at `error`.
+- [ ] Create `standards/rules/anti-slop/` with the 13 anti-slop rules and their tests, ported from ZAIkai's `tools/oxlint/anti-slop/`.
+- [ ] Create `standards/rules/project/` with the generic ZAIkai project rules and their tests, ported from ZAIkai's `tools/oxlint/project-rules/`.
+- [ ] Create `standards/.dependency-cruiser.cjs` and its baseline `standards/dependency-baseline.json`.
+- [ ] Create `standards/check-added-diagnostics.mjs` and `standards/check-added-diagnostics.test.mjs`.
+- [ ] Create `standards/hooks/lint-touched-file.mjs` and `standards/hooks/gate-commit.mjs`.
+- [ ] Create `.claude/settings.json` and `.vite-hooks/pre-push`.
+- [ ] Edit `apps/board/package.json` to add `dependency-cruiser` and the `standards` script.
+- [ ] Edit `apps/board/tsconfig.json` to add `noUnusedLocals`, `noUnusedParameters`, `noFallthroughCasesInSwitch`, and `noPropertyAccessFromIndexSignature`.
+- [ ] Edit `apps/board/scripts/check-engine-untouched.mjs` and its test to allow `standards/`, `.vite-hooks/pre-push`, and `.claude/settings.json`.
+- [ ] Edit `.github/workflows/agent-board.yml` to run the standards check and `node --test standards/`.
+
+**Build.**
+
+- [ ] In `oxlint.config.ts`, load the anti-slop and project rules as `jsPlugins`, imported from `vite-plus/lint/plugins` instead of `@oxlint/plugins`. Turn on the ZAIkai built-ins too. These are `typescript/ban-ts-comment`, `no-explicit-any`, `no-namespace`, `no-non-null-asserted-optional-chain`, `no-require-imports`, `no-unused-vars` with the `^_` ignore, `max-lines` at 500, `react/no-multi-comp`, and `import/no-cycle`.
+- [ ] Port these project rules. They are `no-unbounded-promise-fan-out`, `no-use-effect`, `no-process-env-outside-runtime-profile`, `no-agent-debug-instrumentation`, `enum-property-types`, `no-fixed-sleep`, `no-unsignaled-poll`, and `no-shared-worker-state`. Leave out ZAIkai's domain and design-system rules and `no-module-level-functions`, which fights T3's function style.
+- [ ] In `.dependency-cruiser.cjs`, write the ZAIkai-style dependency rules.
+  - [ ] `no-cross-app-imports`. An app never imports another app's files. `apps/board` reaches T3 only through `@t3tools/contracts` and `@t3tools/client-runtime/<subpath>`.
+  - [ ] `packages-not-apps`. Nothing under `packages/` imports from `apps/`.
+  - [ ] `renderer-not-main`. `apps/board/src/` never imports `apps/board/electron/` or a Node built-in, and `apps/board/electron/` never imports `react`.
+  - [ ] `domain-is-pure`. `apps/board/src/domain/` imports only other domain files and `effect`.
+  - [ ] `no-circular` across the repo, and `no-orphans` in `apps/board`.
+- [ ] Record today's upstream violations once with `depcruise-baseline` into `dependency-baseline.json`. The check passes them with `--ignore-known`, so only new violations fail.
+- [ ] In `check-added-diagnostics.mjs`, list files changed since `git merge-base upstream/main HEAD`, or take `--files`. Run oxlint with `vp lint -c standards/oxlint.config.ts --format=json` on them, and keep only diagnostics on lines that `git diff -U0` shows as added. Run dependency-cruiser with the baseline on the same files. Print each finding with its file, line, and rule, and exit 1 on any finding.
+- [ ] First prove that `vp lint -c` skips the root `lint` block of `vite.config.ts`. If it does not, call the bundled oxlint binary with `-c` directly, and record which in the decision trail.
+- [ ] In `.claude/settings.json`, run `standards/hooks/lint-touched-file.mjs` on PostToolUse for `Edit`, `MultiEdit`, and `Write`. It checks the edited file and returns findings as `hookSpecificOutput.additionalContext`, or nothing when clean. Run `standards/hooks/gate-commit.mjs` on PreToolUse for `Bash`. When the command runs `git commit` or `git push`, it runs the full check and denies the call with the findings as `permissionDecisionReason`.
+- [ ] In `.vite-hooks/pre-push`, run `node standards/check-added-diagnostics.mjs`. The existing `.vite-hooks/_/pre-push` wrapper already calls it.
+- [ ] Fix every finding in the B1 code.
+
+**You see.**
+
+- [ ] An agent that writes a function with an `unknown` parameter anywhere in the repo sees the anti-slop finding right after the edit, cannot commit it, and cannot push it.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `check-added-diagnostics.test.mjs` builds a temporary git repo whose upstream commit holds one violation. Adding a clean line beside it exits 0. Adding a second violation exits 1 and prints only the new line. Every ported rule keeps its own test. Run `node --test standards/`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk does not have the standards, so record that fact. Run the check at head. Save `s1-regression.txt`. Pass when it exits 0, which proves the S1 and B1 code comply.
+- [ ] Lane 2. Commit an `apps/board` file with an `unknown` parameter on a scratch branch and run the check. Save `s1-added-line.txt`. Pass when it exits 1 and names the rule and the line.
+- [ ] Lane 3. Point a scratch `upstream/main` at a commit that holds a violation, add a clean line to that file, and run the check. Save `s1-old-line.txt`. Pass when it exits 0.
+- [ ] Lane 4. Import a file from `apps/server/src/` in `apps/board/src/`. Save `s1-cross-app.txt`. Pass when the check exits 1 and names `no-cross-app-imports`.
+- [ ] Lane 5. Import `apps/board/electron/main.ts` from `apps/board/src/`. Save `s1-renderer.txt`. Pass when the check exits 1 and names `renderer-not-main`.
+- [ ] Lane 6. Run dependency-cruiser on the whole repo with the baseline. Save `s1-baseline.txt`. Pass when it exits 0.
+- [ ] Lane 7. In a scratch worktree, ask `claude -p` to write a TypeScript file with an `unknown` parameter. Save `s1-claude-lint.txt`. Pass when the session transcript shows the finding as added context after the Write.
+- [ ] Lane 8. Ask the same session to commit that file. Save `s1-claude-gate.txt`. Pass when the Bash call is denied with the finding.
+- [ ] Lane 9. Push a violating commit to a scratch bare remote. Save `s1-pre-push.txt`. Pass when the push fails and prints the finding.
+- [ ] Lane 10. Push the head branch and read the `agent-board` run with `gh run view`. Save `s1-ci.txt`. Pass when the standards step and the rule tests are green.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Wall time of the lint hook on one edited file, and of the full check on a 20-file diff. Trunk does not have the check, so the budgets are absolute.
+- [ ] Probe. Time five runs of each at head.
+- [ ] Baseline. Record that trunk has no check, then record the head times.
+- [ ] Rule. The hook median stays under 2 s, and the full check median stays under 30 s.
+
+**Review gate.** None. S1 is not review-gated.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends S1 to the base-branch stack and the operator lands it bottom-up.
+
+## Bring the omp rules, LSP, and persistent env to every Claude Code session (K1)
+
+**Depends on.** S1.
+
+**Files.**
+
+- [ ] Create `apps/board/plugins/.claude-plugin/marketplace.json` that lists one plugin, `omp-kit`.
+- [ ] Create `apps/board/plugins/omp-kit/.claude-plugin/plugin.json`, `apps/board/plugins/omp-kit/hooks/hooks.json`, and `apps/board/plugins/omp-kit/.lsp.json`.
+- [ ] Create `apps/board/plugins/omp-kit/engine/rules.mjs`, `apps/board/plugins/omp-kit/engine/hook.mjs`, and `apps/board/plugins/omp-kit/engine/rules.test.mjs`.
+- [ ] Create `apps/board/scripts/install-omp-kit.mjs`.
+
+**Build.**
+
+- [ ] In `rules.mjs`, load the rules from `~/.omp/agent/rules/*.md` at hook time, so omp and Claude Code share one rule set. Read `description`, `condition`, `scope`, and `interruptMode` from each frontmatter. `OMP_KIT_RULES_DIR` overrides the folder.
+- [ ] Map omp scopes to Claude Code. `tool:edit` and `tool:write` match `Edit`, `MultiEdit`, and `Write`, and a scope glob tests `tool_input.file_path`. `tool:bash` matches `Bash`. `text` matches the last assistant message. Drop `thinking`, because no hook sees it.
+- [ ] In `hook.mjs`, handle four events.
+  - [ ] PreToolUse. Match tool rules against `tool_input`, which is the command, or `new_string` and `content`. An interrupt rule denies the call with the rule body as `permissionDecisionReason`. A remind rule waits for the PostToolUse of that call.
+  - [ ] PostToolUse. Return waiting remind rules as `hookSpecificOutput.additionalContext`, in omp's `system-reminder` wording.
+  - [ ] Stop. Match text rules against the last assistant message in `transcript_path`. An interrupt rule returns `decision: "block"` with the rule body, which starts one more turn. A remind rule waits for the next PostToolUse or UserPromptSubmit.
+  - [ ] SessionStart. Return `~/.omp/agent/RULES.md` as added context. Write `. ~/.config/vite-plus/env` into `CLAUDE_ENV_FILE`, so `vp` and anything the agent appends to that file persist across Bash calls.
+- [ ] Fire each rule once per session, as omp does. Keep the fired names in a state file per `session_id` in the plugin's data folder.
+- [ ] In `.lsp.json`, register `typescript-language-server --stdio` for `.ts`, `.tsx`, `.js`, and `.mjs`, so Claude Code's LSP tool and its diagnostics after edits work.
+- [ ] In `install-omp-kit.mjs`, run `claude plugin marketplace add apps/board/plugins` and `claude plugin install omp-kit@agent-board --scope user`. Skip each step that is already done.
+
+**You see.**
+
+- [ ] Every Claude Code session on this machine, T3 Claude threads included, gets an omp rule when it matches, the LSP tool, and `vp` on its Bash path.
+
+**Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] `rules.test.mjs` loads three fixture rules, a remind rule scoped to `tool:edit(*.ts)`, an interrupt rule scoped to `tool:bash`, and a text rule. It asserts the literal hook output for a matching Edit, the same Edit on a `.md` file, a matching Bash command, a matching last message, and a second match in the same session, which stays silent. Run `node --test apps/board/plugins/omp-kit/engine/`.
+
+**Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
+
+- [ ] Lane 1. Regression lane against trunk. Trunk does not have the plugin, so record that fact. Run the install script at head. Save `k1-install.txt`. Pass when `claude plugin list` shows `omp-kit` enabled at user scope.
+- [ ] Lane 2. Run the install script again. Save `k1-reinstall.txt`. Pass when it reports both steps skipped.
+- [ ] Lane 3. Ask `claude -p` to write a `.ts` file that matches the `code-quality-anti-smell` rule. Save `k1-remind.txt`. Pass when the transcript shows that rule's reminder after the Write.
+- [ ] Lane 4. Ask a session to run a Bash command that matches `linear-writes-require-approval`. Save `k1-deny.txt`. Pass when the call is denied with that rule's text.
+- [ ] Lane 5. Prompt a session so its reply matches the `surgical-changes` rule twice in a row. Save `k1-text.txt`. Pass when the Stop hook blocks once with the rule body and stays silent the second time.
+- [ ] Lane 6. Repeat lane 5 in a new session. Save `k1-new-session.txt`. Pass when the rule fires again.
+- [ ] Lane 7. Ask a session for the references to a symbol in `apps/board/src`. Save `k1-lsp.txt`. Pass when the LSP tool returns them.
+- [ ] Lane 8. Ask a session to run `vp --version` in Bash with no setup. Save `k1-env.txt`. Pass when it prints the version.
+- [ ] Lane 9. Repeat lane 3 in a T3 Claude thread on an isolated engine. Save `k1-t3-thread.txt`. Pass when the reminder shows in the thread.
+- [ ] Lane 10. Point `OMP_KIT_RULES_DIR` at a scratch copy with one rule changed, and start a session. Save `k1-rules-dir.txt`. Pass when the changed rule is the one that fires.
+
+**Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
+
+- [ ] Metric. Wall time of one PreToolUse hook run with all 26 rules loaded. Trunk does not have the plugin, so the budget is absolute.
+- [ ] Probe. Run `hook.mjs` 50 times on a fixed Edit payload.
+- [ ] Baseline. Record that trunk has no plugin, then record the head distribution.
+- [ ] Rule. The p95 stays under 150 ms.
+
+**Review gate.** None. K1 is not review-gated.
+
+**Merge.**
+
+- [ ] Root's clean verdict at the exact head SHA.
+- [ ] Bugbot triage done.
+- [ ] Rebased onto current trunk after the verdict, patch-id unchanged.
+- [ ] The root appends K1 to the base-branch stack and the operator lands it bottom-up.
+
+## Connect to the local engine and list its projects (B2)
+
+**Depends on.** K1.
 
 **Files.**
 
@@ -260,7 +394,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Build.**
 
-- [ ] In `engine-probe.ts`, reuse `electron/engine.ts` for the token and run eight checks against an isolated engine with the operator's Claude Code login. Each check prints `PASS` or `FAIL` with its evidence lines.
+- [ ] In `engine-probe.ts`, reuse `electron/engine.ts` for the token and run ten checks against an isolated engine with the operator's Claude Code login. Each check prints `PASS` or `FAIL` with its evidence lines.
   - [ ] Check A. `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=60` from `~/.claude/settings.json` reaches a T3 Claude thread.
   - [ ] Check B. `delegate_task` with `isolation: 'worktree'` creates a worktree and a child whose `lineage.parentThreadId` is the parent.
   - [ ] Check C. A child can call `delegate_task` itself.
@@ -269,11 +403,13 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
   - [ ] Check F. `projects.readFile` and `projects.listEntries` accept an absolute path.
   - [ ] Check G. An `assets.createUrl` `media-file` URL for an absolute path loads without an auth header.
   - [ ] Check H. Archiving a parent leaves its children unarchived, and archiving is refused while a child runs.
+  - [ ] Check I. A T3 Claude thread writes and later reads Claude Code's own project memory under `~/.claude/projects/<project>/memory/`.
+  - [ ] Check J. A T3 Claude thread can drive a page with the `preview_*` tools while no board or web client is connected.
 - [ ] Write the results table into `engine-findings.md`, with the follow-up each failure needs in B5 to B9.
 
 **You see.**
 
-- [ ] `node apps/board/scripts/engine-probe.ts` prints eight result rows, and `engine-findings.md` holds the same eight rows.
+- [ ] `node apps/board/scripts/engine-probe.ts` prints ten result rows, and `engine-findings.md` holds the same ten rows.
 
 **Verify, unit.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -281,16 +417,16 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Trunk does not have the probe, so record that fact. Run the full probe at head. Save `b3-full.txt`. Pass when all eight rows print and `engine-findings.md` matches them.
+- [ ] Lane 1. Regression lane against trunk. Trunk does not have the probe, so record that fact. Run the full probe at head. Save `b3-full.txt`. Pass when all ten rows print and `engine-findings.md` matches them.
 - [ ] Lane 2. Run check A alone. Save `b3-check-a.txt`. Pass when the row shows the observed compaction threshold and the verdict.
 - [ ] Lane 3. Run check B alone. Save `b3-check-b.txt`. Pass when the row names the child thread, its worktree path, and its parent id.
 - [ ] Lane 4. Run check C alone. Save `b3-check-c.txt`. Pass when the row names a grandchild thread.
 - [ ] Lane 5. Run check D alone. Save `b3-check-d.txt`. Pass when the row shows the request id before and its resolved status after.
 - [ ] Lane 6. Run check E alone. Save `b3-check-e.txt`. Pass when the row shows the parent's wake message.
-- [ ] Lane 7. Run check F alone. Save `b3-check-f.txt`. Pass when the row shows both calls with their result or error.
-- [ ] Lane 8. Run check G alone. Save `b3-check-g.txt`. Pass when the row shows the HTTP status of the unauthenticated GET.
+- [ ] Lane 7. Run checks F and G alone. Save `b3-check-fg.txt`. Pass when the rows show both file calls with their result or error, and the HTTP status of the unauthenticated GET.
+- [ ] Lane 8. Run check I alone. Save `b3-check-i.txt`. Pass when the row shows the memory file path and the fact the second session read back.
 - [ ] Lane 9. Run check H alone. Save `b3-check-h.txt`. Pass when the row shows the refused archive and the children's archive state.
-- [ ] Lane 10. Run the full probe a second time in the same engine. Save `b3-rerun.txt`. Pass when the second run prints the same eight verdicts.
+- [ ] Lane 10. Run check J alone. Save `b3-check-j.txt`. Pass when the row shows the preview snapshot text, or the error that says a host is needed.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
 
@@ -802,6 +938,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Write the `orchestrate` skill from the omp orchestrate and autopilot-stack playbooks, rewritten for T3's `delegate_task`, `t3_thread_*`, and `request_secret` tools, the board store contract, and the B6 role registry.
 - [ ] In the `orchestrate` skill, map each lifecycle step to a registry role. The ticket owner is `task` or `poteto-agent` with `worktree` isolation. The owner spawns its reviewers (`reviewer`, `security-reviewer`, `comment-sicko`, and `thermo-nuclear-review-subagent`) with `shared` isolation, so they read the ticket's worktree. Research is `scout`, mechanical edits are `sonic`, and document reviews are the `egm-*` roles. A fix round goes to the owner thread with `t3_thread_send`, not to a new agent.
 - [ ] In `install-skills.mjs`, link each skill folder into `~/.claude/skills/` and the Codex skills folder, and skip links that already point there.
+- [ ] Also turn on Codex memories in `~/.codex/config.toml`, with `[features] memories = true` and `memories.disable_on_external_context = false`, because every T3 thread uses the T3 MCP server. Leave every other key as it is.
 
 **You see.**
 
@@ -821,7 +958,7 @@ Each live lane runs against a frozen PR head in its own worktree or disjoint out
 - [ ] Lane 6. Let the orchestrator start one ticket. Save `b12-owner.txt`. Pass when the owner's title is `[<key>] task`, its role is `implementation`, and it runs in a new worktree.
 - [ ] Lane 7. Let the owner reach code-ready. Save `b12-review.txt`. Pass when a child titled `[<key>] reviewer` runs with role `review` in the owner's checkout and its thread shows no file edit.
 - [ ] Lane 8. Ask an agent to apply ponytail on a small change. Save `b12-ponytail.txt`. Pass when the agent's reply ends with the skipped and risk lines.
-- [ ] Lane 9. Remove one link by hand and rerun the script. Save `b12-repair.txt`. Pass when only that link is recreated.
+- [ ] Lane 9. Run two T3 Codex threads in the same project, where the first states a project fact. Save `b12-codex-memory.txt`. Pass when `~/.codex/memories_v2/` holds that fact after the first thread goes idle, or record the gap if Codex never writes it.
 - [ ] Lane 10. Run the boundary check at head. Save `b12-boundary.txt`. Pass when it exits 0.
 
 **Verify, perf.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked.
@@ -864,12 +1001,22 @@ The engine questions were answered from source by two read-only scouts against c
 - `delegate_task` takes `task`, `target` (provider instance, model, effort options), `title`, `role`, and `isolation`, and `role` is a fixed list of six (`packages/contracts/src/orchestratorMcp.ts:140`, `:171`). It has no field for a system prompt, so an omp role travels as the first line of `task` plus the role's `target`.
 - omp has no user-level roles. `~/.omp/agent/agents` links to a folder that does not exist (measured). The 18 active roles come from omp's bundle and the pstack-omp, thermos-omp, and egm plugins.
 
+The agent capabilities were answered by five read-only scouts, with reports in the root session's `local://` store.
+
+- T3's Claude threads pass no `settingSources`, so the Agent SDK loads user, project, and local settings. `~/.claude/settings.json` hooks, enabled plugins, skills, and Claude Code's own project memory apply (`apps/server/src/orchestration-v2/Adapters/ClaudeAdapterV2.ts`, `makeClaudeQueryOptions`). An instance with a custom `CLAUDE_CONFIG_DIR` reads that folder instead.
+- Claude Code hooks can deny a tool call with a reason (PreToolUse), add context after a call (PostToolUse `additionalContext`), add context to a prompt (UserPromptSubmit), and force another turn (Stop `decision: "block"`). No hook sees the reply while it streams, so omp's mid-reply interrupt becomes an end-of-turn check.
+- omp matches rules only against streamed assistant text, thinking, and tool-call arguments, once per session per rule. None of the 26 rules uses `astCondition`. omp shows LSP diagnostics after writes but never runs oxlint itself.
+- T3 already gives agents parallel children with no engine cap, worktree isolation, session resume, and `preview_*` browser tools for Claude and Codex (`apps/server/src/mcp/toolkits/preview/tools.ts`).
+- Claude Code's LSP tool needs a plugin that names a server. Codex has no LSP. Claude Code keeps cwd but not env vars between Bash calls, and sources `CLAUDE_ENV_FILE` before each one.
+- Under Vite+, oxlint ignores nested lint configs, so the repo standards run through an explicit `-c` config (`node_modules/vite-plus/docs/guide/lint.md`). ZAIkai fails only diagnostics on added lines (`scripts/check-oxlint-diff.mjs`), which lets standards cover a repo with existing debt.
+
 These stay unproven until B3 runs.
 
 - Whether `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` from `~/.claude/settings.json` reaches a T3 Claude thread.
 - Whether `projects.listEntries` accepts an absolute `directoryPath`.
 - Whether the `/api/assets/` route needs an auth header.
 - Whether nested `delegate_task` works end to end with a real provider.
+- Whether Claude Code's own project memory works inside a T3 Claude thread, and whether `preview_*` works with no client connected.
 
 ## Appendix B. Alternatives rejected
 
@@ -882,6 +1029,12 @@ These stay unproven until B3 runs.
 - `create_threads` for agents lost, because its threads have no lineage. Agents start with `delegate_task`.
 - Installing the omp roles as Claude Code subagents in `~/.claude/agents/` lost, because those run inside one thread, so the board could not show them as cards and Codex could not use them.
 - DPoP auth lost to bearer tokens from `t3 auth session issue`, because the engine runs on the same machine.
+- Editing T3's root `vite.config.ts` lint block lost, because every upstream merge could conflict there. The standards live in a new `standards/` folder and run with their own config.
+- A lint config nested in `apps/board` lost, because Vite+ turns nested configs off.
+- Copying the omp rules into the plugin lost to reading `~/.omp/agent/rules` at hook time, so omp and Claude Code share one rule set.
+- Hindsight memory lost by operator choice. Claude Code's own project memory and Codex memories cover cross-session memory with no new service.
+- Claude in Chrome lost, because Claude Code does not support it in WSL. Agents use T3's `preview_*` tools.
+- A persistent code kernel MCP and an LSP MCP for Codex were left out, because neither was asked for by name and each adds a service to own.
 - The dock and per-card chat layouts are deferred. B6 ships the side panel, and the operator revises the chat while using it.
 
 ## Appendix C. Risks
@@ -896,6 +1049,9 @@ These stay unproven until B3 runs.
 - Lanes never touch `~/.t3`. Each lane uses its own `--base-dir`.
 - GitHub Actions are off by default on a fork. The operator enables them for `13kparkin/t3code` before B0's lane 10.
 - Auto-compaction in `~/.claude/settings.json` was switched from `false` to `true` with `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` set to `60`. Every Claude Code session on this machine now compacts at 60% of its auto-compact window.
+- T3 Codex threads get no omp rules and no lint hooks, because the operator scoped both to Claude Code. CI and the pre-push hook still check Codex's commits.
+- Upstream could add its own `.claude/settings.json` or `.vite-hooks/pre-push` later. The boundary check would then flag S1's copy as an edit to an upstream file, and the owner merges the two by hand.
+- `vp lint -c` skipping the root lint block is read from docs, not run. S1's first build box proves it or switches to the bundled oxlint binary.
 
 ## Appendix D. Links and reading list
 
