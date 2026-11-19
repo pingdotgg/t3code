@@ -3,7 +3,10 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
+import {
+  deriveThreadQueueWorkflowState,
+  canSendAllQueuedRuns,
+} from "@t3tools/client-runtime/state/thread-workflows";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import {
   isAttachmentOnlyBootstrapPrompt,
@@ -134,6 +137,8 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
+  const canSendAll =
+    workflow !== null && canSendAllQueuedRuns(workflow) && optimisticQueued.length === 0;
   const items = [
     ...queued.map(({ run, text, attachments, context, message }, serverIndex) => ({
       key: run.id,
@@ -171,44 +176,52 @@ export function QueuedRunsControl({
     })),
   ];
 
-  const sendQueuedMessage = async (queuedRunId: RunId) => {
+  const sendQueuedRuns = async (queuedRunIds: ReadonlyArray<RunId>) => {
+    if (steerInFlightRef.current) return;
+    steerInFlightRef.current = true;
+    for (const queuedRunId of queuedRunIds) {
+      setBusyRunId(queuedRunId);
+      const result = workflow?.canSendNow
+        ? await resume({
+            environmentId: props.environmentId,
+            input: { threadId: props.threadId, runId: queuedRunId },
+          })
+        : activeRun !== null
+          ? await promote({
+              environmentId: props.environmentId,
+              input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
+            })
+          : null;
+      if (result?._tag !== "Failure") continue;
+      if (!isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add({
+          type: "error",
+          title: m(msg("Could not send queued message")),
+          description:
+            error instanceof Error
+              ? (thrownErrorMessage(error, m) ?? error.message)
+              : m(msg("An error occurred.")),
+        });
+      }
+      break;
+    }
+    steerInFlightRef.current = false;
+    setBusyRunId(null);
+  };
+
+  const sendQueuedMessage = (queuedRunId: RunId) => {
     const freshContext = queued.some(
       ({ run }) => run.id === queuedRunId && run.freshContext === true,
     );
-    if (!canSendRun(freshContext) || steerInFlightRef.current) return;
-    steerInFlightRef.current = true;
-    setBusyRunId(queuedRunId);
-    const result = workflow?.canSendNow
-      ? await resume({
-          environmentId: props.environmentId,
-          input: { threadId: props.threadId, runId: queuedRunId },
-        })
-      : activeRun !== null
-        ? await promote({
-            environmentId: props.environmentId,
-            input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
-          })
-        : null;
-    steerInFlightRef.current = false;
-    setBusyRunId(null);
-    if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: m(msg("Could not send queued message")),
-        description:
-          error instanceof Error
-            ? (thrownErrorMessage(error, m) ?? error.message)
-            : m(msg("An error occurred.")),
-      });
-    }
+    if (canSendRun(freshContext)) void sendQueuedRuns([queuedRunId]);
   };
 
   useImperativeHandle(ref, () => ({
     steerNext(repeat) {
       const next = queued[0];
       if (!next || !canSendRun(next.run.freshContext === true)) return false;
-      if (!repeat && busyRunId === null) void sendQueuedMessage(next.run.id);
+      if (!repeat && busyRunId === null) sendQueuedMessage(next.run.id);
       return true;
     },
     // Leave the key to caret navigation while editing.
@@ -304,9 +317,7 @@ export function QueuedRunsControl({
                           variant="ghost-muted"
                           disabled={item.runId === null || busyRunId !== null}
                           onClick={() => {
-                            if (item.runId !== null) {
-                              void sendQueuedMessage(item.runId);
-                            }
+                            if (item.runId !== null) sendQueuedMessage(item.runId);
                           }}
                         >
                           <ArrowUpIcon />
@@ -420,30 +431,43 @@ export function QueuedRunsControl({
           );
         })}
       </ol>
-      {collapsible ? (
-        <div className="self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
-          <InlineButton
-            tone="muted"
-            aria-expanded={showAll}
-            aria-controls={queueListId}
-            // Keep the composer focused; keyboard activation still works.
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => setShowAll((value) => !value)}
-          >
-            {showAll
-              ? gt("Show fewer")
-              : gt(
-                  "{count, plural, one {Show all {count} queued} other {Show all {count} queued}}",
-                  { count: items.length },
+      {collapsible || canSendAll ? (
+        <div className="flex items-center gap-3 self-end pe-1 text-xs pointer-coarse:[&_[data-slot=inline-button]]:relative pointer-coarse:[&_[data-slot=inline-button]]:after:absolute pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-x-1.5 pointer-coarse:[&_[data-slot=inline-button]]:after:-inset-y-3.5">
+          {canSendAll ? (
+            <InlineButton
+              tone="muted"
+              disabled={busyRunId !== null}
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => void sendQueuedRuns(queued.map(({ run }) => run.id))}
+            >
+              <ArrowUpIcon aria-hidden className="size-3.5" />
+              <T>Send all</T>
+            </InlineButton>
+          ) : null}
+          {collapsible ? (
+            <InlineButton
+              tone="muted"
+              aria-expanded={showAll}
+              aria-controls={queueListId}
+              // Keep the composer focused; keyboard activation still works.
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => setShowAll((value) => !value)}
+            >
+              {showAll
+                ? gt("Show fewer")
+                : gt(
+                    "{count, plural, one {Show all {count} queued} other {Show all {count} queued}}",
+                    { count: items.length },
+                  )}
+              <ChevronDownIcon
+                aria-hidden
+                className={cn(
+                  "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
+                  showAll && "rotate-180",
                 )}
-            <ChevronDownIcon
-              aria-hidden
-              className={cn(
-                "size-3.5 transition-transform duration-150 motion-reduce:transition-none",
-                showAll && "rotate-180",
-              )}
-            />
-          </InlineButton>
+              />
+            </InlineButton>
+          ) : null}
         </div>
       ) : null}
     </section>

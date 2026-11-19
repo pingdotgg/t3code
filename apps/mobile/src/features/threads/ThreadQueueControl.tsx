@@ -7,9 +7,11 @@ import {
 } from "@t3tools/client-runtime/queued-run-edit";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { canSendAllQueuedRuns } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import type { ChatAttachment, EnvironmentId, RunId, ThreadId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -217,13 +219,35 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
             : null;
     busyRef.current = false;
     setBusyRunId(null);
-    if (action === "steer" && result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-      const error = squashAtomCommandFailure(result);
-      Dialog.alert(
-        m(msg("Could not send queued message")),
-        errorDisplayMessage(error, m) ?? m(msg("Try again.")),
-      );
+    if (action === "steer" && result !== null) alertSendFailure(result);
+  };
+
+  const alertSendFailure = (result: AtomCommandResult<unknown, unknown>) => {
+    if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
+    Dialog.alert(
+      m(msg("Could not send queued message")),
+      errorDisplayMessage(squashAtomCommandFailure(result), m) ?? m(msg("Try again.")),
+    );
+  };
+
+  const sendAll = async () => {
+    const activeRun = workflow?.activeRun;
+    if (busyRef.current || !activeRun) return;
+    busyRef.current = true;
+    void Haptics.selectionAsync();
+    for (const { run } of queuedRuns) {
+      setBusyRunId(run.id);
+      const result = await promote({
+        ...target,
+        input: { threadId: target.threadId, queuedRunId: run.id, targetRunId: activeRun.id },
+      });
+      if (result._tag === "Failure") {
+        alertSendFailure(result);
+        break;
+      }
     }
+    busyRef.current = false;
+    setBusyRunId(null);
   };
 
   const content = (
@@ -262,6 +286,18 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
                 );
               }
             }}
+          />
+        </View>
+      ) : null}
+      {workflow && canSendAllQueuedRuns(workflow) ? (
+        <View className="py-3">
+          <Button
+            label={gt("Send all")}
+            icon="arrow.up"
+            tone="primary"
+            size="compact"
+            loading={busyRunId !== null}
+            onPress={() => void sendAll()}
           />
         </View>
       ) : null}

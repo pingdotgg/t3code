@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   threadState: null as unknown as Atom.Writable<AsyncResult.AsyncResult<EnvironmentThreadState>>,
   workflow: null as unknown,
   commandResult: undefined as unknown,
+  sendCommand: null as null | ((input: never) => Promise<unknown>),
 }));
 
 vi.mock(import("@t3tools/client-runtime/state/thread-workflows"), async (importOriginal) => ({
@@ -74,7 +75,8 @@ vi.mock(import("../../state/threads"), async (importOriginal) => {
 
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => async () => state.commandResult) as never,
+  useAtomCommand: (() => async (input: never) =>
+    state.sendCommand ? state.sendCommand(input) : state.commandResult) as never,
 }));
 
 vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
@@ -96,6 +98,7 @@ import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 function setup() {
   state.workflow = null;
   state.commandResult = undefined;
+  state.sendCommand = null;
 }
 
 const baseProps = {
@@ -442,4 +445,44 @@ it("tells the user why Send now was rejected", async () => {
 
   await page.getByRole("button", { name: "Send now" }).click();
   await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
+});
+
+it("sends every queued message in order and stops at the first rejection", async () => {
+  setup();
+  const reason = "Target run run:active is stopping and cannot be steered.";
+  const sent: Array<string> = [];
+  state.workflow = {
+    activeRun: { id: "run:active" },
+    canPromoteToSteer: true,
+    promoteSkipsCompaction: false,
+    queuedRuns: ["first", "second", "third"].map((name) => ({
+      run: { id: `run:${name}`, userMessageId: `message:${name}` },
+      text: name,
+      attachments: [],
+    })),
+  };
+  state.sendCommand = async (input: { readonly input: { readonly queuedRunId: string } }) => {
+    sent.push(input.input.queuedRunId);
+    return sent.length < 2
+      ? AsyncResult.success(undefined)
+      : AsyncResult.failure(
+          Cause.fail(
+            new OrchestrationV2DispatchCommandError({
+              commandId: CommandId.make("command:promote"),
+              commandType: "queued-message.promote-to-steer",
+              message: reason,
+              detail: reason,
+            }),
+          ),
+        );
+  };
+  await using _screen = await renderUi(
+    <ToastProvider timeout={0}>
+      <QueuedRunsControl {...baseProps} />
+    </ToastProvider>,
+  );
+
+  await page.getByRole("button", { name: "Send all" }).click();
+  await vi.waitFor(() => expect(page.getByText(reason).element()).toBeVisible());
+  expect(sent).toEqual(["run:first", "run:second"]);
 });

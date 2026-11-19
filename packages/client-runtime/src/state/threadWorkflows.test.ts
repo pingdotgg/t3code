@@ -4,6 +4,7 @@ import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 import {
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
+  canSendAllQueuedRuns,
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
@@ -136,6 +137,29 @@ describe("thread workflows", () => {
     expect(state.activeRun?.id).toBe("active");
     expect(state.canPromoteToSteer).toBe(true);
     expect(state.canSendNow).toBe(false);
+    expect(canSendAllQueuedRuns(state)).toBe(true);
+  });
+
+  it.each([
+    { case: "an idle thread", active: false, steer: true, compaction: false, fresh: false },
+    {
+      case: "a turn that cannot steer",
+      active: true,
+      steer: false,
+      compaction: false,
+      fresh: false,
+    },
+    { case: "a compaction", active: true, steer: true, compaction: true, fresh: false },
+    { case: "a fresh-session message", active: true, steer: true, compaction: false, fresh: true },
+  ])("does not offer send all with $case", ({ active, steer, compaction, fresh }) => {
+    const state = {
+      activeRun: active ? { id: "active" } : null,
+      canPromoteToSteer: steer,
+      promoteSkipsCompaction: compaction,
+      queuedRuns: [{ run: { id: "first" } }, { run: { id: "second", freshContext: fresh } }],
+    } as never;
+
+    expect(canSendAllQueuedRuns(state)).toBe(false);
   });
 
   it.each(["completed", "interrupted", "cancelled", "failed"])(

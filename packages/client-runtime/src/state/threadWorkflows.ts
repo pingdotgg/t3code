@@ -195,6 +195,17 @@ export function deriveThreadQueueWorkflowState(
   };
 }
 
+/** Every queued message can steer into the active turn, so one press sends them all. */
+export function canSendAllQueuedRuns(state: ThreadQueueWorkflowState): boolean {
+  return (
+    state.activeRun !== null &&
+    state.canPromoteToSteer &&
+    !state.promoteSkipsCompaction &&
+    state.queuedRuns.length > 1 &&
+    state.queuedRuns.every(({ run }) => run.freshContext !== true)
+  );
+}
+
 export function canForkProjectedAssistantItem(input: {
   readonly projectedItem: OrchestrationV2ProjectedTurnItem;
   readonly capabilities?: OrchestrationV2ProviderCapabilities | undefined;
