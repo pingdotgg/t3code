@@ -2451,6 +2451,69 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
+  it.live("reconfigures a reused ACP session only when its policy changes", () =>
+    Effect.gen(function* () {
+      const instanceId = ProviderInstanceId.make("acp-policy-changes");
+      const threadId = ThreadId.make("thread-policy-changes");
+      const modelSelection = { instanceId, model: "default" };
+      let configurations = 0;
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          onSessionConfigurationUpdate: () => Effect.sync(() => configurations++),
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+            mockAgentPath: yield* bundledMockAgentPath,
+          }),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "approval-required",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("session-policy-changes"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const changes = [];
+      for (const [ordinal, restrictions] of [
+        { approvalPolicy: "on-request" },
+        { approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
+        { approvalPolicy: "on-request", sandboxPolicy: { type: "readOnly" } },
+      ].entries()) {
+        const before = configurations;
+        yield* runtime.startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            modelSelection,
+            runtimePolicy: { ...runtimePolicy, ...restrictions },
+            now: yield* DateTime.now,
+            ordinal,
+          }),
+        );
+        yield* runtime.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        changes.push(configurations - before);
+      }
+      assert.deepEqual(changes, [1, 1, 0], "approval changed, sandbox changed, unchanged");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.live.each(["failed", "recovered", "cancelled"] as const)(
     "projects Mistral retry notices and their %s outcome",
     (outcome) =>
