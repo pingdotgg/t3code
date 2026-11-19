@@ -23,14 +23,15 @@ export function resolveAntigravityUserHome(
   return environment.HOME || home;
 }
 
-/** Link private GEMINI_HOME skills to ~/.gemini; ~/.agents/skills is ignored because .agents/skills is project-only. */
+/** Link private GEMINI_HOME skills and plugins to ~/.gemini; ~/.agents/skills is project-only. */
 export function antigravityUserSkillDirectories(
   path: Path.Path,
   geminiHome: string,
-): readonly [configSkills: string, cliSkills: string] {
+): readonly [configSkills: string, cliSkills: string, configPlugins: string] {
   return [
     path.join(geminiHome, "config", "skills"),
     path.join(geminiHome, "antigravity-cli", "skills"),
+    path.join(geminiHome, "config", "plugins"),
   ];
 }
 
@@ -247,17 +248,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
     }
   });
 
-  for (const root of roots) {
-    yield* scanDirectory(root.directory, root.scope, true);
-  }
-
-  const pluginsDirectory = path.join(input.profileDirectory, "config", "plugins");
-  const plugins = yield* readIfPresent(
-    fileSystem.readDirectory(pluginsDirectory),
-    pluginsDirectory,
-  );
-  if (plugins !== undefined && plugins.length > 0) {
-    const configPath = path.join(input.profileDirectory, "config", "config.json");
+  const scanPlugins = Effect.fn("scanAntigravityPlugins")(function* (geminiHome: string) {
+    const pluginsDirectory = path.join(geminiHome, "config", "plugins");
+    const plugins = yield* readIfPresent(
+      fileSystem.readDirectory(pluginsDirectory),
+      pluginsDirectory,
+    );
+    if (plugins === undefined || plugins.length === 0) return;
+    const configPath = path.join(geminiHome, "config", "config.json");
     const configInfo = yield* readIfPresent(fileSystem.stat(configPath), configPath);
     if (configInfo?.type === "File" && configInfo.size > BigInt(MAX_SKILL_BYTES)) {
       return yield* new AntigravitySkillsProbeError({
@@ -282,6 +280,14 @@ export const discoverAntigravitySkills = Effect.fn("discoverAntigravitySkills")(
       if (info?.type !== "Directory") continue;
       yield* scanDirectory(path.join(pluginDirectory, "skills"), "user", true);
     }
+  });
+
+  for (const root of roots) {
+    yield* scanDirectory(root.directory, root.scope, true);
+  }
+  // `agy plugin install` writes to ~/.gemini, which the profile links in at launch.
+  for (const geminiHome of [input.profileDirectory, path.join(input.userHome, ".gemini")]) {
+    yield* scanPlugins(geminiHome);
   }
   return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 });

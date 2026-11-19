@@ -246,7 +246,7 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   }
 }
 
-/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
+/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and plugins from the real ~/.gemini. */
 const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
@@ -259,6 +259,7 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
   for (const [link, target] of [
     [links[0], targets[0]],
     [links[1], targets[1]],
+    [links[2], targets[2]],
   ] as const) {
     yield* Effect.gen(function* () {
       // The harness creates these folders itself, and mkdir fails on a dangling link.

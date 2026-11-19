@@ -658,9 +658,14 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
             Effect.as(true),
             Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
           );
+        const configPlugins = path.join(userHome, ".gemini", "config", "plugins");
         yield* fs.makeDirectory(path.join(configSkills, "review"), { recursive: true });
+        yield* fs.makeDirectory(path.join(configPlugins, "demo"), { recursive: true });
 
         yield* prepareAntigravityProfile({ profileDirectory, userHome });
+        expect(yield* fs.readLink(path.join(profileDirectory, "config", "plugins"))).toBe(
+          configPlugins,
+        );
         const configLink = path.join(profileDirectory, "config", "skills");
         const cliLink = path.join(profileDirectory, "antigravity-cli", "skills");
         expect(yield* fs.readLink(configLink)).toBe(configSkills);
