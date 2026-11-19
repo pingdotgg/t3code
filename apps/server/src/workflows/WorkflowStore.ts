@@ -15,10 +15,10 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 export { WorkflowRun, WorkflowRunStatus, WorkflowStep };
 
-/** Where a signal goes: one wait of one run, or whichever run of a workflow waits on a key. */
+/** Where a signal goes: one wait of one run, or whichever run of a workflow waits on a channel. */
 export type SignalAddress =
   | { readonly runId: string; readonly wait: string }
-  | { readonly workflow: string; readonly key: string };
+  | { readonly workflow: string; readonly channel: string };
 
 /** The run that invoked another, and the wait in it that hears how the other ended. */
 export interface RunParent {
@@ -40,6 +40,8 @@ export interface RunRow {
   readonly parent_run_id: string | null;
   readonly parent_wait: string | null;
   readonly pauses: number | bigint;
+  /** Paused until a person resumes it, whatever the workflow's `resumeAfter` says. */
+  readonly held: number | bigint;
   readonly started_at: string;
   readonly updated_at: string;
   readonly ended_at: string | null;
@@ -86,7 +88,7 @@ const mailAddress = (address: SignalAddress) =>
   JSON.stringify(
     "runId" in address
       ? ["run", address.runId, address.wait]
-      : ["key", address.workflow, address.key],
+      : ["key", address.workflow, address.channel],
   );
 
 export class WorkflowStore extends Context.Service<
@@ -112,7 +114,7 @@ export class WorkflowStore extends Context.Service<
      * side by side is still out, which it then waits on.
      */
     readonly runResumed: (runId: string) => Effect.Effect<void>;
-    readonly runPaused: (runId: string, detail: string) => Effect.Effect<void>;
+    readonly runPaused: (runId: string, detail: string, held?: boolean) => Effect.Effect<void>;
     readonly runEnded: (
       runId: string,
       status: "completed" | "stopped" | "skipped" | "cancelled",
@@ -240,6 +242,8 @@ export class WorkflowStore extends Context.Service<
     readonly mailDelete: (signalId: string) => Effect.Effect<void>;
     readonly mailExpire: Effect.Effect<void>;
     readonly run: (runId: string) => Effect.Effect<RunRow | undefined>;
+    /** The run a workflow was started as under `key`, of whichever version. */
+    readonly runByKey: (workflow: string, key: string) => Effect.Effect<RunRow | undefined>;
     readonly runs: (status: WorkflowRunStatus | undefined) => Effect.Effect<ReadonlyArray<RunRow>>;
     /** Runs by what they are a run of and what they were started as, newest first. */
     readonly runsWhere: (filter: {
@@ -319,13 +323,14 @@ export const make = Effect.gen(function* () {
         `,
       );
     }),
-    runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail) {
+    runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held = false) {
       const at = yield* now;
       yield* write(
         runId,
         sql`
           UPDATE workflow_runs
-          SET status = 'paused', detail = ${detail.slice(0, 2000)}, pauses = pauses + 1, updated_at = ${at}
+          SET status = 'paused', detail = ${detail.slice(0, 2000)}, pauses = pauses + 1,
+            held = ${held ? 1 : 0}, updated_at = ${at}
           WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
         `,
       );
@@ -584,7 +589,7 @@ export const make = Effect.gen(function* () {
             `
           : sql<WaitRow>`
               SELECT ${waitColumns} FROM workflow_waits
-              WHERE workflow = ${address.workflow} AND key = ${address.key} AND signalled_at IS NULL
+              WHERE workflow = ${address.workflow} AND key = ${address.channel} AND signalled_at IS NULL
               ORDER BY opened_at LIMIT 1
             `
       ).pipe(Effect.orDie);
@@ -691,6 +696,13 @@ export const make = Effect.gen(function* () {
       const rows = yield* sql<RunRow>`SELECT * FROM workflow_runs WHERE run_id = ${runId}`.pipe(
         Effect.orDie,
       );
+      return rows[0];
+    }),
+    runByKey: Effect.fn("WorkflowStore.runByKey")(function* (workflow, key) {
+      const rows = yield* sql<RunRow>`
+        SELECT * FROM workflow_runs WHERE workflow = ${workflow} AND idempotency_key = ${key}
+        ORDER BY started_at LIMIT 1
+      `.pipe(Effect.orDie);
       return rows[0];
     }),
     runsWhere: Effect.fn("WorkflowStore.runsWhere")(function* (filter) {

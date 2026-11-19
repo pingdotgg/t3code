@@ -115,7 +115,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
 
   /** When the sweep resumes a paused run; undefined once it has used up its tries. */
   const resumesAt = (row: WorkflowStore.RunRow) => {
-    if (row.status !== "paused") return undefined;
+    if (row.status !== "paused" || Number(row.held) === 1) return undefined;
     const rest = definitionByTag.get(row.engine_tag)?.resumeAfter[Number(row.pauses) - 1];
     return rest === undefined
       ? undefined
@@ -174,6 +174,21 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         });
       }
       const [definition, engine] = found;
+      // A key is one run of the workflow: the engine's own id also counts the version, so a
+      // start after a new version would otherwise begin the same work again.
+      const earlier = yield* store.runByKey(name, options.idempotencyKey);
+      if (earlier !== undefined && earlier.engine_tag !== engineTag(definition)) {
+        if (
+          options.parent !== undefined &&
+          (earlier.parent_run_id !== options.parent.runId ||
+            earlier.parent_wait !== options.parent.wait)
+        ) {
+          return yield* new WorkflowInputError({
+            problem: `Run ${earlier.run_id} of ${name} was started by something else under this key, so it cannot be invoked. Give the invoke a key of its own.`,
+          });
+        }
+        return { runId: earlier.run_id };
+      }
       const payloadCodec = Schema.toCodecJson(definition.payload);
       const encode = Schema.encodeUnknownEffect(payloadCodec);
       const encoded = yield* encode(input).pipe(
@@ -451,6 +466,14 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     if (definition?.onEnd === undefined || ending.has(row.run_id)) return;
     const onEnd = definition.onEnd;
     ending.add(row.run_id);
+    // A step still running would race the cleanup: a machine deleted before it is made.
+    yield* link.inFlight.settled(row.run_id);
+    // The body may have run its own `onEnd` just as the run was cancelled: once is enough.
+    const steps = yield* store.steps(row.run_id);
+    if (steps.some((step) => step.name === END_STEP && step.status === "completed")) {
+      ending.delete(row.run_id);
+      return;
+    }
     yield* store.stepStarted(row.run_id, END_STEP, "step");
     const payloadCodec = Schema.toCodecJson(definition.payload);
     const decode = Schema.decodeEffect(payloadCodec);
@@ -490,7 +513,10 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     yield* fireSchedules;
     yield* fireOpened;
     yield* fireWatches;
-    for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) yield* endCancelled(row);
+    // A run with a step still going is ended by its cancel, which waits for that step.
+    for (const row of yield* store.runsToEnd(END_STEP, END_TRIES)) {
+      if (!link.inFlight.busy(row.run_id)) yield* endCancelled(row);
+    }
     for (const row of yield* store.everyRun("running")) yield* reconcile(row);
     const at = yield* DateTime.now;
     for (const row of yield* store.everyRun("paused")) {
@@ -625,12 +651,12 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     },
   );
   const signalAll = Effect.fn("WorkflowEngine.signalAll")(function* (
-    address: { readonly key: string; readonly workflow?: string | undefined },
+    address: { readonly channel: string; readonly workflow?: string | undefined },
     value: Schema.Json,
   ) {
     const valueJson = WorkflowStore.jsonText(value);
     let woken = 0;
-    for (const wait of yield* store.waitsOn(address.key, address.workflow)) {
+    for (const wait of yield* store.waitsOn(address.channel, address.workflow)) {
       const schema = WorkflowStore.jsonValue(wait.schema_json) as Record<string, Schema.Json>;
       // A wait this value does not fit was not waiting for it; the others are still woken.
       if (Result.isFailure(yield* checkOutput(schema, valueJson))) continue;
@@ -710,7 +736,16 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   return Workflows.of({
     start,
     hooks: Effect.succeed(hooks.map(({ workflow, name, path }) => ({ workflow, name, path }))),
-    unfinished: store.unfinished,
+    // A cancelled run whose cleanup has not worked yet still needs its version to run it.
+    unfinished: Effect.map(
+      Effect.all([store.unfinished, store.runsToEnd(END_STEP, END_TRIES)]),
+      ([open, ending]) => [
+        ...open,
+        ...ending
+          .filter((row) => definitionByTag.get(row.engine_tag)?.onEnd !== undefined)
+          .map((row) => ({ workflow: row.workflow, version: Number(row.version) })),
+      ],
+    ),
     deliver,
     signal,
     resume,

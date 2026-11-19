@@ -2,6 +2,7 @@
 // wake a run that waits. Both touch the world, so they are for inside `step` and `onEnd`.
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -9,6 +10,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { checkOptions } from "./options.ts";
 import type { WorkflowDefinition } from "./workflow.ts";
 import { WorkflowForge } from "./WorkflowForge.ts";
 import type { WorkflowError, WorkflowInputError } from "./Workflows.ts";
@@ -36,7 +38,7 @@ export type SendSignal = (
 
 /** Everyone who waits on a key, in one workflow or in all of them. */
 export interface EveryoneAt {
-  readonly key: string;
+  readonly channel: string;
   readonly workflow?: string | undefined;
 }
 export type SendSignalToAll = (address: EveryoneAt, value: Schema.Json) => Effect.Effect<number>;
@@ -111,9 +113,54 @@ export class EngineLink extends Context.Service<
           readonly ended: (runId: string) => Effect.Effect<void>;
         }
       | undefined;
+    /** The steps of each run that are running in this process right now. */
+    readonly inFlight: InFlight;
   }
 >()("t3/workflows/stepServices/EngineLink") {}
-export const layerEngineLink = Layer.sync(EngineLink, () => ({ current: undefined }));
+export interface InFlight {
+  readonly track: <A, E, R>(
+    runId: string,
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E, R>;
+  /** Whether a step of `runId` is running now. */
+  readonly busy: (runId: string) => boolean;
+  /** Waits until no step of `runId` is running. */
+  readonly settled: (runId: string) => Effect.Effect<void>;
+}
+
+// A step cannot be interrupted, so whatever cleans up after a cancelled run waits for it here.
+const makeInFlight = (): InFlight => {
+  const running = new Map<string, { count: number; idle: Deferred.Deferred<void> }>();
+  return {
+    track: (runId, effect) =>
+      Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const entry = running.get(runId) ?? { count: 0, idle: Deferred.makeUnsafe<void>() };
+          entry.count++;
+          running.set(runId, entry);
+          return entry;
+        }),
+        () => effect,
+        (entry) =>
+          Effect.suspend(() => {
+            if (--entry.count > 0) return Effect.void;
+            running.delete(runId);
+            return Deferred.succeed(entry.idle, undefined);
+          }),
+      ),
+    busy: (runId) => running.has(runId),
+    settled: (runId) =>
+      Effect.suspend(() => {
+        const entry = running.get(runId);
+        return entry === undefined ? Effect.void : Deferred.await(entry.idle);
+      }),
+  };
+};
+
+export const layerEngineLink = Layer.sync(EngineLink, () => ({
+  current: undefined,
+  inFlight: makeInFlight(),
+}));
 
 const engineOf = (link: EngineLink["Service"]) =>
   link.current === undefined
@@ -293,15 +340,37 @@ const transaction = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
  */
 export const store = { entry, entries, transaction };
 
+/** A workflow by its name or its definition, wherever one is named. */
+export type WorkflowName = string | Pick<WorkflowDefinition, "name">;
+const nameOf = (workflow: WorkflowName) =>
+  typeof workflow === "string" ? workflow : workflow.name;
+
 /**
- * Wake a run that waits: `{ runId, wait }` for one wait of one run, `{ workflow, key }` for
- * whichever run of a workflow waits on a key. Inside `step` or `onEnd` only.
+ * Wake a run that waits: `{ runId, wait }` for one wait of one run, `{ workflow, channel }` for
+ * whichever run of a workflow waits on a channel. Inside `step` or `onEnd` only.
  */
 export const signal = (
-  address: SignalAddress,
+  address:
+    | { readonly runId: string; readonly wait: string }
+    | { readonly workflow: WorkflowName; readonly channel: string },
   value: Schema.Json,
   options?: { readonly id?: string; readonly ttl?: Duration.Input },
-) => Effect.flatMap(Signals, (signals) => signals.send(address, value, options));
+) =>
+  Effect.flatMap(Signals, (signals) => {
+    checkOptions(
+      "signal's address",
+      address,
+      "runId" in address ? ["runId", "wait"] : ["workflow", "channel"],
+    );
+    checkOptions("signal", options, ["id", "ttl"]);
+    return signals.send(
+      "runId" in address
+        ? address
+        : { workflow: nameOf(address.workflow), channel: address.channel },
+      value,
+      options,
+    );
+  });
 
 /**
  * Start a run of another workflow and go on without it. The same `key` is the same run. Inside
@@ -317,18 +386,25 @@ export const start = <P>(
   );
 
 /**
- * Wake every run that waits on `key`, in one workflow or, without `workflow`, in all of them.
+ * Wake every run that waits on `channel`, in one workflow or, without `workflow`, in all of them.
  * Returns how many it woke. Nothing is kept for a wait that opens later, so a run that waits on
  * a condition checks the condition in a step first, and gives its wait a timeout to check again.
  * Inside `step` or `onEnd` only.
  */
 export const signalAll = (
-  address: { readonly key: string; readonly workflow?: Pick<WorkflowDefinition, "name"> },
+  address: { readonly channel: string; readonly workflow?: WorkflowName },
   value: Schema.Json,
 ) =>
-  Effect.flatMap(Signals, (signals) =>
-    signals.sendAll({ key: address.key, workflow: address.workflow?.name }, value),
-  );
+  Effect.flatMap(Signals, (signals) => {
+    checkOptions("signalAll's address", address, ["channel", "workflow"]);
+    return signals.sendAll(
+      {
+        channel: address.channel,
+        workflow: address.workflow === undefined ? undefined : nameOf(address.workflow),
+      },
+      value,
+    );
+  });
 
 /**
  * Cancel another run, as a person would: its agents are stopped, its questions withdrawn, what
@@ -343,13 +419,13 @@ export const cancel = (runId: string, reason: string) =>
  * Newest first, 500 at most. Inside `step` or `onEnd` only: the answer changes over time.
  */
 export const runs = (filter?: {
-  readonly workflow?: Pick<WorkflowDefinition, "name">;
+  readonly workflow?: WorkflowName;
   readonly status?: WorkflowRunStatus;
   readonly keyPrefix?: string;
 }) =>
   Effect.flatMap(Runs, (all) =>
     all.list({
-      workflow: filter?.workflow?.name,
+      workflow: filter?.workflow === undefined ? undefined : nameOf(filter.workflow),
       status: filter?.status,
       keyPrefix: filter?.keyPrefix,
     }),

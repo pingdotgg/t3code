@@ -10,7 +10,7 @@ export default [
       const found = yield* agent("list", {
         project: "proj-1",
         brief: "List the TODO comments in this repository. Do not change any file.",
-        output: Schema.Struct({
+        returns: Schema.Struct({
           todos: Schema.Array(
             Schema.Struct({ file: Schema.String, line: Schema.Number, text: Schema.String }),
           ),

@@ -1,4 +1,9 @@
-import type { ModelSelection } from "@t3tools/contracts";
+import type {
+  ModelSelection,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ProviderInteractionMode,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
 import type * as Effect from "effect/Effect";
@@ -20,6 +25,14 @@ export interface AgentModel {
   readonly model: string;
   /** The model's own options, such as reasoning effort, as `{ id, value }` pairs. */
   readonly options?: ModelSelection["options"];
+}
+
+/** How a new thread starts, as `t3_thread_launch` takes it. Unset fields follow the project. */
+export interface AgentLaunch {
+  /** Where its files are: the project's checkout by default, or a worktree of its own. */
+  readonly workspace?: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
+  readonly runtimeMode?: RuntimeMode | undefined;
+  readonly interactionMode?: ProviderInteractionMode | undefined;
 }
 
 export const AgentTurn = Schema.Struct({
@@ -47,6 +60,12 @@ export const AgentResult = Schema.Struct({
 });
 export type AgentResult = typeof AgentResult.Type;
 
+/** What a continued thread says to options that only shape a new one. */
+export const launchOnContinue = new WorkflowAgentError({
+  reason:
+    "`workspace`, `runtimeMode` and `interactionMode` shape a new thread. A continued `thread` keeps how it started.",
+});
+
 /** A project named by its folder instead of its id. */
 export const isProjectPath = (project: string) => project.startsWith("/");
 
@@ -71,6 +90,8 @@ export class WorkflowAgents extends Context.Service<
       readonly thread: string | undefined;
       /** An issue the thread is about, which it is linked to. */
       readonly issue?: IssueAddress | undefined;
+      /** How a new thread starts. Refused with `thread`, which keeps how it started. */
+      readonly launch?: AgentLaunch | undefined;
     }) => Effect.Effect<AgentTurn, WorkflowAgentError>;
     /**
      * Wait for the turn to end and return what it produced. With `quiet`, a turn that ended
