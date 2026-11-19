@@ -993,6 +993,8 @@ interface AcpMcpContext {
   readonly processEnvironment?: NodeJS.ProcessEnv;
   readonly endpoint?: string;
   readonly authorization?: string;
+  /** Only proxy mode reaches the stdio and MCP-over-ACP bridges; Copilot lists every tool there. */
+  readonly bridgeToolExposure?: McpProviderSession.McpToolExposureMode;
 }
 
 function mcpToolExposureMode(
@@ -1012,6 +1014,7 @@ function acpMcpContext(
     return { servers: [], acpServers: [], httpServers: [] };
   }
   const exposure = mcpToolExposureMode(deferMcpTools);
+  const bridgeToolExposure = exposure === "deferred-proxy" ? exposure : undefined;
   // codex-acp 1.2.0 and pi-acp drop injected HTTP servers, so HTTP is opt-in per flavor.
   return {
     servers: [
@@ -1023,10 +1026,9 @@ function acpMcpContext(
           { name: "ELECTRON_RUN_AS_NODE", value: "1" },
           { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
           { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
-          // Copilot's stdio bridge keeps listing every tool; only proxy mode defers there.
-          ...(exposure === "deferred-proxy"
-            ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: exposure }]
-            : []),
+          ...(bridgeToolExposure === undefined
+            ? []
+            : [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: bridgeToolExposure }]),
         ],
       },
     ],
@@ -1049,6 +1051,7 @@ function acpMcpContext(
         : [],
     endpoint: session.endpoint,
     authorization: session.authorizationHeader,
+    ...(bridgeToolExposure === undefined ? {} : { bridgeToolExposure }),
     processEnvironment: {
       // The thread id every process the agent starts inherits, so a tool run
       // from its shell can find its T3 thread. Claude and Codex sessions set
@@ -7661,6 +7664,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
+            toolExposure: mcpContext.bridgeToolExposure,
             allocateConnectionId: random.uuidV4(),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);
