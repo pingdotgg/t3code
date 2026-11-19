@@ -214,8 +214,9 @@ it.effect("reads each open row's check results, skipping rows a filter will drop
   }),
 );
 
-it.effect("rereads a pending check result after a minute", () =>
+it.effect.each(["pending", "absent"] as const)("rereads a %s check result after a minute", (kind) =>
   Effect.gen(function* () {
+    const firstState = kind === "pending" ? "INPROGRESS" : null;
     const pullRequestRow = (id: number) => ({
       id,
       title: `Pull request ${id}`,
@@ -234,7 +235,7 @@ it.effect("rereads a pending check result after a minute", () =>
       viewer: "bilal",
       limit: 10,
     } as const;
-    let state = "INPROGRESS";
+    let state: string | null = firstState;
     const reads: string[] = [];
     const provider = yield* BitbucketPullRequestProvider.make.pipe(
       Effect.provide(
@@ -245,7 +246,9 @@ it.effect("rereads a pending check result after a minute", () =>
                 if (url.includes("/statuses")) {
                   reads.push(url);
                   return Effect.succeed({
-                    body: JSON.stringify({ values: [{ key: "ci", name: "ci", state }] }),
+                    body: JSON.stringify({
+                      values: state === null ? [] : [{ key: "ci", name: "ci", state }],
+                    }),
                     truncated: false,
                   });
                 }
@@ -268,7 +271,7 @@ it.effect("rereads a pending check result after a minute", () =>
     yield* TestClock.adjust("31 seconds");
     const later = yield* provider.listChangeRequests({ ...listInput, state: "open" });
 
-    assert.strictEqual(first.items[0]?.checksState, "pending");
+    assert.strictEqual(first.items[0]?.checksState, firstState === null ? null : "pending");
     assert.strictEqual(later.items[0]?.checksState, "passing");
     assert.strictEqual(reads.length, 2);
   }),
