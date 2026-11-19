@@ -6,6 +6,7 @@ import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import { readGtkPrimaryPasteEnabled } from "./DesktopPrimaryPaste.ts";
 
@@ -30,9 +31,13 @@ const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
     ),
   );
 
-const read = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
+const read = (
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+  desktop = "ubuntu:GNOME",
+) =>
   readGtkPrimaryPasteEnabled.pipe(
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    Effect.provideService(HostProcess.Environment, { XDG_CURRENT_DESKTOP: desktop }),
   );
 
 describe("readGtkPrimaryPasteEnabled", () => {
@@ -42,6 +47,15 @@ describe("readGtkPrimaryPasteEnabled", () => {
       assert.isTrue(yield* read(spawnerWithStdout(Stream.make(encoder.encode("true\n")))));
       // A missing schema prints nothing on stdout.
       assert.isTrue(yield* read(spawnerWithStdout(Stream.empty)));
+    }),
+  );
+
+  it.effect("ignores the GNOME key outside GNOME, where nothing applies it to GTK", () =>
+    Effect.gen(function* () {
+      const disabled = spawnerWithStdout(Stream.make(encoder.encode("false\n")));
+      assert.isTrue(yield* read(disabled, "XFCE"));
+      assert.isTrue(yield* read(disabled, "KDE"));
+      assert.isTrue(yield* read(disabled, ""));
     }),
   );
 

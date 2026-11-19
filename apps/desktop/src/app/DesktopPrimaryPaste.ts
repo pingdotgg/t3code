@@ -13,7 +13,10 @@ export class DesktopPrimaryPaste extends Context.Service<
 >()("@t3tools/desktop/app/DesktopPrimaryPaste") {}
 
 // Chrome applies gtk-enable-primary-paste from chrome/, which Electron does not include.
+// Only GNOME applies this key to GTK; elsewhere its schema default (false since 50) is no one's choice.
 export const readGtkPrimaryPasteEnabled = Effect.gen(function* () {
+  const env = yield* HostProcess.Environment;
+  if (!(env.XDG_CURRENT_DESKTOP?.split(":").includes("GNOME") ?? false)) return true;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const output = yield* spawner.string(
     ChildProcess.make(
