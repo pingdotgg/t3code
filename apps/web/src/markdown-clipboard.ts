@@ -14,6 +14,7 @@ const SANITIZED_HTML_SELECTOR = [
 
 const ALERT_ATTRIBUTE = "data-markdown-alert";
 const ALERT_LABEL = "data-markdown-alert-label";
+const LIST_ITEM_CHECKBOX = ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]';
 
 export interface MarkdownClipboardPayload {
   text: string;
@@ -131,10 +132,8 @@ function serializeListItem(
   index: number,
   inTableCell: boolean,
 ): string {
-  const checkbox = item.querySelector(
-    ':scope > input[type="checkbox"], :scope > p > input[type="checkbox"]',
-  );
-  const task = checkbox ? `[${(checkbox as HTMLInputElement).checked ? "x" : " "}] ` : "";
+  const checkbox = item.querySelector<HTMLInputElement>(LIST_ITEM_CHECKBOX);
+  const task = checkbox ? `[${checkbox.checked ? "x" : " "}] ` : "";
   const bullet = ordered ? `${index}. ` : "- ";
   const marker = `${bullet}${task}`;
   let content = outsideCode(serializeChildren(item, inTableCell), (prose) =>
@@ -578,8 +577,16 @@ function cloneWithListMarkers(range: Range, container: Element): void {
   let clone: Node | null = container;
   for (const [depth, source] of chain.entries()) {
     clone = clone?.firstChild ?? null;
-    if (!(clone instanceof Element) || !(source instanceof Element) || source.tagName !== "OL")
+    if (!(clone instanceof Element) || !(source instanceof Element)) continue;
+    if (source.tagName === "LI" && clone.tagName === "LI") {
+      // A selection starting at the task label leaves its checkbox outside the clone.
+      const checkbox = source.querySelector(LIST_ITEM_CHECKBOX);
+      if (checkbox && !clone.querySelector(LIST_ITEM_CHECKBOX)) {
+        clone.prepend(checkbox.cloneNode(false));
+      }
       continue;
+    }
+    if (source.tagName !== "OL") continue;
     const firstCopied = chain[depth + 1] ?? source.childNodes[range.startOffset];
     if (!firstCopied) continue;
     const shown = numberedListItems(source).find(

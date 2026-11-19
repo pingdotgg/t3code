@@ -785,6 +785,13 @@ describe("ChatMarkdown copy", () => {
       text: "2. Configure\n3. Deploy",
     },
     {
+      source: "1. [ ] Install\n2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
+      from: "Configure",
+      to: "Deploy",
+      text: "2. [x] Configure\n3. [ ] Test\n4. [x] Deploy",
+      htmlText: "2. Configure\n3. Test\n4. Deploy",
+    },
+    {
       source: "1. A\n2. B\n7. C\n8. D",
       from: "B",
       to: "C",
@@ -799,7 +806,7 @@ describe("ChatMarkdown copy", () => {
     },
   ])(
     "copies $text with the markers its list shows",
-    async ({ source, from, to, userMessage, text }) => {
+    async ({ source, from, to, userMessage, text, htmlText = text }) => {
       setup();
       await using screen = await renderText(
         source,
@@ -808,24 +815,25 @@ describe("ChatMarkdown copy", () => {
       const itemText = (shown: string) =>
         [...screen.container.querySelectorAll("li")]
           .flatMap((item) => [...item.childNodes])
-          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === shown)!;
+          .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === shown)!;
       const end = to
         ? itemText(to)
         : [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
       const range = document.createRange();
-      range.setStart(itemText(from), 0);
+      const start = itemText(from);
+      range.setStart(start, start.textContent!.indexOf(from));
       range.setEnd(end, end.textContent!.length);
       const selection = window.getSelection()!;
       selection.removeAllRanges();
       selection.addRange(range);
       const payload = chatMarkdownClipboardPayload(selection);
       expect(payload?.text).toBe(text);
-      // Rich paste reads back as the same list.
+      // Rich paste keeps the list structure. HTML sanitization strips form controls.
       expect(
         serializeRenderedMarkdownFragment(
           new DOMParser().parseFromString(payload!.html, "text/html").body,
         ),
-      ).toBe(text);
+      ).toBe(htmlText);
     },
   );
 
