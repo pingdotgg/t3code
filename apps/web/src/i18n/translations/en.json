@@ -2194,6 +2194,7 @@
   "63977cd5e4535393": "Unpin {name}",
   "c4c2d240ffe55dec": "Pin {name}",
   "a1190e56375f2032": "{action} ({shortcut})",
+  "f16b6d8ef68bab61": "Failed to import {name}.",
   "924d4b8e011c9127": "Failed to import action.",
   "0421f870f82997bc": "Import",
   "06690d4ce0d19c30": "Edit {name}",
