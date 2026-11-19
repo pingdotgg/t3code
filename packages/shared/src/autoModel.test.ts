@@ -348,6 +348,13 @@ describe("resolveAutoModelSelection", () => {
       usedPercent: 99,
     });
     expect(routeTo([claude("claudeAutoB", 95), spentPastPlan])).toBe("claudeAuto");
+    const spendCapped = withWindow(claude("claudeAuto", 20), {
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 100,
+    });
+    expect(routeTo([spendCapped])).toBe("claudeAuto");
   });
 
   it("ignores a window whose reset has already passed when checking room", () => {
@@ -378,18 +385,17 @@ describe("resolveAutoModelSelection", () => {
 
   it("ranks unknown usage after an account with known room", () => {
     const known = withWeekly(claude("claudeAuto", 0), 30, inHours(100));
-    // Grok's credits response omits creditUsagePercent on a unified-billing subscription; its
-    // reader currently turns that into a fabricated 0%. Without a reading it is unknown, not empty.
+    // Only a Fable allowance is reported, so nothing says how much Opus room is left.
     const unknown = {
       ...claude("claudeAutoB", 0),
       usageLimits: {
         windows: [
           {
-            id: "subscription",
+            id: "seven_day_fable",
             kind: "weekly",
-            label: "Weekly",
+            label: "Weekly · Fable",
+            usedPercent: 10,
             resetsAt: inHours(100),
-            windowDurationMins: 10_080,
           },
         ],
       },
@@ -406,14 +412,6 @@ describe("resolveAutoModelSelection", () => {
     expect(routeTo([noReport, claude("claudeAuto", 95)])).toBe("claudeAutoB");
     expect(routeTo([unknown, claude("claudeAuto", 95)])).toBe("claudeAutoB");
     expect(routeTo([noReport])).toBe("claudeAutoB");
-    // A known window past 90% outranks an unknown one: the account has no room.
-    const partlyUnknown = withWindow(claude("claudeAutoB", 95), {
-      id: "seven_day",
-      kind: "weekly",
-      label: "Weekly",
-      resetsAt: inHours(100),
-    });
-    expect(routeTo([partlyUnknown, claude("claudeAuto", 92)])).toBe("claudeAuto");
   });
 
   it("ranks an account with no session window after one with a known session", () => {
@@ -461,17 +459,7 @@ describe("resolveAutoModelSelection", () => {
       ...claude("grok", 0, false),
       driver: ProviderDriverKind.make("grok"),
       models: [{ slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null }],
-      usageLimits: {
-        windows: [
-          {
-            id: "subscription",
-            kind: "weekly",
-            label: "Weekly",
-            resetsAt: inHours(100),
-            windowDurationMins: 10_080,
-          },
-        ],
-      },
+      usageLimits: undefined,
     } as unknown as ServerProvider;
     const current = {
       instanceId: ProviderInstanceId.make("openCode"),

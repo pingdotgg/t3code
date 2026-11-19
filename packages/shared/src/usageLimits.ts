@@ -35,6 +35,12 @@ export function usageWindowLimitsModel(
   }
   switch (provider.driver) {
     case "claudeAgent":
+      // Monthly spend caps only extra usage past the plan windows, so it blocks only accounts without them.
+      if (window.id === "monthly_spend") {
+        return !(provider.usageLimits?.windows ?? []).some(
+          (entry) => entry.id === "five_hour" || entry.id === "seven_day",
+        );
+      }
       // Claude names a one-model weekly allowance `seven_day_<model>` (see claudeUsageLimits.ts).
       return (
         !window.id.startsWith("seven_day_") ||
