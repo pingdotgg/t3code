@@ -1,6 +1,6 @@
 import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { memo } from "react";
+import { memo, useRef, useState } from "react";
 import { CheckIcon, StarIcon } from "lucide-react";
 import { getDisplayModelName } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
@@ -42,6 +42,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     subProvider: props.subProvider,
   };
   const displayName = getDisplayModelName(model);
+  const textRef = useRef<HTMLDivElement>(null);
+  const [nameTooltipOpen, setNameTooltipOpen] = useState(false);
 
   const row = (
     <ComboboxItem
@@ -69,43 +71,54 @@ export const ModelListRow = memo(function ModelListRow(props: {
         indicatorBackground="var(--popover)"
         badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 px-0.5 text-5xs"
       />
-      <div
-        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-        // Names the row in full on hover only when its name or sub-provider is cut off.
-        onPointerEnter={(event) => {
-          const clipped = [...event.currentTarget.children].some(
-            (child) => child.scrollWidth > child.clientWidth,
+      <Tooltip
+        open={nameTooltipOpen}
+        // Opens only when the name or sub-provider is cut off; a disabled row's reason tooltip covers it.
+        onOpenChange={(open) => {
+          const text = textRef.current;
+          setNameTooltipOpen(
+            open &&
+              !!text &&
+              [...text.children].some((child) => child.scrollWidth > child.clientWidth),
           );
-          event.currentTarget.title = clipped
-            ? [displayName, props.subProvider].filter(Boolean).join(" · ")
-            : "";
         }}
+        disabled={Boolean(props.disabledReason)}
       >
-        <div className="min-w-0 truncate text-sm font-normal leading-snug">
-          {displayName}
-          {/* The logo is decorative, so name the provider for screen readers. */}
-          <span className="sr-only">, {props.providerDisplayName}</span>
-        </div>
-        {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
-        {props.subProvider ? (
-          <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
-            {props.subProvider}
-          </span>
-        ) : null}
-        {props.showNewBadge ? (
-          <span
-            className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
-            aria-label={gt("New model")}
-          >
-            {gt("New", { $context: "badge on a newly added model" })}
-          </span>
-        ) : null}
-        {props.unavailable ? (
-          <Badge variant="outline" size="sm">
-            <T context="badge on a model that cannot be selected">Unavailable</T>
-          </Badge>
-        ) : null}
-      </div>
+        <TooltipTrigger
+          tabIndex={-1}
+          render={
+            <div ref={textRef} className="flex min-w-0 flex-1 items-center gap-2 text-left" />
+          }
+        >
+          <div className="min-w-0 truncate text-sm font-normal leading-snug">
+            {displayName}
+            {/* The logo is decorative, so name the provider for screen readers. */}
+            <span className="sr-only">, {props.providerDisplayName}</span>
+          </div>
+          {props.isSelected ? <CheckIcon className="size-3.5 shrink-0" aria-hidden="true" /> : null}
+          {props.subProvider ? (
+            <span className="min-w-0 shrink truncate text-xs text-muted-foreground/70">
+              {props.subProvider}
+            </span>
+          ) : null}
+          {props.showNewBadge ? (
+            <span
+              className="shrink-0 rounded border border-update/35 bg-update/15 px-0.5 py-px text-3xs font-bold uppercase leading-none tracking-wide text-update-foreground"
+              aria-label={gt("New model")}
+            >
+              {gt("New", { $context: "badge on a newly added model" })}
+            </span>
+          ) : null}
+          {props.unavailable ? (
+            <Badge variant="outline" size="sm">
+              <T context="badge on a model that cannot be selected">Unavailable</T>
+            </Badge>
+          ) : null}
+        </TooltipTrigger>
+        <TooltipPopup side="top" align="start">
+          {[displayName, props.subProvider].filter(Boolean).join(" · ")}
+        </TooltipPopup>
+      </Tooltip>
 
       <div className="flex shrink-0 items-center gap-1.5">
         <Tooltip>

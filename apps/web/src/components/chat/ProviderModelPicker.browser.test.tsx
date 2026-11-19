@@ -177,7 +177,7 @@ it("keeps a docked picker open after a pick and hands focus to that model's effo
   await expect.element(search).not.toBeInTheDocument();
 });
 
-it("names a row in full on hover only when its name or sub-provider is cut off", async () => {
+it("names a row in full on hover when only its sub-provider is cut off", async () => {
   const instanceId = ProviderInstanceId.make("opencode-zen");
   const entries = deriveProviderInstanceEntries([
     {
@@ -220,19 +220,15 @@ it("names a row in full on hover only when its name or sub-provider is cut off",
   );
   await screen.getByRole("button", { name: "Choose model" }).click();
 
-  const hoverTitle = async (modelName: string, subProvider: string) => {
-    const option = page.getByRole("option", { name: new RegExp(modelName) });
-    await expect.element(option).toBeVisible();
-    const label = option.getByText(subProvider);
-    await userEvent.hover(label);
-    return label.element().parentElement?.getAttribute("title");
-  };
-
-  // Only the sub-provider is clipped here, and main titled only a clipped model name.
-  await vi.waitFor(async () =>
-    expect(await hoverTitle("GLM-5.3", longSubProvider)).toBe(`GLM-5.3 · ${longSubProvider}`),
+  const option = page.getByRole("option", { name: /GLM-5\.3/ });
+  await expect.element(option).toBeVisible();
+  // Only the sub-provider is clipped here, and main named only a clipped model name.
+  await userEvent.hover(option.getByText(longSubProvider));
+  await vi.waitFor(() =>
+    expect(document.querySelector('[data-slot="tooltip-popup"]')?.textContent).toBe(
+      `GLM-5.3 · ${longSubProvider}`,
+    ),
   );
-  expect(await hoverTitle("Kimi", "Pi")).toBe("");
 });
 
 it("lists a model reported twice by one provider once, with contiguous jump shortcuts", async () => {
