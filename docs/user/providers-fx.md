@@ -25,13 +25,17 @@ When a newer fx release is out, the fx card in **Settings → Providers** shows 
 
 To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only; use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
 
-## Models and effort
+## Backends, models, and effort
 
-The model picker lists **Default** first. That option runs the model `fx status` reports on the server's machine. A model set only for one project in fx's settings is not picked up, so choose it from the list instead. If the thread's fx backend does not offer that model, the thread keeps its current one. The other entries come from `fx models`. A custom model you add in the provider settings goes to fx as is, and fx reports an error if its backend does not offer it.
+fx can run models through several backends: Vercel AI Gateway, a Codex subscription, a Grok subscription, and any OpenAI-compatible endpoint you configure in fx's settings. In the model picker, the fx tab lists each backend under its own heading. Open a backend to see the models it offers, then pick one. Search lists every backend's models together.
+
+The backend is part of each thread's model choice, so two threads can run on different backends at the same time. Switching it in T3 Code changes only that thread's fx session. It never changes the default `fx provider` sets for your terminal.
+
+Sign-ins are different: every fx instance on a machine shares that machine's fx login. A backend you are signed out of shows as unavailable, with the command to run on that machine, such as `fx login grok`. Refresh the provider after signing in.
+
+**Default** runs whatever fx would start a new session on in the thread's project folder, including a model fx's settings give only that folder. Its label shows the machine-wide default. A custom model you add in the provider settings goes to fx as is, on the thread's current backend, and fx reports an error if that backend does not offer it.
 
 fx also has an **Effort** control. A new thread starts at Medium.
-
-T3 Code does not show fx's backend selector. To use Codex, Grok, or Vercel AI Gateway, run `fx provider` on the environment's machine.
 
 Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case; to run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
 
