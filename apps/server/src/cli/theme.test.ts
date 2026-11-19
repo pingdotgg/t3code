@@ -182,6 +182,29 @@ describe("t3 theme", () => {
     }),
   );
 
+  it.effect("publishes a theme despite a rollback file left by an earlier process", () =>
+    Effect.gen(function* () {
+      const baseDir = makeBaseDir();
+      const themeFile = NodePath.join(baseDir, "nightfall.json");
+      NodeFS.writeFileSync(themeFile, NIGHTFALL_THEME_JSON);
+      const themesDir = NodePath.join(baseDir, "userdata", "themes");
+      const destination = NodePath.join(themesDir, "nightfall.json");
+      const staleBackup = `${destination}.rollback-${process.pid}`;
+      NodeFS.mkdirSync(themesDir, { recursive: true });
+      NodeFS.writeFileSync(staleBackup, "previous theme");
+
+      yield* runCli(["theme", "set", themeFile, "--base-dir", baseDir]);
+
+      assert.equal(readSettings(baseDir).defaultTheme, "nightfall");
+      assert.equal(NodeFS.readFileSync(destination, "utf8"), NIGHTFALL_THEME_JSON);
+      assert.equal(NodeFS.readFileSync(staleBackup, "utf8"), "previous theme");
+      assert.deepEqual(NodeFS.readdirSync(themesDir).sort(), [
+        "nightfall.json",
+        NodePath.basename(staleBackup),
+      ]);
+    }),
+  );
+
   it.effect("rejects a file that is not a theme and sets nothing", () =>
     Effect.gen(function* () {
       const baseDir = makeBaseDir();

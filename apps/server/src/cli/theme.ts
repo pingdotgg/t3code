@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - publish commits and rollbacks
 // move exact directory entries with rename, which the FileSystem service does
 // not expose atomically.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 
 import {
@@ -317,8 +318,6 @@ const publishThemeFile = Effect.fn(function* (input: {
   }
 
   const destinationPath = path.join(input.themesDir, `${themeId}.json`);
-  // Non-JSON suffixes hide these from the watcher; PIDs isolate concurrent publishers.
-  const backupPath = `${destinationPath}.rollback-${process.pid}`;
   const stagingPath = `${destinationPath}.staging-${process.pid}`;
   yield* fs
     .makeDirectory(input.themesDir, { recursive: true })
@@ -357,24 +356,26 @@ const publishThemeFile = Effect.fn(function* (input: {
     catch: publishFailure,
   });
 
-  const hadPrevious = yield* Effect.try({
+  const backupPath = yield* Effect.try({
     try: () => {
+      // A fresh path leaves any backup from a crashed publish intact.
+      const rollbackPath = `${destinationPath}.rollback-${NodeCrypto.randomUUID()}`;
       // A rename onto a regular file rejects a directory even if it appeared after lstat.
-      const fd = NodeFS.openSync(backupPath, "wx", 0o600);
+      const fd = NodeFS.openSync(rollbackPath, "wx", 0o600);
       let saved = false;
       try {
         NodeFS.closeSync(fd);
-        NodeFS.renameSync(destinationPath, backupPath);
+        NodeFS.renameSync(destinationPath, rollbackPath);
         saved = true;
-        return true;
+        return rollbackPath;
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
         if (NodeFS.lstatSync(destinationPath, { throwIfNoEntry: false })?.isDirectory()) {
           throw new ThemeDestinationDirectoryError({ themeId, destinationPath });
         }
         throw error;
       } finally {
-        if (!saved) NodeFS.unlinkSync(backupPath);
+        if (!saved) NodeFS.unlinkSync(rollbackPath);
       }
     },
     catch: (cause) => (isThemeDestinationDirectoryError(cause) ? cause : publishFailure(cause)),
@@ -401,7 +402,7 @@ const publishThemeFile = Effect.fn(function* (input: {
           return null;
         }
       })();
-      if (hadPrevious) {
+      if (backupPath !== null) {
         if (destinationIno === null || destinationIno === stagedIno) {
           NodeFS.renameSync(backupPath, destinationPath);
         } else {
@@ -414,7 +415,7 @@ const publishThemeFile = Effect.fn(function* (input: {
   });
   const cleanup = Effect.sync(() => {
     try {
-      if (hadPrevious) NodeFS.unlinkSync(backupPath);
+      if (backupPath !== null) NodeFS.unlinkSync(backupPath);
     } catch {}
   });
 
