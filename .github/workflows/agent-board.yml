@@ -1,0 +1,35 @@
+name: agent-board
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  agent-board:
+    name: agent-board
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: package.json
+
+      - name: Fetch upstream T3 Code
+        run: |
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags --filter=blob:none upstream main
+
+      - name: Engine boundary
+        run: node apps/board/scripts/check-engine-untouched.mjs
+
+      - name: Board script tests
+        run: node --test apps/board/scripts/*.test.mjs
