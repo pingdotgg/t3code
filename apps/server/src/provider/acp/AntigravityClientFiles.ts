@@ -11,9 +11,8 @@ const GIT_POINTER_MAX_BYTES = 4096;
 const readGitPointer = Effect.fn("AntigravityClientFiles.readGitPointer")(function* (
   fileSystem: FileSystem.FileSystem,
   filePath: string,
+  info: FileSystem.File.Info,
 ) {
-  // A symlink to another worktree's .git file would make its backlink appear valid.
-  const info = yield* fileSystem.lstat(filePath);
   if (info.type !== "File" || Number(info.size) > GIT_POINTER_MAX_BYTES) return undefined;
   return yield* fileSystem.readFileString(filePath);
 });
@@ -29,20 +28,38 @@ export const resolveGitWorktreeDirectory = Effect.fn(
     const { fileSystem, path } = input;
     const cwd = input.cwd?.trim();
     if (!cwd) return undefined;
-    const dotGit = path.join(cwd, ".git");
-    const pointer = yield* readGitPointer(fileSystem, dotGit);
-    const gitdir = pointer?.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1]?.trim();
-    if (!gitdir) return undefined;
+    let dir = path.resolve(cwd);
+    while (true) {
+      const dotGit = path.join(dir, ".git");
+      const info = yield* fileSystem.lstat(dotGit).pipe(
+        Effect.catchIf(
+          (error) => error.reason._tag === "NotFound",
+          () => Effect.undefined,
+        ),
+      );
+      if (info === undefined) {
+        const parent = path.dirname(dir);
+        if (parent === dir) return undefined;
+        dir = parent;
+        continue;
+      }
+      const pointer = yield* readGitPointer(fileSystem, dotGit, info);
+      const gitdir = pointer?.match(/^gitdir:\s*(.+?)\s*$/mu)?.[1]?.trim();
+      if (!gitdir) return undefined;
 
-    const realDotGit = yield* fileSystem.realPath(dotGit);
-    const gitDirectory = yield* fileSystem.realPath(path.resolve(path.dirname(realDotGit), gitdir));
-    const info = yield* fileSystem.stat(gitDirectory);
-    if (info.type !== "Directory") return undefined;
+      const realDotGit = yield* fileSystem.realPath(dotGit);
+      const gitDirectory = yield* fileSystem.realPath(
+        path.resolve(path.dirname(realDotGit), gitdir),
+      );
+      if ((yield* fileSystem.stat(gitDirectory)).type !== "Directory") return undefined;
 
-    const backlink = (yield* readGitPointer(fileSystem, path.join(gitDirectory, "gitdir")))?.trim();
-    if (!backlink) return undefined;
-    const target = yield* fileSystem.realPath(path.resolve(gitDirectory, backlink));
-    return target === realDotGit ? gitDirectory : undefined;
+      const backlinkPath = path.join(gitDirectory, "gitdir");
+      const backlinkInfo = yield* fileSystem.lstat(backlinkPath);
+      const backlink = (yield* readGitPointer(fileSystem, backlinkPath, backlinkInfo))?.trim();
+      if (!backlink) return undefined;
+      const target = yield* fileSystem.realPath(path.resolve(gitDirectory, backlink));
+      return target === realDotGit ? gitDirectory : undefined;
+    }
   },
   Effect.orElseSucceed(() => undefined),
 );

@@ -11,14 +11,16 @@ import {
 } from "./AntigravityClientFiles.ts";
 
 it.layer(NodeServices.layer)("AntigravityClientFiles", (it) => {
-  it.effect("reads a linked worktree HEAD and keeps the shared Git config outside", () =>
+  it.effect("reads a linked worktree HEAD from its root and subdirectories", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const root = yield* fileSystem.makeTempDirectoryScoped();
       const repo = path.join(root, "repo");
-      const cwd = path.join(root, "linked");
+      const worktree = path.join(root, "linked");
+      const subdirectory = path.join(worktree, "apps", "web");
+      const nestedRepo = path.join(worktree, "nested");
       const attachments = path.join(root, "attachments");
       yield* fileSystem.makeDirectory(attachments);
       for (const args of [
@@ -37,31 +39,39 @@ it.layer(NodeServices.layer)("AntigravityClientFiles", (it) => {
           "-qm",
           "Initial commit",
         ],
-        ["-C", repo, "worktree", "add", "-qb", "linked", cwd],
+        ["-C", repo, "worktree", "add", "-qb", "linked", worktree],
+        ["init", "-qb", "main", nestedRepo],
       ]) {
         const code = yield* spawner.exitCode(ChildProcess.make("git", args));
         assert.equal(Number(code), 0, `git ${args.join(" ")}`);
       }
+      yield* fileSystem.makeDirectory(subdirectory, { recursive: true });
       const gitDir = yield* fileSystem.realPath(path.join(repo, ".git", "worktrees", "linked"));
-      const worktreeGitDir = yield* resolveGitWorktreeDirectory({ fileSystem, path, cwd });
-      assert.equal(worktreeGitDir, gitDir);
-      const allowedRoots =
-        worktreeGitDir === undefined ? [cwd, attachments] : [cwd, attachments, worktreeGitDir];
-      const read = (target: string) =>
-        readAntigravityClientTextFile({
-          fileSystem,
-          path,
-          allowedRoots,
-          request: { sessionId: "worktree", path: target },
-        });
-      assert.equal((yield* read(path.join(gitDir, "HEAD"))).content, "ref: refs/heads/linked\n");
-      const blocked = yield* read(path.join(repo, ".git", "config")).pipe(Effect.flip);
-      assert.match(blocked.message, /outside the session workspace/);
+      for (const cwd of [worktree, subdirectory]) {
+        const worktreeGitDir = yield* resolveGitWorktreeDirectory({ fileSystem, path, cwd });
+        assert.equal(worktreeGitDir, gitDir);
+        const allowedRoots =
+          worktreeGitDir === undefined ? [cwd, attachments] : [cwd, attachments, worktreeGitDir];
+        const read = (target: string) =>
+          readAntigravityClientTextFile({
+            fileSystem,
+            path,
+            allowedRoots,
+            request: { sessionId: "worktree", path: target },
+          });
+        assert.equal((yield* read(path.join(gitDir, "HEAD"))).content, "ref: refs/heads/linked\n");
+        const blocked = yield* read(path.join(repo, ".git", "config")).pipe(Effect.flip);
+        assert.match(blocked.message, /outside the session workspace/);
+      }
 
-      const forged = path.join(root, "forged");
+      const forged = path.join(worktree, "forged");
       yield* fileSystem.makeDirectory(forged);
-      yield* fileSystem.symlink(path.join(cwd, ".git"), path.join(forged, ".git"));
-      assert.isUndefined(yield* resolveGitWorktreeDirectory({ fileSystem, path, cwd: forged }));
+      yield* fileSystem.symlink(path.join(worktree, ".git"), path.join(forged, ".git"));
+      for (const boundary of [nestedRepo, forged]) {
+        const cwd = path.join(boundary, "src");
+        yield* fileSystem.makeDirectory(cwd);
+        assert.isUndefined(yield* resolveGitWorktreeDirectory({ fileSystem, path, cwd }));
+      }
     }),
   );
 
