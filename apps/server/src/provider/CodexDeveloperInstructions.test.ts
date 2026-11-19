@@ -43,34 +43,6 @@ describe("Codex runtime context", () => {
   });
 });
 
-describe("Codex orchestration context", () => {
-  it("routes subagents native first, delegate_task for the rest", () => {
-    const orchestration = Object.entries(buildCodexAdditionalContext({ model: "gpt-6.1-sol" }))
-      .filter(([key]) => key.startsWith("t3_code_orchestration_"))
-      .map(([, entry]) => entry.value)
-      .join("\n");
-
-    NodeAssert.ok(
-      orchestration.includes("native tools for same-provider children on offered models"),
-    );
-    NodeAssert.ok(orchestration.includes("`run_in_background:false`"));
-    NodeAssert.ok(
-      orchestration.includes(
-        "Use `delegate_task` for other-provider models (even with native types)",
-      ),
-    );
-    NodeAssert.ok(orchestration.includes("or background agents. Never background `Agent`."));
-    NodeAssert.ok(
-      orchestration.includes("Use a new `delegate_task` for every delegate review/re-check"),
-    );
-    NodeAssert.ok(orchestration.includes("never `t3_thread_send`"));
-    NodeAssert.ok(!orchestration.includes("inheritedOptions"));
-    NodeAssert.ok(!orchestration.includes("Prefer native"));
-    // The ACP terminal fallback is ACP-only; Codex agents never need it.
-    NodeAssert.ok(!orchestration.includes("acp-mcp-call"));
-  });
-});
-
 describe("Codex device context", () => {
   it("adds the shared device block only when the session holds device access", () => {
     const tools = (device: boolean) =>

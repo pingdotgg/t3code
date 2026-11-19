@@ -5938,6 +5938,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "runs",
           ...(command.continuationAfterRunId === undefined ? [] : (["messages"] as const)),
           ...(command.continuationAfterRunId === undefined ? [] : (["turnItems"] as const)),
+          ...(command.continuationAfterRunId === undefined ? [] : (["subagents"] as const)),
           ...(command.sourcePoint.type === "checkpoint" ? (["checkpoints"] as const) : []),
           "providerThreads",
           ...(command.continuationAfterRunId === undefined ? [] : (["providerSessions"] as const)),
@@ -5972,11 +5973,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       }
       const latest = sourceProjection.runs.toSorted((a, b) => b.ordinal - a.ordinal)[0];
+      const stopped =
+        latest?.id === command.continuationAfterRunId
+          ? yield* stopReachedRun(command, command.sourceThreadId, latest.id)
+          : false;
       if (
         command.createdBy !== "agent" ||
         command.creationSource !== "server" ||
         latest?.id !== command.continuationAfterRunId ||
         latest.status !== "completed" ||
+        stopped ||
+        hasRunningDelegatedTasks(sourceProjection.subagents) ||
+        sourceProjection.subagents.some(
+          (task) =>
+            task.origin === "app_owned" &&
+            task.runId !== null &&
+            (task.completionDelivery?.state === "pending" ||
+              task.completionDelivery?.state === "claimed"),
+        ) ||
         sourceProjection.messages.filter((message) => message.role === "user").length !==
           command.continuationMessageCount ||
         sourceProjection.turnItems.some(

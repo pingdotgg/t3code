@@ -35,12 +35,21 @@ export interface ThreadRelationshipWalkRow {
 }
 
 export function resolveMergeBackTargetThreadId(
-  projection: Pick<ThreadStructure, "thread"> | null,
+  projection: Pick<ThreadStructure, "thread" | "contextTransfers"> | null,
 ): ThreadId | null {
   if (projection?.thread.lineage.relationshipToParent !== "fork") return null;
-  return projection.thread.forkedFrom?.type === "run"
-    ? projection.thread.forkedFrom.threadId
-    : projection.thread.lineage.parentThreadId;
+  const targetThreadId =
+    projection.thread.forkedFrom?.type === "run"
+      ? projection.thread.forkedFrom.threadId
+      : projection.thread.lineage.parentThreadId;
+  return projection.contextTransfers.some(
+    (transfer) =>
+      transfer.type === "fork" &&
+      transfer.sourceThreadId === targetThreadId &&
+      transfer.targetThreadId === projection.thread.id,
+  )
+    ? targetThreadId
+    : null;
 }
 
 function edgeKey(edge: ThreadRelationshipEdge): string {

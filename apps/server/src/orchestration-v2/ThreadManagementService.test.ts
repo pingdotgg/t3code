@@ -94,23 +94,27 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>, reads: Array<string> = []) =>
+  (dispatched: Array<string>) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
-            Effect.succeed({
-              thread: {
-                id: ThreadId.make("thread:thread-management:chokepoint"),
-                projectId: ProjectId.make("project:thread-management:chokepoint"),
-                deletedAt: null,
-                modelSelection: {
-                  instanceId: ProviderInstanceId.make("codex_work"),
-                  model: "test",
+            Effect.sync(() => {
+              reads.push("getThreadRecords");
+              return {
+                thread: {
+                  id: ThreadId.make("thread:thread-management:chokepoint"),
+                  projectId: ProjectId.make("project:thread-management:chokepoint"),
+                  deletedAt: null,
+                  modelSelection: {
+                    instanceId: ProviderInstanceId.make("codex_work"),
+                    model: "test",
+                  },
                 },
-              },
-            } as unknown as OrchestrationV2ThreadProjection),
+              } as unknown as OrchestrationV2ThreadProjection;
+            }),
           dispatch: (command) =>
             Effect.sync(() => {
               dispatched.push(command.type);
@@ -1097,8 +1101,10 @@ it.effect(
     }),
 );
 
-it.effect("automatic continuation is disabled by default and does not load or fork a thread", () =>
-  Effect.gen(function* () {
+it.effect("automatic continuation is disabled by default without reading or dispatching", () => {
+  const reads: Array<string> = [];
+  const dispatched: Array<string> = [];
+  return Effect.gen(function* () {
     const service = yield* ThreadManagementService.ThreadManagementService;
     expect(
       yield* service.requestContinuation({
@@ -1106,8 +1112,12 @@ it.effect("automatic continuation is disabled by default and does not load or fo
         handoff: "Continue the task.",
       }),
     ).toEqual({ enabled: false });
-  }).pipe(Effect.provide(layerDispatchChokepointTest(ServerSettings.layerTest())([]))),
-);
+    expect(reads).toEqual([]);
+    expect(dispatched).toEqual([]);
+  }).pipe(
+    Effect.provide(layerDispatchChokepointTest(ServerSettings.layerTest(), reads)(dispatched)),
+  );
+});
 
 it.effect("refuses continuation when its provider is disabled for the project", () => {
   const threadId = ThreadId.make("continuation:provider-disabled");
@@ -1238,6 +1248,9 @@ it.effect("deduplicates continuation requests only within the same run", () => {
       first,
     );
     runs[2]!.status = "completed";
+    expect(yield* service.requestContinuation({ threadId, handoff: "Continue task one." })).toEqual(
+      first,
+    );
     runs.push({ id: RunId.make("run:4"), ordinal: 4, status: "running" });
     const error = yield* Effect.flip(
       service.requestContinuation({ threadId, handoff: "Continue task two." }),

@@ -1270,7 +1270,6 @@ const make = Effect.gen(function* () {
       !isListedThreadLineage(source.thread.lineage) ||
       isDelegatedAppThread(source.thread) ||
       run === undefined ||
-      !["running", "starting", "waiting"].includes(run.status) ||
       source.runs.filter((candidate) => candidate.status === "completed").length < 2 ||
       source.runs.some((candidate) => candidate.status === "queued") ||
       threadPullRequestsOf(source.thread).some((link) => link.watch !== undefined)
@@ -1307,13 +1306,26 @@ const make = Effect.gen(function* () {
           "A continuation request from an earlier turn is still pending. Continue in this thread.",
       });
     if (pendingTarget !== undefined) return { enabled: true, targetThreadId: pendingTarget };
+    if (!["running", "starting", "waiting"].includes(run.status))
+      return yield* new Orchestrator.OrchestratorDispatchError({
+        commandId: CommandId.make("continuation:refused"),
+        commandType: "thread.fork",
+        cause:
+          "Continuation needs a top-level thread with two completed turns, no queued messages, and no PR watch.",
+      });
     continuationRequests.set(input.threadId, targetThreadId);
     const handoff = input.handoff;
+    const projectId = source.thread.projectId;
+    const threadId = input.threadId;
+    const runId = run.id;
+    const continuationMessageCount = source.messages.filter(
+      (message) => message.role === "user",
+    ).length;
     yield* Effect.gen(function* () {
       const waited = yield* waitForThread({
-        projectId: source.thread.projectId,
-        threadId: input.threadId,
-        runId: run.id,
+        projectId,
+        threadId,
+        runId,
         timeoutMs: SETTLE_AFTER_RUN_WAIT_MS,
         untilDelegatedWorkSettled: true,
       });
@@ -1323,12 +1335,11 @@ const make = Effect.gen(function* () {
           ? dispatch({
               type: "thread.fork",
               commandId: CommandId.make(`${targetThreadId}:fork`),
-              sourceThreadId: input.threadId,
+              sourceThreadId: threadId,
               targetThreadId,
-              sourcePoint: { type: "run", runId: run.id },
-              continuationAfterRunId: run.id,
-              continuationMessageCount: source.messages.filter((message) => message.role === "user")
-                .length,
+              sourcePoint: { type: "run", runId },
+              continuationAfterRunId: runId,
+              continuationMessageCount,
               continuationHandoff: handoff,
               createdBy: "agent",
               creationSource: "server",
@@ -1336,7 +1347,7 @@ const make = Effect.gen(function* () {
           : Effect.void,
       );
     }).pipe(
-      Effect.ensuring(Effect.sync(() => continuationRequests.delete(input.threadId))),
+      Effect.ensuring(Effect.sync(() => continuationRequests.delete(threadId))),
       Effect.ignoreCause({ log: true }),
       Effect.forkIn(layerScope),
     );

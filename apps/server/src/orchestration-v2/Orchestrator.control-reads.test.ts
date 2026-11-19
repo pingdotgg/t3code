@@ -2303,15 +2303,22 @@ it.effect("records a secret and a link card without reading the thread's history
     const copyPath = "file:/card-reads?vfs=memdb";
     using copy = new NodeSqlite.DatabaseSync(copyPath);
     yield* sql`VACUUM INTO ${copyPath}`;
-    const replaySteps = () =>
+    const replayReads = () =>
       statements
         .filter(([query]) => /^\s*(SELECT|WITH)\b/.test(query))
-        .reduce((steps, [query, params]) => {
-          const statement = copy.prepare(query);
-          statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-          return steps + statement.stat("vmStep");
-        }, 0);
-    const shortSteps = replaySteps();
+        .reduce(
+          (result, [query, params]) => {
+            const statement = copy.prepare(query);
+            result.rows += statement.all(
+              ...(params as ReadonlyArray<NodeSqlite.SQLInputValue>),
+            ).length;
+            result.steps += statement.stat("vmStep");
+            return result;
+          },
+          { rows: 0, steps: 0 },
+        );
+    const shortReads = replayReads();
+    const shortSteps = shortReads.steps;
     assert.isAbove(shortSteps, 0);
     const history: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> = [
       ["runs", "run_id", []],
@@ -2336,7 +2343,9 @@ it.effect("records a secret and a link card without reading the thread's history
         INSERT INTO ${name} (${columns.join(", ")})
         SELECT ${values.join(", ")} FROM ${name}, history WHERE thread_id = '${threadId}'`);
     }
-    assert.isAtMost(replaySteps(), shortSteps * 1.1);
+    const longReads = replayReads();
+    assert.equal(longReads.rows, shortReads.rows);
+    assert.isAtMost(longReads.steps, shortSteps * 1.1);
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -3182,6 +3191,9 @@ it.effect(
 it.effect.each([
   "success",
   "changed-run",
+  "stopped",
+  "active-task",
+  "pending-delivery",
   "new-message",
   "watch",
   "background",
@@ -3226,6 +3238,69 @@ it.effect.each([
       occurredAt: now,
       payload: { ...run, status: "completed", completedAt: now },
     });
+    if (scenario === "stopped") {
+      yield* projections.apply({
+        id: EventId.make("continuation:stop-reached"),
+        type: "turn-item.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make("continuation:stop-reached"),
+          threadId: sourceThreadId,
+          runId: run.id,
+          nodeId: run.rootNodeId ?? NodeId.make("continuation:root"),
+          providerThreadId:
+            run.providerThreadId ?? ProviderThreadId.make("continuation:provider-thread"),
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1_000,
+          status: "completed",
+          title: "Interrupt requested",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "run_interrupt_request",
+          message: "Stop",
+        },
+      });
+    }
+    if (scenario === "active-task" || scenario === "pending-delivery") {
+      const active = scenario === "active-task";
+      const taskId = NodeId.make(`continuation:${scenario}:task`);
+      yield* projections.apply({
+        id: EventId.make(`continuation:${scenario}`),
+        type: "subagent.updated",
+        threadId: sourceThreadId,
+        runId: run.id,
+        nodeId: taskId,
+        providerInstanceId: instanceId,
+        occurredAt: now,
+        payload: {
+          id: taskId,
+          threadId: sourceThreadId,
+          runId: run.id,
+          parentNodeId: run.rootNodeId ?? NodeId.make("continuation:root"),
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: instanceId,
+          providerThreadId: null,
+          childThreadId: ThreadId.make(`continuation:${scenario}:child`),
+          nativeTaskRef: null,
+          prompt: "Continue delegated work",
+          title: null,
+          model: null,
+          status: active ? "running" : "completed",
+          completionDelivery: active ? undefined : { state: "pending", observedByRunId: null },
+          result: active ? null : "done",
+          startedAt: now,
+          completedAt: active ? null : now,
+          updatedAt: now,
+        },
+      });
+    }
     if (scenario === "unread-steer") {
       const original = initial.turnItems.find((item) => item.type === "user_message");
       assert.isDefined(original);
