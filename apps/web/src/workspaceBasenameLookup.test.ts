@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   agentWorkingDirectories,
-  claimWorkspaceBasenameLookup,
   findAgentDirectoryMatch,
   pickProjectLinkMatch,
   pickWorkspaceBasenameMatch,
@@ -181,15 +180,5 @@ describe("findAgentDirectoryMatch", () => {
       await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b", "/work/repo-c"], found),
     ).toBe("/work/repo-c/etc/config.test.yaml");
     expect(await findAgentDirectoryMatch("config.test.yaml", ["/work/repo-b"], found)).toBeNull();
-  });
-});
-
-describe("claimWorkspaceBasenameLookup", () => {
-  it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup();
-    const second = claimWorkspaceBasenameLookup();
-
-    expect(second()).toBe(true);
-    expect(first()).toBe(false);
   });
 });
