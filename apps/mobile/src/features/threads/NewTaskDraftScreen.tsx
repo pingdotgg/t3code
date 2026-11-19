@@ -1008,7 +1008,7 @@ export function NewTaskDraftScreen(props: {
     return (
       <ThreadScreenFallback header={<AppBar title={gt("New thread")} onBack={goBack} />}>
         <View className="flex-1 justify-end gap-3 p-4">
-          {contextControls}
+          {environmentControl}
           <Text className="text-foreground-muted">
             <T>
               Your draft is saved on this device. Connect to an environment to choose its first
@@ -1020,7 +1020,6 @@ export function NewTaskDraftScreen(props: {
             value={flow.prompt}
             onChangeText={flow.setPrompt}
             placeholder={gt("Ask anything")}
-            readOnly={isDraftInteractionLocked}
             multiline
             style={{ minHeight: 64 }}
           />
