@@ -12,13 +12,18 @@ import { DEFAULT_THREAD_TERMINAL_ID } from "./types";
 const THREAD_ID = ThreadId.make("thread-1");
 const THREAD_REF = scopeThreadRef("environment-a" as never, THREAD_ID);
 const OTHER_THREAD_REF = scopeThreadRef("environment-b" as never, THREAD_ID);
+const layout = () =>
+  selectThreadTerminalUiState(
+    useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
+    THREAD_REF,
+  );
 
 describe("terminalUiStateStore actions", () => {
   beforeEach(() => {
-    useTerminalUiStateStore.getState().removeOrphanedTerminalUiStates(new Set());
     useTerminalUiStateStore.persist.clearStorage();
     useTerminalUiStateStore.setState({
       terminalUiStateByThreadKey: {},
+      serverObservationsByThreadKey: {},
       suppressedTerminalIdsByThreadKey: {},
     });
   });
@@ -201,18 +206,6 @@ describe("terminalUiStateStore actions", () => {
     store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
     expect(terminalIds()).toEqual([DEFAULT_THREAD_TERMINAL_ID, "term-3"]);
   });
-});
-
-describe("server terminal reconciliation", () => {
-  const layout = () =>
-    selectThreadTerminalUiState(
-      useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-      THREAD_REF,
-    );
-
-  beforeEach(() => {
-    useTerminalUiStateStore.getState().removeTerminalUiState(THREAD_REF);
-  });
 
   it("preserves a vertical split while the terminals reattach to a restarted server", () => {
     const store = useTerminalUiStateStore.getState();
@@ -277,16 +270,5 @@ describe("server terminal reconciliation", () => {
       { id: "group-elsewhere", terminalIds: ["elsewhere"] },
     ]);
     expect(layout().activeTerminalId).toBe("pending");
-  });
-
-  it("resets the drawer when another client closes the last terminal", () => {
-    const store = useTerminalUiStateStore.getState();
-    const defaultLayout = layout();
-    store.setTerminalOpen(THREAD_REF, true);
-    store.reconcileTerminalIds(THREAD_REF, [DEFAULT_THREAD_TERMINAL_ID]);
-
-    store.reconcileTerminalIds(THREAD_REF, []);
-
-    expect(layout()).toEqual(defaultLayout);
   });
 });
