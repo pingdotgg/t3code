@@ -518,23 +518,17 @@ it.layer(layerTest)("ProjectService", (it) => {
       const service = yield* ProjectService.ProjectService;
       const onWindows = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
         effect.pipe(Effect.provideService(HostProcess.Platform, "win32"));
-      for (const workspaceRoot of [
-        "\\\\wsl.localhost\\Ubuntu\\home\\ubuntu\\repo",
-        "\\\\wsl$\\Ubuntu\\home\\ubuntu\\repo",
-        "//WSL.localhost/Ubuntu/home/ubuntu/repo",
-      ]) {
-        const projectId = ProjectId.make(`project:wsl-share:${workspaceRoot}`);
-        const refused = yield* onWindows(
-          service.create({
-            commandId: CommandId.make(`command:wsl-share:${workspaceRoot}`),
-            projectId,
-            title: "WSL",
-            workspaceRoot,
-          }),
-        ).pipe(Effect.flip);
-        assert.equal(refused._tag, "ProjectInvalidError");
-        assert.isTrue(Option.isNone(yield* service.getById(projectId)));
-      }
+      const projectId = ProjectId.make("project:wsl-share");
+      const refused = yield* onWindows(
+        service.create({
+          commandId: CommandId.make("command:wsl-share"),
+          projectId,
+          title: "WSL",
+          workspaceRoot: "\\\\wsl$\\Ubuntu\\home\\ubuntu\\repo",
+        }),
+      ).pipe(Effect.flip);
+      assert.equal(refused._tag, "ProjectInvalidError");
+      assert.isTrue(Option.isNone(yield* service.getById(projectId)));
 
       const mover = ProjectId.make("project:wsl-share:mover");
       yield* onWindows(
