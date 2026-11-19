@@ -125,6 +125,7 @@ kept in the server's secret store, applies right away, and is used before `CAFE_
 `cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
+To browse issues with a scoped token, grant read access to issue and comment contents.
 
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.
@@ -367,7 +368,7 @@ out from the matching organization and repository.
 ## Issues
 
 The Issues page lists the issues of every project whose remote is on GitHub, GitLab, Azure
-DevOps or Forgejo, grouped per tracker account. Open it from the sidebar's utility row or with
+DevOps, Forgejo or GitCafe, grouped per tracker account. Open it from the sidebar's utility row or with
 **Open issues** in the command palette. Filter by open or closed, by your involvement
 (assigned, opened by you, mentioning you), by project, and by tracker; the search box asks the tracker
 itself where it can search. Press **Load more** at the end of a group to read further back.
@@ -382,6 +383,7 @@ requests, labels, assignees, and reactions. Linked pull requests open in the sam
 comment, edit the title and description, change labels and assignees, react, and close or
 reopen (with a close reason where the tracker records one) when the tracker and your account
 allow it. An issue read through a project that does not own its repository is shown read-only.
+GitCafe issues are read-only, and **Mentioning me** finds none on GitCafe.
 
 An issue can be kept with a thread the way a pull request can: open it beside the thread (issue
 links in the conversation open there) and use **Link to this thread** in its header; **Unlink**

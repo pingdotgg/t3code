@@ -83,6 +83,35 @@ describe("GitCafe change request URLs", () => {
   });
 });
 
+describe("GitCafe issue URLs", () => {
+  const parseIssue = (url: string) => definition.parseIssueUrl?.(new URL(url)) ?? null;
+
+  it("reads issues on its own hosts", () => {
+    expect(parseIssue("https://git.cafe/Acme/Web/issues/42#comment")).toEqual({
+      host: "git.cafe",
+      scope: "acme/web",
+      key: "42",
+    });
+    expect(parseIssue("https://staging.git.cafe/acme/web/issues/7/")).toEqual({
+      host: "staging.git.cafe",
+      scope: "acme/web",
+      key: "7",
+    });
+  });
+
+  it("leaves other hosts and routes alone", () => {
+    for (const url of [
+      "https://github.com/acme/web/issues/42",
+      "https://git.cafe.evil.test/acme/web/issues/42",
+      "https://git.cafe/acme/web/pulls/42",
+      "https://git.cafe/acme/web/issues/0",
+      "https://git.cafe/acme/web/issues",
+    ]) {
+      expect(parseIssue(url), url).toBeNull();
+    }
+  });
+});
+
 describe("GitCafe remotes", () => {
   it("recognises its own hosts only, without a port", () => {
     expect(recognizeRemoteWith(definition, "https://git.cafe:8443/a/b")).toEqual({
