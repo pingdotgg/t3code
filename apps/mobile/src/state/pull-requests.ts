@@ -11,7 +11,6 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { connectionAtomRuntime } from "../connection/runtime";
-import { uuidv4 } from "../lib/uuid";
 import {
   EMPTY_PULL_REQUEST_STATS_CACHE,
   pullRequestListHead,
@@ -131,7 +130,6 @@ const onPullRequestAnswer = {
 export const composerPullRequests = createPullRequestEnvironmentAtoms(
   connectionAtomRuntime,
   onPullRequestAnswer,
-  { createDiffRevision: uuidv4 },
 );
 export const pullRequestStackAtom = createPullRequestStackAtomFamily(
   connectionAtomRuntime,

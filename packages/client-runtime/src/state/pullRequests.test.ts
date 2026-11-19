@@ -45,6 +45,7 @@ import {
   applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
   createPullRequestEnvironmentAtoms,
+  type CachedPullRequestDiff,
   createPullRequestStackAtomFamily,
   editHeldPullRequestListEntries,
   heldPullRequestListEntriesAtom,
@@ -3026,7 +3027,7 @@ it.effect("reads a reused cursor from the new diff revision after reloading page
   Effect.gen(function* () {
     const inputs: unknown[] = [];
     let patch = "before-push";
-    const { runtime, registry, supervisor } = yield* makeTestRuntime(
+    const { atoms, registry, supervisor } = yield* makeTestRuntime(
       {} as WsRpcProtocolClient,
       undefined,
       false,
@@ -3052,14 +3053,6 @@ it.effect("reads a reused cursor from the new diff revision after reloading page
         httpAuthorization: null,
         target: TARGET,
       }),
-    );
-    let revision = 0;
-    const atoms = createPullRequestEnvironmentAtoms(
-      runtime,
-      {},
-      {
-        createDiffRevision: () => String(++revision),
-      },
     );
     const reference = { projectId: ProjectId.make("project-1"), repository: "acme/web", number: 1 };
     const target = { environmentId: TARGET.environmentId, input: reference };
@@ -3087,4 +3080,89 @@ it.effect("reads a reused cursor from the new diff revision after reloading page
       { ...reference, cursor: "2" },
     ]);
   }),
+);
+
+it.effect.each(["commit", "live"] as const)(
+  "restores only the saved continuation for the current %s diff offline",
+  (kind) =>
+    Effect.gen(function* () {
+      const disk = new Map<string, string>();
+      let continuationPatch = "original";
+      const { atoms, registry, supervisor } = yield* makeTestRuntime(
+        {} as WsRpcProtocolClient,
+        undefined,
+        false,
+        {},
+        {
+          load: (_environment, key) => Effect.sync(() => Option.fromNullishOr(disk.get(key))),
+          save: (_environment, key, value) => Effect.sync(() => void disk.set(key, value)),
+        },
+        {
+          load: (_prepared, input) =>
+            Effect.sync(() =>
+              input.cursor === undefined
+                ? { patch: "same first page", truncated: false, nextCursor: "2" }
+                : { patch: continuationPatch, truncated: false, nextCursor: null },
+            ),
+        },
+      );
+      yield* SubscriptionRef.set(
+        supervisor.prepared,
+        Option.some({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          httpBaseUrl: "https://example.test",
+          socketUrl: "wss://example.test",
+          httpAuthorization: null,
+          target: TARGET,
+        }),
+      );
+      const target = {
+        environmentId: TARGET.environmentId,
+        input: {
+          projectId: ProjectId.make("project-1"),
+          repository: "acme/web",
+          number: 1,
+          ...(kind === "commit" ? { commit: "commit-sha" } : {}),
+        },
+      };
+      const firstPage = atoms.diff(target);
+      const continuation = (first: CachedPullRequestDiff) =>
+        atoms.diff({
+          ...target,
+          input: {
+            ...target.input,
+            cursor: first.nextCursor!,
+            ...(first.revision === undefined ? {} : { cacheRevision: first.revision }),
+          },
+        });
+      const settled = { suspendOnWaiting: true };
+      const first = yield* AtomRegistry.getResult(registry, firstPage, settled);
+      expect((yield* AtomRegistry.getResult(registry, continuation(first), settled)).patch).toBe(
+        "original",
+      );
+
+      registry.refresh(firstPage);
+      const refreshed = yield* AtomRegistry.getResult(registry, firstPage, settled);
+      if (kind === "live") {
+        continuationPatch = "updated";
+        expect(
+          (yield* AtomRegistry.getResult(registry, continuation(refreshed), settled)).patch,
+        ).toBe("updated");
+      }
+
+      yield* SubscriptionRef.update(supervisor.state, (state) => ({ ...state, phase: "offline" }));
+      const offline = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+        Effect.sync(() => registry.dispose()),
+      );
+      const savedFirst = yield* AtomRegistry.getResult(offline, firstPage, settled);
+      const savedPage = yield* AtomRegistry.getResult(offline, continuation(savedFirst), settled);
+      expect(savedPage.patch).toBe(kind === "commit" ? "original" : "updated");
+      if (kind === "live") {
+        const oldPage = yield* AtomRegistry.getResult(offline, continuation(first), settled).pipe(
+          Effect.result,
+        );
+        expect(oldPage._tag).toBe("Failure");
+      }
+    }),
 );

@@ -6,7 +6,8 @@ import {
   type PullRequestSummary,
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
+import { Atom, type AsyncResult } from "effect/reactivity";
+import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
 import { useLocale, useMessages } from "gt-react-native";
 import { useContext, useLayoutEffect, useMemo, useState } from "react";
 
@@ -124,10 +125,12 @@ export function usePullRequestDiff(
   const firstPageAtom = composerPullRequests.diff(target);
   const refreshFirstPage = useAtomRefresh(firstPageAtom);
   const { refreshing, onRefresh } = usePullToRefresh(firstPageAtom);
+  const registry = useContext(RegistryContext);
   const [state, setState] = useState<{
     key: string;
     cursor: string | null;
     pages: readonly PullRequestDiffPage[];
+    reloadFrom?: AsyncResult.AsyncResult<CachedPullRequestDiff, unknown>;
   }>({ key, cursor: null, pages: NO_PAGES });
   const cursor = state.key === key ? state.cursor : null;
   const loaded = state.key === key ? state.pages : NO_PAGES;
@@ -144,7 +147,12 @@ export function usePullRequestDiff(
           },
         }),
   );
-  const response = query.successResult?.value;
+  // Pull to refresh starts asynchronously, so the previous settled result can still be visible.
+  const reloadFrom = state.key === key ? state.reloadFrom : undefined;
+  const reloadPending =
+    reloadFrom !== undefined &&
+    (query.successResult === null || query.successResult === reloadFrom);
+  const response = reloadPending ? null : query.data;
   const pages = useMemo(() => {
     return response ? retainPullRequestDiffPage(loaded, cursor, response) : loaded;
   }, [cursor, loaded, response]);
@@ -158,7 +166,6 @@ export function usePullRequestDiff(
   const withheldResults = useAtomValue(
     withheldFileDiffsAtom(JSON.stringify({ targetKey: key, paths: withheldPaths })),
   );
-  const registry = useContext(RegistryContext);
   const refreshWithheldFiles = () => {
     for (const path of withheldPaths) registry.refresh(withheldFileDiff(key, path));
   };
@@ -206,7 +213,7 @@ export function usePullRequestDiff(
     setState({ key, cursor: nextCursor, pages });
   };
   const reload = (refreshFirst: () => void) => {
-    setState({ key, cursor: null, pages: NO_PAGES });
+    setState({ key, cursor: null, pages: NO_PAGES, reloadFrom: registry.get(firstPageAtom) });
     refreshFirst();
     refreshWithheldFiles();
   };

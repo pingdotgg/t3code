@@ -10,6 +10,7 @@ import {
   pullRequestLinkCommit,
   resolvePullRequestAnchorRange,
 } from "@t3tools/shared/pullRequestAnchor";
+import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type {
   CodeViewItem,
@@ -190,7 +191,7 @@ const COMMIT_PAGE_SIZE = 10;
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
 interface DiffSlice {
-  readonly source: PullRequestDiffResult;
+  readonly source: CachedPullRequestDiff;
   readonly cursor: string | null;
   readonly patch: string;
   readonly truncated: boolean;
@@ -478,6 +479,7 @@ function PullRequestCodeTab({
     readonly key: string;
     readonly cursor: string | null;
     readonly slices: ReadonlyArray<DiffSlice>;
+    readonly awaitingFirstPage?: boolean;
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
@@ -505,12 +507,15 @@ function PullRequestCodeTab({
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
+  const revision = loadedSlices[0]?.source.revision;
+  const awaitingFirstPage = sliceState.key === scopeKey && sliceState.awaitingFirstPage === true;
   const diffQuery = useEnvironmentQuery(
     pullRequestEnvironment.diff({
       environmentId,
       input: {
         ...reference,
         ...(cursor === null ? {} : { cursor }),
+        ...(cursor !== null && revision !== undefined ? { cacheRevision: revision } : {}),
         ...(commit === null ? {} : { commit }),
       },
     }),
@@ -524,11 +529,17 @@ function PullRequestCodeTab({
   const data = diffQuery.data;
   if (
     data !== null &&
-    (appliedPage?.data !== data ||
+    (!awaitingFirstPage || (diffQuery.isSuccess && !diffQuery.isPending)) &&
+    (awaitingFirstPage ||
+      appliedPage?.data !== data ||
       appliedPage.cursor !== cursor ||
       appliedPage.scopeKey !== scopeKey)
   ) {
     setAppliedPage({ data, cursor, scopeKey });
+    if (cursor === null && loadedSlices.length > 0 && data.revision !== revision) {
+      setDraft(null);
+      setSelectedLines(null);
+    }
     setSliceState((previous) => {
       const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
       const next = {
@@ -549,6 +560,7 @@ function PullRequestCodeTab({
         existing.patch === next.patch &&
         existing.truncated === next.truncated &&
         existing.nextCursor === next.nextCursor &&
+        existing.source.revision === next.source.revision &&
         existing.source.withheldFilesReadable === next.source.withheldFilesReadable &&
         existing.omittedFileStats.length === next.omittedFileStats.length &&
         existing.omittedFileStats.every((file, index) => {
@@ -561,7 +573,7 @@ function PullRequestCodeTab({
           );
         })
       ) {
-        return previous;
+        return awaitingFirstPage ? { key: scopeKey, cursor, slices } : previous;
       }
       // Drop later slices when replacing a changed page; their cursors target the old diff.
       return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
@@ -619,29 +631,28 @@ function PullRequestCodeTab({
     for (const path of withheldPaths) atomRegistry.refresh(withheldFileDiff(path));
   });
   const appliedRefreshToken = useRef(refreshToken);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
-  useEffect(() => {
-    if (appliedRefreshToken.current === refreshToken) return;
-    appliedRefreshToken.current = refreshToken;
-    setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
-    // An equal refetch keeps the answer's identity, so the emptied slices refill only if the
-    // applied page is forgotten too.
-    setAppliedPage(null);
-    refreshFirstDiffPage();
-    refreshWithheldFiles();
-    refreshFilesViewed();
-  }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a background refresh token refetches the first diff page and viewed files while keeping slices
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- refresh tokens restart pagination and refetch the diff and viewed files
   useEffect(() => {
-    if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    const manual = appliedRefreshToken.current !== refreshToken;
+    if (!manual && appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
+    appliedRefreshToken.current = refreshToken;
     appliedBackgroundRefreshToken.current = backgroundRefreshToken;
-    // Keeping slices mounted preserves scroll; the page merge invalidates changed pages.
-    setSliceState((previous) => ({ ...previous, cursor: null }));
+    setSliceState((previous) => ({
+      key: scopeKey,
+      cursor: null,
+      // A background refresh keeps the old slices visible until the first page settles.
+      slices: manual || previous.key !== scopeKey ? NO_SLICES : previous.slices,
+      awaitingFirstPage: true,
+    }));
+    if (manual) {
+      setDraft(null);
+      setSelectedLines(null);
+    }
     refreshFirstDiffPage();
     refreshWithheldFiles();
     refreshFilesViewed();
-  }, [backgroundRefreshToken, refreshFirstDiffPage, refreshFilesViewed]);
+  }, [refreshToken, backgroundRefreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
 
   const codeViewReveal = useCodeViewFileReveal();
   const answeredRevealNonce = useRef<number | null>(null);
@@ -977,6 +988,7 @@ function PullRequestCodeTab({
   const canLoadNextSlice =
     nextCursor !== null &&
     nextCursor !== cursor &&
+    !awaitingFirstPage &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = () => {
@@ -1055,7 +1067,7 @@ function PullRequestCodeTab({
     range: SelectedLineRange | null,
     context: { item: CodeViewItem<ReviewAnnotationGroup> },
   ) => {
-    if (!range || !canSelectLines || withheldRefetching) return;
+    if (!range || !canSelectLines || awaitingFirstPage || withheldRefetching) return;
     const item = context.item;
     if (item.type !== "diff") return;
     const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === item.id);
@@ -1172,6 +1184,8 @@ function PullRequestCodeTab({
     );
   };
 
+  const canStartSelection =
+    canSelectLines && draft === null && !awaitingFirstPage && !withheldRefetching;
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -1187,8 +1201,8 @@ function PullRequestCodeTab({
             new Error(m(msg("Unchanged lines are unavailable in a file with cut lines."))),
           )
         : loadDiffFiles(fileDiff),
-    enableGutterUtility: canSelectLines && draft === null && !withheldRefetching,
-    enableLineSelection: canSelectLines && draft === null && !withheldRefetching,
+    enableGutterUtility: canStartSelection,
+    enableLineSelection: canStartSelection,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
     onPostRender: (fileContainer: HTMLElement, instance: object) => {
@@ -1331,6 +1345,7 @@ function PullRequestCodeTab({
           projectId={reference.projectId}
           ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
           kind="draft"
+          pending={awaitingFirstPage}
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
           text=""
           completionScope={canCommentOnLines ? completionScope : null}

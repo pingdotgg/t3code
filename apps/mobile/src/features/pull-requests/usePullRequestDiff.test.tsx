@@ -78,6 +78,9 @@ function setup() {
   );
   return {
     requests,
+    revalidate() {
+      act(() => registry.refresh(queries(JSON.stringify([null, null]))));
+    },
     remount() {
       act(() =>
         root.render(
@@ -288,4 +291,19 @@ it("keeps another reader's old continuation out of the reloaded diff", async () 
   expect(screen.current.isPending).toBe(true);
   await screen.succeed(3, patch("second.ts", null, "after-push"));
   expect(screen.current.patch).toContain("+after-push");
+});
+
+it("shows the cached page on open during revalidation and after a read error", async () => {
+  using screen = setup();
+  await screen.succeed(0, patch("cached.ts", "second"));
+  screen.revalidate();
+  screen.remount();
+
+  expect(screen.current.isPending).toBe(true);
+  expect(screen.current.patch).toContain("cached.ts");
+  expect(screen.current.canLoadMore).toBe(false);
+
+  await screen.fail(1);
+  expect(screen.current.error).not.toBeNull();
+  expect(screen.current.patch).toContain("cached.ts");
 });

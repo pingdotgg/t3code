@@ -776,10 +776,58 @@ export interface PullRequestAnswerHandlers {
 
 const CachedPullRequestDiff = Schema.Struct({
   ...PullRequestDiffResult.fields,
-  /** Identifies the continuation pages that follow this first page, including offline. */
+  /** Identifies the page chain this diff belongs to, including offline. */
   revision: Schema.optionalKey(Schema.String),
 });
 export type CachedPullRequestDiff = typeof CachedPullRequestDiff.Type;
+
+type PullRequestDiffCacheInput = PullRequestDiffInput & {
+  readonly cacheHeadSha?: string;
+  readonly cacheRevision?: string;
+};
+
+function createDiffRevision(): string {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    // Native runtimes may lack Web Crypto; this is a cache key, not a credential.
+    for (let index = 0; index < bytes.length; index++) bytes[index] = Math.random() * 256;
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+const diffPersistence = persistQuery(CachedPullRequestDiff);
+
+function diffPersistenceScope(key: string) {
+  const [label, { cacheRevision, ...input }] = JSON.parse(key) as [
+    string,
+    PullRequestDiffCacheInput,
+  ];
+  return {
+    key: cacheRevision === undefined ? key : queryPersistenceKey(label, input),
+    revision: cacheRevision,
+    continuation: input.cursor !== undefined,
+  };
+}
+
+const persistDiff: QueryPersistence<CachedPullRequestDiff> = {
+  load: (environmentId, key) => {
+    const scope = diffPersistenceScope(key);
+    return diffPersistence
+      .load(environmentId, scope.key)
+      .pipe(
+        Effect.map((value) =>
+          Option.filter(value, (diff) => !scope.continuation || diff.revision === scope.revision),
+        ),
+      );
+  },
+  save: (environmentId, key, diff) => {
+    const scope = diffPersistenceScope(key);
+    // One saved continuation per cursor, with the revision stored alongside its patch.
+    return diffPersistence.save(environmentId, scope.key, diff);
+  },
+};
 
 export function createPullRequestStackAtomFamily<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
@@ -834,7 +882,6 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     E
   >,
   onAnswer: PullRequestAnswerHandlers = {},
-  options: { readonly createDiffRevision?: () => string } = {},
 ) {
   const refreshes = createPullRequestRefreshAtomFamily(runtime);
   const sessions = createEnvironmentSessionAtoms(runtime);
@@ -1300,26 +1347,21 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     diff: createEnvironmentQueryAtomFamily(runtime, {
       label: "environment-data:pull-requests:diff",
-      persistence: persistQuery(CachedPullRequestDiff),
+      persistence: persistDiff,
       staleTimeMs: 60_000,
       // Guide heads and pagination revisions namespace the client cache only.
-      execute: ({
-        cacheHeadSha: _cacheHeadSha,
-        cacheRevision: _cacheRevision,
-        ...input
-      }: PullRequestDiffInput & {
-        readonly cacheHeadSha?: string;
-        readonly cacheRevision?: string;
-      }) =>
+      execute: ({ cacheHeadSha, cacheRevision, ...input }: PullRequestDiffCacheInput) =>
         loadDiff(input).pipe(
           Effect.map((diff): CachedPullRequestDiff => {
-            const createRevision = options.createDiffRevision;
-            return createRevision &&
+            const revision =
               diff.nextCursor !== null &&
               input.cursor === undefined &&
-              input.path === undefined
-              ? { ...diff, revision: createRevision() }
-              : diff;
+              input.path === undefined &&
+              input.commit === undefined &&
+              cacheHeadSha === undefined
+                ? createDiffRevision()
+                : cacheRevision;
+            return revision === undefined ? diff : { ...diff, revision };
           }),
         ),
     }),

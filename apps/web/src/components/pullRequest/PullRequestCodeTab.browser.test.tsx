@@ -7,6 +7,7 @@ import {
   type PullRequestDetailView,
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
+import type { CachedPullRequestDiff } from "@t3tools/client-runtime/state/pull-requests";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -38,7 +39,7 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     truncated: false,
     nextCursor: null,
   };
-  const pages: Record<string, PullRequestDiffResult> = {
+  const pages: Record<string, CachedPullRequestDiff> = {
     first: {
       patch: Array.from({ length: 40 }, (_, index) =>
         filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
@@ -47,19 +48,25 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
       nextCursor: "page-2",
     },
     "page-2": { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null },
+    refreshed: { patch: filePatch("pushed.ts"), truncated: false, nextCursor: null },
   };
   return {
     // An environment query whose refetch returns equal content hands back the previous value
     // itself, so a refresh publishes a new result around the very same page.
     diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
     pagedDiffAtom: Atom.family((cursor: string) =>
-      Atom.make(() => AsyncResult.success(pages[cursor]!)),
+      Atom.make(() =>
+        AsyncResult.success(
+          cursor === "first" ? { ...pages.first!, revision: mocks.diffRevision } : pages[cursor]!,
+        ),
+      ),
     ),
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
+  diffRevision: "before-push",
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -106,9 +113,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
-      diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
+      diff: (({
+        input,
+      }: {
+        input: { cursor?: string; commit?: string; cacheRevision?: string };
+      }) => {
         mocks.diffCommits.push(input.commit);
-        return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
+        const page = input.cacheRevision === "after-push" ? "refreshed" : (input.cursor ?? "first");
+        return mocks.paged ? pagedDiffAtom(page) : diffAtom;
       }) as never,
     },
   };
@@ -173,6 +185,7 @@ function setup({ paged }: { paged: boolean }) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.diffRevision = "before-push";
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -183,6 +196,7 @@ const tab = (
   revealRequest: { readonly path: string; readonly nonce: number } | null = null,
   revealUrl?: string,
   onRevealSettled?: (url: string) => void,
+  backgroundRefreshToken = 0,
 ) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
@@ -193,6 +207,7 @@ const tab = (
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
     refreshToken={refreshToken}
+    backgroundRefreshToken={backgroundRefreshToken}
     revealRequest={revealRequest}
     revealUrl={revealUrl}
     onRevealSettled={onRevealSettled}
@@ -340,6 +355,32 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await screen.rerender(tab(0, { path: "early-0.ts", nonce: 1 }, url, settled));
   await expectFileHeaderShown(screen, container, "late.test.ts");
 });
+
+it.each(["manual", "background"] as const)(
+  "reads the new continuation after a %s refresh of an unchanged first page",
+  async (refresh) => {
+    setup({ paged: true });
+    const container = pagedContainer();
+    await using screen = await render(tab(0, { path: "late.test.ts", nonce: 1 }), { container });
+    await expectFileHeaderShown(screen, container, "late.test.ts");
+
+    mocks.diffRevision = "after-push";
+    await screen.rerender(
+      tab(
+        refresh === "manual" ? 1 : 0,
+        { path: "pushed.ts", nonce: 2 },
+        undefined,
+        undefined,
+        refresh === "background" ? 1 : 0,
+      ),
+    );
+
+    await expect
+      .element(screen.getByText("pushed.ts", { exact: true }).first())
+      .toBeInTheDocument();
+    await expect.element(screen.getByText("late.test.ts", { exact: true })).not.toBeInTheDocument();
+  },
+);
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
   setup({ paged: false });
