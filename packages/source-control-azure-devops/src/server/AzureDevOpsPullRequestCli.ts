@@ -275,6 +275,7 @@ function involvementArgs(input: {
     case "reviewing":
       return ["--reviewer", input.viewer];
     case "all":
+    case "involved":
       return [];
   }
 }

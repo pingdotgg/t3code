@@ -24,6 +24,7 @@ const INVOLVEMENT = {
   all: msg("All PRs"),
   reviewing: msg("Your review"),
   authored: msg("By you"),
+  involved: msg("Authored or reviewing"),
 };
 const DRAFTS = { all: msg("All drafts"), only: msg("Drafts only"), hide: msg("Hide drafts") };
 const REVIEWS = {

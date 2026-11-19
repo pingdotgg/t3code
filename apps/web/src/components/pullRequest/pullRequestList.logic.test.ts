@@ -157,6 +157,39 @@ describe("pull request involvement filtering", () => {
       filterPullRequestsByInvolvement(mixed, VIEWERS, "authored").map((item) => item.number),
     ).toEqual([1]);
   });
+
+  it("keeps rows the viewer authored or was asked to review", () => {
+    const rows = [
+      entry({ number: 1, author: { login: "Bilal", name: null, avatarUrl: null } }),
+      entry({ number: 2, viewerReviewRequested: true }),
+      entry({ number: 3 }),
+    ];
+    expect(
+      filterPullRequestsByInvolvement(rows, VIEWERS, "involved").map((item) => item.number),
+    ).toEqual([1, 2]);
+    // The involved list keeps the Authored / Review requested split, so the blocked sort and
+    // the group headers still know each row's role.
+    const { groups } = pullRequestGroups({
+      known: rows,
+      baseline: undefined,
+      providers: [],
+      viewers: VIEWERS,
+      involvement: "involved",
+      localFilters: {},
+      hasLocalFilters: false,
+      text: "",
+      answeredLocally: false,
+      baselineEmpty: true,
+      held: undefined,
+      authored: undefined,
+      reviewing: undefined,
+      partitionsWanted: false,
+    });
+    expect(groups.map((group) => [group.key, group.entries.map((item) => item.number)])).toEqual([
+      ["authored", [1]],
+      ["reviewRequested", [2]],
+    ]);
+  });
 });
 
 describe("ranking what a search found", () => {

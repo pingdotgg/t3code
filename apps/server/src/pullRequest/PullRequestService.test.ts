@@ -2783,6 +2783,146 @@ it.effect("shares one cold viewer lookup across distinct concurrent lists", () =
   }),
 );
 
+it.effect("lists authored or review-requested rows by reading everything and narrowing", () =>
+  Effect.gen(function* () {
+    const asked: string[] = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getViewer: () => Effect.succeed("bilal"),
+          listChangeRequests: (input) => {
+            asked.push(input.involvement);
+            return Effect.succeed({
+              items: [
+                {
+                  ...changeRequest(1, "2026-07-03T00:00:00Z"),
+                  author: { login: "Bilal", name: null, avatarUrl: null },
+                  reviewRequestLogins: ["bilal"],
+                },
+                {
+                  ...changeRequest(2, "2026-07-02T00:00:00Z"),
+                  author: { login: "ana", name: null, avatarUrl: null },
+                  reviewRequestLogins: ["bilal"],
+                },
+                {
+                  ...changeRequest(3, "2026-07-01T00:00:00Z"),
+                  author: { login: "ana", name: null, avatarUrl: null },
+                },
+              ],
+              truncated: false,
+              continues: false,
+            });
+          },
+        }),
+      ],
+    });
+
+    const listed = yield* service.list({ state: "open", involvement: "involved" });
+
+    assert.deepStrictEqual(
+      listed.entries.map((entry) => entry.number),
+      [1, 2],
+    );
+    assert.isTrue(asked.length > 0);
+    assert.isTrue(asked.every((involvement) => involvement === "all"));
+
+    const reads: Array<number> = [];
+    const matchingRows = Array.from({ length: 16 }, (_, index) => ({
+      ...changeRequest(index + 1, `2026-07-${String(20 - index).padStart(2, "0")}T00:00:00Z`),
+      author: { login: index % 4 === 0 ? "BILAL" : "ana", name: null, avatarUrl: null },
+      reviewRequestLogins: index % 4 === 2 ? ["Bilal"] : [],
+    }));
+    for (const { batched, matches } of [
+      { batched: false, matches: true },
+      { batched: true, matches: true },
+      { batched: false, matches: false },
+      { batched: true, matches: false },
+    ]) {
+      const rows = matches
+        ? matchingRows
+        : matchingRows.map((row) => ({ ...row, author: null, reviewRequestLogins: [] }));
+      reads.length = 0;
+      const paged = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getViewer: () => Effect.succeed("bilal"),
+            listChangeRequests: (input) => {
+              assert.strictEqual(input.involvement, "all");
+              const delivered = input.cursor?.delivered ?? 0;
+              reads.push(delivered);
+              return Effect.succeed({
+                items: rows.slice(delivered, delivered + input.limit),
+                truncated: delivered + input.limit < rows.length,
+                continues: true,
+              });
+            },
+            ...(batched
+              ? {
+                  listChangeRequestsAcross: (input) => {
+                    assert.strictEqual(input.involvement, "all");
+                    const delivered = input.cursor?.delivered ?? 0;
+                    reads.push(delivered);
+                    return Effect.succeed({
+                      items: rows
+                        .slice(delivered, delivered + input.limit)
+                        .map((row) => ({ ...row, repository: "acme/web" })),
+                      truncated: true,
+                    });
+                  },
+                }
+              : {}),
+          }),
+        ],
+      });
+      const first = yield* paged.list({ state: "open", involvement: "involved", limit: 2 });
+      if (batched) {
+        // A batched page is shared across repositories, so it is narrowed but never filled.
+        assert.deepStrictEqual(
+          first.entries.map((entry) => entry.number),
+          matches ? [1] : [],
+        );
+        assert.deepStrictEqual(reads, [0]);
+        assert.isTrue(first.truncated);
+        continue;
+      }
+      if (!matches) {
+        assert.deepStrictEqual(first.entries, []);
+        assert.deepStrictEqual(reads, [0, 2, 4, 6, 8]);
+        assert.isTrue(first.truncated);
+        const last = yield* paged.list({
+          state: "open",
+          involvement: "involved",
+          limit: 2,
+          cursors: first.nextCursors,
+        });
+        assert.deepStrictEqual(last.entries, []);
+        assert.deepStrictEqual(last.nextCursors, {});
+        assert.isFalse(last.truncated);
+        continue;
+      }
+      assert.deepStrictEqual(
+        first.entries.map((entry) => entry.number),
+        [1, 3],
+      );
+      assert.deepStrictEqual(reads, [0, 2]);
+      const second = yield* paged.list({
+        state: "open",
+        involvement: "involved",
+        limit: 2,
+        cursors: first.nextCursors,
+      });
+      assert.deepStrictEqual(
+        second.entries.map((entry) => entry.number),
+        [5, 7],
+      );
+    }
+  }),
+);
+
 it.effect("a listing narrowed to some projects is its own cache entry", () =>
   Effect.gen(function* () {
     const asked: ReadonlyArray<string>[] = [];

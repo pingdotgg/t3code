@@ -213,6 +213,22 @@ describe("all-environment PR list", () => {
       [2, mbp],
       [1, cups],
     ]);
+    const involved = filterPullRequestList(
+      [
+        ...merged.entries,
+        { ...entry(3, { author: null, viewerReviewRequested: true }), environmentId: cups },
+        { ...entry(4, { author: null }), environmentId: cups },
+      ],
+      { ...DEFAULT_PR_LIST_CONTROLS, involvement: "involved" },
+      merged.viewers,
+      "",
+      merged.localSearchHosts,
+    );
+    expect(involved.map((row) => [row.number, row.environmentId])).toEqual([
+      [3, cups],
+      [2, mbp],
+      [1, cups],
+    ]);
     const localOnlySearch = new Set([`${cups} github.com`]);
     const searched = filterPullRequestList(
       merged.entries,

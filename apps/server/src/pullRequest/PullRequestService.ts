@@ -1378,6 +1378,17 @@ export const make = Effect.gen(function* () {
     "PullRequestService.listUncached",
   )(function* (input) {
     const involvement = input.involvement ?? "all";
+    // No host lists "authored or review requested" as one query, so it reads everything and the
+    // rows are narrowed here, filling pages the way a row filter does.
+    const involved = involvement === "involved";
+    const providerInvolvement = involved ? "all" : involvement;
+    const isInvolved = (item: ProviderChangeRequest, viewer: string) => {
+      const login = viewer.toLowerCase();
+      return (
+        item.author?.login.toLowerCase() === login ||
+        item.reviewRequestLogins.some((candidate) => candidate.toLowerCase() === login)
+      );
+    };
     const epochAtStart = epochCounter;
     const continuation = yield* decodeCursors(input.cursors);
     const {
@@ -1478,7 +1489,7 @@ export const make = Effect.gen(function* () {
             repository: project.repository,
             host: project.host,
             state: input.state,
-            involvement,
+            involvement: providerInvolvement,
             viewer,
             limit,
             query: input.query,
@@ -1511,7 +1522,11 @@ export const make = Effect.gen(function* () {
               return {
                 key,
                 entries: items
-                  .filter((item) => matchesRowFilters(item, input.filters, viewer))
+                  .filter(
+                    (item) =>
+                      matchesRowFilters(item, input.filters, viewer) &&
+                      (!involved || isInvolved(item, viewer)),
+                  )
                   .map((item) => toEntry({ project, item, viewer, observedAt })),
                 errors: [],
                 truncated: page.truncated,
@@ -1556,7 +1571,7 @@ export const make = Effect.gen(function* () {
       const fill = (batch: RepositoryBatch, reads: number): Effect.Effect<RepositoryBatch> => {
         const cursor = batch.nextCursor === null ? null : parseListCursor(batch.nextCursor);
         if (
-          input.filters === undefined ||
+          (input.filters === undefined && !involved) ||
           cursor === null ||
           batch.entries.length >= limit ||
           reads >= FILTERED_LIST_READS
@@ -1590,7 +1605,7 @@ export const make = Effect.gen(function* () {
         host: first.host,
         repositories: chunk.map((project) => project.repository),
         state: input.state,
-        involvement,
+        involvement: providerInvolvement,
         viewer,
         limit,
         query: input.query,
@@ -1642,10 +1657,16 @@ export const make = Effect.gen(function* () {
                         item.updatedAt !== cursorHere.updatedBefore ||
                         !cursorHere.seenAt.includes(item.number),
                     );
+              // A batched page is shared by the whole chunk, so it is not filled per repository:
+              // that would fan out a read per repository and split the shared cursor.
               return Effect.succeed({
                 key: project.cursorKey,
                 entries: items
-                  .filter((item) => matchesRowFilters(item, input.filters, viewer))
+                  .filter(
+                    (item) =>
+                      matchesRowFilters(item, input.filters, viewer) &&
+                      (!involved || isInvolved(item, viewer)),
+                  )
                   .map((item) => toEntry({ project, item, viewer, observedAt })),
                 errors: [],
                 truncated: page.truncated,

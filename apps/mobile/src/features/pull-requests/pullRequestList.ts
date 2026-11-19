@@ -420,11 +420,10 @@ export function filterPullRequestList<
       return false;
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
     const viewer = viewers[viewerKey];
+    const authored = !!viewer && normalize(entry.author?.login ?? "") === normalize(viewer);
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;
-    if (
-      controls.involvement === "authored" &&
-      (!viewer || normalize(entry.author?.login ?? "") !== normalize(viewer))
-    )
+    if (controls.involvement === "authored" && !authored) return false;
+    if (controls.involvement === "involved" && !entry.viewerReviewRequested && !authored)
       return false;
     if ((filters.draft === "only" && !entry.isDraft) || (filters.draft === "hide" && entry.isDraft))
       return false;

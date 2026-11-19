@@ -810,6 +810,7 @@ function involvementParams(input: {
     case "reviewing":
       return [["reviewer_username", input.viewer]];
     case "all":
+    case "involved":
       return [];
   }
 }

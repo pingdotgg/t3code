@@ -100,6 +100,8 @@ export function pullRequestGroups({
   );
 
   const groups = (() => {
+    // The involved rows are the Authored and Review requested groups, so they keep that split.
+    if (involvement === "involved") return groupPullRequestsByInvolvement(entries, viewers);
     if (involvement !== "all") return [{ key: "others" as const, label: "", entries }];
     if (baselineEmpty) {
       return groupPullRequestsByInvolvement(entries, viewers);

@@ -235,6 +235,11 @@ export function filterPullRequestsByInvolvement<Entry extends ScopedEntry>(
   if (involvement === "authored") {
     return entries.filter((entry) => isAuthoredByViewer(entry, viewers));
   }
+  if (involvement === "involved") {
+    return entries.filter(
+      (entry) => entry.viewerReviewRequested || isAuthoredByViewer(entry, viewers),
+    );
+  }
   return entries;
 }
 
@@ -765,7 +770,7 @@ export function sortPullRequestGroups<Entry extends PullRequestListEntry>(
       key === "others" ? involvement : key === "authored" ? "authored" : "reviewing";
     return groups.map((group) => {
       const groupRole = role(group.key);
-      if (groupRole === "all") return group;
+      if (groupRole === "all" || groupRole === "involved") return group;
       const rank =
         groupRole === "authored"
           ? rankPullRequestsBlockedOnAuthor
