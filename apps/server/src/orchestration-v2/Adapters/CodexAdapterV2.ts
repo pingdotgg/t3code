@@ -785,9 +785,9 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
 }
 
 /**
- * Full access keeps Codex on granular approvals so MCP prompts still reach T3, which lets
- * Codex's own checks (a command it judges dangerous, such as `rm -rf`) still ask. With no
- * explicit approval or sandbox override, Full access means no prompts, so T3 accepts them.
+ * Full access keeps Codex on granular approvals so MCP prompts reach T3, but that also lets
+ * Codex ask about commands it judges dangerous (such as `rm -rf`). Without an explicit approval
+ * or sandbox override, Full access means no prompts, so T3 accepts those itself.
  */
 function codexFullAccessAcceptsApprovals(runtimePolicy: {
   readonly runtimeMode: RuntimeMode;
