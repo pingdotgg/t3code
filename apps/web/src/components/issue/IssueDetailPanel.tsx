@@ -178,7 +178,6 @@ function IssueLabelPicker({
     <PullRequestCandidatePicker
       icon={<TagIcon className="size-3.5" />}
       label={gt("Change labels")}
-      popupWidth="labels"
       allowed={allowed}
       disabledReason={disabledReason}
       open={open}
@@ -297,7 +296,6 @@ function IssueAssigneePicker({
     <PullRequestCandidatePicker
       icon={<UserPlusIcon className="size-3.5" />}
       label={gt("Change assignees")}
-      popupWidth="reviewers"
       allowed={allowed}
       disabledReason={disabledReason}
       open={open}
