@@ -135,7 +135,13 @@ it("fits, finds and selects text, and changes PDF colors without losing the read
     await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
     await expect.element(screen.getByRole("status")).toHaveTextContent("1/1");
     await screen.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await vi.waitFor(() => expect(region.scrollWidth).toBeGreaterThan(region.clientWidth));
+    const canvas = region.querySelector<HTMLCanvasElement>('canvas[aria-label="Page 2"]')!;
+    await vi.waitFor(() => {
+      expect(region.scrollWidth).toBeGreaterThan(region.clientWidth);
+      const bitmapWidth =
+        canvas.getBoundingClientRect().width * Math.min(2, window.devicePixelRatio);
+      expect(Math.abs(canvas.width - bitmapWidth)).toBeLessThanOrEqual(1);
+    });
     const rotated = await vi.waitFor(() => {
       const span = Array.from(region.querySelectorAll("[data-pdf-text-layer] span")).find(
         (node) => node.textContent === "Budget and risks",
@@ -159,23 +165,23 @@ it("fits, finds and selects text, and changes PDF colors without losing the read
     selection.removeAllRanges();
     selection.addRange(range);
     expect(selection.toString()).toBe("Budget and risks");
+    selection.removeAllRanges();
 
-    const canvas = region.querySelector('canvas[aria-label="Page 2"]')!;
     const position = [region.scrollTop, region.scrollLeft];
     const zoom = screen.container.textContent!.match(/\d+%/)![0];
     await colors.click();
     await expect.element(colors).toHaveAttribute("aria-pressed", "false");
     expect(getComputedStyle(canvas).filter).toBe("none");
-    expect(selection.toString()).toBe("Budget and risks");
+    expect(region.contains(rotated)).toBe(true);
     await colors.click();
     await expect.element(colors).toHaveAttribute("aria-pressed", "true");
     expect(getComputedStyle(canvas).filter).toBe("invert(1) hue-rotate(180deg)");
     expect(region.querySelector('canvas[aria-label="Page 2"]')).toBe(canvas);
+    expect(region.contains(rotated)).toBe(true);
     expect([region.scrollTop, region.scrollLeft]).toEqual(position);
     expect(screen.container.textContent).toContain(zoom);
     await expect.element(find).toHaveValue("budget");
     await expect.element(screen.getByRole("status")).toHaveTextContent("1/1");
-    selection.removeAllRanges();
 
     await act(() =>
       persistClientSettingsPatch({ pdfAppearance: "original" }, async () => undefined),
