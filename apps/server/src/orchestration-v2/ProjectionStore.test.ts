@@ -7372,6 +7372,56 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* message("message:turn-start-commands:later", "user", "/compact later", 4);
         yield* message("message:turn-start-commands:assistant", "assistant", "/compact", 6);
 
+        const otherThreadId = ThreadId.make("thread:other");
+        const transfer = (id: string, type: "fork" | "merge_back") =>
+          projectionStore.apply({
+            id: EventId.make(`event:${id}`),
+            type: "context-transfer.created",
+            threadId,
+            occurredAt: created,
+            payload: {
+              id: ContextTransferId.make(id),
+              type,
+              sourceThreadId: otherThreadId,
+              targetThreadId: threadId,
+              sourcePoint: { threadId: otherThreadId },
+              basePoint: null,
+              sourceProviderInstanceId: providerInstanceId,
+              targetProviderInstanceId: providerInstanceId,
+              targetRunId: null,
+              status: "pending",
+              resolution: null,
+              createdBy: "user",
+              error: null,
+              createdAt: created,
+              updatedAt: created,
+              consumedAt: null,
+            },
+          });
+        yield* transfer("transfer:turn-start-commands:fork", "fork");
+        yield* transfer("transfer:turn-start-commands:referenced", "merge_back");
+        yield* projectionStore.apply({
+          id: EventId.make("event:turn-start-commands:handoff"),
+          type: "context-handoff.updated",
+          threadId,
+          occurredAt: created,
+          payload: {
+            id: ContextHandoffId.make("handoff:turn-start-commands"),
+            transferId: ContextTransferId.make("transfer:turn-start-commands:referenced"),
+            threadId,
+            targetRunId: runId,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("provider-thread:turn-start-commands"),
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "Summary",
+            createdByProviderInstanceId: providerInstanceId,
+            createdAt: created,
+            updatedAt: created,
+          },
+        });
         const nativeId = NodeId.make("subagent:turn-start-commands:native");
         yield* projectionStore.apply({
           id: EventId.make("event:turn-start-commands:native"),
@@ -7442,7 +7492,10 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           context.subagents.map((task) => task.id),
           [nativeId],
         );
-        assert.deepEqual(context.contextTransfers, []);
+        assert.deepEqual(
+          context.contextTransfers.map((item) => item.id),
+          ["transfer:turn-start-commands:fork", "transfer:turn-start-commands:referenced"],
+        );
 
         const planOf = Effect.fn("planOf")(function* (table: string) {
           const statement = statements.find((query) =>
