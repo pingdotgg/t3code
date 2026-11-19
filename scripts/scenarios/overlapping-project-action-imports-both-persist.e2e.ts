@@ -50,12 +50,14 @@ test(
     await screen.getByRole("menuitem", /Shared build/).tap();
     await browser.evaluate(async () => {
       await window.releaseFirstActionImport;
+      return null;
     });
     await imports.tap();
     await screen.getByRole("menuitem", /Shared checks/).tap();
     await browser.evaluate(async () => {
       const release = await window.releaseFirstActionImport!;
       release();
+      return null;
     });
 
     const actions = screen.getByRole("button", "Script actions", { exact: true });
