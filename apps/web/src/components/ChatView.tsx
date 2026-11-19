@@ -1,4 +1,5 @@
 import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { NotebookPen } from "lucide-react";
 import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
@@ -4072,6 +4073,19 @@ export default function ChatView(props: ChatViewProps) {
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddDevice={addDeviceSurfaceStable}
+          extraSurfaces={
+            isServerThread
+              ? [
+                  {
+                    label: "Notes (IWE)",
+                    description: "Search, read, and edit this project's IWE notes.",
+                    icon: NotebookPen,
+                    shortcut: "N",
+                    onClick: () => useRightPanelStore.getState().open(activeThreadRef, "iwe"),
+                  },
+                ]
+              : undefined
+          }
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}
           terminalAvailable={activeProject !== null && canOperateTerminal}

@@ -66,6 +66,7 @@ import {
   FolderGit2Icon,
   FolderIcon,
   FolderPlusIcon,
+  NotebookPenIcon,
   MessageSquareDashedIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -280,6 +281,7 @@ import { readPullRequestListPreferences } from "~/components/pullRequest/pullReq
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 import { APP_BASE_NAME } from "../branding";
+import { iweEnvironment } from "../state/iwe";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const ADD_PROJECT_ENTRY_GROUP = "add-project";
@@ -454,6 +456,7 @@ function OpenCommandPaletteDialog(props: {
     setHighlightedItemValue(null);
   }
   const clientSettings = useClientSettings(selectCommandPaletteClientSettings);
+  const prepareIweWorkspace = useAtomCommand(iweEnvironment.prepareWorkspace, { reportFailure: false });
   const createProject = useAtomCommand(projectEnvironment.create, {
     reportFailure: false,
   });
@@ -539,6 +542,8 @@ function OpenCommandPaletteDialog(props: {
   );
   const [isPickingProjectFolder, setIsPickingProjectFolder] = useState(false);
   const [addProjectCloneFlow, setAddProjectCloneFlow] = useState<AddProjectCloneFlow | null>(null);
+  // Add project → Open/New IWE Workspace: the folder browse ends in IWE's checks or `iwe init`.
+  const [iweMode, setIweMode] = useState<"open" | "new" | null>(null);
   const [newProjectFlow, setNewProjectFlow] = useState<{
     readonly environmentId: EnvironmentId;
     readonly sourcesEnvironmentId: EnvironmentId | null;
@@ -957,6 +962,7 @@ function OpenCommandPaletteDialog(props: {
     browseNavigation.invalidate();
     setAddProjectCloneFlow(null);
     setNewProjectFlow(null);
+    setIweMode(null);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     } else if (newProjectFlow?.sourcesEnvironmentId) {
@@ -1068,6 +1074,33 @@ function OpenCommandPaletteDialog(props: {
         icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
         keepOpen: true,
         run: async () => {
+          setIweMode(null);
+          await startAddProjectBrowse(environmentId);
+        },
+      },
+      {
+        kind: "action",
+        value: `action:add-project:${environmentId}:iwe-open`,
+        searchTerms: ["iwe", "notes", "markdown", "knowledge", "workspace", "open"],
+        title: "Open IWE Workspace",
+        description: "A folder with .iwe/config.toml; notes open in place",
+        icon: <NotebookPenIcon className={ITEM_ICON_CLASS} />,
+        keepOpen: true,
+        run: async () => {
+          setIweMode("open");
+          await startAddProjectBrowse(environmentId);
+        },
+      },
+      {
+        kind: "action",
+        value: `action:add-project:${environmentId}:iwe-new`,
+        searchTerms: ["iwe", "notes", "markdown", "knowledge", "workspace", "new", "init"],
+        title: "New IWE Workspace",
+        description: "Runs iwe init in a new or existing folder",
+        icon: <NotebookPenIcon className={ITEM_ICON_CLASS} />,
+        keepOpen: true,
+        run: async () => {
+          setIweMode("new");
           await startAddProjectBrowse(environmentId);
         },
       },
@@ -2010,6 +2043,37 @@ function OpenCommandPaletteDialog(props: {
 
   const handleAddProject = async (rawCwd: string) => {
     if (!browseEnvironmentId) return;
+    if (iweMode !== null) {
+      const path = resolveProjectPathForDispatch(rawCwd, currentProjectCwdForBrowse);
+      if (path.length === 0) return;
+      const prepared = await prepareIweWorkspace({ environmentId: browseEnvironmentId, input: { path, mode: iweMode } });
+      if (prepared._tag !== "Success") {
+        const error = squashAtomCommandFailure(prepared);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: iweMode === "open" ? "Not an IWE workspace" : "Could not create the IWE workspace",
+            description: error instanceof Error ? error.message : "IWE did not respond.",
+          }),
+        );
+        return;
+      }
+      setIweMode(null);
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: `IWE workspace ${prepared.value.name}`,
+          description: `${prepared.value.documentCount} notes. Open Notes (IWE) from the panel's + menu once the thread starts.`,
+        }),
+      );
+      await handleAddProjectForEnvironment({
+        environmentId: browseEnvironmentId,
+        rawCwd: prepared.value.root,
+        platform: browseEnvironmentPlatform,
+        currentProjectCwd: currentProjectCwdForBrowse,
+      });
+      return;
+    }
     await handleAddProjectForEnvironment({
       environmentId: browseEnvironmentId,
       rawCwd,
@@ -2471,6 +2535,10 @@ function OpenCommandPaletteDialog(props: {
   const inputPlaceholder =
     newProjectFlow !== null
       ? "Project name"
+      : isBrowsing && iweMode !== null
+        ? iweMode === "open"
+          ? "IWE workspace folder (with .iwe/config.toml)"
+          : "Folder for the new IWE workspace"
       : (remoteProjectInputPlaceholder(addProjectCloneFlow) ??
         getCommandPaletteInputPlaceholder(paletteMode));
   const isSubmenu = paletteMode === "submenu" || paletteMode === "submenu-browse";

@@ -91,6 +91,8 @@ import { MessageToolkit } from "./toolkits/message/tools.ts";
 import { MemoryToolkit } from "./toolkits/memory/tools.ts";
 import { GameDevToolkit } from "./toolkits/gameDev/tools.ts";
 import * as GameDevHandlers from "./toolkits/gameDev/handlers.ts";
+import { IweToolkit } from "./toolkits/iwe/tools.ts";
+import * as IweHandlers from "./toolkits/iwe/handlers.ts";
 import * as MemoryHandlers from "./toolkits/memory/handlers.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
@@ -1267,6 +1269,8 @@ const layerMemoryToolkit = toolkitRegistration(MemoryToolkit, MemoryHandlers.lay
 
 const layerGameDevToolkit = toolkitRegistration(GameDevToolkit, GameDevHandlers.layer);
 
+const layerIweToolkit = toolkitRegistration(IweToolkit, IweHandlers.layer);
+
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -1360,6 +1364,7 @@ export const layerTools = Layer.mergeAll(
   layerMessageToolkit,
   layerMemoryToolkit,
   layerGameDevToolkit,
+  layerIweToolkit,
 );
 
 const layerToolExposure = Layer.effect(

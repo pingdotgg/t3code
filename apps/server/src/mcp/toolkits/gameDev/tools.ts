@@ -39,7 +39,7 @@ const GameStatusTool = Tool.make("continuum_game_status", {
   ...shared,
   description:
     "Game Development status for this thread's project: engine projects found, the connected editor (Roblox Studio, Unity, or Unreal) with the operations it supports right now and their argument shapes, play state, compile errors, and whether Blender and ForgeGUI are available. Call it before other continuum_game_* or continuum_asset_* tools.",
-  parameters: Schema.Struct({}),
+  // No `parameters`: an empty Schema.Struct({}) is not a valid MCP input schema (see worktree tools).
   success: Result,
 })
   .annotate(Tool.Readonly, true)
@@ -175,7 +175,7 @@ const AssetImportTool = Tool.make("continuum_asset_import", {
 const AssetListTool = Tool.make("continuum_asset_list", {
   ...shared,
   description: "List this project's generated and edited assets with revisions, previews, files, checks, and import status.",
-  parameters: Schema.Struct({}),
+  // No `parameters`: an empty Schema.Struct({}) is not a valid MCP input schema (see worktree tools).
   success: Result,
 })
   .annotate(Tool.Readonly, true)

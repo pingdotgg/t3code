@@ -13,6 +13,7 @@ export * from "./gameDev.ts";
 export * from "./supercharge.ts";
 export * from "./improve.ts";
 export * from "./mobileAccess.ts";
+export * from "./iwe.ts";
 export * from "./memoryVault.ts";
 export * from "./providerRuntimes.ts";
 export * from "./usageSharing.ts";

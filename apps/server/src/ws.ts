@@ -83,6 +83,8 @@ import {
   type RelayClientInstallProgressEvent,
   OllamaError,
   GameDevError,
+  IweError,
+  type IweInstallEvent,
   type GameInstallEvent,
   type OllamaInstallEvent,
   type OllamaPullEvent,
@@ -254,6 +256,7 @@ import * as GameDevService from "./gameDev/GameDevService.ts";
 import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
 import * as ImproveService from "./improve/ImproveService.ts";
 import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
+import * as IweService from "./iwe/IweService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
@@ -1516,6 +1519,12 @@ export const layerWsRpc = (
       const supercharge = yield* SuperchargeService.SuperchargeService;
       const improve = yield* ImproveService.ImproveService;
       const mobileAccess = yield* MobileAccessService.MobileAccessService;
+      const iwe = yield* IweService.IweService;
+      const iweProjectRoot = (threadId: ThreadId) =>
+        IweService.threadProjectRoot(threadId).pipe(
+          Effect.provideService(ThreadManagementService.ThreadManagementService, threadManagement),
+          Effect.provideService(ProjectService.ProjectService, projectService),
+        );
       const memoryVaults = yield* MemoryVaultService.MemoryVaultService;
       const providerRuntimes = yield* ProviderRuntimeUpdater.ProviderRuntimeUpdater;
       const usageSharing = yield* UsageSharing.UsageSharingService;
@@ -2816,6 +2825,47 @@ export const layerWsRpc = (
         [WS_METHODS.improveList]: (input) => improve.list(input.sourceThreadId),
         [WS_METHODS.improveDismiss]: (input) => improve.dismiss(input.requestId),
         [WS_METHODS.mobileAccessStatus]: (_input) => mobileAccess.status,
+        [WS_METHODS.iweStatus]: (_input) => iwe.status,
+        [WS_METHODS.iweInstall]: (_input) =>
+          Stream.callback<IweInstallEvent, IweError>((queue) =>
+            iwe
+              .install((completedBytes, totalBytes) => {
+                Queue.offerUnsafe(queue, { type: "progress", completedBytes, totalBytes });
+              })
+              .pipe(
+                Effect.flatMap((status) => Queue.offer(queue, { type: "complete", status })),
+                Effect.andThen(Queue.end(queue)),
+                Effect.catchTags({ IweError: (error) => Queue.fail(queue, error) }),
+              ),
+          ),
+        [WS_METHODS.iwePrepareWorkspace]: (input) => iwe.prepare(input.path, input.mode),
+        [WS_METHODS.iweWorkspace]: (input) => iwe.workspace(input.root),
+        [WS_METHODS.iweSearch]: (input) => iwe.search(input.root, input.query, input.mode, input.limit ?? 50),
+        [WS_METHODS.iweNote]: (input) => iwe.note(input.root, input.key),
+        [WS_METHODS.iweSaveNote]: (input) => iwe.save(input.root, input.key, input.content, input.threadId ?? null),
+        [WS_METHODS.iweCreateNote]: (input) => iwe.create(input.root, input.title, input.content ?? ""),
+        [WS_METHODS.iweRenameNote]: (input) => iwe.rename(input.root, input.key, input.newKey),
+        [WS_METHODS.iweComplete]: (input) => iwe.complete(input.root, input.key, input.text, input.line, input.character),
+        [WS_METHODS.iweRenameLink]: (input) =>
+          iwe.renameLink(input.root, input.key, input.text, input.line, input.character, input.newName),
+        [WS_METHODS.iweThreadState]: (input) =>
+          iweProjectRoot(input.threadId).pipe(
+            Effect.flatMap((projectRoot) => iwe.run("threadState", (core) => core.threadState(input.threadId, projectRoot))),
+          ),
+        [WS_METHODS.iweAttach]: (input) =>
+          iweProjectRoot(input.threadId).pipe(
+            Effect.flatMap((projectRoot) =>
+              iwe.run("attach", (core) => core.attach(input.threadId, input.root, input.key, input.depth, projectRoot)),
+            ),
+          ),
+        [WS_METHODS.iweDetach]: (input) =>
+          iweProjectRoot(input.threadId).pipe(
+            Effect.flatMap((projectRoot) => iwe.run("detach", (core) => core.detach(input.threadId, input.key, projectRoot))),
+          ),
+        [WS_METHODS.iweSelectWorkspace]: (input) =>
+          iweProjectRoot(input.threadId).pipe(
+            Effect.flatMap((projectRoot) => iwe.run("select", (core) => core.select(input.threadId, input.root, projectRoot))),
+          ),
         [WS_METHODS.serverRetryResourceTelemetry]: (_input) => resourceTelemetry.retry,
         [WS_METHODS.serverCheckOtlpEndpoint]: (input) => otlpEndpointCheck.check(input),
         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),

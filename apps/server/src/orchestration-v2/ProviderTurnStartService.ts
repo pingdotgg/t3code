@@ -37,6 +37,7 @@ import { withTurnStartReservation, withWorkspaceLease } from "../workspace/works
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
 import * as SuperchargeService from "../supercharge/SuperchargeService.ts";
+import * as IweService from "../iwe/IweService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -207,6 +208,7 @@ export const layer: Layer.Layer<
     // Optional so hosts and tests without vaults build this service unchanged.
     const memoryVaults = yield* Effect.serviceOption(MemoryVaultService.MemoryVaultService);
     const supercharge = yield* Effect.serviceOption(SuperchargeService.SuperchargeService);
+    const iwe = yield* Effect.serviceOption(IweService.IweService);
     const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -908,6 +910,19 @@ export const layer: Layer.Layer<
         goalCommand || Option.isNone(supercharge)
           ? ""
           : yield* supercharge.value.contextForTurn({ threadId: projection.thread.id, runId: run.id });
+      // An IWE thread names its notes workspace; attached notes go out once, with linked context.
+      const iweProjectRoot =
+        projection.thread.worktreePath ??
+        (yield* projects.getById(projection.thread.projectId).pipe(
+          Effect.map((project) => Option.getOrNull(project)?.workspaceRoot ?? null),
+          Effect.orElseSucceed(() => null),
+        ));
+      const iweContext =
+        goalCommand || Option.isNone(iwe)
+          ? ""
+          : yield* iwe.value
+              .run("contextForTurn", (core) => core.contextForTurn(projection.thread.id, iweProjectRoot))
+              .pipe(Effect.orElseSucceed(() => ""));
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1780,6 +1795,7 @@ export const layer: Layer.Layer<
             compact || turnInput.resume ? "" : memoryContext,
             compact || turnInput.resume ? "" : agentEyesNarrationContext(narration),
             compact || turnInput.resume ? "" : superchargeContext,
+            compact || turnInput.resume ? "" : iweContext,
           ]
             .filter((part) => part !== "")
             .join("\n\n");

@@ -15,6 +15,10 @@ const DIRECT_TOOLS: ReadonlySet<string> = new Set([
   // Game work starts by asking what the connected editor can do.
   "continuum_game_status",
   "continuum_game_call",
+  // Note workspaces are read on most turns of an IWE thread.
+  "continuum_iwe_find",
+  "continuum_iwe_retrieve",
+  "continuum_iwe_write",
   TOOL_SEARCH,
 ]);
 

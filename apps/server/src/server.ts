@@ -213,6 +213,7 @@ import * as GameDevService from "./gameDev/GameDevService.ts";
 import * as SuperchargeService from "./supercharge/SuperchargeService.ts";
 import * as ImproveService from "./improve/ImproveService.ts";
 import * as MobileAccessService from "./mobileAccess/MobileAccessService.ts";
+import * as IweService from "./iwe/IweService.ts";
 import * as MemoryVaultService from "./memoryVaults/MemoryVaultService.ts";
 import * as ProviderRuntimeUpdater from "./providerRuntimes/ProviderRuntimeUpdater.ts";
 import * as UsageSharing from "./usageSharing/UsageSharingService.ts";
@@ -814,6 +815,7 @@ const layerRuntimeDependencies = layerRuntimeCoreWithSharing.pipe(
   Layer.provideMerge(MemoryVaultService.layer),
   Layer.provideMerge(SuperchargeService.layer),
   Layer.provideMerge(MobileAccessService.layer),
+  Layer.provideMerge(IweService.layer),
   Layer.provideMerge(GameDevService.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(

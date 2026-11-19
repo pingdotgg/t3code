@@ -34,7 +34,7 @@ export async function listDir(path: string): Promise<ReadonlyArray<NodeFS.Dirent
 
 export async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = `${path}.${process.pid}.${Date.now()}.${NodeCrypto.randomBytes(4).toString("hex")}.tmp`;
   await NodeFSP.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`);
   await NodeFSP.rename(temporary, path);
 }

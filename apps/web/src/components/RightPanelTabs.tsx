@@ -41,6 +41,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Eye,
+  NotebookPen,
   FileDiff,
   Files,
   Globe2,
@@ -145,6 +146,8 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  /** Surfaces this view adds to the launcher, such as IWE notes. */
+  extraSurfaces?: ReadonlyArray<ExtraSurface> | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -316,6 +319,14 @@ function SurfaceMenuItem(props: {
   return <DisabledReasonTooltip reason={props.disabledReason} trigger={item} />;
 }
 
+export interface ExtraSurface {
+  readonly label: string;
+  readonly description?: string;
+  readonly icon: typeof Eye;
+  readonly shortcut: string;
+  readonly onClick: () => void;
+}
+
 function RightPanelEmptyState(props: {
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
@@ -326,6 +337,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  extraSurfaces?: ReadonlyArray<ExtraSurface> | undefined;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -411,7 +423,16 @@ function RightPanelEmptyState(props: {
           },
         ]
       : []),
-  ] as const;
+    ...(props.extraSurfaces ?? []).map((surface) => ({
+      label: surface.label,
+      description: surface.description,
+      icon: surface.icon,
+      shortcut: surface.shortcut,
+      available: true,
+      disabledReason: "",
+      onClick: surface.onClick,
+    })),
+  ];
 
   type SurfaceAction = (typeof actions)[number];
 
@@ -600,6 +621,8 @@ function surfaceTitle(
       return "Side chat";
     case "agent-eyes":
       return "Agent Eyes";
+    case "iwe":
+      return "Notes";
     case "preview": {
       const snapshot = surface.resourceId ? sessions[surface.resourceId] : null;
       if (!snapshot || snapshot.navStatus._tag === "Idle") return "Browser";
@@ -667,6 +690,8 @@ function SurfaceIcon({
       return <FileDiff className="size-3 shrink-0" />;
     case "agent-eyes":
       return <Eye className="size-3 shrink-0" />;
+    case "iwe":
+      return <NotebookPen className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -1167,6 +1192,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           },
         ]
       : []),
+    ...(props.extraSurfaces ?? []).map((surface) => ({
+      label: surface.label,
+      icon: surface.icon,
+      shortcut: surface.shortcut,
+      available: true,
+      disabledReason: "",
+      onClick: surface.onClick,
+    })),
   ] as const;
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -1552,6 +1585,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            extraSurfaces={props.extraSurfaces}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}

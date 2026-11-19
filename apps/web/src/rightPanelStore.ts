@@ -23,6 +23,7 @@ const RIGHT_PANEL_KINDS = [
   "pull-requests",
   "side-chat",
   "agent-eyes",
+  "iwe",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -49,6 +50,7 @@ export type RightPanelSurface =
     }
   | { id: "diff"; kind: "diff" }
   | { id: "agent-eyes"; kind: "agent-eyes" }
+  | { id: "iwe"; kind: "iwe" }
   | {
       id: "files";
       kind: "files";
@@ -229,6 +231,8 @@ const singletonSurface = (
       return { id: "device", kind };
     case "agent-eyes":
       return { id: "agent-eyes", kind };
+    case "iwe":
+      return { id: "iwe", kind };
   }
 };
 

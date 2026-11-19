@@ -97,6 +97,16 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gameDevAssetImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.gameDevSetForgeGuiKey]: AuthProvidersManageScope,
   [WS_METHODS.gameDevTestForgeGui]: AuthProvidersManageScope,
+  // IWE: installs download binaries; workspace and note writes change files on disk.
+  [WS_METHODS.iweInstall]: AuthProvidersManageScope,
+  [WS_METHODS.iwePrepareWorkspace]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweSaveNote]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweCreateNote]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweRenameNote]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweRenameLink]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweAttach]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweDetach]: AuthOrchestrationOperateScope,
+  [WS_METHODS.iweSelectWorkspace]: AuthOrchestrationOperateScope,
   // Supercharge and /improve start agent turns.
   [WS_METHODS.superchargeConfigure]: AuthOrchestrationOperateScope,
   [WS_METHODS.superchargeStop]: AuthOrchestrationOperateScope,

@@ -501,6 +501,30 @@ import {
   ImproveStartInput,
 } from "./improve.ts";
 import { MobileAccessStatus } from "./mobileAccess.ts";
+import {
+  IweAttachInput,
+  IweCompletion,
+  IweCreateNoteInput,
+  IweDetachInput,
+  IweEditorPositionInput,
+  IweError,
+  IweInstallEvent,
+  IweNote,
+  IweNoteInput,
+  IweNoteSummary,
+  IwePrepareWorkspaceInput,
+  IweRenameLinkInput,
+  IweRenameNoteInput,
+  IweRenameResult,
+  IweSaveNoteInput,
+  IweSearchInput,
+  IweSelectWorkspaceInput,
+  IweThreadInput,
+  IweThreadState,
+  IweToolStatus,
+  IweWorkspaceInfo,
+  IweWorkspaceInput,
+} from "./iwe.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -677,6 +701,22 @@ export const WS_METHODS = {
   improveDismiss: "improve.dismiss",
 
   mobileAccessStatus: "mobileAccess.status",
+
+  iweStatus: "iwe.status",
+  iweInstall: "iwe.install",
+  iwePrepareWorkspace: "iwe.prepareWorkspace",
+  iweWorkspace: "iwe.workspace",
+  iweSearch: "iwe.search",
+  iweNote: "iwe.note",
+  iweSaveNote: "iwe.saveNote",
+  iweCreateNote: "iwe.createNote",
+  iweRenameNote: "iwe.renameNote",
+  iweComplete: "iwe.complete",
+  iweRenameLink: "iwe.renameLink",
+  iweThreadState: "iwe.threadState",
+  iweAttach: "iwe.attach",
+  iweDetach: "iwe.detach",
+  iweSelectWorkspace: "iwe.selectWorkspace",
 
   providerRuntimesStatus: "providerRuntimes.status",
   providerRuntimesUpdateSettings: "providerRuntimes.updateSettings",
@@ -1463,6 +1503,33 @@ const WsImproveDismissRpc = Rpc.make(WS_METHODS.improveDismiss, {
   payload: ImproveDismissInput,
   error: ImproveRpcError,
 });
+
+const IweRpcError = Schema.Union([IweError, EnvironmentAuthorizationError]);
+const iweRpc = <const Tag extends string, P extends Schema.Top, S extends Schema.Top>(
+  tag: Tag,
+  payload: P,
+  success: S,
+) => Rpc.make(tag, { payload, success, error: IweRpcError });
+const WsIweStatusRpc = iweRpc(WS_METHODS.iweStatus, Schema.Struct({}), IweToolStatus);
+const WsIweInstallRpc = Rpc.make(WS_METHODS.iweInstall, {
+  payload: Schema.Struct({}),
+  success: IweInstallEvent,
+  error: IweRpcError,
+  stream: true,
+});
+const WsIwePrepareWorkspaceRpc = iweRpc(WS_METHODS.iwePrepareWorkspace, IwePrepareWorkspaceInput, IweWorkspaceInfo);
+const WsIweWorkspaceRpc = iweRpc(WS_METHODS.iweWorkspace, IweWorkspaceInput, Schema.NullOr(IweWorkspaceInfo));
+const WsIweSearchRpc = iweRpc(WS_METHODS.iweSearch, IweSearchInput, Schema.Array(IweNoteSummary));
+const WsIweNoteRpc = iweRpc(WS_METHODS.iweNote, IweNoteInput, IweNote);
+const WsIweSaveNoteRpc = iweRpc(WS_METHODS.iweSaveNote, IweSaveNoteInput, IweNote);
+const WsIweCreateNoteRpc = iweRpc(WS_METHODS.iweCreateNote, IweCreateNoteInput, IweNote);
+const WsIweRenameNoteRpc = iweRpc(WS_METHODS.iweRenameNote, IweRenameNoteInput, IweRenameResult);
+const WsIweCompleteRpc = iweRpc(WS_METHODS.iweComplete, IweEditorPositionInput, Schema.Array(IweCompletion));
+const WsIweRenameLinkRpc = iweRpc(WS_METHODS.iweRenameLink, IweRenameLinkInput, IweRenameResult);
+const WsIweThreadStateRpc = iweRpc(WS_METHODS.iweThreadState, IweThreadInput, IweThreadState);
+const WsIweAttachRpc = iweRpc(WS_METHODS.iweAttach, IweAttachInput, IweThreadState);
+const WsIweDetachRpc = iweRpc(WS_METHODS.iweDetach, IweDetachInput, IweThreadState);
+const WsIweSelectWorkspaceRpc = iweRpc(WS_METHODS.iweSelectWorkspace, IweSelectWorkspaceInput, IweThreadState);
 
 const WsMobileAccessStatusRpc = Rpc.make(WS_METHODS.mobileAccessStatus, {
   payload: Schema.Struct({}),
@@ -2646,6 +2713,21 @@ export const WsRpcGroup = RpcGroup.make(
   WsImproveListRpc,
   WsImproveDismissRpc,
   WsMobileAccessStatusRpc,
+  WsIweStatusRpc,
+  WsIweInstallRpc,
+  WsIwePrepareWorkspaceRpc,
+  WsIweWorkspaceRpc,
+  WsIweSearchRpc,
+  WsIweNoteRpc,
+  WsIweSaveNoteRpc,
+  WsIweCreateNoteRpc,
+  WsIweRenameNoteRpc,
+  WsIweCompleteRpc,
+  WsIweRenameLinkRpc,
+  WsIweThreadStateRpc,
+  WsIweAttachRpc,
+  WsIweDetachRpc,
+  WsIweSelectWorkspaceRpc,
   WsProviderRuntimesStatusRpc,
   WsProviderRuntimesUpdateSettingsRpc,
   WsProviderRuntimesCheckNowRpc,

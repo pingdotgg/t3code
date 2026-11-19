@@ -81,6 +81,8 @@ export type EnvironmentStreamCommandRpcTag =
   | typeof WS_METHODS.cloudInstallRelayClient
   | typeof WS_METHODS.ollamaInstall
   | typeof WS_METHODS.ollamaPullModel
+  | typeof WS_METHODS.gameDevInstall
+  | typeof WS_METHODS.iweInstall
   | typeof WS_METHODS.serverUpdateServerWithProgress
   | typeof WS_METHODS.gitRunStackedAction;
 

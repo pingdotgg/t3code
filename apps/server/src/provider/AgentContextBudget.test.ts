@@ -1,5 +1,6 @@
 import * as MemoryVaultService from "../memoryVaults/MemoryVaultService.ts";
 import * as GameDevService from "../gameDev/GameDevService.ts";
+import * as IweService from "../iwe/IweService.ts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -54,6 +55,7 @@ import budget from "./agentContextBudget.json" with { type: "json" };
 const toolHandlerServices = Layer.mergeAll(
   Layer.mock(MemoryVaultService.MemoryVaultService)({}),
   Layer.mock(GameDevService.GameDevService)({ core: undefined as never }),
+  Layer.mock(IweService.IweService)({ core: undefined as never }),
   Layer.mock(AssetSigner)({}),
   Layer.mock(DeviceService)({}),
   Layer.mock(DocumentText)({}),
