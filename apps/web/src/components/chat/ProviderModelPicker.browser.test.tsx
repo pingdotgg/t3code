@@ -204,9 +204,10 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
   const options = new Map([
     [
       instanceId,
-      ["a", "b", "c", "c", "d", "d"].map((slug) => ({
+      ["a", "b", "c", "c", "d", "d", "e"].map((slug) => ({
         slug,
         name: `Model ${slug.toUpperCase()}`,
+        isUnavailable: slug === "e",
       })),
     ],
   ]);
@@ -222,7 +223,7 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
     <ProviderModelPicker
       environmentId={null}
       activeInstanceId={instanceId}
-      model="a"
+      model="e"
       lockedProvider={null}
       instanceEntries={entries}
       modelOptionsByInstance={options}
@@ -231,7 +232,9 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
       onInstanceModelChange={() => {}}
     />,
   );
-  await screen.getByRole("button", { name: "Choose model" }).click();
+  const trigger = screen.getByRole("button", { name: "Choose model" });
+  await expect.element(trigger.getByText("Unavailable", { exact: true })).toBeVisible();
+  await trigger.click();
   await expect.element(page.getByRole("option", { name: /Model A/ })).toBeVisible();
   await vi.waitFor(() =>
     expect(
@@ -253,17 +256,24 @@ it("lists a model reported twice by one provider once, with contiguous jump shor
 
 it("opens on the active provider when every favorite belongs to a disabled provider", async () => {
   const entries = deriveProviderInstanceEntries(
-    ["Codex", "Claude"].map((name) => ({
+    ["Codex", "Claude", "OpenCode"].map((name) => ({
       instanceId: ProviderInstanceId.make(name.toLowerCase()),
       driver: ProviderDriverKind.make(name.toLowerCase()),
-      enabled: name === "Codex",
+      displayName: name,
+      enabled: name !== "Claude",
       installed: true,
       version: null,
       status: "ready" as const,
       auth: { status: "authenticated" as const },
       checkedAt: "2026-01-01T00:00:00.000Z",
       models: [
-        { slug: name.toLowerCase(), name: `${name} model`, isCustom: false, capabilities: {} },
+        {
+          slug: name.toLowerCase(),
+          name: `${name} model`,
+          isCustom: false,
+          capabilities: {},
+          isUnavailable: name === "OpenCode",
+        },
       ],
       slashCommands: [],
       skills: [],
@@ -278,20 +288,35 @@ it("opens on the active provider when every favorite belongs to a disabled provi
     [Symbol.dispose]: () => __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS),
   };
 
-  await using screen = await render(
+  const picker = (providers: typeof entries) => (
     <ProviderModelPicker
       environmentId={null}
       activeInstanceId={codex!.instanceId}
       model="codex"
       lockedProvider={null}
-      instanceEntries={entries}
-      modelOptionsByInstance={new Map(entries.map((entry) => [entry.instanceId, entry.models]))}
+      instanceEntries={providers}
+      modelOptionsByInstance={new Map(providers.map((entry) => [entry.instanceId, entry.models]))}
       triggerAriaLabel="Choose model"
       onInstanceModelChange={() => {}}
-    />,
+    />
   );
+  await using screen = await render(picker(entries));
   await screen.getByRole("button", { name: "Choose model" }).click();
   await expect.element(page.getByRole("option", { name: /Codex model/ })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: /OpenCode/ })).not.toBeInTheDocument();
+  await screen.rerender(
+    picker(
+      entries.map((entry) => ({
+        ...entry,
+        isAvailable: entry !== codex,
+        models: entry.models.map((model) => ({ ...model, isUnavailable: false })),
+      })),
+    ),
+  );
+  await expect.element(page.getByRole("option", { name: /OpenCode model/ })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Codex", exact: true }))
+    .not.toBeInTheDocument();
 });
 
 it("keeps the touch keyboard down while choosing a provider", async () => {

@@ -1723,13 +1723,14 @@ export const layerWithOptions = (
       const markProviderThreadLoaded = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
+        readonly runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime;
         readonly providerThreadKey: string;
         readonly linkedEnvironments: boolean | null | undefined;
       }) =>
         Ref.update(sessions, (current) => {
           const key = sessionKey(input.providerSessionId);
           const entry = current.get(key);
-          if (entry === undefined) {
+          if (entry?.runtime !== input.runtime) {
             return current;
           }
           const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
@@ -2478,6 +2479,7 @@ export const layerWithOptions = (
                 markProviderThreadLoaded({
                   providerSessionId,
                   threadId: input.threadId,
+                  runtime,
                   providerThreadKey: providerThreadLoadKey({
                     runtime,
                     providerThread,
@@ -2546,6 +2548,7 @@ export const layerWithOptions = (
                 markProviderThreadLoaded({
                   providerSessionId,
                   threadId,
+                  runtime,
                   providerThreadKey: providerThreadLoadKey({
                     runtime,
                     providerThread,
@@ -2579,6 +2582,7 @@ export const layerWithOptions = (
                 markProviderThreadLoaded({
                   providerSessionId,
                   threadId: input.targetThreadId,
+                  runtime,
                   providerThreadKey: providerThreadLoadKey({
                     runtime,
                     providerThread,

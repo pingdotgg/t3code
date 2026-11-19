@@ -465,6 +465,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly interruptTurn?: Effect.Effect<void>;
+    readonly beforeResume?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -579,7 +580,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
             Ref.update(state, (current) => ({
               ...current,
               resumeCount: current.resumeCount + 1,
-            })).pipe(Effect.as(threadInput.providerThread)),
+            })).pipe(
+              Effect.andThen(options.beforeResume ?? Effect.void),
+              Effect.as(threadInput.providerThread),
+            ),
           startTurn: () => options.startTurn ?? Effect.void,
           compactThread: () => options.startTurn ?? Effect.void,
           resumeTurn: () => options.startTurn ?? Effect.void,
@@ -651,6 +655,7 @@ function layerTest(input: {
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly interruptTurn?: Effect.Effect<void>;
+  readonly beforeResume?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
@@ -699,6 +704,7 @@ function layerTest(input: {
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
+      ...(input.beforeResume === undefined ? {} : { beforeResume: input.beforeResume }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
       ...(input.archive === undefined ? {} : { archive: input.archive }),
@@ -5325,10 +5331,11 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 invalidates only errored threads and keeps reusable session errors cached",
+  "ProviderSessionManagerV2 owns cached native loads through errors and runtime replacement",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const beforeResume = yield* Ref.make<Effect.Effect<void>>(Effect.void);
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -5368,7 +5375,7 @@ it.effect(
           });
           yield* resume;
           yield* resume;
-          return { runtime, providerThread, resume };
+          return { runtime, providerThread, resume, threadId };
         });
         const failed = yield* openCachedRuntime(ThreadId.make("idle-failed-runtime"));
         const healthy = yield* openCachedRuntime(ThreadId.make("idle-healthy-runtime"));
@@ -5439,9 +5446,53 @@ it.effect(
             },
           },
         );
+
+        yield* publish({
+          type: "provider_thread.updated",
+          driver: CODEX_DRIVER,
+          providerThread: { ...failed.providerThread, status: "error" },
+        });
+        const resuming = yield* Deferred.make<void>();
+        const releaseResume = yield* Deferred.make<void>();
+        yield* Ref.set(
+          beforeResume,
+          Deferred.succeed(resuming, undefined).pipe(Effect.andThen(Deferred.await(releaseResume))),
+        );
+        const pending = yield* failed.resume.pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.gen(function* () {
+          yield* Deferred.await(resuming);
+          yield* manager.close(failed.runtime.providerSessionId);
+          const replacement = yield* manager.open({
+            threadId: failed.threadId,
+            providerSessionId: failed.runtime.providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* Ref.set(beforeResume, Effect.void);
+          yield* Deferred.succeed(releaseResume, undefined);
+          yield* Fiber.join(pending);
+          const before = (yield* Ref.get(state)).resumeCount;
+          const resumeReplacement = replacement.resumeThread({
+            providerThread: failed.providerThread,
+            threadId: failed.threadId,
+            modelSelection,
+            runtimePolicy,
+          });
+          yield* resumeReplacement;
+          yield* resumeReplacement;
+          assert.equal((yield* Ref.get(state)).resumeCount - before, 1);
+        }).pipe(Effect.ensuring(Deferred.succeed(releaseResume, undefined)));
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            beforeResume: Effect.flatten(Ref.get(beforeResume)),
+          }),
+        ),
+      );
     }),
 );
 

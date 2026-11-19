@@ -1105,6 +1105,12 @@ const make = Effect.gen(function* () {
                 completionWake: "always",
               })
               .pipe(
+                // A send can arrive after its parent's Stop, which then refuses its local owner.
+                Effect.tapError(() =>
+                  restore(
+                    stopThere(followScope(caller, remote), remote, `unrecorded-followup:${taskId}`),
+                  ).pipe(Effect.ignoreCause({ log: true })),
+                ),
                 Effect.mapError(
                   () =>
                     new OrchestratorMcpFailure({

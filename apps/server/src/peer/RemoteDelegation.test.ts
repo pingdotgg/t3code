@@ -143,6 +143,7 @@ interface BoxThread {
   readonly releaseStop: Deferred.Deferred<void>;
   /** Messages sent to the thread there after its launch, each starting a later run. */
   readonly sent: Ref.Ref<ReadonlyArray<string>>;
+  readonly beforeSend: Ref.Ref<Effect.Effect<void>>;
   /** Runs as the launch there is answered, before the laptop hears back. */
   readonly afterLaunch: Ref.Ref<Effect.Effect<void>>;
 }
@@ -183,6 +184,7 @@ const makeBoxThread = Effect.gen(function* () {
     stopStarted: yield* Deferred.make<void>(),
     releaseStop: yield* Deferred.make<void>(),
     sent: yield* Ref.make<ReadonlyArray<string>>([]),
+    beforeSend: yield* Ref.make<Effect.Effect<void>>(Effect.void),
     afterLaunch: yield* Ref.make<Effect.Effect<void>>(Effect.void),
   } satisfies BoxThread;
 });
@@ -518,11 +520,14 @@ const boxToolkitLayer = (thread: BoxThread) => {
         : Effect.die(`The box does not expect ${command.type}`),
     stopDelegatedTasks: (input) => recordStop(input.commandId, "delegated-tasks"),
     sendToThread: (input) =>
-      Ref.update(thread.sent, (seen) => {
-        if (sends.has(input.commandId)) return seen;
-        sends.add(input.commandId);
-        return [...seen, input.text];
-      }).pipe(
+      Effect.flatten(Ref.get(thread.beforeSend)).pipe(
+        Effect.andThen(
+          Ref.update(thread.sent, (seen) => {
+            if (sends.has(input.commandId)) return seen;
+            sends.add(input.commandId);
+            return [...seen, input.text];
+          }),
+        ),
         Effect.as(
           (input.mode === "queue"
             ? { run: { id: boxQueuedRunId, status: "queued" }, delivery: "queued" }
@@ -2170,7 +2175,11 @@ it.effect("a stop the box refuses because the parent was lowered ends instead of
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
-it.effect("stopping the parent stops its task there", () =>
+it.effect.each([
+  "active task",
+  "in-flight follow-up",
+  "in-flight follow-up cancelled during cleanup",
+] as const)("stopping the parent stops its %s there", (scenario) =>
   Effect.scoped(
     Effect.gen(function* () {
       const thread = yield* makeBoxThread;
@@ -2180,10 +2189,70 @@ it.effect("stopping the parent stops its task there", () =>
       >([]);
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
       const a = yield* makeLaptop(database, offers);
+      yield* a.remote.start();
       yield* linkTo(a.links, b, "full-access");
       yield* seedParent(a);
 
       const delegated = yield* delegateToBox(a);
+      if (scenario !== "active task") {
+        yield* Ref.set(thread.reply, "Preflight complete.");
+        yield* Ref.set(thread.status, "completed");
+        yield* Deferred.succeed(thread.finished, undefined);
+        yield* taskResult(a, delegated.taskId);
+        const sendStarted = yield* Deferred.make<void>();
+        const releaseSend = yield* Deferred.make<void>();
+        yield* Ref.set(
+          thread.beforeSend,
+          Deferred.succeed(sendStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseSend)),
+          ),
+        );
+        const sending = yield* a
+          .call("t3_thread_send", {
+            environmentId: box.environmentId,
+            threadId: delegated.remoteChild.threadId,
+            message: "Continue with the slow suite.",
+            clientRequestId: "followup-after-stop",
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.gen(function* () {
+          yield* Deferred.await(sendStarted);
+          yield* a.orchestrator.dispatch({
+            type: "thread.stop",
+            commandId: CommandId.make("command:stop:laptop-before-followup-arrives"),
+            threadId: parentThreadId,
+          });
+          yield* a.threads.stopDelegatedTasks({
+            threadId: parentThreadId,
+            commandId: CommandId.make("command:stop:laptop-before-followup-arrives:tasks"),
+          });
+          yield* stoppedThere(a, delegated.taskId);
+          expect(yield* Ref.get(thread.interrupted)).toBe(1);
+          const interruptCleanup = scenario === "in-flight follow-up cancelled during cleanup";
+          yield* Ref.set(thread.holdFirstStop, interruptCleanup);
+          yield* Deferred.succeed(releaseSend, undefined);
+          if (interruptCleanup) {
+            yield* Deferred.await(thread.stopStarted);
+            yield* Fiber.interrupt(sending);
+          } else {
+            const sent = yield* Fiber.join(sending);
+            expect(sent.isError).toBe(true);
+          }
+          expect(yield* Ref.get(thread.sent)).toEqual(["Continue with the slow suite."]);
+          expect(
+            (yield* a.orchestrator.getThreadProjection(parentThreadId)).subagents,
+          ).toHaveLength(1);
+          // The parent's earlier Stop could not cover this later accepted run.
+          expect(yield* Ref.get(thread.interrupted)).toBe(2);
+        }).pipe(
+          Effect.ensuring(
+            Deferred.succeed(releaseSend, undefined).pipe(
+              Effect.andThen(Deferred.succeed(thread.releaseStop, undefined)),
+            ),
+          ),
+        );
+        return;
+      }
       // What the delegated-tasks.stop effect runs once the parent's Stop commits.
       yield* a.threads.stopDelegatedTasks({
         threadId: parentThreadId,
