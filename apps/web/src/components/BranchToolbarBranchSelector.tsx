@@ -1,3 +1,4 @@
+import { isThreadCheckoutMissing } from "@t3tools/client-runtime/thread-checkout";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
@@ -58,7 +59,6 @@ import {
   resolveBranchTriggerLabel,
   resolveBranchToolbarPrBranch,
   resolveBranchSelectionTarget,
-  isThreadCheckoutMissing,
   resolveBranchToolbarValue,
   resolveConfirmedSelectedRef,
   resolveDefaultWorktreeBaseBranch,

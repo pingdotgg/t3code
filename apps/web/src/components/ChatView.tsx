@@ -1,3 +1,4 @@
+import { isThreadCheckoutMissing } from "@t3tools/client-runtime/thread-checkout";
 import { m } from "../i18n/messages";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useGT, useMessages } from "gt-react";
@@ -321,7 +322,6 @@ import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   resolveEffectiveEnvMode,
   resolveLocalCheckoutBranchMismatch,
-  isThreadCheckoutMissing,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";

@@ -44,9 +44,10 @@ vi.mock("./use-thread-selection", () => ({
   }),
 }));
 vi.mock("./use-selected-thread-worktree", () => ({
-  useSelectedThreadWorktree: () => ({
+  useSelectedThreadGitCheckout: () => ({
     selectedThreadCwd: "/repo",
     selectedThreadWorktreePath: null,
+    checkoutMissing: false,
   }),
 }));
 vi.mock("./queries", () => ({

@@ -79,6 +79,10 @@
       "types": "./src/worktreeSetup.ts",
       "default": "./src/worktreeSetup.ts"
     },
+    "./thread-checkout": {
+      "types": "./src/threadCheckout.ts",
+      "default": "./src/threadCheckout.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
