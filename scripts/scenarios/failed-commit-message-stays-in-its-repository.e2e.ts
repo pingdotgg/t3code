@@ -59,6 +59,7 @@ test(
     await app.screenshot("commit-message-in-second-repository");
     const message = await browser.evaluate(
       () =>
+        "" +
         document.querySelector<HTMLTextAreaElement>(
           'textarea[placeholder="Leave empty to auto-generate"]',
         )?.value,
