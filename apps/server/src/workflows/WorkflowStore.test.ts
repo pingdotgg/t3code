@@ -95,7 +95,10 @@ it.effect("counts what waits on a person, and finds the run's latest agent threa
       assert.deepStrictEqual(yield* store.counts, { needsYou: 0, active: 0, total: 0 });
       yield* Effect.forEach(["r1", "r2", "r3"], start);
       yield* store.runPaused("r1", "the build failed");
-      yield* store.runEnded("r3", "completed", null, null);
+      assert.isTrue(yield* store.runEnded("r3", "completed", null, null));
+      // A second ending, such as a cancel that lost the race, is not recorded and says so.
+      assert.isFalse(yield* store.runEnded("r3", "cancelled", "late", null));
+      assert.equal((yield* store.run("r3"))?.status, "completed");
       yield* store.waitOpened({
         runId: "r2",
         name: "merge",
@@ -183,6 +186,9 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       assert.equal(yield* store.mailDeliver("s1", "r2", "go", woke), "gone");
       assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
       assert.isTrue(yield* store.signalSeen("s1"));
+      // Nor can the id, sent again straight to that wait, claim it: one id wakes one wait.
+      assert.isFalse(yield* store.waitSignalled("r2", "go", woke, "s1"));
+      assert.isDefined(yield* store.waitAt({ runId: "r2", wait: "go" }));
       // A wait that is already claimed takes no second wake.
       assert.equal(yield* store.mailDeliver("other", "r1", "go", woke), "claimed");
 

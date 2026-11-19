@@ -131,6 +131,9 @@ const definitions = (counts: Ref.Ref<Record<string, number>>, failures: Ref.Ref<
         yield* step("same", { returns: Schema.Void, ...once }, Effect.void);
       }),
     ),
+    workflow("reserved", { version: 1, payload: Schema.Struct({}) }, () =>
+      step("onEnd", { returns: Schema.Void, ...once }, Effect.void),
+    ),
     ...[1, 2].map((version) =>
       workflow("versioned", { version, payload: Schema.Struct({}), returns: Schema.Number }, () =>
         Effect.succeed(version),
@@ -856,6 +859,10 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
         const twice = yield* workflows.start("twice", {}, { idempotencyKey: "t1" });
         const paused = yield* workflows.waitFor(twice.runId, status("paused"));
         assert.include(paused.detail ?? "", 'named "same"');
+        // The cleanup step's name is taken by nothing else.
+        const reserved = yield* workflows.start("reserved", {}, { idempotencyKey: "r1" });
+        const refusedName = yield* workflows.waitFor(reserved.runId, status("paused"));
+        assert.include(refusedName.detail ?? "", "cleanup step");
 
         const missing = yield* workflows
           .start("nothing", {}, { idempotencyKey: "n1" })
@@ -1002,6 +1009,8 @@ it.effect(
           const refused = yield* workflows.waitFor(unstorable.runId, status("paused"));
           assert.include(refused.detail ?? "", "unstorable");
           assert.equal((yield* workflows.get(unstorable.runId)).steps[0]?.status, "failed");
+          // Never marked done on the way, so each try counts as one more pause.
+          yield* workflows.waitFor(unstorable.runId, (run) => run.pauses >= 2);
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
@@ -1422,6 +1431,8 @@ it.effect("an issue opened after the workflow loaded starts one run, which can c
         // The first look only notes the time: what was there already starts nothing.
         yield* workflows.sweep;
         yield* TestClock.adjust("2 minutes");
+        // One the workflow turns down comes first, and does not hold back the one after it.
+        forge.open.push({ ...issueAt("bad", "1970-01-01T00:00:30.000Z"), title: 5 } as never);
         forge.open.push(issueAt("2", "1970-01-01T00:01:00.000Z"));
         yield* workflows.sweep;
         yield* TestClock.adjust("2 minutes");

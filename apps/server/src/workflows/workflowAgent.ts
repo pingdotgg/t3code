@@ -235,7 +235,8 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       ));
       if (lingers) problem = `${problem}; its turn could not be stopped`;
     }
-    // A turn that died is not the job's fault the first time: once more, on a thread of its own.
+    // A turn that died is not the job's fault the first time: once more, on a thread of its own,
+    // or on the same thread for a step that continues one, since only that thread has its project.
     // One a person stopped is not tried again behind their back.
     if (round % 2 === 0 && !stopped && !lingers) continue;
     if (onFailure === "return") {
