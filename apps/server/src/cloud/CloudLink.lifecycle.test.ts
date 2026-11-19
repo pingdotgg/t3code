@@ -11,22 +11,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import {
-  HttpClient,
-  HttpClientResponse,
-  HttpServer,
-  HttpServerRequest,
-  type HttpClientRequest,
-} from "effect/http";
+import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
 import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
-import {
-  AuthSessionId,
-  type AuthEnvironmentScope,
-  EnvironmentAuthenticatedPrincipal,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as EnvironmentKeys from "./environmentKeys.ts";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -312,30 +301,16 @@ describe("releaseManagedTunnelOnShutdown", () => {
         });
         yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
         const link = yield* CloudLink.CloudLink;
-        const proof = yield* link
-          .linkProof(
-            {
-              challenge,
-              relayIssuer,
-              endpoint: {
-                httpBaseUrl: "http://127.0.0.1:3773",
-                wsBaseUrl: "ws://127.0.0.1:3773",
-                providerKind: "manual",
-              },
-              origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
-            },
-            HttpServerRequest.fromWeb(
-              new Request("http://127.0.0.1:3773/api/t3-connect/link-proof"),
-            ),
-          )
-          .pipe(
-            Effect.provideService(EnvironmentAuthenticatedPrincipal, {
-              sessionId: AuthSessionId.make("test-session"),
-              subject: "test",
-              method: "bearer-access-token",
-              scopes: new Set<AuthEnvironmentScope>(),
-            }),
-          );
+        const proof = yield* link.linkProof({
+          challenge,
+          relayIssuer,
+          endpoint: {
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+            providerKind: "manual",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        });
         const environmentKeys =
           yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(store);
         yield* TestClock.setTime(relayNow * 1_000);
