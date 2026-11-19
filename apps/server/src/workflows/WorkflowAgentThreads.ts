@@ -301,7 +301,7 @@ const make = Effect.gen(function* () {
           projectId: shell.projectId,
           threadId,
           commandId: CommandId.make(
-            `workflow:interrupt:${thread}:${yield* Clock.currentTimeMillis}`,
+            `workflow:interrupt:${thread}:${target.turnId ?? ""}:${yield* Clock.currentTimeMillis}`,
           ),
           reason: "Its workflow run was cancelled",
           ...(target.turnId === undefined ? {} : { runId: target.turnId as RunId }),

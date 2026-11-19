@@ -121,13 +121,18 @@ const attempt = Effect.fn("workflow.agent")(function* <A, I>(
       Effect.timeoutOption(Duration.millis(Math.max(0, left))),
     );
     if (Option.isSome(result)) return result.value;
-    // A stop that still fails pauses the run unrecorded, so resuming tries the stop again.
-    yield* agents
+    // A stop that still fails pauses the run unrecorded, so resuming tries the stop again. A step
+    // that returns its failure says the turn may still be running.
+    const stoppedIt = yield* agents
       .interrupt({ ...threadOf(turn), turnId: turn.turnId })
-      .pipe(Effect.retry({ times: 2 }), onFailure === "pause" ? identity : Effect.ignore);
+      .pipe(
+        Effect.retry({ times: 2 }),
+        Effect.as(true),
+        onFailure === "pause" ? identity : Effect.catch(() => Effect.succeed(false)),
+      );
     return {
       ending: "stopped" as const,
-      detail: `it was not done after ${Duration.format(limit)}`,
+      detail: `it was not done after ${Duration.format(limit)}${stoppedIt ? "" : ", and its turn could not be stopped"}`,
       reply: "",
     };
   });

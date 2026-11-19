@@ -149,12 +149,13 @@ export class WorkflowStore extends Context.Service<
     /** Takes the wait for one signal. False when another signal already has it. */
     /**
      * Claims an open wait for one wake and keeps what it is woken with. False when something else
-     * already claimed it.
+     * already claimed it. A signal's id is recorded with the claim, so a retry never claims twice.
      */
     readonly waitSignalled: (
       runId: string,
       name: string,
       woke: Schema.Json,
+      signalId?: string,
     ) => Effect.Effect<boolean>;
     /** Waits claimed a while ago whose runs are still not past them: their wake is redone. */
     readonly waitsToWake: Effect.Effect<ReadonlyArray<WaitRow>>;
@@ -172,7 +173,6 @@ export class WorkflowStore extends Context.Service<
     readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
     /** Every paused run, however many: the sweep decides which are due. */
     readonly pausedRuns: Effect.Effect<ReadonlyArray<RunRow>>;
-    readonly signalDelivered: (signalId: string) => Effect.Effect<void>;
     /** Whether a signal with this id already woke a wait. */
     readonly signalSeen: (signalId: string) => Effect.Effect<boolean>;
     /** Counts one more arrival at `name` in this run and returns the count. */
@@ -399,15 +399,24 @@ export const make = Effect.gen(function* () {
         sql`DELETE FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}`,
       );
     }),
-    waitSignalled: Effect.fn("WorkflowStore.waitSignalled")(function* (runId, name, woke) {
-      const at = yield* now;
-      const taken = yield* sql`
-        UPDATE workflow_waits SET signalled_at = ${at}, woke_json = ${jsonText(woke)}
-        WHERE run_id = ${runId} AND name = ${name} AND signalled_at IS NULL
-        RETURNING name
-      `.pipe(Effect.orDie);
-      return taken.length > 0;
-    }),
+    waitSignalled: Effect.fn("WorkflowStore.waitSignalled")(
+      function* (runId, name, woke, signalId) {
+        const at = yield* now;
+        const taken = yield* sql`
+          UPDATE workflow_waits SET signalled_at = ${at}, woke_json = ${jsonText(woke)}
+          WHERE run_id = ${runId} AND name = ${name} AND signalled_at IS NULL
+          RETURNING name
+        `;
+        if (taken.length > 0 && signalId !== undefined) {
+          yield* sql`
+            INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
+            ON CONFLICT (signal_id) DO NOTHING
+          `;
+        }
+        return taken.length > 0;
+      },
+      (effect) => sql.withTransaction(effect).pipe(Effect.orDie),
+    ),
     waitsToWake: Effect.gen(function* () {
       const before = DateTime.formatIso(
         DateTime.subtractDuration(yield* DateTime.now, WAKE_REDONE_AFTER),
@@ -455,13 +464,6 @@ export const make = Effect.gen(function* () {
       WHERE c.ended_at IS NULL AND p.status = 'cancelled'
     `.pipe(Effect.orDie),
     pausedRuns: sql<RunRow>`SELECT * FROM workflow_runs WHERE status = 'paused'`.pipe(Effect.orDie),
-    signalDelivered: Effect.fn("WorkflowStore.signalDelivered")(function* (signalId) {
-      const at = yield* now;
-      yield* sql`
-        INSERT INTO workflow_signals (signal_id, delivered_at) VALUES (${signalId}, ${at})
-        ON CONFLICT (signal_id) DO NOTHING
-      `.pipe(Effect.orDie);
-    }),
     signalSeen: Effect.fn("WorkflowStore.signalSeen")(function* (signalId) {
       const rows = yield* sql`
         SELECT 1 FROM workflow_signals WHERE signal_id = ${signalId}
