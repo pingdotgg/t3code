@@ -130,7 +130,8 @@ describe("readEnvironmentFromLoginShell", () => {
           encoding: "utf8",
           env: { PATH: process.env.PATH },
         }).trim();
-        NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
+        // macOS kills a copied system binary (its signature no longer matches the path).
+        NodeFS.symlinkSync(printenv, NodePath.join(tools, "printenv"));
         vi.stubEnv("PATH", tools);
         const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");
