@@ -463,9 +463,9 @@ describe("thread workflows", () => {
       each: null,
     },
     {
-      name: "a delegated task follow-up that keeps the combined message",
+      name: "a delegated task follow-up that would keep the combined message",
       firstRun: { delegatedTaskId: "node:followup" },
-      asOne: null,
+      asOne: "Follow-ups to a delegated task are sent on their own.",
       each: null,
     },
     {
