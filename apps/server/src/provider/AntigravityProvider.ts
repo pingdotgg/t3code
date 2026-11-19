@@ -1,3 +1,4 @@
+import { resolveProviderProbeTimeoutMs } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -24,7 +25,10 @@ import type * as EffectAcpSchema from "effect-acp/compat";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { acpProviderOptionDescriptors } from "@t3tools/provider-acp/server/sessionConfig";
-import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
+import {
+  DeferringFailedCheck,
+  makeManagedServerProvider,
+} from "@t3tools/provider-core/server/managedProvider";
 import {
   makeManualOnlyProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
@@ -40,7 +44,7 @@ import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
-const HEALTH_CHECK_TIMEOUT = "90 seconds";
+const HEALTH_CHECK_TIMEOUT_MS = 90_000;
 const SIGN_IN_MESSAGE = "Sign in with Google to use Antigravity.";
 const AUTH_UNCHECKED_MESSAGE =
   "Antigravity is installed. Google account access is not checked yet.";
@@ -155,6 +159,7 @@ interface AntigravityProviderState {
 }
 
 interface AntigravityProviderOptions {
+  readonly environment?: NodeJS.ProcessEnv;
   readonly stampIdentity: (snapshot: ServerProviderDraft) => Effect.Effect<ServerProvider>;
   readonly probe: Effect.Effect<
     EffectAcpSchema.InitializeResponse,
@@ -202,7 +207,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       },
     }),
     setup: { canAuthenticate: true, canInstall: true },
-    supportsConversationRollback: false,
+    supportsConversationRollback: true,
     supportsTextGeneration: false,
     workspaceSnapshots: [],
   } satisfies ServerProviderDraft;
@@ -271,10 +276,12 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
   const checkProvider = Effect.fn("checkAntigravityProvider")(function* () {
     if (!settings.enabled) return yield* getSnapshot;
     const before = yield* SubscriptionRef.get(metadata);
-    const result = yield* options.probe.pipe(
-      Effect.timeoutOption(HEALTH_CHECK_TIMEOUT),
-      Effect.result,
+    const timeoutMs = resolveProviderProbeTimeoutMs(
+      "antigravity",
+      HEALTH_CHECK_TIMEOUT_MS,
+      options.environment,
     );
+    const result = yield* options.probe.pipe(Effect.timeoutOption(timeoutMs), Effect.result);
     const initialized =
       Result.isSuccess(result) && Option.isSome(result.success) ? result.success.value : undefined;
     const version = initialized?.agentInfo?.version;
@@ -289,11 +296,11 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             ? "Antigravity ACP runtime is not installed or its executable could not be found."
             : failure
               ? "Antigravity could not complete its local health check."
-              : `Antigravity did not respond to its local health check within ${HEALTH_CHECK_TIMEOUT}.`;
+              : `Antigravity did not respond to its local health check within ${timeoutMs / 1_000} seconds.`;
     const supportsTextGeneration =
       initialized !== undefined ? yield* options.supportsTextGeneration : false;
     const updatedAt = DateTime.formatIso(yield* DateTime.now);
-    const next = yield* SubscriptionRef.updateAndGet(metadata, (state) => {
+    const applyCheck = (state: AntigravityProviderState) => {
       if (state.authRevision !== before.authRevision) return state;
       const { message: _previousMessage, ...draft } = state.draft;
       const authenticated = draft.auth.status === "authenticated";
@@ -332,6 +339,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           ...(message ? { message } : {}),
         },
       } satisfies AntigravityProviderState;
+    };
+    // This state is published as it changes, so a failure the managed provider discards stays out.
+    const deferFailure = errorMessage !== undefined && (yield* DeferringFailedCheck);
+    const next = yield* SubscriptionRef.modifySome(metadata, (state) => {
+      const checked = applyCheck(state);
+      const stored = deferFailure && state.draft.status === "ready" ? state : checked;
+      return [checked, stored === state ? Option.none() : Option.some(stored)];
     });
     if (initialized !== undefined) yield* refreshUsage();
     return yield* options.stampIdentity(next.draft);
