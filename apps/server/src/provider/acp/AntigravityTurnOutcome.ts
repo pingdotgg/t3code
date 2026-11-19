@@ -171,6 +171,11 @@ function turnFailure(
   );
 }
 
+// The executor's closing message for a failed prompt; its error step carries the same failure.
+const TERMINAL_DIAGNOSTIC = /^\s*(?:⚠\s*)?agent execut(?:or|ion) error: /i;
+
+export const isAntigravityTerminalDiagnostic = (text: string) => TERMINAL_DIAGNOSTIC.test(text);
+
 const conversationSegments = ["antigravity-acp", "conversations"];
 
 /**

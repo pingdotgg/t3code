@@ -368,6 +368,11 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<
     (result: EffectAcpSchema.PromptResponse) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
   >;
+  /**
+   * The agent's own text for the error that ended a prompt. It is held until the prompt
+   * settles and dropped when `watchPromptOutcome` reports that failure in its place.
+   */
+  readonly isTerminalDiagnostic?: (text: string) => boolean;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
    * Runs before attachment paths, T3 instructions and native slash-command detection,
@@ -1534,6 +1539,9 @@ interface ActiveAcpTurn {
   readonly pendingInjectedReport: Set<string>;
   /** Reports can precede monitor end notices; consume their completion marker without re-arming. */
   earlyInjectedReportObserved: boolean;
+  heldDiagnostic?:
+    | { readonly text: string; readonly messageId: string | null | undefined }
+    | undefined;
   readonly plans: Map<
     string,
     {
@@ -3142,7 +3150,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           stream.current = null;
         });
 
+        const releaseHeldDiagnostic = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          const held = context.heldDiagnostic;
+          if (held === undefined) return;
+          context.heldDiagnostic = undefined;
+          yield* appendText(context, "assistant", held.text, held.messageId);
+        });
+
         const closeTextStreams = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          yield* releaseHeldDiagnostic(context);
           yield* closeTextStream(context, "user");
           yield* closeTextStream(context, "reasoning");
           yield* closeTextStream(context, "assistant");
@@ -5846,6 +5862,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             )
               return;
           }
+          yield* releaseHeldDiagnostic(context);
           switch (update.sessionUpdate) {
             case "state_update": {
               const toolCallId = `${context.nativeTurnId}:requires-action`;
@@ -5869,7 +5886,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
             case "agent_message_chunk": {
               const text = acpContentBlockDisplayText(update.content);
-              if (text !== undefined) {
+              if (text !== undefined && flavor.isTerminalDiagnostic?.(text) === true) {
+                context.heldDiagnostic = { text, messageId: update.messageId };
+              } else if (text !== undefined) {
                 const startsNewAssistantSegment = context.assistant.current === null;
                 if (context.pendingInjectedReport.size > 0) {
                   const reportedTaskIds = [...context.pendingInjectedReport];
@@ -9100,6 +9119,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         ? undefined
                         : yield* checkPromptOutcome(result);
                     if (hiddenFailure !== undefined) {
+                      context.heldDiagnostic = undefined;
                       yield* Ref.set(runtimeRestartRequired, true);
                     }
                     const failure =

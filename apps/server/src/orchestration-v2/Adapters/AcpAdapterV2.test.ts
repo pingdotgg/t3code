@@ -59,6 +59,8 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { isAntigravityTerminalDiagnostic } from "../../provider/acp/AntigravityTurnOutcome.ts";
+
 import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1359,12 +1361,18 @@ describe("AcpAdapterV2", () => {
       const promptRuntimes: Array<number> = [];
       const promptTexts: Array<string> = [];
       const watchedSessions: Array<string> = [];
+      let notify: Parameters<
+        AcpSessionRuntime.AcpSessionRuntime["Service"]["handleSessionUpdate"]
+      >[0];
+      const diagnostic =
+        "⚠ agent executor error: generating and executing: Error 502, Message: Bad Gateway, Status: , Details: []";
       const adapter = yield* makeAcpAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
         flavor: {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
+          isTerminalDiagnostic: isAntigravityTerminalDiagnostic,
           watchPromptOutcome: (sessionId) =>
             Effect.sync(() => {
               watchedSessions.push(sessionId);
@@ -1389,16 +1397,34 @@ describe("AcpAdapterV2", () => {
             wrapRuntime: (runtime, runtimeOrdinal) => ({
               ...runtime,
               cancel: Deferred.succeed(cancelled, undefined).pipe(Effect.asVoid),
-              prompt: (payload) =>
+              handleSessionUpdate: (handler) =>
                 Effect.sync(() => {
-                  promptRuntimes.push(runtimeOrdinal);
-                  promptTexts.push(
-                    payload.prompt
-                      .flatMap((block) => (block.type === "text" ? [block.text] : []))
-                      .join("\n"),
-                  );
-                  return { stopReason: "end_turn" as const };
-                }),
+                  notify = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              prompt: (payload) =>
+                (promptRuntimes.length < 2
+                  ? notify({
+                      sessionId: watchedSessions.at(-1)!,
+                      update: {
+                        sessionUpdate: "agent_message_chunk",
+                        content: { type: "text", text: diagnostic },
+                      },
+                    })
+                  : Effect.void
+                ).pipe(
+                  Effect.as(undefined),
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      promptRuntimes.push(runtimeOrdinal);
+                      promptTexts.push(
+                        payload.prompt
+                          .flatMap((block) => (block.type === "text" ? [block.text] : []))
+                          .join("\n"),
+                      );
+                      return { stopReason: "end_turn" as const };
+                    }),
+                  ),
+                ),
             }),
           }),
         },
@@ -1440,12 +1466,23 @@ describe("AcpAdapterV2", () => {
           );
         });
 
-      const failed = (yield* runTurn(1)).at(-1);
+      const assistantTexts = (events: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) =>
+        events.flatMap((event) =>
+          event.type === "message.updated" && event.message.role === "assistant"
+            ? [event.message.text]
+            : [],
+        );
+      const failedEvents = yield* runTurn(1);
+      const failed = failedEvents.at(-1);
       if (failed?.type !== "turn.terminal" || failed.status !== "failed") {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, quota);
-      const completed = (yield* runTurn(2)).at(-1);
+      // The reported failure replaces the agent's own error text.
+      assert.deepEqual(assistantTexts(failedEvents), []);
+      const completedEvents = yield* runTurn(2);
+      assert.equal(assistantTexts(completedEvents).at(-1), diagnostic);
+      const completed = completedEvents.at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
       // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
