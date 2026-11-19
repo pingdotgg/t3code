@@ -10274,10 +10274,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           activeContext: ActiveClaudeTurnContext | null,
           toolUseId: string | undefined,
         ): Pick<OrchestrationV2PendingBackgroundTask, "command" | "itemId" | "sourceThreadId"> => {
+          // A background subagent keeps launching shells after the root turn settles.
           const launch =
-            toolUseId === undefined || activeContext === null
+            toolUseId === undefined
               ? undefined
-              : findToolCall(activeContext, toolUseId);
+              : activeContext === null
+                ? subagentToolCalls.get(toolUseId)
+                : findToolCall(activeContext, toolUseId);
           const command =
             launch?.classification.itemType === "command_execution" ||
             launch?.toolName === "Monitor"
