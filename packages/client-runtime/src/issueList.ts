@@ -101,6 +101,18 @@ export function issueOrder(sort: IssueListSort) {
   return (left: IssueListEntry, right: IssueListEntry) => date(right) - date(left);
 }
 
+function sortIssueRows(
+  rows: EnvironmentIssueEntry[],
+  sort: IssueListSort,
+): EnvironmentIssueEntry[] {
+  if (rows.length < 2) return rows;
+  const field = sort === "created" ? "createdAt" : "updatedAt";
+  return rows
+    .map((row) => ({ row, timestamp: Date.parse(row[field]) }))
+    .sort((left, right) => right.timestamp - left.timestamp)
+    .map(({ row }) => row);
+}
+
 export function groupIssues(
   held: ReadonlyMap<EnvironmentId, HeldIssuePage>,
   query: string,
@@ -158,7 +170,7 @@ export function groupIssues(
       group?.errors.push({ ...error, environmentId });
     }
   }
-  for (const group of byTracker.values()) group.rows.sort(issueOrder(sort));
+  for (const group of byTracker.values()) group.rows = sortIssueRows(group.rows, sort);
   return [...byTracker.values()].sort((a, b) =>
     issueTrackerKey(a.tracker).localeCompare(issueTrackerKey(b.tracker)),
   );

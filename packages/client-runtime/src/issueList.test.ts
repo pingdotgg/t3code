@@ -197,6 +197,34 @@ describe("issueFilterScopes", () => {
 });
 
 describe("groupIssues", () => {
+  it("sorts by the selected timestamp and keeps order for equal instants", () => {
+    const tracker = {
+      tracker: "github",
+      host: "github.com",
+      projectCount: 1,
+      configured: true,
+      detail: null,
+    } as IssueTrackerSummary;
+    const first = entry({
+      key: "first",
+      createdAt: "2026-10-01T02:00:00+02:00",
+      updatedAt: "2026-10-02T00:00:00Z",
+    });
+    const second = entry({ key: "second", createdAt: "2026-10-01T00:00:00Z" });
+    const newer = entry({ key: "newer", createdAt: "2026-10-01T01:00:00Z" });
+    const held = holdIssuePages(
+      [
+        [environmentId, answer({ trackers: [tracker], entries: [first, second] })],
+        ["env-2" as EnvironmentId, answer({ trackers: [tracker], entries: [newer] })],
+      ],
+      new Map(),
+    );
+    const keys = (sort: "created" | "updated") =>
+      groupIssues(held, "", [], sort)[0]?.rows.map((row) => row.key);
+    expect(keys("created")).toEqual(["newer", "first", "second"]);
+    expect(keys("updated")).toEqual(["first", "second", "newer"]);
+  });
+
   it("lists an issue once when two environments hold the same repository", () => {
     const github = {
       tracker: "github",
