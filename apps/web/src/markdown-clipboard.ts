@@ -505,15 +505,23 @@ function sanitizedHtmlFrom(container: Element): string {
   return `<meta charset="utf-8">${container.innerHTML}`;
 }
 
-/** A list cloned from a later item would renumber from its start; restart it at the shown number. */
-function keepStartListNumbers(range: Range, container: Element): void {
-  // The start's ancestors below the common ancestor clone as the fragment's first-child chain.
+/**
+ * Items copied within one list clone without it, so wrap them in it again. A list cloned
+ * from a later item would renumber from its start; restart it at the shown number.
+ */
+function keepStartListMarkers(range: Range, container: Element): void {
+  const ancestor = range.commonAncestorContainer;
+  const withinList =
+    ancestor instanceof Element && (ancestor.tagName === "OL" || ancestor.tagName === "UL");
+  if (withinList) {
+    const list = ancestor.cloneNode(false);
+    list.append(...container.childNodes);
+    container.replaceChildren(list);
+  }
+  // The start's ancestors below the cloned top clone as the fragment's first-child chain.
+  const top = withinList ? ancestor.parentNode : ancestor;
   const chain: Node[] = [];
-  for (
-    let node: Node | null = range.startContainer;
-    node && node !== range.commonAncestorContainer;
-    node = node.parentNode
-  ) {
+  for (let node: Node | null = range.startContainer; node && node !== top; node = node.parentNode) {
     chain.unshift(node);
   }
   let clone: Node | null = container;
@@ -545,7 +553,7 @@ export function chatMarkdownClipboardPayload(
     if (range.collapsed) continue;
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
-    keepStartListNumbers(range, container);
+    keepStartListMarkers(range, container);
     // The indentation typed at a line start only shows; pasted, it would turn lines into code.
     for (const indentation of container.querySelectorAll("[data-leading-whitespace]")) {
       indentation.remove();
