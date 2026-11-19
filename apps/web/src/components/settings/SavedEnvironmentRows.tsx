@@ -28,6 +28,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
+import { EnvironmentHostSummary } from "../EnvironmentHostSummary";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
@@ -332,6 +333,12 @@ export function SavedBackendListRow({
       }
       below={
         <>
+          {enabled && isConnected ? (
+            <EnvironmentHostSummary
+              environmentId={environmentId}
+              className="whitespace-normal text-muted-foreground text-xs"
+            />
+          ) : null}
           {diagnosis ? (
             <ConnectionDiagnosisSummary
               diagnosis={diagnosis}

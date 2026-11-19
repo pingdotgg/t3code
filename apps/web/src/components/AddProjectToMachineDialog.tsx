@@ -42,6 +42,7 @@ import { useEnvironments } from "../state/environments";
 import { projectEnvironment } from "../state/projects";
 import { useDebouncedValue } from "../state/queries";
 import { useEnvironmentQuery } from "../state/query";
+import { EnvironmentHostSummary } from "./EnvironmentHostSummary";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -315,9 +316,15 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                     <SelectPopup>
                       {targets.map((t) => (
                         <SelectItem key={t.environmentId} value={t.environmentId}>
-                          <span className="inline-flex items-center gap-1.5">
-                            <EnvironmentMachineIcon kind={t.machine} className="size-3" />
-                            {t.label}
+                          <span className="flex min-w-0 flex-col">
+                            <span className="inline-flex items-center gap-1.5">
+                              <EnvironmentMachineIcon kind={t.machine} className="size-3" />
+                              {t.label}
+                            </span>
+                            <EnvironmentHostSummary
+                              environmentId={t.environmentId}
+                              className="ps-4.5 text-muted-foreground text-xs"
+                            />
                           </span>
                         </SelectItem>
                       ))}
@@ -331,6 +338,12 @@ function AddProjectToMachineDialog({ request }: { request: AddProjectToMachineRe
                     <span className="truncate">{target?.label ?? gt("No machine available")}</span>
                   </span>
                 )}
+                {targets.length === 1 && target ? (
+                  <EnvironmentHostSummary
+                    environmentId={target.environmentId}
+                    className="whitespace-normal text-muted-foreground text-xs"
+                  />
+                ) : null}
                 <span className="flex min-w-0 font-mono text-muted-foreground text-xs">
                   <MiddleTruncate value={destinationPath} />
                 </span>

@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem has no statfs.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import type { HostResourcesSnapshot } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -8,6 +10,8 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 export class HostResources extends Context.Service<
@@ -65,6 +69,53 @@ function darwinAvailableMemory(output: string): number | null {
   return Number.isSafeInteger(available) && Number(pageSize) > 0 ? available : null;
 }
 
+type OsUpdates = NonNullable<HostResourcesSnapshot["osUpdates"]>;
+
+class HostDiskReadError extends Schema.TaggedError<HostDiskReadError>()("HostDiskReadError", {
+  cause: Schema.Defect(),
+}) {}
+
+const decodeRecommendedUpdates = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Array(
+      Schema.Struct({
+        Identifier: Schema.optionalKey(Schema.String),
+        "Display Name": Schema.optionalKey(Schema.String),
+        "Display Version": Schema.optionalKey(Schema.String),
+      }),
+    ),
+  ),
+);
+
+/** `RecommendedUpdates` from com.apple.SoftwareUpdate.plist, as `plutil -extract ... json`. */
+export function parseDarwinRecommendedUpdates(json: string): OsUpdates | undefined {
+  const decoded = Option.getOrUndefined(decodeRecommendedUpdates(json));
+  if (!decoded) return undefined;
+  // Major OS upgrades are optional, as Ubuntu's count leaves out release upgrades.
+  const entries = decoded.filter(({ Identifier }) => !Identifier?.endsWith("_major"));
+  const names = entries.flatMap(({ "Display Name": name, "Display Version": version }) => {
+    if (!name) return [];
+    return [version && !name.endsWith(version) ? `${name} ${version}` : name];
+  });
+  return { available: entries.length, names: names.slice(0, 20) };
+}
+
+/** Ubuntu's MOTD fragment at /var/lib/update-notifier/updates-available, old and new wording. */
+export function parseUpdateNotifier(text: string): OsUpdates | undefined {
+  const available = /^(\d+) (?:updates?|packages?) can be (?:applied immediately|updated)/m.exec(
+    text,
+  )?.[1];
+  if (!available) return undefined;
+  const security =
+    /^(\d+) (?:of these )?updates? (?:is|are) (?:a )?(?:standard )?security updates?\./m.exec(
+      text,
+    )?.[1];
+  return {
+    available: Number(available),
+    ...(security ? { security: Number(security) } : {}),
+  };
+}
+
 function cgroupNumber(text: string, pattern: RegExp): number | null {
   const value = pattern.exec(text)?.[1];
   return value === undefined ? null : Number(value);
@@ -74,10 +125,68 @@ const make = Effect.fn("makeHostResources")(function* () {
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcess.Platform;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
+
+  // Reads only what the OS's own background check recorded; never starts a network check.
+  const readOsUpdates = Effect.fn("HostResources.readOsUpdates")(function* (): Effect.fn.Return<
+    Pick<HostResourcesSnapshot, "osUpdates" | "rebootRequired">
+  > {
+    if (platform === "darwin") {
+      const json = yield* spawner
+        .string(
+          ChildProcess.make(
+            "/usr/bin/plutil",
+            [
+              "-extract",
+              "RecommendedUpdates",
+              "json",
+              "-o",
+              "-",
+              "/Library/Preferences/com.apple.SoftwareUpdate.plist",
+            ],
+            { stdin: "ignore", stderr: "ignore" },
+          ),
+        )
+        .pipe(
+          Effect.timeout("2 seconds"),
+          Effect.orElseSucceed(() => ""),
+        );
+      const osUpdates = parseDarwinRecommendedUpdates(json);
+      return osUpdates ? { osUpdates } : {};
+    }
+    if (platform === "linux") {
+      const notifier = yield* fs
+        .readFileString("/var/lib/update-notifier/updates-available")
+        .pipe(Effect.orElseSucceed(() => ""));
+      const osUpdates = parseUpdateNotifier(notifier);
+      const rebootRequired = yield* fs
+        .exists("/var/run/reboot-required")
+        .pipe(Effect.orElseSucceed(() => false));
+      return { ...(osUpdates ? { osUpdates } : {}), rebootRequired };
+    }
+    return {};
+  });
+  const osUpdatesCache = yield* Cache.make({
+    capacity: 1,
+    lookup: (_key: "host") => readOsUpdates(),
+    timeToLive: "10 minutes",
+  });
+
+  const readDisk = Effect.tryPromise({
+    try: () => NodeFSP.statfs(homeDirectory, { bigint: true }),
+    catch: (cause) => new HostDiskReadError({ cause }),
+  }).pipe(
+    Effect.timeout("1 second"),
+    Effect.map(({ bavail, blocks, bsize }) => ({
+      availableBytes: Number(bavail * bsize),
+      totalBytes: Number(blocks * bsize),
+    })),
+    Effect.option,
+  );
 
   const readFile = (path: string) => fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""));
 
-  const sample = Effect.fn("HostResources.sample")(function* () {
+  const sampleCpuAndMemory = Effect.fn("HostResources.sampleCpuAndMemory")(function* () {
     // cgroup v2 only; limits of the server's own cgroup, which is `/` inside a container.
     const cgroupPath =
       platform === "linux"
@@ -173,11 +282,23 @@ const make = Effect.fn("makeHostResources")(function* () {
       );
     }
     return {
-      sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
       cpuUtilization,
       cpuCount,
       availableMemoryBytes: Math.min(totalMemoryBytes, Math.max(0, availableMemoryBytes)),
       totalMemoryBytes,
+    };
+  });
+
+  const sample = Effect.fn("HostResources.sample")(function* () {
+    const [cpuAndMemory, disk, osUpdates] = yield* Effect.all(
+      [sampleCpuAndMemory(), readDisk, Cache.get(osUpdatesCache, "host")],
+      { concurrency: "unbounded" },
+    );
+    return {
+      sampledAt: DateTime.toEpochMillis(yield* DateTime.now),
+      ...cpuAndMemory,
+      ...(Option.isSome(disk) ? { disk: disk.value } : {}),
+      ...osUpdates,
     };
   });
 
