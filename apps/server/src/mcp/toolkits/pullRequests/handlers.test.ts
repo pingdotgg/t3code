@@ -1023,10 +1023,11 @@ describe("source control tools", () => {
   it.effect("a stack merge pins every open layer up to the PR", () =>
     Effect.gen(function* () {
       const actions: Array<PullRequestActionInput> = [];
-      const layer = (number: number, state: "open" | "merged", headSha: string) => ({
+      let lowerHead: string | undefined = "bbb";
+      const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
         number,
         state,
-        headSha,
+        ...(headSha === undefined ? {} : { headSha }),
         headBranch: `layer-${number}`,
       });
       const harness = yield* makeHarness({
@@ -1042,7 +1043,7 @@ describe("source control tools", () => {
                   base: "main",
                   layers: [
                     layer(40, "merged", "aaa"),
-                    layer(41, "open", "bbb"),
+                    layer(41, "open", lowerHead),
                     layer(42, "open", "stale"),
                     layer(43, "open", "ddd"),
                   ],
@@ -1063,6 +1064,12 @@ describe("source control tools", () => {
           ],
         },
       ]);
+      lowerHead = undefined;
+      const unpinned = yield* harness
+        .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
+        .pipe(Effect.flip);
+      expect(unpinned._tag).toBe("PullRequestForgeError");
+      expect(actions).toHaveLength(1);
     }),
   );
 

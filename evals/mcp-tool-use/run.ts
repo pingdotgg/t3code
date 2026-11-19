@@ -1624,7 +1624,10 @@ export const t3Default = (
       const matching = [...sample.linked]
         .map((url) => linkedEntry(sample, url))
         .map((entry) => {
-          const position = layers.indexOf(entry.number) + 1;
+          const position =
+            entry.repository.toLowerCase() === sample.repo.toLowerCase()
+              ? layers.indexOf(entry.number) + 1
+              : 0;
           return {
             ...entry,
             source: "agent",
@@ -1636,7 +1639,7 @@ export const t3Default = (
       const start = Number(valueText(input.cursor)) || 0;
       const end = start + 50;
       const linkedLayers = layers.filter((number) =>
-        matching.some((entry) => entry.number === number),
+        matching.some((entry) => entry.stack !== null && entry.number === number),
       );
       return {
         pullRequests: matching.slice(start, end),

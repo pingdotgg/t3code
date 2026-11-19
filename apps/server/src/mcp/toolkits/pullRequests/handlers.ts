@@ -415,13 +415,16 @@ const make = Effect.gen(function* () {
       return yield* new PullRequestForgeError({
         detail: `PR #${ref.number} is not in a stack this host can merge. Merge it without stack.`,
       });
-    const expectedStackHeads = stack.layers
-      .slice(0, end + 1)
-      .filter((layer) => layer.state !== "merged")
-      .flatMap((layer) => {
-        const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
-        return headSha === undefined ? [] : [{ number: layer.number, headSha }];
-      });
+    const expectedStackHeads: Array<{ readonly number: number; readonly headSha: string }> = [];
+    for (const layer of stack.layers.slice(0, end + 1)) {
+      if (layer.state === "merged") continue;
+      const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
+      if (headSha === undefined)
+        return yield* new PullRequestForgeError({
+          detail: `The host did not report PR #${layer.number}'s head, so the stack cannot be pinned. Try again.`,
+        });
+      expectedStackHeads.push({ number: layer.number, headSha });
+    }
     return { stackNumber: stack.number, expectedStackHeads };
   });
 
