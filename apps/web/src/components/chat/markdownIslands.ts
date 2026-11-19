@@ -1,5 +1,5 @@
 import type { Element, ElementContent, Properties, Root, RootContent } from "hast";
-import { find, html as htmlSchema } from "property-information";
+import { find, html as htmlSchema, svg as svgSchema } from "property-information";
 import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { createElement, Fragment as ReactFragment, type ReactNode } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
@@ -69,16 +69,18 @@ interface AttributeInfo {
 
 const attributeInfo = new Map<string, AttributeInfo>();
 
-function infoFor(property: string): AttributeInfo {
-  let info = attributeInfo.get(property);
+// SVG names its attributes differently (`fontSize` is `font-size`), so its lookups key apart.
+function infoFor(property: string, inSvg: boolean): AttributeInfo {
+  const key = inSvg ? `svg:${property}` : property;
+  let info = attributeInfo.get(key);
   if (!info) {
-    const found = find(htmlSchema, property);
+    const found = find(inSvg ? svgSchema : htmlSchema, property);
     info = {
       name: found.attribute,
       boolean: found.boolean || found.overloadedBoolean,
       separator: found.commaSeparated ? ", " : " ",
     };
-    attributeInfo.set(property, info);
+    attributeInfo.set(key, info);
   }
   return info;
 }
@@ -93,15 +95,16 @@ const escapeAttribute = (value: string) =>
     : value;
 
 /** HTML for the elements and text this pipeline builds; the DOM matches hast-util-to-html's. */
-function serialize(node: ElementContent): string {
+function serialize(node: ElementContent, inSvg = false): string {
   if (node.type === "text") return escapeText(node.value);
   if (node.type !== "element") return "";
+  const svg = inSvg || node.tagName === "svg";
   let html = `<${node.tagName}`;
   const { properties } = node;
   for (const key in properties) {
     const value = properties[key];
     if (value === null || value === undefined || value === false || Number.isNaN(value)) continue;
-    const info = infoFor(key);
+    const info = infoFor(key, svg);
     if (info.boolean && value) {
       html += ` ${info.name}`;
       continue;
@@ -115,7 +118,7 @@ function serialize(node: ElementContent): string {
   }
   html += ">";
   if (VOID_ELEMENTS.has(node.tagName)) return html;
-  for (const child of node.children) html += serialize(child);
+  for (const child of node.children) html += serialize(child, svg);
   return `${html}</${node.tagName}>`;
 }
 

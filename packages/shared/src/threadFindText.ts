@@ -1,13 +1,15 @@
+import { shouldPreserveAssistantLineBreaks } from "./assistantInsights.ts";
+import { THREAD_FIND_BLOCK_TAGS } from "./threadFindBlockTags.ts";
 import {
   matchInlineSkills,
   formatProviderSkillDisplayName,
   type InlineSkill,
 } from "./inlineSkills.ts";
+import { renderCodexInlineDirectivesAsMarkdown } from "./codexMarkdownDirectives.ts";
 import {
   artifactTemplateFromHastProperties,
-  renderCodexInlineDirectivesAsMarkdown,
-} from "./codexMarkdownDirectives.ts";
-import { codexArtifactTemplatePresentationLabel } from "./codexArtifactTemplates.ts";
+  codexArtifactTemplatePresentationLabel,
+} from "./codexArtifactTemplates.ts";
 import {
   buildFileLinkParentSuffixByPath,
   splitFilePathPosition,
@@ -32,7 +34,6 @@ import { unified } from "unified";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import {
-  shouldPreserveAssistantLineBreaks,
   remarkAssistantInsights,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
@@ -42,44 +43,6 @@ import {
 } from "./markdownPipeline.ts";
 
 // Inline wrappers (including Shiki token spans) must not split a search phrase.
-export const THREAD_FIND_BLOCK_TAGS = new Set([
-  "address",
-  "article",
-  "aside",
-  "blockquote",
-  "br",
-  "dd",
-  "details",
-  "div",
-  "dl",
-  "dt",
-  "figcaption",
-  "figure",
-  "footer",
-  "h1",
-  "h2",
-  "h3",
-  "h4",
-  "h5",
-  "h6",
-  "header",
-  "hr",
-  "li",
-  "main",
-  "nav",
-  "ol",
-  "p",
-  "pre",
-  "section",
-  "summary",
-  "table",
-  "tbody",
-  "td",
-  "th",
-  "thead",
-  "tr",
-  "ul",
-]);
 
 function assistantTextProcessor(lineBreaks = false, renderInsights = false) {
   return unified()

@@ -11,7 +11,7 @@ import {
   extractMarkdownLinkHrefs,
   inlineCodeFilePathCandidate,
 } from "@t3tools/shared/markdownLinks";
-import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskList";
+import { taskListMarkerOffset } from "@t3tools/shared/markdownTaskEdits";
 import { isHostPath, resolveWorkspaceFilePath } from "@t3tools/shared/path";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import {
@@ -19,14 +19,6 @@ import {
   AuthOrchestrationOperateScope,
   SOURCE_CONTROL_MEDIA_ASSET,
 } from "@t3tools/contracts";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_USER_MESSAGE_REMARK_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  decodeMarkdownLinkEscapes,
-  remarkAssistantInsights,
-} from "@t3tools/shared/markdownPipeline";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -91,27 +83,17 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
-import type {
-  Components,
-  ExtraProps as ReactMarkdownExtraProps,
-  Options as ReactMarkdownOptions,
-} from "react-markdown";
-import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
-import type { Pluggable, PluggableList } from "unified";
-import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import { AssistantCitationEmbed } from "./chat/AssistantCitationChip";
 import { MarkdownThreadLink } from "./chat/MarkdownThreadLink";
-import { mathKind } from "@t3tools/shared/markdownMath";
-import remarkMath from "remark-math";
+import { artifactTemplateFromHastProperties } from "@t3tools/shared/codexArtifactTemplates";
 import {
-  artifactTemplateFromHastProperties,
+  decodeMarkdownLinkEscapes,
   renderCodexInlineDirectivesAsMarkdown,
-} from "@t3tools/shared/codexMarkdownDirectives";
+} from "../markdown/markdownText";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
-import { MarkdownMath } from "./chat/MarkdownMath";
 import {
   resolveMarkdownMediaPreview,
   type ExpandedImagePreview,
@@ -128,8 +110,7 @@ import {
   resolveExternalWebLinkHost,
   showExternalLinkContextMenu,
 } from "./chat/externalLinkContextMenu";
-import { SharedTooltipProvider, useSharedTooltip, withSharedTooltip } from "./ui/shared-tooltip";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SharedTooltipProvider, SharedTooltipTrigger } from "./ui/shared-tooltip";
 import { Button } from "./ui/button";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { recordVisitForThread } from "../browserHistoryStore";
@@ -209,8 +190,7 @@ import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 import { IssueLinkPreview, IssueLinkPreviewFallback } from "./issue/IssueLinkPreview";
 import { MarkdownCodeBlock, SuspenseShikiCodeBlock } from "./chat/MarkdownCodeBlock";
 import { createMarkdownRenderer } from "./chat/markdownRenderer";
-import { FAST_MARKDOWN } from "../markdown/fastMarkdownSetting";
-import { wordsHast, type WordsHastOptions } from "../markdown/wordsHast";
+import type { MarkdownExtensions, WordsHastOptions } from "../markdown/wordsHast";
 import {
   type MarkdownIslandOptions,
   renderHastWithIslands,
@@ -235,9 +215,7 @@ import {
 import { MarkdownExternalLinkContent } from "./chat/MarkdownExternalLink";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
 import { canUseMarkdownFileShellActions } from "./chat/MarkdownFileLink.logic";
-import { rehypeChipPunctuation } from "./chat/markdownChipPunctuation";
-import { handleMarkdownFragmentClick, rehypeHeadingIds } from "./chat/markdownFragments";
-import { rehypeTextDirection } from "./chat/markdownTextDirection";
+import { handleMarkdownFragmentClick } from "./chat/markdownFragments";
 import { hastHasText, hastPlainTextDeep, plainHastText } from "./chat/markdownHast.logic";
 import {
   extractCodeBlock,
@@ -273,8 +251,8 @@ interface ChatMarkdownProps {
   imageBaseDir?: string | undefined;
   workspaceMutationId?: string | null | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  /** Keep one list per configuration (a module constant): it keys the shared parse cache. */
-  extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+  /** Keep one object per configuration (a module constant): it keys the shared parse cache. */
+  extensions?: MarkdownExtensions | undefined;
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
   /** Loads media a source control host keeps behind a credential through the server, which holds
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
@@ -294,7 +272,7 @@ export interface ChatMarkdownContextReference {
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
-const EMPTY_REMARK_PLUGINS: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = [];
+const NO_EXTENSIONS: MarkdownExtensions = {};
 
 const ARTIFACT_TEMPLATE_ICON_BY_KIND = {
   document: FileTextIcon,
@@ -428,19 +406,29 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
     : rewrittenHref;
 }
 
-// Heading ids are added after sanitizing, which would prefix them a second time.
-const CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS = [
-  ...CHAT_MARKDOWN_REHYPE_PLUGINS,
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+/** A component per element, with the hast node it renders, as react-markdown typed them. */
+type MarkdownComponents = {
+  [Tag in keyof React.JSX.IntrinsicElements]?: React.ComponentType<
+    React.JSX.IntrinsicElements[Tag] & { node?: HastElement | undefined }
+  >;
+};
 
-const CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS = [
-  rehypeHeadingIds,
-  rehypeTextDirection,
-  rehypeChipPunctuation,
-] satisfies NonNullable<ReactMarkdownOptions["rehypePlugins"]>;
+// react-markdown's defaultUrlTransform: relative URLs, and absolute ones with a safe protocol.
+const SAFE_PROTOCOL = /^(?:https?|ircs?|mailto|xmpp)$/i;
+function safeUrl(value: string): string {
+  const colon = value.indexOf(":");
+  const before = (character: string) => {
+    const at = value.indexOf(character);
+    return at !== -1 && colon > at;
+  };
+  return colon === -1 ||
+    before("/") ||
+    before("?") ||
+    before("#") ||
+    SAFE_PROTOCOL.test(value.slice(0, colon))
+    ? value
+    : "";
+}
 
 function markdownUrlTransform(href: string) {
   if (parseAssistantCitationHref(href)) return href;
@@ -448,7 +436,7 @@ function markdownUrlTransform(href: string) {
   if (parseThreadLinkHref(href)) return href;
   if (isWindowsDrivePathHref(href)) return href;
   if (isLocalEditorFileHref(href)) return href;
-  return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
+  return rewriteMarkdownFileUriHref(href) ?? safeUrl(href);
 }
 
 const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
@@ -1126,7 +1114,7 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
   return function MarkdownHeading({
     node: _node,
     ...props
-  }: ComponentProps<typeof Tag> & ReactMarkdownExtraProps) {
+  }: ComponentProps<typeof Tag> & { node?: HastElement | undefined }) {
     const { headingLevelOffset } = use(ChatMarkdownRendererContext);
     return (
       <Tag
@@ -1135,17 +1123,6 @@ function markdownHeadingRenderer(level: 1 | 2 | 3 | 4 | 5 | 6) {
       />
     );
   };
-}
-
-function MarkdownLinkTooltip({ link, href }: { link: React.ReactElement; href: string }) {
-  const sharedTooltip = useSharedTooltip({ render: () => href });
-  if (sharedTooltip) return withSharedTooltip(link, sharedTooltip);
-  return (
-    <Tooltip>
-      <TooltipTrigger render={link} />
-      <TooltipPopup side="top">{href}</TooltipPopup>
-    </Tooltip>
-  );
 }
 
 const CHAT_MARKDOWN_COMPONENTS = {
@@ -1548,7 +1525,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       if (issuePreviewTarget !== null) {
         return <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />;
       }
-      return <MarkdownLinkTooltip link={link} href={href} />;
+      return <SharedTooltipTrigger render={link} label={href} />;
     }
 
     const label = nodeToPlainText(children);
@@ -1570,18 +1547,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   code: function MarkdownCode({ node, children, className, ...props }) {
-    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip, mathEnabled, inline } =
-      use(ChatMarkdownRendererContext);
-    const math = mathEnabled ? mathKind(className) : null;
-    if (math) {
-      return (
-        <MarkdownMath
-          tex={nodeToPlainText(children)}
-          display={math === "display"}
-          focusable={!inline}
-        />
-      );
-    }
+    const { cwd, imageBaseDir, inlineCodeFileLinkMetaByText, fileLinkChip } = use(
+      ChatMarkdownRendererContext,
+    );
     if (node?.properties?.dataInlineCode != null) {
       const codeText = nodeToPlainText(children);
       const fileLinkMeta =
@@ -1813,15 +1781,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   pre: function MarkdownPre({ node, children, ...props }) {
     const gt = useGT();
-    const {
-      resolvedTheme,
-      diffThemeName,
-      expandMedia,
-      isStreaming,
-      onRunShellCommand,
-      inline,
-      mathEnabled,
-    } = use(ChatMarkdownRendererContext);
+    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand } = use(
+      ChatMarkdownRendererContext,
+    );
     const text = use(ChatMarkdownTextContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
@@ -1829,15 +1791,6 @@ const CHAT_MARKDOWN_COMPONENTS = {
     }
 
     const language = extractFenceLanguage(codeBlock.className);
-    if (
-      mathEnabled &&
-      language === "math" &&
-      (!isStreaming ||
-        mathKind(codeBlock.className) === "display" ||
-        isClosedCodeFence(node, text, codeBlock.code))
-    ) {
-      return <MarkdownMath tex={codeBlock.code} display focusable={!inline} />;
-    }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
       <RenderErrorBoundary
@@ -1895,71 +1848,37 @@ const CHAT_MARKDOWN_COMPONENTS = {
       </MarkdownCodeBlock>
     );
   },
-} satisfies Components;
+} satisfies MarkdownComponents;
 
-const REMARK_MATH: Pluggable = [remarkMath, { singleDollarTextMath: true }];
-// Shared lists, so every message with the same options shares a processor and its cache.
-const CHAT_MARKDOWN_REMARK_PLUGIN_SETS = {
-  plain: CHAT_MARKDOWN_REMARK_PLUGINS,
-  breaks: CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
-  math: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS],
-  mathBreaks: [REMARK_MATH, ...CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS],
-} satisfies Record<string, PluggableList>;
+const markdownOptions = new WeakMap<MarkdownExtensions, Map<string, WordsHastOptions>>();
 
-const combinedPlugins = new WeakMap<PluggableList, WeakMap<PluggableList, PluggableList>>();
-
-// One combined list per pair, so a stable extra list shares a renderer and its parse cache.
-const INSIGHT_REMARK_PLUGINS: PluggableList = [remarkAssistantInsights];
-
-function withExtraPlugins(shared: PluggableList, extra: PluggableList): PluggableList {
-  if (extra.length === 0) return shared;
-  let byShared = combinedPlugins.get(extra);
-  if (!byShared) combinedPlugins.set(extra, (byShared = new WeakMap()));
-  let combined = byShared.get(shared);
-  if (!combined) byShared.set(shared, (combined = [...shared, ...extra]));
-  return combined;
-}
-
-const WORDS_OPTIONS = new Map<PluggableList, WordsHastOptions>();
-for (const [key, shared] of Object.entries(CHAT_MARKDOWN_REMARK_PLUGIN_SETS)) {
-  const math = key.startsWith("math");
-  const breaks = key === "breaks" || key === "mathBreaks";
-  WORDS_OPTIONS.set(shared, { math, breaks, singleTilde: true, listNumbers: false });
-  WORDS_OPTIONS.set(withExtraPlugins(shared, CHAT_USER_MESSAGE_REMARK_PLUGINS), {
-    math,
-    breaks,
-    singleTilde: false,
-    listNumbers: true,
-  });
-}
-
-/** Words renders the shared plugin sets; other plugins still need remark. */
-function sourceHastFor(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
-  const options = WORDS_OPTIONS.get(remarkPlugins);
-  if (!FAST_MARKDOWN || !options || rehypePlugins !== CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS) {
-    return undefined;
-  }
-  return (text: string) => wordsHast(text, options);
+/** One options object per configuration, so equal messages share a renderer and its cache. */
+function wordsOptions(
+  extensions: MarkdownExtensions,
+  flags: Omit<WordsHastOptions, "extensions">,
+): WordsHastOptions {
+  let byFlags = markdownOptions.get(extensions);
+  if (!byFlags) markdownOptions.set(extensions, (byFlags = new Map()));
+  const key = `${+flags.math}${+flags.breaks}${+flags.escapeHtml}${+flags.insights}`;
+  let options = byFlags.get(key);
+  if (!options) byFlags.set(key, (options = { ...flags, extensions }));
+  return options;
 }
 
 const markdownRenderers = new WeakMap<
-  PluggableList,
-  WeakMap<PluggableList, ReturnType<typeof createMarkdownRenderer>>
+  WordsHastOptions,
+  ReturnType<typeof createMarkdownRenderer>
 >();
 
-function markdownRenderer(remarkPlugins: PluggableList, rehypePlugins: PluggableList) {
-  let byRehype = markdownRenderers.get(remarkPlugins);
-  if (!byRehype) markdownRenderers.set(remarkPlugins, (byRehype = new WeakMap()));
-  let renderer = byRehype.get(rehypePlugins);
+function markdownRenderer(markdown: WordsHastOptions) {
+  let renderer = markdownRenderers.get(markdown);
   if (!renderer) {
     renderer = createMarkdownRenderer({
-      remarkPlugins,
-      rehypePlugins,
-      sourceHast: sourceHastFor(remarkPlugins, rehypePlugins),
+      markdown,
       components: CHAT_MARKDOWN_COMPONENTS,
       urlTransform: markdownUrlTransform,
     });
-    byRehype.set(rehypePlugins, renderer);
+    markdownRenderers.set(markdown, renderer);
   }
   return renderer;
 }
@@ -2001,7 +1920,6 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
     headingLevelOffset,
     imageBaseDir,
     inlineCodeFileLinkMetaByText,
-    mathEnabled,
     onTaskListChange,
     skills,
   } = state;
@@ -2023,7 +1941,6 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
         case "input":
           return node.properties.type === "checkbox" && onTaskListChange !== undefined;
         case "code": {
-          if (mathEnabled && mathKind(hastClassName(node))) return true;
           if (node.properties.dataInlineCode == null) return false;
           const codeText = hastPlainTextDeep(node);
           return (
@@ -2076,34 +1993,20 @@ function markdownIslandOptions(state: ChatMarkdownComponentState): MarkdownIslan
 
 const MarkdownSource = memo(function MarkdownSource({
   text,
-  remarkPlugins,
-  rehypePlugins,
-  shared,
+  markdown,
   cache,
 }: {
   text: string;
-  remarkPlugins: PluggableList;
-  rehypePlugins: PluggableList;
-  /** The plugins are one of the shared sets. */
-  shared: boolean;
+  markdown: WordsHastOptions;
   /** The text will not change again; streamed text would only fill the cache with prefixes. */
   cache: boolean;
 }) {
-  // Per-instance plugins, such as the incremental parser, set up their state on every render.
-  const render = shared
-    ? markdownRenderer(remarkPlugins, rehypePlugins)
-    : createMarkdownRenderer({
-        remarkPlugins,
-        rehypePlugins,
-        sourceHast: sourceHastFor(remarkPlugins, rehypePlugins),
-        components: CHAT_MARKDOWN_COMPONENTS,
-        urlTransform: markdownUrlTransform,
-      });
+  const render = markdownRenderer(markdown);
   const entry = render.parse(text);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Caching during render would make React Compiler rebuild the element when `cache` flips.
   useEffect(() => {
-    if (shared && cache) render.remember(text, entry);
-  }, [render, text, entry, shared, cache]);
+    if (cache) render.remember(text, entry);
+  }, [render, text, entry, cache]);
   const islandState = use(ChatMarkdownRendererContext);
   return (
     <ChatMarkdownTextContext value={text}>
@@ -2120,51 +2023,28 @@ function ChatMarkdown({
   inline = false,
   lineBreaks = false,
   parseRawHtml = true,
-  extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
+  extensions = NO_EXTENSIONS,
   renderInsights = false,
   ...props
 }: ChatMarkdownProps) {
-  const hasInsights = renderInsights && text.includes("★ Insight");
-  // Streaming re-renders only the last block; offsets for task edits need the whole text.
+  // Streaming re-renders only the last block; offsets for task edits, and extensions that read
+  // the whole message, need the whole text.
   const streamingBlocks =
-    props.isStreaming === true &&
-    !inline &&
-    extraRemarkPlugins.length === 0 &&
-    !props.onTaskListChange
-      ? splitMarkdownBlocks(text)
+    props.isStreaming === true && !inline && extensions === NO_EXTENSIONS && !props.onTaskListChange
+      ? (splitMarkdownBlocks(text) ?? [text])
       : null;
   const { componentState, handleCopy, markdownRef, localMediaPreview, closeLocalMediaPreview } =
     useChatMarkdownState({ text, inline, ...props }, streamingBlocks);
-  const incrementalParsing =
-    props.isStreaming === true &&
-    !hasInsights &&
-    streamingBlocks === null &&
-    extraRemarkPlugins.length === 0 &&
-    /(?:^|\n) {0,3}(?:`{3}|~{3})/.test(text);
   const Root = inline ? "span" : "div";
   const bindMarkdownRef = (node: HTMLElement | null) => {
     markdownRef.current = node;
   };
-  const sharedRemarkPlugins =
-    CHAT_MARKDOWN_REMARK_PLUGIN_SETS[
-      componentState.mathEnabled
-        ? lineBreaks
-          ? "mathBreaks"
-          : "math"
-        : lineBreaks
-          ? "breaks"
-          : "plain"
-    ];
-  // The incremental parser keeps per-instance state, so its output is not shared.
-  const uncachedPlugins = incrementalParsing;
-  const remarkPlugins = incrementalParsing
-    ? [...sharedRemarkPlugins, ...extraRemarkPlugins, createIncrementalMarkdownPlugin()]
-    : withExtraPlugins(
-        hasInsights
-          ? withExtraPlugins(INSIGHT_REMARK_PLUGINS, sharedRemarkPlugins)
-          : sharedRemarkPlugins,
-        extraRemarkPlugins,
-      );
+  const markdown = wordsOptions(extensions, {
+    math: componentState.mathEnabled,
+    breaks: lineBreaks,
+    escapeHtml: !parseRawHtml,
+    insights: renderInsights && text.includes("★ Insight"),
+  });
   const blocks = streamingBlocks ?? [text];
 
   return (
@@ -2186,13 +2066,7 @@ function ChatMarkdown({
               // oxlint-disable-next-line react/no-array-index-key -- streamed blocks only change at the end
               key={index}
               text={source}
-              remarkPlugins={remarkPlugins}
-              rehypePlugins={
-                parseRawHtml
-                  ? CHAT_MARKDOWN_RENDER_REHYPE_PLUGINS
-                  : CHAT_MARKDOWN_LITERAL_HTML_REHYPE_PLUGINS
-              }
-              shared={!uncachedPlugins}
+              markdown={markdown}
               // Every block before the last is finished, so its parse can be reused.
               cache={!props.isStreaming || index < blocks.length - 1}
             />

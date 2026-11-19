@@ -1,6 +1,5 @@
 import { msg } from "gt-react";
-import type { PluggableList } from "unified";
-import type { Root, RootContent } from "mdast";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
@@ -209,67 +208,14 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
 export const THOUGHT_PREVIEW_SOURCE_MAX_LENGTH = 8_192;
 export const THOUGHT_PREVIEW_MAX_LENGTH = 2_048;
 
-/** Compact reasoning keeps formulas while flattening other Markdown into label text. */
-export function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const children: RootContent[] = [];
-    let remaining = THOUGHT_PREVIEW_MAX_LENGTH;
-    let fragments: string[] = [];
-    const flush = () => {
-      if (fragments.length === 0) return;
-      children.push({ type: "text", value: fragments.join("").replace(/\s+/g, " ") });
-      fragments = [];
-    };
-    const take = (value: string) => {
-      const text = value.slice(0, remaining);
-      remaining = text.length < value.length ? 0 : remaining - text.length;
-      // A cut here or at the source limit must not leave half a surrogate pair.
-      return text.replace(/[\uD800-\uDBFF]$/, "");
-    };
-    const append = (value: string) => {
-      fragments.push(take(value));
-    };
-    const visit = (node: Root | RootContent) => {
-      if (remaining === 0 || node.type === "html" || node.type === "definition") return;
-      if (node.type === "math" || node.type === "inlineMath") {
-        flush();
-        const value = take(node.value);
-        children.push({
-          type: "inlineMath",
-          value,
-          position: node.position,
-          data: {
-            hName: "code",
-            hProperties: { className: ["language-math", "math-inline"] },
-            hChildren: [{ type: "text", value }],
-          },
-        });
-      } else if ("alt" in node) append(node.alt ?? "");
-      else if ("value" in node) append(node.value);
-      else if ("children" in node) {
-        for (const [index, child] of node.children.entries()) {
-          if (remaining === 0) break;
-          if (
-            index &&
-            ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(node.type)
-          )
-            append(" ");
-          visit(child);
-        }
-      } else if (node.type === "break") append(" ");
-    };
-    visit(tree);
-    flush();
-    const first = children[0];
-    const last = children.at(-1);
-    if (first?.type === "text") first.value = first.value.trimStart();
-    if (last?.type === "text") last.value = last.value.trimEnd();
-    tree.children = children.some((child) => child.type !== "text" || child.value)
-      ? children
-      : [{ type: "text", value: fallback }];
-  };
-}
+const thoughtPreviews = new Map<string, MarkdownExtensions>();
 
-export function thoughtPreviewPlugins(fallback: string): PluggableList {
-  return [[remarkThoughtPreview, fallback]];
+/** Compact reasoning keeps formulas while flattening other Markdown into label text. */
+export function thoughtPreviewMarkdown(fallback: string): MarkdownExtensions {
+  let extensions = thoughtPreviews.get(fallback);
+  if (!extensions) {
+    extensions = { preview: { fallback, maxLength: THOUGHT_PREVIEW_MAX_LENGTH } };
+    thoughtPreviews.set(fallback, extensions);
+  }
+  return extensions;
 }

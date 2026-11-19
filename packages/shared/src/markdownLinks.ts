@@ -557,3 +557,6 @@ export function absoluteFilePathMatches(text: string): Array<{ index: number; pa
   }
   return paths;
 }
+
+// A drive path that has not reached whitespace yet: `C:`, `C:\Users\me`, `C:/work`.
+export const UNFINISHED_DRIVE_PATH = /(?:^|\W)[A-Za-z]:(?:[\\/]\S*)?$/;

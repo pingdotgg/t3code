@@ -3,6 +3,7 @@ import {
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
   CHAT_USER_MESSAGE_REMARK_PLUGINS,
+  remarkAssistantInsights,
 } from "@t3tools/shared/markdownPipeline";
 import spec from "commonmark-spec";
 import type { Element, Root } from "hast";
@@ -14,14 +15,12 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { rehypeChipPunctuation } from "../components/chat/markdownChipPunctuation";
 import { rehypeHeadingIds } from "../components/chat/markdownFragments";
-import { remarkParseWithoutUnusedSyntax } from "../components/chat/markdownSyntaxGates";
 import { rehypeTextDirection } from "../components/chat/markdownTextDirection";
-import { wordsHast } from "./wordsHast";
+import { wordsHast, type WordsHastOptions } from "./wordsHast";
 
 function remarkHtml(markdown: string, plugins: PluggableList): string {
   const processor = unified()
     .use(remarkParse)
-    .use(remarkParseWithoutUnusedSyntax)
     .use(plugins)
     .use(remarkRehype, { allowDangerousHtml: true })
     // ChatMarkdown's render list.
@@ -34,12 +33,16 @@ function remarkHtml(markdown: string, plugins: PluggableList): string {
   return toHtml(processor.runSync(processor.parse(markdown), markdown) as Root);
 }
 
-const ASSISTANT = { math: false, breaks: false, singleTilde: true, listNumbers: false };
-
-const wordsHtml = (markdown: string, options: Partial<typeof ASSISTANT> = {}) => {
-  const tree = wordsHast(markdown, { ...ASSISTANT, ...options });
-  return tree && toHtml(tree);
+const ASSISTANT: WordsHastOptions = {
+  math: false,
+  breaks: false,
+  escapeHtml: false,
+  insights: false,
+  extensions: {},
 };
+
+const wordsHtml = (markdown: string, options: Partial<WordsHastOptions> = {}) =>
+  toHtml(wordsHast(markdown, { ...ASSISTANT, ...options }));
 
 // Syntax the chat's plugins add, in the shapes agents and review bots write it.
 const CHAT_MARKDOWN_CASES = [
@@ -111,14 +114,14 @@ describe("wordsHast", () => {
 
   it("keeps the composer's tildes and list numbers in user messages", () => {
     const markdown = "Install as ~/a/x, then (~/b.md). ~one~ ~~two~~\n\n3. three\n5. five";
-    expect(wordsHtml(markdown, { singleTilde: false, listNumbers: true })).toBe(
+    expect(wordsHtml(markdown, { extensions: { userMessage: true } })).toBe(
       remarkHtml(markdown, [...CHAT_MARKDOWN_REMARK_PLUGINS, ...CHAT_USER_MESSAGE_REMARK_PLUGINS]),
     );
   });
 
   it("gives elements the source positions components read", () => {
     const markdown = "é [a](u)\n\n- [ ] task\n\n```sh\nls\n```";
-    const tree = wordsHast(markdown, ASSISTANT)!;
+    const tree = wordsHast(markdown, ASSISTANT);
     const slices: string[] = [];
     const visit = (node: Root | Element) => {
       for (const child of node.children) {
@@ -133,16 +136,102 @@ describe("wordsHast", () => {
     expect(slices).toEqual(["[a](u)", "- [ ] task", "```sh\nls\n```"]);
   });
 
+  it("renders insight blocks as remarkAssistantInsights does", () => {
+    const markdown =
+      "Intro\n\n`★ Insight ─────────────────────────────────────`\n- one\n- two\n`─────────────────────────────────────────────────`\n\nAfter\n\n```\n★ Insight ─────\n```";
+    expect(wordsHtml(markdown, { insights: true })).toBe(
+      remarkHtml(markdown, [remarkAssistantInsights, ...CHAT_MARKDOWN_REMARK_PLUGINS]),
+    );
+  });
+
+  it("shows raw HTML as its text when asked", () => {
+    expect(wordsHtml("a <b>x</b> and <https://a.dev>", { escapeHtml: true })).toBe(
+      '<p dir="ltr">a &#x3C;b>x&#x3C;/b> and <a href="https://a.dev">https://a.dev</a></p>',
+    );
+  });
+
+  it("flattens a preview to one line of text and math, within its length", () => {
+    const preview = { fallback: "Thinking", maxLength: 24 };
+    const options = { math: true, extensions: { preview } };
+    expect(wordsHtml("# Plan\n\n- **one** <b>x</b>\n- `two` $a$", options)).toMatch(
+      /^Plan one x two <span[^>]* data-markdown-math="inline"[^>]*><svg [^>]*aria-label="a"/,
+    );
+    expect(wordsHtml("x".repeat(30), options)).toBe("x".repeat(24));
+    expect(wordsHtml("<!-- only -->", options)).toBe("Thinking");
+  });
+
+  it("makes a saved file's Markdown inert", () => {
+    expect(
+      wordsHtml(
+        "[a](https://x.dev) ![b](https://x.dev/i.png) `c` <img src=y>\n\n```mermaid\nA\n```",
+        {
+          extensions: { inert: true },
+        },
+      ),
+    ).toBe('<p dir="ltr">a b c </p>\n<pre><code class="language-text">A\n</code></pre>');
+  });
+
+  it("links a change request's references and resolves its root-relative media", () => {
+    const autolinks = (text: string) =>
+      [...text.matchAll(/#(\d+)/g)].map((match) => ({
+        index: match.index,
+        text: match[0],
+        label: match[0],
+        url: `https://forge.dev/o/r/pull/${match[1]}`,
+        kind: "reference" as const,
+      }));
+    const html = wordsHtml("See #12 and `#13`.\n\n![shot](/api/attachments/1)", {
+      extensions: { changeRequest: { repositoryUrl: "https://forge.dev/o/r", autolinks } },
+    });
+    expect(html).toContain(
+      '<a href="https://forge.dev/o/r/pull/12" data-pull-request-autolink="reference">#12</a>',
+    );
+    expect(html).toContain('<code data-inline-code="" dir="ltr">#13</code>');
+    expect(html).toContain('src="https://forge.dev/api/attachments/1"');
+  });
+
   it("renders math as SVG, and keeps money as text", () => {
     const html = toHtml(
       wordsHast("Costs $34.58 and $15.00, and $x^2$ is math.\n\n$$\na\n$$", {
         ...ASSISTANT,
         math: true,
-      })!,
+      }),
     );
     expect(html).toContain("Costs $34.58 and $15.00, and ");
     expect(html.match(/<svg /g)).toHaveLength(2);
     expect(html).toContain('aria-label="x^2"');
+  });
+
+  it.each(["Status ![badge](https://x.dev/b.png)\ncontinues", "Hard  \nbreak and a\\\nbackslash"])(
+    "breaks lines next to images and hard breaks as remark does: %j",
+    (markdown) => {
+      expect(wordsHtml(markdown)).toBe(remarkHtml(markdown, CHAT_MARKDOWN_REMARK_PLUGINS));
+      expect(wordsHtml(markdown, { breaks: true })).toBe(
+        remarkHtml(markdown, CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS),
+      );
+    },
+  );
+
+  it("reads raw HTML attributes as an HTML parser does", () => {
+    expect(wordsHtml('<a href="https://x.dev/?q=1&copy=2&amp;b">x</a>')).toContain(
+      'href="https://x.dev/?q=1&#x26;copy=2&#x26;b"',
+    );
+  });
+
+  it("treats only Words' own directives as directives", () => {
+    const forged =
+      '<span data-directive="codex-followup" data-attributes="null">Ask</span> and <div data-directive="artifact-template" data-attributes="[1]"></div>';
+    expect(wordsHtml(forged)).toBe(remarkHtml(forged, CHAT_MARKDOWN_REMARK_PLUGINS));
+  });
+
+  it("keeps authored SVG and ids out of the math it restores", () => {
+    const html = wordsHtml(
+      '<svg width="99999" viewBox="0 0 1 1"><rect x="0" y="0" width="1" height="1"/></svg> <span id="t3-math-0">kept</span> $x$',
+      { math: true },
+    );
+    expect(html).not.toContain("99999");
+    expect(html).toContain("kept");
+    expect(html.match(/<svg /g)).toHaveLength(1);
   });
 
   it("keeps only math's own SVG elements and attributes", () => {
@@ -150,7 +239,7 @@ describe("wordsHast", () => {
       wordsHast(
         '<svg onload="x()" style="position:fixed;display:inline"><a href="javascript:x()"><text x="1">t</text></a><script>x()</script></svg> $y$',
         { ...ASSISTANT, math: true },
-      )!,
+      ),
     );
     expect(html).not.toMatch(/onload|javascript|position|<a |<script/);
     expect(html).toContain('aria-label="y"');

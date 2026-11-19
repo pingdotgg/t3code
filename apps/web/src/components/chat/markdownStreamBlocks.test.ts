@@ -1,32 +1,19 @@
-import {
-  CHAT_MARKDOWN_REHYPE_PLUGINS,
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  remarkAssistantInsights,
-} from "@t3tools/shared/markdownPipeline";
-import { renderToStaticMarkup } from "react-dom/server";
-import ReactMarkdown from "react-markdown";
-import remarkMath from "remark-math";
-import type { PluggableList } from "unified";
+import { toHtml } from "hast-util-to-html";
 import { describe, expect, it } from "vite-plus/test";
 
+import { wordsHast } from "~/markdown/wordsHast";
 import { splitMarkdownBlocks } from "./markdownStreamBlocks";
-import { rehypeHeadingIds } from "./markdownFragments";
-
-const MATH_PLUGINS: PluggableList = [[remarkMath, { singleDollarTextMath: true }]];
 
 // Whitespace between top-level blocks collapses in the rendered message.
 const renderMarkdown = (source: string, math = false) =>
-  renderToStaticMarkup(
-    <ReactMarkdown
-      remarkPlugins={[
-        remarkAssistantInsights,
-        ...(math ? MATH_PLUGINS : []),
-        ...CHAT_MARKDOWN_REMARK_PLUGINS,
-      ]}
-      rehypePlugins={[...CHAT_MARKDOWN_REHYPE_PLUGINS, rehypeHeadingIds]}
-    >
-      {source}
-    </ReactMarkdown>,
+  toHtml(
+    wordsHast(source, {
+      math,
+      breaks: false,
+      escapeHtml: false,
+      insights: source.includes("★ Insight"),
+      extensions: {},
+    }),
   )
     .replace(/>\s+</g, "><")
     .trim();

@@ -1,23 +1,15 @@
 import type { Element, Nodes, Root } from "hast";
-import type { Root as MdastRoot } from "mdast";
 import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { urlAttributes } from "html-url-attributes";
 import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { type PluggableList, unified } from "unified";
-import { VFile } from "vfile";
 
-import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
+import { wordsHast, type WordsHastOptions } from "../../markdown/wordsHast";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
-  readonly remarkPlugins: PluggableList;
-  readonly rehypePlugins: PluggableList;
-  /** Builds what the plugins would, straight from the source; null to run them. */
-  readonly sourceHast?: ((text: string) => Root | null) | undefined;
+  readonly markdown: WordsHastOptions;
   readonly components: Partial<Components>;
   readonly urlTransform: MarkdownUrlTransform;
 }
@@ -50,41 +42,18 @@ function remember(key: string, entry: Rendered) {
   }
 }
 
-/** Renders markdown as react-markdown does, with one processor per plugin set. */
+/** Renders markdown with Words, keeping one parse cache per option set. */
 export function createMarkdownRenderer({
-  remarkPlugins,
-  rehypePlugins,
+  markdown,
   components,
   urlTransform,
-  sourceHast,
 }: MarkdownRendererOptions) {
-  const remark = unified()
-    .use(remarkParse)
-    .use(remarkParseWithoutUnusedSyntax)
-    .use(remarkPlugins)
-    .freeze();
-  const rehype = unified()
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(rehypePlugins)
-    .freeze();
-  const toHast = (file: VFile): Root => {
-    const direct = sourceHast?.(String(file.value));
-    if (direct) return direct;
-    const mdast = remark.runSync(remark.parse(file), file) as MdastRoot;
-    return rehype.runSync(mdast as never, file) as Root;
-  };
   const keyPrefix = `${nextRendererId++}\u0000`;
 
-  // Literal raw HTML that survived the rehype plugins, and URL attributes, as react-markdown treats them.
+  // URL attributes, as react-markdown transformed them.
   const prepare = (node: Nodes) => {
     if (!("children" in node)) return;
-    const { children } = node;
-    for (let index = 0; index < children.length; index++) {
-      const child = children[index]!;
-      if (child.type === "raw") {
-        children[index] = { type: "text", value: child.value };
-        continue;
-      }
+    for (const child of node.children) {
       if (child.type !== "element") continue;
       const { properties } = child;
       for (const key in properties) {
@@ -107,8 +76,7 @@ export function createMarkdownRenderer({
       rendered.set(key, cached);
       return cached;
     }
-    const file = new VFile(text);
-    const tree = toHast(file);
+    const tree = wordsHast(text, markdown);
     prepare(tree);
     return { tree };
   };

@@ -14,7 +14,7 @@ import {
   IDLE_COMPACTION_TITLES,
 } from "@t3tools/client-runtime/user-message";
 import type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
-import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
+import { renderCodexDirectivesForCopy } from "~/markdown/markdownText";
 import {
   commandDisplayText,
   commandProgramName,

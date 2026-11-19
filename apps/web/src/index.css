@@ -1887,10 +1887,6 @@ code {
   margin: 0.65rem 0;
 }
 
-.chat-markdown-math-display .katex-display {
-  margin: 0;
-}
-
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,

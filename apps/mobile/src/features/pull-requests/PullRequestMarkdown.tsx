@@ -17,7 +17,7 @@ import { createContext, useContext, useMemo, useState } from "react";
 import {
   changeRequestReferenceAutolinker,
   resolveChangeRequestMediaUrl,
-} from "@t3tools/client-runtime/pull-request-markdown";
+} from "@t3tools/client-runtime/pull-request-references";
 import {
   sourceControlClients,
   type ReferenceAutolink,

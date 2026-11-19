@@ -131,7 +131,7 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { revisionedQuery } from "~/state/revisionedQuery";
 import {
