@@ -346,6 +346,7 @@ const fakeAgents = () => {
     readonly environment?: string | undefined;
   }> = [];
   let threads = 0;
+  let refusals = 0;
   const turn = (key: string) => {
     const known = turns.get(key);
     if (known !== undefined) return known;
@@ -375,9 +376,16 @@ const fakeAgents = () => {
           };
         }),
       result: (started) => Deferred.await(turn(started.turnId).ended),
-      interrupt: (thread) => Effect.sync(() => void interrupted.push(thread)),
+      interrupt: (thread) =>
+        refusals-- > 0
+          ? Effect.fail(new WorkflowAgentError({ reason: "the link is down" }))
+          : Effect.sync(() => void interrupted.push(thread)),
     }),
     interrupted,
+    /** Turns down the next `count` stops. */
+    refuseStops: (count: number) => {
+      refusals = count;
+    },
     /** The turn of `runId` with this key, once it has been started. */
     started: (runId: string, key: string) => Deferred.await(turn(`${runId}/${key}`).started),
     end: (runId: string, key: string, result: Partial<AgentResult>) =>
@@ -1158,8 +1166,16 @@ it.effect("two agents run side by side, and one past its time limit is stopped",
         yield* agents.started(run.runId, "left/0");
         yield* agents.started(run.runId, "right/0");
         yield* agents.end(run.runId, "left/0", { reply: "done" });
-        // The right one never answers. Its minute passes on the clock, and its thread is stopped.
-        const paused = yield* workflows.waitFor(run.runId, status("paused"));
+        // The right one never answers. Its minute passes, and a stop that cannot get through
+        // pauses the run without giving the turn up, so the next try stops it.
+        agents.refuseStops(3);
+        const refused = yield* workflows.waitFor(run.runId, status("paused"));
+        assert.include(refused.detail ?? "", "the link is down");
+        assert.equal(agents.interrupted.length, 0);
+        const paused = yield* workflows.waitFor(
+          run.runId,
+          (current) => current.status === "paused" && current.detail !== refused.detail,
+        );
         assert.include(paused.detail ?? "", "it was not done after 1m");
         assert.equal(agents.interrupted.length, 1);
         const { steps } = yield* workflows.get(run.runId);
