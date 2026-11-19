@@ -34,6 +34,7 @@ vi.mock(import("../ProjectFavicon"), () => ({
     </span>
   ),
 }));
+vi.mock(import("../ThreadChipHoverCard"), () => ({ ThreadChipHoverCard: () => <span /> }));
 vi.mock(import("../contextChipParts"), () => ({
   UnresolvedChip: ({ label }: { label: string }) => <span>{label}</span>,
 }));
