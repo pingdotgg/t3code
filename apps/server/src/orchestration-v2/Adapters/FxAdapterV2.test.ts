@@ -55,7 +55,7 @@ const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
 const CUSTOM_MODEL = "openai/gpt-6.1-sol";
 const CODEX_MODEL = "gpt-6.1-sol";
 const FX_0_0_13_MODES = ["code", "ask"];
-/** fx `main` after vercel-labs/fx#1189. */
+/** fx 0.0.14+, after vercel-labs/fx#1189. */
 const FX_MAIN_MODES = ["auto", "ask", "full-access"];
 
 type Frame = Record<string, unknown>;
@@ -277,16 +277,22 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
 });
 
 describe("FxAdapterV2", () => {
-  it.effect("runs Auto as fx's `code` mode on 0.0.13 and as `auto` where fx advertises it", () =>
+  it.effect("runs Auto as `code` on 0.0.13, and Auto and Full access as fx names them later", () =>
     Effect.forEach(
       [
-        { scenario: "auto-0-0-13", modes: FX_0_0_13_MODES, written: "code" },
-        { scenario: "auto-main", modes: FX_MAIN_MODES, written: "auto" },
-      ],
-      ({ scenario, modes, written }) =>
+        { scenario: "auto-0-0-13", runtimeMode: "auto", modes: FX_0_0_13_MODES, written: "code" },
+        { scenario: "auto-main", runtimeMode: "auto", modes: FX_MAIN_MODES, written: "auto" },
+        {
+          scenario: "full-access-main",
+          runtimeMode: "full-access",
+          modes: FX_MAIN_MODES,
+          written: "full-access",
+        },
+      ] as const,
+      ({ scenario, runtimeMode, modes, written }) =>
         openFxSession({
           scenario,
-          runtimeMode: "auto",
+          runtimeMode,
           frames: [
             ...initialize,
             outbound("session/new", {
