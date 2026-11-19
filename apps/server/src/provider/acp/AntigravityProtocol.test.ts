@@ -19,7 +19,7 @@ import {
   mergeToolCallState,
   parseSessionUpdateEvent,
 } from "@t3tools/provider-acp/server/runtimeModel";
-import { acpToolCallDiffPatch } from "@t3tools/provider-acp/server/adapter";
+import { acpToolCallDiffPatch, acpToolCallSnippetEdit } from "@t3tools/provider-acp/server/adapter";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -418,6 +418,71 @@ describe("Antigravity tool results", () => {
       );
       expect(toolCall.data.content).toMatchObject([{ patch: { format: "omitted" } }]);
       expect(acpToolCallDiffPatch(toolCall.data.content)).toBeUndefined();
+    }
+  });
+
+  it("shows a 1.5 edit_file edit while it runs and places it from the completion's whole-file texts", () => {
+    const path = "/workspace/app.ts";
+    // An insert above its anchor: the target still matches once in the written file, a line late.
+    const rawInput = {
+      Path: path,
+      Target: "import x from 'x';",
+      Replacement: "import w from 'w';\nimport x from 'x';",
+    };
+    const fileOf = (lines: number, anchor: string) =>
+      Array.from({ length: lines }, (_, i) =>
+        i === lines - 3 ? anchor : `const line${i + 1} = ${i + 1}; // padding`,
+      ).join("\n") + "\n";
+    // agy 1.5.11 announces in progress with no content, then completes with the whole file.
+    const frame = (lines: number, status: "in_progress" | "completed") =>
+      ({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: status === "in_progress" ? "tool_call" : "tool_call_update",
+          toolCallId: `edit-${lines}`,
+          kind: "edit",
+          status,
+          title: "File app.ts",
+          locations: [{ path }],
+          rawInput,
+          ...(status === "completed"
+            ? {
+                content: [
+                  {
+                    type: "diff",
+                    path,
+                    oldText: fileOf(lines, rawInput.Target),
+                    newText: fileOf(lines, rawInput.Replacement),
+                  },
+                ],
+              }
+            : {}),
+        },
+      }) satisfies EffectAcpSchema.SessionNotification;
+    // Whole-file texts over 8 KB are cut to their tails, which no longer hold the line.
+    for (const lines of [5, 400]) {
+      // The runtime does not wait for T3, so the file may already be written when T3 could read it.
+      const readWrittenFile = () => fileOf(lines, rawInput.Replacement);
+      let toolCall = normalizeAntigravityToolCall(
+        parseToolUpdate(frame(lines, "in_progress")).toolCall,
+        readWrittenFile,
+      );
+      expect(acpToolCallSnippetEdit(toolCall.data.content)).toEqual({
+        oldStr: rawInput.Target,
+        newStr: rawInput.Replacement,
+      });
+      toolCall = normalizeAntigravityToolCall(
+        mergeToolCallState(toolCall, parseToolUpdate(frame(lines, "completed")).toolCall),
+        readWrittenFile,
+      );
+      expect(acpToolCallSnippetEdit(toolCall.data.content)).toBeUndefined();
+      const context = Math.min(3, lines - 3);
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toContain(
+        `@@ -${lines - 2 - context},${context + 3} +${lines - 2 - context},${context + 4} @@\n`,
+      );
+      expect(acpToolCallDiffPatch(toolCall.data.content)).toContain(
+        `\n+import w from 'w';\n import x from 'x';\n`,
+      );
     }
   });
 

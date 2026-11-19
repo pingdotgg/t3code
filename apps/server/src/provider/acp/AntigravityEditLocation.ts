@@ -117,6 +117,26 @@ function snippetHunks(
   })?.hunks;
 }
 
+/**
+ * The hunks of a whole-file diff, made from the uncut texts: tool text bounding keeps only the
+ * tail of a long text, which loses every line number.
+ */
+export function antigravityWholeFilePatch(
+  path: string,
+  oldText: string,
+  newText: string,
+): string | undefined {
+  if (oldText.length > PRE_EDIT_FILE_LIMIT || newText.length > PRE_EDIT_FILE_LIMIT)
+    return undefined;
+  const patch = structuredPatch(path, path, oldText, newText, undefined, undefined, {
+    context: 3,
+    maxEditLength: EDIT_DIFF_BUDGET,
+  });
+  return patch === undefined || patch.hunks.length === 0
+    ? undefined
+    : formatPatch(patch, FILE_HEADERS_ONLY);
+}
+
 const changedLines = (hunks: ReadonlyArray<StructuredPatchHunk>) =>
   hunks.reduce(
     (total, hunk) =>
