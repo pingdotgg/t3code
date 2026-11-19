@@ -8775,6 +8775,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ...(turnInput.message.senderThreadId === undefined
                 ? {}
                 : { senderThreadId: turnInput.message.senderThreadId }),
+              ...(turnInput.message.linkedSender === undefined
+                ? {}
+                : { linkedSender: turnInput.message.linkedSender }),
               id: turnInput.message.messageId,
               threadId: turnInput.threadId,
               runId: turnInput.runId,

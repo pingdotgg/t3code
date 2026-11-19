@@ -23,6 +23,7 @@ import {
   type KnowledgeSourceUnavailableReason,
   type MessageId,
   type OrchestrationV2ConversationMessage,
+  type OrchestrationV2MessageProvenance,
   type OrchestrationV2MessageSpeaker,
   type OrchestrationV2RunStatus,
   type OrchestrationV2UserMessageInputIntent,
@@ -39,6 +40,10 @@ import {
   summaryToolText,
   summaryToolTypes,
 } from "@t3tools/provider-core/server/conversationEvidence";
+import {
+  messageEvidenceDigestInput,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import * as Context from "effect/Context";
@@ -288,10 +293,14 @@ const make = Effect.gen(function* () {
   const textGeneration = yield* TextGeneration.TextGeneration;
   const digest = (text: string) =>
     crypto.digest(Digest.sha256, new TextEncoder().encode(text)).pipe(Effect.map(Hex.encode));
-  const messageDigest = (text: string, speaker?: OrchestrationV2MessageSpeaker) =>
+  const messageDigest = (
+    text: string,
+    speaker?: OrchestrationV2MessageSpeaker,
+    provenance?: OrchestrationV2MessageProvenance,
+  ) =>
     digest(
       speaker === undefined
-        ? text
+        ? messageEvidenceDigestInput(text, provenance)
         : JSON.stringify(["conversation-peer-v1", speaker.label, speaker.model, text]),
     );
   const afterSummary = (after: SummaryCursor | undefined) =>
@@ -473,9 +482,11 @@ const make = Effect.gen(function* () {
                 source: {
                   ...result.source,
                   digest:
-                    text === result.text && result.speaker === undefined
+                    text === result.text &&
+                    result.speaker === undefined &&
+                    result.provenance === undefined
                       ? result.source.digest
-                      : yield* messageDigest(text, result.speaker),
+                      : yield* messageDigest(text, result.speaker, result.provenance),
                 },
               }
             : result,
@@ -1340,16 +1351,19 @@ const make = Effect.gen(function* () {
         threadId,
         finalized.filter((message) => message.role === "assistant").map((message) => message.id),
       );
+      const provenanceByMessage = new Map<MessageId, OrchestrationV2MessageProvenance>();
       const all: Array<SummarySource> = [];
       for (const message of finalized) {
         const text = conversationEvidenceText(message.text);
         if (text.trim() === "") continue;
+        const provenance = message.role === "user" ? messageProvenance(message) : undefined;
+        if (provenance !== undefined) provenanceByMessage.set(message.id, provenance);
         all.push({
           ref: {
             kind: "message",
             threadId,
             messageId: message.id,
-            digest: yield* messageDigest(text, speakers.get(message.id)),
+            digest: yield* messageDigest(text, speakers.get(message.id), provenance),
           },
           role: message.role,
           text,
@@ -1414,8 +1428,9 @@ const make = Effect.gen(function* () {
           {
             readonly text: string;
             readonly range?: (typeof ConversationSummarySourceRange)["Type"];
+            readonly provenance?: OrchestrationV2MessageProvenance;
           } & (
-            | { readonly role: "user" | "assistant" | "tool" | "summary" }
+            | { readonly role: "user" | "assistant" | "tool" | "summary" | "agent" | "system" }
             | {
                 readonly role: "peer";
                 readonly speaker: OrchestrationV2MessageSpeaker;
@@ -1546,7 +1561,18 @@ const make = Effect.gen(function* () {
           messages: chunk.map((source) => {
             const speaker =
               source.ref.kind === "message" ? speakers.get(source.ref.messageId) : undefined;
+            const provenance =
+              source.ref.kind === "message"
+                ? provenanceByMessage.get(source.ref.messageId)
+                : undefined;
             const range = source.ref.range === undefined ? {} : { range: source.ref.range };
+            if (provenance !== undefined)
+              return {
+                role: provenance.createdBy === "system" ? ("system" as const) : ("agent" as const),
+                provenance,
+                text: source.text,
+                ...range,
+              };
             return speaker === undefined
               ? { role: source.role, text: source.text, ...range }
               : { role: "peer" as const, speaker, text: source.text, ...range };

@@ -649,7 +649,13 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
   ),
   Layer.provide(
     AssistedLearning.layerWorker.pipe(
-      Layer.provide(Layer.mergeAll(ProjectionStoreV2.layer, TextGeneration.layer)),
+      Layer.provide(
+        Layer.mergeAll(
+          ProjectionStoreV2.layer,
+          TextGeneration.layer,
+          RuntimeLayer.layerManagedProjectFolders.pipe(Layer.provide(layerGitWorkflow)),
+        ),
+      ),
     ),
   ),
   Layer.provide(MemoryCuration.layerWorker.pipe(Layer.provide(TextGeneration.layer))),

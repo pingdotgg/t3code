@@ -569,12 +569,15 @@ it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
     ),
   );
 
-  it.effect("keeps checkout instructions out of automatic memory extraction and checks", () =>
+  it.effect("keeps checkout and global instructions out of automatic memory extraction", () =>
     Effect.gen(function* () {
       const modelSelection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-6-luna");
       const isolation = {
         requireArg: "--config project_doc_max_bytes=0",
         requiredCwd: process.cwd(),
+        requireIsolatedHome: "empty routing" as const,
+        configToml: 'developer_instructions = "Unrelated user instructions."\n',
+        disabledFeatures: ["plugins", "apps", "shell_tool", "unified_exec", "skill_search"],
       };
       yield* withFakeCodexEnv(
         { ...isolation, output: JSON.stringify({ candidates: [] }) },

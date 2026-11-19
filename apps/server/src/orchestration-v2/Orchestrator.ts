@@ -30,7 +30,6 @@ import {
   COMPOSER_CONTEXT_MAX_SERIALIZED_CHARS,
   ComposerContextRecord,
   type GuestMessageId,
-  isCompactionCommandMessage,
   isOrchestrationV2PublicationRun,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -68,7 +67,6 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
-  parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
   ProviderInteractionMode,
@@ -125,7 +123,9 @@ import {
   followUpOwnerRun,
   goalCommandStopsActiveRun,
   isActiveRun,
+  isNativeCompactionCommand,
   isNativeMaintenanceCommand,
+  parseNativeGoalCommand,
   providerSwitchWaitsForTurn,
   providerTurnCapabilities,
   resolveMessageDispatchIntent,
@@ -1600,7 +1600,7 @@ function groupAudienceForMessage(
     command.manualContinuationOfRunId !== undefined ||
     command.freshContext === true ||
     isNativeMaintenanceCommand(command) ||
-    parseGoalCommand(command) !== null
+    parseNativeGoalCommand(command) !== null
   ) {
     return null;
   }
@@ -1720,10 +1720,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const ensureGoalCommandSupported = Effect.fn("Orchestrator.ensureGoalCommandSupported")(
     function* (
       command: Pick<OrchestrationV2ServerCommand, "commandId" | "type">,
-      message: { readonly text: string; readonly attachments: ReadonlyArray<ChatAttachment> },
+      message: Parameters<typeof parseNativeGoalCommand>[0] & {
+        readonly attachments: ReadonlyArray<ChatAttachment>;
+      },
       providerInstanceId: ProviderInstanceId,
     ) {
-      const goalCommand = parseGoalCommand(message);
+      const goalCommand = parseNativeGoalCommand(message);
       if (goalCommand === null || goalCommand.type === "set") return;
       const driver = yield* goalDriverFor(command, providerInstanceId);
       if (driver === "antigravity") {
@@ -7278,7 +7280,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       OrchestrationV2Command,
       { readonly type: "message.dispatch" | "queued-message.promote-to-steer" }
     >,
-    message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
+    message: Parameters<typeof parseNativeGoalCommand>[0] &
+      Pick<OrchestrationV2ConversationMessage, "attachments" | "context">,
   ) {
     if (isNativeMaintenanceCommand(message)) {
       return yield* new OrchestratorDispatchError({
@@ -7290,7 +7293,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : "Signing out must run as a separate turn. Queue it or wait for the active turn to finish.",
       });
     }
-    if (parseGoalCommand(message) !== null) {
+    if (parseNativeGoalCommand(message) !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -8198,7 +8201,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode = { type: "queue_after_active" };
     }
     // Native goal commands must not steer an existing turn.
-    const parsedGoalCommand = parseGoalCommand(command);
+    const parsedGoalCommand = parseNativeGoalCommand(command);
     const goalCommand =
       parsedGoalCommand === null ||
       (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
@@ -12483,7 +12486,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const emitEvent = emit(events, command);
     // A scheduled delivery steers on the thread's current pick, so /goal must suit that provider.
     const modelSelection = queuedRunModelSelection(projection, queuedRun);
-    const parsedGoalCommand = parseGoalCommand(queuedMessage);
+    const parsedGoalCommand = parseNativeGoalCommand(queuedMessage);
     const goalCommand =
       parsedGoalCommand === null ||
       (yield* goalDriverFor(command, modelSelection.instanceId)) === undefined
@@ -12497,7 +12500,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       target !== undefined &&
       targetMessage !== undefined &&
-      isCompactionCommandMessage(targetMessage)
+      isNativeCompactionCommand(targetMessage)
     ) {
       if (goalCommand !== null) {
         yield* ensureGoalCommandSupported(command, queuedMessage, modelSelection.instanceId);
@@ -12866,7 +12869,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     yield* ensureGoalCommandSupported(
       command,
-      { text: command.text, attachments: command.attachments ?? queuedMessage.attachments },
+      {
+        ...queuedMessage,
+        text: command.text,
+        attachments: command.attachments ?? queuedMessage.attachments,
+      },
       queuedRunModelSelection(projection, queuedRun).instanceId,
     );
     const queuedTurnItem = projection.turnItems.find(

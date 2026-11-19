@@ -24,6 +24,10 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
+import {
+  messageProvenance,
+  messageProvenanceLabel,
+} from "@t3tools/provider-core/server/messageProvenance";
 import { createOrchestrationV2TurnItemVisibility } from "@t3tools/shared/orchestrationV2Timeline";
 import { freshTailMessages } from "./ContextHandoffDelivery.ts";
 import type { ProjectionStoreV2Shape } from "./ProjectionStore.ts";
@@ -210,10 +214,15 @@ export const readForkHistoryItems = Effect.fn(
   ];
 });
 
+function userMessageLabel(item: Extract<OrchestrationV2TurnItem, { type: "user_message" }>) {
+  const provenance = messageProvenance(item);
+  return provenance === undefined ? "User" : messageProvenanceLabel(provenance);
+}
+
 function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
   switch (item.type) {
     case "user_message":
-      return `- User: ${compactText(item.text)}`;
+      return `- ${userMessageLabel(item)}: ${compactText(item.text)}`;
     case "assistant_message":
       return `- ${item.speaker?.label ?? "Assistant"}: ${compactText(item.text)}`;
     case "command_execution":
@@ -252,12 +261,6 @@ function makeForkDeltaSummary(input: {
 
 const SIDE_CHAT_CONTEXT_MAX_CHARS = 8_000;
 
-/** Another member's message may have come from an agent, and a seat must not read it as the user. */
-const summarizeSideChatItem = (item: OrchestrationV2TurnItem, seat: boolean) =>
-  seat && item.type === "user_message" && item.createdBy !== undefined && item.createdBy !== "user"
-    ? `- Agent: ${compactText(item.text)}`
-    : summarizeDeltaItem(item);
-
 /** Oldest first; raw parent items are summarized only until the context cap is reached. */
 export function makeSideChatContext(input: {
   readonly parentThreadId: ThreadId;
@@ -290,9 +293,7 @@ export function makeSideChatContext(input: {
   for (let index = input.digest.length - 1; index >= 0; index--) {
     const item = input.digest[index]!;
     const line =
-      typeof item === "string"
-        ? conversationEvidenceText(item)
-        : summarizeSideChatItem(item, input.seat === true);
+      typeof item === "string" ? conversationEvidenceText(item) : summarizeDeltaItem(item);
     if (line === null) continue;
     if (line.length + 1 > remaining) {
       omitted = true;
@@ -313,7 +314,7 @@ function makeLegacyImportSummary(items: ReadonlyArray<OrchestrationV2TurnItem>):
   const sections = items.flatMap((item) => {
     switch (item.type) {
       case "user_message":
-        return [{ label: "User", body: conversationEvidenceText(item.text) }];
+        return [{ label: userMessageLabel(item), body: conversationEvidenceText(item.text) }];
       case "assistant_message":
         return [{ label: "Assistant", body: conversationEvidenceText(item.text) }];
       default:

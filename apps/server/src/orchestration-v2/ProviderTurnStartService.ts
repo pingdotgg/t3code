@@ -13,13 +13,12 @@ import {
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextRestart,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2HistoricalMessage,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
-  isCompactionCommandMessage,
-  parseGoalCommand,
   RunId,
   RunAttemptId,
   NodeId,
@@ -44,13 +43,20 @@ import {
 import { withTurnStartReservation, withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
-import { isActiveRun, isNativeMaintenanceCommand } from "./CommandPolicy.ts";
+import {
+  allowsNativeMessageCommand,
+  isActiveRun,
+  isNativeMaintenanceCommand,
+  isNativeCompactionCommand,
+  parseNativeGoalCommand,
+} from "./CommandPolicy.ts";
 import { groupParticipants, renderPrimaryGroupNote } from "./GroupPrompt.ts";
 import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import {
@@ -67,10 +73,19 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { contextRestartDue, contextRestartRefusal } from "./ContextRestart.ts";
-import { deliverContextHandoffs, withInlineContext } from "./ContextHandoffDelivery.ts";
+import {
+  ContextHandoffEvidenceChangedError,
+  deliverContextHandoffs,
+  formatHistoricalSummary,
+  refreshHistoricalMessageSources,
+  withInlineContext,
+} from "./ContextHandoffDelivery.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
-import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
+import {
+  formatMessageWithProvenance,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { unsentManualContinuationSource } from "./manualContinuation.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -239,6 +254,7 @@ export const layer: Layer.Layer<
   | ServerSettings.ServerSettingsService
   | GitWorkflowService.GitWorkflowService
   | ProjectService.ProjectService
+  | ManagedProjectFolders.ManagedProjectFolders
   | ProjectKnowledge.ProjectKnowledge
   | ProviderAuthService.ProviderAuthService
   | ProjectionStore.ProjectionStoreV2
@@ -257,11 +273,16 @@ export const layer: Layer.Layer<
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const projects = yield* ProjectService.ProjectService;
+    const managedProjectFolders = yield* ManagedProjectFolders.ManagedProjectFolders;
     const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
     const conversationSummaries = yield* ConversationSummaryRuntime;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+    const refreshSources = (messages: ReadonlyArray<OrchestrationV2HistoricalMessage>) =>
+      refreshHistoricalMessageSources(messages).pipe(
+        Effect.provideService(ProjectionStore.ProjectionStoreV2, projectionStore),
+      );
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
@@ -556,7 +577,8 @@ export const layer: Layer.Layer<
                     projection.messages.some(
                       (message) =>
                         message.id === source.userMessageId &&
-                        (isCompactionCommandMessage(message) || parseGoalCommand(message) !== null),
+                        (isNativeCompactionCommand(message) ||
+                          parseNativeGoalCommand(message) !== null),
                     ))),
             )));
       const isSideChatHandoff = (handoff: OrchestrationV2ContextHandoff) =>
@@ -642,11 +664,12 @@ export const layer: Layer.Layer<
         },
       );
       if (
+        allowsNativeMessageCommand(providerMessage) &&
         providerMessage.attachments.length === 0 &&
         providerMessage.text.trimStart().startsWith("/")
       ) {
         const isEmptyCompaction =
-          providerMessage.text.trim().toLowerCase() === "/compact" && !projection.hasConversation;
+          isNativeCompactionCommand(providerMessage) && !projection.hasConversation;
         // Preparation may select a new provider; account commands still target the last native session.
         const nativeThreads = new Map(
           projection.providerThreads
@@ -938,16 +961,23 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      let userText = projectComposerContextForProvider({
-        text: providerMessage.text,
-        records: providerMessage.context?.records ?? [],
-      });
       // Native goal commands go verbatim; handoff history waits a turn.
       const goalDriver =
         session.driver === "codex" ||
         session.driver === "claudeAgent" ||
         session.providerSession.capabilities.turns.supportsNativeGoals === true;
-      const goalCommand = goalDriver && parseGoalCommand(providerMessage) !== null;
+      const goalCommand = goalDriver && parseNativeGoalCommand(providerMessage) !== null;
+      const provenance = messageProvenance(providerMessage);
+      const renderMessage = (text: string) =>
+        isNativeMaintenanceCommand(providerMessage) || goalCommand
+          ? text
+          : formatMessageWithProvenance(text, provenance);
+      let userText = renderMessage(
+        projectComposerContextForProvider({
+          text: providerMessage.text,
+          records: providerMessage.context?.records ?? [],
+        }),
+      );
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
         run,
@@ -962,8 +992,8 @@ export const layer: Layer.Layer<
           projection.messages
             .filter(
               (candidate) =>
-                isCompactionCommandMessage(candidate) ||
-                (goalDriver && parseGoalCommand(candidate) !== null),
+                isNativeCompactionCommand(candidate) ||
+                (goalDriver && parseNativeGoalCommand(candidate) !== null),
             )
             .map((candidate) => candidate.id),
         ),
@@ -982,7 +1012,7 @@ export const layer: Layer.Layer<
         groupOthers.length === 0 ||
         message.createdBy !== "user" ||
         isNativeMaintenanceCommand(providerMessage) ||
-        parseGoalCommand(providerMessage) !== null
+        parseNativeGoalCommand(providerMessage) !== null
           ? ""
           : renderPrimaryGroupNote({
               self: group.primary,
@@ -1185,8 +1215,8 @@ export const layer: Layer.Layer<
               );
               return source === undefined ||
                 (message !== undefined &&
-                  (isCompactionCommandMessage(message) ||
-                    (goalDriver && parseGoalCommand(message) !== null)))
+                  (isNativeCompactionCommand(message) ||
+                    (goalDriver && parseNativeGoalCommand(message) !== null)))
                 ? []
                 : [source.ordinal];
             }),
@@ -1580,10 +1610,11 @@ export const layer: Layer.Layer<
           resumedHandoffContext = context;
           resumedRetryHandoff = yield* prepareRetryHandoff(context);
           const fits = yield* deliverContextHandoffs({
+            refreshSources,
             handoffs: [...handoffs, ...resumedRetryHandoff.handoffs],
             providerThread: { ...resumed.success, id: providerThread.id },
             budget: context.budget,
-            deferInline: isCompactionCommandMessage(providerMessage) || goalCommand,
+            deferInline: isNativeCompactionCommand(providerMessage) || goalCommand,
             alreadyDeliveredItemIds: context.deliveredItemIds,
             persist: () => Effect.void,
           }).pipe(
@@ -1596,6 +1627,7 @@ export const layer: Layer.Layer<
           const freshContext = handoffContextForThread(freshThread, REPLACEMENT_HANDOFF_TOKEN_CAP);
           const { handoff } = yield* recoveryHandoff;
           const freshDelivery = yield* deliverContextHandoffs({
+            refreshSources,
             handoffs: withRecoveryHandoff(handoff),
             providerThread: freshThread,
             budget: freshContext.budget,
@@ -1618,7 +1650,7 @@ export const layer: Layer.Layer<
             const refusal = contextRestartRefusal({
               controlMessage:
                 isNativeMaintenanceCommand(providerMessage) ||
-                parseGoalCommand(providerMessage) !== null,
+                parseNativeGoalCommand(providerMessage) !== null,
               restartContinuation:
                 run.restartContinuationOfRunId !== undefined || restartNote !== "",
               groupDiscussion: projection.thread.group?.discussion != null,
@@ -2039,11 +2071,14 @@ export const layer: Layer.Layer<
         let { composer } = knowledgeDelivery;
         if (composer.byteLength > 0 && !(yield* isCurrentAttemptInStatus("running"))) return;
         let initialDeliveryState = yield* knowledgeDelivery.readState;
-        userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+        userText = renderMessage(initialDeliveryState.sent ? composer.baseText : composer.text);
         const budget = handoffBudgetAssumptions({
           tokenCap,
           modelContextWindow,
-          userText: turnNotes === "" ? composer.baseText : `${turnNotes}\n\n${composer.baseText}`,
+          userText:
+            turnNotes === ""
+              ? renderMessage(composer.baseText)
+              : `${turnNotes}\n\n${renderMessage(composer.baseText)}`,
           attachments: providerMessage.attachments,
           providerThread: budgetProviderThread,
           nativeContextEstimate:
@@ -2064,6 +2099,13 @@ export const layer: Layer.Layer<
               ...(providerMessage.notification === undefined
                 ? {}
                 : { notification: providerMessage.notification }),
+              ...(providerMessage.delegatedCompletion === undefined
+                ? {}
+                : { delegatedCompletion: providerMessage.delegatedCompletion }),
+              ...(provenance === undefined ? {} : { provenance }),
+              scratchProject: yield* managedProjectFolders.isScratchProject(
+                projection.thread.projectId,
+              ),
               composer: pstackComposer,
               knowledgeAllowance: budget.knowledgeAllowance,
               turn: {
@@ -2082,7 +2124,9 @@ export const layer: Layer.Layer<
                   knowledgeDelivery = withRecall.value;
                   composer = knowledgeDelivery.composer;
                   initialDeliveryState = yield* knowledgeDelivery.readState;
-                  userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+                  userText = renderMessage(
+                    initialDeliveryState.sent ? composer.baseText : composer.text,
+                  );
                 }
                 break;
               }
@@ -2115,7 +2159,7 @@ export const layer: Layer.Layer<
           composer = knowledgeDelivery.composer;
           composer.omissions.push(...omissions);
           recalledComposer = null;
-          userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+          userText = renderMessage(initialDeliveryState.sent ? composer.baseText : composer.text);
           yield* knowledgeDelivery.revalidate;
           yield* knowledgeDelivery.checkBudget(budget, initialDeliveryState.sent);
         });
@@ -2158,6 +2202,7 @@ export const layer: Layer.Layer<
               | Effect.Success<ReturnType<typeof deliveredKnowledgeForHistory>>
               | undefined;
             const delivery = yield* deliverContextHandoffs({
+              refreshSources,
               handoffs: [...effectiveHandoffs, ...retryHandoff.handoffs],
               deferInline: compact || goalCommand,
               providerThread: runningProviderThread,
@@ -2275,7 +2320,9 @@ export const layer: Layer.Layer<
                   } else {
                     knowledgeDelivery = updated.value;
                     composer = knowledgeDelivery.composer;
-                    userText = initialDeliveryState.sent ? composer.baseText : composer.text;
+                    userText = renderMessage(
+                      initialDeliveryState.sent ? composer.baseText : composer.text,
+                    );
                     yield* knowledgeDelivery.checkBudget(budget, initialDeliveryState.sent);
                   }
                 }
@@ -2293,12 +2340,13 @@ export const layer: Layer.Layer<
             yield* knowledgeDelivery
               .record("prepared")
               .pipe(Effect.tapError(() => delivery.unsent));
+            yield* Effect.tapError(delivery.revalidate, () => knowledgeDelivery.record("failed"));
             const start = compact ? session.compactThread! : session.startTurn;
             // Like history, the side chat context waits for a turn that sends a prompt.
             const sideChatContext =
               sideChatHandoff === undefined || compact || goalCommand
                 ? ""
-                : conversationEvidenceText(sideChatHandoff.summaryText);
+                : formatHistoricalSummary(sideChatHandoff.summaryText);
             const context = [delivery.context, sideChatContext, turnNotes]
               .filter((part) => part !== "")
               .join("\n\n");
@@ -2384,6 +2432,7 @@ export const layer: Layer.Layer<
               { discard: true },
             );
           },
+          Effect.retry({ while: Schema.is(ContextHandoffEvidenceChangedError), times: 1 }),
           Effect.mapError((cause) =>
             cause._tag === "ProviderAdapterTurnStartError"
               ? cause
@@ -2450,14 +2499,17 @@ export const layer: Layer.Layer<
             messageId: message.id,
             text: userText,
             attachments: providerMessage.attachments,
-            createdBy: message.createdBy,
-            creationSource: message.creationSource,
-            ...(message.scheduledTaskId === undefined
+            createdBy: providerMessage.createdBy,
+            creationSource: providerMessage.creationSource,
+            ...(providerMessage.scheduledTaskId === undefined
               ? {}
-              : { scheduledTaskId: message.scheduledTaskId }),
-            ...(message.senderThreadId === undefined
+              : { scheduledTaskId: providerMessage.scheduledTaskId }),
+            ...(providerMessage.senderThreadId === undefined
               ? {}
-              : { senderThreadId: message.senderThreadId }),
+              : { senderThreadId: providerMessage.senderThreadId }),
+            ...(providerMessage.linkedSender === undefined
+              ? {}
+              : { linkedSender: providerMessage.linkedSender }),
           },
           modelSelection: run.modelSelection,
           runtimePolicy: resolvedRuntimePolicy,

@@ -12,6 +12,7 @@ import { Tool } from "effect/ai";
 import { advertisedJsonSchema } from "../../apps/server/src/mcp/advertisedJsonSchema.ts";
 import { OrchestratorToolkit } from "../../apps/server/src/mcp/toolkits/orchestrator/tools.ts";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
+import { formatHistoricalSummary } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
 import { type GroupEntry } from "../../apps/server/src/orchestration-v2/GroupConversation.ts";
 import {
   renderPrimaryGroupNote,
@@ -36,11 +37,13 @@ export const group = (): OrchestrationV2ThreadGroup => ({
 export const delta = (entries: ReadonlyArray<Exchange>) =>
   entries.map((entry) => ({ ...entry, model: null }));
 export const digest = (entries: ReadonlyArray<Exchange>, seat = false) =>
-  makeSideChatContext({
-    parentThreadId: ThreadId.make("thread:main"),
-    digest: entries.map((entry) => `[${entry.label}] ${entry.text}`),
-    seat,
-  });
+  formatHistoricalSummary(
+    makeSideChatContext({
+      parentThreadId: ThreadId.make("thread:main"),
+      digest: entries.map((entry) => `[${entry.label}] ${entry.text}`),
+      seat,
+    }),
+  );
 
 const decodeHistoricalMessage = Schema.decodeSync(OrchestrationV2HistoricalMessage);
 export const publicHistory = (entries: ReadonlyArray<Exchange>) =>

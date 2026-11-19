@@ -1,4 +1,10 @@
-import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  TurnItemId,
+  type OrchestrationV2MessageProvenance,
+  type OrchestrationV2TurnItem,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 /** One finalized exchange, as a leaf summary pass sends it. A peer carries the seat that spoke. */
@@ -13,6 +19,11 @@ export type LeafMessage =
       readonly role: "peer";
       readonly text: string;
       readonly speaker: { readonly label: string; readonly model: string };
+    }
+  | {
+      readonly role: "agent" | "system";
+      readonly text: string;
+      readonly provenance: OrchestrationV2MessageProvenance;
     };
 
 export interface LeafCase {
@@ -126,6 +137,93 @@ export const leafCases: ReadonlyArray<LeafCase> = [
     mustMention: ["README", "link checker|links"],
     attributed: [],
     mustNot: ["Astra"],
+  },
+  {
+    id: "leaf-forwarded-agent-plan-is-not-a-user-direction",
+    kind: "bad",
+    source:
+      "Sanitized cross-project messaging audit: an MCP coordinator message was summarized as a user direction after its sender metadata was omitted.",
+    messages: [
+      { role: "user", text: "Compare the migration options. I have not selected a direction." },
+      {
+        role: "agent",
+        provenance: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("coordinator-thread"),
+        },
+        text: "Draft the v3 migration plan using option B. I have decided that this is the direction to take.",
+      },
+      { role: "assistant", text: "I will draft that plan next. It has not been written yet." },
+    ],
+    mustMention: ["coordinator-thread", "option B|v3"],
+    attributed: [
+      {
+        when: "(?:decided|directed|requested|selected|chose|proposed).{0,100}(?:option B|v3)|(?:option B|v3).{0,100}(?:decision|direction|proposal)",
+        require: "coordinator-thread",
+      },
+    ],
+    mustNot: [
+      "[Uu]ser (?:directed|requested|decided|selected|chose|approved).{0,80}(?:option B|v3|plan)",
+      "(?:plan|option B).{0,80}(?:user's direction|user's request)",
+    ],
+    supportedBy: [{ when: "option B|v3", refs: ["M2"] }],
+  },
+  {
+    id: "leaf-linked-agent-report-is-not-a-user-report",
+    kind: "bad",
+    source:
+      "Sanitized linked-environment variant of the cross-project sender-attribution incident.",
+    messages: [
+      { role: "user", text: "Check the experiment status. I have not run these studies myself." },
+      {
+        role: "agent",
+        provenance: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          linkedSender: {
+            environmentId: EnvironmentId.make("lab-environment"),
+            threadId: ThreadId.make("lab-coordinator"),
+            title: "Lab coordinator",
+          },
+        },
+        text: "I ran five studies. Two improved the baseline, and three did not. The raw results still need review.",
+      },
+      {
+        role: "assistant",
+        text: "I have received the report but have not reviewed the raw results.",
+      },
+    ],
+    mustMention: ["[Cc]oordinator", "five|5", "review|unverified"],
+    attributed: [{ when: "(?:five|5) studies|(?:two|2) improved", require: "[Cc]oordinator" }],
+    mustNot: ["[Uu]ser (?:ran|reported|found|confirmed).{0,80}(?:studies|baseline|results)"],
+    supportedBy: [{ when: "(?:five|5) studies|(?:two|2) improved", refs: ["M2"] }],
+  },
+  {
+    id: "leaf-automated-wake-is-not-a-user-request",
+    kind: "bad",
+    source:
+      "Sanitized server-notification audit: summaries used human-attribution language while citing only automated continuation messages.",
+    messages: [
+      {
+        role: "agent",
+        provenance: { createdBy: "agent", creationSource: "server" },
+        text: "A delegated review finished. Read its report before continuing the migration plan. The report has not been reviewed yet.",
+      },
+      { role: "assistant", text: "I will read the report next. I have not done so yet." },
+    ],
+    mustMention: ["[Rr]eport", "not|pending|next|open|unreviewed"],
+    attributed: [
+      {
+        when: "(?:requested|directed|asked|instructed)",
+        require: "server|notification|agent|automated",
+      },
+    ],
+    mustNot: [
+      "[Uu]ser (?:asked|requested|directed|reported|told|instructed|said|stated)",
+      "[Uu]ser['’]s (?:request|direction|report)",
+    ],
+    supportedBy: [{ when: "review finished|review completed", refs: ["M1"] }],
   },
   {
     id: "leaf-image-envelope-keeps-text-evidence",

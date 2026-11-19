@@ -110,6 +110,10 @@ export const layerProjectService = ProjectService.layer.pipe(
   ),
 );
 
+export const layerManagedProjectFolders = ManagedProjectFolders.layer.pipe(
+  Layer.provide(layerProjectService),
+);
+
 const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -294,14 +298,11 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
   // Whether a thread came from a linked environment, which skips setup.
   Layer.provide(ProjectionStore.layer),
 );
-const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
-  Layer.provide(layerProjectService),
-);
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerProjectSetupScriptRunner,
-      layerManagedProjectFoldersProvided,
+      layerManagedProjectFolders,
       layerThreadManagementProvided,
       layerCommandReceiptStoreProvided,
       layerWorktreeBranchesProvided,
@@ -318,7 +319,7 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
     Layer.mergeAll(
       layerThreadLaunchProvided,
       layerThreadManagementProvided,
-      layerManagedProjectFoldersProvided,
+      layerManagedProjectFolders,
       layerSecretRequestsProvided,
     ),
   ),
@@ -326,7 +327,7 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
 const layerScratchThreadPromotionProvided = ScratchThreadPromotion.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      layerManagedProjectFoldersProvided,
+      layerManagedProjectFolders,
       layerThreadManagementProvided,
       layerScheduledTaskProvided,
     ).pipe(Layer.provideMerge(layerProjectService)),
@@ -411,7 +412,6 @@ export const layerProduction = Layer.mergeAll(
     Layer.provide(Layer.merge(layerWorktreeBranchesProvided, ProjectionStore.layer)),
   ),
   layer,
-  layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
@@ -435,6 +435,7 @@ export const layerProduction = Layer.mergeAll(
   EffectOutbox.layerPruneWorker.pipe(Layer.provide(EffectOutbox.layer)),
 ).pipe(
   Layer.provide(ResourceCleanupService.layer.pipe(Layer.provide(layerScheduledTaskProvided))),
+  Layer.provideMerge(layerManagedProjectFolders),
   Layer.provideMerge(layerProjectService),
   Layer.provide(Scheduler.layer),
   Layer.provide(ProviderUsageLimitHook.layer),

@@ -111,6 +111,10 @@ import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAda
 const layerPlatformTest = Layer.mergeAll(
   NodeServices.layer,
   NodeCrypto.layer,
+  Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+    namedProjectsRoot: "/test-projects",
+    isScratchProject: () => Effect.succeed(false),
+  }),
   Layer.mock(ModelEvaluations.ModelEvaluations)({ enqueueRun: () => Effect.void }),
   Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
     resolveLink: () => Effect.die("unused title link"),
@@ -9542,8 +9546,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           attachments: [],
           dispatchMode: { type: "queue_after_active" },
           ...(deliveryIntent === undefined ? {} : { deliveryIntent }),
-          createdBy: "agent",
-          creationSource: "mcp",
+          createdBy: "user",
+          creationSource: "web",
         });
       // It runs after the pick, on a provider that can pause goals.
       yield* sendGoal("pause", "/goal pause");

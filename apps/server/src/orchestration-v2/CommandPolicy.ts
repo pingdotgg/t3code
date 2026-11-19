@@ -1,12 +1,16 @@
 import {
   type ChatAttachment,
   CommandId,
+  IDLE_COMPACTION_TEXT,
+  isCompactionCommandMessage,
   type OrchestrationV2Command,
+  type OrchestrationV2ConversationMessage,
   OrchestrationV2ProviderCapabilities,
   type OrchestrationV2GoalCommand,
   type OrchestrationV2ProviderGoalStatus,
   type OrchestrationV2Run,
   OrchestrationV2ThreadProjection,
+  parseGoalCommand,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -59,12 +63,56 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
-export function isNativeMaintenanceCommand(message: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
-}): boolean {
+type NativeMessageCommand = Parameters<typeof parseGoalCommand>[0] &
+  Pick<
+    OrchestrationV2ConversationMessage,
+    | "createdBy"
+    | "creationSource"
+    | "senderThreadId"
+    | "linkedSender"
+    | "notification"
+    | "delegatedCompletion"
+    | "scheduledTaskId"
+    | "idleCompaction"
+  >;
+
+export function allowsNativeMessageCommand(message: NativeMessageCommand): boolean {
+  if (
+    message.senderThreadId !== undefined ||
+    message.linkedSender !== undefined ||
+    message.notification !== undefined ||
+    message.delegatedCompletion !== undefined
+  )
+    return false;
+  if (message.createdBy === "user" || message.scheduledTaskId !== undefined) return true;
+  // Older automatic compactions predate idleCompaction; their server actor is the durable marker.
   return (
+    message.creationSource === "server" &&
+    message.text.trim().toLowerCase() === IDLE_COMPACTION_TEXT &&
+    (message.createdBy === "agent" ||
+      (message.createdBy === "system" && message.idleCompaction !== undefined))
+  );
+}
+
+export function parseNativeGoalCommand(message: NativeMessageCommand) {
+  return allowsNativeMessageCommand(message) ? parseGoalCommand(message) : null;
+}
+
+export function isNativeCompactionCommand(
+  message: NativeMessageCommand & { readonly role: string },
+) {
+  return allowsNativeMessageCommand(message) && isCompactionCommandMessage(message);
+}
+
+export function isNativeMaintenanceCommand(
+  message: NativeMessageCommand & {
+    readonly text: string;
+    readonly attachments: ReadonlyArray<ChatAttachment>;
+    readonly context?: import("@t3tools/contracts").OrchestrationMessageContext | undefined;
+  },
+): boolean {
+  return (
+    allowsNativeMessageCommand(message) &&
     message.attachments.length === 0 &&
     ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
   );

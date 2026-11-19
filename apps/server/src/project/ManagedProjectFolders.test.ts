@@ -134,8 +134,26 @@ it.effect("offers nothing, and says why once, when the data dir sits inside a Gi
     const repositoryRoot = (yield* git(baseDir, ["rev-parse", "--show-toplevel"])).stdout.trim();
     yield* Effect.gen(function* () {
       const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const projects = yield* ProjectService.ProjectService;
+      const existing = yield* projects.create({
+        commandId: CommandId.make("command:existing-scratch"),
+        projectId: ProjectId.make("project:existing-scratch"),
+        title: "Saved chats",
+        workspaceRoot: ManagedProjectFolders.scratchFolderRoot(baseDir, path),
+        createWorkspaceRootIfMissing: true,
+      });
       assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
       assert.isFalse(yield* scratch.isScratchProject(ProjectId.make("project:any")));
+      assert.isTrue(yield* scratch.isScratchProject(existing.id));
+      assert.isTrue(
+        Option.isNone(
+          yield* scratch.folderForThread({
+            projectId: existing.id,
+            threadId: ThreadId.make("thread:existing-scratch"),
+            text: "Hello",
+          }),
+        ),
+      );
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
       assert.include(failure.message, baseDir);
@@ -216,6 +234,59 @@ it.effect("offers the Scratch folder once a Git check that timed out is asked ag
       ),
     },
   ),
+);
+
+it.effect.each(["canonical", "symlink"] as const)(
+  "recognizes existing Scratch projects while Git availability checks fail: %s",
+  (kind) =>
+    withScratch(
+      ({ baseDir }) =>
+        Effect.gen(function* () {
+          const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+          const projects = yield* ProjectService.ProjectService;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = ManagedProjectFolders.scratchFolderRoot(baseDir, path);
+          const workspaceRoot = kind === "canonical" ? root : path.join(baseDir, "saved-chats");
+          yield* fileSystem.makeDirectory(workspaceRoot);
+          if (kind === "symlink") yield* fileSystem.symlink(workspaceRoot, root);
+          const existing = yield* projects.create({
+            commandId: CommandId.make("command:existing-scratch"),
+            projectId: ProjectId.make("project:existing-scratch"),
+            title: "Saved chats",
+            workspaceRoot,
+          });
+
+          assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+          assert.isTrue(yield* scratch.isScratchProject(existing.id));
+          assert.equal(
+            (yield* Effect.flip(scratch.ensureScratchProject))._tag,
+            "ScratchUnavailableError",
+          );
+          assert.isTrue(
+            Option.isNone(
+              yield* scratch.folderForThread({
+                projectId: existing.id,
+                threadId: ThreadId.make("thread:existing-scratch"),
+                text: "Hello",
+              }),
+            ),
+          );
+        }),
+      {
+        vcsProcess: Layer.succeed(VcsProcess.VcsProcess, {
+          run: (input) =>
+            Effect.fail(
+              new VcsProcessTimeoutError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                timeoutMs: 5_000,
+              }),
+            ),
+        }),
+      },
+    ),
 );
 
 it.effect("creates one Scratch project, even for concurrent first requests", () =>

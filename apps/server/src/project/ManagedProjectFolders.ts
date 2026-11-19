@@ -353,15 +353,25 @@ const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
 
-  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = (projectId) =>
-    scratchRoot.pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.succeed(false),
-          onSome: (root) => isScratchRoot(projectId, root),
-        }),
-      ),
-    );
+  const isScratchProject: ManagedProjectFolders["Service"]["isScratchProject"] = Effect.fn(
+    "ManagedProjectFolders.isScratchProject",
+  )(
+    function* (projectId) {
+      // Existing No project chats keep their identity even when creating new ones is unavailable.
+      const project = yield* projects.getById(projectId);
+      if (Option.isNone(project)) return false;
+      const workspaceRoot = path.resolve(project.value.workspaceRoot);
+      const root = scratchFolderRoot(config.baseDir, path);
+      if (workspaceRoot === root) return true;
+      const real = (dir: string) =>
+        fileSystem.realPath(dir).pipe(
+          Effect.map((resolved) => path.resolve(resolved)),
+          Effect.orElseSucceed(() => dir),
+        );
+      return (yield* real(workspaceRoot)) === (yield* real(root));
+    },
+    Effect.orElseSucceed(() => false),
+  );
 
   const folderForThread: ManagedProjectFolders["Service"]["folderForThread"] = Effect.fn(
     "ManagedProjectFolders.folderForThread",

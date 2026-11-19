@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { ThreadId } from "@t3tools/contracts";
 
 import { buildKnowledgeCandidatesPrompt, buildThreadTitlePrompt } from "./textGenerationPrompts.ts";
 import { normalizeCliError } from "./textGenerationUtils.ts";
@@ -37,10 +38,22 @@ it("preserves each run boundary and terminal outcome in family review prompts", 
         runId: "run-b",
         runOutcome: "completed",
       },
+      {
+        ref: "M3",
+        role: "user",
+        text: "I propose making the experimental schema permanent.",
+        provenance: {
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: ThreadId.make("coordinator"),
+        },
+      },
     ],
   });
   expect(prompt).toContain("[M1] user (T1/R1, interrupted):\nKeep the API stable.");
   expect(prompt).toContain("[M2] assistant (T2/R2, completed):\nChecked compatibility.");
+  expect(prompt).toContain('[M3] agent (thread "coordinator")');
+  expect(prompt).not.toContain("[M3] user");
 });
 
 describe("buildThreadTitlePrompt", () => {

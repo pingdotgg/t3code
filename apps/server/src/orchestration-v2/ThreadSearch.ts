@@ -1,11 +1,16 @@
 import { conversationEvidenceText } from "@t3tools/provider-core/server/conversationEvidence";
 import {
+  messageEvidenceDigestInput,
+  messageProvenance,
+} from "@t3tools/provider-core/server/messageProvenance";
+import {
   IsoDateTime,
   MessageId,
   ThreadSearchCursor,
   OrchestrationThreadSearchSource,
   OrchestrationV2AppThreadJson,
   OrchestrationV2ThreadOpens,
+  OrchestrationV2MessageProvenance,
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
   type OrchestrationSearchThreadsInput,
@@ -80,6 +85,14 @@ const ExactSearchRequest = Schema.Struct({
   includeArchived: Schema.Boolean,
   cursor: Schema.NullOr(ThreadSearchCursor),
 });
+const MessageProvenancePayload = Schema.fromJsonString(
+  Schema.Struct({
+    ...OrchestrationV2MessageProvenance.fields,
+    notification: Schema.optional(Schema.Unknown),
+    delegatedCompletion: Schema.optional(Schema.Unknown),
+    scheduledTaskId: Schema.optional(Schema.Unknown),
+  }),
+);
 const ExactSearchRow = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -90,6 +103,7 @@ const ExactSearchRow = Schema.Struct({
   archived: Schema.Number,
   rank: Schema.Literals([0, 1, 2, 3]),
   matchText: Schema.String,
+  provenance: MessageProvenancePayload,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
 
@@ -150,6 +164,7 @@ const SearchRow = Schema.Struct({
   projectId: ProjectId,
   source: OrchestrationThreadSearchSource,
   text: Schema.String,
+  provenance: MessageProvenancePayload,
   messageCreatedAt: Schema.NullOr(IsoDateTime),
 });
 
@@ -308,6 +323,7 @@ export const messageHitsQuery = (
             eligible.project_id AS "projectId",
             messages.role AS source,
             ${messageSearchText(sql)} AS text,
+            messages.payload_json AS provenance,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_projection_messages AS messages
           INNER JOIN eligible ON eligible.thread_id = messages.thread_id
@@ -325,6 +341,7 @@ export const messageHitsQuery = (
             eligible.project_id AS "projectId",
             messages.role AS source,
             ${messageSearchText(sql)} AS text,
+            messages.payload_json AS provenance,
             messages.created_at AS "messageCreatedAt"
           FROM orchestration_v2_message_search
           INNER JOIN orchestration_v2_projection_messages AS messages
@@ -395,6 +412,7 @@ export interface ThreadSearchHit {
   readonly projectId: ProjectId;
   readonly title: string;
   readonly source: "title" | OrchestrationThreadSearchSource;
+  readonly provenance?: OrchestrationV2MessageProvenance;
   readonly snippet?: string;
   readonly messageCreatedAt?: string | null;
 }
@@ -463,6 +481,7 @@ export const make = Effect.gen(function* () {
           threads.archived_at,
           messages.role,
           json_extract(messages.payload_json, '$.text') AS match_text,
+          messages.payload_json AS provenance,
           messages.created_at AS message_created_at,
           messages.message_id,
           threads.updated_at AS thread_updated_at
@@ -491,6 +510,7 @@ export const make = Effect.gen(function* () {
           message_id,
           archived_at,
           match_text,
+          provenance,
           message_created_at,
           CASE WHEN match_text LIKE ${phrase} ESCAPE '!' THEN 0 ELSE 2 END
             + CASE role WHEN 'user' THEN 0 ELSE 1 END AS match_rank,
@@ -515,6 +535,7 @@ export const make = Effect.gen(function* () {
         archived_at IS NOT NULL AS archived,
         match_rank AS rank,
         match_text AS "matchText",
+        provenance,
         message_created_at AS "messageCreatedAt"
       FROM ranked
       WHERE thread_match_rank = 1
@@ -631,21 +652,28 @@ export const make = Effect.gen(function* () {
             : null,
         matches: yield* Effect.forEach(page, (row) => {
           const itemId = itemIds.get(row.messageId);
-          return crypto.digest(Digest.sha256, new TextEncoder().encode(row.matchText)).pipe(
-            Effect.map((hash) => ({
-              threadId: row.threadId,
-              projectId: row.projectId,
-              title: row.title,
-              source: row.source,
-              messageId: row.messageId,
-              ...(itemId === undefined ? {} : { itemId }),
-              digest: Hex.encode(hash),
-              archived: row.archived === 1,
-              snippet: buildExactSearchSnippet(row.matchText, input.query),
-              messageCreatedAt: row.messageCreatedAt,
-            })),
-            Effect.mapError((cause) => new ThreadSearchError({ operation: "query", cause })),
-          );
+          const provenance = row.source === "user" ? messageProvenance(row.provenance) : undefined;
+          return crypto
+            .digest(
+              Digest.sha256,
+              new TextEncoder().encode(messageEvidenceDigestInput(row.matchText, provenance)),
+            )
+            .pipe(
+              Effect.map((hash) => ({
+                threadId: row.threadId,
+                projectId: row.projectId,
+                title: row.title,
+                source: row.source,
+                ...(provenance === undefined ? {} : { provenance }),
+                messageId: row.messageId,
+                ...(itemId === undefined ? {} : { itemId }),
+                digest: Hex.encode(hash),
+                archived: row.archived === 1,
+                snippet: buildExactSearchSnippet(row.matchText, input.query),
+                messageCreatedAt: row.messageCreatedAt,
+              })),
+              Effect.mapError((cause) => new ThreadSearchError({ operation: "query", cause })),
+            );
         }),
       };
     },
@@ -850,16 +878,20 @@ export const make = Effect.gen(function* () {
       { picks: input.picks ?? true },
     );
     return {
-      matches: ranked.slice(0, input.limit ?? 50).map(({ row, text, quality, offset }) => ({
-        hits: hitCount(row.threadId),
-        threadId: row.threadId,
-        messageId: row.messageId,
-        projectId: row.projectId,
-        source: row.source,
-        snippet: buildSearchSnippet(text, offset),
-        messageCreatedAt: row.messageCreatedAt,
-        quality,
-      })),
+      matches: ranked.slice(0, input.limit ?? 50).map(({ row, text, quality, offset }) => {
+        const provenance = row.source === "user" ? messageProvenance(row.provenance) : undefined;
+        return {
+          hits: hitCount(row.threadId),
+          threadId: row.threadId,
+          messageId: row.messageId,
+          projectId: row.projectId,
+          source: row.source,
+          ...(provenance === undefined ? {} : { provenance }),
+          snippet: buildSearchSnippet(text, offset),
+          messageCreatedAt: row.messageCreatedAt,
+          quality,
+        };
+      }),
     };
   });
 

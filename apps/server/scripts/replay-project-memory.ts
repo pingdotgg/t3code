@@ -5,7 +5,8 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
-  OrchestrationV2Notification,
+  OrchestrationV2ConversationMessage,
+  OrchestrationV2MessageProvenance,
   ProjectFactId,
   ProjectId,
   ProviderInstanceId,
@@ -14,6 +15,7 @@ import {
   type ApplicationProjectEvent,
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
+import { messageProvenance } from "@t3tools/provider-core/server/messageProvenance";
 // @effect-diagnostics nodeBuiltinImport:off - realpath plus inode identity is how a case variant or a symlink is the same directory
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -41,6 +43,9 @@ const GATES = [
   "hand_picked",
   "slash",
   "progress_notice",
+  "nonhuman",
+  "current_correction",
+  "scratch_project",
   "allowance",
   "kernel_unavailable",
   "no_match",
@@ -59,6 +64,8 @@ export interface ReplayOptions {
   readonly messages: string;
   readonly out: string;
   readonly project?: string;
+  /** Canonical managed scratch project ID; the message export contains no workspace roots. */
+  readonly scratchProject?: string;
   readonly factCount?: number;
   readonly limit?: number;
   readonly candidateLimit?: number;
@@ -81,7 +88,9 @@ interface NormalizedMessage {
   readonly threadId: string;
   readonly createdBy: string;
   readonly text: string;
-  readonly notification?: OrchestrationV2Notification;
+  readonly notification?: OrchestrationV2ConversationMessage["notification"];
+  readonly delegatedCompletion?: OrchestrationV2ConversationMessage["delegatedCompletion"];
+  readonly provenance?: OrchestrationV2MessageProvenance;
   readonly noticeKind: string | null;
 }
 
@@ -184,9 +193,10 @@ export const parseReplayArgs = (argv: ReadonlyArray<string>): ReplayOptions => {
   const out = read("--out");
   if (!factsPath || !messagesPath || !out)
     throw new Error(
-      "Usage: replay-project-memory.ts --facts <facts.json> --messages <msgs.json> --out <dir> [--project <id>] [--fact-count <n>] [--limit <n>] [--candidate-limit <n>]",
+      "Usage: replay-project-memory.ts --facts <facts.json> --messages <msgs.json> --out <dir> [--project <id>] [--scratch-project <canonical-id>] [--fact-count <n>] [--limit <n>] [--candidate-limit <n>]",
     );
   const project = read("--project");
+  const scratchProject = read("--scratch-project");
   const factCount = positiveInteger("--fact-count", read("--fact-count"));
   const limit = positiveInteger("--limit", read("--limit"));
   const candidateLimit = positiveInteger("--candidate-limit", read("--candidate-limit"));
@@ -195,6 +205,7 @@ export const parseReplayArgs = (argv: ReadonlyArray<string>): ReplayOptions => {
     messages: messagesPath,
     out,
     ...(project ? { project } : {}),
+    ...(scratchProject ? { scratchProject } : {}),
     ...(factCount === undefined ? {} : { factCount }),
     ...(limit === undefined ? {} : { limit }),
     ...(candidateLimit === undefined ? {} : { candidateLimit }),
@@ -245,26 +256,14 @@ const normalizeFact = (value: unknown): NormalizedFact => {
   };
 };
 
-const decodeNotification = Schema.decodeUnknownSync(OrchestrationV2Notification);
-
-const messageText = (row: Record<string, unknown>): { text: string; createdBy: string } => {
-  if (typeof row.text === "string") {
-    const createdBy =
-      typeof row.created_by === "string"
-        ? row.created_by
-        : typeof row.createdBy === "string"
-          ? row.createdBy
-          : "unknown";
-    return { text: row.text, createdBy };
-  }
-  const payload =
-    typeof row.payload_json === "string" ? JSON.parse(row.payload_json) : row.payload_json;
-  const body = asRecord(payload, "payload_json");
-  return {
-    text: typeof body.text === "string" ? body.text : "",
-    createdBy: typeof body.createdBy === "string" ? body.createdBy : "unknown",
-  };
-};
+const decodeMessageMetadata = Schema.decodeUnknownSync(
+  Schema.Struct({
+    ...OrchestrationV2MessageProvenance.fields,
+    notification: OrchestrationV2ConversationMessage.fields.notification,
+    delegatedCompletion: OrchestrationV2ConversationMessage.fields.delegatedCompletion,
+    scheduledTaskId: OrchestrationV2ConversationMessage.fields.scheduledTaskId,
+  }),
+);
 
 const normalizeMessage = (value: unknown): NormalizedMessage => {
   const row = asRecord(value, "message");
@@ -272,27 +271,36 @@ const normalizeMessage = (value: unknown): NormalizedMessage => {
     throw new Error("message_id is missing");
   if (typeof row.project_id !== "string" || typeof row.thread_id !== "string")
     throw new Error(`message ${row.message_id} is missing project_id or thread_id`);
-  const { text, createdBy } = messageText(row);
   const payload =
     typeof row.payload_json === "string" ? JSON.parse(row.payload_json) : row.payload_json;
-  const body = typeof payload === "object" && payload !== null ? payload : row;
-  const raw = (body as Record<string, unknown>).notification;
-  let notification: NormalizedMessage["notification"];
-  if (raw !== undefined) {
-    try {
-      notification = decodeNotification(raw);
-    } catch {
-      notification = undefined;
-    }
-  }
+  const body =
+    typeof payload === "object" && payload !== null ? asRecord(payload, "payload_json") : row;
+  const rawActor = body.createdBy ?? row.created_by ?? row.createdBy;
+  const createdBy = typeof rawActor === "string" ? rawActor : "unknown";
+  const text =
+    typeof row.text === "string" ? row.text : typeof body.text === "string" ? body.text : "";
+  const metadata = decodeMessageMetadata({
+    createdBy: createdBy === "user" || createdBy === "agent" ? createdBy : "system",
+    creationSource: body.creationSource ?? row.creation_source ?? row.creationSource ?? "server",
+    senderThreadId: body.senderThreadId ?? row.sender_thread_id ?? row.senderThreadId ?? undefined,
+    linkedSender: body.linkedSender ?? row.linkedSender ?? undefined,
+    notification: body.notification ?? row.notification ?? undefined,
+    delegatedCompletion: body.delegatedCompletion ?? row.delegatedCompletion ?? undefined,
+    scheduledTaskId: body.scheduledTaskId ?? row.scheduledTaskId ?? undefined,
+  });
+  const provenance = messageProvenance(metadata);
   return {
     messageId: row.message_id,
     projectId: row.project_id,
     threadId: row.thread_id,
     createdBy,
     text,
-    ...(notification === undefined ? {} : { notification }),
-    noticeKind: notification?.source.kind ?? null,
+    ...(metadata.notification === undefined ? {} : { notification: metadata.notification }),
+    ...(metadata.delegatedCompletion === undefined
+      ? {}
+      : { delegatedCompletion: metadata.delegatedCompletion }),
+    ...(provenance === undefined ? {} : { provenance }),
+    noticeKind: metadata.notification?.source.kind ?? null,
   };
 };
 
@@ -387,6 +395,7 @@ export const summarizeReplay = (
     readonly factsLoaded: number;
     readonly factScale: "as-exported" | "sample" | "duplicate";
     readonly project: string | null;
+    readonly scratchProject: string | null;
     readonly knowledgeAllowance: number;
     readonly recallTimeout: string;
     readonly citation: string;
@@ -558,6 +567,10 @@ const recallGate = (outcome: ProjectKnowledge.RecallOutcome): (typeof GATES)[num
           return "hand_picked";
         case "progress_notice":
           return "progress_notice";
+        case "nonhuman":
+        case "current_correction":
+        case "scratch_project":
+          return outcome.reason;
         case "no_budget":
           return "allowance";
         case "no_match":
@@ -662,6 +675,7 @@ const loadFacts = Effect.fn("replay.loadFacts")(function* (
 const measureMessage = Effect.fn("replay.measureMessage")(function* (
   message: NormalizedMessage,
   candidateLimit: number | undefined,
+  scratchProject: string | undefined,
 ) {
   const knowledge = yield* ProjectKnowledge.ProjectKnowledge;
   spans.length = 0;
@@ -673,6 +687,11 @@ const measureMessage = Effect.fn("replay.measureMessage")(function* (
       requestId: CommandId.make(`memory-recall:${message.messageId}`),
       query: message.text,
       ...(message.notification === undefined ? {} : { notification: message.notification }),
+      ...(message.delegatedCompletion === undefined
+        ? {}
+        : { delegatedCompletion: message.delegatedCompletion }),
+      ...(message.provenance === undefined ? {} : { provenance: message.provenance }),
+      scratchProject: message.projectId === scratchProject,
       ...(candidateLimit === undefined ? {} : { candidateLimit }),
       composer: { text: message.text, records: [] },
       knowledgeAllowance: KNOWLEDGE_ALLOWANCE,
@@ -736,17 +755,18 @@ export const replayProjectMemory = Effect.fn("replay.projectMemory")(function* (
     }
     const rows: ReplayRow[] = [];
     for (const message of corpus.messages)
-      rows.push(yield* measureMessage(message, options.candidateLimit));
+      rows.push(yield* measureMessage(message, options.candidateLimit, options.scratchProject));
     return { loaded, rows };
   }).pipe(Effect.provide(knowledgeLayer(dbPath)));
   const summary = summarizeReplay(produced.rows, {
     factsLoaded: produced.loaded,
     factScale: corpus.factScale,
     project: corpus.project,
+    scratchProject: options.scratchProject ?? null,
     knowledgeAllowance: KNOWLEDGE_ALLOWANCE,
     recallTimeout: RECALL_TIMEOUT,
     citation:
-      "one shared resolving message per project; assisted origin uses origin_thread when the export has one",
+      "synthetic human citation shared per project; real fact source authority is not replayed; assisted origin uses origin_thread when the export has one",
     warmupExcluded: 1,
   });
   yield* fs.makeDirectory(options.out, { recursive: true });

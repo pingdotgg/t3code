@@ -37,6 +37,9 @@ import { LastThreadTitleRegeneration, ThreadTitleRegeneration } from "./threadTi
 import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
+  OrchestrationV2LinkedSender,
+} from "./messageProvenance.ts";
+import {
   OrchestrationV2DelegatedFrom,
   OrchestrationV2MessageSpeaker,
   OrchestrationV2RunStatus,
@@ -524,6 +527,7 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
   senderThreadId: Schema.optional(ThreadId),
+  linkedSender: Schema.optional(OrchestrationV2LinkedSender),
   /** Who said a peer's reply in a group. Absent on the thread's own model and on the user. */
   speaker: Schema.optional(OrchestrationV2MessageSpeaker),
   type: Schema.String,

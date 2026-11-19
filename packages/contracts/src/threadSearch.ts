@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import { OrchestrationV2MessageProvenance } from "./messageProvenance.ts";
 
 import {
   IsoDateTime,
@@ -45,6 +46,7 @@ export const OrchestrationThreadSearchMatch = Schema.Struct({
   projectId: ProjectId,
   title: Schema.optionalKey(Schema.String),
   source: OrchestrationThreadSearchSource,
+  provenance: Schema.optionalKey(OrchestrationV2MessageProvenance),
   messageId: Schema.optionalKey(MessageId),
   itemId: Schema.optionalKey(TurnItemId),
   digest: Schema.optionalKey(Schema.String),
