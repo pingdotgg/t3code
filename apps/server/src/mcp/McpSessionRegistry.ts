@@ -33,7 +33,8 @@ export interface McpSessionRegistryShape {
   ) => Effect.Effect<McpInvocationContext.McpThreadInvocationScope | undefined>;
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
-  readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
+  /** `keep` names provider sessions whose credentials a live process still holds. */
+  readonly revokeThread: (threadId: ThreadId, keep?: ReadonlySet<string>) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
 }
 
@@ -213,8 +214,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         yield* revokeWhere((record) => record.scope.thread.providerSessionId === providerSessionId);
       },
     ),
-    revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
-      yield* revokeWhere((record) => record.scope.thread.threadId === threadId);
+    revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId, keep) {
+      yield* revokeWhere(
+        (record) =>
+          record.scope.thread.threadId === threadId &&
+          keep?.has(record.scope.thread.providerSessionId) !== true,
+      );
     }),
     revokeAll: SynchronizedRef.set(state, { records: new Map() }),
   });

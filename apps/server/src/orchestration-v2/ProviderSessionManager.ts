@@ -550,6 +550,8 @@ export const layerWithOptions = (
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
+      /** The thread's MCP slot holds one config; sessions still attached get theirs back on reuse. */
+      const mcpConfigByCredentialId = new Map<string, Parameters<typeof mcpSessions.set>[0]>();
       /** Serialize prepares per thread so concurrent rotations cannot revoke each other's credentials. */
       const prepareMcpSession = (
         threadId: ThreadId,
@@ -602,7 +604,30 @@ export const layerWithOptions = (
                   }
                   dropMcpCredentialReservation(threadId, existing.providerSessionId);
                 }
-                yield* mcpSessionRegistry.revokeThread(threadId);
+                // A hand-off can keep a busy session attached; its process still uses its token
+                // unless agent access was narrowed since it was issued.
+                const held = new Set<string>();
+                for (const entry of (yield* Ref.get(sessions)).values()) {
+                  const heldId = entry.mcpCredentialIdByThread.get(threadId);
+                  const heldCapabilities =
+                    heldId === undefined
+                      ? undefined
+                      : mcpConfigByCredentialId.get(heldId)?.capabilities;
+                  if (
+                    heldId !== undefined &&
+                    entry.attachedThreadIds.has(threadId) &&
+                    heldCapabilities?.has("preview") === browserToolsAvailable &&
+                    heldCapabilities.has("device") === deviceToolsAvailable
+                  ) {
+                    held.add(heldId);
+                  }
+                }
+                yield* mcpSessionRegistry.revokeThread(threadId, held);
+                for (const [id, config] of mcpConfigByCredentialId) {
+                  if (config.threadId === threadId && !held.has(id)) {
+                    mcpConfigByCredentialId.delete(id);
+                  }
+                }
                 const credential = yield* mcpSessionRegistry.issue({
                   threadId,
                   providerInstanceId,
@@ -610,7 +635,7 @@ export const layerWithOptions = (
                   capabilities,
                   subagent,
                 });
-                yield* mcpSessions.set({
+                const config = {
                   ...credential.config,
                   hasPendingWake: projectionStore
                     .getThreadRecords(threadId, ["runs", "subagents"])
@@ -618,25 +643,56 @@ export const layerWithOptions = (
                       Effect.map(delegatedTaskWillWake),
                       Effect.orElseSucceed(() => false),
                     ),
-                });
+                };
+                mcpConfigByCredentialId.set(credential.config.providerSessionId, config);
+                yield* mcpSessions.set(config);
                 reserveMcpCredential(threadId, credential.config.providerSessionId);
                 return { mcpCredentialId: credential.config.providerSessionId, issued: true };
               }),
             );
       const clearMcpSession = (threadId: ThreadId, mcpCredentialId?: string) =>
         mcpCredentialId === undefined
-          ? mcpSessionRegistry
-              .revokeThread(threadId)
-              .pipe(Effect.tap(() => mcpSessions.clear(threadId)))
+          ? mcpSessionRegistry.revokeThread(threadId).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  for (const [id, config] of mcpConfigByCredentialId) {
+                    if (config.threadId === threadId) mcpConfigByCredentialId.delete(id);
+                  }
+                }),
+              ),
+              Effect.tap(() => mcpSessions.clear(threadId)),
+            )
           : mcpSessionRegistry.revokeProviderSession(mcpCredentialId).pipe(
               Effect.tap(() =>
                 Effect.gen(function* () {
+                  mcpConfigByCredentialId.delete(mcpCredentialId);
                   if ((yield* mcpSessions.read(threadId))?.providerSessionId === mcpCredentialId) {
                     yield* mcpSessions.clear(threadId);
                   }
                 }),
               ),
             );
+
+      const restoreHeldMcpSession = (providerSessionId: ProviderSessionId, threadId: ThreadId) =>
+        mcpPrepareLock.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const mcpCredentialId = (yield* Ref.get(sessions))
+              .get(sessionKey(providerSessionId))
+              ?.mcpCredentialIdByThread.get(threadId);
+            const config =
+              mcpCredentialId === undefined
+                ? undefined
+                : mcpConfigByCredentialId.get(mcpCredentialId);
+            if (
+              config === undefined ||
+              (yield* mcpSessions.read(threadId))?.providerSessionId === mcpCredentialId
+            ) {
+              return;
+            }
+            yield* mcpSessions.set(config);
+          }),
+        );
 
       const subscriberReleaseCleanup = new WeakMap<
         Queue.Queue<ProviderSessionEventSignal, Cause.Done>,
@@ -1790,6 +1846,8 @@ export const layerWithOptions = (
                   }),
                 );
               }
+            } else {
+              yield* restoreHeldMcpSession(input.providerSessionId, input.threadId);
             }
           }).pipe(
             Effect.onError(() =>

@@ -466,8 +466,10 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
     readonly scopeCloseReached?: Deferred.Deferred<void>;
+    readonly instanceId?: ProviderInstanceId;
   } = {},
 ) {
+  const instanceId = options.instanceId ?? modelSelection.instanceId;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
@@ -487,7 +489,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     ).pipe(Effect.andThen(Effect.never)),
   );
   return ProviderAdapter.ProviderAdapterV2.of({
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId,
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
@@ -535,7 +537,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
         }
 
         return {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId,
           driver: CODEX_DRIVER,
           providerSessionId: input.providerSessionId,
           ...(options.normalizeThreadLoadModelSelection === undefined
@@ -651,6 +653,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly installationGateLayer?: Layer.Layer<ProviderInstallationGate.ProviderInstallationGate>;
+  readonly secondInstanceId?: ProviderInstanceId;
 }) {
   const layerConfiguredEventSink =
     input.flakyReleaseWrites !== undefined
@@ -698,7 +701,17 @@ function layerTest(input: {
       ...(input.scopeCloseReached === undefined
         ? {}
         : { scopeCloseReached: input.scopeCloseReached }),
-    }).pipe(Effect.map(ProviderAdapterRegistry.layerSingle)),
+    }).pipe(
+      Effect.flatMap((adapter) =>
+        input.secondInstanceId === undefined
+          ? Effect.succeed([adapter])
+          : makeProviderAdapter(input.state, {
+              ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
+              instanceId: input.secondInstanceId,
+            }).pipe(Effect.map((second) => [adapter, second])),
+      ),
+      Effect.map(ProviderAdapterRegistry.layerFromAdapters),
+    ),
   );
   const layerConfiguredMcpRegistry =
     input.pauseResolve === undefined
@@ -3044,6 +3057,101 @@ it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP c
       ),
     );
   }),
+);
+
+// regression: #37000 a queued hand-off keeps a busy session attached while another instance opens
+it.effect(
+  "ProviderSessionManagerV2 keeps a retained session's MCP credential when a hand-off opens another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
+      const otherInstanceId = ProviderInstanceId.make("codex-other");
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-retained-handoff");
+        const retainedSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const handoffSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherInstanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+
+        yield* manager.open({
+          threadId,
+          providerSessionId: retainedSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const retainedToken = (yield* mcpSessions.read(threadId))?.authorizationHeader.replace(
+          /^Bearer\s+/,
+          "",
+        );
+        assert.isDefined(retainedToken);
+
+        // The busy session stays attached; the hand-off opens its own session.
+        yield* manager.open({
+          threadId,
+          providerSessionId: handoffSessionId,
+          modelSelection: { instanceId: otherInstanceId, model: "gpt-5.4" },
+          runtimePolicy,
+        });
+        assert.equal(
+          (yield* registry.resolve(retainedToken!))?.thread.providerInstanceId,
+          modelSelection.instanceId,
+          "the retained process still holds its credential",
+        );
+
+        // Switching back reuses the retained, still-attached session.
+        yield* manager.open({
+          threadId,
+          providerSessionId: retainedSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const current = yield* mcpSessions.read(threadId);
+        const resolved = yield* registry.resolve(
+          current!.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        assert.equal(resolved?.thread.providerInstanceId, modelSelection.instanceId);
+
+        // Narrowed agent access is not kept alive by the retained session.
+        yield* settings.updateSettings({ enableAgentBrowserAccess: false });
+        yield* manager.open({
+          threadId,
+          providerSessionId: yield* idAllocator.allocate.providerSession({
+            providerInstanceId: otherInstanceId,
+            threadId,
+          }),
+          modelSelection: { instanceId: otherInstanceId, model: "gpt-5.4" },
+          runtimePolicy,
+        });
+        assert.isUndefined(yield* registry.resolve(retainedToken!));
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            secondInstanceId: otherInstanceId,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
