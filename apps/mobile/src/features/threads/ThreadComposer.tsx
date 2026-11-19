@@ -708,6 +708,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
     compactBeforeSend !== null &&
     !compactEditor.isExpanded &&
     stripAttachments.length === 0;
+  // Allow 52dp for the editor, 60dp for the model picker and 44dp per button (62dp for large Send).
+  const wrapCompactActions =
+    reserveCompactInput && compactRowWidth > 0 && compactRowWidth < (usesLargeControls ? 306 : 288);
   const compactTokens = compactBeforeSend ? formatTokens(compactBeforeSend.tokens) : null;
   const compactControl =
     compactBeforeSend && compactTokens !== null ? (
@@ -820,7 +823,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             }}
           >
             <ComposerDictationDraftContent
-              className="flex-row items-end"
+              className={wrapCompactActions ? "flex-row flex-wrap items-end" : "flex-row items-end"}
               compact
               hidden={showsCompactDictation}
             >

@@ -63,7 +63,7 @@ export function ComposerInlineControl(props: {
     <Animated.View
       style={{
         maxWidth: props.maxWidth ?? 190,
-        flexShrink: props.hideOverflowingLabel ? 1 : undefined,
+        ...(props.hideOverflowingLabel && { flexShrink: 1, minWidth: 44 }),
         overflow: animatesLabel ? "hidden" : undefined,
       }}
     >
