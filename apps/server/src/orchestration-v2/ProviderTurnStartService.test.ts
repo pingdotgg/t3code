@@ -2255,8 +2255,7 @@ effectIt.effect("sends new steering text when restarting a manual continuation",
   }),
 );
 
-// Fork: upstream failed here with "Native resume is unavailable", which left Grok, OpenCode and
-// Antigravity threads stuck on Resume. The fork starts an ordinary turn that asks to continue.
+// Fork: upstream refuses this resume ("Native resume is unavailable"); the fork asks to continue.
 effectIt.effect("asks to continue when the provider cannot resume natively", () =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({

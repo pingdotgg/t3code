@@ -970,9 +970,8 @@ export const layer: Layer.Layer<
       });
       let effectiveHandoffs = handoffs;
       let resumeFellBack = false;
-      // Fork: Resume on a provider with no native resume (Grok, OpenCode, Antigravity, or a run
-      // that moved to another provider) used to fail with "Native resume is unavailable". It now
-      // starts an ordinary turn that asks the agent to continue.
+      // Fork: a session without native resume (Grok and the other ACP agents, Pi, Muse,
+      // Antigravity) continues with a prompt instead of failing with "Native resume is unavailable".
       const continueInstead =
         manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined;
       const userText = continueInstead
