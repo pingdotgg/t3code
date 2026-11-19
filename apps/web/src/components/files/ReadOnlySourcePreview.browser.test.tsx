@@ -90,6 +90,7 @@ describe("ReadOnlySourcePreview", () => {
 
   it.each([
     { contents: text, height: 400 },
+    // Short enough that rows of the selection stay mounted with the preview scrolled to the bottom.
     { contents: text.split("\n").slice(0, 163).join("\n"), height: 800 },
   ])(
     "restores and copies a partial selection after scrolling away and back ($height px)",

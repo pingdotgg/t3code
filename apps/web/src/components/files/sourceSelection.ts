@@ -51,6 +51,10 @@ export class SourceSelection {
   #pressed = false;
   /** A press that places a caret, where a collapsed selection is the click's and never a kept one. */
   #clicking = false;
+  /**
+   * The browser's selection as last left: by a render during a press when nothing was drawn over it,
+   * or (`clippedByRender`) as drawn clipped to the mounted rows, which must not be read back as the ends.
+   */
   #parked:
     | { readonly range: StaticRange | undefined; readonly clippedByRender: boolean }
     | undefined;
