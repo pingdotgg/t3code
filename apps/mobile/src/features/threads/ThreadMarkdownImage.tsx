@@ -1,24 +1,28 @@
 import { useAtomValue } from "@effect/atom-react";
-import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
-import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { Image } from "expo-image";
+import { T, useGT } from "gt-react-native";
 import { createContext, useContext, useId, useState } from "react";
 import { fetch } from "expo/fetch";
 import { parse, SvgAst, type JsxAST } from "react-native-svg";
 import { Pressable, StyleSheet, View, type ViewStyle } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
+import { useFilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { AppText as Text } from "../../components/ui/AppText";
-import type { FilePreviewSource } from "../../components/FilePreviewModal";
+import type { FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { MediaActionsMenu } from "../../components/MediaActionsMenu";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useMediaActions } from "../../state/mediaActions";
 import type { MediaActionsSource } from "../../lib/mediaActionsSource";
 import { useAssetUrlState } from "../../state/assets";
+import { WorkspaceMutationIdContext } from "./workspaceMutationIdContext";
+import { ZoomableImagePressable } from "./ZoomableImagePressable";
+import { assetImageCacheKey } from "../../lib/assetImageSource";
+import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
 import {
   MARKDOWN_IMAGE_MAX_WIDTH,
   type MarkdownImageDisplaySize,
@@ -31,7 +35,9 @@ export const MarkdownImageAvailableWidthContext = createContext(0);
 
 type ImageSize = { readonly width: number; readonly height: number };
 
-class SvgLoadError extends Data.TaggedError("SvgLoadError")<{ readonly cause: unknown }> {}
+class SvgLoadError extends Schema.TaggedError<SvgLoadError>()("SvgLoadError", {
+  cause: Schema.Defect(),
+}) {}
 
 async function readSvgXml(uri: string, signal: AbortSignal): Promise<string> {
   if (uri.startsWith("data:image/svg+xml")) {
@@ -70,7 +76,9 @@ const svgDocumentAtom = Atom.family((uri: string) =>
     if (cached !== null) return Effect.succeed(cached);
     return Effect.tryPromise({
       try: async (signal): Promise<SvgDocument> => {
-        const ast = parse(await readSvgXml(uri, signal));
+        const xml = await readSvgXml(uri, signal);
+        signal.throwIfAborted();
+        const ast = parse(xml);
         if (!ast) throw new Error("SVG has no root element");
         return { ast, size: resolveSvgImageSize(ast.props) };
       },
@@ -84,6 +92,8 @@ const noSvgDocumentAtom = Atom.make(AsyncResult.initial<SvgDocument, SvgLoadErro
 export function ThreadMarkdownImageView(props: {
   readonly uri: string | null;
   readonly sourceKey: string;
+  readonly sourceIdentifier?: string;
+  readonly cacheKey?: string | undefined;
   readonly unavailable: boolean;
   readonly unavailableDetail?: string | undefined;
   readonly alt: string | null;
@@ -92,8 +102,10 @@ export function ThreadMarkdownImageView(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const gt = useGT();
   const withGallery = useFilePreviewGallery();
-  const sourceIdentifier = useId();
+  const localSourceIdentifier = useId();
+  const sourceIdentifier = props.sourceIdentifier ?? localSourceIdentifier;
   const mediaActions = useMediaActions(props.actionsSource);
   const contextWidth = useContext(MarkdownImageAvailableWidthContext);
   const [measuredWidth, setMeasuredWidth] = useState(0);
@@ -139,9 +151,9 @@ export function ThreadMarkdownImageView(props: {
         <MediaActionsMenu media={mediaActions}>
           <Pressable
             accessibilityRole="imagebutton"
-            accessibilityLabel={props.alt ?? "Markdown image"}
+            accessibilityLabel={props.alt ?? gt("Markdown image")}
             accessibilityHint={
-              mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+              mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
             }
             className="items-center justify-center rounded-[10px] bg-md-code-bg"
             style={frameStyle}
@@ -149,8 +161,8 @@ export function ThreadMarkdownImageView(props: {
             {failed ? (
               <Text className="px-3 text-center text-xs text-foreground-muted">
                 {props.unavailableDetail
-                  ? `Image unavailable. ${props.unavailableDetail}`
-                  : "Image unavailable"}
+                  ? gt("Image unavailable. {detail}", { detail: props.unavailableDetail })
+                  : gt("Image unavailable")}
               </Text>
             ) : (
               <AppActivityIndicator />
@@ -160,41 +172,47 @@ export function ThreadMarkdownImageView(props: {
       ) : (
         <PresentationSource identifier={sourceIdentifier} style={{ alignSelf: "flex-start" }}>
           <MediaActionsMenu media={mediaActions}>
-            <Pressable
+            <ZoomableImagePressable
+              key={props.sourceKey}
               accessibilityRole="imagebutton"
-              accessibilityLabel={props.alt ?? "Markdown image"}
+              accessibilityLabel={props.alt ?? gt("Markdown image")}
               accessibilityHint={
-                mediaActions.actions.length > 0 ? "Touch and hold for media actions" : undefined
+                mediaActions.actions.length > 0 ? gt("Touch and hold for media actions") : undefined
               }
               onPress={() =>
                 props.onPressPreview(
                   withGallery({
                     kind: "image",
                     uri: props.uri!,
-                    name: props.actionsSource?.name ?? props.alt ?? "Image",
+                    name: props.actionsSource?.name ?? props.alt ?? gt("Image"),
                     sourceIdentifier,
                     actionsSource: props.actionsSource,
                   }),
                 )
               }
-              style={{ alignSelf: "flex-start" }}
+              className="overflow-hidden rounded-[10px] bg-md-code-bg"
+              style={{ alignSelf: "flex-start", ...frameStyle }}
             >
-              <View
-                className="items-center justify-center overflow-hidden rounded-[10px] bg-md-code-bg"
-                style={frameStyle}
-              >
-                {props.format === "svg" ? (
-                  <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
-                ) : (
-                  <ThreadMarkdownImageRequest
-                    key={props.sourceKey}
-                    uri={props.uri}
-                    onLoad={(size) => setDecoded({ sourceKey: props.sourceKey, size })}
-                    onError={() => setFailure({ uri: props.uri, failed: true })}
-                  />
-                )}
-              </View>
-            </Pressable>
+              {props.format === "svg" ? (
+                <ThreadMarkdownSvg ast={svgDocument?.ast ?? null} />
+              ) : (
+                <ThreadMarkdownImageRequest
+                  uri={props.uri}
+                  cacheKey={props.cacheKey}
+                  onLoad={(size) =>
+                    // Only the first decode counts: later loads report the bitmap
+                    // downsampled for the current frame (969 vs 970 wide), so keeping
+                    // them resizes the frame, which reloads the image, and so on.
+                    setDecoded((current) =>
+                      current?.sourceKey === props.sourceKey
+                        ? current
+                        : { sourceKey: props.sourceKey, size },
+                    )
+                  }
+                  onError={() => setFailure({ uri: props.uri, failed: true })}
+                />
+              )}
+            </ZoomableImagePressable>
           </MediaActionsMenu>
         </PresentationSource>
       )}
@@ -209,6 +227,7 @@ export function ThreadMarkdownImageView(props: {
 
 function ThreadMarkdownImageRequest(props: {
   readonly uri: string;
+  readonly cacheKey: string | undefined;
   readonly onLoad: (sourceSize: ImageSize) => void;
   readonly onError: () => void;
 }) {
@@ -217,7 +236,7 @@ function ThreadMarkdownImageRequest(props: {
   return (
     <>
       <Image
-        source={{ uri: props.uri }}
+        source={{ uri: props.uri, cacheKey: props.cacheKey }}
         contentFit="contain"
         cachePolicy="memory-disk"
         accessible={false}
@@ -239,7 +258,9 @@ function ThreadMarkdownImageLoading() {
       pointerEvents="none"
       style={[StyleSheet.absoluteFill, { alignItems: "center", justifyContent: "center" }]}
     >
-      <Text className="text-xs text-foreground-muted">Loading image…</Text>
+      <Text className="text-xs text-foreground-muted">
+        <T>Loading image…</T>
+      </Text>
     </View>
   );
 }
@@ -263,23 +284,45 @@ export function ThreadMarkdownImage(props: {
   readonly actionsSource?: MediaActionsSource;
   readonly onPressPreview: (source: FilePreviewSource) => void;
 }) {
+  const gt = useGT();
   const withGallery = useFilePreviewGallery();
-  const assetUrl = useAssetUrlState(props.environmentId, props.resource);
+  const workspaceMutationId = useContext(WorkspaceMutationIdContext);
+  const assetUrl = useAssetUrlState(
+    props.environmentId,
+    props.resource,
+    props.resource._tag === "media-file" ? workspaceMutationId : undefined,
+  );
+  const resourceKey =
+    props.resource._tag === "attachment"
+      ? `attachment:${props.resource.attachmentId}`
+      : props.resource._tag === "tool-output-image"
+        ? `tool-output:${props.resource.itemId}:${props.resource.index}`
+        : `workspace:${props.resource.path}`;
+  // The view keeps the first decoded size per key, so a file edited in place needs a
+  // new key; a re-signed URL for the same revision must not get one.
+  const sourceKey =
+    assetUrl._tag === "Success" && assetUrl.fileRevision !== undefined
+      ? `${resourceKey}@${assetUrl.fileRevision}`
+      : resourceKey;
 
   return (
     <ThreadMarkdownImageView
       uri={assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null}
-      sourceKey={
-        props.resource._tag === "attachment"
-          ? `attachment:${props.resource.attachmentId}`
-          : props.resource._tag === "tool-output-image"
-            ? `tool-output:${props.resource.itemId}:${props.resource.index}`
-            : `workspace:${props.resource.path}`
+      cacheKey={
+        assetUrl._tag === "Success"
+          ? assetImageCacheKey(props.environmentId, props.resource, assetUrl.fileRevision)
+          : undefined
       }
+      sourceKey={sourceKey}
+      sourceIdentifier={filePreviewSourceIdentifier({
+        kind: "image",
+        environmentId: props.environmentId,
+        resource: props.resource,
+      })}
       unavailable={assetUrl._tag === "Failure"}
       unavailableDetail={
         assetUrl._tag === "Failure" && assetUrl.reason === "missing-file-access"
-          ? MISSING_FILE_ACCESS_MESSAGE
+          ? gt("This connection cannot read host files. Pair again with a new link to view it.")
           : undefined
       }
       knownSize={assetUrl._tag === "Success" ? assetUrl.imageDimensions : undefined}

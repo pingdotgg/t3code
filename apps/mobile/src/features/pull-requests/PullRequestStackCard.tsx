@@ -1,20 +1,23 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { useState } from "react";
-import { Platform, View } from "react-native";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
+import { View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
+import { pullRequestLayerParams } from "./pullRequestStack";
 import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
 import type { PullRequestStackState } from "./usePullRequestStack";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { withKnownPullRequestSummary } from "../../state/use-thread-pr";
 
 export function PullRequestStackCard(props: {
   readonly params: PullRequestParams;
   readonly state: PullRequestStackState;
 }) {
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
+  const gt = useGT();
+  const m = useMessages();
   const [expanded, setExpanded] = useState(false);
   const stack = props.state.stack;
   if (!stack) {
@@ -26,9 +29,9 @@ export function PullRequestStackCard(props: {
     return (
       <PullRequestCardGroup>
         <PullRequestCardRow
-          title="Stack"
+          title={gt("Stack", { $context: "stacked pull requests" })}
           icon={PullRequestGlyph.stack}
-          value={`${summary.position} of ${summary.size}`}
+          value={gt("{position} of {total}", { position: summary.position, total: summary.size })}
           last
         />
       </PullRequestCardGroup>
@@ -38,10 +41,17 @@ export function PullRequestStackCard(props: {
   return (
     <PullRequestCardGroup>
       <PullRequestCardRow
-        title="Stack"
+        title={gt("Stack", { $context: "stacked pull requests" })}
         icon={PullRequestGlyph.stack}
-        value={`${position} of ${stack.layers.length}`}
-        accessibilityLabel={`Stack, ${position} of ${stack.layers.length}${props.state.isFresh ? "" : ", showing saved stack"}`}
+        value={gt("{position} of {total}", { position, total: stack.layers.length })}
+        accessibilityLabel={
+          props.state.isFresh
+            ? gt("Stack, {position} of {total}", { position, total: stack.layers.length })
+            : gt("Stack, {position} of {total}, showing saved stack", {
+                position,
+                total: stack.layers.length,
+              })
+        }
         expanded={expanded}
         onPress={() => setExpanded(!expanded)}
         last={!expanded}
@@ -50,27 +60,35 @@ export function PullRequestStackCard(props: {
         <View>
           {stack.layers.map((layer, index) => {
             const selected = layer.number === props.params.number;
-            const status = pullRequestStatus({
-              state: layer.state,
-              isDraft: layer.isDraft === true,
-            });
+            const status = pullRequestStatus(
+              { state: layer.state, isDraft: layer.isDraft === true },
+              m,
+            );
             return (
               <View key={layer.number} className={selected ? "bg-thread-selected" : undefined}>
                 <PullRequestCardRow
                   title={layer.title ?? layer.headBranch}
                   icon={status.icon}
                   tint={status.tint}
-                  value={selected ? "Current" : status.label}
-                  detail={`#${layer.number} · ${index + 1} of ${stack.layers.length}`}
+                  value={
+                    selected ? gt("Current", { $context: "current stack layer" }) : status.label
+                  }
+                  detail={`#${layer.number} · ${gt("{position} of {total}", {
+                    position: index + 1,
+                    total: stack.layers.length,
+                  })}`}
                   onPress={
                     selected
                       ? undefined
-                      : () => {
-                          const params = { ...props.params, number: layer.number };
-                          if (Platform.OS === "android")
-                            selectDetail({ name: "PullRequest", params });
-                          else navigation.dispatch(StackActions.push("PullRequest", params));
-                        }
+                      : () =>
+                          navigation.dispatch(
+                            StackActions.push(
+                              "PullRequest",
+                              withKnownPullRequestSummary(
+                                pullRequestLayerParams(props.params, layer.number),
+                              ),
+                            ),
+                          )
                   }
                   last={index === stack.layers.length - 1}
                 />
@@ -78,7 +96,10 @@ export function PullRequestStackCard(props: {
             );
           })}
           <Text className="px-4 py-3 text-xs text-foreground-muted">
-            Base: {stack.base}. Open a layer to review it or merge the stack through that layer.
+            <T>
+              Base: <Var>{stack.base}</Var>. Open a layer to review it or merge the stack through
+              that layer.
+            </T>
           </Text>
         </View>
       ) : null}

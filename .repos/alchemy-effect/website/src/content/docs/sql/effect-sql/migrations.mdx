@@ -97,9 +97,13 @@ running its migrate command.
 
 Two guard rails:
 
-- Every recorded row must match a local migration file; an orphaned
-  row fails the deploy with `MigrationHistoryConflictError` — it
-  means migrations were applied that your checkout doesn't have.
+- Every recorded row must match a local migration file by name and
+  content hash. An orphaned row fails conversion with
+  `MigrationHistoryConflictError`; an already-applied file that was
+  edited or removed fails with `RewrittenMigrationHistoryError`.
+  Add a forward migration rather than rewriting history. PlanetScale
+  development branches replace (re-fork from parent) instead of
+  failing; production branches always fail.
 - A **failed** Prisma migration (`finished_at` NULL) blocks adoption
   until repaired with `prisma migrate resolve`; rolled-back rows are
   skipped.
@@ -150,7 +154,7 @@ working directory, **not** the source module.
 Load the directory in the outer Effect:
 
 ```typescript
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 
 export class Users extends Cloudflare.DurableObject<Users>()(

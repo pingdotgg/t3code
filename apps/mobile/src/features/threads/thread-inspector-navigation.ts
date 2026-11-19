@@ -2,13 +2,17 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { createContext, use } from "react";
 import { Platform } from "react-native";
 
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useWorkspacePaneState } from "../layout/AdaptiveWorkspaceLayout";
+
+export type ThreadInspectorMode = "route" | "git" | "files" | "preview";
 
 export type ThreadInspectorTarget = {
-  readonly type: "thread" | "device";
+  readonly type: "thread" | "device" | "localPreview";
   readonly environmentId: string;
   readonly threadId: string;
   readonly deviceKey?: string;
+  /** The environment's localhost page a "localPreview" shows. */
+  readonly url?: string;
 };
 
 export const ThreadInspectorNavigationContext = createContext<
@@ -17,7 +21,7 @@ export const ThreadInspectorNavigationContext = createContext<
 
 export function useOpenThreadInspector() {
   const navigation = useNavigation();
-  const { fileInspector } = useAdaptiveWorkspaceLayout();
+  const { fileInspector } = useWorkspacePaneState();
   const openInInspector = use(ThreadInspectorNavigationContext);
   return (
     source: { readonly environmentId: string; readonly threadId: string },

@@ -3,12 +3,14 @@ import type {
   UsageBucket,
   UsageCategoryCost,
   UsageDay,
+  UsageModelFilter,
+  UsageModelSelector,
   UsageResolution,
   UsageTokenTotals,
 } from "@t3tools/contracts";
 
 import { EMPTY_TOTALS, type UsageRecord } from "@t3tools/provider-core/server/usage";
-import { cacheSavingsUsd, priceUsage, type RateTable } from "./usagePricing.ts";
+import { cacheSavingsUsd, lookupRate, priceUsage, type RateTable } from "./usagePricing.ts";
 
 // en-CA gives ISO-ordered parts in the requested zone; Date getters are host-local.
 function makeDayFormatter(timeZone: string): (timestampMs: number) => string {
@@ -56,6 +58,7 @@ interface MutableBucket {
   speedPremiumUsd: number;
   records: number;
   unpricedRecords: number;
+  unpricedTokens: number;
   providerReportedRecords: number;
   sessions: Set<string>;
 }
@@ -67,6 +70,8 @@ export interface AggregateOptions {
   readonly rates: RateTable;
   readonly priceOverrides?: RateTable;
   readonly modelAliases?: ReadonlyMap<string, string>;
+  readonly rateModel?: (provider: UsageRecord["provider"], model: string) => string | undefined;
+  readonly modelFilter?: UsageModelFilter;
   readonly resolution?: UsageResolution;
   readonly sinceTimeMs?: number;
   readonly untilTimeMs?: number;
@@ -75,17 +80,60 @@ export interface AggregateOptions {
 export function resolveModelAliases(
   aliases: Readonly<Record<string, string>>,
 ): ReadonlyMap<string, string> {
-  const resolved = new Map<string, string>();
-  for (const model of Object.keys(aliases)) {
-    const seen = new Set([model]);
-    let target = aliases[model]!;
-    while (Object.hasOwn(aliases, target) && !seen.has(target)) {
-      seen.add(target);
+  const models = Object.keys(aliases);
+  const memo = new Map<string, string | null>();
+  for (const model of models) {
+    if (memo.has(model)) continue;
+    const path: string[] = [];
+    let target = model;
+    while (Object.hasOwn(aliases, target) && !memo.has(target)) {
+      path.push(target);
+      // Null marks both the active walk and paths that end in a cycle.
+      memo.set(target, null);
       target = aliases[target]!;
     }
-    if (!Object.hasOwn(aliases, target)) resolved.set(model, target);
+    const terminal = Object.hasOwn(aliases, target) ? (memo.get(target) ?? null) : target;
+    for (const alias of path) memo.set(alias, terminal);
+  }
+
+  const resolved = new Map<string, string>();
+  for (const model of models) {
+    const target = memo.get(model);
+    if (target !== null && target !== undefined) resolved.set(model, target);
   }
   return resolved;
+}
+
+/** Matches original IDs, so an alias cannot pull excluded usage into a kept model. */
+function keepsUsageRecord(filter: UsageModelFilter | undefined, record: UsageRecord): boolean {
+  if (filter === undefined) return true;
+  const model = record.model.trim();
+  const matches = (selector: UsageModelSelector) =>
+    selector.model === model &&
+    (selector.provider === undefined || selector.provider === record.provider);
+  return (filter.include?.some(matches) ?? true) && !(filter.exclude?.some(matches) ?? false);
+}
+
+const selectorKey = (selector: UsageModelSelector) =>
+  JSON.stringify([selector.provider ?? null, selector.model]);
+
+const canonicalSelectors = (selectors: readonly UsageModelSelector[]) =>
+  [...new Map(selectors.map((selector) => [selectorKey(selector), selector]))]
+    // Code-unit order, so servers in different locales echo the same form.
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([, selector]) => selector);
+
+/** Equal filters get one form, so they share scans and clients can compare echoed filters. */
+export function canonicalModelFilter(
+  filter: UsageModelFilter | undefined,
+): UsageModelFilter | undefined {
+  if (filter === undefined) return undefined;
+  const exclude = filter.exclude?.length ? canonicalSelectors(filter.exclude) : undefined;
+  if (filter.include === undefined && exclude === undefined) return undefined;
+  return {
+    ...(filter.include === undefined ? {} : { include: canonicalSelectors(filter.include) }),
+    ...(exclude === undefined ? {} : { exclude }),
+  };
 }
 
 export interface AggregateResult {
@@ -94,10 +142,80 @@ export interface AggregateResult {
   readonly outOfWindow: number;
 }
 
+/**
+ * Partial copies share a billed message's key: keep each token channel's maximum and the larger
+ * reported cost, and the first copy's time, model, session and speed so it stays in its bucket.
+ */
+export function mergeUsageCopies(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.max(held.reportedCostUsd, copy.reportedCostUsd);
+  if (
+    b.uncachedInputTokens <= a.uncachedInputTokens &&
+    b.cachedInputTokens <= a.cachedInputTokens &&
+    b.cacheCreationTokens <= a.cacheCreationTokens &&
+    b.outputTokens <= a.outputTokens &&
+    b.reasoningTokens <= a.reasoningTokens &&
+    (copy.cacheCreation1hTokens ?? 0) <= (held.cacheCreation1hTokens ?? 0) &&
+    reportedCostUsd === held.reportedCostUsd
+  ) {
+    return held;
+  }
+  const cacheCreation1hTokens = Math.max(
+    held.cacheCreation1hTokens ?? 0,
+    copy.cacheCreation1hTokens ?? 0,
+  );
+  return {
+    ...held,
+    ...(cacheCreation1hTokens > 0 ? { cacheCreation1hTokens } : {}),
+    totals: {
+      uncachedInputTokens: Math.max(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.max(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.max(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.max(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.max(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+/**
+ * Grok reports each turn once, complete, so real copies are equal. A larger one is a deleted
+ * transcript's pre-v17 maximum over turns that shared a prompt id, whichever source it came from.
+ */
+function smallestGrokCopy(held: UsageRecord, copy: UsageRecord): UsageRecord {
+  const a = held.totals;
+  const b = copy.totals;
+  const reportedCostUsd =
+    held.reportedCostUsd === null || copy.reportedCostUsd === null
+      ? (held.reportedCostUsd ?? copy.reportedCostUsd)
+      : Math.min(held.reportedCostUsd, copy.reportedCostUsd);
+  return {
+    ...held,
+    totals: {
+      uncachedInputTokens: Math.min(a.uncachedInputTokens, b.uncachedInputTokens),
+      cachedInputTokens: Math.min(a.cachedInputTokens, b.cachedInputTokens),
+      cacheCreationTokens: Math.min(a.cacheCreationTokens, b.cacheCreationTokens),
+      outputTokens: Math.min(a.outputTokens, b.outputTokens),
+      reasoningTokens: Math.min(a.reasoningTokens, b.reasoningTokens),
+    },
+    reportedCostUsd,
+  };
+}
+
+interface Contribution {
+  record: UsageRecord;
+  /** Null when the first copy fell outside the window. */
+  readonly bucket: MutableBucket | null;
+}
+
 /** Deduplicates across the whole scan; Claude copies records into resumed/forked transcripts. */
 export class UsageAggregator {
   readonly #buckets = new Map<string, MutableBucket>();
-  readonly #seen = new Set<string>();
+  readonly #seen = new Map<string, Contribution>();
   readonly #toDay: (timestampMs: number) => string;
   readonly #hourlyWindow: { readonly sinceTimeMs: number; readonly untilTimeMs: number } | null;
   readonly #options: AggregateOptions;
@@ -129,22 +247,41 @@ export class UsageAggregator {
   }
 
   add(input: UsageRecord, sourcePath?: string): boolean {
+    if (!keepsUsageRecord(this.#options.modelFilter, input)) return false;
     const record = this.#mapModel(input);
     if (record.dedupeKey !== null) {
-      if (this.#seen.has(record.dedupeKey)) {
+      const held = this.#seen.get(record.dedupeKey);
+      if (held !== undefined) {
         this.#duplicatesDropped += 1;
+        if (held.bucket !== null) {
+          held.record =
+            record.provider === "grok"
+              ? smallestGrokCopy(held.record, record)
+              : mergeUsageCopies(held.record, record);
+        }
         return false;
       }
-      this.#seen.add(record.dedupeKey);
     }
 
+    const bucket = this.#placeInWindow(record, sourcePath ?? "");
+    if (record.dedupeKey !== null) this.#seen.set(record.dedupeKey, { record, bucket });
+    if (bucket === null) {
+      this.#outOfWindow += 1;
+      return false;
+    }
+    // Keyed usage is counted in finish(), once all its copies are merged.
+    if (record.dedupeKey === null) this.#accumulate(bucket, record);
+    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
+    return true;
+  }
+
+  #placeInWindow(record: UsageRecord, source: string): MutableBucket | null {
     if (
       this.#hourlyWindow !== null &&
       (record.timestampMs < this.#hourlyWindow.sinceTimeMs ||
         record.timestampMs >= this.#hourlyWindow.untilTimeMs)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const day = this.#toDay(record.timestampMs);
@@ -152,16 +289,17 @@ export class UsageAggregator {
       this.#hourlyWindow === null &&
       (day < this.#options.sinceDay || day > this.#options.untilDay)
     ) {
-      this.#outOfWindow += 1;
-      return false;
+      return null;
     }
 
     const hourIndex =
       this.#hourlyWindow === null
         ? -1
         : Math.floor((record.timestampMs - this.#hourlyWindow.sinceTimeMs) / HOUR_MS);
-    const bucket = this.#bucketFor(day, hourIndex, record.provider, record.model, sourcePath ?? "");
+    return this.#bucketFor(day, hourIndex, record.provider, record.model, source);
+  }
 
+  #accumulate(bucket: MutableBucket, record: UsageRecord): void {
     const priced = priceUsage(this.#options.rates, record, this.#options.priceOverrides);
 
     const totals = bucket.totals;
@@ -193,18 +331,27 @@ export class UsageAggregator {
       this.#options.priceOverrides,
     );
     bucket.records += 1;
-    if (priced.costSource === "unpriced") bucket.unpricedRecords += 1;
+    if (priced.costSource === "unpriced") {
+      bucket.unpricedRecords += 1;
+      bucket.unpricedTokens +=
+        record.totals.uncachedInputTokens +
+        record.totals.cachedInputTokens +
+        record.totals.cacheCreationTokens +
+        record.totals.outputTokens;
+    }
     if (priced.costSource === "providerReported") bucket.providerReportedRecords += 1;
-    if (record.sessionId.length > 0) bucket.sessions.add(record.sessionId);
-    return true;
   }
 
-  // Aliases use the target's rate, replacing provider-specific rateModel.
+  // Aliases use the target's rate. Only an unpriced target goes through the provider's own rate naming.
   #mapModel(record: UsageRecord): UsageRecord {
     const model = this.#options.modelAliases?.get(record.model);
     if (model === undefined) return record;
     const { rateModel: _rateModel, ...rest } = record;
-    return { ...rest, model };
+    const rateModel =
+      lookupRate(this.#options.rates, model) === null
+        ? this.#options.rateModel?.(record.provider, model)
+        : undefined;
+    return rateModel === undefined ? { ...rest, model } : { ...rest, model, rateModel };
   }
 
   // Time-ordered records usually reuse the previous bucket; avoid rebuilding its key.
@@ -242,6 +389,7 @@ export class UsageAggregator {
         speedPremiumUsd: 0,
         records: 0,
         unpricedRecords: 0,
+        unpricedTokens: 0,
         providerReportedRecords: 0,
         sessions: new Set<string>(),
       };
@@ -252,6 +400,10 @@ export class UsageAggregator {
   }
 
   finish(): AggregateResult {
+    for (const { record, bucket } of this.#seen.values()) {
+      if (bucket !== null) this.#accumulate(bucket, record);
+    }
+    this.#seen.clear();
     const buckets: UsageBucket[] = [];
     for (const [key, bucket] of this.#buckets) {
       const [day = "", hourStart = "", provider = "", model = "", sourcePath = ""] =
@@ -285,6 +437,7 @@ export class UsageAggregator {
         costSource: resolveCostSource(bucket),
         records: bucket.records,
         unpricedRecords: bucket.unpricedRecords,
+        unpricedTokens: bucket.unpricedTokens,
         sessions: bucket.sessions.size,
       });
     }

@@ -1,4 +1,4 @@
-import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
@@ -14,10 +14,9 @@ import { PORTS } from "./ports.ts";
  * that unrelated churn (worker-source edits, stack reloads, broken
  * intermediate states) must NOT bounce the container.
  */
-export class SandboxContainer extends Cloudflare.Container<
-  SandboxContainer,
-  {}
->()("SandboxContainer") {}
+export class SandboxContainer extends Cloudflare.Container<SandboxContainer, {}>()(
+  "SandboxContainer",
+) {}
 
 export const SandboxLive = /* @__PURE__ */ SandboxContainer.make(
   {

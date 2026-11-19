@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -99,9 +100,76 @@ export function resolveMessageDispatchIntent(
   // Compaction and sign-out cannot accept steers; queue follow-ups.
   const target = projection.runs.find((run) => run.id === mode.targetRunId);
   const targetMessage = projection.messages.find((message) => message.id === target?.userMessageId);
-  return targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)
+  if (targetMessage !== undefined && isNativeMaintenanceCommand(targetMessage)) {
+    return { type: "queue_after_active" };
+  }
+  // A provider that can neither steer nor restart its turn takes the message after the turn.
+  const turns =
+    target === undefined || !isActiveRun(target)
+      ? undefined
+      : providerTurnCapabilities(projection, target);
+  return turns !== undefined && !turns.supportsActiveSteering && providerSwitchWaitsForTurn(turns)
     ? { type: "queue_after_active" }
     : mode;
+}
+
+/** A run that still owns the thread's provider turn. */
+export function isActiveRun(run: OrchestrationV2Run): boolean {
+  return (
+    run.status === "preparing" ||
+    run.status === "starting" ||
+    run.status === "running" ||
+    run.status === "waiting"
+  );
+}
+
+/**
+ * Providers that key forks on native turn ids can only fork a busy source from a turn with one;
+ * a synthetic or missing boundary would fork the live conversation, including the running turn.
+ */
+export function canForkBusySourceNatively(
+  capabilities: OrchestrationV2ProviderCapabilities,
+  hasNativeTurnBoundary: boolean,
+): boolean {
+  return (
+    capabilities.threads.canForkWhileSourceRunning === true &&
+    (hasNativeTurnBoundary || !capabilities.turns.exposesNativeTurnId)
+  );
+}
+
+/** The run a follow-up to a finished child binds to: the latest active one, else the last that ran. */
+export function followUpOwnerRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  return (
+    runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? latestExecutedRun(runs)
+  );
+}
+
+/** A provider that cannot restart its turn for new input runs a provider switch after the turn. */
+export function providerSwitchWaitsForTurn(
+  turns: OrchestrationV2ProviderCapabilities["turns"],
+): boolean {
+  return (
+    turns.supportsQueuedMessages &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
+  );
+}
+
+export function providerTurnCapabilities(
+  projection: OrchestrationV2ThreadProjection,
+  run: OrchestrationV2Run,
+) {
+  const providerThread = projection.providerThreads.find(
+    (candidate) => candidate.id === run.providerThreadId,
+  );
+  const providerSession =
+    providerThread?.providerSessionId == null
+      ? undefined
+      : projection.providerSessions.find(
+          (candidate) => candidate.id === providerThread.providerSessionId,
+        );
+  return providerSession?.capabilities.turns;
 }
 
 function resolveDeliveryIntent(
@@ -111,13 +179,7 @@ function resolveDeliveryIntent(
 ): MessageDispatchMode {
   if (deliveryIntent === undefined) return requestedMode;
 
-  const activeRun = projection.runs.findLast(
-    (run) =>
-      run.status === "preparing" ||
-      run.status === "starting" ||
-      run.status === "running" ||
-      run.status === "waiting",
-  );
+  const activeRun = projection.runs.findLast(isActiveRun);
   if (activeRun === undefined) return { type: "start_immediately" };
   if (deliveryIntent === "steer") {
     return { type: "steer_active", targetRunId: activeRun.id };
@@ -137,16 +199,7 @@ function resolveDeliveryIntent(
     return { type: "queue_after_active" };
   }
 
-  const providerThread = projection.providerThreads.find(
-    (candidate) => candidate.id === activeRun.providerThreadId,
-  );
-  const providerSession =
-    providerThread?.providerSessionId == null
-      ? undefined
-      : projection.providerSessions.find(
-          (candidate) => candidate.id === providerThread.providerSessionId,
-        );
-  const capabilities = providerSession?.capabilities.turns;
+  const capabilities = providerTurnCapabilities(projection, activeRun);
   if (capabilities?.supportsActiveSteering === true) {
     return { type: "steer_active", targetRunId: activeRun.id };
   }
@@ -187,8 +240,11 @@ export interface CommandPolicyV2Shape {
     input: CapabilityCheckInput & {
       readonly sameProvider: boolean;
       readonly hasStrongNativeSource: boolean;
+      readonly hasNativeTurnBoundary: boolean;
       readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
+      /** Later source runs are still active. */
+      readonly sourceBusy: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
   readonly ensureRollback: (
@@ -288,9 +344,11 @@ const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
 };
 
 const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
+  // Without native truncation, the next turn replays the kept conversation as a handoff.
   if (
     !input.capabilities.threads.canRollbackThread ||
-    !input.capabilities.checkpointing.providerCanRollbackConversation
+    (!input.capabilities.checkpointing.providerCanRollbackConversation &&
+      !input.capabilities.context.canConsumeHandoffSummaries)
   ) {
     return Effect.fail(
       unsupported(input, "rollback", "providerInstanceId conversation rollback is unavailable"),
@@ -352,6 +410,8 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
+    (!input.sourceBusy ||
+      canForkBusySourceNatively(input.capabilities, input.hasNativeTurnBoundary)) &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
     input.capabilities.identity.nativeThreadIds === "strong";
