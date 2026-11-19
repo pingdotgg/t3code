@@ -11,7 +11,11 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  pendingModelAfterPress,
+  resolvePendingRuntimeMode,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -69,6 +73,18 @@ afterEach(() => {
 });
 
 describe("thread settings sheet state", () => {
+  it("revalidates a staged permission against the current model and workspace policy", () => {
+    expect(resolvePendingRuntimeMode(null, [])).toBeNull();
+    expect(resolvePendingRuntimeMode("full-access", [{ mode: "full-access" }])).toBe("full-access");
+    expect(
+      resolvePendingRuntimeMode("full-access", [{ mode: "approval-required" }]),
+    ).toBeUndefined();
+    expect(
+      resolvePendingRuntimeMode("full-access", [
+        { mode: "full-access", disabledReason: "Managed policy" },
+      ]),
+    ).toBeUndefined();
+  });
   it("preserves in-progress edits when the staged model is pressed again", () => {
     rememberModelOptions("codex", "gpt-next", [{ id: "effort", value: "medium" }]);
     const pending = modelOption("gpt-next", [{ id: "effort", value: "high" }]);

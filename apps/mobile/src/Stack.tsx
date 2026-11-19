@@ -214,10 +214,9 @@ const ROUTE_TITLES: Readonly<Record<string, string>> = {
   ConnectionsNew: msg("Add Environment"),
 };
 
-// Thread settings keep the Duo's vertical bar so cancel, search, filter and confirm sit in the
-// rail. The picker stack spans the sheet so its header reaches the rail, and insets its content.
 const THREAD_SETTINGS_ROUTE = sheetRoute({
-  detent: "full",
+  detent: 0.72,
+  maxDetent: 1,
   header: "none",
   android: "card",
   spansRail: true,

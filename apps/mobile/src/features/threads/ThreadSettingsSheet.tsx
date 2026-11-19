@@ -2,7 +2,7 @@ import {
   getPromptControlledTraits,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
-import { T, useGT, useLocale, useMessages } from "gt-react-native";
+import { useGT, useLocale, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
@@ -46,7 +46,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Pressable, ScrollView, View } from "react-native";
+import { Modal, Pressable, ScrollView, View } from "react-native";
+import { useKeyboardState } from "react-native-keyboard-controller";
 import { READABLE_WIDTH_STYLE, ROW_MIN_HEIGHT } from "../../components/ui/listMetrics";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import Animated, {
@@ -57,8 +58,8 @@ import Animated, {
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { SymbolView } from "../../components/ui/AppSymbol";
-import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { AppBar } from "../../components/ui/AppBar";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
@@ -106,8 +107,6 @@ import {
   createProviderCatalogRefreshRunner,
   providerCatalogRefreshError,
 } from "./provider-catalog-refresh";
-import { useSearchToolbarInset } from "../../components/ui/useBarInset";
-import type { AppBarSearch } from "../../components/ui/AppBar";
 import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
@@ -122,6 +121,7 @@ import {
   modelFavoriteKey,
   modelMatchesCatalogQuery,
   pendingModelAfterPress,
+  resolvePendingRuntimeMode,
   providerSectionIsCollapsed,
 } from "./thread-settings-sheet-state";
 import { formatProviderUpdateRequiredNotice } from "@t3tools/client-runtime/providerUpdateRequiredModels";
@@ -140,14 +140,17 @@ const THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION = {
 const THREAD_SETTINGS_CATALOG_LAYOUT_TRANSITION = LinearTransition.duration(180);
 const THREAD_SETTINGS_CATALOG_ENTER_TRANSITION = FadeIn.duration(140);
 const THREAD_SETTINGS_CATALOG_EXIT_TRANSITION = FadeOut.duration(120);
-const THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION = LinearTransition.duration(180);
-const THREAD_SETTINGS_OPTION_ENTER_TRANSITION = FadeIn.duration(140);
-const THREAD_SETTINGS_OPTION_EXIT_TRANSITION = FadeOut.duration(100);
 const EMPTY_MODEL_FAVORITES: ReadonlyArray<{
   readonly provider: ProviderInstanceId;
   readonly model: string;
 }> = [];
 const FAVORITES_PROVIDER_FILTER = "@favorites";
+const PERMISSION_SYMBOLS = {
+  "approval-required": { ios: "lock", android: "lock" },
+  "auto-accept-edits": "pencil",
+  auto: "checkmark.circle",
+  "full-access": { ios: "lock.open", android: "lock" },
+} as const satisfies Record<RuntimeMode, AppSymbolName>;
 // Servers that predate `migrateModelPreferences` drop it and keep reporting null favorites.
 const attemptedMigrationGenerations = new Map<EnvironmentId, number>();
 function ProviderHeader(props: {
@@ -508,14 +511,17 @@ function ThreadSettingsSessionProvider(
     });
   };
   const [showLegacyToggle, setShowLegacyToggle] = useState(false);
-  const [providerFilter, setProviderFilter] = useState<string | null>(null);
+  const [providerFilter, setProviderFilter] = useState<string | null>(FAVORITES_PROVIDER_FILTER);
   const [searchQuery, setSearchQuery] = useState("");
   const [providerExpansionOverrides, setProviderExpansionOverrides] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
   const [pendingModel, setPendingModel] = useState<ModelOption | null>(null);
+  const [pendingOptions, setPendingOptions] =
+    useState<ReadonlyArray<ProviderOptionSelection> | null>(null);
+  const [pendingRuntimeMode, setPendingRuntimeMode] = useState<RuntimeMode | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
-  const displayedPrompt = pendingModel ? (pendingPrompt ?? props.prompt) : props.prompt;
+  const displayedPrompt = pendingPrompt ?? props.prompt;
 
   const isApplied = (option: ModelOption) =>
     option.selection.instanceId === props.selectedModel?.instanceId &&
@@ -528,26 +534,35 @@ function ThreadSettingsSessionProvider(
         capabilities: pendingModel.capabilities,
         selections: pendingModel.selection.options,
       })
-    : props.optionDescriptors;
+    : props.optionDescriptors.map((descriptor): ProviderOptionDescriptor => {
+        if (pendingOptions === null) return descriptor;
+        const value = pendingOptions.find((option) => option.id === descriptor.id)?.value;
+        if (descriptor.type === "select")
+          return { ...descriptor, currentValue: typeof value === "string" ? value : undefined };
+        return { ...descriptor, currentValue: typeof value === "boolean" ? value : undefined };
+      });
   const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
-  const displayedModel =
-    pendingModel ??
-    props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
-    null;
+  const displayedModel = props.providerGroups.flatMap((group) => group.models).find(isDisplayed);
   const runtimeModeChoices = withManagedRuntimeModeLimits(
     runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
     [config?.managedPolicy],
     messages,
   );
-  const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
-    props.runtimeMode,
-    runtimeModeChoices,
-  );
+  const stagedRuntimeMode = resolvePendingRuntimeMode(pendingRuntimeMode, runtimeModeChoices);
+  const compatibleRuntimeMode =
+    stagedRuntimeMode ?? compatibleRuntimeModeForChoices(props.runtimeMode, runtimeModeChoices);
 
   const hasLegacyModels = props.providerGroups.some((group) =>
     group.models.some((model) => model.isLegacy),
   );
   const commitPendingModel = () => {
+    if (stagedRuntimeMode === undefined) {
+      Dialog.alert(
+        gt("Permission mode unavailable"),
+        gt("Choose a permission mode supported by this model and workspace."),
+      );
+      return false;
+    }
     if (pendingModel) {
       if (!canCommitPendingModel(pendingModel, props.providerGroups)) {
         Dialog.alert(
@@ -557,11 +572,21 @@ function ThreadSettingsSessionProvider(
         return false;
       }
       void Haptics.selectionAsync();
-      props.onSelectModel(pendingModel);
-      if (pendingPrompt !== null && pendingPrompt !== props.prompt) {
-        props.onPromptChange(pendingPrompt);
+      if (pendingModel.selection.options) {
+        rememberModelOptions(
+          pendingModel.selection.instanceId,
+          pendingModel.selection.model,
+          pendingModel.selection.options,
+        );
       }
+      props.onSelectModel(pendingModel);
+    } else if (pendingOptions !== null) {
+      props.onUpdateOptionSelections(pendingOptions);
     }
+    if (pendingPrompt !== null && pendingPrompt !== props.prompt)
+      props.onPromptChange(pendingPrompt);
+    if (stagedRuntimeMode !== null && stagedRuntimeMode !== props.runtimeMode)
+      props.onUpdateRuntimeMode(stagedRuntimeMode);
     return true;
   };
 
@@ -579,11 +604,7 @@ function ThreadSettingsSessionProvider(
     if (descriptor?.type === "select") {
       if (!change) return;
       if (change.prompt !== displayedPrompt) {
-        if (pendingModel) {
-          setPendingPrompt(change.prompt);
-        } else {
-          props.onPromptChange(change.prompt);
-        }
+        setPendingPrompt(change.prompt);
       }
     }
     const next = change
@@ -593,13 +614,12 @@ function ThreadSettingsSessionProvider(
       return;
     }
     if (pendingModel) {
-      rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
       setPendingModel({
         ...pendingModel,
         selection: { ...pendingModel.selection, options: next },
       });
     } else {
-      props.onUpdateOptionSelections(next);
+      setPendingOptions(next);
     }
   };
 
@@ -615,8 +635,9 @@ function ThreadSettingsSessionProvider(
 
   const pressModel = (option: ModelOption) => {
     void Haptics.selectionAsync();
-    if (isApplied(option) || option.key !== pendingModel?.key) {
+    if (pendingModel ? option.key !== pendingModel.key : !isApplied(option)) {
       setPendingPrompt(null);
+      setPendingOptions(null);
     }
     setPendingModel((current) =>
       pendingModelAfterPress({
@@ -647,11 +668,16 @@ function ThreadSettingsSessionProvider(
     pendingHiddenKeys,
     runtimeMode: compatibleRuntimeMode,
     runtimeModeChoices,
-    onUpdateRuntimeMode: props.onUpdateRuntimeMode,
+    onUpdateRuntimeMode: (mode) => setPendingRuntimeMode(mode === props.runtimeMode ? null : mode),
     displayedDescriptors,
     promptTraits,
-    displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
-    reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
+    displayedModelSelection:
+      pendingModel?.selection ??
+      (pendingOptions !== null && props.selectedModel
+        ? { ...props.selectedModel, options: pendingOptions }
+        : props.selectedModel),
+    reportedModelSelection:
+      pendingModel || pendingOptions !== null ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
     providerExpansionOverrides,
@@ -747,10 +773,6 @@ type ThreadSettingsCatalogItem =
   | {
       readonly kind: "empty";
       readonly key: "empty";
-    }
-  | {
-      readonly kind: "options";
-      readonly key: "options";
     };
 
 function ThreadSettingsModelListRow(props: {
@@ -887,6 +909,14 @@ function buildThreadSettingsCatalogItems(
   resolve: MessageResolver,
   locale: string,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
+  const favoritesSelected = session.providerFilter === FAVORITES_PROVIDER_FILTER;
+  if (favoritesSelected && !session.searchQuery.trim() && !session.manageHidden) {
+    return modelItems(
+      session.providerGroups.flatMap((group) =>
+        group.models.filter((model) => session.favoriteKeys.has(model.key)),
+      ),
+    );
+  }
   return session.providerGroups.flatMap((group) => {
     if (
       session.providerFilter !== null &&
@@ -906,15 +936,12 @@ function buildThreadSettingsCatalogItems(
               !model.isLegacy || session.isDisplayed(model) || session.favoriteKeys.has(model.key),
           );
     const visibleModels = favoritesFirst(
-      catalogModels.filter(
-        (model) =>
-          (session.providerFilter !== FAVORITES_PROVIDER_FILTER ||
-            session.favoriteKeys.has(model.key)) &&
-          modelMatchesCatalogQuery({
-            model,
-            providerLabel: group.providerLabel,
-            query: session.searchQuery,
-          }),
+      catalogModels.filter((model) =>
+        modelMatchesCatalogQuery({
+          model,
+          providerLabel: group.providerLabel,
+          query: session.searchQuery,
+        }),
       ),
       session.favoriteKeys,
     );
@@ -970,12 +997,48 @@ function buildThreadSettingsCatalogItems(
   });
 }
 
+function SettingSegments(props: {
+  readonly label: string;
+  readonly choices: ReadonlyArray<{ readonly value: string | boolean; readonly label: string }>;
+  readonly selected: string | boolean | undefined;
+  readonly onChange: (value: string | boolean) => void;
+}) {
+  return (
+    <View className="gap-1.5">
+      <Text className="text-sm text-foreground-muted">{props.label}</Text>
+      <View className="flex-row flex-wrap gap-1">
+        {props.choices.map((choice) => {
+          const selected = choice.value === props.selected;
+          return (
+            <Pressable
+              key={String(choice.value)}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected }}
+              className={cn(
+                "min-h-11 min-w-11 flex-1 items-center justify-center rounded-lg bg-grouped-card px-1 py-1",
+                selected && "bg-subtle-strong",
+              )}
+              onPress={() => props.onChange(choice.value)}
+            >
+              <Text
+                className={cn(
+                  "text-center text-sm text-foreground-muted",
+                  selected && "font-t3-medium text-foreground",
+                )}
+              >
+                {choice.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function ThreadSettingsOptionsItem(props: {
-  readonly animationsReady: boolean;
-  readonly bottomInset: number;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
-  const insets = useSafeAreaInsets();
   const gt = useGT();
   const m = useMessages();
   const session = useThreadSettingsSession();
@@ -985,98 +1048,150 @@ function ThreadSettingsOptionsItem(props: {
         .get(session.environmentId)
         ?.providers.find((provider) => provider.instanceId === session.providerInstanceId) ?? null)
     : null;
+  const reasoning = session.promptTraits.primarySelectDescriptor;
+  const speed =
+    session.displayedDescriptors.find(
+      (entry) => entry.id === "serviceTier" && entry.type === "select",
+    ) ??
+    session.displayedDescriptors.find(
+      (entry) => entry.id === "fastMode" && entry.type === "boolean",
+    );
+  const speedChoices =
+    speed?.type === "select"
+      ? selectableChoices(speed).map((choice) => ({
+          value: choice.id,
+          label:
+            choice.id === "default"
+              ? gt("Standard")
+              : choice.id === "priority"
+                ? gt("Fast")
+                : choice.label,
+        }))
+      : [
+          { value: false, label: gt("Standard") },
+          { value: true, label: gt("Fast") },
+        ];
+  const runtimeLabel = session.runtimeModeChoices.find(
+    (choice) => choice.mode === session.runtimeMode,
+  )?.label;
+  const currentValue = (descriptor: ProviderOptionDescriptor) =>
+    getProviderOptionCurrentValue(
+      descriptor,
+      session.displayedModelSelection,
+      session.reportedModelSelection,
+    );
+  const extraOptions = session.displayedDescriptors.filter(
+    (entry) => entry.id !== reasoning?.id && entry.id !== speed?.id,
+  );
 
   return (
-    <View style={{ paddingBottom: insets.bottom + props.bottomInset + 12 }}>
+    <View className="gap-3 border-b border-border-subtle px-3 pb-4 pt-3">
       <ChatGptSharingStatus provider={selectedProvider} />
-      <Text className="px-5 pb-2 pt-2 text-sm font-t3-medium text-foreground-muted">
-        <T>Options</T>
-      </Text>
-      <Animated.View
-        className="mx-4 overflow-hidden rounded-2xl bg-grouped-card"
-        layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-      >
-        {session.displayedDescriptors.map((descriptor) => {
-          if (descriptor.type === "select") {
-            return (
-              <Animated.View
-                key={descriptor.id}
-                entering={
-                  props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined
-                }
-                exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-                layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
-              >
-                <DisclosureRow
-                  label={descriptor.label}
-                  value={
-                    session.promptTraits.ultrathinkPromptControlled &&
-                    descriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                      ? "Ultrathink"
-                      : getProviderOptionCurrentLabel(
-                          descriptor,
-                          session.displayedModelSelection,
-                          session.reportedModelSelection,
-                        )
-                  }
-                  onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
-                />
-              </Animated.View>
-            );
-          }
-          return (
-            <Animated.View
-              key={descriptor.id}
-              entering={props.animationsReady ? THREAD_SETTINGS_OPTION_ENTER_TRANSITION : undefined}
-              exiting={props.animationsReady ? THREAD_SETTINGS_OPTION_EXIT_TRANSITION : undefined}
-              layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}
+      <View className="flex-row items-end gap-2">
+        {speed ? (
+          <View className="w-32 shrink-0">
+            <SettingSegments
+              label={gt("Speed")}
+              choices={speedChoices}
+              selected={currentValue(speed)}
+              onChange={(value) => session.applyOptionChange(speed.id, value)}
+            />
+          </View>
+        ) : null}
+        <View className="min-w-0 flex-1 gap-1.5">
+          <Text className="text-sm text-foreground-muted">{gt("Permissions")}</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={[
+              gt("Permissions"),
+              runtimeLabel === undefined ? undefined : m(runtimeLabel),
+            ]
+              .filter(Boolean)
+              .join(", ")}
+            className="min-h-11 flex-row items-center gap-2 rounded-lg bg-grouped-card px-2 py-1"
+            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
+          >
+            <SymbolView
+              name={PERMISSION_SYMBOLS[session.runtimeMode]}
+              size={14}
+              tintColorClassName="accent-foreground-muted"
+            />
+            <Text
+              numberOfLines={1}
+              className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
             >
+              {runtimeLabel === undefined ? undefined : m(runtimeLabel)}
+            </Text>
+            <SymbolView
+              name="chevron.right"
+              size={12}
+              tintColorClassName="accent-foreground-muted"
+            />
+          </Pressable>
+        </View>
+      </View>
+      {extraOptions.length ? (
+        <View className="overflow-hidden rounded-xl bg-grouped-card">
+          {extraOptions.map((descriptor) =>
+            descriptor.type === "select" ? (
+              <DisclosureRow
+                key={descriptor.id}
+                label={descriptor.label}
+                value={getProviderOptionCurrentLabel(
+                  descriptor,
+                  session.displayedModelSelection,
+                  session.reportedModelSelection,
+                )}
+                onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
+              />
+            ) : (
               <SwitchRow
+                key={descriptor.id}
                 label={descriptor.label}
                 value={descriptor.currentValue ?? false}
                 onValueChange={(value) => session.applyOptionChange(descriptor.id, value)}
               />
-            </Animated.View>
-          );
-        })}
-        <Animated.View layout={THREAD_SETTINGS_OPTIONS_LAYOUT_TRANSITION}>
-          <DisclosureRow
-            isLast
-            label={gt("Runtime", { $context: "agent permission mode setting" })}
-            value={(() => {
-              const label = session.runtimeModeChoices.find(
-                (choice) => choice.mode === session.runtimeMode,
-              )?.label;
-              return label === undefined ? undefined : m(label);
-            })()}
-            onPress={() => props.onOpenSubmenu({ kind: "runtime" })}
-          />
-        </Animated.View>
-      </Animated.View>
-
-      <Text className="px-5 pb-2 pt-7 text-sm font-t3-medium text-foreground-muted">
-        {gt("Catalog", { $context: "section heading for the model catalog" })}
-      </Text>
-      <View className="mx-4 overflow-hidden rounded-2xl bg-grouped-card">
-        <SwitchRow
-          label={gt("Manage hidden models")}
-          value={session.manageHidden}
-          onValueChange={session.setManageHidden}
-          isLast
+            ),
+          )}
+        </View>
+      ) : null}
+      {reasoning ? (
+        <SettingSegments
+          label={gt("Reasoning")}
+          choices={selectableChoices(reasoning).map((choice) => ({
+            value: choice.id,
+            label: choice.label,
+          }))}
+          selected={
+            session.promptTraits.ultrathinkPromptControlled ? "ultrathink" : currentValue(reasoning)
+          }
+          onChange={(value) => {
+            if (session.promptTraits.ultrathinkInBodyText) {
+              Dialog.alert(
+                gt("Reasoning controlled by prompt"),
+                gt(
+                  'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                ),
+              );
+              return;
+            }
+            session.applyOptionChange(reasoning.id, value);
+          }}
         />
-      </View>
+      ) : null}
     </View>
   );
 }
 
 function ThreadSettingsMainContent(props: {
-  readonly bottomInset: number;
   readonly onOpenSubmenu: (submenu: ThreadSettingsSubmenuPage) => void;
 }) {
   const gt = useGT();
   const m = useMessages();
   const locale = useLocale();
   const session = useThreadSettingsSession();
+  const insets = useSafeAreaInsets();
+  const searching = useKeyboardState((state) => state.isVisible);
   const refreshProvidersCommand = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
@@ -1128,7 +1243,6 @@ function ThreadSettingsMainContent(props: {
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [
     ...(catalogItems.length === 0 ? ([{ kind: "empty", key: "empty" }] as const) : catalogItems),
-    { kind: "options", key: "options" },
   ] satisfies ReadonlyArray<ThreadSettingsCatalogItem>;
   const renderCatalogItem = (itemProps: LegendListRenderItemProps<ThreadSettingsCatalogItem>) => {
     const item = itemProps.item;
@@ -1161,14 +1275,6 @@ function ThreadSettingsMainContent(props: {
           </Text>
         </View>
       );
-    } else {
-      content = (
-        <ThreadSettingsOptionsItem
-          animationsReady={animationsReady}
-          bottomInset={props.bottomInset}
-          onOpenSubmenu={props.onOpenSubmenu}
-        />
-      );
     }
 
     return (
@@ -1183,33 +1289,90 @@ function ThreadSettingsMainContent(props: {
   };
 
   return (
-    // oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content; sheets sit outside workspace columns and keep their own header handling.
-    <AnimatedLegendList
-      alwaysBounceVertical
-      automaticallyAdjustsScrollIndicatorInsets
-      className="flex-1 bg-sheet"
-      style={READABLE_WIDTH_STYLE}
-      contentContainerStyle={{ paddingTop: 4 }}
-      contentInsetAdjustmentBehavior="automatic"
-      data={listItems}
-      estimatedItemSize={ROW_MIN_HEIGHT.item}
-      extraData={animationsReady}
-      getItemType={(item) => item.kind}
-      itemLayoutAnimation={THREAD_SETTINGS_CATALOG_LAYOUT_TRANSITION}
-      keyExtractor={(item) => item.key}
-      keyboardDismissMode="on-drag"
-      keyboardShouldPersistTaps="handled"
-      maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
-      recycleItems
-      refreshControl={
-        session.environmentId ? (
-          <RefreshControl refreshing={isRefreshingProviders} onRefresh={refreshProviders} />
-        ) : undefined
-      }
-      onLoad={() => setListLoaded(true)}
-      renderItem={renderCatalogItem}
-      showsVerticalScrollIndicator={false}
-    />
+    <View className="flex-1 bg-sheet">
+      {!searching ? <ThreadSettingsOptionsItem onOpenSubmenu={props.onOpenSubmenu} /> : null}
+      <View className="min-h-0 flex-1 flex-row">
+        <ScrollView
+          className="w-14 grow-0 border-r border-border-subtle"
+          contentContainerClassName="items-center gap-1 p-1"
+          keyboardShouldPersistTaps="always"
+        >
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Favorites")}
+            accessibilityState={{ selected: session.providerFilter === FAVORITES_PROVIDER_FILTER }}
+            className={cn(
+              "size-11 items-center justify-center rounded-lg",
+              session.providerFilter === FAVORITES_PROVIDER_FILTER && "bg-subtle-strong",
+            )}
+            onPress={() => session.setProviderFilter(FAVORITES_PROVIDER_FILTER)}
+          >
+            <SymbolView name="star.fill" size={17} tintColorClassName="accent-foreground" />
+          </Pressable>
+          {session.providerGroups.map((group) => (
+            <Pressable
+              key={group.providerKey}
+              accessibilityRole="button"
+              accessibilityLabel={group.providerLabel}
+              accessibilityState={{ selected: session.providerFilter === group.providerKey }}
+              className={cn(
+                "size-11 items-center justify-center rounded-lg",
+                session.providerFilter === group.providerKey && "bg-subtle-strong",
+              )}
+              onPress={() => session.setProviderFilter(group.providerKey)}
+            >
+              <ProviderIcon
+                provider={group.models[0]?.providerDriver}
+                iconUrl={group.models[0]?.providerIconUrl}
+                size={17}
+              />
+            </Pressable>
+          ))}
+        </ScrollView>
+        {/* oxlint-disable-next-line t3code/require-registered-list-scroll -- Sheet content is outside workspace columns. */}
+        <AnimatedLegendList
+          alwaysBounceVertical
+          automaticallyAdjustsScrollIndicatorInsets
+          className="flex-1 bg-sheet"
+          style={READABLE_WIDTH_STYLE}
+          contentContainerStyle={{ paddingTop: 4 }}
+          contentInsetAdjustmentBehavior="automatic"
+          data={listItems}
+          estimatedItemSize={ROW_MIN_HEIGHT.item}
+          extraData={animationsReady}
+          getItemType={(item) => item.kind}
+          itemLayoutAnimation={THREAD_SETTINGS_CATALOG_LAYOUT_TRANSITION}
+          keyExtractor={(item) => item.key}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          maintainVisibleContentPosition={THREAD_SETTINGS_MAINTAIN_VISIBLE_CONTENT_POSITION}
+          recycleItems
+          refreshControl={
+            session.environmentId ? (
+              <RefreshControl refreshing={isRefreshingProviders} onRefresh={refreshProviders} />
+            ) : undefined
+          }
+          onLoad={() => setListLoaded(true)}
+          renderItem={renderCatalogItem}
+          showsVerticalScrollIndicator={false}
+        />
+      </View>
+      <View
+        className="border-t border-border-subtle px-3 pt-2"
+        style={{ paddingBottom: searching ? 8 : insets.bottom + 8 }}
+      >
+        <AppTextInput
+          accessibilityLabel={gt("Search models")}
+          autoCapitalize="none"
+          autoCorrect={false}
+          className="min-h-11 rounded-lg bg-grouped-card px-3 text-sm text-foreground"
+          onChangeText={session.setSearchQuery}
+          placeholder={gt("Search models")}
+          returnKeyType="search"
+          value={session.searchQuery}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -1345,20 +1508,15 @@ function ThreadSettingsModelsScreen() {
   const session = useThreadSettingsSession();
   const presentation = useThreadSettingsPickerPresentation();
   const navigation = useNavigation<NativeStackNavigationProp<ThreadSettingsPickerStackParams>>();
+  const m = useMessages();
+  const insets = useSafeAreaInsets();
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const dismissPermissions = () => setPermissionsOpen(false);
   const hasCustomCatalogFilter = session.providerFilter !== null || session.showLegacy;
   const commitAndClose = useEffectEvent(() => {
     if (!session.commitPendingModel()) return;
     presentation.onClose();
   });
-  const search: AppBarSearch = {
-    value: session.searchQuery,
-    onChangeText: session.setSearchQuery,
-    placeholder: gt("Find a model"),
-    clearAccessibilityLabel: gt("Clear model search"),
-    mode: "inline",
-    compactToolbar: true,
-  };
-  const searchToolbarInset = useSearchToolbarInset(search);
   const providerFilters = [
     { id: "all-providers", title: gt("All providers"), value: null },
     { id: "favorites", title: gt("Favorites"), value: FAVORITES_PROVIDER_FILTER },
@@ -1372,10 +1530,9 @@ function ThreadSettingsModelsScreen() {
   return (
     <>
       <AppBar
-        title={gt("Thread settings")}
+        title={gt("Model selector")}
         onClose={presentation.onClose}
         closeAccessibilityLabel={gt("Cancel thread settings")}
-        search={search}
         menus={[
           {
             title: gt("Model filters"),
@@ -1383,6 +1540,12 @@ function ThreadSettingsModelsScreen() {
               ? "line.3.horizontal.decrease.circle.fill"
               : "line.3.horizontal.decrease",
             items: [
+              {
+                id: "manage-hidden",
+                title: gt("Manage hidden models"),
+                selected: session.manageHidden,
+                onPress: () => session.setManageHidden(!session.manageHidden),
+              },
               {
                 id: "provider",
                 title: gt("Provider"),
@@ -1407,33 +1570,106 @@ function ThreadSettingsModelsScreen() {
           },
         ]}
         optionsVersion={[
+          session.manageHidden,
           session.providerFilter,
           session.providerGroups.map((group) => group.providerKey),
           session.showLegacy,
           session.hasLegacyModels,
         ]}
         confirm={{
-          label: session.pendingModel
-            ? gt("Save", { $context: "verb, button" })
-            : gt("Done", { $context: "button that closes the sheet" }),
+          label: gt("Apply model settings"),
           onPress: commitAndClose,
         }}
         hideBottomBorder
       />
       <ScreenContent>
         <ThreadSettingsMainContent
-          bottomInset={searchToolbarInset}
           onOpenSubmenu={(submenu) => {
+            if (submenu.kind === "runtime") {
+              setPermissionsOpen(true);
+              return;
+            }
             const title =
-              submenu.kind === "runtime"
-                ? gt("Runtime", { $context: "agent permission mode setting" })
-                : (session.displayedDescriptors.find(
-                    (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
-                  )?.label ?? gt("Option"));
+              session.displayedDescriptors.find(
+                (descriptor) => descriptor.type === "select" && descriptor.id === submenu.id,
+              )?.label ?? gt("Option");
             navigation.navigate("ThreadSettingsChoice", { ...submenu, title });
           }}
         />
       </ScreenContent>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={permissionsOpen}
+        onRequestClose={dismissPermissions}
+      >
+        <View className="flex-1 justify-end bg-black/60">
+          <Pressable className="absolute inset-0" accessible={false} onPress={dismissPermissions} />
+          <View
+            accessibilityViewIsModal
+            className="max-h-[80%] rounded-t-3xl bg-sheet px-4 pt-2"
+            style={{ paddingBottom: insets.bottom + 12 }}
+          >
+            <View className="flex-row items-center justify-between">
+              <Text
+                accessibilityRole="header"
+                className="pl-3 text-base font-t3-medium text-foreground"
+              >
+                {gt("Permissions")}
+              </Text>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={gt("Close permissions")}
+                className="size-11 items-center justify-center"
+                onPress={dismissPermissions}
+              >
+                <SymbolView name="xmark" size={16} tintColorClassName="accent-foreground" />
+              </Pressable>
+            </View>
+            <ScrollView bounces={false} className="grow-0 rounded-xl bg-grouped-card">
+              {session.runtimeModeChoices.map((choice, index) => (
+                <Pressable
+                  key={choice.mode}
+                  accessibilityRole="radio"
+                  accessibilityState={{
+                    checked: choice.mode === session.runtimeMode,
+                    disabled: choice.disabledReason !== undefined,
+                  }}
+                  accessibilityHint={choice.disabledReason}
+                  disabled={choice.disabledReason !== undefined}
+                  className={cn(
+                    "min-h-12 flex-row items-center gap-3 px-3 py-2 active:bg-subtle",
+                    index !== session.runtimeModeChoices.length - 1 &&
+                      "border-b border-border-subtle",
+                    choice.disabledReason !== undefined && "opacity-50",
+                  )}
+                  onPress={() => {
+                    void Haptics.selectionAsync();
+                    session.onUpdateRuntimeMode(choice.mode);
+                    dismissPermissions();
+                  }}
+                >
+                  <SymbolView
+                    name={PERMISSION_SYMBOLS[choice.mode]}
+                    size={17}
+                    tintColorClassName="accent-foreground"
+                  />
+                  <Text className="flex-1 text-base text-foreground">{m(choice.label)}</Text>
+                  <View className="w-5 items-center">
+                    {choice.mode === session.runtimeMode ? (
+                      <SymbolView
+                        name="checkmark"
+                        size={16}
+                        tintColorClassName="accent-foreground"
+                      />
+                    ) : null}
+                  </View>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

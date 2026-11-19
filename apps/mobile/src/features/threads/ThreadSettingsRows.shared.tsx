@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Pressable, View } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
+import { ProviderIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import type { ModelOption } from "../../lib/modelOptions";
 
@@ -64,6 +65,11 @@ export function ModelRowContent(
         onPress={props.onPress}
       >
         {props.leadingSelection}
+        <ProviderIcon
+          provider={props.option.providerDriver}
+          iconUrl={props.option.providerIconUrl}
+          size={16}
+        />
         <View className="min-w-0 flex-1">
           <View className="flex-row items-center gap-2">
             <Text

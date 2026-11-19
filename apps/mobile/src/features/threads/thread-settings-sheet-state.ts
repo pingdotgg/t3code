@@ -1,5 +1,15 @@
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
-import type { ModelSelection, ProviderInstanceId } from "@t3tools/contracts";
+import type { ModelSelection, ProviderInstanceId, RuntimeMode } from "@t3tools/contracts";
+
+export function resolvePendingRuntimeMode(
+  pendingMode: RuntimeMode | null,
+  choices: ReadonlyArray<{ readonly mode: RuntimeMode; readonly disabledReason?: string }>,
+): RuntimeMode | null | undefined {
+  if (pendingMode === null) return null;
+  return choices.find(
+    (choice) => choice.mode === pendingMode && choice.disabledReason === undefined,
+  )?.mode;
+}
 
 export function modelFavoriteKey(provider: ProviderInstanceId, model: string): string {
   return `${provider}:${model}`;
