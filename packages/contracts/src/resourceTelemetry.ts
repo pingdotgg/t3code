@@ -324,6 +324,7 @@ export const ShellEnvironmentPatch = Schema.Struct({
   T3CODE_RELEASE_BASE_URL: Schema.optionalKey(Schema.NullOr(Schema.String)),
   __MISE_DIFF: Schema.optionalKey(Schema.NullOr(Schema.String)),
   JAVA_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  PNPM_HOME: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_DIR: Schema.optionalKey(Schema.NullOr(Schema.String)),
   FNM_MULTISHELL_PATH: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
