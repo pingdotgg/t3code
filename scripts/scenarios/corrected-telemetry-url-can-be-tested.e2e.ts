@@ -23,7 +23,7 @@ test(
     });
     collector.listen(0, "127.0.0.1");
     try {
-      await NodeEvents.once(collector, "listening");
+      await NodeEvents.EventEmitter.once(collector, "listening");
       const address = collector.address();
       if (address === null || typeof address === "string") throw new Error("No collector port");
       const origin = `http://127.0.0.1:${address.port}`;
