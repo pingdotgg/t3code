@@ -211,6 +211,34 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
           yield* sql`UPDATE orchestration_v2_tool_search_state
           SET cursor = (SELECT max(rowid) FROM orchestration_v2_projection_turn_items),
               backfill_end = (SELECT max(rowid) FROM orchestration_v2_projection_turn_items) WHERE id = 1`;
+          for (const [summaryId, projectId, threadId, text, scrubbed] of [
+            ["summary-kept", "project-kept", "stopped-thread", "keptsummaryterm", false],
+            [
+              "summary-dropped",
+              "project-deleted",
+              "deleted-project-thread",
+              "droppedsummaryterm",
+              false,
+            ],
+            ["summary-scrubbed", "project-kept", "stopped-thread", "scrubbedsummaryterm", true],
+            [
+              "summary-legacy-scrubbed",
+              "project-kept",
+              "stopped-thread",
+              "[Source unavailable: removed or changed.]",
+              false,
+            ],
+          ] as const) {
+            yield* sql`INSERT INTO conversation_summaries
+              (summary_id, project_id, thread_id, position, created_at, payload_json)
+              VALUES (${summaryId}, ${projectId}, ${threadId}, '0', '2026-08-01',
+                ${JSON.stringify({ statements: [{ text }], scrubbed })})`;
+          }
+          assert.deepEqual(
+            yield* sql`SELECT text FROM conversation_summary_fts
+              WHERE conversation_summary_fts MATCH 'keptsummaryterm'`,
+            [{ text: "keptsummaryterm" }],
+          );
         }),
       );
 
@@ -233,6 +261,18 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             toolHits.map((hit) => hit.id),
             ["tool-copy"],
           );
+          const summaryHits = yield* sql<{ id: string }>`
+            SELECT summary.summary_id AS id FROM conversation_summary_fts
+            JOIN conversation_summary_search_ids AS ids ON ids.id = conversation_summary_fts.rowid
+            JOIN conversation_summaries AS summary USING (summary_id)
+            WHERE conversation_summary_fts MATCH 'keptsummaryterm'`;
+          assert.deepEqual(
+            summaryHits.map((hit) => hit.id),
+            ["summary-kept"],
+          );
+          assert.deepEqual(yield* sql`SELECT text FROM conversation_summary_fts`, [
+            { text: "keptsummaryterm" },
+          ]);
           const threads = yield* sql<{ thread_id: string }>`
             SELECT thread_id FROM orchestration_v2_projection_threads ORDER BY thread_id`;
           const events = yield* sql<{ stream_id: string }>`

@@ -322,6 +322,16 @@ const copySourceSlice = Effect.fn("copyDevDbSourceSlice")(function* (sourcePath:
       if (virtualTables.includes("project_knowledge_fts")) {
         yield* sql`INSERT INTO project_knowledge_fts(project_knowledge_fts) VALUES ('rebuild')`;
       }
+      if (virtualTables.includes("conversation_summary_fts")) {
+        yield* sql`INSERT INTO conversation_summary_fts (rowid, text)
+          SELECT ids.id, (SELECT group_concat(json_extract(value, '$.text'), ' ')
+            FROM json_each(summary.payload_json, '$.statements'))
+          FROM conversation_summaries AS summary
+          JOIN conversation_summary_search_ids AS ids USING (summary_id)
+          WHERE coalesce(json_extract(summary.payload_json, '$.scrubbed'), 0) = 0
+            AND coalesce(json_extract(summary.payload_json, '$.statements[0].text'), '')
+              != '[Source unavailable: removed or changed.]'`;
+      }
     }),
   );
   yield* sql`DETACH DATABASE src`;

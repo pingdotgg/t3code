@@ -113,6 +113,15 @@ const HANDOFF_CANDIDATE_LIMIT = 40;
 const CLEANUP_LIMIT = 100;
 const SCRUBBED_TEXT = "[Source unavailable: removed or changed.]";
 
+interface StoredSummaryRow extends StoredSummary {
+  readonly revision: string | null;
+}
+
+interface LoadedSummary {
+  readonly summary: ConversationSummary;
+  readonly revision: string | null;
+}
+
 export class ConversationSummaries extends Context.Service<
   ConversationSummaries,
   {
@@ -309,7 +318,7 @@ const make = Effect.gen(function* () {
     projectId: ProjectId,
     threadId: ThreadId,
   ) {
-    const summaries: Array<StoredSummary> = [];
+    const summaries: Array<StoredSummaryRow> = [];
     let after: SummaryCursor | undefined;
     while (true) {
       const rows = yield* sql<{
@@ -317,9 +326,11 @@ const make = Effect.gen(function* () {
         readonly summary_id: string;
         readonly sources_json: string;
         readonly scrubbed: number;
+        readonly revision: string | null;
       }>`
         SELECT position, summary_id,
           json_extract(payload_json, '$.sources') AS sources_json,
+          json_extract(payload_json, '$._revision') AS revision,
           (coalesce(json_extract(payload_json, '$.scrubbed'), 0) = 1
             OR json_extract(payload_json, '$.statements[0].text') = ${SCRUBBED_TEXT}) AS scrubbed
         FROM conversation_summaries
@@ -334,6 +345,7 @@ const make = Effect.gen(function* () {
           sources: yield* decodeSources(row.sources_json),
           scrubbed: row.scrubbed === 1,
           position: row.position,
+          revision: row.revision,
         });
       if (rows.length < THREAD_SUMMARY_PAGE_SIZE) return summaries;
       after = rows.at(-1)!;
@@ -358,8 +370,12 @@ const make = Effect.gen(function* () {
   const findSummary = Effect.fn("ConversationSummaries.findSummary")(function* (
     input: ConversationSummaryDescribeInput,
   ) {
-    const rows = yield* sql<{ readonly payload_json: string }>`
-      SELECT payload_json FROM conversation_summaries
+    const rows = yield* sql<{
+      readonly payload_json: string;
+      readonly revision: string | null;
+    }>`
+      SELECT payload_json, json_extract(payload_json, '$._revision') AS revision
+      FROM conversation_summaries
       WHERE project_id = ${input.projectId} AND thread_id = ${input.threadId}
         AND summary_id = ${input.summaryId}
     `.pipe(Effect.mapError(storageError(input.projectId)));
@@ -368,9 +384,10 @@ const make = Effect.gen(function* () {
         reason: "missing_summary",
         projectId: input.projectId,
       });
-    return yield* decodeSummary(rows[0].payload_json).pipe(
+    const summary = yield* decodeSummary(rows[0].payload_json).pipe(
       Effect.mapError(storageError(input.projectId)),
     );
+    return { summary, revision: rows[0].revision };
   });
 
   const invisibleMessageIds = Effect.fn("ConversationSummaries.invisibleMessageIds")(function* (
@@ -548,10 +565,10 @@ const make = Effect.gen(function* () {
   const verify = Effect.fn("ConversationSummaries.verify")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
-    rows: ReadonlyMap<string, StoredSummary>,
+    rows: ReadonlyMap<string, StoredSummaryRow>,
     ids: ReadonlyArray<string>,
   ) {
-    const leaves: Array<StoredSummary> = [];
+    const leaves: Array<StoredSummaryRow> = [];
     const visited = new Set<string>();
     const collect = (id: string) => {
       const row = rows.get(id);
@@ -608,46 +625,50 @@ const make = Effect.gen(function* () {
       const row = rows.get(id);
       if (row === undefined || reason === null || reason === "archived" || row.scrubbed) continue;
       // Handoff references keep the summary skeleton, not text derived from a removed source.
+      // A regeneration can reuse this id, even with identical text and the same timestamp.
+      // Scrub only the publication whose sources this read verified, in its original project.
       yield* sql`UPDATE conversation_summaries SET payload_json = json_set(payload_json,
         '$.scrubbed', json('true'),
         '$.statements', json(${encodeStatements([
           { text: SCRUBBED_TEXT, citations: [conversationSummarySourceKey(row.sources[0]!)] },
-        ])})) WHERE summary_id = ${id}`;
+        ])})) WHERE summary_id = ${id} AND project_id = ${projectId}
+          AND json_extract(payload_json, '$._revision') IS ${row.revision}`;
     }
     return reasons;
   });
 
-  const storedOf = (summary: ConversationSummary): StoredSummary => ({
+  const storedOf = ({ summary, revision }: LoadedSummary): StoredSummaryRow => ({
     id: summary.id,
     sources: summary.sources,
     scrubbed: isScrubbed(summary),
     position: "",
+    revision,
   });
 
   /** Rows a verification of these summaries needs: themselves, or the thread for a roll-up. */
   const rowsFor = Effect.fn("ConversationSummaries.rowsFor")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
-    summaries: ReadonlyArray<ConversationSummary>,
+    summaries: ReadonlyArray<LoadedSummary>,
   ) {
     return summaries.some((summary) => childIds(storedOf(summary)).length > 0)
       ? new Map((yield* loadThreadSummaries(projectId, threadId)).map((row) => [row.id, row]))
-      : new Map(summaries.map((summary) => [summary.id, storedOf(summary)]));
+      : new Map(summaries.map((stored) => [stored.summary.id, storedOf(stored)]));
   });
 
   const verifyAndReadAll = Effect.fn("ConversationSummaries.readAll")(function* (
     projectId: ProjectId,
     threadId: ThreadId,
-    summaries: ReadonlyArray<ConversationSummary>,
+    summaries: ReadonlyArray<LoadedSummary>,
   ) {
     if (summaries.length === 0) return [];
     const reasons = yield* verify(
       projectId,
       threadId,
       yield* rowsFor(projectId, threadId, summaries),
-      summaries.map((summary) => summary.id),
+      summaries.map(({ summary }) => summary.id),
     );
-    return summaries.map((summary): ConversationSummaryRead => {
+    return summaries.map(({ summary }): ConversationSummaryRead => {
       const reason = reasons.get(summary.id);
       return reason === null
         ? { state: "available", summary }
@@ -661,8 +682,8 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const read = (summary: ConversationSummary) =>
-    verifyAndReadAll(summary.projectId, summary.threadId, [summary]).pipe(
+  const read = (stored: LoadedSummary) =>
+    verifyAndReadAll(stored.summary.projectId, stored.summary.threadId, [stored]).pipe(
       Effect.map((reads) => reads[0]!),
     );
 
@@ -746,7 +767,7 @@ const make = Effect.gen(function* () {
       }
       const limit = input.limit ?? 20;
       const query = input.query?.trim().toLowerCase() ?? "";
-      const matching: Array<ConversationSummary> = [];
+      const matching: Array<LoadedSummary> = [];
       const scanLimit = query === "" ? limit + 1 : THREAD_SUMMARY_PAGE_SIZE;
       // Fold Unicode in application code; SQLite lower() only folds ASCII. Each read is
       // bounded, and the cursor remains the last returned summary, even across sparse matches.
@@ -755,8 +776,11 @@ const make = Effect.gen(function* () {
           readonly payload_json: string;
           readonly summary_id: string;
           readonly position: string;
+          readonly revision: string | null;
         }>`
-          SELECT payload_json, summary_id, position FROM conversation_summaries
+          SELECT payload_json, summary_id, position,
+            json_extract(payload_json, '$._revision') AS revision
+          FROM conversation_summaries
           WHERE project_id = ${input.projectId} AND thread_id = ${input.threadId}
           ${afterSummary(after)}
           ORDER BY position, summary_id LIMIT ${scanLimit}
@@ -767,7 +791,7 @@ const make = Effect.gen(function* () {
             query === "" ||
             summary.statements.some((statement) => statement.text.toLowerCase().includes(query))
           )
-            matching.push(summary);
+            matching.push({ summary, revision: row.revision });
           if (matching.length > limit) break;
         }
         if (rows.length < scanLimit) break;
@@ -780,7 +804,7 @@ const make = Effect.gen(function* () {
           .enableConversationSummaries,
         lastPass,
         summaries: yield* verifyAndReadAll(input.projectId, input.threadId, page),
-        nextCursor: matching.length > limit ? (page.at(-1)?.id ?? null) : null,
+        nextCursor: matching.length > limit ? (page.at(-1)?.summary.id ?? null) : null,
       };
     },
     (effect, input) => effect.pipe(Effect.mapError(storageError(input.projectId))),
@@ -894,8 +918,10 @@ const make = Effect.gen(function* () {
               readonly summary_id: string;
               readonly payload_json: string;
               readonly excerpt: string;
+              readonly revision: string | null;
             }>`
               SELECT summary.summary_id, summary.payload_json,
+                json_extract(summary.payload_json, '$._revision') AS revision,
                 snippet(conversation_summary_fts, 0, char(1), char(2), ' … ', 64) AS excerpt
               FROM conversation_summary_fts
               JOIN conversation_summary_search_ids AS ids ON ids.id = conversation_summary_fts.rowid
@@ -912,12 +938,16 @@ const make = Effect.gen(function* () {
           .slice(index, index + limit - summaries.length)
           .flatMap((rank) => loaded.get(rank.summaryId) ?? []);
         index += Math.min(limit - summaries.length, candidates.length - index);
-        const decoded = yield* Effect.forEach(batch, (row) => decodeSummary(row.payload_json));
-        const byThread = Map.groupBy(decoded, (summary) => summary.threadId);
+        const decoded = yield* Effect.forEach(batch, (row) =>
+          decodeSummary(row.payload_json).pipe(
+            Effect.map((summary): LoadedSummary => ({ summary, revision: row.revision })),
+          ),
+        );
+        const byThread = Map.groupBy(decoded, ({ summary }) => summary.threadId);
         const verifiedById = new Map<string, ConversationSummaryRead>();
         for (const [threadId, group] of byThread) {
           const reads = yield* verifyAndReadAll(input.projectId, threadId, group);
-          group.forEach((summary, position) => verifiedById.set(summary.id, reads[position]!));
+          group.forEach(({ summary }, position) => verifiedById.set(summary.id, reads[position]!));
         }
         for (const row of batch) {
           const verified = verifiedById.get(row.summary_id)!;
@@ -976,7 +1006,8 @@ const make = Effect.gen(function* () {
   )(
     function* (input) {
       yield* requireProject(input.projectId);
-      const summary = yield* findSummary(input);
+      const stored = yield* findSummary(input);
+      const { summary } = stored;
       const offset = input.offset ?? 0;
       const textOffset = input.textOffset ?? 0;
       if (
@@ -1043,7 +1074,7 @@ const make = Effect.gen(function* () {
         }
       }
       return {
-        summary: yield* read(summary),
+        summary: yield* read(stored),
         sources,
         nextOffset,
         nextTextOffset,
@@ -1108,9 +1139,10 @@ const make = Effect.gen(function* () {
       const enabled = (settings: ServerSettingsValue, projectId: ProjectId) =>
         resolveProjectSettings(settings, projectId).settings.enableConversationSummaries;
       const rows = yield* sql<{ readonly project_id: ProjectId }>`
-        SELECT DISTINCT project_id FROM conversation_summary_passes
-        WHERE json_extract(payload_json, '$.chunkFailures') IS NOT NULL
-          OR json_extract(payload_json, '$.retries') IS NOT NULL
+        SELECT DISTINCT thread.project_id FROM conversation_summary_passes AS pass
+        JOIN orchestration_v2_projection_threads AS thread ON thread.thread_id = pass.thread_id
+        WHERE json_extract(pass.payload_json, '$.chunkFailures') IS NOT NULL
+          OR json_extract(pass.payload_json, '$.retries') IS NOT NULL
       `;
       const reenabled = rows
         .map((row) => row.project_id)
@@ -1119,7 +1151,10 @@ const make = Effect.gen(function* () {
       yield* sql`
         UPDATE conversation_summary_passes
         SET payload_json = json_remove(payload_json, '$.chunkFailures', '$.retries')
-        WHERE ${sql.in("project_id", reenabled)}
+        WHERE thread_id IN (
+          SELECT thread_id FROM orchestration_v2_projection_threads
+          WHERE ${sql.in("project_id", reenabled)}
+        )
       `;
     },
   );
@@ -1463,21 +1498,46 @@ const make = Effect.gen(function* () {
           modelSelection: settings.textGenerationModelSelection,
           createdAt: DateTime.formatIso(yield* DateTime.now),
         };
-        yield* sql`
+        // This private publication token is excluded by the public summary codec and id digest.
+        const published = yield* sql<{ readonly revision: string }>`
           INSERT INTO conversation_summaries (
             summary_id, project_id, thread_id, position, created_at, payload_json
           ) VALUES (
             ${id}, ${projectId}, ${threadId}, ${input.position},
-            ${summary.createdAt}, ${encodeSummary(summary)}
+            ${summary.createdAt},
+            json_set(${encodeSummary(summary)}, '$._revision', lower(hex(randomblob(16))))
           )
           ON CONFLICT (summary_id) DO UPDATE SET
+            project_id = excluded.project_id,
             created_at = excluded.created_at, payload_json = excluded.payload_json
-          WHERE coalesce(json_extract(conversation_summaries.payload_json, '$.scrubbed'), 0) = 1
+          WHERE conversation_summaries.project_id != excluded.project_id
+            OR coalesce(json_extract(conversation_summaries.payload_json, '$.scrubbed'), 0) = 1
             OR json_extract(conversation_summaries.payload_json, '$.statements[0].text') = ${SCRUBBED_TEXT}
+          RETURNING json_extract(payload_json, '$._revision') AS revision
         `;
+        // A no-op conflict retains the existing publication, including a legacy null revision.
+        const stored =
+          published[0] ??
+          (yield* sql<{ readonly revision: string | null }>`
+          SELECT json_extract(payload_json, '$._revision') AS revision
+          FROM conversation_summaries WHERE summary_id = ${id}
+            AND project_id = ${projectId} AND thread_id = ${threadId}
+        `)[0];
+        if (stored === undefined)
+          return {
+            ok: false as const,
+            reason: "The summary was removed while it was being saved.",
+            unusableReply: false,
+          };
         return {
           ok: true as const,
-          row: { id, sources: input.sources, scrubbed: false, position: input.position },
+          row: {
+            id,
+            sources: input.sources,
+            scrubbed: false,
+            position: input.position,
+            revision: stored.revision,
+          },
         };
       });
 
@@ -1910,8 +1970,8 @@ const make = Effect.gen(function* () {
       );
       const eligibleOverrides = overriddenProjects.filter(usesRecoveredModel);
       const eligibleProjects = usesRecoveredModel(null)
-        ? sql`(NOT ${sql.in("passes.project_id", overriddenProjects)} OR ${sql.in("passes.project_id", eligibleOverrides)})`
-        : sql.in("passes.project_id", eligibleOverrides);
+        ? sql`(NOT ${sql.in("thread.project_id", overriddenProjects)} OR ${sql.in("thread.project_id", eligibleOverrides)})`
+        : sql.in("thread.project_id", eligibleOverrides);
       const rows = yield* sql<{ readonly threadId: ThreadId; readonly payload: string }>`
         SELECT passes.thread_id AS "threadId", passes.payload_json AS payload
         FROM conversation_summary_passes AS passes
@@ -1921,7 +1981,7 @@ const make = Effect.gen(function* () {
           AND ${eligibleProjects}
           AND EXISTS (
             SELECT 1 FROM projection_projects AS project
-            WHERE project.project_id = passes.project_id AND project.deleted_at IS NULL
+            WHERE project.project_id = thread.project_id AND project.deleted_at IS NULL
           )
           AND coalesce(json_extract(passes.payload_json, '$.retries'), 0) < ${STALLED_RETRY_LIMIT}
           AND thread.deleted_at IS NULL
