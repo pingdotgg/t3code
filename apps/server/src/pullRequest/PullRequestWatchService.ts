@@ -126,8 +126,10 @@ const make = Effect.gen(function* () {
     if (watching && before?.snapshot?.state === "merged") {
       return yield* new PullRequestNotOpenError({ state: "merged" });
     }
+    // A pending rollup has no failure yet, so any failure the first read finds is news.
+    let checksPendingAtStart: boolean | undefined;
     if (watching && before?.watch === undefined) {
-      yield* pullRequests
+      checksPendingAtStart = yield* pullRequests
         .summary(
           {
             projectId: thread.projectId,
@@ -142,11 +144,12 @@ const make = Effect.gen(function* () {
           Effect.flatMap((summary) =>
             summary.state === "merged"
               ? Effect.fail(new PullRequestNotOpenError({ state: "merged" }))
-              : Effect.void,
+              : Effect.succeed(summary.checksState === "pending"),
           ),
           Effect.catchTags({
             // Host and transport errors can recover while the watch is active.
-            PullRequestOperationError: () => Effect.void,
+            // A failed read leaves the seed to the link's last sync.
+            PullRequestOperationError: () => Effect.undefined,
           }),
         );
     }
@@ -162,6 +165,9 @@ const make = Effect.gen(function* () {
         watching,
         ...(watching ? { link: { url: target.url, source: "agent" as const } } : {}),
         ...(watching && input.until !== undefined && { until: input.until }),
+        ...(watching && checksPendingAtStart !== undefined
+          ? { checksPending: checksPendingAtStart }
+          : {}),
       })
       .pipe(
         Effect.catchCause((cause) =>
