@@ -76,10 +76,13 @@ describe("mobile preferences state", () => {
 
       registry.set(state.updatePreferencesAtom, {
         collapsedProjectGroups: ["project:new"],
+        threadListProjectFoldersEnabled: true,
       });
       pendingLoad.resolve({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:old"],
+        threadListProjectFoldersEnabled: false,
+        workingShelfEnabled: true,
       });
 
       const preferences = yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
@@ -88,9 +91,12 @@ describe("mobile preferences state", () => {
       expect(preferences).toEqual({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:new"],
+        threadListProjectFoldersEnabled: true,
+        workingShelfEnabled: true,
       });
       expect(savePatch).toHaveBeenCalledWith({
         collapsedProjectGroups: ["project:new"],
+        threadListProjectFoldersEnabled: true,
       });
       expect(AsyncResult.isFailure(registry.get(state.updatePreferencesAtom))).toBe(false);
 

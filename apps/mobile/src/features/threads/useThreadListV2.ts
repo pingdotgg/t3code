@@ -1,5 +1,7 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { isListedThreadLineage } from "@t3tools/contracts";
+import { pickableProjectGroups } from "@t3tools/client-runtime/state/project-grouping";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
@@ -14,6 +16,11 @@ import {
   threadListV2LayoutTime,
 } from "./threadListV2";
 import { computeThreadMoveAvailability } from "./threadOrder";
+import {
+  sortHomeProjectScopes,
+  type HomeProjectScope,
+  type HomeProjectSortOrder,
+} from "../home/homeThreadList";
 
 /**
  * Screens' select handlers read the content-only key set; a fresh one per list rebuild gave
@@ -66,8 +73,14 @@ export function useThreadListV2(input: {
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
+  readonly projectFoldersEnabled?: boolean;
+  readonly projectScopes?: ReadonlyArray<HomeProjectScope>;
+  readonly projectSortOrder?: HomeProjectSortOrder;
+  readonly collapsedProjectKeys?: ReadonlyArray<string>;
 }) {
-  const { threads, workingShelfEnabled } = input;
+  const { threads } = input;
+  const projectFoldersEnabled = input.projectFoldersEnabled === true;
+  const workingShelfEnabled = input.workingShelfEnabled && !projectFoldersEnabled;
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -102,7 +115,7 @@ export function useThreadListV2(input: {
       });
     return new Map([
       ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
+      ...(workingShelfEnabled || projectFoldersEnabled ? [] : sectionAvailability("active")),
     ]);
   }, [
     threads,
@@ -114,6 +127,7 @@ export function useThreadListV2(input: {
     input.snoozeEnvironmentIds,
     input.queuedThreadKeys,
     workingShelfEnabled,
+    projectFoldersEnabled,
   ]);
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = useMemo(
@@ -147,6 +161,7 @@ export function useThreadListV2(input: {
         settledLimit: input.settledLimit,
         now: layoutTime,
         workingShelfEnabled,
+        projectFoldersEnabled,
         workingShelfExpanded: input.workingShelfExpanded,
         inboxReturnAt: inbox.returnedAt,
         isWorking: inbox.isWorking,
@@ -179,6 +194,7 @@ export function useThreadListV2(input: {
       input.settledLimit,
       layoutTime,
       workingShelfEnabled,
+      projectFoldersEnabled,
       input.workingShelfExpanded,
       inbox.returnedAt,
       inbox.isWorking,
@@ -192,6 +208,38 @@ export function useThreadListV2(input: {
   );
   useOlderSettledShelfGrowth(olderSettledShelf, layout.listedSettledThreads);
   const contentOnlyThreadKeys = useKeySet([...layout.contentOnlyThreadKeys].sort().join("\n"));
+  const projectFolders = useMemo(() => {
+    if (!projectFoldersEnabled || input.searchQuery.trim().length > 0) return null;
+    const projectKeys =
+      input.projectRefs == null
+        ? null
+        : new Set(
+            input.projectRefs.map((ref) => scopedProjectKey(ref.environmentId, ref.projectId)),
+          );
+    const scopes = (input.projectScopes ?? []).filter((scope) =>
+      scope.projectRefs.some(
+        (ref) =>
+          (input.environmentId === null || ref.environmentId === input.environmentId) &&
+          (projectKeys === null ||
+            projectKeys.has(scopedProjectKey(ref.environmentId, ref.projectId))),
+      ),
+    );
+    const sorted = sortHomeProjectScopes({
+      scopes,
+      threads: threads.filter((thread) => isListedThreadLineage(thread.lineage)),
+      pendingTasks: [],
+      projectSortOrder: input.projectSortOrder ?? "updated_at",
+    });
+    return [...pickableProjectGroups(sorted), ...sorted.filter((scope) => scope.archived)];
+  }, [
+    projectFoldersEnabled,
+    input.searchQuery,
+    input.projectRefs,
+    input.projectScopes,
+    input.environmentId,
+    input.projectSortOrder,
+    threads,
+  ]);
   const pendingTasks = useMemo(() => {
     const scopedProjectKeys =
       input.projectRefs == null
@@ -229,6 +277,10 @@ export function useThreadListV2(input: {
         queuedThreadKeys: input.queuedThreadKeys,
         moveAvailability,
         shelfPreferencesLoading: !input.shelfPreferencesLoaded,
+        projectFolders,
+        collapsedProjectKeys: input.collapsedProjectKeys,
+        keepEmptyProjectFolders: input.projectRefs != null,
+        selectedThreadKey: input.selectedThreadKey,
         resolve: keepMarked,
       }),
     [
@@ -242,6 +294,10 @@ export function useThreadListV2(input: {
       input.queuedThreadKeys,
       moveAvailability,
       input.shelfPreferencesLoaded,
+      projectFolders,
+      input.collapsedProjectKeys,
+      input.projectRefs,
+      input.selectedThreadKey,
     ],
   );
   return { layout, items, contentOnlyThreadKeys, olderSettledShelf };

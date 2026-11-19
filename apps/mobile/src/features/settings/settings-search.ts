@@ -96,6 +96,8 @@ const SETTINGS_SEARCH_TERMS = {
     msg("organization", { $context: "settings search keyword" }),
     msg("sidebar", { $context: "settings search keyword" }),
     msg("working section", { $context: "settings search keyword" }),
+    msg("group threads by project", { $context: "settings search keyword" }),
+    msg("project folders", { $context: "settings search keyword" }),
     msg("new threads", { $context: "settings search keyword" }),
     msg("last project", { $context: "settings search keyword" }),
   ],

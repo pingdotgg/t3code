@@ -213,25 +213,45 @@ export function WorkingSectionSettings() {
   const gt = useGT();
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
+  const loaded = AsyncResult.isSuccess(preferences);
+  const projectFoldersEnabled =
+    loaded && preferences.value.threadListProjectFoldersEnabled === true;
+  const workingShelfEnabled = loaded && preferences.value.workingShelfEnabled !== false;
 
   return (
     <View className="gap-3">
       <SettingsSection title={gt("Sidebar")}>
         <SettingsSwitchRow
+          icon="folder"
+          label={gt("Group threads by project")}
+          subtitle={gt(
+            "Group active threads into project folders. Pinned threads stay above, and Snoozed and Settled stay below.",
+          )}
+          value={projectFoldersEnabled}
+          disabled={!loaded}
+          onValueChange={(value) => savePreferences({ threadListProjectFoldersEnabled: value })}
+        />
+        <SettingsSwitchRow
           icon="bolt.circle"
           label={gt("Working section")}
           value={workingShelfEnabled}
+          disabled={!loaded || projectFoldersEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
-        <T>
-          Fold working and monitoring threads into a Working section. They return to the top of the
-          list when they need you. While this is on, active threads are ordered by time and cannot
-          be moved.
-        </T>
+        {projectFoldersEnabled ? (
+          <T>
+            In project layout, working threads stay in their project folders. Your Working section
+            preference returns when you turn project layout off.
+          </T>
+        ) : (
+          <T>
+            Fold working and monitoring threads into a Working section. They return to the top of
+            the list when they need you. While this is on, active threads are ordered by time and
+            cannot be moved.
+          </T>
+        )}
       </Text>
     </View>
   );
