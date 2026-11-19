@@ -1,8 +1,10 @@
 import { useGT } from "gt-react";
+import { ListFilterIcon, PlusIcon } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
 import { useState } from "react";
 
-import { LayoutPaneSkeleton, PaneNotchTab } from "../../layout/PaneSkeleton";
+import { useTheme } from "../../hooks/useTheme";
+import { LayoutPaneSkeleton, PaneJoinTab, PaneNotchTab } from "../../layout/PaneSkeleton";
 import { cn } from "~/lib/utils";
 
 // Scale once from double size so miniature gaps and radii stay proportional.
@@ -15,6 +17,10 @@ const SIDEBAR = 56;
 const SIDE_PANE = 60;
 const PANE_TOP = GAP;
 const PANE_HEIGHT = H - GAP * 2;
+// Each pane's tab row, on the chrome above the pane's surface.
+const TAB_ROW = 16;
+// The app's 10px radius and ear on its 41px joined tab, at this 16px tab.
+const TAB_RADIUS = 4;
 // The chat pane's edges, open (beside both panels) and closed (alone).
 const OPEN_LEFT = SIDEBAR;
 const OPEN_RIGHT = W - GAP - SIDE_PANE - GAP;
@@ -33,6 +39,37 @@ const COMPOSER_CLASS =
   "overflow-hidden border-y border-foreground/8 bg-background before:absolute before:inset-0 before:bg-foreground/4";
 
 const SIDEBAR_ROW_WIDTHS = ["w-4/5", "w-3/5", "w-[70%]", "w-1/2"] as const;
+
+/**
+ * A pane's tab: joined to the pane from the row above it, or, under light,
+ * black chrome, in a notch inside the pane as in the app (PaneNotch.tsx).
+ */
+function PreviewTab({ notch, className }: { notch: boolean; className: string }) {
+  const label = (
+    <>
+      <span className="size-1.5 shrink-0 rounded-full bg-foreground/40" />
+      <span className="h-1 flex-1 rounded-full bg-foreground/35" />
+    </>
+  );
+  if (notch) {
+    return (
+      <PaneNotchTab className={cn("h-4 shrink-0 gap-1.5 px-2", className)}>{label}</PaneNotchTab>
+    );
+  }
+  return (
+    <span className="flex shrink-0 items-center" style={{ height: TAB_ROW }}>
+      <PaneJoinTab radius={TAB_RADIUS} className={cn("h-full gap-1.5 px-2", className)}>
+        {label}
+      </PaneJoinTab>
+      <PlusIcon
+        data-chrome-scope=""
+        absoluteStrokeWidth
+        strokeWidth={2}
+        className="ms-1.5 size-2 shrink-0 text-foreground/45"
+      />
+    </span>
+  );
+}
 
 /**
  * A horizontal bar whose two ends follow the chat pane's edges: the caps
@@ -114,6 +151,9 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
   const [panelsOpen, setPanelsOpen] = useState(true);
   const leftShift = panelsOpen ? OPEN_LEFT - CLOSED_LEFT : 0;
   const rightShift = panelsOpen ? OPEN_RIGHT - CLOSED_RIGHT : 0;
+  const { blackChrome, resolvedTheme } = useTheme();
+  const notch = blackChrome && resolvedTheme === "light";
+  const tabRow = notch ? 0 : TAB_ROW;
 
   return (
     <button
@@ -161,8 +201,8 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
         <StretchBar
           open={panelsOpen}
           inset={0}
-          top={PANE_TOP}
-          height={PANE_HEIGHT}
+          top={PANE_TOP + tabRow}
+          height={PANE_HEIGHT - tabRow}
           capClassName="bg-background"
           middleClassName="bg-background"
           leftCapClassName="rounded-bl-item"
@@ -176,16 +216,26 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
             transform: `translateX(${leftShift}px)`,
           }}
         >
-          <PaneNotchTab className="h-4 w-12 gap-1.5 px-2">
-            <span className="size-1.5 shrink-0 rounded-full bg-foreground/40" />
-            <span className="h-1 flex-1 rounded-full bg-foreground/35" />
-          </PaneNotchTab>
+          <PreviewTab notch={notch} className="w-12" />
           <span className="mt-9 ms-3 flex flex-col gap-2">
             <span className="h-1 w-14 rounded-full bg-foreground/14" />
             <span className="h-1 w-11 rounded-full bg-foreground/11" />
             <span className="h-1 w-12 rounded-full bg-foreground/11" />
           </span>
         </span>
+        {notch ? null : (
+          <ListFilterIcon
+            data-chrome-scope=""
+            absoluteStrokeWidth
+            strokeWidth={2}
+            className={cn("absolute size-2 text-foreground/45", MOVE)}
+            style={{
+              left: CLOSED_RIGHT - 4 - 8,
+              top: PANE_TOP + (TAB_ROW - 8) / 2,
+              transform: `translateX(${rightShift}px)`,
+            }}
+          />
+        )}
         <span
           className={cn("absolute h-5 w-10 rounded-md bg-foreground/8", MOVE)}
           style={{
@@ -209,11 +259,7 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
 
         {/* The side pane, beside the chat. */}
         <span
-          className={cn(
-            "absolute flex flex-col overflow-hidden rounded-item rounded-tl-none bg-background",
-            MOVE,
-            panelsOpen ? "opacity-100" : "opacity-0",
-          )}
+          className={cn("absolute flex flex-col", MOVE, panelsOpen ? "opacity-100" : "opacity-0")}
           style={{
             left: W - GAP - SIDE_PANE,
             top: PANE_TOP,
@@ -222,11 +268,11 @@ export function PanelAnimationsPreview({ durationMs }: { durationMs: number }) {
             transform: panelsOpen ? undefined : `translateX(${SIDE_PANE + GAP}px)`,
           }}
         >
-          <PaneNotchTab className="h-4 w-10 shrink-0 gap-1.5 px-2">
-            <span className="size-1.5 shrink-0 rounded-full bg-foreground/40" />
-            <span className="h-1 flex-1 rounded-full bg-foreground/35" />
-          </PaneNotchTab>
-          <LayoutPaneSkeleton shape="diff" />
+          {notch ? null : <PreviewTab notch={false} className="w-10" />}
+          <span className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-item rounded-tl-none bg-background">
+            {notch ? <PreviewTab notch className="w-10" /> : null}
+            <LayoutPaneSkeleton shape="diff" />
+          </span>
         </span>
       </span>
     </button>
