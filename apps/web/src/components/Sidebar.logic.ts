@@ -957,6 +957,43 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   return "ready";
 }
 
+/** The stored environment filter, or every environment once that environment is gone. */
+export function resolveSidebarEnvironmentScope(
+  stored: string | null,
+  environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+): EnvironmentId | null {
+  return (
+    environments.find((environment) => environment.environmentId === stored)?.environmentId ?? null
+  );
+}
+
+export interface SidebarEnvironmentWork {
+  readonly needsYou: number;
+  readonly working: number;
+}
+
+/** Per environment, the threads waiting on the user and the ones running, so a filter that hides them can say so. */
+export function summarizeSidebarEnvironmentWork(
+  threads: ReadonlyArray<
+    SidebarThreadStatusInput & Pick<SidebarThreadSummary, "environmentId" | "archivedAt">
+  >,
+): ReadonlyMap<EnvironmentId, SidebarEnvironmentWork> {
+  const work = new Map<EnvironmentId, SidebarEnvironmentWork>();
+  for (const thread of threads) {
+    if (thread.archivedAt !== null) continue;
+    const status = resolveSidebarThreadStatus(thread);
+    const needsYou = status === "approval" || status === "input" || status === "request";
+    const working = status === "working" || status === "preparing";
+    if (!needsYou && !working) continue;
+    const current = work.get(thread.environmentId) ?? { needsYou: 0, working: 0 };
+    work.set(thread.environmentId, {
+      needsYou: current.needsYou + (needsYou ? 1 : 0),
+      working: current.working + (working ? 1 : 0),
+    });
+  }
+  return work;
+}
+
 /** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
 export function resolveSidebarRowStatus(
   thread: ThreadStatusInput & SidebarThreadStatusInput,

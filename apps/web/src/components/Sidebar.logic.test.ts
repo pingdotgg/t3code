@@ -16,6 +16,8 @@ import {
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
   resolveSidebarThreadStatus,
+  resolveSidebarEnvironmentScope,
+  summarizeSidebarEnvironmentWork,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
@@ -171,6 +173,43 @@ describe("orderItemsByPreferredIds", () => {
       "physical-a",
       "physical-b",
     ]);
+  });
+});
+
+describe("sidebar environment filter", () => {
+  const laptop = EnvironmentId.make("env-laptop");
+  const server = EnvironmentId.make("env-server");
+
+  it("reads a removed environment as every environment", () => {
+    const environments = [{ environmentId: laptop }];
+    expect(resolveSidebarEnvironmentScope(laptop, environments)).toBe(laptop);
+    expect(resolveSidebarEnvironmentScope(server, environments)).toBeNull();
+    expect(resolveSidebarEnvironmentScope(null, environments)).toBeNull();
+  });
+
+  it("counts approvals and running work per environment, skipping archived and idle threads", () => {
+    const base = {
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      runtime: null,
+      archivedAt: null,
+    };
+    const running = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    };
+    const work = summarizeSidebarEnvironmentWork([
+      { ...base, environmentId: server, hasPendingApprovals: true },
+      { ...base, environmentId: server, runtime: running },
+      { ...base, environmentId: server, hasPendingUserInput: true, archivedAt: "2026-03-09" },
+      { ...base, environmentId: laptop },
+    ]);
+    expect(work.get(server)).toEqual({ needsYou: 1, working: 1 });
+    expect(work.has(laptop)).toBe(false);
   });
 });
 
