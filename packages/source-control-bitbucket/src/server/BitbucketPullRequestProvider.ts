@@ -115,6 +115,20 @@ function toChangeRequest(pullRequest: BitbucketPullRequest): ProviderChangeReque
   };
 }
 
+function viewerAuthor(input: {
+  readonly filters?: { readonly author?: string | undefined } | undefined;
+  readonly involvement: string;
+  readonly viewer: string;
+}): string | undefined {
+  const author =
+    input.filters?.author !== undefined
+      ? resolvePullRequestAuthorFilter(input.filters.author, input.viewer)
+      : input.involvement === "authored"
+        ? input.viewer
+        : undefined;
+  return author?.toLowerCase() === input.viewer.toLowerCase() ? author : undefined;
+}
+
 /** The write's reply has no `closed_on`, line counts, or conflict state, so those stay absent. */
 function toActionSummary(pullRequest: BitbucketPullRequest): ProviderChangeRequestSummary {
   return {
@@ -187,10 +201,9 @@ export const make = Effect.gen(function* () {
           limit: input.limit,
           query: input.query,
           cursor: input.cursor,
-          author:
-            input.filters?.author === undefined
-              ? undefined
-              : resolvePullRequestAuthorFilter(input.filters.author, input.viewer),
+          // Bitbucket has no involvement filter; for "authored" the viewer is the author. Only
+          // the viewer can be pushed down, so skip the identity lookup for anyone else.
+          author: viewerAuthor(input),
           draft: input.filters?.draft === undefined ? undefined : input.filters.draft === "only",
         })
         .pipe(

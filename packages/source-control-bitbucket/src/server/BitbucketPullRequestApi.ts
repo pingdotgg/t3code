@@ -316,16 +316,16 @@ function searchFilter(query: string): string {
   return `(title ~ "${literal}" OR description ~ "${literal}")`;
 }
 
-// Bitbucket rejects display_name filters; UUID supports viewers whose accounts have no nickname.
-// Logins compare case-insensitively, like the service's row filter.
-function authorFilter(
+// Bitbucket rejects display_name filters and most accounts have no nickname, so only the viewer
+// can be pushed down (by uuid). Other authors are left to the service's row filter, which
+// compares logins case-insensitively and keeps reading until the page fills.
+function viewerAuthorFilter(
   login: string,
   viewer: { readonly login: string | null; readonly uuid: string | null } | null,
-): string {
-  if (viewer?.uuid && viewer.login?.toLowerCase() === login.toLowerCase()) {
-    return `author.uuid = "${filterLiteral(viewer.uuid)}"`;
-  }
-  return `author.nickname = "${filterLiteral(login)}"`;
+): ReadonlyArray<string> {
+  return viewer?.uuid && viewer.login?.toLowerCase() === login.toLowerCase()
+    ? [`author.uuid = "${filterLiteral(viewer.uuid)}"`]
+    : [];
 }
 
 /**
@@ -572,13 +572,22 @@ export const make = Effect.gen(function* () {
                     const decoded = decodeViewerIdentityJson(response.body);
                     return Result.isSuccess(decoded) ? decoded.success : null;
                   }),
-                  Effect.orElseSucceed(() => null),
+                  Effect.catchIf(
+                    (error) =>
+                      error._tag !== "SourceControlRateLimitPausedError" &&
+                      !(
+                        (error._tag === "BitbucketResponseError" ||
+                          error._tag === "BitbucketResponseBodyReadError") &&
+                        error.status === 429
+                      ),
+                    () => Effect.succeed(null),
+                  ),
                 );
           const search = input.query?.trim() ?? "";
           // Exclude already-sent IDs in the boundary millisecond before applying the page limit.
           const predicates = [
             ...(search.length === 0 ? [] : [searchFilter(search)]),
-            ...(input.author === undefined ? [] : [authorFilter(input.author, viewer)]),
+            ...(input.author === undefined ? [] : viewerAuthorFilter(input.author, viewer)),
             ...(input.draft === undefined ? [] : [`draft = ${input.draft}`]),
             ...(input.cursor === undefined
               ? []
@@ -586,7 +595,8 @@ export const make = Effect.gen(function* () {
             ...(input.cursor?.seenAt ?? []).map((number) => `id != ${number}`),
           ];
           return yield* listPage({
-            // Listings omit reviewers needed by `viewerReviewRequested`.
+            // Listings omit the reviewers behind `viewerReviewRequested` and the votes behind
+            // the review decision.
             url: `${path}/pullrequests?${stateParams(input.state)
               .map((state) => `state=${state}`)
               .join("&")}&pagelen=${MAX_PAGE_SIZE}&sort=-updated_on&fields=%2Bvalues.reviewers${

@@ -1,6 +1,8 @@
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { SourceControlProviderKind } from "@t3tools/contracts";
+import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as BitbucketPullRequestApi from "./BitbucketPullRequestApi.ts";
@@ -153,7 +155,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("narrows by author nickname and draft state in the same query", () =>
+  it.effect("leaves another author to the row filter and still narrows by draft state", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
@@ -171,7 +173,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         draft: false,
       });
 
-      expect(filterOfCall(1)).toBe('author.nickname = "ana\\"" AND draft = false');
+      expect(filterOfCall(1)).toBe("draft = false");
     }),
   );
 
@@ -206,7 +208,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("falls back to nickname when the viewer identity is unavailable", () =>
+  it.effect("sends no author predicate when the viewer identity is unavailable", () =>
     Effect.gen(function* () {
       const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
@@ -234,7 +236,47 @@ layer("BitbucketPullRequestApi.layer", (it) => {
           author: "ana",
         });
 
-        expect(filterOfCall(callIndex + 1)).toBe('author.nickname = "ana"');
+        expect(filterOfCall(callIndex + 1)).toBeNull();
+      }
+    }),
+  );
+
+  it.effect("preserves rate limits from the viewer lookup without requesting a listing", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const errors = [
+        new BitbucketApi.BitbucketResponseError({
+          operation: "request",
+          status: 429,
+          responseBodyLength: 0,
+          retryAt: 120_000,
+        }),
+        new BitbucketApi.BitbucketResponseBodyReadError({
+          operation: "request",
+          status: 429,
+          cause: new Error("stream failed"),
+          retryAt: 120_000,
+        }),
+        new SourceControlRateLimit.SourceControlRateLimitPausedError({
+          provider: SourceControlProviderKind.make("bitbucket"),
+          host: "bitbucket.org",
+          retryAt: 120_000,
+        }),
+      ];
+      for (const error of errors) {
+        const callIndex = mockedRequest.mock.calls.length;
+        mockedRequest.mockReturnValueOnce(Effect.fail(error));
+        mockedRequest.mockReturnValue(Effect.succeed(response(page(0, 1))));
+        const result = yield* Effect.result(
+          api.listPullRequests({
+            repository: "acme/web",
+            state: "open",
+            limit: 50,
+            author: "bilal",
+          }),
+        );
+        expect(result).toMatchObject({ _tag: "Failure", failure: error });
+        expect(mockedRequest.mock.calls.length).toBe(callIndex + 1);
       }
     }),
   );
