@@ -324,7 +324,9 @@ const sessionRevokeCommand = Command.make("revoke", {
     Argument.withSchema(AuthSessionId),
   ),
 }).pipe(
-  Command.withDescription("Revoke an active session."),
+  Command.withDescription(
+    "Revoke an active session. A T3 Connect device's session takes the device's trust and other sessions with it, so it cannot sign itself back in.",
+  ),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
       Effect.gen(function* () {
@@ -333,7 +335,7 @@ const sessionRevokeCommand = Command.make("revoke", {
             client.auth
               .revokeClient({ headers: {}, payload: { sessionId: flags.sessionId } })
               .pipe(Effect.map((result) => result.revoked)),
-          locally: environmentAuth.revokeSession(flags.sessionId),
+          locally: environmentAuth.revokeClient(flags.sessionId),
         });
         yield* Console.log(
           revoked

@@ -602,6 +602,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly listClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<ReadonlyArray<AuthClientSession>, ServerAuthInternalError>;
+    /** Revokes a session; one bound to a device key takes the device's trust and sessions with it. */
+    readonly revokeClient: (
+      sessionId: AuthSessionId,
+    ) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly revokeClientSession: (
       currentSessionId: AuthSessionId,
       targetSessionId: AuthSessionId,
@@ -1433,25 +1437,36 @@ export const make = Effect.gen(function* () {
       Effect.withSpan("EnvironmentAuth.listClientSessions"),
     );
 
+  const proofKeyOf = (sessionId: AuthSessionId) =>
+    sessions
+      .proofKeyThumbprintOf(sessionId)
+      .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
+
+  const revokeClient: EnvironmentAuth["Service"]["revokeClient"] = Effect.fn(
+    "EnvironmentAuth.revokeClient",
+  )(function* (sessionId) {
+    // A T3 Connect device would otherwise mint itself a new session right away.
+    return yield* Option.match(yield* proofKeyOf(sessionId), {
+      onNone: () => revokeSession(sessionId),
+      onSome: revokeConnectDevice,
+    });
+  });
+
   const revokeClientSession: EnvironmentAuth["Service"]["revokeClientSession"] = Effect.fn(
     "EnvironmentAuth.revokeClientSession",
   )(function* (currentSessionId, targetSessionId) {
     if (currentSessionId === targetSessionId) {
       return yield* new ServerAuthForbiddenOperationError({});
     }
-    const proofKeyThumbprint = yield* sessions
-      .proofKeyThumbprintOf(targetSessionId)
-      .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
-    // A T3 Connect device would otherwise mint itself a new session right away.
-    if (Option.isSome(proofKeyThumbprint)) {
-      const currentProofKey = yield* sessions
-        .proofKeyThumbprintOf(currentSessionId)
-        .pipe(Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })));
-      if (Option.getOrUndefined(currentProofKey) !== proofKeyThumbprint.value) {
-        return yield* revokeConnectDevice(proofKeyThumbprint.value);
-      }
+    const targetProofKey = Option.getOrUndefined(yield* proofKeyOf(targetSessionId));
+    // Revoking the caller's own device would cut off the caller too.
+    if (
+      targetProofKey !== undefined &&
+      Option.getOrUndefined(yield* proofKeyOf(currentSessionId)) === targetProofKey
+    ) {
+      return yield* revokeSession(targetSessionId);
     }
-    return yield* revokeSession(targetSessionId);
+    return yield* revokeClient(targetSessionId);
   });
 
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] =
@@ -1663,6 +1678,7 @@ export const make = Effect.gen(function* () {
     listSessions,
     revokeSession,
     listClientSessions,
+    revokeClient,
     revokeClientSession,
     revokeOtherClientSessions,
     authenticateHttpRequest,
