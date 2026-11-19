@@ -14,6 +14,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 const PLACEHOLDER_PATTERN = /\$\{(?:env:([A-Za-z_][A-Za-z0-9_]*)|([^:}]+)(?::-([^}]*))?)\}/g;
 const WORKSPACE_VARIABLE_PATTERN =
   /\$\{(?:workspaceFolder|workspaceFolderBasename|userHome|pathSeparator|\/)\}/;
+const THREAD_VARIABLE_PATTERN = /\$\{(?:env:)?T3CODE_THREAD_ID\}/;
 const WORKSPACE_PATH_PATTERN = /^\$\{(?:workspaceFolder|userHome)\}[\\/]/;
 // These exit when their script argument is missing; other arguments may be labels a server ignores.
 const SCRIPT_INTERPRETERS = new Set(["node", "bun", "tsx", "python", "python3"]);
@@ -61,6 +62,7 @@ function needsWorkspaceExpansion(server: unknown): boolean {
   if ("envFile" in server || "enabledTools" in server) return false;
   const { command, cwd, args } = server as Record<string, unknown>;
   return (
+    THREAD_VARIABLE_PATTERN.test(JSON.stringify(server)) ||
     [command, cwd].some(
       (text) => typeof text === "string" && WORKSPACE_VARIABLE_PATTERN.test(text),
     ) ||
