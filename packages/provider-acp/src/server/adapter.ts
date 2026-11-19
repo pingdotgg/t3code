@@ -817,6 +817,7 @@ export const AcpProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
+    supportsNativeResume: false,
     supportsActiveSteering: false,
     supportsSteeringByInterruptRestart: true,
     supportsQueuedMessages: true,
