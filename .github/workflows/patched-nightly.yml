@@ -91,7 +91,10 @@ jobs:
           lineage_agent_patch="$RUNNER_TEMP/lineage-custom-agents.patch"
           git show "$WORKFLOW_SHA:.github/patches/lineage-custom-agents.patch" > "$lineage_agent_patch"
           lineage_agent_patch_sha="$(sha256sum "$lineage_agent_patch" | cut -d' ' -f1)"
-          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; } \
+          thread_list_patch="$RUNNER_TEMP/mobile-thread-list.patch"
+          git show "$WORKFLOW_SHA:.github/patches/mobile-thread-list.patch" > "$thread_list_patch"
+          thread_list_patch_sha="$(sha256sum "$thread_list_patch" | cut -d' ' -f1)"
+          patch_set="$( { printf '%s\n' "$patch_commits"; printf '%s\n' "$compatibility_patch_sha"; printf '%s\n' "$lineage_agent_patch_sha"; printf '%s\n' "$thread_list_patch_sha"; } \
             | sha256sum | cut -c1-16)"
 
           dry_run=false
@@ -180,6 +183,8 @@ jobs:
           git apply "$compatibility_patch"
           git apply --check "$lineage_agent_patch"
           git apply "$lineage_agent_patch"
+          git apply --check "$thread_list_patch"
+          git apply "$thread_list_patch"
           git add -A
           git commit -m "patch: apply portable fork fixes to upstream nightly"
           if [[ "$dry_run" == "true" ]]; then
@@ -223,6 +228,8 @@ jobs:
           - Hide settled or confirmed deleted child threads in Lineage; mark offline linked-environment children unavailable.
           - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
           - Allow named T3 delegate_task targets according to each lead agent's allowlist.
+          - Keep mobile thread rows on three lines: project, title, then branch and machine.
+          - Show Mark unread in the mobile thread hold menu instead of under More.
 
           Agent selection remains explicit. Automatic complexity-based routing is a separate follow-up. The named-target allowlist covers T3 delegate_task, not provider-native subagent tools.
 
