@@ -102,6 +102,8 @@ export interface AcpSessionRuntimeOptions {
   readonly resumeMethod?: "load" | "resume";
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
+  // Treat replay going quiet as loaded, for agents whose session/load may never reply.
+  readonly sessionLoadReplayIdleReadiness?: boolean;
   readonly interruptPromptOnCancel?: boolean;
   readonly cancelMeta?: EffectAcpSchema.CancelNotification["_meta"];
   readonly initializeMeta?: EffectAcpSchema.InitializeRequest["_meta"];
@@ -2000,14 +2002,19 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             status: "started",
           });
 
-          const idleFiber = yield* waitForSessionLoadReplayIdle({
-            gateRef: sessionLoadGateRef,
-          }).pipe(Effect.forkIn(runtimeScope));
-          const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
-            Fiber.join(idleFiber),
-          ).pipe(
-            Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
+          const loadOrReplayIdle =
+            options.sessionLoadReplayIdleReadiness === true
+              ? Effect.gen(function* () {
+                  const idleFiber = yield* waitForSessionLoadReplayIdle({
+                    gateRef: sessionLoadGateRef,
+                  }).pipe(Effect.forkIn(runtimeScope));
+                  return yield* Effect.raceFirst(
+                    acp.agent.loadSession(loadPayload),
+                    Fiber.join(idleFiber),
+                  ).pipe(Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)));
+                })
+              : acp.agent.loadSession(loadPayload);
+          const loaded = yield* loadOrReplayIdle.pipe(
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Effect.fromOption(
