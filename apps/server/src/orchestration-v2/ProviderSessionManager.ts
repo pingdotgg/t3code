@@ -66,6 +66,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -423,6 +424,7 @@ export const layerWithOptions = (
   ProviderSessionManagerV2,
   never,
   | CommandOutputHub.CommandOutputHub
+  | EffectOutbox.EffectOutboxV2
   | EventSink.EventSinkV2
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
@@ -444,6 +446,7 @@ export const layerWithOptions = (
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const eventSink = yield* EventSink.EventSinkV2;
+      const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
       const commandOutput = yield* CommandOutputHub.CommandOutputHub;
       const promptSuggestionStore = yield* SubscriptionRef.make<
         ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
@@ -2331,6 +2334,7 @@ export const layerWithOptions = (
         >,
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
+        const acceptedSteerKeys = new Set<string>();
         const subscribeEvents = makeEventSubscription(eventSubscribers);
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
@@ -2540,39 +2544,82 @@ export const layerWithOptions = (
                 ),
               ),
             ),
-          steerTurn: (input) =>
-            observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
-              Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
-              Effect.andThen(() =>
-                runtime.reportsSteerStatus
-                  ? Effect.void
-                  : providerEventIngestor
-                      .ingestNormalized({
+          steerTurn: Effect.fn("ProviderSessionManager.steerTurn")(function* (input) {
+            if (runtime.reportsSteerStatus) {
+              yield* observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+                Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              );
+              return;
+            }
+            const acceptedKey = `${input.providerTurnId}:${input.message.messageId}`;
+            const effect = Option.getOrUndefined(
+              yield* effectOutbox
+                .steerForProviderTurn({
+                  threadId: input.threadId,
+                  messageId: input.message.messageId,
+                  providerTurnId: input.providerTurnId,
+                })
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterEventStreamError({
+                        driver: runtime.driver,
                         providerSessionId,
-                        providerInstanceId: runtime.instanceId,
-                        threadId: input.threadId,
-                        event: {
-                          type: "steer.updated",
-                          driver: runtime.driver,
-                          threadId: input.threadId,
-                          runId: input.runId,
-                          messageId: input.message.messageId,
-                          status: "completed",
-                        },
-                      })
-                      .pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderAdapter.ProviderAdapterEventStreamError({
-                              driver: runtime.driver,
-                              providerSessionId,
-                              raisedByT3: true,
-                              cause,
-                            }),
-                        ),
-                      ),
-              ),
-            ),
+                        raisedByT3: true,
+                        cause,
+                      }),
+                  ),
+                ),
+            );
+            const alreadyAccepted =
+              acceptedSteerKeys.has(acceptedKey) ||
+              (effect?.request.type === "provider-turn.steer" &&
+                effect.request.runtimeAccepted === true);
+            if (!alreadyAccepted) {
+              yield* observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(
+                Effect.andThen(runtime.steerTurn(input).pipe(turnMetrics("steer"))),
+              );
+              acceptedSteerKeys.add(acceptedKey);
+            }
+            if (effect !== undefined && effect.request.type === "provider-turn.steer")
+              yield* effectOutbox.markSteerAccepted(effect.id).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEventStreamError({
+                      driver: runtime.driver,
+                      providerSessionId,
+                      raisedByT3: true,
+                      cause,
+                    }),
+                ),
+              );
+            yield* providerEventIngestor
+              .ingestNormalized({
+                providerSessionId,
+                providerInstanceId: runtime.instanceId,
+                threadId: input.threadId,
+                event: {
+                  type: "steer.updated",
+                  driver: runtime.driver,
+                  threadId: input.threadId,
+                  runId: input.runId,
+                  messageId: input.message.messageId,
+                  status: "completed",
+                },
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEventStreamError({
+                      driver: runtime.driver,
+                      providerSessionId,
+                      raisedByT3: true,
+                      cause,
+                    }),
+                ),
+              );
+            acceptedSteerKeys.delete(acceptedKey);
+          }),
           // A provider starved of memory can stop answering, so no caller may wait on it unbounded.
           interruptTurn: (input) =>
             observeActivity(providerSessionId, touchActivity(providerSessionId)).pipe(

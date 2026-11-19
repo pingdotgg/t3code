@@ -380,7 +380,8 @@ export const layerExecutor: Layer.Layer<
                     const queued =
                       message.delegatedCompletion !== undefined ||
                       message.notification !== undefined ||
-                      error.steerDeclined === true;
+                      error.steerDeclined === true ||
+                      error.turnCompleted === true;
                     // Reuse message ids and receipts so retries cannot duplicate messages or follow-ups.
                     yield* threads
                       .dispatch({
@@ -388,8 +389,10 @@ export const layerExecutor: Layer.Layer<
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,
-                        ...(error.steerDeclined ? { steerFollowUpOfRunId: run.id } : {}),
-                        ...(error.steerDeclined &&
+                        ...(error.turnCompleted || error.steerDeclined
+                          ? { steerFollowUpOfRunId: run.id }
+                          : {}),
+                        ...((error.turnCompleted || error.steerDeclined) &&
                         effect.request.steerFollowUpAfterRunOrdinal !== undefined
                           ? {
                               steerFollowUpAfterRunOrdinal:
@@ -399,7 +402,8 @@ export const layerExecutor: Layer.Layer<
                         text: message.text,
                         ...(message.context ? { context: message.context } : {}),
                         attachments: message.attachments,
-                        ...(error.steerDeclined && effect.request.modelSelection !== undefined
+                        ...((error.turnCompleted || error.steerDeclined) &&
+                        effect.request.modelSelection !== undefined
                           ? { modelSelection: effect.request.modelSelection }
                           : message.delegatedCompletion === undefined
                             ? {}

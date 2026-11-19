@@ -3522,6 +3522,34 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.runId === item.runId,
       );
       if (run === undefined || message === undefined || isActiveRun(run)) continue;
+      const firstSteer = Option.getOrUndefined(
+        yield* effectOutbox.firstSteer(threadId, message.id),
+      )?.request;
+      const acceptedSteer =
+        item.providerTurnId === null
+          ? firstSteer
+          : Option.getOrUndefined(
+              yield* effectOutbox.steerForProviderTurn({
+                threadId,
+                messageId: message.id,
+                providerTurnId: item.providerTurnId,
+              }),
+            )?.request;
+      if (acceptedSteer?.type === "provider-turn.steer" && acceptedSteer.runtimeAccepted === true) {
+        const now = yield* DateTime.now;
+        yield* writeSystemEvents([
+          {
+            type: "turn-item.updated",
+            threadId,
+            runId: run.id,
+            ...(item.nodeId === null ? {} : { nodeId: item.nodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...item, status: "completed" as const, completedAt: now, updatedAt: now },
+          },
+        ]);
+        continue;
+      }
       // Stop drops a steer it reached; say so, as the adapter does for steers it still held.
       if (yield* projectionStore.hasRunInterruptRequest(threadId, run.id)) {
         const now = yield* DateTime.now;
@@ -3569,9 +3597,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       // The message's first steer effect recorded which runs were queued before it was sent; a
       // queued message that was promoted also stays behind only the runs queued before its own.
-      const firstSteer = Option.getOrUndefined(
-        yield* effectOutbox.firstSteer(threadId, message.id),
-      )?.request;
       const steer = firstSteer?.type === "provider-turn.steer" ? firstSteer : undefined;
       const afterRunOrdinal = Math.max(
         0,
@@ -16406,14 +16431,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const message =
       command.type === "thread.metadata.update" ? metadataUpdateContinuation(command) : command;
     if (message?.type === "message.dispatch") {
-      yield* awaitSettlingSteerEffects(message.threadId, undefined, message.messageId).pipe(
-        mapDispatchError(command),
-      );
+      const dispatchMessage = mayStartSubagentFollowup(message)
+        ? withSubagentParentLock(message.threadId, dispatch)
+        : dispatch;
+      if (message.steerFollowUpOfRunId !== undefined) return yield* dispatchMessage;
       return yield* messageIntake.withLock(
         message.threadId,
-        mayStartSubagentFollowup(message)
-          ? withSubagentParentLock(message.threadId, dispatch)
-          : dispatch,
+        awaitSettlingSteerEffects(message.threadId, undefined, message.messageId).pipe(
+          mapDispatchError(command),
+          Effect.andThen(dispatchMessage),
+        ),
       );
     }
     // Answering a message-mode question can also start a follow-up.
