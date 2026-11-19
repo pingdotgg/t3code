@@ -482,6 +482,22 @@ it.effect.each(["origin", "github"] as const)(
     }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect(
+  "refreshes remote status after external init while refs still cache a non-repository",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fs = yield* FileSystem.FileSystem;
+      const cwd = yield* fs.realPath(yield* makeTmpDir());
+      assert.isFalse((yield* driver.listRefs({ cwd })).isRepo);
+      yield* git(cwd, ["init"]);
+
+      assert.isFalse((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+      yield* driver.ensureRemote({ cwd, preferredName: "origin", url: cwd });
+      assert.isTrue((yield* driver.statusDetailsLocal(cwd)).hasOriginRemote);
+    }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect.each([
   { hookExitCode: 0, commonDirFailure: "none" },
   { hookExitCode: 1, commonDirFailure: "none" },
@@ -2000,6 +2016,11 @@ it.effect.each([
     stderr: "error: fetching ref refs/remotes/origin/main failed: reference already exists",
     expected: "could not update a local reference",
     attempts: 2,
+  },
+  {
+    name: "broken local ref",
+    stderr: "fatal: bad object refs/remotes/origin/dev 2",
+    expected: "broken local ref",
   },
   {
     name: "unrelated remote chatter",
@@ -4899,7 +4920,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* writeTextFile(cwd, "nested/untracked.txt", "one\ntwo\n");
         yield* writeTextFile(cwd, "new [1].txt", "literal\n");
 
-        const status = yield* driver.statusDetailsLocal(pathService.join(cwd, "nested"), {
+        const nested = pathService.join(cwd, "nested");
+        const alias = pathService.join(yield* makeTmpDir(), "alias");
+        const platform = yield* HostProcess.Platform;
+        yield* Effect.promise(() =>
+          NodeFS.promises.symlink(nested, alias, platform === "win32" ? "junction" : "dir"),
+        );
+        const status = yield* driver.statusDetailsLocal(alias, {
           includeBranchChanges: true,
         });
         assert.deepStrictEqual(status.branchChanges, {
@@ -4907,6 +4934,8 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           insertions: 4,
           deletions: 0,
         });
+        yield* driver.ensureRemote({ cwd: alias, preferredName: "origin", url: cwd });
+        assert.isTrue((yield* driver.statusDetailsLocal(alias)).hasOriginRemote);
         assert.isUndefined((yield* driver.statusDetailsLocal(cwd)).branchChanges);
       }),
     );
