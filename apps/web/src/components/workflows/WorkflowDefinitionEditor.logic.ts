@@ -13,6 +13,11 @@ export function diskChange(input: {
   return input.dirty ? "stale" : "follow";
 }
 
-/** The warning after a save: one the person saved over is settled, a newer one stays. */
-export const staleAfterSave = (now: string | null, overwrote: string | null) =>
+/** One change on disk the person has not settled. Each change is its own, even with the same text. */
+export interface DiskChange {
+  readonly source: string;
+}
+
+/** The warning after a save: the change the person saved over is settled, any later one stays. */
+export const staleAfterSave = (now: DiskChange | null, overwrote: DiskChange | null) =>
   now === overwrote ? null : now;
