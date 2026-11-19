@@ -207,17 +207,18 @@ describe("thread execution presentation", () => {
     expect(source({ providerSessions: [session("Plan limit reached")] })).toBe(
       "limit-error@2026-07-28T10:00:00.000Z",
     );
-    // Any other session error belongs to the latest ended run, kept while a newer run starts.
+    // Otherwise a session error belongs to the latest ended run, kept while a newer run starts.
     const ended = { ...failed, completedAt: now };
+    const starting = [ended, run("next", 2, "starting")];
     expect(source({ runs: [ended], providerSessions: [session("Session failed")] })).toBe(
       "limited@2026-07-28T10:00:00.000Z",
     );
-    expect(
-      source({
-        runs: [ended, run("next", 2, "starting")],
-        providerSessions: [session("Session failed")],
-      }),
-    ).toBe("limited@2026-07-28T10:00:00.000Z");
+    expect(source({ runs: starting, providerSessions: [session("Session failed")] })).toBe(
+      "limited@2026-07-28T10:00:00.000Z",
+    );
+    expect(source({ runs: starting, providerSessions: [session("Plan limit reached")] })).toBe(
+      "limit-error@2026-07-28T10:00:00.000Z",
+    );
     expect(deriveResumableRunId(projection, deriveThreadRuntime(projection))).toBe(failed.id);
     expect(
       deriveThreadRuntime({

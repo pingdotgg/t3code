@@ -396,34 +396,43 @@ export function deriveThreadStructureRuntime(
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
     ...threadErrorSummary(failureItem?.failure ?? null, sessionError),
-    lastErrorSource: threadErrorSource(failureItem, sessionError, projection.runs),
+    lastErrorSource: threadErrorSource(failureItem, sessionError, projection),
   };
 }
 
 const isoOrEmpty = (at: DateTime.Utc | null) => (at === null ? "" : DateTime.formatIso(at));
 
 /**
- * A session error that repeats the run's failure is that failure: providers rewrite session
- * timestamps on unrelated updates. Any other session error belongs to the latest ended run.
+ * A session error belongs to the latest ended run, as that run's failure when the text matches.
+ * Session timestamps are not used: providers rewrite them on unrelated updates.
  */
 function threadErrorSource(
   failureItem: ReturnType<typeof latestRootProviderFailureItem>,
   sessionError: string | null,
-  runs: ThreadStructure["runs"],
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
 ): string | null {
+  const itemSource = (item: NonNullable<typeof failureItem>) =>
+    `${item.id}@${isoOrEmpty(item.completedAt)}`;
   if (
     failureItem !== null &&
     (sessionError === null || sessionError === failureItem.failure.message)
   ) {
-    return `${failureItem.id}@${isoOrEmpty(failureItem.completedAt)}`;
+    return itemSource(failureItem);
   }
   if (sessionError === null) return null;
   let ended: ThreadStructure["runs"][number] | null = null;
-  for (const run of runs) {
+  for (const run of projection.runs) {
     if (run.status !== "failed" && run.status !== "completed") continue;
     if (ended === null || run.ordinal > ended.ordinal) ended = run;
   }
-  return ended === null ? null : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
+  if (ended === null) return null;
+  const endedFailure =
+    failureItem?.runId === ended.id
+      ? failureItem
+      : latestRootProviderFailureItem(ended, projection.turnItems);
+  return endedFailure?.failure.message === sessionError
+    ? itemSource(endedFailure)
+    : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
 }
 
 export interface UsageLimitNoticeRows {
