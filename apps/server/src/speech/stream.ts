@@ -14,6 +14,7 @@ import * as Scope from "effect/Scope";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(Schema.fromJsonString(SpeechStreamCommand));
@@ -80,6 +81,8 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
       });
     }
   }).pipe(
+    // Stops the worker before the stream's slow cleanup, so it cannot send in the meantime.
+    Effect.scoped,
     Effect.timeoutOrElse({
       duration: "10 minutes",
       // The socket read loop is already interrupted here; its writer can no longer send.
@@ -93,6 +96,7 @@ export const speechStreamRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const speech = yield* SpeechService.SpeechService;
+    const sessions = yield* SessionStore.SessionStore;
     return HttpRouter.add(
       "GET",
       SPEECH_STREAM_PATH,
@@ -105,7 +109,10 @@ export const speechStreamRouteLayer = Layer.unwrap(
         if (!session.success.scopes.includes(AuthOrchestrationOperateScope))
           return HttpServerResponse.empty({ status: 403 });
         const socket = yield* request.upgrade;
-        yield* runSpeechSocket(socket, speech).pipe(Effect.scoped);
+        yield* Effect.raceFirst(
+          runSpeechSocket(socket, speech).pipe(Effect.scoped),
+          sessions.awaitInvalidation(session.success.sessionId, session.success.proofKeyThumbprint),
+        ).pipe(Effect.ignore({ log: true }));
         return HttpServerResponse.empty();
       }),
     );
