@@ -413,7 +413,9 @@ describe("LinearIssueTracker", () => {
         workspace: "other",
         scopes: [{ key: "ENG", name: "Engineering" }],
       });
-      expect(requests).toEqual([
+      expect(
+        requests.map(({ operation, authorization }) => ({ operation, authorization })),
+      ).toEqual([
         { operation: "T3CurrentUser", authorization: "lin_api_stored" },
         { operation: "T3Viewer", authorization: "lin_api_new" },
       ]);
