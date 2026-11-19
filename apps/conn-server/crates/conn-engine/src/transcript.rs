@@ -1,5 +1,7 @@
 //! The thread transcript body (`OrchestrationV2ThreadTranscript`) and the size of the file the
-//! client builds from it (`threadTranscriptHeader` plus one JSON line per item).
+//! client builds from it (`threadTranscriptHeader` plus one JSON line per item), and the
+//! [`RowSink`] that the timeline reader writes into: this body or a projection's
+//! `visibleTurnItems`.
 
 use serde_json::{Value, json};
 
@@ -17,6 +19,48 @@ pub(crate) fn header_bytes(values: [&str; 4]) -> u64 {
 
 fn json_len(value: &Value) -> u64 {
     serde_json::to_vec(value).map_or(0, |text| text.len() as u64)
+}
+
+/// Where the timeline reader writes visible rows (`OrchestrationV2ProjectedTurnItem`), in
+/// order, each with the next position.
+pub(crate) trait RowSink {
+    /// Whether a row whose stored text has at least `bytes` could still fit.
+    fn has_room(&self, bytes: u64) -> bool;
+    /// Appends one row; `false` when the sink is full (and the read should stop).
+    fn push(
+        &mut self,
+        visibility: &str,
+        source_thread_id: Value,
+        source_item_id: Value,
+        item: Value,
+    ) -> Result<bool, String>;
+}
+
+/// `visibleTurnItems` of a thread projection: every row, in memory, numbered from 0.
+#[derive(Default)]
+pub(crate) struct ProjectedRows(pub(crate) Vec<Value>);
+
+impl RowSink for ProjectedRows {
+    fn has_room(&self, _bytes: u64) -> bool {
+        true
+    }
+
+    fn push(
+        &mut self,
+        visibility: &str,
+        source_thread_id: Value,
+        source_item_id: Value,
+        item: Value,
+    ) -> Result<bool, String> {
+        self.0.push(json!({
+            "position": self.0.len(),
+            "visibility": visibility,
+            "sourceThreadId": source_thread_id,
+            "sourceItemId": source_item_id,
+            "item": item,
+        }));
+        Ok(true)
+    }
 }
 
 /// The rows of the JSON body, written as they arrive into `{"items":[...],"threadId":..,
@@ -44,13 +88,31 @@ impl Rows {
         self.size <= self.limit
     }
 
-    /// Whether a row of at least `bytes` could still fit.
-    pub(crate) fn has_room(&self, bytes: u64) -> bool {
+    pub(crate) fn finish(
+        mut self,
+        thread_id: &str,
+        title: &str,
+        updated_at: &str,
+    ) -> Result<Vec<u8>, String> {
+        let text = |value: &str| serde_json::to_string(value).map_err(|e| e.to_string());
+        self.out.extend_from_slice(b"],\"threadId\":");
+        self.out.extend_from_slice(text(thread_id)?.as_bytes());
+        self.out.extend_from_slice(b",\"title\":");
+        self.out.extend_from_slice(text(title)?.as_bytes());
+        self.out.extend_from_slice(b",\"updatedAt\":");
+        self.out.extend_from_slice(text(updated_at)?.as_bytes());
+        self.out.push(b'}');
+        Ok(self.out)
+    }
+}
+
+impl RowSink for Rows {
+    fn has_room(&self, bytes: u64) -> bool {
         self.size.saturating_add(bytes).saturating_add(1) <= self.limit
     }
 
-    /// Appends one row; `false` when it passes the limit (the body is then useless).
-    pub(crate) fn push(
+    /// `false` when the row passes the limit (the body is then useless).
+    fn push(
         &mut self,
         visibility: &str,
         source_thread_id: Value,
@@ -73,22 +135,5 @@ impl Rows {
         self.size = self.size.saturating_add(line);
         self.position += 1;
         Ok(self.fits())
-    }
-
-    pub(crate) fn finish(
-        mut self,
-        thread_id: &str,
-        title: &str,
-        updated_at: &str,
-    ) -> Result<Vec<u8>, String> {
-        let text = |value: &str| serde_json::to_string(value).map_err(|e| e.to_string());
-        self.out.extend_from_slice(b"],\"threadId\":");
-        self.out.extend_from_slice(text(thread_id)?.as_bytes());
-        self.out.extend_from_slice(b",\"title\":");
-        self.out.extend_from_slice(text(title)?.as_bytes());
-        self.out.extend_from_slice(b",\"updatedAt\":");
-        self.out.extend_from_slice(text(updated_at)?.as_bytes());
-        self.out.push(b'}');
-        Ok(self.out)
     }
 }

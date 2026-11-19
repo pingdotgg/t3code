@@ -20,7 +20,7 @@ workspace README describes the trait's first methods and the wire.
 | `EngineConfig::runtime_policy_override`       | Laid over every turn's policy (`RuntimePolicy.layerWithOverride`); the replay sets the fixture's |
 | `EngineConfig::command_output_tap`            | Sees every live command output chunk (T3's `CommandOutputRecorder`) |
 | `Engine::await_background_tasks`, `BackgroundWait`, `BackgroundWaitError` | `awaitBackgroundTasks` (`src/background_wait.rs`): the live session of the thread's active provider thread marks or clears background task ids (15 s limit); `/mcp`'s `t3_background_wait` |
-| `Engine::thread_transcript`, `ThreadTranscript` | `GET /api/orchestration/threads/:id/transcript` (`src/transcript.rs`): reads visible turn items one at a time on the store thread (indexes `turn_items_in_order`, `turn_item_interrupts`), writes the JSON body as it goes, and stops at the first row past the file limit; a run fork starts with its inherited rows and the fork marker |
+| `Engine::thread_transcript`, `ThreadTranscript` | `GET /api/orchestration/threads/:id/transcript` (`src/transcript.rs`): reads visible turn items one at a time on the store thread (indexes `turn_items_in_order`, `turn_item_interrupts`), writes the JSON body as it goes, and stops at the first row past the file limit; a run fork starts with its inherited rows and the fork marker; the thread projection's `visibleTurnItems` uses the same reader (`RowSink`) |
 | `EngineHost::response_streaming_mode`, `ResponseStreamingMode` | The project's `responseStreamingMode` (`paragraph` by default, or `turn`), read at each turn start |
 
 `Engine::record_secret_request` is an internal entry point for secret card status changes.
