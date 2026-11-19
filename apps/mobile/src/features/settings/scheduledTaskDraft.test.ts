@@ -12,7 +12,6 @@ import {
   createDraft,
   editDraft,
   scheduledTaskDefaultModel,
-  scheduledTaskWorktreeBaseRef,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
   scheduleFromDraft,
@@ -214,11 +213,6 @@ it("rejects dedupe keys without valid request placeholders", () => {
 });
 
 describe("scheduled task worktree base", () => {
-  const ref = (name: string, isDefault = false, isRemote = false) => ({
-    name,
-    isDefault,
-    isRemote,
-  });
   const rootTask = {
     id: ScheduledTaskId.make("task"),
     title: "Review issues",
@@ -249,25 +243,5 @@ describe("scheduled task worktree base", () => {
       editDraft({ ...rootTask, workspaceStrategy: { type: "worktree", baseRef: "release" } })
         .baseRef,
     ).toBe("release");
-  });
-
-  it("starts an automatic base from the project's default branch", () => {
-    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master", true)])).toBe("master");
-    expect(scheduledTaskWorktreeBaseRef(" ", [ref("origin/develop", true, true)])).toBe(
-      "origin/develop",
-    );
-  });
-
-  it("falls back to main or master when the remote records no default", () => {
-    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master")])).toBe("master");
-    expect(scheduledTaskWorktreeBaseRef("", [ref("origin/master", false, true)])).toBe(
-      "origin/master",
-    );
-    expect(scheduledTaskWorktreeBaseRef("", [ref("master"), ref("main")])).toBe("main");
-    expect(scheduledTaskWorktreeBaseRef("", [])).toBe("main");
-  });
-
-  it("keeps a base the user picked", () => {
-    expect(scheduledTaskWorktreeBaseRef(" release ", [ref("master", true)])).toBe("release");
   });
 });

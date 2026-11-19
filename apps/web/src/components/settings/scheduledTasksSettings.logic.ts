@@ -13,7 +13,6 @@ import {
   type RuntimeMode,
   type ProviderInteractionMode,
   type ServerSettings,
-  type VcsRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -307,22 +306,6 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     timeOfDay: draft.timeOfDay,
     ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
   };
-}
-
-/** An empty base is automatic: the project's default branch, else `main` or `master`. */
-export function scheduledTaskWorktreeBaseRef(
-  baseRef: string,
-  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
-): string {
-  const picked = baseRef.trim();
-  if (picked) return picked;
-  const defaultRef = refs.find((ref) => ref.isDefault);
-  if (defaultRef) return defaultRef.name;
-  for (const name of ["main", "master"]) {
-    const match = refs.find((ref) => ref.name === name || ref.name === `origin/${name}`);
-    if (match) return match.name;
-  }
-  return "main";
 }
 
 export function taskToDraft(task: ScheduledTask): DraftState {

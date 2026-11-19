@@ -8,7 +8,6 @@ import type {
   ScheduledTaskThreadMode,
   ScheduledTaskUpsertSchedule,
   ScheduledTaskWebhookSignature,
-  VcsRef,
   ThreadId,
 } from "@t3tools/contracts";
 
@@ -253,22 +252,6 @@ export function hasScheduledTaskDraftChanges(
   current: ScheduledTaskDraft,
 ): boolean {
   return draftSignature(initial) !== draftSignature(current);
-}
-
-/** An empty base is automatic: the project's default branch, else `main` or `master`. */
-export function scheduledTaskWorktreeBaseRef(
-  baseRef: string,
-  refs: ReadonlyArray<Pick<VcsRef, "name" | "isDefault">>,
-): string {
-  const picked = baseRef.trim();
-  if (picked) return picked;
-  const defaultRef = refs.find((ref) => ref.isDefault);
-  if (defaultRef) return defaultRef.name;
-  for (const name of ["main", "master"]) {
-    const match = refs.find((ref) => ref.name === name || ref.name === `origin/${name}`);
-    if (match) return match.name;
-  }
-  return "main";
 }
 
 export function moveDraftToThread(

@@ -2,6 +2,7 @@ import { msg, T, useGT, useMessages } from "gt-react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { LegendList } from "@legendapp/list/react-native";
 import { useNavigation } from "@react-navigation/native";
+import { scheduledTaskWorktreeBaseRef } from "@t3tools/client-runtime/scheduled-task-worktree";
 import { isListedThreadLineage } from "@t3tools/contracts";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
@@ -27,11 +28,7 @@ import {
   useScheduledTaskDestinationLabel,
   useScheduledTaskEditor,
 } from "./scheduled-task-editor";
-import {
-  moveDraftToThread,
-  scheduledTaskWorktreeBaseRef,
-  unbindDraftFromThread,
-} from "./scheduledTaskDraft";
+import { moveDraftToThread, unbindDraftFromThread } from "./scheduledTaskDraft";
 
 function MissingTaskDraft() {
   const gt = useGT();

@@ -22,7 +22,6 @@ import {
   defaultScheduledTaskProjectId,
   matchesScheduledTaskScope,
   scheduleFromDraft,
-  scheduledTaskWorktreeBaseRef,
   scheduleLabel,
   taskToDraft,
   unbindDraftFromThread,
@@ -176,34 +175,6 @@ describe("editing scheduled task branch settings", () => {
   it("leaves the base automatic when a task without a worktree switches to one", () => {
     const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
     expect(draft.baseRef).toBe("");
-  });
-});
-
-describe("scheduled task worktree base", () => {
-  const ref = (name: string, isDefault = false, isRemote = false) => ({
-    name,
-    isDefault,
-    isRemote,
-  });
-
-  it("starts an automatic base from the project's default branch", () => {
-    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master", true)])).toBe("master");
-    expect(scheduledTaskWorktreeBaseRef(" ", [ref("origin/develop", true, true)])).toBe(
-      "origin/develop",
-    );
-  });
-
-  it("falls back to main or master when the remote records no default", () => {
-    expect(scheduledTaskWorktreeBaseRef("", [ref("feature"), ref("master")])).toBe("master");
-    expect(scheduledTaskWorktreeBaseRef("", [ref("origin/master", false, true)])).toBe(
-      "origin/master",
-    );
-    expect(scheduledTaskWorktreeBaseRef("", [ref("master"), ref("main")])).toBe("main");
-    expect(scheduledTaskWorktreeBaseRef("", [])).toBe("main");
-  });
-
-  it("keeps a base the user picked", () => {
-    expect(scheduledTaskWorktreeBaseRef(" release ", [ref("master", true)])).toBe("release");
   });
 });
 
