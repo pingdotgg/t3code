@@ -53,8 +53,13 @@ function setPresented(next: PresentedDialog | null) {
 function submitRequest(dialog: DialogRequest) {
   const replaced = presented;
   setPresented({ ...dialog, id: ++nextPresentationId });
-  // A replaced alert closed without an answer, which its owner hears as a dismissal.
-  if (replaced?.kind === "alert") replaced.request.options?.onDismiss?.();
+  // A replaced dialog closed without an answer, which its owner hears as a dismissal.
+  if (replaced) closeUnanswered(replaced);
+}
+
+function closeUnanswered(dialog: DialogRequest) {
+  if (dialog.kind === "alert") dialog.request.options?.onDismiss?.();
+  else dialog.request.onCancel?.();
 }
 
 /** Closes the dialog only if it is still the one the action came from. */
@@ -99,8 +104,7 @@ export function Host() {
   const handleCancel = () => {
     if (!presented) return;
     dismiss(presented.id);
-    if (presented.kind === "alert") presented.request.options?.onDismiss?.();
-    else presented.request.onCancel?.();
+    closeUnanswered(presented);
   };
 
   const handleConfirm = (nativeInputValue?: string) => {
