@@ -39,7 +39,9 @@ it.each(["edit", "dismiss", "older import fails first", "newer import fails firs
     const actions = screen.getByRole("button", { name: "Script actions" });
     const dialog = page.getByRole("dialog");
     const name = dialog.getByRole("textbox", { name: "Name" });
-    const failure = AsyncResult.failure(Cause.fail(new Error("Settings write failed")));
+    const failure: ProjectScriptActionResult = AsyncResult.failure(
+      Cause.fail(new Error("Settings write failed")),
+    );
 
     await actions.click();
     await page.getByRole("menuitem", { name: /Shared build/ }).click();
