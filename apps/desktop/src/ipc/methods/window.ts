@@ -383,7 +383,7 @@ export const readMedia = DesktopIpc.makeIpcMethod({
   payload: Schema.String,
   result: Schema.NullOr(DesktopMediaReadSchema),
   handler: Effect.fn("desktop.ipc.window.readMedia")(function* (url, event) {
-    const window = yield* (yield* ElectronWindow.ElectronWindow).main;
+    const window = yield* (yield* ElectronWindow.ElectronWindow).mainForSender(event?.sender.id);
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -467,7 +467,7 @@ export const pasteAsText = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.pasteAsText")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    const window = yield* electronWindow.mainForSender(event?.sender.id);
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -493,7 +493,7 @@ export const revealWindow = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.revealWindow")(function* (_input, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.main;
+    const window = yield* electronWindow.mainForSender(event?.sender.id);
     if (
       event === undefined ||
       Option.isNone(window) ||
@@ -531,7 +531,7 @@ export const syncHtmlFullscreen = DesktopIpc.makeIpcMethod({
   result: Schema.Void,
   handler: Effect.fn("desktop.ipc.window.syncHtmlFullscreen")(function* (fullscreen, event) {
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const main = yield* electronWindow.main;
+    const main = yield* electronWindow.mainForSender(event?.sender.id);
     if (
       event === undefined ||
       Option.isNone(main) ||

@@ -4,6 +4,7 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vite-plus/test";
 
@@ -204,6 +205,28 @@ describe("ElectronWindow", () => {
         assert.strictEqual(error.cause, cause);
       }
       assert.equal(vi.mocked(laterWindow.destroy).mock.calls.length, 1);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("keeps both application windows registered until each closes", () =>
+    Effect.gen(function* () {
+      const service = yield* ElectronWindow.ElectronWindow;
+      const makeWindow = (id: number) =>
+        ({
+          webContents: { id },
+          isDestroyed: () => false,
+          isFocused: () => id === 1,
+        }) as unknown as Electron.BrowserWindow;
+      const first = makeWindow(1);
+      const second = makeWindow(2);
+      yield* service.setMain(first);
+      yield* service.setMain(second);
+      assert.deepEqual(yield* service.main, Option.some(first));
+      assert.deepEqual(yield* service.mainForSender(2), Option.some(second));
+      assert.deepEqual(yield* service.mainForSender(3), Option.none());
+      yield* service.clearMain(Option.some(first));
+      assert.deepEqual(yield* service.mainForSender(1), Option.none());
+      assert.deepEqual(yield* service.main, Option.some(second));
     }).pipe(Effect.provide(layerTest)),
   );
 
