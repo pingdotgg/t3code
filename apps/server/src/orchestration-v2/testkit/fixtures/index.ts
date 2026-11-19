@@ -100,6 +100,7 @@ import { assertOpenCodeChildApprovalOutput } from "./opencode_child_approval/out
 import { openCodeRunningChildApprovalInput } from "./opencode_running_child_approval/input.ts";
 import { assertOpenCodeRunningChildApprovalOutput } from "./opencode_running_child_approval/output.ts";
 import { openCodeSubagentInput } from "./opencode_subagent/input.ts";
+import { openCodeBackgroundWakeInput } from "./opencode_background_wake/input.ts";
 import { openCode2InboxInput } from "./opencode2_inbox/input.ts";
 import { openCode2RevertInput } from "./opencode2_revert/input.ts";
 import { assertOpenCode2RevertOutput } from "./opencode2_revert/output.ts";
@@ -131,6 +132,7 @@ import { assertCodexModelRerouteOutput } from "./codex_model_reroute/output.ts";
 import { openCode2ToolCallInput } from "./opencode2_tool_call/input.ts";
 import { assertOpenCode2ToolCallOutput } from "./opencode2_tool_call/output.ts";
 import { assertOpenCodeSubagentOutput } from "./opencode_subagent/output.ts";
+import { assertOpenCodeBackgroundWakeOutput } from "./opencode_background_wake/output.ts";
 import {
   assertCodexPlanQuestionsOutput,
   assertPlanQuestionsOutput,
@@ -225,9 +227,12 @@ import { fxEarlyStopInput } from "./fx_early_stop/input.ts";
 import { assertFxEarlyStopOutput } from "./fx_early_stop/fx_output.ts";
 import { fxSubagentInput } from "./fx_subagent/input.ts";
 import { assertFxSubagentOutput } from "./fx_subagent/fx_output.ts";
+import { fxSubagentStopInput } from "./fx_subagent_stop/input.ts";
+import { assertFxSubagentStopOutput } from "./fx_subagent_stop/fx_output.ts";
 import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
 import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
 import { assertTurnInterruptMidToolCursorOutput } from "./turn_interrupt_mid_tool/cursor_output.ts";
+import { assertTurnInterruptMidToolFxOutput } from "./turn_interrupt_mid_tool/fx_output.ts";
 import {
   turnInterruptMidToolInput,
   turnInterruptMidToolKiroInput,
@@ -1174,6 +1179,22 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "opencode_background_wake",
+    buildInput: openCodeBackgroundWakeInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("opencode"),
+        transcriptFile: new URL(
+          "./opencode_background_wake/opencode_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: OPENCODE_MODEL_SELECTION,
+        runContinuationWorker: true,
+        assertOutput: assertOpenCodeBackgroundWakeOutput,
+      },
+    ],
+  },
+  {
     name: "opencode2_simple",
     buildInput: openCode2SimpleInput,
     providers: [
@@ -1886,6 +1907,18 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
     ],
   },
   {
+    name: "fx_subagent_stop",
+    buildInput: fxSubagentStopInput,
+    providers: [
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./fx_subagent_stop/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        assertOutput: assertFxSubagentStopOutput,
+      },
+    ],
+  },
+  {
     name: "command_output_streaming",
     buildInput: commandOutputStreamingInput,
     providers: [
@@ -1943,6 +1976,17 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
         modelSelection: CURSOR_MODEL_SELECTION,
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptMidToolCursorOutput,
+      },
+      {
+        driver: ProviderDriverKind.make("fx"),
+        transcriptFile: new URL("./turn_interrupt_mid_tool/fx_transcript.ndjson", import.meta.url),
+        modelSelection: FX_MODEL_SELECTION,
+        // fx asks before running the command; a workspace sandbox would deny it.
+        runtimePolicyOverride: {
+          approvalPolicy: "never",
+          sandboxPolicy: { type: "dangerFullAccess" },
+        },
+        assertOutput: assertTurnInterruptMidToolFxOutput,
       },
       {
         driver: ProviderDriverKind.make("pi"),

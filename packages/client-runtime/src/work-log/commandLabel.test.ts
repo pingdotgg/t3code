@@ -158,6 +158,22 @@ describe("commandDisplayText with redacted Codex commands", () => {
   });
 });
 
+describe("commandDisplayText with Windows shell wrappers", () => {
+  it.each([
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`,
+      "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+    ],
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+      'rg -n -F "new Date()" .',
+    ],
+    ['cmd.exe /c "npm test"', "npm test"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
+  });
+});
+
 describe("commandDisplayText control characters", () => {
   it.each([
     ["printf '\u001b[31mred\u001b[0m'", "printf '␛[31mred␛[0m'"],

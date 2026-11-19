@@ -2,6 +2,7 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
+import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -10,7 +11,10 @@ import "../index.css";
 
 import { filesystemEnvironment } from "../state/filesystem";
 import { useRightPanelStore } from "../rightPanelStore";
-import { remarkEnableOrderedListNumbers } from "@t3tools/shared/markdownPipeline";
+import {
+  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
+  remarkEnableOrderedListNumbers,
+} from "@t3tools/shared/markdownPipeline";
 import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
@@ -43,7 +47,7 @@ vi.mock(import("../state/server"), async (original) => {
   const { Atom } = await import("effect/reactivity");
   const noConfig = Atom.make(null);
   const modelsConfig = Atom.make({
-    environment: { platform: { os: "darwin" } },
+    environment: { platform: { os: "darwin" }, capabilities: {} },
     availableEditors: [],
     settings: { providerInstances: {} },
     providers: [
@@ -291,7 +295,10 @@ it("reuses the parse of a streaming reply's finished blocks when it remounts", a
     <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\nStill growing"} isStreaming />
   );
   {
-    await using _first = await render(message);
+    await using first = await render(
+      <ChatMarkdown cwd="/tmp/project" text={"Finished block\n\n"} isStreaming />,
+    );
+    await first.rerender(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Still growing")).toBeVisible();
@@ -306,11 +313,28 @@ it("reuses the parse of a remounted message that has stable extra plugins", asyn
     <ChatMarkdown cwd="/tmp/project" text="Cached text" extraRemarkPlugins={countingPlugins} />
   );
   {
-    await using _first = await render(message);
+    await using first = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="Cached text"
+        extraRemarkPlugins={countingPlugins}
+        isStreaming
+      />,
+    );
+    await first.rerender(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Cached text")).toBeVisible();
   expect(parsed).toHaveBeenCalledTimes(1);
+  const changed = vi.fn();
+  await screen.rerender(
+    <ChatMarkdown
+      cwd="/tmp/project"
+      text="Cached text"
+      extraRemarkPlugins={[() => () => void changed()]}
+    />,
+  );
+  expect(changed).toHaveBeenCalledTimes(1);
 });
 
 it("highlights a code block's own source when an earlier block of the same length was cached", async () => {
@@ -509,7 +533,7 @@ describe("ChatMarkdown workspace file opens", () => {
 });
 
 describe("ChatMarkdown skill chips", () => {
-  it("shows the skill's details and opens its instructions", async () => {
+  it("shows the skill's details and opens its instructions, closing the details", async () => {
     setup();
     const threadRef = {
       environmentId: EnvironmentId.make("workspace"),
@@ -536,6 +560,7 @@ describe("ChatMarkdown skill chips", () => {
     await userEvent.click(page.getByRole("button", { name: "View instructions" }));
 
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/skills/review/SKILL.md");
+    await expect.element(page.getByText("Reviews the current branch.")).not.toBeInTheDocument();
   });
 
   it("names a mentioned model as its provider does, without a thread", async () => {
@@ -606,13 +631,15 @@ describe("ChatMarkdown headings", () => {
 });
 
 describe("ChatMarkdown inline code selection", () => {
-  it("selects the whole inline code span on double-click, but only a word in fenced code", async () => {
+  it("selects only a word on double-click in inline and fenced code", async () => {
     setup();
     await using screen = await renderText(
       "Run `migration-gate --dry-run` first.\n\n```txt\nfenced-block word\n```",
     );
-    await userEvent.dblClick(screen.getByText("migration-gate --dry-run"));
-    expect(window.getSelection()?.toString()).toBe("migration-gate --dry-run");
+    await userEvent.dblClick(screen.getByText("migration-gate --dry-run"), {
+      position: { x: 12, y: 8 },
+    });
+    expect(window.getSelection()?.toString()).toBe("migration");
 
     window.getSelection()?.removeAllRanges();
     const fenced = screen.container.querySelector("pre code")!;
@@ -657,7 +684,7 @@ describe("ChatMarkdown inline code selection", () => {
   });
 });
 
-describe("ChatMarkdown alert copy", () => {
+describe("ChatMarkdown copy", () => {
   it("copies a fully selected callout as alert Markdown and a partial one as text", async () => {
     setup();
     await using screen = await renderText("> [!WARNING]\n> Back up first.");
@@ -679,6 +706,104 @@ describe("ChatMarkdown alert copy", () => {
     );
     expect(select(labelText, bodyText, "Back up".length)).toBe("Warning\n\nBack up");
   });
+
+  it.each([
+    { text: "   Plan\nnext" },
+    { text: "Plan\n            Deep\n                        Deeper" },
+    { text: "Plan\n\tTabbed\n \t Mixed" },
+    { text: "- item\n    more\n      deeper\n- next" },
+    { text: "Plan\n   Step one\n        Detail a", from: "Step one" },
+  ])(
+    "copies and selects user lines the same whether their typed indentation shows: $text",
+    async (copy) => {
+      setup();
+      const copied = async (extraRemarkPlugins: typeof CHAT_USER_MARKDOWN_REMARK_PLUGINS) => {
+        await using screen = await renderText(copy.text, {
+          className: "user-message-markdown",
+          lineBreaks: true,
+          parseRawHtml: false,
+          extraRemarkPlugins,
+        });
+        const range = document.createRange();
+        range.selectNodeContents(screen.container);
+        if (copy.from) {
+          const walker = document.createTreeWalker(screen.container, NodeFilter.SHOW_TEXT);
+          let line = walker.nextNode();
+          while (line && !line.textContent!.includes(copy.from)) line = walker.nextNode();
+          // Start mid-line, three characters into the line's text.
+          range.setStart(line!, line!.textContent!.indexOf(copy.from) + 3);
+        }
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        // A drag or anything else that reads the selection gets its text, not the copy payload.
+        return { payload: chatMarkdownClipboardPayload(selection), selected: selection.toString() };
+      };
+      const shown = await copied(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+      // The user pipeline as it was before typed indentation was shown.
+      expect(shown).toEqual(await copied([[remarkGfm, { singleTilde: false }]]));
+    },
+  );
+
+  it("copies part of inline code without prose escapes", async () => {
+    setup();
+    await using screen = await renderText("Read `items[0]*_x` and a*b*c.");
+    const code = screen.container.querySelector("p code")!.firstChild!;
+    const range = document.createRange();
+    range.setStart(code, 0);
+    range.setEnd(code, "items[0]*_".length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(chatMarkdownClipboardPayload(selection)?.text).toBe("items[0]*_");
+  });
+
+  it.each([
+    {
+      source: "10. First\n11. Second\n12. Third\n\nAfter.",
+      from: "Second",
+      text: "11. Second\n12. Third\n\nAfter.",
+    },
+    {
+      source: "1. A\n2. B\n7. C\n8. D\n\nAfter.",
+      from: "D",
+      userMessage: true,
+      text: "8. D\n\nAfter.",
+    },
+    {
+      source: "1. Outer\n2. Next\n   1. Inner\n   2. Deeper\n\nAfter.",
+      from: "Deeper",
+      text: "2. 2. Deeper\n\nAfter.",
+    },
+  ])(
+    "keeps the shown numbers when a copy starts at $from and ends past the list",
+    async ({ source, from, userMessage, text }) => {
+      setup();
+      await using screen = await renderText(
+        source,
+        userMessage ? { extraRemarkPlugins: SOURCE_NUMBER_PLUGINS } : {},
+      );
+      const start = [...screen.container.querySelectorAll("li")]
+        .flatMap((item) => [...item.childNodes])
+        .find((node) => node.nodeType === Node.TEXT_NODE && node.textContent === from)!;
+      const after = [...screen.container.querySelectorAll("p")].at(-1)!.firstChild!;
+      const range = document.createRange();
+      range.setStart(start, 0);
+      range.setEnd(after, after.textContent!.length);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const payload = chatMarkdownClipboardPayload(selection);
+      expect(payload?.text).toBe(text);
+      // Rich paste numbers its list from the same start.
+      expect(
+        new DOMParser()
+          .parseFromString(payload!.html, "text/html")
+          .querySelector("li")
+          ?.closest("ol")?.start,
+      ).toBe(Number(text.split(".")[0]));
+    },
+  );
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
