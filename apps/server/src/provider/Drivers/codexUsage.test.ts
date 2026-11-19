@@ -450,6 +450,61 @@ describe("parseCodexLine", () => {
     expect(state.malformedRecords).toBe(0);
   });
 
+  it("bills request-ledger usage through resumed context counters and compaction", () => {
+    const state = initialCodexScanState();
+    const request = (response_id: string, usage: unknown) =>
+      JSON.stringify({
+        type: "token_usage_record",
+        timestamp: "2026-08-01T05:17:45.000Z",
+        payload: { response_id, usage },
+      });
+    parseCodexLine(sessionMeta, state);
+    parseCodexLine(turnContext, state);
+    parseCodexLine(counted(counters(100, 20), counters(1000, 200)), state);
+    // Resume restores older context counters, while the request ledger continues.
+    expect(
+      parseCodexLine(request("response-1", counters(80, 10)), state)?.totals.outputTokens,
+    ).toBe(10);
+    expect(parseCodexLine(counted(counters(80, 10), counters(580, 110)), state)).toBeNull();
+    // Rate-limit refreshes repeat the snapshot without another request.
+    expect(parseCodexLine(counted(counters(80, 10), counters(580, 110)), state)).toBeNull();
+    expect(
+      parseCodexLine(request("compaction", counters(90, 15)), state)?.totals.outputTokens,
+    ).toBe(15);
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted({ ...counters(0, 0), total_tokens: 40 }, counters(580, 110)), state),
+    ).toBeNull();
+    expect(parseCodexLine(request("response-2", counters(30, 5)), state)?.totals.outputTokens).toBe(
+      5,
+    );
+    expect(parseCodexLine(counted(counters(30, 5), counters(610, 115)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
+    // A later turn from an older CLI can still report usage through snapshots alone.
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted(counters(20, 2), counters(630, 117)), state)?.totals.outputTokens,
+    ).toBe(2);
+    expect(
+      parseCodexLine(request("interrupted", counters(40, 4)), state)?.totals.outputTokens,
+    ).toBe(4);
+    parseCodexLine(turnContext, state);
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(680, 122)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(request("", counters(15, 3)), state)).toBeNull();
+    parseCodexLine(turnContext, state);
+    const transition = parseCodexRecords(request("upgraded", counters(25, 5)), state);
+    expect(transition.map((record) => record.totals.outputTokens)).toEqual([3, 5]);
+    expect(parseCodexLine(counted(counters(25, 5), counters(720, 130)), state)).toBeNull();
+    expect(parseCodexLine(request("", counters(10, 1)), state)).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)?.totals.outputTokens,
+    ).toBe(1);
+    expect(parseCodexLine(counted(counters(10, 1), counters(730, 131)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
+  });
+
   it("does not bill a context-window estimate or lose the following real request", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);
@@ -496,6 +551,134 @@ describe("parseCodexLine", () => {
       parseCodexLine(counted(counters(10, 2), counters(40, 7)), state)?.totals.outputTokens,
     ).toBe(2);
     expect(codexUsageFormat.readMalformedRecords?.(state)).toBe(0);
+  });
+
+  const later = (line: string) => line.replace("05:17:49.919Z", "07:17:49.919Z");
+  it.each([
+    {
+      name: "bills a later request that continues from an earlier snapshot",
+      tail: [
+        later(counted(counters(20, 4), counters(130, 26))),
+        later(counted(counters(5, 1), counters(135, 27))),
+      ],
+      processed: [120, 12, 35, 24, 6],
+      skipped: 0,
+    },
+    {
+      name: "does not bill a re-emitted earlier snapshot again",
+      tail: [counted(counters(10, 2), counters(110, 22))],
+      processed: [120, 12, 35, 0],
+      skipped: 1,
+    },
+  ])("$name when cumulative counters rewind", ({ tail, processed, skipped }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const billed = [
+      counted(counters(100, 20), counters(100, 20)),
+      counted(counters(10, 2), counters(110, 22)),
+      counted(counters(30, 5), counters(140, 27)),
+      ...tail,
+    ].map((line) => {
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({ processed: billed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed,
+      skipped,
+    });
+  });
+
+  const at = (time: string, line: string) => line.replace("05:17:49.919Z", `${time}.000Z`);
+  const anonymousRequest = (time: string, usage: unknown) =>
+    JSON.stringify({
+      type: "token_usage_record",
+      timestamp: `2026-08-01T${time}.000Z`,
+      payload: { usage },
+    });
+  it.each([
+    {
+      name: "does not bill an older snapshot re-emitted after requests without cumulative counters",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4))),
+        at("10:00:10", counted(counters(30, 6))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+      ],
+      processed: [120, 24, 36, 0],
+      skipped: 1,
+    },
+    {
+      name: "bills a rewind that follows a request without cumulative counters",
+      lines: [
+        at("10:00:00", counted(counters(100, 20))),
+        at("10:00:10", counted(counters(20, 4), counters(60, 12))),
+      ],
+      processed: [120, 24],
+      skipped: 0,
+    },
+    {
+      name: "keeps the baseline when it rejects an older snapshot, so the replay that follows is not billed",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+      ],
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "keeps the baseline when it rejects a lower snapshot from the baseline's own time",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:00", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:00", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:00", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:00", counted(counters(30, 6), counters(150, 30))),
+      ],
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "does not bill replayed snapshots against a cached baseline of unknown age",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+        at("10:00:10", counted(counters(30, 6), counters(150, 30))),
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        at("10:00:05", counted(counters(20, 4), counters(120, 24))),
+      ],
+      undatedAfter: 3,
+      processed: [120, 24, 36, 0, 0],
+      skipped: 1,
+    },
+    {
+      name: "warns about the anonymous request a rewound snapshot does not report",
+      lines: [
+        at("10:00:00", counted(counters(100, 20), counters(100, 20))),
+        anonymousRequest("10:00:05", counters(40, 8)),
+        anonymousRequest("10:00:06", counters(20, 4)),
+        at("10:00:07", counted(counters(20, 4), counters(60, 12))),
+        at("10:00:08", counted(counters(10, 2), counters(70, 14))),
+      ],
+      processed: [120, 0, 0, 24, 12],
+      skipped: 1,
+    },
+  ])("$name", ({ lines, undatedAfter, processed, skipped }) => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    const billed = lines.map((line, index) => {
+      if (index === undatedAfter) delete state.latestCumulativeAtMs;
+      const record = parseCodexLine(line, state);
+      return record === null ? 0 : totalTokens(record.totals);
+    });
+
+    expect({ processed: billed, skipped: codexUsageFormat.readMalformedRecords?.(state) }).toEqual({
+      processed,
+      skipped,
+    });
   });
 
   it("ignores a replay of the current sequence's first request without rewinding the baseline", () => {
