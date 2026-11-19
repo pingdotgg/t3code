@@ -364,20 +364,33 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitCafeApi.GitCafeApi> 
 
       getIssue: Effect.fn("GitCafeIssueTracker.getIssue")(function* (input) {
         const path = yield* issuePath("getIssue", input);
+        // A refused or unreadable conversation leaves the issue itself readable.
+        const comments = newestComments(input, path).pipe(
+          Effect.asSome,
+          Effect.catch((error) =>
+            Effect.logWarning("GitCafe issue comments could not be read", {
+              reason: error.reason,
+            }).pipe(Effect.as(Option.none())),
+          ),
+        );
         const [issue, conversation] = yield* Effect.all(
-          [read("getIssue", input.host, path, Issue), newestComments(input, path)],
+          [read("getIssue", input.host, path, Issue), comments],
           { concurrency: 2 },
         );
         return {
           ...toSummary(issue, input),
-          commentCount: conversation.count,
+          commentCount: Option.isSome(conversation) ? conversation.value.count : 0,
           body: issue.description ?? "",
           viewer: null,
           viewerPermissions: READ_ONLY,
           // Empty: nothing here moves an issue between states.
           states: [],
-          comments: conversation.comments,
-          commentsCursor: conversation.commentsCursor,
+          ...(Option.isSome(conversation)
+            ? {
+                comments: conversation.value.comments,
+                commentsCursor: conversation.value.commentsCursor,
+              }
+            : { comments: [], commentsCursor: null, commentsUnavailable: true }),
           events: [],
           linkedPullRequests: [],
         };

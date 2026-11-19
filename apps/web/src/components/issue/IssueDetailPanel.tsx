@@ -817,7 +817,11 @@ export function IssueDetailPanel({
                 {loadingOlder ? <T>Loading…</T> : <T>Load older comments</T>}
               </Button>
             ) : null}
-            {timeline.length === 0 ? (
+            {detail.commentsUnavailable ? (
+              <p className="text-sm text-muted-foreground">
+                <T>Comments could not be loaded.</T>
+              </p>
+            ) : timeline.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 <T>Nothing has happened here yet.</T>
               </p>

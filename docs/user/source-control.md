@@ -125,7 +125,8 @@ kept in the server's secret store, applies right away, and is used before `CAFE_
 `cafe` login. Or set `CAFE_TOKEN` in the server's environment and restart it. Both tokens are only
 sent to `git.cafe`; `CAFE_TOKEN` follows `CAFE_HOST` if you set it. Repositories on
 `staging.git.cafe` need their own login with `--host https://staging.git.cafe/api`.
-To browse issues with a scoped token, grant read access to issue and comment contents.
+For a scoped token, grant read access to issue contents to browse issues and to comment contents to
+see their comments.
 
 Line comments are not available for GitCafe pull requests yet.
 Merging a stack lands it through GitCafe, and updating a branch restacks the layers above it.

@@ -371,8 +371,15 @@ describe("GitCafeIssueTracker", () => {
     }),
   );
 
-  it.effect("keeps one page of comments whole and refuses a walk that loops or never ends", () =>
+  it.effect("keeps one page of comments whole and reads the issue past a walk it gives up on", () =>
     Effect.gen(function* () {
+      const refused = new GitCafeApi.GitCafeApiError({
+        host: "git.cafe",
+        operation: "getIssue",
+        status: 403,
+        reason: "failed",
+        detail: "You cannot read comments on this issue.",
+      });
       const { tracker, sent } = fakeGitCafe({
         "/repos/acme/web/issues/3": issue(3),
         "/repos/acme/web/issues/3/comments/": (query: URLSearchParams) => ({
@@ -389,6 +396,10 @@ describe("GitCafeIssueTracker", () => {
           items: [comment(`c-${query.get("after")}`, "2026-11-02T10:00:00.000Z")],
           next: query.get("after") === "b" ? "a" : query.get("after") === "a" ? "b" : "a",
         }),
+        "/repos/acme/web/issues/4": issue(4),
+        "/repos/acme/web/issues/4/comments/": refused,
+        "/repos/acme/web/issues/5": issue(5),
+        "/repos/acme/web/issues/5/comments/": { items: [{ id: "c1" }], next: null },
       });
       const api = yield* tracker;
       const single = yield* api.getIssue({ ...target, key: "1" });
@@ -397,17 +408,73 @@ describe("GitCafeIssueTracker", () => {
         ["c1"],
       );
       assert.isNull(single.commentsCursor);
+      assert.isUndefined(single.commentsUnavailable);
 
-      const looping = yield* api.getIssue({ ...target, key: "2" }).pipe(Effect.flip);
-      assert.strictEqual(looping.reason, "failed");
+      const unavailable = (detail: typeof single) => ({
+        title: detail.title,
+        body: detail.body,
+        state: detail.state.name,
+        comments: detail.comments,
+        commentCount: detail.commentCount,
+        commentsCursor: detail.commentsCursor,
+        commentsUnavailable: detail.commentsUnavailable,
+      });
+      const expected = (number: number) => ({
+        title: `Issue ${number}`,
+        body: "Steps to reproduce.",
+        state: "Backlog",
+        comments: [],
+        commentCount: 0,
+        commentsCursor: null,
+        commentsUnavailable: true,
+      });
 
+      // Refused, unreadable, looping and endless conversations each keep the issue readable.
+      assert.deepStrictEqual(
+        unavailable(yield* api.getIssue({ ...target, key: "4" })),
+        expected(4),
+      );
+      assert.deepStrictEqual(
+        unavailable(yield* api.getIssue({ ...target, key: "5" })),
+        expected(5),
+      );
+      assert.deepStrictEqual(
+        unavailable(yield* api.getIssue({ ...target, key: "2" })),
+        expected(2),
+      );
       const before = sent.length;
-      const endless = yield* api.getIssue({ ...target, key: "3" }).pipe(Effect.flip);
-      assert.strictEqual(endless.reason, "failed");
+      assert.deepStrictEqual(
+        unavailable(yield* api.getIssue({ ...target, key: "3" })),
+        expected(3),
+      );
       assert.strictEqual(
         sent.slice(before).filter((request) => request.path.endsWith("/comments/")).length,
         30,
       );
+    }),
+  );
+
+  it.effect("fails when the issue itself cannot be read, whatever its comments do", () =>
+    Effect.gen(function* () {
+      const { tracker } = fakeGitCafe({
+        "/repos/acme/web/issues/6/comments/": { items: [], next: null },
+        "/repos/acme/web/issues/7": new GitCafeApi.GitCafeApiError({
+          host: "git.cafe",
+          operation: "getIssue",
+          status: 401,
+          reason: "unauthenticated",
+          detail: "Sign in to GitCafe.",
+        }),
+        "/repos/acme/web/issues/8": { number: 8 },
+        "/repos/acme/web/issues/8/comments/": { items: [], next: null },
+      });
+      const api = yield* tracker;
+      const missing = yield* api.getIssue({ ...target, key: "6" }).pipe(Effect.flip);
+      assert.strictEqual(missing.reason, "not-found");
+      const signedOut = yield* api.getIssue({ ...target, key: "7" }).pipe(Effect.flip);
+      assert.strictEqual(signedOut.reason, "unauthenticated");
+      const unreadable = yield* api.getIssue({ ...target, key: "8" }).pipe(Effect.flip);
+      assert.strictEqual(unreadable.reason, "failed");
     }),
   );
 

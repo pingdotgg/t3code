@@ -707,7 +707,11 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                           onPress={() => void loadOlder()}
                         />
                       ) : null}
-                      {timeline.length === 0 ? (
+                      {detail.commentsUnavailable ? (
+                        <Text className="text-sm text-foreground-muted">
+                          <T>Comments could not be loaded.</T>
+                        </Text>
+                      ) : timeline.length === 0 ? (
                         <Text className="text-sm text-foreground-muted">
                           <T>Nothing has happened here yet.</T>
                         </Text>
