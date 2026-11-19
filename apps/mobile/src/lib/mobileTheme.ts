@@ -451,6 +451,8 @@ export function createMobileThemeVariables(
   };
 }
 
+const T3_CODE_DARK_WELL = "#121212";
+
 export function getMobileThemeColors(
   themeId: SharedMobileThemeId,
   appearance: MobileThemeAppearance,
@@ -464,8 +466,9 @@ export function getMobileThemeColors(
           surface: "#1d1d1d",
           surfaceRaised: "#1d1d1d",
           surfaceOverlay: "#1d1d1d",
-          secondary: "#1d1d1d",
-          muted: "#1d1d1d",
+          // Web's raised fill for controls on cards; the lightest that keeps muted text at 4.5:1.
+          secondary: "#232323",
+          muted: "#232323",
           border: "#242424",
           textMuted: "#8a8a8a",
           mutedForeground: "#8a8a8a",
@@ -530,7 +533,17 @@ export function getMobileThemeVariables(
         : undefined,
   );
 
-  return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
+  // Web's sunken well: fields and off switch tracks sit below the card instead of matching it.
+  const variables =
+    themeId === DEFAULT_MOBILE_THEME_ID && appearance === "dark"
+      ? {
+          ...baseVariables,
+          "--color-input": T3_CODE_DARK_WELL,
+          "--color-switch-inactive-track": T3_CODE_DARK_WELL,
+        }
+      : baseVariables;
+
+  return overrides ? ({ ...variables, ...overrides } as MobileThemeVariables) : variables;
 }
 
 export function getMobileThemePreviewColors(
