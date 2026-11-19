@@ -1,7 +1,17 @@
 import * as Schema from "effect/Schema";
 
 import { AuthMcpClientAccess } from "./auth.ts";
-import { EnvironmentId, ThreadId, TrimmedNonEmptyString, TurnItemId } from "./baseSchemas.ts";
+import {
+  EnvironmentId,
+  NonNegativeInt,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnItemId,
+} from "./baseSchemas.ts";
+import {
+  OrchestratorMcpThreadStatus,
+  OrchestratorMcpThreadTimelineItem,
+} from "./orchestratorMcp.ts";
 
 /**
  * A link from this environment to another one (the peer). This environment
@@ -72,6 +82,60 @@ export class PeerLinkError extends Schema.TaggedError<PeerLinkError>()("PeerLink
   message: Schema.String,
   cause: Schema.optionalKey(Schema.Defect()),
 }) {}
+
+/**
+ * A page of a linked environment's thread, read for a client of this environment over the link.
+ * No cursor reads the newest page; `beforePosition` pages back and `afterPosition` reads what
+ * came after, which is also how an open view refreshes.
+ */
+export const PeerLinkThreadReadInput = Schema.Struct({
+  /** The linked environment the thread lives in. */
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+  beforePosition: Schema.optionalKey(NonNegativeInt),
+  afterPosition: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(-1))),
+});
+export type PeerLinkThreadReadInput = typeof PeerLinkThreadReadInput.Type;
+
+export const PeerLinkThreadPage = Schema.Struct({
+  /** What this environment calls the linked one. */
+  label: Schema.String,
+  thread: Schema.Struct({
+    threadId: ThreadId,
+    title: Schema.String,
+    status: OrchestratorMcpThreadStatus,
+    model: Schema.String,
+  }),
+  /** Oldest first. Each page is bounded in items and in bytes. */
+  items: Schema.Array(OrchestratorMcpThreadTimelineItem),
+  /** Pass as `beforePosition` for the page before this one; null at the thread's start. */
+  earlierPosition: Schema.NullOr(NonNegativeInt),
+  /** More items follow this page already, so the next read need not wait. */
+  hasMore: Schema.Boolean,
+});
+export type PeerLinkThreadPage = typeof PeerLinkThreadPage.Type;
+
+/** Why a linked environment's thread could not be read, with the reason in words. */
+export class PeerLinkThreadReadError extends Schema.TaggedError<PeerLinkThreadReadError>()(
+  "PeerLinkThreadReadError",
+  {
+    reason: Schema.Literals([
+      /** Linked environments is off here. */
+      "disabled",
+      "unknown_link",
+      "expired",
+      /** The linked environment no longer accepts the link, or refuses the read. */
+      "rejected",
+      "unreachable",
+      "thread_not_found",
+      /** The linked environment runs a version that cannot page a thread backwards. */
+      "incompatible",
+    ]),
+    /** What this environment calls the linked one, when it still has the link. */
+    label: Schema.NullOr(Schema.String),
+    message: Schema.String,
+  },
+) {}
 
 /**
  * The user's answer to an agent asking to link an environment. The pairing

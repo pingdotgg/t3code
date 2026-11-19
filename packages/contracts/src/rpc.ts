@@ -25,6 +25,9 @@ import {
   PeerLinkRequestAnswerInput,
   PeerLinkRequestError,
   PeerLinkSummary,
+  PeerLinkThreadPage,
+  PeerLinkThreadReadError,
+  PeerLinkThreadReadInput,
 } from "./peerLink.ts";
 import {
   ChatGptReconnectProfileInput,
@@ -549,6 +552,7 @@ export const WS_METHODS = {
   peerLinksLink: "peerLinks.link",
   peerLinksUnlink: "peerLinks.unlink",
   peerLinksAnswerRequest: "peerLinks.answerRequest",
+  peerLinksReadThread: "peerLinks.readThread",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
@@ -900,6 +904,12 @@ const WsPeerLinksUnlinkRpc = Rpc.make(WS_METHODS.peerLinksUnlink, {
   payload: PeerLinkRemoveInput,
   success: PeerLinkRemoveResult,
   error: Schema.Union([PeerLinkError, EnvironmentAuthorizationError]),
+});
+
+const WsPeerLinksReadThreadRpc = Rpc.make(WS_METHODS.peerLinksReadThread, {
+  payload: PeerLinkThreadReadInput,
+  success: PeerLinkThreadPage,
+  error: Schema.Union([PeerLinkThreadReadError, EnvironmentAuthorizationError]),
 });
 
 const WsPeerLinksAnswerRequestRpc = Rpc.make(WS_METHODS.peerLinksAnswerRequest, {
@@ -2305,6 +2315,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsPeerLinksLinkRpc,
   WsPeerLinksUnlinkRpc,
   WsPeerLinksAnswerRequestRpc,
+  WsPeerLinksReadThreadRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerCheckSecretSourceRpc,
   WsServerSearchAcpRegistryRpc,

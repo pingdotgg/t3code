@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   AuthAccessWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProjectId,
@@ -198,6 +199,58 @@ it.effect("allows issue reads but requires a source-control grant before comment
     );
     yield* writer[WS_METHODS.issuesComment](comment);
     expect(comments).toEqual(["Repro attached."]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("reads a linked environment's thread only for a client that may read threads here", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<
+          keyof typeof RPC_REQUIRED_SCOPES,
+          typeof WS_METHODS.peerLinksReadThread
+        > => tag !== WS_METHODS.peerLinksReadThread,
+      ),
+    );
+    const read: string[] = [];
+    const handlers = group.toLayerHandler(WS_METHODS.peerLinksReadThread, ({ threadId }) =>
+      Effect.sync(() => {
+        read.push(threadId);
+        return {
+          label: "Box",
+          thread: { threadId, title: "There", status: "idle" as const, model: "gpt-5" },
+          items: [],
+          earlierPosition: null,
+          hasMore: false,
+        };
+      }),
+    );
+    const input = {
+      environmentId: EnvironmentId.make("environment-box"),
+      threadId: ThreadId.make("thread:box"),
+    };
+    // Managing links and writing settings here say nothing about reading threads.
+    const outsider = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(
+        Layer.merge(
+          handlers,
+          RpcAuthorization.layer([AuthAccessWriteScope, AuthSettingsWriteScope]),
+        ),
+      ),
+    );
+    expect(yield* outsider[WS_METHODS.peerLinksReadThread](input).pipe(Effect.flip)).toMatchObject({
+      _tag: "EnvironmentAuthorizationError",
+      requiredPermission: AuthOrchestrationReadScope,
+    });
+    expect(read).toEqual([]);
+
+    const reader = yield* RpcTest.makeClient(group).pipe(
+      Effect.provide(Layer.merge(handlers, RpcAuthorization.layer([AuthOrchestrationReadScope]))),
+    );
+    expect((yield* reader[WS_METHODS.peerLinksReadThread](input)).label).toBe("Box");
+    expect(read).toEqual([input.threadId]);
   }).pipe(Effect.scoped),
 );
 
