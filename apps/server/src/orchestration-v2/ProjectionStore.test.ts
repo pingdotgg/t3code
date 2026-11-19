@@ -7798,7 +7798,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         nodeId: rootNodeId,
         providerInstanceId,
         occurredAt: later,
-        payload: { ...staleRun, status: "interrupted", completedAt: later },
+        payload: {
+          ...staleRun,
+          // An earlier submission, read before the latest one landed.
+          output: { value: { verdict: "fix-first" }, submittedAt: "2026-11-10T00:00:00.000Z" },
+          status: "interrupted",
+          completedAt: later,
+        },
       });
       yield* projectionStore.apply({
         id: EventId.make("event:projection-delegated-completion:stale-task"),

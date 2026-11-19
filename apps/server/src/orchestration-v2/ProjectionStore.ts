@@ -958,9 +958,8 @@ function preserveRunRecordedFields(
     current.restartCancelledBackgroundWork !== undefined
       ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
       : {}),
-    ...(next.output === undefined && current.output !== undefined
-      ? { output: current.output }
-      : {}),
+    // Only a submission sets the output; a lifecycle write carries it as it was when read.
+    ...(current.output !== undefined ? { output: current.output } : {}),
   };
 }
 
@@ -2375,6 +2374,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ELSE ${payload}
       END
     `;
+    // Only a submission sets the output; a lifecycle write carries it as it was when read.
+    const keepRecordedRunOutput = (payload: Statement.Fragment) => sql`
+      CASE
+        WHEN json_type(orchestration_v2_projection_runs.payload_json, '$.output') IS NOT NULL
+        THEN json_set(
+          ${payload},
+          '$.output',
+          json_extract(orchestration_v2_projection_runs.payload_json, '$.output')
+        )
+        ELSE ${payload}
+      END
+    `;
 
     type TimelineIndexItem = Pick<
       OrchestrationV2TurnItem,
@@ -2569,12 +2580,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = ${keepRecordedRunField(
+                payload_json = ${keepRecordedRunOutput(
                   keepRecordedRunField(
                     keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
                     "$.restartCancelledBackgroundWork",
                   ),
-                  "$.output",
                 )}
             `;
               break;
