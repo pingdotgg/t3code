@@ -1991,7 +1991,7 @@ export function ThreadsSettingsPanel() {
           serverScoped
           {...setting("auto-resume-limited-threads")}
           description={gt(
-            "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",
+            "Continue threads after a usage limit: threads on Auto move to the next subscription with room, other threads resume when their limit resets. You can cancel auto-resume in each thread.",
           )}
           settingKeys={["autoResumeLimitedThreads"]}
           control={

@@ -479,7 +479,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "auto-resume-limited-threads",
     title: msg("Resume after usage limits"),
     to: "/settings/threads",
-    searchTerms: [msg("usage quota rate limit reset recover continue")],
+    searchTerms: [
+      msg(
+        "usage quota rate limit reset recover continue auto failover switch subscription account",
+      ),
+    ],
   },
   {
     id: "working-shelf",

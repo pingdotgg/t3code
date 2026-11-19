@@ -180,6 +180,13 @@
 - Switching the hubs: migration `100_TurnStartReadIndexes` adds three partial indexes. The Node pins did not change.
 - Next: Tomáš merges the PR, then switches hub2 and hub to the new build. Not checked in a browser: the Resume button on a stopped Grok run.
 
+## 2026-11-19: "Resume after usage limits" says it also moves Auto threads
+
+- What: the description of **Resume after usage limits** (web Settings → Threads, mobile thread settings) now reads "Continue threads after a usage limit: threads on Auto move to the next subscription with room, other threads resume when their limit resets. You can cancel auto-resume in each thread." Settings search also matches "auto failover switch subscription account". `docs/user/thread-sidebar.md` says the same switch gates the Auto move. Translated in all 9 non-English web and mobile catalogs. No server change: `AutoFailoverService` still sends nothing while the switch is off.
+- Why: the switch was off on both hubs. When Claude A hit its 5-hour limit, Auto benched it but never moved the thread, which sat idle for 50 minutes. The old text only spoke of resuming at reset.
+- Numbers: `vp run i18n:check` pass; `vp run check:changed`: format, lint, knip, typecheck (3 packages), 2 test files and react compiler pass.
+- Real run: dev server on a seeded worktree `.t3`; Settings → Threads shows the new text, and searching "failover" lists the switch.
+
 ## 2026-11-19: Fork Usage strings translated
 
 - What: the 17 web strings the fork added to Usage → Limits (the pooled view: "Pool empty", "First empty", "Next reset", the burn labels, "Reset advice:", "Subscriptions", the chart's "Now", "projected" and aria label, and their values) are translated in de, es, fr, ja, ko, pt-BR, ru, sv and zh, following each catalog's existing words for pool and reset. Mobile has none of these keys.

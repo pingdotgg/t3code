@@ -138,7 +138,7 @@ export function AutoSettleSettingsRows(props: {
             icon="clock"
             label={gt("Resume after usage limits")}
             subtitle={gt(
-              "Automatically resume threads when their usage limits reset. You can cancel auto-resume in each thread.",
+              "Continue threads after a usage limit: threads on Auto move to the next subscription with room, other threads resume when their limit resets. You can cancel auto-resume in each thread.",
             )}
             value={uniformMobileSetting(displayTargets, "autoResumeLimitedThreads")}
             disabled={disabledFor("autoResumeLimitedThreads")}
