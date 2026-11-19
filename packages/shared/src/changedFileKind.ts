@@ -63,12 +63,14 @@ const MOCK_DIRS = new Set([
 ]);
 
 const TEST_NAME =
-  /(\.(test|spec|e2e|eval|stories)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)/i;
+  /(\.(test|spec|e2e|eval|stories)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$|\.bru$)/i;
 // Case-sensitive: `FooTest.java` is a test class, `Latest.java` is not.
 const CLASS_TEST_NAME = /(Tests?|Spec)\.(java|kt|kts|scala|groovy|cs|php|swift|m)$/;
 const TEST_DIRS = new Set([
   "__tests__",
   "__test__",
+  "bruno",
+  ".bruno",
   "cypress",
   "e2e",
   "evals",
@@ -81,7 +83,6 @@ const TEST_DIRS = new Set([
 const DOCS_NAME = /\.(md|mdx|markdown|rst|adoc|txt)$/i;
 // Plain-text files that tools read as config or input, not prose.
 const NOT_DOCS_NAME = /^(requirements.*|constraints.*|CMakeLists|robots|llms)\.txt$/i;
-const BRUNO_DIRS = new Set(["bruno", ".bruno"]);
 
 /**
  * Sorts a changed file by its path alone, using common naming conventions. Lockfiles and build
@@ -103,14 +104,5 @@ export function classifyChangedFile(path: string): ChangedFileKind {
   if (MOCK_NAME.test(name) || inDir(MOCK_DIRS)) return "mocks";
   if (TEST_NAME.test(name) || CLASS_TEST_NAME.test(name) || inDir(TEST_DIRS)) return "tests";
   if (DOCS_NAME.test(name) && !NOT_DOCS_NAME.test(name)) return "docs";
-  if (name.endsWith(".bru")) return "tests";
-  const brunoDirIndex = dirs.findIndex((dir) => BRUNO_DIRS.has(dir));
-  if (
-    brunoDirIndex !== -1 &&
-    (/\.ya?ml$/.test(name) ||
-      (name.endsWith(".js") && dirs.includes("lib", brunoDirIndex + 1)) ||
-      (name === "package.json" && BRUNO_DIRS.has(dirs.at(-1) ?? "")))
-  )
-    return "tests";
   return "code";
 }
