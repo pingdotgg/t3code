@@ -134,6 +134,9 @@ const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(Credit
 const decodeClaudeUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeUsage));
 const decodeCodexUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(CodexUsage));
 const decodeClaudeProfile = Schema.decodeUnknownEffect(Schema.fromJsonString(ClaudeProfile));
+const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
+const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
+const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 /** Names the tier the way the native Claude provider does, so pools weight both alike. */
 function claudeHubPlanLabel(profile: typeof ClaudeProfile.Type | undefined): string {
@@ -152,9 +155,6 @@ function claudeHubPlanLabel(profile: typeof ClaudeProfile.Type | undefined): str
       return "Claude Subscription";
   }
 }
-const decodeGrokUsage = Schema.decodeUnknownEffect(Schema.fromJsonString(GrokUsageResponse));
-const decodeJson = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
-const isUsageLimitSourceError = Schema.is(UsageLimitSourceError);
 
 // Extra CAs can fix untrusted chains; expiry/hostname failures report codes only.
 const UNTRUSTED_CERTIFICATE_CODES = new Set([

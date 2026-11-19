@@ -375,6 +375,39 @@ describe("CLIProxyAPI built-in management API", () => {
 
   it.effect.each([
     {
+      profile: {
+        status: 200,
+        body: {
+          organization: {
+            organization_type: "claude_max",
+            rate_limit_tier: "default_claude_max_20x",
+          },
+        },
+      },
+      plan: "Claude Ultra Subscription",
+    },
+    {
+      profile: { status: 200, body: { organization: { organization_type: "claude_pro" } } },
+      plan: "Claude Pro Subscription",
+    },
+    { profile: { status: 500, body: {} }, plan: "Claude Subscription" },
+  ])("labels a hub Claude account $plan from its profile", ({ profile, plan }) =>
+    Effect.gen(function* () {
+      const test = fixture({
+        accounts: [{ ...accounts[0]!, provider: "claude" }],
+        upstream: (request) =>
+          request.url?.endsWith("/api/oauth/profile")
+            ? profile
+            : { status: 200, body: { seven_day: { utilization: 50, resets_at: null } } },
+      });
+      const result = yield* (yield* test.api).readAccounts(config);
+      expect(result[0]?.plan).toBe(plan);
+      expect(result[0]?.usageLimits.windows.map((window) => window.id)).toEqual(["seven_day"]);
+    }),
+  );
+
+  it.effect.each([
+    {
       name: "spend budget",
       budget: {
         spend: {
