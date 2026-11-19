@@ -341,10 +341,12 @@ export function acpPerTurnPromptUsage(
   };
 }
 
-interface AcpPromptOutcomeFailure {
-  readonly failure: OrchestrationV2ProviderFailure;
-  readonly threadDisposition: "reusable" | "broken";
-}
+type AcpPromptOutcome =
+  | {
+      readonly failure: OrchestrationV2ProviderFailure;
+      readonly threadDisposition: "reusable" | "broken";
+    }
+  | { readonly hiddenReply: string };
 
 export interface AcpAdapterV2Flavor {
   readonly buildAttachmentPrompt?: (input: {
@@ -358,15 +360,17 @@ export interface AcpAdapterV2Flavor {
   }) => Effect.Effect<ReadonlyArray<EffectAcpSchema.ContentBlock>, EffectAcpErrors.AcpError>;
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   /**
-   * Runs before `session/prompt`. The returned check sees a prompt the agent ended
-   * without an error or cancel, and reports a failure its stop reason hid. A reported
-   * failure restarts the runtime before the next turn. A `broken` thread's native
-   * history is unusable, so the next turn falls back to a fresh session.
+   * Runs before `session/prompt`; the check sees an `end_turn` and reports a hidden failure
+   * (restarting the runtime; `broken` falls back to a fresh session), or the reply of work
+   * the agent did without ACP updates, which it may follow until `stopped`.
    */
   readonly watchPromptOutcome?: (
     sessionId: string,
   ) => Effect.Effect<
-    (result: EffectAcpSchema.PromptResponse) => Effect.Effect<AcpPromptOutcomeFailure | undefined>
+    (
+      result: EffectAcpSchema.PromptResponse,
+      stopped: Effect.Effect<boolean>,
+    ) => Effect.Effect<AcpPromptOutcome | undefined>
   >;
   readonly requiresSignIn?: (cause: unknown) => boolean;
   /**
@@ -1620,6 +1624,8 @@ interface ActiveAcpTurn {
   finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
   promptSettled: boolean;
   promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  /** The prompt returned and its outcome check may still be following the agent's work. */
+  checkingPromptOutcome: boolean;
   workAccepted: boolean;
   readonly promptWireSettled: Deferred.Deferred<void, never>;
   /** Completed once `session/prompt` is the runtime's active prompt. */
@@ -2648,6 +2654,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 // An open prompt fails with its transport. A turn held open for a running tool
                 // has no prompt, so nothing else ends it.
                 const held = yield* Ref.get(activeTurn);
+                if (held?.checkingPromptOutcome === true && !held.finalized) {
+                  yield* finalizeTurn(
+                    held,
+                    "failed",
+                    makeProviderFailure({ class: "transport_error" }),
+                  );
+                  return;
+                }
                 if (
                   flavor.toolOutlivesPrompt === undefined ||
                   held === null ||
@@ -8961,6 +8975,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               finalizedStatus: null,
               promptSettled: false,
               promptSettledStatus: null,
+              checkingPromptOutcome: false,
               workAccepted: false,
               promptWireSettled,
               promptDispatched,
@@ -9166,108 +9181,139 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               ),
               Effect.tap(() => options.testHooks?.afterPromptWireSettled?.() ?? Effect.void),
               Effect.flatMap((result) =>
-                runRuntimeCallbackAtGeneration(
-                  promptGeneration,
-                  Effect.gen(function* () {
-                    // Record delivery only for this runtime: a replacement can reuse the session id.
-                    // Grok cancels locally, refusals discard the prompt, and errors need a retry.
-                    // Native compaction sends no prompt, and the compacted session needs the notes.
-                    if (compactSession !== undefined) {
-                      yield* markSessionCompacted(requestedSessionId);
-                    } else if (
-                      result.stopReason !== "cancelled" &&
-                      result.stopReason !== "refusal" &&
-                      result.stopReason !== "error"
-                    ) {
-                      yield* Ref.update(promptInstructionStates, (current) => {
-                        if (promptParts?.instructionState === undefined) return current;
-                        const updated = new Map(current);
-                        updated.set(requestedSessionId, promptParts.instructionState);
-                        return updated;
-                      });
-                      yield* Ref.update(promptRuntimeInstructions, (current) => {
-                        if (promptParts?.runtimeInstructions === undefined) return current;
-                        const updated = new Map(current);
-                        updated.set(requestedSessionId, promptParts.runtimeInstructions);
-                        return updated;
-                      });
-                      yield* Ref.update(compactionMarkers, (current) => {
-                        if (promptParts?.instructionState === undefined) return current;
-                        const observedMarker = promptParts.compactionMarker;
-                        if (
-                          observedMarker === undefined ||
-                          current.get(requestedSessionId) !== observedMarker
-                        )
-                          return current;
-                        const updated = new Map(current);
-                        updated.delete(requestedSessionId);
-                        return updated;
-                      });
-                    }
-                    if (context.finalized || followsAgentWorkState) return;
-                    // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
-                    const hiddenFailure =
-                      checkPromptOutcome === undefined ||
-                      context.interrupted ||
-                      result.stopReason === "error" ||
-                      result.stopReason === "cancelled"
-                        ? undefined
-                        : yield* checkPromptOutcome(result);
-                    if (hiddenFailure !== undefined) {
-                      yield* Ref.set(runtimeRestartRequired, true);
-                    }
-                    const failure =
-                      hiddenFailure?.failure ??
-                      (context.interrupted
-                        ? undefined
-                        : stopReasonFailure(result.stopReason, result.error));
-                    const status =
-                      failure !== undefined
-                        ? "failed"
-                        : result.stopReason === "cancelled"
-                          ? context.interrupted
-                            ? "interrupted"
-                            : "cancelled"
-                          : "completed";
-                    if (defersFinalizeForBackgroundWork && !context.interrupted) {
-                      context.promptSettled = true;
-                      context.promptSettledStatus = status;
-                      for (const [taskId, completion] of context.backgroundCommands) {
-                        if (completion === null) continue;
-                        yield* finishRegisteredBackgroundTool({ taskId, ...completion });
+                Effect.gen(function* () {
+                  // Outside the callback permit: the check can follow work the agent keeps
+                  // doing without ACP updates until this turn stops.
+                  const checksPromptOutcome =
+                    checkPromptOutcome !== undefined &&
+                    !context.finalized &&
+                    !followsAgentWorkState &&
+                    !context.interrupted &&
+                    result.stopReason !== "error" &&
+                    result.stopReason !== "cancelled";
+                  context.checkingPromptOutcome = checksPromptOutcome;
+                  const promptOutcome = checksPromptOutcome
+                    ? yield* checkPromptOutcome(
+                        result,
+                        Effect.map(
+                          Ref.get(runtimeCallbackGeneration),
+                          (generation) =>
+                            generation !== promptGeneration ||
+                            context.finalized ||
+                            context.interrupted,
+                        ),
+                      )
+                    : undefined;
+                  return yield* runRuntimeCallbackAtGeneration(
+                    promptGeneration,
+                    Effect.gen(function* () {
+                      // Record delivery only for this runtime: a replacement can reuse the session id.
+                      // Grok cancels locally, refusals discard the prompt, and errors need a retry.
+                      // Native compaction sends no prompt, and the compacted session needs the notes.
+                      if (compactSession !== undefined) {
+                        yield* markSessionCompacted(requestedSessionId);
+                      } else if (
+                        result.stopReason !== "cancelled" &&
+                        result.stopReason !== "refusal" &&
+                        result.stopReason !== "error"
+                      ) {
+                        yield* Ref.update(promptInstructionStates, (current) => {
+                          if (promptParts?.instructionState === undefined) return current;
+                          const updated = new Map(current);
+                          updated.set(requestedSessionId, promptParts.instructionState);
+                          return updated;
+                        });
+                        yield* Ref.update(promptRuntimeInstructions, (current) => {
+                          if (promptParts?.runtimeInstructions === undefined) return current;
+                          const updated = new Map(current);
+                          updated.set(requestedSessionId, promptParts.runtimeInstructions);
+                          return updated;
+                        });
+                        yield* Ref.update(compactionMarkers, (current) => {
+                          if (promptParts?.instructionState === undefined) return current;
+                          const observedMarker = promptParts.compactionMarker;
+                          if (
+                            observedMarker === undefined ||
+                            current.get(requestedSessionId) !== observedMarker
+                          )
+                            return current;
+                          const updated = new Map(current);
+                          updated.delete(requestedSessionId);
+                          return updated;
+                        });
                       }
-                    }
-                    if (failure !== undefined) {
-                      yield* terminalizeOpenForegroundTools(context, "failed");
-                      // Unlike an RPC failure, the agent survives an idle error, so its
-                      // background tools and subagents keep reporting to this run.
-                      yield* finalizeTurn(context, "failed", failure, {
-                        childTurnsContinue: hasSurvivingBackgroundWork(context),
-                        ...(hiddenFailure === undefined
-                          ? {}
-                          : { threadDisposition: hiddenFailure.threadDisposition }),
-                      });
-                      return;
-                    }
-                    yield* idleReportedSubagents(context);
-                    if (context.finalized) return;
-                    if (
-                      defersFinalizeForBackgroundWork &&
-                      !context.interrupted &&
-                      hasDeferredBackgroundWork(context)
-                    ) {
-                      yield* closeTextStreams(context);
-                      yield* (
-                        options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
-                      );
-                      return;
-                    }
-                    yield* finalizeTurn(context, status);
-                  }),
-                ).pipe(
-                  Effect.andThen(() => options.testHooks?.afterPromptCallback?.() ?? Effect.void),
-                  Effect.asVoid,
-                ),
+                      if (context.finalized || followsAgentWorkState) return;
+                      // ACP v2 reports a failed prompt through its idle stop reason, not an RPC error.
+                      const hiddenFailure =
+                        promptOutcome !== undefined && "failure" in promptOutcome
+                          ? promptOutcome
+                          : undefined;
+                      if (promptOutcome !== undefined && "hiddenReply" in promptOutcome) {
+                        yield* handleSessionUpdate({
+                          sessionId: requestedSessionId,
+                          update: {
+                            sessionUpdate: "agent_message_chunk",
+                            content: { type: "text", text: promptOutcome.hiddenReply },
+                          },
+                        });
+                      }
+                      const stoppedDuringCheck = checksPromptOutcome && context.interrupted;
+                      if (hiddenFailure !== undefined) {
+                        yield* Ref.set(runtimeRestartRequired, true);
+                      }
+                      const failure =
+                        hiddenFailure?.failure ??
+                        (context.interrupted
+                          ? undefined
+                          : stopReasonFailure(result.stopReason, result.error));
+                      const status =
+                        failure !== undefined
+                          ? "failed"
+                          : result.stopReason === "cancelled" || stoppedDuringCheck
+                            ? context.interrupted
+                              ? "interrupted"
+                              : "cancelled"
+                            : "completed";
+                      if (defersFinalizeForBackgroundWork && !context.interrupted) {
+                        context.promptSettled = true;
+                        context.promptSettledStatus = status;
+                        for (const [taskId, completion] of context.backgroundCommands) {
+                          if (completion === null) continue;
+                          yield* finishRegisteredBackgroundTool({ taskId, ...completion });
+                        }
+                      }
+                      if (failure !== undefined) {
+                        yield* terminalizeOpenForegroundTools(context, "failed");
+                        // Unlike an RPC failure, the agent survives an idle error, so its
+                        // background tools and subagents keep reporting to this run.
+                        yield* finalizeTurn(context, "failed", failure, {
+                          childTurnsContinue: hasSurvivingBackgroundWork(context),
+                          ...(hiddenFailure === undefined
+                            ? {}
+                            : { threadDisposition: hiddenFailure.threadDisposition }),
+                        });
+                        return;
+                      }
+                      yield* idleReportedSubagents(context);
+                      if (context.finalized) return;
+                      if (
+                        defersFinalizeForBackgroundWork &&
+                        !context.interrupted &&
+                        hasDeferredBackgroundWork(context)
+                      ) {
+                        yield* closeTextStreams(context);
+                        yield* (
+                          options.testHooks?.afterPromptSettledWithBackgroundWork?.() ?? Effect.void
+                        );
+                        return;
+                      }
+                      yield* finalizeTurn(context, status);
+                    }),
+                  ).pipe(
+                    Effect.andThen(() => options.testHooks?.afterPromptCallback?.() ?? Effect.void),
+                    Effect.asVoid,
+                  );
+                }),
               ),
               Effect.catchCause((cause) =>
                 runRuntimeCallbackAtGeneration(

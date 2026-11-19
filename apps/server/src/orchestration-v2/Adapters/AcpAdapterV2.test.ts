@@ -1334,7 +1334,7 @@ describe("AcpAdapterV2", () => {
       assert.equal(promptOrdinal, 2, "continuation turn must not dispatch session/prompt");
     }).pipe(Effect.provide(layerTest)),
   );
-  it.live("fails an end_turn the outcome check rejects and restarts before the next turn", () =>
+  it.live("applies what the outcome check finds after an end_turn", () =>
     Effect.gen(function* () {
       const checking = yield* Deferred.make<void>();
       const releaseCheck = yield* Deferred.make<void>();
@@ -1373,7 +1373,7 @@ describe("AcpAdapterV2", () => {
                   ? { failure: quota, threadDisposition: "reusable" as const }
                   : watchedSessions.length >= 3
                     ? { failure: poisoned, threadDisposition: "broken" as const }
-                    : undefined;
+                    : { hiddenReply: "FINAL: done out of view" };
               const interrupted = watchedSessions.length === 4;
               return () =>
                 interrupted
@@ -1445,8 +1445,16 @@ describe("AcpAdapterV2", () => {
         return assert.fail("expected a failed terminal");
       }
       assert.deepEqual(failed.failure, quota);
-      const completed = (yield* runTurn(2)).at(-1);
+      // Work the agent did without ACP updates reaches the turn as its reply.
+      const completedEvents = yield* runTurn(2);
+      const completed = completedEvents.at(-1);
       assert.equal(completed?.type === "turn.terminal" ? completed.status : null, "completed");
+      const replies = completedEvents.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+          ? [event.turnItem.text]
+          : [],
+      );
+      assert.equal(replies.at(-1), "FINAL: done out of view");
       assert.deepEqual(promptRuntimes, [1, 2], "the next turn runs on a fresh runtime");
       // The fresh runtime has no record of what reached the agent, so it sends T3's notes again.
       assert.include(promptTexts[1] ?? "", "<runtime_info>");
@@ -1508,6 +1516,81 @@ describe("AcpAdapterV2", () => {
         interrupted?.type === "turn.terminal" ? interrupted.threadDisposition : null,
         "broken",
       );
+    }).pipe(Effect.provide(layerTest)),
+  );
+  it.live("fails a turn whose outcome check is pending when the runtime terminates", () =>
+    Effect.gen(function* () {
+      const checking = yield* Deferred.make<void>();
+      const releaseCheck = yield* Deferred.make<void>();
+      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+      const baseMakeRuntime = makeMockRuntime({
+        childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+        mockAgentPath: yield* bundledMockAgentPath,
+        wrapRuntime: (runtime) => ({
+          ...runtime,
+          prompt: () => Effect.succeed({ stopReason: "end_turn" as const }),
+        }),
+      });
+      const instanceId = ProviderInstanceId.make("acp-test-outcome-termination");
+      const threadId = ThreadId.make("thread-acp-outcome-termination");
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          // Follows work the agent does without ACP updates, as Kimi's check does.
+          watchPromptOutcome: () =>
+            Effect.succeed(() =>
+              Deferred.succeed(checking, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseCheck)),
+                Effect.as(undefined),
+              ),
+            ),
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              runtimeInputs.push(runtimeInput);
+            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+        },
+      });
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-outcome-termination"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtime.startTurn(
+        makeTurnInput({
+          threadId,
+          providerThread,
+          instanceId,
+          runtimePolicy,
+          now: yield* DateTime.now,
+        }),
+      );
+      const terminal = yield* runtime.events.pipe(
+        Stream.filter((event) => event.type === "turn.terminal"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(checking);
+      yield* runtimeInputs.at(-1)!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({ detail: "Injected agent exit", cause: "test" }),
+      );
+      const ended = Option.getOrUndefined(yield* Fiber.join(terminal));
+      yield* Deferred.succeed(releaseCheck, undefined);
+      assert.equal(ended?.type === "turn.terminal" ? ended.status : null, "failed");
     }).pipe(Effect.provide(layerTest)),
   );
   it.live("retains returned usage when Stop finalizes before the prompt callback", () =>
