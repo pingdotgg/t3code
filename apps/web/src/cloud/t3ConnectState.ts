@@ -18,6 +18,23 @@ export function isManagedTunnelActive(
   );
 }
 
+/**
+ * Whether reaching `desired` links or relinks the environment, which needs `relay:configure`.
+ * Unlinking and preference changes on the current link only need `relay:write`.
+ */
+export function cloudChangeReplacesLink(
+  linkState: EnvironmentCloudLinkStateResult,
+  relayProviderKind: RelayManagedEndpointProviderKind | undefined,
+  desired: { readonly managedTunnel: boolean; readonly publish: boolean },
+) {
+  return (
+    (desired.managedTunnel || desired.publish) &&
+    (!linkState.linked ||
+      linkState.linkRevoked === true ||
+      isManagedTunnelActive(linkState, relayProviderKind) !== desired.managedTunnel)
+  );
+}
+
 // The URL ends up in commands people paste into a shell, so only plain DNS names pass.
 const TUNNEL_HOSTNAME = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i;
 
@@ -52,7 +69,6 @@ export type T3ConnectTurnOn =
  * `linkableHere` is the environment's own answer for this session (its link state).
  */
 export function resolveT3ConnectTurnOn(input: {
-  readonly desktopApp: boolean;
   readonly linkableHere: boolean;
   readonly cloudConfigured: boolean;
   readonly canReadRelay: boolean;
@@ -60,11 +76,7 @@ export function resolveT3ConnectTurnOn(input: {
   readonly connectDenial: string | undefined;
 }): T3ConnectTurnOn {
   if (input.connectDenial !== undefined) return { kind: "policy", reason: input.connectDenial };
-  return input.desktopApp &&
-    input.linkableHere &&
-    input.cloudConfigured &&
-    input.canReadRelay &&
-    input.canWriteRelay
+  return input.linkableHere && input.cloudConfigured && input.canReadRelay && input.canWriteRelay
     ? { kind: "here" }
     : { kind: "on-host" };
 }
