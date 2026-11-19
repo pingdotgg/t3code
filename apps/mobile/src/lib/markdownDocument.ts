@@ -9,7 +9,7 @@ import {
   parseMarkdownFileLink,
 } from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
-import { textDirection } from "@t3tools/shared/textDirection";
+import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
@@ -564,7 +564,6 @@ export function markdownWithFileEmbeds(
   return { markdown: parts.join(""), fileHrefs };
 }
 
-const RTL_SCRIPT = /[֐-ࣿיִ-﷿ﹰ-﻿]/u;
 const DIRECTION_MARK = { ltr: "‎", rtl: "‏" } as const;
 
 function proseText(node: MarkdownNode): string {
@@ -604,7 +603,7 @@ function firstLeafOffset(node: MarkdownNode): number | undefined {
  * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
  */
 export function markdownWithTextDirection(markdown: string): string {
-  if (!RTL_SCRIPT.test(markdown)) return markdown;
+  if (!hasRightToLeftLetter(markdown)) return markdown;
   const edits: MarkdownEdit[] = [];
   for (const block of parser.parse(markdown).children) {
     if (block.type === "code" || block.type === "html") continue;

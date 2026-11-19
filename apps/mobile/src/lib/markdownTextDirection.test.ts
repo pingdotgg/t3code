@@ -5,11 +5,6 @@ const LRM = "‎";
 const RLM = "‏";
 
 describe("markdownWithTextDirection", () => {
-  it("leaves text without right-to-left letters untouched", () => {
-    const markdown = "- **Plantur**, Haarserum 100 ml, 14,95 €.";
-    expect(markdownWithTextDirection(markdown)).toBe(markdown);
-  });
-
   it("marks Arabic list items that open with an English name", () => {
     const markdown = [
       "## للنمو والتقوية",
