@@ -188,6 +188,7 @@ import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
+import { PreviewChromeRow } from "./PreviewChromeRow";
 import { PreviewView } from "./PreviewView";
 import { ToastProvider } from "~/components/ui/toast";
 
@@ -311,6 +312,34 @@ describe("PreviewView", () => {
     await expect.element(input).toHaveValue("https://example.com/pinyin");
     expect(mocks.navigate).not.toHaveBeenCalled();
     expect(enter.defaultPrevented).toBe(true);
+  });
+
+  it("keeps a typed address after blur until the page navigates", async () => {
+    const chromeRow = (url: string) => (
+      <PreviewChromeRow
+        url={url}
+        loading={false}
+        canGoBack={false}
+        canGoForward={false}
+        refreshDisabled={false}
+        urlInputRef={{ current: null }}
+        onBack={() => {}}
+        onForward={() => {}}
+        onRefresh={() => {}}
+        onStopLoading={() => {}}
+        onSubmit={() => {}}
+      />
+    );
+    await using screen = await render(chromeRow("http://a.test/"));
+    const input = page.getByPlaceholder("Search or enter URL");
+    await input.fill("http://typed.test/");
+    (input.element() as HTMLInputElement).blur();
+    await expect.element(input).toHaveValue("http://typed.test/");
+
+    await screen.rerender(chromeRow("http://b.test/"));
+    await expect.element(input).toHaveValue("http://b.test/");
+    await screen.rerender(chromeRow("http://a.test/"));
+    await expect.element(input).toHaveValue("http://a.test/");
   });
 
   it("retains the annotation locally when its own environment loses access during capture", async () => {
