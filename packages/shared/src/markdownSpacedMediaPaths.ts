@@ -25,34 +25,37 @@ function* spacedMediaPaths(source: string) {
 }
 
 function wrapSpacedMediaPaths(source: string, readTree: () => Root) {
-  const candidates = spacedMediaPaths(source);
-  let candidate = candidates.next().value;
-  if (!candidate) return undefined;
+  const candidates = [...spacedMediaPaths(source)];
+  if (candidates.length === 0) return undefined;
+
+  const textRanges: Array<[number, number]> = [];
+  const literalRanges: Array<[number, number]> = [];
+  const visit = (node: Root | RootContent) => {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if ("children" in node) node.children.forEach(visit);
+    else if (start !== undefined && end !== undefined) {
+      (node.type === "text" ? textRanges : literalRanges).push([start, end]);
+    }
+  };
+  visit(readTree());
 
   const parts: string[] = [];
   const insertions: number[] = [];
   let writtenTo = 0;
-  const visit = (node: Root | RootContent) => {
-    if (!candidate) return;
-    if (node.type === "text") {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start === undefined || end === undefined) return;
-      // Only repair openers the parser left as text. This skips valid images, code and HTML.
-      while (candidate && candidate.opener < end) {
-        if (candidate.opener >= start && candidate.opener >= writtenTo) {
-          const { start, end } = candidate;
-          parts.push(source.slice(writtenTo, start), "<", source.slice(start, end), ">");
-          insertions.push(start + insertions.length, end + insertions.length + 1);
-          writtenTo = end;
-        }
-        candidate = candidates.next().value;
-      }
-    } else if ("children" in node) {
-      node.children.forEach(visit);
+  for (const { opener, start, end } of candidates) {
+    // Only repair embeds the parser left as text: skip valid images, and code or HTML anywhere inside.
+    if (
+      opener < writtenTo ||
+      !textRanges.some(([from, to]) => opener >= from && opener < to) ||
+      literalRanges.some(([from, to]) => from < end && to > start)
+    ) {
+      continue;
     }
-  };
-  visit(readTree());
+    parts.push(source.slice(writtenTo, start), "<", source.slice(start, end), ">");
+    insertions.push(start + insertions.length, end + insertions.length + 1);
+    writtenTo = end;
+  }
   if (insertions.length === 0) return undefined;
   parts.push(source.slice(writtenTo));
   return { markdown: parts.join(""), insertions };

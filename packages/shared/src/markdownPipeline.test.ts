@@ -4,6 +4,7 @@ import rehypeRaw from "rehype-raw";
 import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
+import { markdownWithSpacedMediaPaths } from "./markdownSpacedMediaPaths.ts";
 import type { Link, Root, RootContent } from "mdast";
 import {
   chatMarkdownImageSources,
@@ -977,6 +978,10 @@ it("finds bare absolute media embeds with spaces while leaving code and other de
   ].join("\n");
 
   expect(chatMarkdownImageSources(authored).map(decodeURI)).toEqual([mac, linux, wrapped]);
+  const codeSpan = "![`label](/work/c d.png)`";
+  expect(
+    markdownWithSpacedMediaPaths(codeSpan, () => unified().use(remarkParse).parse(codeSpan)),
+  ).toBe(codeSpan);
 });
 
 it("keeps authored offsets after repairing multiple media embeds", () => {
