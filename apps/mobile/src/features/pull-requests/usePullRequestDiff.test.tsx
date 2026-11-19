@@ -14,9 +14,13 @@ import { usePullRequestDiff, usePullRequestDiffEntry } from "./usePullRequestDif
 import * as reviewModel from "../review/reviewModel";
 import { getCachedNativeReviewDiffData } from "../review/nativeReviewDiffAdapter";
 
-function patch(path: string, nextCursor: string | null = null): PullRequestDiffResult {
+function patch(
+  path: string,
+  nextCursor: string | null = null,
+  added = "new",
+): PullRequestDiffResult {
   return {
-    patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+new\n`,
+    patch: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-old\n+${added}\n`,
     truncated: false,
     nextCursor,
   };
@@ -236,13 +240,31 @@ it("retries a failed continuation without discarding loaded files or restarting 
   expect(screen.current.nextCursor).toBeNull();
 });
 
-it("still refreshes from page one after successfully loading a continuation", async () => {
-  using screen = setup();
-  await screen.succeed(0, patch("first.ts", "second"));
-  act(() => screen.current.loadMore());
-  await screen.succeed(1, patch("second.ts"));
-  act(() => screen.current.refresh());
-  await screen.succeed(2, patch("refreshed.ts"));
-  if (screen.current.parsed.kind !== "files") throw new Error("Expected files");
-  expect(screen.current.parsed.files.map((file) => file.path)).toEqual(["refreshed.ts"]);
-});
+it.each(["failed", "loaded"] as const)(
+  "reloads every page from the new head after a continuation %s",
+  async (continuation) => {
+    using screen = setup();
+    await screen.succeed(0, patch("first.ts", "second"));
+    act(() => screen.current.loadMore());
+    if (continuation === "failed") await screen.fail(1);
+    else await screen.succeed(1, patch("second.ts"));
+
+    act(() => screen.current.refresh());
+    expect(screen.requests.map((request) => request.cursor)).toEqual([null, "second", null]);
+    await screen.succeed(2, patch("first.ts", "second", "pushed"));
+    expect(screen.current.error).toBeNull();
+    expect(screen.current.patch).not.toContain("+new");
+
+    act(() => screen.current.loadMore());
+    expect(screen.requests.map((request) => request.cursor)).toEqual([
+      null,
+      "second",
+      null,
+      "second",
+    ]);
+    await screen.succeed(3, patch("second.ts", null, "pushed"));
+    expect(screen.current.patch).not.toContain("+new");
+    if (screen.current.parsed.kind !== "files") throw new Error("Expected files");
+    expect(screen.current.parsed.files.map((file) => file.path)).toEqual(["first.ts", "second.ts"]);
+  },
+);
