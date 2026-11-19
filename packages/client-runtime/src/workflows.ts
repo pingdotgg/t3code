@@ -414,7 +414,13 @@ export function buildWorkflowTimeline(input: {
       .map((child) => [child.parentStep, child] as const),
   );
   const startMs = Date.parse(input.run.startedAt);
-  const endMs = input.run.endedAt === null ? input.nowMs : Date.parse(input.run.endedAt);
+  // A caller's clock can be a minute old. Now is never before anything the run has done.
+  const nowMs = Math.max(
+    input.nowMs,
+    startMs,
+    ...input.steps.map((step) => Date.parse(step.endedAt ?? step.startedAt)),
+  );
+  const endMs = input.run.endedAt === null ? nowMs : Date.parse(input.run.endedAt);
   const rows: WorkflowTimelineRow[] = [];
   const beats: WorkflowBeat[] = [];
   let quick: WorkflowStep[] = [];
@@ -434,7 +440,7 @@ export function buildWorkflowTimeline(input: {
       if (childByStep.has(step.name.slice(0, -"/start".length))) continue;
     }
     const stepStart = Date.parse(step.startedAt);
-    const stepEnd = step.endedAt === null ? input.nowMs : Date.parse(step.endedAt);
+    const stepEnd = step.endedAt === null ? nowMs : Date.parse(step.endedAt);
     const childRun = step.kind === "wait" ? (childByStep.get(step.name) ?? null) : null;
     const isBeat =
       step.kind !== "step" ||
@@ -468,7 +474,7 @@ export function buildWorkflowTimeline(input: {
   }
   flush();
   const overlaps = (left: WorkflowBeat, right: WorkflowBeat) =>
-    left !== right && left.startMs < right.endMs && right.startMs < left.endMs;
+    left !== right && left.startMs < openEnd(right) && right.startMs < openEnd(left);
   return {
     rows: rows.map((row) =>
       row.kind === "quick"
@@ -479,6 +485,10 @@ export function buildWorkflowTimeline(input: {
     endMs: Math.max(endMs, ...beats.map((beat) => beat.endMs), startMs + 1),
   };
 }
+
+/** When a beat stops overlapping what starts after it: one still under way never does. */
+const openEnd = (beat: WorkflowBeat) =>
+  beat.status === "running" ? Number.POSITIVE_INFINITY : beat.endMs;
 
 /** What a person answered a question with, when a step's result is such an answer. */
 export function workflowAnswer(
@@ -520,12 +530,12 @@ export function buildWorkflowFeed(timeline: WorkflowTimeline): ReadonlyArray<Wor
     }
     if (together.length > 0 && row.parallel && row.startMs < until) {
       together.push(row);
-      until = Math.max(until, row.endMs);
+      until = Math.max(until, openEnd(row));
       continue;
     }
     flush();
     together = [row];
-    until = row.endMs;
+    until = openEnd(row);
   }
   flush();
   return rows;

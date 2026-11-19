@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { RelativeTime } from "../../components/RelativeTime";
 import { AppBar } from "../../components/ui/AppBar";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import * as Dialog from "../../components/ui/Dialog";
@@ -111,46 +112,74 @@ function QuestionCard(props: {
   );
 }
 
-/** The straight piece of wire between two parts of the flow. */
-function Wire(props: { readonly live?: boolean }) {
+// Wires are drawn with borders, so a corner is a rounded box and nothing needs measuring.
+const WIRE = "border-icon-subtle/40";
+// Past two, steps that ran at once no longer fit side by side and hang off a rail instead.
+const SIDE_BY_SIDE = 2;
+
+/** The straight piece of wire between two parts of the flow, with a word beside it if it has one. */
+function Wire(props: { readonly live?: boolean; readonly label?: string }) {
   return (
+    <View className="items-center">
+      <View
+        className={cn(
+          "w-0 border-l-2",
+          props.label === undefined ? "h-4" : "h-6",
+          props.live === true ? "border-primary" : WIRE,
+        )}
+      />
+      {props.label === undefined ? null : (
+        <Text className="absolute top-1 left-1/2 ms-3 text-xs text-foreground-muted">
+          {props.label}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+/** Where one column of a side-by-side fork leaves the wire above it, or rejoins the one below. */
+function Elbow(props: { readonly first: boolean; readonly join?: boolean }) {
+  const join = props.join === true;
+  const turn = (
     <View
-      className={cn("h-4 w-0.5 self-center", props.live === true ? "bg-primary/50" : "bg-border")}
+      className={cn(
+        "h-3 flex-1",
+        WIRE,
+        join ? "border-b-2" : "border-t-2",
+        props.first
+          ? cn("border-l-2", join ? "rounded-bl-xl" : "rounded-tl-xl")
+          : cn("border-r-2", join ? "rounded-br-xl" : "rounded-tr-xl"),
+      )}
     />
   );
-}
-
-/** One wire becoming several, or several becoming one: the piece above or below one column. */
-function Rail(props: { readonly index: number; readonly count: number; readonly join?: boolean }) {
-  const bar = (shown: boolean) => (
-    <View className={cn("h-0.5 flex-1", shown ? "bg-border" : null)} />
-  );
-  const across = (
+  const rest = <View className="flex-1" />;
+  return (
     <View className="flex-row">
-      {bar(props.index > 0)}
-      {bar(props.index < props.count - 1)}
-    </View>
-  );
-  const down = <View className="h-3 w-0.5 self-center bg-border" />;
-  return props.join === true ? (
-    <View>
-      {down}
-      {across}
-    </View>
-  ) : (
-    <View>
-      {across}
-      {down}
+      {props.first ? rest : turn}
+      {props.first ? turn : rest}
     </View>
   );
 }
 
-/** A step in the flow: what it was, how it went in a line, and how long it took. */
+/** Where the wire swings out to the rail that many steps hang off, or back in from it. */
+function RailTurn(props: { readonly join?: boolean }) {
+  return (
+    <View className="w-1/2 ps-3">
+      <View
+        className={cn(
+          "h-3 border-l-2",
+          WIRE,
+          props.join === true ? "rounded-bl-xl border-b-2" : "rounded-tl-xl border-t-2",
+        )}
+      />
+    </View>
+  );
+}
+
+/** A step in the flow: a mark for what it is, its name, how it went in a line, and its time. */
 function FlowNode(props: {
   readonly beat: WorkflowBeat;
   readonly child: WorkflowRunNode | null;
-  /** How long it took, as a share of the longest step. */
-  readonly share: number;
   readonly onPress: () => void;
 }) {
   const { beat } = props;
@@ -162,7 +191,7 @@ function FlowNode(props: {
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
   const line = failed
-    ? gt("failed after {duration}", { duration: length })
+    ? (beat.detail ?? gt("failed"))
     : running
       ? beat.kind === "sleep"
         ? gt("sleeping")
@@ -170,56 +199,80 @@ function FlowNode(props: {
           ? gt("working")
           : gt("under way")
       : beat.kind === "agent" && said !== null
-        ? plain(said).trim().split("\n", 1)[0]
+        ? (plain(said).trim().split("\n", 1)[0] ?? "")
         : beat.kind === "ask"
           ? answer === null
             ? gt("nobody answered")
             : gt("Answered {choice}", { choice: answer.choice })
           : beat.kind === "run" && props.child !== null
             ? workflowRunNow(props.child, m)
-            : length;
+            : beat.kind === "sleep"
+              ? gt("slept")
+              : beat.kind === "wait"
+                ? gt("waited")
+                : "";
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`${beat.childRun?.title ?? beat.name}, ${line}`}
+      accessibilityLabel={`${beat.childRun?.title ?? beat.name}, ${line === "" ? length : line}`}
       onPress={props.onPress}
       className={cn(
-        "gap-0.5 rounded-xl border px-3 py-2 active:opacity-70",
-        failed ? "border-danger-border bg-danger/5" : "border-border bg-card",
+        "flex-row items-center gap-2.5 rounded-2xl border px-2.5 py-2 active:opacity-70",
+        failed
+          ? "border-danger-border bg-danger/5"
+          : running
+            ? "border-primary/40 bg-card"
+            : "border-border bg-card",
       )}
     >
-      <View className="flex-row items-center gap-2">
-        <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground" numberOfLines={1}>
-          {beat.childRun?.title ?? beat.name}
-        </Text>
-        <Text
-          className={cn(
-            "text-xs",
+      <View
+        className={cn(
+          "size-7 items-center justify-center rounded-lg",
+          failed ? "bg-danger" : running ? "bg-primary/10" : "bg-subtle",
+        )}
+      >
+        <SymbolView
+          name={
             failed
-              ? "text-danger-foreground"
+              ? "exclamationmark.circle"
+              : beat.kind === "agent"
+                ? "text.bubble"
+                : beat.kind === "ask"
+                  ? "questionmark.bubble"
+                  : beat.kind === "sleep" || beat.kind === "wait"
+                    ? "clock"
+                    : beat.kind === "run"
+                      ? "arrow.triangle.branch"
+                      : "checkmark"
+          }
+          size={14}
+          tintColorClassName={
+            failed
+              ? "accent-danger-foreground"
               : running
-                ? "text-info-foreground"
-                : "text-foreground-muted",
-          )}
-        >
-          {running
-            ? gt("Working", { $context: "workflow step status" })
-            : failed
-              ? gt("Failed", { $context: "workflow step status" })
-              : length}
-        </Text>
+                ? "accent-primary"
+                : "accent-foreground-muted"
+          }
+          type="monochrome"
+        />
       </View>
-      <Text className="text-xs text-foreground-muted" numberOfLines={1}>
-        {line}
-      </Text>
-      {running ? null : (
-        <View className="mt-1 h-0.5 rounded-full bg-border">
-          <View
-            className="h-0.5 rounded-full bg-icon-subtle"
-            style={{ width: `${Math.max(4, Math.round(props.share * 100))}%` }}
-          />
+      <View className="min-w-0 flex-1">
+        <View className="flex-row items-baseline gap-2">
+          <Text className="min-w-0 flex-1 font-t3-medium text-sm text-foreground" numberOfLines={1}>
+            {beat.childRun?.title ?? beat.name}
+          </Text>
+          {/* The page has no ticking clock, so a step under way shows no time. */}
+          {running ? null : <Text className="text-xs text-foreground-muted">{length}</Text>}
         </View>
-      )}
+        {line === "" ? null : (
+          <Text
+            className={cn("text-xs", failed ? "text-danger-foreground" : "text-foreground-muted")}
+            numberOfLines={1}
+          >
+            {line}
+          </Text>
+        )}
+      </View>
     </Pressable>
   );
 }
@@ -304,7 +357,6 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
     />
   );
   const failedAtStep = beats.some((beat) => beat.status === "failed");
-  const longestMs = Math.max(1, ...beats.map((beat) => beat.endMs - beat.startMs));
   const pause = (
     <Card tone="failed">
       <Text className="font-t3-medium text-sm text-danger-foreground">
@@ -334,7 +386,6 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
       <FlowNode
         beat={beat}
         child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
-        share={(beat.endMs - beat.startMs) / longestMs}
         onPress={() => openStep(beat.name)}
       />
     );
@@ -373,30 +424,50 @@ function RunBody(props: { readonly environmentId: EnvironmentId; readonly node: 
         </Text>
       ) : (
         <View>
-          <View className="size-2 self-center rounded-full bg-icon-subtle" />
+          <View className={cn("size-2.5 self-center rounded-full border-2", WIRE)} />
           {feed.map((row) =>
             row.kind === "quick" ? (
               <View key={`quick:${row.steps[0]?.name}`} className="items-center">
                 <Wire />
-                <Text className="px-6 text-xs text-foreground-muted" numberOfLines={1}>
-                  {row.steps.map((step) => step.name).join(" · ")}
-                </Text>
+                <View className="max-w-[85%] rounded-full border border-border px-2.5 py-0.5">
+                  <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+                    {row.steps.map((step) => step.name).join(" · ")}
+                  </Text>
+                </View>
               </View>
             ) : row.kind === "together" ? (
               <View key={`together:${row.beats[0]?.name}`}>
-                <Wire />
-                <Text className="self-center pb-1 text-xs text-foreground-muted">
-                  <T>at the same time</T>
-                </Text>
-                <View className="flex-row">
-                  {row.beats.map((beat, index) => (
-                    <View key={beat.name} className="min-w-0 flex-1">
-                      <Rail index={index} count={row.beats.length} />
-                      <View className="px-1">{stop(beat)}</View>
-                      <Rail index={index} count={row.beats.length} join />
+                <Wire
+                  label={
+                    row.beats.length <= SIDE_BY_SIDE
+                      ? gt("at the same time")
+                      : gt("{count} at the same time", { count: row.beats.length })
+                  }
+                />
+                {row.beats.length <= SIDE_BY_SIDE ? (
+                  <View className="flex-row">
+                    {row.beats.map((beat, index) => (
+                      <View key={beat.name} className="min-w-0 flex-1">
+                        <Elbow first={index === 0} />
+                        <View className="px-1">{stop(beat)}</View>
+                        <Elbow first={index === 0} join />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <View>
+                    <RailTurn />
+                    <View className={cn("ms-3 border-l-2", WIRE)}>
+                      {row.beats.map((beat) => (
+                        <View key={beat.name} className="flex-row items-center py-1">
+                          <View className={cn("w-4 border-t-2", WIRE)} />
+                          <View className="min-w-0 flex-1">{stop(beat)}</View>
+                        </View>
+                      ))}
                     </View>
-                  ))}
-                </View>
+                    <RailTurn join />
+                  </View>
+                )}
               </View>
             ) : (
               <View key={row.name}>

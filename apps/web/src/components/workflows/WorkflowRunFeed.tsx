@@ -19,11 +19,13 @@ import {
   BotIcon,
   CheckIcon,
   CircleHelpIcon,
+  FlagIcon,
   CircleAlertIcon,
   HourglassIcon,
   MoonIcon,
 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { secondTick } from "@t3tools/client-runtime/clock";
+import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -87,6 +89,25 @@ function reportFailure(title: string, result: AtomCommandResult<unknown, unknown
 // Reads the minute tick because the compiler caches a render-time Date.now() on the timestamp.
 function useNowMs(): number {
   return Date.parse(`${useNowMinute()}:00.000Z`);
+}
+
+// A time still counting is told to the second: its tenths would only flicker.
+const wholeSeconds = (ms: number) => Math.max(1000, Math.round(ms / 1000) * 1000);
+const elapsedOf = (beat: WorkflowBeat) =>
+  beat.status === "running" ? wholeSeconds(beat.endMs - beat.startMs) : beat.endMs - beat.startMs;
+
+const never = () => () => {};
+const noTick = () => 0;
+
+/** The clock a run is told by: to the second while it is under way, to the minute after. */
+function useRunNowMs(live: boolean): number {
+  const minute = useNowMs();
+  const second = useSyncExternalStore(
+    live ? secondTick.subscribe : never,
+    live ? secondTick.getSnapshot : noTick,
+    live ? secondTick.getSnapshot : noTick,
+  );
+  return live ? second : minute;
 }
 
 export function RelativeLabel({ value }: { readonly value: string }) {
@@ -171,7 +192,7 @@ export function WorkflowRunFeed({
 }) {
   const { run } = node;
   const gt = useGT();
-  const nowMs = useNowMs();
+  const nowMs = useRunNowMs(node.run.endedAt === null);
   const panel = useRef<HTMLElement | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
   const detail = useEnvironmentQuery(
@@ -203,7 +224,9 @@ export function WorkflowRunFeed({
     reportFailure(gt("Could not cancel the run"), result);
   };
   const ended = run.endedAt !== null;
-  const ranMs = (ended ? Date.parse(run.endedAt) : nowMs) - Date.parse(run.startedAt);
+  const ranMs = ended
+    ? Date.parse(run.endedAt) - Date.parse(run.startedAt)
+    : wholeSeconds(nowMs - Date.parse(run.startedAt));
   const steps = detail.data?.steps;
   const feed =
     steps === undefined
@@ -441,60 +464,138 @@ export function WorkflowRunFeed({
   );
 }
 
-const FLOW_TONE = {
-  plain: "border-border bg-card",
-  ask: "border-primary/40 bg-primary/4",
-  failed: "border-destructive/40 bg-destructive/4",
-} as const;
-
 const firstSentence = (text: string) => {
   const line = text.trim().split("\n", 1)[0] ?? "";
   const end = line.search(/[.!?](\s|$)/);
   return end === -1 ? line : line.slice(0, end + 1);
 };
 
-/** The straight piece of wire between two parts of the flow. */
-function Wire({ live = false }: { readonly live?: boolean }) {
+// Wires are drawn with borders, so a corner is a rounded box and nothing needs measuring.
+const WIRE = "border-muted-foreground/35";
+// Past two, steps that ran at once no longer fit side by side and hang off a rail instead.
+const SIDE_BY_SIDE = 2;
+
+/** The straight piece of wire between two parts of the flow, with a word beside it if it has one. */
+function Wire({ live = false, label }: { readonly live?: boolean; readonly label?: ReactNode }) {
+  return (
+    <div aria-hidden={label === undefined} className="relative">
+      <span
+        aria-hidden
+        className={cn(
+          "mx-auto block w-0 border-l-2",
+          live ? "h-6 border-dashed border-primary" : cn("h-4", WIRE),
+          label === undefined ? null : "h-5",
+        )}
+      />
+      {label === undefined ? null : (
+        <span className="absolute top-1/2 left-1/2 ms-2.5 -translate-y-1/2 text-3xs whitespace-nowrap text-muted-foreground">
+          {label}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Where one column of a side-by-side fork leaves the wire above it, or rejoins the one below. */
+function Elbow({ first, join = false }: { readonly first: boolean; readonly join?: boolean }) {
   return (
     <span
       aria-hidden
       className={cn(
-        "mx-auto block h-4 w-0 border-l-2",
-        live ? "h-6 border-dashed border-primary" : "border-border",
+        "block h-3 w-1/2",
+        WIRE,
+        join ? "border-b-2" : "border-t-2",
+        first
+          ? cn("ms-[50%] border-l-2", join ? "rounded-bl-xl" : "rounded-tl-xl")
+          : cn("border-r-2", join ? "rounded-br-xl" : "rounded-tr-xl"),
       )}
     />
   );
 }
 
-/** One wire becoming several, or several becoming one, for steps that ran at the same time. */
-function Branch({ count, join = false }: { readonly count: number; readonly join?: boolean }) {
+/** Where the wire swings out to the rail that many steps hang off, or back in from it. */
+function RailTurn({ join = false }: { readonly join?: boolean }) {
   return (
-    <svg
+    <span
       aria-hidden
-      viewBox="0 0 100 20"
-      preserveAspectRatio="none"
-      className="block h-5 w-full text-border"
+      className={cn(
+        "ms-3 block h-3 w-[calc(50%-0.75rem)] border-l-2",
+        WIRE,
+        join ? "rounded-bl-xl border-b-2" : "rounded-tl-xl border-t-2",
+      )}
+    />
+  );
+}
+
+const MARK_TONE = {
+  plain: "bg-muted text-muted-foreground",
+  working: "bg-info/12 text-info-foreground",
+  ask: "bg-primary/12 text-primary",
+  failed: "bg-destructive/12 text-destructive",
+  done: "bg-success/12 text-success-foreground",
+} as const;
+
+const NODE_TONE: Record<keyof typeof MARK_TONE, string> = {
+  plain: "border-border bg-card",
+  working: "border-info/40 bg-card",
+  ask: "border-primary/40 bg-primary/4",
+  failed: "border-destructive/40 bg-destructive/4",
+  done: "border-success/30 bg-success/4",
+};
+
+/** A stop in the flow: a mark for what it is, its name, a line on how it went, and its time. */
+function FlowNode({
+  tone,
+  mark,
+  name,
+  line,
+  aside,
+  selected,
+  onPick,
+}: {
+  readonly tone: keyof typeof MARK_TONE;
+  readonly mark: ReactNode;
+  readonly name: string;
+  readonly line: string;
+  readonly aside?: string | undefined;
+  readonly selected: boolean;
+  readonly onPick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-current={selected}
+      className={cn(
+        "flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-xl border px-2 py-1.5 text-left shadow-xs hover:bg-accent",
+        NODE_TONE[tone === "done" ? "plain" : tone],
+        selected ? "border-primary ring-2 ring-primary/25" : null,
+      )}
+      onClick={onPick}
     >
-      {Array.from({ length: count }, (_, index) => {
-        const x = ((index + 0.5) / count) * 100;
-        return (
-          <path
-            key={x}
-            d={join ? `M${x} 0 C${x} 12, 50 8, 50 20` : `M50 0 C50 12, ${x} 8, ${x} 20`}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            vectorEffect="non-scaling-stroke"
-          />
-        );
-      })}
-    </svg>
+      <span
+        aria-hidden
+        className={cn("grid size-6 shrink-0 place-items-center rounded-md", MARK_TONE[tone])}
+      >
+        {mark}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-baseline gap-2">
+          <span className="min-w-0 flex-1 truncate text-xs font-semibold">{name}</span>
+          {aside === undefined ? null : (
+            <span className="shrink-0 text-3xs text-muted-foreground tabular-nums">{aside}</span>
+          )}
+        </span>
+        {line === "" ? null : (
+          <span className="block truncate text-2xs text-muted-foreground">{line}</span>
+        )}
+      </span>
+    </button>
   );
 }
 
 /**
- * The run as it went: one node per step that took time or involved someone, side by side where
- * they ran at once. It never draws what comes next: a run can branch.
+ * The run as it went: one node per step that took time or involved someone. Two that ran at once
+ * sit side by side; more hang off a rail. It never draws what comes next: a run can branch.
  */
 function WorkflowFlow({
   environmentId,
@@ -521,55 +622,45 @@ function WorkflowFlow({
   readonly end: string | null;
 }) {
   const gt = useGT();
-  const beats = rows.flatMap((row) =>
-    row.kind === "quick" ? [] : row.kind === "together" ? row.beats : [row],
-  );
-  const longestMs = Math.max(1, ...beats.map((beat) => beat.endMs - beat.startMs));
   const beatNode = (beat: WorkflowBeat) => (
-    <WorkflowFlowNode
+    <WorkflowBeatNode
       environmentId={environmentId}
       beat={beat}
       child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
       asks={node.questions.some((question) => question.name === beat.name)}
       nowMs={nowMs}
-      share={(beat.endMs - beat.startMs) / longestMs}
       selected={focus === `step:${beat.name}`}
       onPick={() => onPick(`step:${beat.name}`)}
     />
   );
-  const plainNode = (key: string, tone: keyof typeof FLOW_TONE, name: string, sub: string) => (
-    <div className="mx-auto w-56 max-w-full">
-      <FlowButton tone={tone} selected={focus === key} onPick={() => onPick(key)}>
-        <span className="block truncate text-xs font-semibold">{name}</span>
-        <span className="block truncate text-2xs text-muted-foreground">{sub}</span>
-      </FlowButton>
-    </div>
-  );
   const waits = node.questions.length > 0;
+  const completed = node.run.status === "completed";
   return (
-    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-72">
-      <span aria-hidden className="mx-auto block size-2 rounded-full bg-muted-foreground" />
+    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-80">
+      <span
+        aria-hidden
+        className={cn("mx-auto block size-2.5 rounded-full border-2 bg-background", WIRE)}
+      />
       {rows.map((row) => {
         if (row.kind === "quick") {
           const key = `quick:${row.steps[0]?.name}`;
           const names = row.steps.map((step) => step.name);
           return (
-            <div key={key} className="relative">
-              <Wire />
+            <div key={key} className="flex flex-col items-center">
               <Wire />
               <button
                 type="button"
                 aria-current={focus === key}
                 className={cn(
-                  "absolute top-1/2 left-1/2 ms-3 max-w-[45%] -translate-y-1/2 cursor-pointer truncate text-2xs text-muted-foreground hover:text-foreground",
-                  focus === key ? "font-semibold text-foreground" : null,
+                  "max-w-[85%] cursor-pointer truncate rounded-full border bg-background px-2 py-0.5 text-2xs text-muted-foreground hover:text-foreground",
+                  focus === key ? "border-primary text-foreground" : "border-border",
                 )}
                 onClick={() => onPick(key)}
               >
                 {names.length <= 2
-                  ? names.join(", ")
+                  ? names.join(" · ")
                   : gt("{names} and {count} more", {
-                      names: names.slice(0, 2).join(", "),
+                      names: names.slice(0, 2).join(" · "),
                       count: names.length - 2,
                     })}
               </button>
@@ -577,56 +668,78 @@ function WorkflowFlow({
           );
         }
         if (row.kind === "together") {
+          const count = row.beats.length;
+          const label =
+            count <= SIDE_BY_SIDE
+              ? gt("at the same time")
+              : gt("{count} at the same time", { count });
           return (
             <div key={`together:${row.beats[0]?.name}`}>
-              <Wire />
-              <Branch count={row.beats.length} />
-              <p className="-mt-3 mb-0.5 text-center text-3xs text-muted-foreground">
-                <span className="bg-background px-1">
-                  <T>at the same time</T>
-                </span>
-              </p>
-              <div
-                className="grid gap-1.5"
-                style={{ gridTemplateColumns: `repeat(${row.beats.length}, minmax(0, 1fr))` }}
-              >
-                {row.beats.map((beat) => (
-                  <div key={beat.name} className="min-w-0">
-                    {beatNode(beat)}
+              <Wire label={label} />
+              {count <= SIDE_BY_SIDE ? (
+                <div
+                  className="grid"
+                  style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
+                >
+                  {row.beats.map((beat, index) => (
+                    <div key={beat.name} className="min-w-0">
+                      <Elbow first={index === 0} />
+                      <div className="px-1">{beatNode(beat)}</div>
+                      <Elbow first={index === 0} join />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <>
+                  <RailTurn />
+                  <div className={cn("ms-3 border-l-2", WIRE)}>
+                    {row.beats.map((beat) => (
+                      <div key={beat.name} className="relative py-1 ps-4">
+                        <span
+                          aria-hidden
+                          className={cn("absolute top-1/2 left-0 w-4 border-t-2", WIRE)}
+                        />
+                        {beatNode(beat)}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <Branch count={row.beats.length} join />
+                  <RailTurn join />
+                </>
+              )}
             </div>
           );
         }
         return (
           <div key={row.name}>
             <Wire />
-            <div className="mx-auto w-56 max-w-full">{beatNode(row)}</div>
+            {beatNode(row)}
           </div>
         );
       })}
       {loose.map((question) => (
         <div key={`question:${question.name}`}>
           <Wire />
-          {plainNode(
-            `question:${question.name}`,
-            "ask",
-            question.name,
-            gt("Asks you", { $context: "a workflow step waits on a person's answer" }),
-          )}
+          <FlowNode
+            tone="ask"
+            mark={<CircleHelpIcon className="size-3.5" />}
+            name={question.name}
+            line={gt("Asks you", { $context: "a workflow step waits on a person's answer" })}
+            selected={focus === `question:${question.name}`}
+            onPick={() => onPick(`question:${question.name}`)}
+          />
         </div>
       ))}
       {paused ? (
         <>
           <Wire />
-          {plainNode(
-            "pause",
-            "failed",
-            gt("Paused", { $context: "a workflow run is paused" }),
-            node.run.detail ?? "",
-          )}
+          <FlowNode
+            tone="failed"
+            mark={<CircleAlertIcon className="size-3.5" />}
+            name={gt("Paused", { $context: "a workflow run is paused" })}
+            line={node.run.detail ?? ""}
+            selected={focus === "pause"}
+            onPick={() => onPick("pause")}
+          />
         </>
       ) : null}
       {end === null ? (
@@ -643,47 +756,28 @@ function WorkflowFlow({
       ) : (
         <>
           <Wire />
-          {plainNode("end", "plain", end, "")}
+          <FlowNode
+            tone={completed ? "done" : "plain"}
+            mark={
+              completed ? <CheckIcon className="size-3.5" /> : <FlagIcon className="size-3.5" />
+            }
+            name={end}
+            line={completed ? "" : (node.run.detail ?? "")}
+            selected={focus === "end"}
+            onPick={() => onPick("end")}
+          />
         </>
       )}
     </nav>
   );
 }
 
-function FlowButton({
-  tone,
-  selected,
-  onPick,
-  children,
-}: {
-  readonly tone: keyof typeof FLOW_TONE;
-  readonly selected: boolean;
-  readonly onPick: () => void;
-  readonly children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      aria-current={selected}
-      className={cn(
-        "block w-full min-w-0 cursor-pointer rounded-lg border px-2.5 py-1.5 text-left hover:bg-accent",
-        FLOW_TONE[tone],
-        selected ? "border-primary ring-2 ring-primary/25" : null,
-      )}
-      onClick={onPick}
-    >
-      {children}
-    </button>
-  );
-}
-
-function WorkflowFlowNode({
+function WorkflowBeatNode({
   environmentId,
   beat,
   child,
   asks,
   nowMs,
-  share,
   selected,
   onPick,
 }: {
@@ -693,8 +787,6 @@ function WorkflowFlowNode({
   /** A person's answer is what it waits for. */
   readonly asks: boolean;
   readonly nowMs: number;
-  /** How long it took, as a share of the longest step. */
-  readonly share: number;
   readonly selected: boolean;
   readonly onPick: () => void;
 }) {
@@ -714,52 +806,46 @@ function WorkflowFlowNode({
     ?.find((candidate) => candidate.instanceId === shell?.modelSelection.instanceId);
   const under = beat.status === "running";
   const failed = beat.status === "failed";
-  const length = formatDuration(beat.endMs - beat.startMs);
+  const length = formatDuration(elapsedOf(beat));
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
   const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
-  const sub = (() => {
-    if (failed) return gt("failed after {duration}", { duration: length });
+  const line = (() => {
+    if (failed) return firstSentence(beat.detail ?? gt("failed"));
     switch (beat.kind) {
       case "agent":
         return [
           shell === null ? null : formatModelSlugName(shell.modelSelection.model),
-          under
-            ? gt("working for {duration}", { duration: length })
-            : said === null
-              ? length
-              : firstSentence(said),
+          under ? gt("working") : said === null ? null : firstSentence(said),
         ]
           .filter((part) => part !== null)
           .join(" · ");
       case "ask":
         return under
           ? asks
-            ? gt("Asks you · waiting {duration}", { duration: length })
-            : gt("waiting {duration}", { duration: length })
+            ? gt("Asks you", { $context: "a workflow step waits on a person's answer" })
+            : gt("waiting for an answer")
           : answer === null
             ? gt("nobody answered")
             : gt("You said {choice}", { choice: answer.choice });
       case "sleep":
         return !under
-          ? gt("slept {duration}", { duration: length })
+          ? gt("slept")
           : Number.isFinite(wakes) && wakes > nowMs
-            ? gt("wakes in {duration}", { duration: formatDuration(wakes - nowMs) })
+            ? gt("wakes in {duration}", { duration: formatDuration(wholeSeconds(wakes - nowMs)) })
             : gt("about to wake");
       case "wait":
-        return under
-          ? gt("waiting {duration}", { duration: length })
-          : gt("waited {duration}", { duration: length });
+        return under ? gt("waiting") : gt("waited");
       case "run":
-        return child === null ? length : workflowRunNow(child, m);
+        return child === null ? "" : workflowRunNow(child, m);
       case "step":
-        return under ? gt("running for {duration}", { duration: length }) : length;
+        return under ? gt("running") : "";
     }
   })();
   const mark =
     beat.kind === "agent" ? (
       provider === undefined ? (
-        <BotIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        <BotIcon className="size-3.5" />
       ) : (
         <ProviderInstanceIcon
           driverKind={provider.driver}
@@ -769,48 +855,28 @@ function WorkflowFlowNode({
         />
       )
     ) : beat.kind === "ask" ? (
-      <CircleHelpIcon aria-hidden className="size-3.5 shrink-0" />
+      <CircleHelpIcon className="size-3.5" />
     ) : beat.kind === "sleep" ? (
-      <MoonIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <MoonIcon className="size-3.5" />
     ) : beat.kind === "wait" ? (
-      <HourglassIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      <HourglassIcon className="size-3.5" />
     ) : beat.kind === "run" ? (
       <WorkflowChip name={beat.childRun?.workflow ?? beat.name} />
-    ) : null;
+    ) : failed ? (
+      <CircleAlertIcon className="size-3.5" />
+    ) : (
+      <CheckIcon className="size-3.5" />
+    );
   return (
-    <FlowButton
-      tone={failed ? "failed" : under && asks ? "ask" : "plain"}
+    <FlowNode
+      tone={failed ? "failed" : under ? (asks ? "ask" : "working") : "plain"}
+      mark={mark}
+      name={beat.childRun?.title ?? beat.name}
+      line={line}
+      aside={length}
       selected={selected}
       onPick={onPick}
-    >
-      <span
-        className={cn(
-          "flex min-w-0 items-center gap-1.5 text-xs font-semibold",
-          under && asks ? "text-primary" : null,
-        )}
-      >
-        {mark}
-        <span className="min-w-0 truncate">{beat.childRun?.title ?? beat.name}</span>
-        {under ? (
-          asks ? null : (
-            <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-info" />
-          )
-        ) : failed ? (
-          <CircleAlertIcon aria-hidden className="size-3 shrink-0 text-destructive" />
-        ) : (
-          <CheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
-        )}
-      </span>
-      <span className="block truncate text-2xs text-muted-foreground">{sub}</span>
-      {under ? null : (
-        <span aria-hidden className="mt-1.5 block h-0.5 rounded-full bg-border">
-          <span
-            className="block h-full rounded-full bg-muted-foreground/55"
-            style={{ width: `${Math.max(4, Math.round(share * 100))}%` }}
-          />
-        </span>
-      )}
-    </FlowButton>
+    />
   );
 }
 
@@ -946,7 +1012,7 @@ function WorkflowBeatCard({
   const gt = useGT();
   const m = useMessages();
   const under = beat.status === "running";
-  const length = formatDuration(beat.endMs - beat.startMs);
+  const length = formatDuration(elapsedOf(beat));
   const tries = beat.attempts > 1 ? ` · ${nthTry(beat.attempts, m)}` : "";
   switch (beat.kind) {
     case "agent":
@@ -1012,7 +1078,7 @@ function WorkflowBeatCard({
               Number.isFinite(wakes) && wakes > nowMs
                 ? gt("{step} · wakes in {duration}", {
                     step: beat.name,
-                    duration: formatDuration(wakes - nowMs),
+                    duration: formatDuration(wholeSeconds(wakes - nowMs)),
                   })
                 : gt("{step} · about to wake", { step: beat.name })
             }
@@ -1118,7 +1184,7 @@ function WorkflowAgentCard({
     .get(threadEnvironmentId)
     ?.find((candidate) => candidate.instanceId === shell?.modelSelection.instanceId);
   const under = beat.status === "running";
-  const length = formatDuration(beat.endMs - beat.startMs);
+  const length = formatDuration(elapsedOf(beat));
   const summary = workflowAgentSummary(beat);
   const start = summary.said === null ? null : workflowSaidStart(summary.said, SAID_SHOWN);
   const sub = [

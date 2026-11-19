@@ -302,7 +302,7 @@ describe("WorkflowRunsView", () => {
     const flow = screen.getByRole("navigation", { name: "Steps so far" });
     await expect
       .element(flow)
-      .toMatchTextContent(/load, existing-prs.*triage.*Reproduced on main\..*implement.*approve/);
+      .toMatchTextContent(/load · existing-prs.*triage.*Reproduced on main\..*implement.*approve/);
 
     await flow.getByRole("button", { name: /triage/ }).click();
     const triage = screen.getByRole("region", { name: "triage" });
@@ -321,7 +321,7 @@ describe("WorkflowRunsView", () => {
     await expect
       .element(screen.getByRole("region", { name: "approve" }))
       .toMatchTextContent("You said Fix it: It hits everyone on Windows");
-    await flow.getByRole("button", { name: /load, existing-prs/ }).click();
+    await flow.getByRole("button", { name: /load · existing-prs/ }).click();
     await expect
       .element(screen.getByRole("region", { name: "Quick steps" }))
       .toMatchTextContent("loadexisting-prs");

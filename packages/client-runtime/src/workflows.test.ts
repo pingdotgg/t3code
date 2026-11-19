@@ -342,6 +342,20 @@ describe("buildWorkflowTimeline", () => {
       180_000,
       Date.parse(at(4)),
     ]);
+    // Six started at once and a clock a minute behind: still one row, and no time runs backwards.
+    const wide = buildWorkflowTimeline({
+      run: run("r", { startedAt: at(1) }),
+      children: [],
+      nowMs: Date.parse(at(0)),
+      steps: [
+        step("a", "sleep", at(1), at(2)),
+        ...["b", "c", "d", "e", "f"].map((name) => step(name, "sleep", at(1), null)),
+      ],
+    });
+    expect(
+      buildWorkflowFeed(wide).map((row) => (row.kind === "together" ? row.beats.length : 1)),
+    ).toEqual([6]);
+    expect(wide.rows.every((row) => row.endMs >= row.startMs)).toBe(true);
   });
 });
 
