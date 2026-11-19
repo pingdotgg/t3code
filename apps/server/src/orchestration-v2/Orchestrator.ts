@@ -67,6 +67,7 @@ import {
   parseGoalCommand,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   ProviderInteractionMode,
   isRuntimeModeAbove,
   resolveProviderInstanceEnabled,
@@ -82,6 +83,7 @@ import {
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { modelSwitchSince } from "./modelSwitch.ts";
 import { contextBoundaryOrdinal, isScheduledFreshRun } from "./contextBoundary.ts";
 import { isPlaceholderThreadTitle } from "./placeholderThreadTitle.ts";
@@ -1373,7 +1375,7 @@ function appendContextHandoffId(
   return handoffId === null ? handoffIds : Array.from(new Set([...handoffIds, handoffId]));
 }
 
-/** The provider thread a message continues: the active one, unless a fresh-session schedule run started it. */
+/** The provider thread a message continues: the active one, unless a fresh-session schedule run started it or it predates the latest fresh start. */
 function conversationProviderThread(
   projection: Pick<
     OrchestrationV2ThreadProjection,
@@ -1389,8 +1391,12 @@ function conversationProviderThread(
   const active = projection.providerThreads.find(
     (candidate) => candidate.id === projection.thread.activeProviderThreadId,
   );
-  if (active === undefined || !startedByScheduledFreshRun(active)) return active;
+  if (active === undefined) return active;
   const boundary = contextBoundaryOrdinal(projection);
+  // A pre-clear session that is still alive (background work) can become active again on its updates.
+  if (!startedByScheduledFreshRun(active) && !providerThreadPredatesBoundary(active, boundary)) {
+    return active;
+  }
   return (
     projection.providerThreads
       .filter(
@@ -5980,6 +5986,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     message: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">,
   ) {
+    if (
+      expandAssistantCitationsForProvider(message.text).length > PROVIDER_SEND_TURN_MAX_INPUT_CHARS
+    ) {
+      return yield* new OrchestratorCommandRejectedError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Message exceeds ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS.toLocaleString("en-US")} characters after expanding quotes. Shorten it and try again.`,
+      });
+    }
     if (isNativeMaintenanceCommand(message)) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
