@@ -40,6 +40,7 @@ import {
 } from "./ConnectionsSettings.logic";
 import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { useAccessEnvironment } from "./useAccessEnvironment";
+import { MobileConnectionAttempts } from "./MobileConnectionAttempts";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { ManagedByOrganization } from "../ManagedPolicy";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
@@ -171,15 +172,19 @@ function LocalVersionStatusLabel() {
 }
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
-export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
-  return view === "access" ? (
-    <AccessSettings />
+export function ConnectionsSettings({
+  view,
+}: {
+  readonly view: "environments" | "access" | "mobile";
+}) {
+  return view !== "environments" ? (
+    <AccessSettings view={view} />
   ) : (
     <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
   );
 }
 
-function AccessSettings() {
+function AccessSettings({ view }: { readonly view: "access" | "mobile" }) {
   const gt = useGT();
   // A link that names an environment, such as the MCP wizard's, opens the page on it. The
   // settings layout remounts this page when the link changes.
@@ -246,7 +251,7 @@ function AccessSettings() {
   return (
     <ConnectionsSettingsContent
       key={accessEnvironmentId ?? "none"}
-      view="access"
+      view={view}
       accessEnvironmentId={accessEnvironmentId}
       accessEnvironmentPicker={picker}
     />
@@ -258,7 +263,7 @@ function ConnectionsSettingsContent({
   accessEnvironmentId,
   accessEnvironmentPicker = null,
 }: {
-  readonly view: "environments" | "access";
+  readonly view: "environments" | "access" | "mobile";
   readonly accessEnvironmentId: EnvironmentId | null;
   readonly accessEnvironmentPicker?: ReactNode;
 }) {
@@ -408,7 +413,7 @@ function ConnectionsSettingsContent({
   const canMaintain = useEnvironmentScope(accessEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(accessEnvironmentId, AuthRelayWriteScope);
   const canManageLocalBackend = isPrimaryAccess && !isLocalEnvironmentDisabled() && canMaintain;
-  const showsAccess = view === "access";
+  const showsAccess = view !== "environments";
   const authAccessChanges = useEnvironmentQuery(
     showsAccess && canReadAccess && accessEnvironmentId !== null
       ? authEnvironment.accessChanges({
@@ -1769,7 +1774,16 @@ function ConnectionsSettingsContent({
     </>
   );
 
-  if (showsAccess) return <SettingsPageContainer>{primarySettings}</SettingsPageContainer>;
+  if (showsAccess) {
+    return (
+      <SettingsPageContainer>
+        {primarySettings}
+        {view === "mobile" ? (
+          <MobileConnectionAttempts environmentId={accessEnvironmentId} />
+        ) : null}
+      </SettingsPageContainer>
+    );
+  }
 
   return (
     <SettingsPageContainer>

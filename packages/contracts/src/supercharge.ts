@@ -30,7 +30,10 @@ export const SuperchargeConfig = Schema.Struct({
 });
 export type SuperchargeConfig = typeof SuperchargeConfig.Type;
 
-const SUPERCHARGE_DEFAULT_LIMITS: Record<Exclude<SuperchargePreset, "off">, SuperchargeLimits> = {
+export const SUPERCHARGE_DEFAULT_LIMITS: Record<
+  Exclude<SuperchargePreset, "off">,
+  SuperchargeLimits
+> = {
   verify: { maxIterations: 3, maxMinutes: 30, maxTokens: null },
   deep: { maxIterations: 5, maxMinutes: 60, maxTokens: null },
 };

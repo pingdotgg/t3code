@@ -34,6 +34,12 @@ export function createGameDevEnvironmentAtoms<R, E>(
       tag: WS_METHODS.gameDevAssets,
       staleTimeMs: 3_000,
     }),
+    capture: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:game-dev:capture",
+      tag: WS_METHODS.gameDevGetCapture,
+      staleTimeMs: 60_000,
+      idleTtlMs: 0,
+    }),
     install: createEnvironmentRpcStreamCommand(runtime, {
       label: "environment-data:game-dev:install",
       tag: WS_METHODS.gameDevInstall,

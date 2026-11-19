@@ -38,6 +38,7 @@ import { useTimelineRewind } from "./chat/useTimelineRewind";
 import { useThreadLifecycle } from "./chat/useThreadLifecycle";
 import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
+import { ImprovePromptDialog } from "./chat/ImprovePromptDialog";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
@@ -3005,6 +3006,10 @@ export default function ChatView(props: ChatViewProps) {
     scrollToEnd,
     setThreadError,
   });
+  const [improvePrompt, setImprovePrompt] = useState<{
+    readonly threadId: ThreadId;
+    readonly text: string;
+  } | null>(null);
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -3019,6 +3024,8 @@ export default function ChatView(props: ChatViewProps) {
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
+    onImprove: (text) =>
+      setImprovePrompt(activeThread ? { threadId: activeThread.id, text } : null),
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -3498,6 +3505,24 @@ export default function ChatView(props: ChatViewProps) {
             onDrop={workspaceFileDropHandlers.onDrop}
           >
             <ThreadFind onClose={focusComposerStable} />
+            {activeThreadRef && improvePrompt?.threadId === activeThreadRef.threadId ? (
+              <ImprovePromptDialog
+                threadRef={activeThreadRef}
+                initialPrompt={improvePrompt.text}
+                providers={providerInstanceEntries}
+                activeModel={activeThread.modelSelection}
+                onClose={() => setImprovePrompt(null)}
+                onOpenThread={(nextThreadId) => {
+                  setImprovePrompt(null);
+                  void navigate({
+                    to: "/$environmentId/$threadId",
+                    params: buildThreadRouteParams(
+                      scopeThreadRef(activeThreadRef.environmentId, nextThreadId),
+                    ),
+                  });
+                }}
+              />
+            ) : null}
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
               environmentId={activeThread.environmentId}

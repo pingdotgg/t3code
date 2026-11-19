@@ -598,8 +598,8 @@ export default defineConfig({
           // Continuum-only features are English until they join the catalogs (docs/internals/i18n.md).
           "apps/web/src/components/{forge,entertainment,iwe,memoryVaults,agentEyes,usageSharing,workspaceTabs,continuum,videoBackground}/**",
           "apps/web/src/speech/**",
-          "apps/web/src/components/settings/{UsageSharingSettingsPanel,ReadAloudSettings,LocalModelsSettingsPanel,LocalModelsSettings.logic,NotificationSoundSettings,VideoThemeSettingsPanel,ProviderUpdatesSettingsPanel,WindowOpacitySetting,WindowOpacitySetting.logic}.{ts,tsx}",
-          "apps/web/src/components/chat/{SuperchargeControl,ContinuumComposerStatus,useContinuumCommandSend,MemoryVaultPicker}.{ts,tsx}",
+          "apps/web/src/components/settings/{GameDevelopmentSettingsPanel,MobileConnectionAttempts,UsageSharingSettingsPanel,ReadAloudSettings,LocalModelsSettingsPanel,LocalModelsSettings.logic,NotificationSoundSettings,VideoThemeSettingsPanel,ProviderUpdatesSettingsPanel,WindowOpacitySetting,WindowOpacitySetting.logic}.{ts,tsx}",
+          "apps/web/src/components/chat/{ImprovePromptDialog,SuperchargePickerControl,SuperchargeControl,ContinuumComposerStatus,runContinuumCommand,MemoryVaultPicker}.{ts,tsx}",
           "apps/web/src/{continuumSurfaces,continuumCommands,notificationJingles,agentEyes.logic}.ts",
         ],
         rules: { "t3code/no-untranslated-copy": "error" },

@@ -173,7 +173,9 @@ function steps(
   );
   switch (located.cause) {
     case "offline":
-      return [resolve(msg("Connect this device to the internet. Continuum IDE reconnects on its own."))];
+      return [
+        resolve(msg("Connect this device to the internet. Continuum IDE reconnects on its own.")),
+      ];
     case "session_pending":
       return [
         resolve(msg("Wait a moment. Continuum IDE retries on its own.")),

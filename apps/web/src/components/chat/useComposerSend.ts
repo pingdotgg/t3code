@@ -1,8 +1,12 @@
 import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
-import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
-import { useContinuumCommandSend } from "./useContinuumCommandSend";
+import { runContinuumCommand } from "./runContinuumCommand";
+import {
+  isClearComposerCommand,
+  parseImproveCommand,
+  parseSideChatCommand,
+} from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
   mergeDirectPreviewAnnotation,
@@ -210,6 +214,7 @@ interface ComposerSendInput {
   readonly activeProjectDefaultModelSelection: ModelSelection | null;
   readonly activeMessageCount: number;
   readonly isServerThread: boolean;
+  readonly onImprove: (prompt: string) => void;
   readonly isLocalDraftThread: boolean;
   readonly isGitRepo: boolean;
   readonly phase: SessionPhase;
@@ -311,6 +316,7 @@ export function useComposerSend(input: ComposerSendInput) {
     activeProjectDefaultModelSelection,
     activeMessageCount,
     isServerThread,
+    onImprove,
     isLocalDraftThread,
     isGitRepo,
     phase,
@@ -408,7 +414,6 @@ export function useComposerSend(input: ComposerSendInput) {
     respondingRequestIdsRef.current = respondingRequestIds;
   }, [pendingApprovals, respondingRequestIds]);
 
-  const runContinuumCommand = useContinuumCommandSend();
   const onSend = async (
     e?: { preventDefault: () => void },
     dispatchMode: ComposerDispatchMode = "auto",
@@ -422,6 +427,27 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
+    const improve =
+      !directAnnotation && !queuedRunEdit.isEditing ? parseImproveCommand(promptAtSend) : null;
+    if (improve && !activePendingUserInput) {
+      if (!isServerThread || !activeThread || draftHasNonPromptContent(composerDraftTarget)) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: m(msg("Improve prompt")),
+            description: !isServerThread
+              ? m(msg("Start a thread before using /improve."))
+              : m(msg("Remove attachments and other draft context before using /improve.")),
+          }),
+        );
+        return;
+      }
+      onImprove(improve.prompt);
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      return;
+    }
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
@@ -771,18 +797,10 @@ export function useComposerSend(input: ComposerSendInput) {
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
     if (!directAnnotation && !queuedRunEdit.isEditing) {
-      const outcome = await runContinuumCommand({
+      const outcome = runContinuumCommand({
         prompt: promptAtSend,
         threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id),
         serverThread: !isLocalDraftThread,
-        modelSelection: ctxSelectedModelSelection,
-        hasAttachments:
-          sendContextImages.length > 0 ||
-          composerFiles.length > 0 ||
-          sendContextPreviewAnnotations.length > 0 ||
-          composerReviewComments.length > 0 ||
-          composerThreadContexts.length > 0 ||
-          composerEnvironmentContexts.length > 0,
       });
       if (outcome === "handled" || outcome === "handled-keep-draft") {
         if (

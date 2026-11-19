@@ -42,6 +42,7 @@ import {
   customSiteItem,
   ENTERTAINMENT_APPS,
   ENTERTAINMENT_GAMES,
+  GOOGLE_SNAKE_URL,
   type EntertainmentGameId,
   type EntertainmentItem,
   moveInOrder,
@@ -51,7 +52,7 @@ import {
 import { ENTERTAINMENT_BACKGROUNDS, useEntertainmentStore } from "./entertainmentStore";
 import { CircuitClickerGame } from "./games/CircuitClickerGame";
 import { MinesweeperGame } from "./games/MinesweeperGame";
-import { SnakeGame } from "./games/SnakeGame";
+import { ARCADE_GAMES, gameDocument } from "./entertainmentGames";
 
 type View =
   | { readonly type: "home" }
@@ -179,13 +180,7 @@ export function EntertainmentPanel(props: {
       >
         <div className="entertainment-enter">
           {view.type === "game" ? (
-            view.id === "snake" ? (
-              <SnakeGame visible={props.visible} />
-            ) : view.id === "minesweeper" ? (
-              <MinesweeperGame />
-            ) : (
-              <CircuitClickerGame visible={props.visible} />
-            )
+            <GameView id={view.id} visible={props.visible} />
           ) : view.type === "settings" ? (
             <EntertainmentSettings />
           ) : (
@@ -248,6 +243,46 @@ async function ensureEntertainmentProfile() {
       { id: ENTERTAINMENT_BROWSER_PROFILE_ID, name: "Entertainment", kind: "persistent" },
     ],
   });
+}
+
+function GameView({
+  id,
+  visible,
+}: {
+  readonly id: EntertainmentGameId;
+  readonly visible: boolean;
+}) {
+  if (id === "snake") {
+    return (
+      <div className="flex flex-col gap-2 p-3">
+        <a
+          href={GOOGLE_SNAKE_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="self-start underline"
+        >
+          Open Google Snake in a new tab
+        </a>
+        <iframe
+          title="Google Snake"
+          src={GOOGLE_SNAKE_URL}
+          sandbox="allow-scripts"
+          className="h-[min(65vh,32rem)] w-full"
+        />
+      </div>
+    );
+  }
+  if (id === "minesweeper") return <MinesweeperGame />;
+  if (id === "circuit-clicker") return <CircuitClickerGame visible={visible} />;
+  const game = ARCADE_GAMES.find((entry) => entry.id === id);
+  return game ? (
+    <iframe
+      title={game.title}
+      className="h-[min(65vh,32rem)] w-full"
+      sandbox="allow-scripts"
+      srcDoc={gameDocument(game)}
+    />
+  ) : null;
 }
 
 function Home(props: {

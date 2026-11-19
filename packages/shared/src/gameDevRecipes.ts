@@ -124,8 +124,7 @@ export const GAME_RECIPES: ReadonlyArray<GameRecipe> = [
 
 export function recipePrompt(recipe: GameRecipe, engine: GameEngineId, input: string): string {
   const variant = recipe.engines[engine];
-  const body = variant.prompt.replace(
-    "{input}",
+  const body = variant.prompt.replace("{input}", () =>
     input.trim() === ""
       ? "(no error text given; find it in the latest playtest logs)"
       : input.trim(),

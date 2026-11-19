@@ -90,7 +90,9 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
       message:
         updateState.availableVersion === null
           ? m(msg("A new version of Continuum IDE is available."))
-          : m(msg("Continuum IDE {version} is available."), { version: updateState.availableVersion }),
+          : m(msg("Continuum IDE {version} is available."), {
+              version: updateState.availableVersion,
+            }),
       detail: m(msg("You're running Continuum IDE {version}."), {
         version: updateState.currentVersion,
       }),
@@ -123,7 +125,9 @@ const checkForUpdatesFromMenu = Effect.gen(function* () {
         version === null
           ? m(msg("A new version of Continuum IDE is ready to install."))
           : m(msg("Continuum IDE {version} is ready to install."), { version }),
-      detail: m(msg("Continuum IDE will restart to install it. Any running tasks will be interrupted.")),
+      detail: m(
+        msg("Continuum IDE will restart to install it. Any running tasks will be interrupted."),
+      ),
       buttons: [m(msg("Restart", { $context: "button, restarts the app" })), m(msg("Later"))],
       defaultId: 0,
       cancelId: 1,

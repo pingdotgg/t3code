@@ -3,7 +3,15 @@
  * profile, apart from development browsing. Services that need DRM playback (Widevine), which the
  * built-in browser does not have, open in the system browser instead.
  */
-export type EntertainmentGameId = "snake" | "minesweeper" | "circuit-clicker";
+import { ARCADE_GAMES } from "./entertainmentGames";
+
+export const GOOGLE_SNAKE_URL = "https://www.google.com/fbx?fbx=snake_arcade";
+
+export type EntertainmentGameId =
+  | "snake"
+  | "minesweeper"
+  | "circuit-clicker"
+  | (typeof ARCADE_GAMES)[number]["id"];
 
 export type EntertainmentItem =
   | {
@@ -36,7 +44,7 @@ export const ENTERTAINMENT_GAMES: ReadonlyArray<Extract<EntertainmentItem, { kin
     id: "snake",
     name: "Snake",
     tagline: "Eat, grow, don't bite yourself.",
-    credit: "Continuum's own Snake. Google's Snake can't be embedded here.",
+    credit: "Google Snake",
     accent: "#22c55e",
   },
   {
@@ -55,6 +63,14 @@ export const ENTERTAINMENT_GAMES: ReadonlyArray<Extract<EntertainmentItem, { kin
     credit: "Continuum's original incremental game, not Cookie Clicker.",
     accent: "#f59e0b",
   },
+  ...ARCADE_GAMES.map((game) => ({
+    kind: "game" as const,
+    id: game.id,
+    name: game.title,
+    tagline: game.description,
+    credit: "Built into Continuum.",
+    accent: "#a78bfa",
+  })),
 ];
 
 const web = (

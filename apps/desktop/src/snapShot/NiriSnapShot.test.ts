@@ -146,7 +146,9 @@ it("waits for the restored T3 window to map instead of polling", async () => {
     await original(request, socket);
     if (request === "EventStream")
       send(socket, {
-        WindowOpenedOrChanged: { window: { ...window, id: 4, pid: process.pid, title: "Continuum IDE" } },
+        WindowOpenedOrChanged: {
+          window: { ...window, id: 4, pid: process.pid, title: "Continuum IDE" },
+        },
       });
   };
   await snapshot.feedback!.activate("Continuum IDE");
@@ -167,7 +169,9 @@ it("cancels pending activation when capture feedback is closed", async () => {
     await original(request, socket);
     if (request === "EventStream") started.resolve();
   };
-  const activation = expect(snapshot.feedback!.activate("Continuum IDE")).rejects.toThrow("cancelled");
+  const activation = expect(snapshot.feedback!.activate("Continuum IDE")).rejects.toThrow(
+    "cancelled",
+  );
   await started.promise;
   snapshot.feedback!.close();
   await activation;

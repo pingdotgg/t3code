@@ -17,7 +17,6 @@ import {
   revealCell,
   toggleFlag,
 } from "./minesweeper.logic";
-import { newSnake, queueTurn, stepSnake } from "./snake.logic";
 
 /** Deterministic random numbers for repeatable boards. */
 function seeded(seed: number) {
@@ -67,41 +66,6 @@ describe("minesweeper", () => {
     expect(minesRemaining(game)).toBe(0);
     const stats = recordResult({ played: 0, won: 0, best: {} }, game);
     expect(stats).toEqual({ played: 1, won: 1, best: { beginner: 30 } });
-  });
-});
-
-describe("snake", () => {
-  it("moves, grows on food, and ends at a wall", () => {
-    let game = newSnake(10, 10, false, () => 0);
-    game = { ...game, food: { x: 5, y: 5 } };
-    game = queueTurn(game, "right");
-    expect(game.status).toBe("playing");
-    game = stepSnake(game, () => 0);
-    expect(game.body[0]).toEqual({ x: 5, y: 5 });
-    expect(game.score).toBe(1);
-    expect(game.body).toHaveLength(4);
-    for (let step = 0; step < 10; step += 1) game = stepSnake(game, () => 0.99);
-    expect(game.status).toBe("over");
-  });
-
-  it("ignores reversing into itself and wraps when asked", () => {
-    let game = queueTurn(
-      newSnake(10, 10, true, () => 0),
-      "left",
-    );
-    expect(game.pending).toEqual([]);
-    game = {
-      ...game,
-      body: [
-        { x: 9, y: 5 },
-        { x: 8, y: 5 },
-        { x: 7, y: 5 },
-      ],
-      food: { x: 0, y: 0 },
-    };
-    game = stepSnake(game);
-    expect(game.body[0]).toEqual({ x: 0, y: 5 });
-    expect(game.status).toBe("playing");
   });
 });
 

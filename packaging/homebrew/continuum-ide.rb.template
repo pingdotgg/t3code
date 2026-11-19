@@ -15,7 +15,7 @@ cask "continuum-ide" do
     strategy :github_releases
   end
 
-  depends_on macos: ">= :monterey"
+  depends_on macos: :monterey
 
   app "Continuum IDE.app"
   binary "#{appdir}/Continuum IDE.app/Contents/Resources/bin/contin"

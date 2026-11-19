@@ -67,7 +67,7 @@ const REPORT_FORMAT = [
   'Mark a check "pass" only with evidence from this turn. Set "done" to false while any check fails.',
 ].join("\n");
 
-function superchargeLabel(preset: SuperchargePreset): string {
+export function superchargeLabel(preset: SuperchargePreset): string {
   return preset === "deep" ? "Deep" : preset === "verify" ? "Verify" : "Off";
 }
 

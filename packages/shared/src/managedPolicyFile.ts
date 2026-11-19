@@ -565,7 +565,9 @@ const readPlatformPolicy = Effect.fnUntraced(function* (
       const checkboxes = yield* readKey(`${WINDOWS_POLICY_SUBKEY}\\${subkey}`);
       if (checkboxes === undefined) continue;
       if (checkboxes.subkeys.length > 0) {
-        return yield* refuse(`${subkey}\\${checkboxes.subkeys[0]} is not a Continuum IDE policy key`);
+        return yield* refuse(
+          `${subkey}\\${checkboxes.subkeys[0]} is not a Continuum IDE policy key`,
+        );
       }
       values.push(...checkboxes.values.map((value) => ({ ...value, key: list })));
     }

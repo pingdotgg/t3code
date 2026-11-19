@@ -15,9 +15,12 @@ function promptLinkErrorMessage(error: PromptLinkError, resolve: MFunctionType):
   switch (error) {
     case "prompt-too-long":
       return resolve(
-        msg("This prompt is longer than {maxLength} characters, so Continuum IDE did not open it.", {
-          maxLength: PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US"),
-        }),
+        msg(
+          "This prompt is longer than {maxLength} characters, so Continuum IDE did not open it.",
+          {
+            maxLength: PROMPT_LINK_MAX_PROMPT_LENGTH.toLocaleString("en-US"),
+          },
+        ),
       );
     case "prompt-only-hidden":
       return resolve(

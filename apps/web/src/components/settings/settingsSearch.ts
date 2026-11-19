@@ -32,6 +32,8 @@ export type SettingsPath =
   | "/settings/provider-updates"
   | "/settings/usage-sharing"
   | "/settings/local-models"
+  | "/settings/game-development"
+  | "/settings/mobile-access"
   | "/settings/memory-vaults"
   | "/settings/threads"
   | "/settings/browser"
@@ -112,6 +114,8 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/provider-updates": msg("Provider updates"),
   "/settings/usage-sharing": msg("Usage sharing"),
   "/settings/local-models": msg("Local models"),
+  "/settings/game-development": msg("Game Development"),
+  "/settings/mobile-access": msg("Mobile Access"),
   "/settings/memory-vaults": msg("Memory vaults"),
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
@@ -174,13 +178,19 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
   },
   {
     heading: msg("Code"),
-    paths: ["/settings/projects", "/settings/source-control", "/settings/worktrees"],
+    paths: [
+      "/settings/projects",
+      "/settings/source-control",
+      "/settings/worktrees",
+      "/settings/game-development",
+    ],
   },
   {
     heading: msg("Connections"),
     paths: [
       "/settings/connections",
       "/settings/access",
+      "/settings/mobile-access",
       ...(isSecretsFeatureEnabled ? (["/settings/secrets"] as const) : []),
     ],
   },
@@ -1611,6 +1621,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     secretsFeatureOnly: true,
   },
   {
+    id: "game-development",
+    title: msg("Game Development"),
+    to: "/settings/game-development",
+    targetId: "game-development",
+    searchTerms: [msg("studio unity unreal blender forgegui editors")],
+  },
+  {
+    id: "mobile-access",
+    title: msg("Mobile Access"),
+    to: "/settings/mobile-access",
+    targetId: "mobile-connection-attempts",
+    searchTerms: [msg("phone android ios pairing sessions connection rejected")],
+  },
+  {
     id: "archive",
     title: msg("Archived threads"),
     to: "/settings/archived",
@@ -1628,6 +1652,8 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/usage-sharing": null,
   "/settings/video-theme": null,
   "/settings/local-models": null,
+  "/settings/game-development": null,
+  "/settings/mobile-access": "connections",
   "/settings/memory-vaults": null,
   "/settings/projects": "project",
   "/settings/general": null,

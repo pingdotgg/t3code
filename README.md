@@ -41,14 +41,19 @@ It is **not** an official T3 Code release. See [License and attribution](#licens
 9. [Run models locally with Ollama](#run-models-locally-with-ollama)
 10. [Memory vaults](#memory-vaults)
 11. [Using the editor, terminal, and browser](#using-the-editor-terminal-and-browser)
-12. [Settings](#settings)
-13. [Supported operating systems](#supported-operating-systems)
-14. [Building from source](#building-from-source)
-15. [Troubleshooting](#troubleshooting)
-16. [Updating](#updating)
-17. [Contributing](#contributing)
-18. [License and attribution](#license-and-attribution)
-19. [Roadmap](#roadmap)
+12. [Game Development](#game-development)
+13. [IWE notes](#iwe-notes)
+14. [Supercharge and improve](#supercharge-and-improve)
+15. [Mobile Access](#mobile-access)
+16. [Entertainment Center](#entertainment-center)
+17. [Settings](#settings)
+18. [Supported operating systems](#supported-operating-systems)
+19. [Building from source](#building-from-source)
+20. [Troubleshooting](#troubleshooting)
+21. [Updating](#updating)
+22. [Contributing](#contributing)
+23. [License and attribution](#license-and-attribution)
+24. [Roadmap](#roadmap)
 
 ## Download
 
@@ -318,6 +323,70 @@ bugs and fixes, history, preferences) that agents read before they answer and ke
   and ask the agent to change it.
 - **Agent access to the browser** is permission-controlled; web pages cannot instruct the agent to
   run commands.
+
+## Game Development
+
+Open **Settings → Game Development** and choose the environment that runs your editor. The page shows
+detected installs, launcher requirements, and platform-specific setup. Use **Locate** to register an
+editor installed outside its default directory. Launch the project from this page to install the
+Continuum bridge. Unity version upgrades require confirmation.
+
+| Tool          | Windows                           | macOS                             | Linux                                                                                |
+| ------------- | --------------------------------- | --------------------------------- | ------------------------------------------------------------------------------------ |
+| Roblox Studio | Local                             | Local                             | Connect to a Windows or Mac environment                                              |
+| Unity         | Local through Unity Hub           | Local through Unity Hub           | Local through Unity Hub on supported distributions. NixOS uses the community package |
+| Unreal Engine | Local through Epic Games Launcher | Local through Epic Games Launcher | Download the Linux build from Epic and locate the editor                             |
+| Blender       | Local                             | Local                             | Local through the vendor build or distribution package                               |
+| ForgeGUI      | Optional Roblox asset service     | Optional Roblox asset service     | Optional Roblox asset service. Importing into Studio needs a connected editor        |
+
+Open an existing thread for the project and choose **+ → Game Development** in its right panel.
+Select the editor, or bind a Roblox Studio place after connecting the installed plugin. The workspace
+shows captures, builds, playtests, logs, approvals, checkpoints, and asset revisions. Add a recipe to
+the composer to review its prompt before sending it. Use **Agent Eyes** to see Game Development
+tool calls and their viewport captures.
+
+Install Blender under **Roblox asset tools** for local model generation and revision previews. To
+use ForgeGUI, create an MCP API key with the scopes needed for your work, then save it in the same
+settings section. Enable publishing only if you want to approve uploads from Continuum.
+[ForgeGUI setup](https://github.com/elwinhe/forgegui-plugins/blob/release/claude-mcp-v1/SETUP.md)
+
+## IWE notes
+
+Use **Add project → Open IWE Workspace** to open a folder containing `.iwe/config.toml`, or
+**New IWE Workspace** to initialize one. Start a thread, open its right panel, and choose
+**+ → Notes (IWE)**. If the environment is missing IWE, use **Install IWE for Continuum** or
+follow the setup instructions for that host.
+
+Search by title or text, follow links and backlinks, and edit Markdown with suggestions from
+`iwes`. Save an edit before renaming a link target. **Attach to session** includes the note and
+the selected depth of related notes with the next message. The activity list shows the agent's
+searches, reads, and updates when it uses the IWE tools.
+
+## Supercharge and improve
+
+- **Supercharge** lives in the model picker on a started thread. **Verify** and **Deep** run
+  follow-up checks, fixes, and reviews within the limits you set. See progress and the stop
+  reason in the same control, or choose **Stop** to end the current run.
+- **`/improve <prompt>`** opens a dialog in a started thread. Select an improver and a destination
+  model. Continuum rewrites the prompt with context from the current thread and opens the
+  destination in a new tab. Use **`/improve`** to revisit previous jobs and retry a failed step.
+
+## Mobile Access
+
+Open **Settings → Mobile Access** and select the server the phone will connect to. Enable network
+access or choose a reachable endpoint, create a pairing link, and scan the QR code in T3 Code's
+Add Environment screen. Use the same page to review or revoke clients and diagnose expired
+credentials or protocol mismatches.
+
+## Entertainment Center
+
+Open Entertainment Center from the thread sidebar. Dock it on either side, drag the edge to resize
+it, or collapse it from the header. Paste a YouTube video link to open an embed and use the star to
+save it to favorites. The desktop app plays supported sites in a separate browsing session. DRM
+services open in your system browser. Signal Weave, Orbit Freight, and Tempo Relay play in the panel.
+
+For platform build and workflow coverage, see the
+[Continuum test matrix](./docs/operations/continuum-test-matrix.md).
 
 ## Settings
 
