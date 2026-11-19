@@ -151,14 +151,21 @@ vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" })
 vi.mock("./assets", () => ({ assetEnvironment: {} }));
 vi.mock("./attachments", () => ({ attachmentEnvironment: {} }));
 vi.mock("./session", () => ({ environmentSession: {} }));
-vi.mock("./atom-interop", () => ({
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
   createEnvironmentRpcCommand: () => Symbol("rpc-command"),
-  executeAtomQuery: () => {
-    throw new Error("Unexpected network query in the inline read test");
-  },
-  runAtomCommand: () => {
-    throw new Error("Unexpected network command in the inline read test");
-  },
+  observeAtomQuery: () =>
+    Effect.promise(() =>
+      (() => {
+        throw new Error("Unexpected network query in the inline read test");
+      })(),
+    ),
+  observeAtomCommand: () =>
+    Effect.promise(() =>
+      (() => {
+        throw new Error("Unexpected network command in the inline read test");
+      })(),
+    ),
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
 

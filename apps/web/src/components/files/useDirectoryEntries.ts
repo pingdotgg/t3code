@@ -1,7 +1,9 @@
+import * as Effect from "effect/Effect";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import * as Cause from "effect/Cause";
 import { msg } from "gt-react";
 import { useEffect, useRef, useState } from "react";
@@ -40,11 +42,13 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
       if (running.current >= 4) await new Promise<void>((resolve) => waiting.current.push(resolve));
       else running.current++;
       const result = active.current
-        ? await executeAtomQuery(appAtomRegistry, atom, {
-            refresh: true,
-            reportFailure: false,
-            reportDefect: false,
-          })
+        ? await Effect.runPromise(
+            observeAtomQuery(appAtomRegistry, atom, {
+              refresh: true,
+              reportFailure: false,
+              reportDefect: false,
+            }),
+          )
         : undefined;
       const next = waiting.current.shift();
       if (next) next();

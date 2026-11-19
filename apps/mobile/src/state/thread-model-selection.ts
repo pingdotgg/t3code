@@ -1,5 +1,9 @@
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "./atom-interop";
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   AuthOrchestrationOperateScope,
@@ -38,11 +42,13 @@ export function selectThreadModel(
   ) {
     return;
   }
-  void runAtomCommand(
-    appAtomRegistry,
-    threadEnvironment.setModelSelection,
-    { environmentId: ref.environmentId, input: { threadId: ref.threadId, modelSelection } },
-    { label: "change model", reportFailure: true, reportDefect: true },
+  void Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      threadEnvironment.setModelSelection,
+      { environmentId: ref.environmentId, input: { threadId: ref.threadId, modelSelection } },
+      { label: "change model", reportFailure: true, reportDefect: true },
+    ),
   ).then((result) => {
     // Released on the reply, so a later change from another client shows.
     if (result._tag === "Success") {

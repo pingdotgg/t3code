@@ -1,6 +1,10 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomMount, useAtomSubscribe } from "@effect/atom-react";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import { ProjectListEntriesError, type EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -222,63 +226,68 @@ export function useFileTreeEntries(input: {
     });
     const atom = projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } });
     appAtomRegistry.refresh(atom);
-    return executeAtomQuery(appAtomRegistry, atom, {
-      signal: controller.signal,
-      reportFailure: false,
-      reportDefect: false,
-    }).then((result) => {
-      if (controller.signal.aborted) return;
-      requests.pending.delete(directoryPath);
-      updateDirectories((current) => {
-        const validatedDirectories = new Set(current.validatedDirectories).add(directoryPath);
-        const loading = new Set(current.loading);
-        loading.delete(directoryPath);
-        if (result._tag === "Success") {
-          const entries = new Map(current.entries);
-          entries.delete(directoryPath);
-          entries.set(
-            directoryPath,
-            result.value.entries.filter(
-              (entry) =>
-                entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directoryPath,
-            ),
-          );
-          const completeDirectories = new Set(current.completeDirectories);
-          if (result.value.truncated) completeDirectories.delete(directoryPath);
-          else completeDirectories.add(directoryPath);
+    return Effect.runPromiseExit(
+      observeAtomQuery(appAtomRegistry, atom, {
+        signal: controller.signal,
+        reportFailure: false,
+        reportDefect: false,
+      }),
+      { signal: controller.signal },
+    )
+      .then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)))
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        requests.pending.delete(directoryPath);
+        updateDirectories((current) => {
+          const validatedDirectories = new Set(current.validatedDirectories).add(directoryPath);
+          const loading = new Set(current.loading);
+          loading.delete(directoryPath);
+          if (result._tag === "Success") {
+            const entries = new Map(current.entries);
+            entries.delete(directoryPath);
+            entries.set(
+              directoryPath,
+              result.value.entries.filter(
+                (entry) =>
+                  entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directoryPath,
+              ),
+            );
+            const completeDirectories = new Set(current.completeDirectories);
+            if (result.value.truncated) completeDirectories.delete(directoryPath);
+            else completeDirectories.add(directoryPath);
+            return {
+              ...current,
+              entries,
+              loading,
+              completeDirectories,
+              discoveries: result.value.truncated
+                ? current.discoveries
+                : new Map(
+                    [...current.discoveries].filter(
+                      ([path]) => !contradictsListing(path, directoryPath, result.value.entries),
+                    ),
+                  ),
+              validatedDirectories,
+              listingCompletedAt: new Map(current.listingCompletedAt).set(
+                directoryPath,
+                result.timestamp,
+              ),
+            };
+          }
+          const error = Cause.squash(result.cause);
           return {
             ...current,
-            entries,
             loading,
-            completeDirectories,
-            discoveries: result.value.truncated
-              ? current.discoveries
-              : new Map(
-                  [...current.discoveries].filter(
-                    ([path]) => !contradictsListing(path, directoryPath, result.value.entries),
-                  ),
-                ),
             validatedDirectories,
-            listingCompletedAt: new Map(current.listingCompletedAt).set(
+            errors: new Map(current.errors).set(
               directoryPath,
-              result.timestamp,
+              error instanceof Error
+                ? (errorDisplayMessage(error, m) ?? error.message)
+                : m(msg("Files unavailable")),
             ),
           };
-        }
-        const error = Cause.squash(result.cause);
-        return {
-          ...current,
-          loading,
-          validatedDirectories,
-          errors: new Map(current.errors).set(
-            directoryPath,
-            error instanceof Error
-              ? (errorDisplayMessage(error, m) ?? error.message)
-              : m(msg("Files unavailable")),
-          ),
-        };
+        });
       });
-    });
   };
   const missingRoot =
     isProjectListEntriesError(root.failure) && root.failure.failure === "workspace_root_not_found";
@@ -495,7 +504,9 @@ export function useFileTreeEntries(input: {
         : [];
     const work = [
       ...queries.map((atom) =>
-        executeAtomQuery(appAtomRegistry, atom, { reportFailure: false, reportDefect: false }),
+        Effect.runPromise(
+          observeAtomQuery(appAtomRegistry, atom, { reportFailure: false, reportDefect: false }),
+        ),
       ),
       ...Array.from({ length: Math.min(4, paths.size) }, () => worker()),
     ];

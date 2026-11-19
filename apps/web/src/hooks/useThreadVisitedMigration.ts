@@ -1,6 +1,8 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { runAtomCommand } from "../state/atom-interop";
+
 import type { AtomRegistry } from "effect/reactivity";
 
 import { environmentThreadShells, threadEnvironment } from "../state/threads";
@@ -24,11 +26,13 @@ export function startThreadVisitedMigration(registry: AtomRegistry.AtomRegistry)
       if (!local) continue;
       const localMs = Date.parse(local);
       if (!Number.isFinite(localMs)) continue;
-      void runAtomCommand(
-        registry,
-        threadEnvironment.visit,
-        { environmentId: thread.environmentId, input: { threadId: thread.id, visitedAt: local } },
-        { reportFailure: false },
+      Effect.runFork(
+        observeAtomCommand(
+          registry,
+          threadEnvironment.visit,
+          { environmentId: thread.environmentId, input: { threadId: thread.id, visitedAt: local } },
+          { reportFailure: false },
+        ),
       );
     }
   };

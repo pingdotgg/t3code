@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import {
   EnvironmentId,
   ProjectListEntriesError,
@@ -62,10 +63,14 @@ const mocks = vi.hoisted(() => {
   return { createState, state: createState() };
 });
 
-vi.mock("../../state/atom-interop", () => ({
-  executeAtomQuery: (_registry: unknown, query: Query, options: { signal?: AbortSignal }) =>
-    new Promise<Result>((resolve) =>
-      mocks.state.requests.push({ query, signal: options.signal, resolve }),
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomQuery: (_registry: unknown, query: Query, options: { signal?: AbortSignal }) =>
+    Effect.promise(
+      () =>
+        new Promise<Result>((resolve) =>
+          mocks.state.requests.push({ query, signal: options.signal, resolve }),
+        ),
     ),
 }));
 vi.mock("../../state/atom-registry", () => ({ appAtomRegistry: { refresh: () => {} } }));

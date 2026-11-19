@@ -1,3 +1,4 @@
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import { type LiveActivity } from "expo-widgets";
 import {
   configureAndroidAgentNotifications,
@@ -23,7 +24,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { settleAsyncResult } from "../../state/atom-interop";
 
 import { m } from "../../i18n/messages";
 import { runtime } from "../../lib/runtime";
@@ -621,7 +621,7 @@ function runRegistrationInBackground<E>(
   context: string,
 ): void {
   void (async () => {
-    const result = await settleAsyncResult(() => runtime.runPromiseExit(operation));
+    const result = await runtime.runPromiseExit(operation).then(AsyncResult.fromExit);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       logRegistrationError(context, squashAtomCommandFailure(result));
     }
@@ -662,9 +662,9 @@ function startPendingDeviceRegistration(): void {
   };
   activeDeviceRegistration = registration;
   registration.operation = (async () => {
-    const result = await settleAsyncResult(() =>
-      runtime.runPromiseExit(registerDevice(next.input, generation)),
-    );
+    const result = await runtime
+      .runPromiseExit(registerDevice(next.input, generation))
+      .then(AsyncResult.fromExit);
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       // Refresh failures leave the relay's accepted registration intact; preserve registered status.
       // A sign-out or account switch meanwhile owns the status, so an obsolete run leaves it alone.

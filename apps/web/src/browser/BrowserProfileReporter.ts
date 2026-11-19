@@ -1,5 +1,7 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { runAtomCommand } from "../state/atom-interop";
+
 import { AuthPreviewOperateScope, type EnvironmentId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { Atom } from "effect/reactivity";
@@ -50,11 +52,13 @@ export function startBrowserProfileReporting(): () => void {
     };
     const targets = appAtomRegistry.get(reportTargetsAtom);
     for (const environmentId of takeDueProfileReports(reported, targets, input)) {
-      void runAtomCommand(
-        appAtomRegistry,
-        previewEnvironment.reportProfiles,
-        { environmentId, input },
-        { reportFailure: false },
+      Effect.runFork(
+        observeAtomCommand(
+          appAtomRegistry,
+          previewEnvironment.reportProfiles,
+          { environmentId, input },
+          { reportFailure: false },
+        ),
       );
     }
   };

@@ -1,3 +1,12 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import {
+  observeAtomQuery,
+  isAtomCommandInterrupted,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
@@ -98,12 +107,7 @@ import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplat
 import { codexArtifactTemplatePresentationLabel } from "@t3tools/shared/codexArtifactTemplatesCopy";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import {
-  isAtomCommandInterrupted,
-  settlePromise,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
@@ -3306,30 +3310,34 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     const originalPath = resolveWorkspaceFilePath(workspaceRoot, relativePath);
     const queryOptions = { signal, reportFailure: false, reportDefect: false };
     const searchRoot = (root: string) =>
-      executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.searchEntries({
-          environmentId: props.environmentId,
-          input: {
-            cwd: root,
-            query: workspaceLinkLookupQuery(relativePath, root) ?? relativePath,
-            kind: "file",
-            limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
-          },
-        }),
-        queryOptions,
+      Effect.runPromise(
+        observeAtomQuery(
+          appAtomRegistry,
+          projectEnvironment.searchEntries({
+            environmentId: props.environmentId,
+            input: {
+              cwd: root,
+              query: workspaceLinkLookupQuery(relativePath, root) ?? relativePath,
+              kind: "file",
+              limit: WORKSPACE_BASENAME_LOOKUP_LIMIT,
+            },
+          }),
+          queryOptions,
+        ),
       ).then((result) => ({
         root,
         entries: result._tag === "Success" ? result.value.entries : [],
       }));
     const metadataOf = (target: string) =>
-      executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.fileMetadata({
-          environmentId: props.environmentId,
-          input: { path: target },
-        }),
-        queryOptions,
+      Effect.runPromise(
+        observeAtomQuery(
+          appAtomRegistry,
+          projectEnvironment.fileMetadata({
+            environmentId: props.environmentId,
+            input: { path: target },
+          }),
+          queryOptions,
+        ),
       );
     const lookup = async () => {
       const own = await searchRoot(workspaceRoot);
@@ -3452,23 +3460,28 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         typeof mediaPath === "string" &&
         readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
       ) {
-        void executeAtomQuery(
-          appAtomRegistry,
-          projectEnvironment.fileMetadata({
-            environmentId: props.environmentId,
-            input: { path: mediaPath },
-          }),
-          { signal: request.signal, reportFailure: false, reportDefect: false },
-        ).then((result) => {
-          if (request.signal.aborted) return;
-          if (result._tag === "Success" && result.value?.kind === "directory") {
-            navigation.navigate("ThreadFile", {
-              environmentId: String(props.environmentId),
-              threadId: String(props.threadId),
-              path: fileRoutePathSegments(mediaPath),
-            });
-          } else openMediaPreview();
-        }, openMediaPreview);
+        void Effect.runPromiseExit(
+          observeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.fileMetadata({
+              environmentId: props.environmentId,
+              input: { path: mediaPath },
+            }),
+            { signal: request.signal, reportFailure: false, reportDefect: false },
+          ),
+          { signal: request.signal },
+        )
+          .then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)))
+          .then((result) => {
+            if (request.signal.aborted) return;
+            if (result._tag === "Success" && result.value?.kind === "directory") {
+              navigation.navigate("ThreadFile", {
+                environmentId: String(props.environmentId),
+                threadId: String(props.threadId),
+                path: fileRoutePathSegments(mediaPath),
+              });
+            } else openMediaPreview();
+          }, openMediaPreview);
       } else openMediaPreview();
       return;
     }

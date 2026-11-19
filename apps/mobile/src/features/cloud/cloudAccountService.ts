@@ -1,14 +1,16 @@
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import {
+  observeAtomCommand,
+  reportAtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import type { getClerkInstance } from "@clerk/expo";
 import {
   createCloudAccountService,
   ManagedRelay,
   setManagedRelaySession,
 } from "@t3tools/client-runtime/relay";
-import {
-  reportAtomCommandResult,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand, settleAsyncResult } from "../../state/atom-interop";
+
 import * as Effect from "effect/Effect";
 
 import { runtime } from "../../lib/runtime";
@@ -54,24 +56,24 @@ const cleanUpCloudAccount = async (
   accountId: string | null,
   wasActive: boolean,
 ) => {
-  const removal = await runAtomCommand(appAtomRegistry, removeCloudEnvironments, accountId, {
-    reportFailure: false,
-    reportDefect: false,
-  });
+  const removal = await Effect.runPromise(
+    observeAtomCommand(appAtomRegistry, removeCloudEnvironments, accountId, {
+      reportFailure: false,
+      reportDefect: false,
+    }),
+  );
   if (removal._tag !== "Success") throw squashAtomCommandFailure(removal);
   const results = await Promise.all([
-    settleAsyncResult(() =>
-      runtime.runPromiseExit(
+    runtime
+      .runPromiseExit(
         ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
-      ),
-    ),
+      )
+      .then(AsyncResult.fromExit),
     ...(wasActive
       ? [
-          settleAsyncResult(() =>
-            runtime.runPromiseExit(
-              unregisterAgentAwarenessDeviceForCurrentUser(clerkTokenReader(clerk)),
-            ),
-          ),
+          runtime
+            .runPromiseExit(unregisterAgentAwarenessDeviceForCurrentUser(clerkTokenReader(clerk)))
+            .then(AsyncResult.fromExit),
         ]
       : []),
   ]);

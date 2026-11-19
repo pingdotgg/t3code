@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import {
   AssetWorkspaceAssetNotFoundError,
   AuthFilesystemReadScope,
@@ -54,9 +55,10 @@ vi.mock("@t3tools/client-runtime/state/assets", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@t3tools/client-runtime/state/assets")>()),
   createAssetEnvironmentAtoms: () => ({ createUrl: state.assetQuery }),
 }));
-vi.mock("./atom-interop", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./atom-interop")>()),
-  executeAtomQuery: state.executeQuery,
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomQuery: (...args: Parameters<typeof state.executeQuery>) =>
+    Effect.promise(() => state.executeQuery(...args)),
 }));
 vi.mock("./use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 vi.mock("gt-react-native", async (importOriginal) => {

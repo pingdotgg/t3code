@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../components/ui/Dialog";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
@@ -7,7 +9,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { msg } from "gt-react-native";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { runAtomCommand } from "./atom-interop";
 
 import { hasCloudPublicConfig } from "../features/cloud/publicConfig";
 import { m } from "../i18n/messages";
@@ -62,11 +63,13 @@ export async function pairEnvironment(
   pairingUrl: string,
   expectedEnvironmentId?: EnvironmentId,
 ): Promise<PairingOutcome> {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    connectPairingUrlCommand,
-    { pairingUrl, ...(expectedEnvironmentId === undefined ? {} : { expectedEnvironmentId }) },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      connectPairingUrlCommand,
+      { pairingUrl, ...(expectedEnvironmentId === undefined ? {} : { expectedEnvironmentId }) },
+      { reportFailure: false },
+    ),
   );
   if (AsyncResult.isSuccess(result)) {
     appAtomRegistry.set(connectionPairingUrlAtom, "");

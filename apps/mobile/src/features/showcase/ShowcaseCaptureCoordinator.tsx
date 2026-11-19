@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useSyncExternalStore } from "react";
 import { Appearance, Keyboard, View } from "react-native";
 import {
@@ -6,7 +8,7 @@ import {
   type NavigationAction,
   type NavigationState,
 } from "@react-navigation/native";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import { AsyncResult } from "effect/reactivity";
 import { requireOptionalNativeModule } from "expo";
 
@@ -161,11 +163,13 @@ export function installShowcaseCapture(
       void retryShowcaseOperation(
         async () =>
           AsyncResult.isSuccess(
-            await runAtomCommand(
-              appAtomRegistry,
-              connectPairingUrl,
-              { pairingUrl },
-              { reportFailure: false },
+            await Effect.runPromise(
+              observeAtomCommand(
+                appAtomRegistry,
+                connectPairingUrl,
+                { pairingUrl },
+                { reportFailure: false },
+              ),
             ),
           ),
         { isCancelled: isCancelled() },
@@ -288,10 +292,12 @@ export function installShowcaseCapture(
     // already sees the theme applied. A failed save rolls the patch back, and
     // the next step writes again.
     if (requestedTheme !== null && !themeApplied && storedPreferences) {
-      void runAtomCommand(
-        appAtomRegistry,
-        saveMobilePreferences,
-        createMobileThemePairPatch(requestedTheme),
+      Effect.runFork(
+        observeAtomCommand(
+          appAtomRegistry,
+          saveMobilePreferences,
+          createMobileThemePairPatch(requestedTheme),
+        ),
       );
     }
     const themeId = themeIds[resolveThemeAppearance(storedPreferences)];

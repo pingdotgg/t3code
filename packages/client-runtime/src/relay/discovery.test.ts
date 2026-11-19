@@ -1,4 +1,5 @@
-import { runAtomCommand } from "../state/atom-test-interop.ts";
+import { observeAtomCommand } from "../state/runtime.ts";
+
 import { EnvironmentId } from "@t3tools/contracts";
 import type {
   RelayClientEnvironmentRecord,
@@ -201,14 +202,23 @@ describe("RelayEnvironmentDiscovery", () => {
         const registry = AtomRegistry.make();
         yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
 
-        const refresh = runAtomCommand(registry, atoms.refresh, undefined);
+        const refresh = yield* Effect.forkChild(
+          observeAtomCommand(registry, atoms.refresh, undefined),
+          { startImmediately: true },
+        );
         yield* SubscriptionRef.changes(discovery.state).pipe(
           Stream.filter((state) => state.environments.size === environments.length),
           Stream.runHead,
         );
-        const coalescedRefresh = runAtomCommand(registry, atoms.refresh, undefined);
+        const coalescedRefresh = yield* Effect.forkChild(
+          observeAtomCommand(registry, atoms.refresh, undefined),
+          { startImmediately: true },
+        );
         yield* Ref.set(harness.listedEnvironments, [environments[1]!]);
-        const mutationRefresh = runAtomCommand(registry, atoms.refreshAfterMutation, undefined);
+        const mutationRefresh = yield* Effect.forkChild(
+          observeAtomCommand(registry, atoms.refreshAfterMutation, undefined),
+          { startImmediately: true },
+        );
 
         const requests = yield* Ref.get(harness.statusRequests);
         for (const environment of environments) {
@@ -217,9 +227,11 @@ describe("RelayEnvironmentDiscovery", () => {
             status(environment, "online"),
           );
         }
-        const results = yield* Effect.promise(() =>
-          Promise.all([refresh, coalescedRefresh, mutationRefresh]),
-        );
+        const results = yield* Effect.all([
+          Fiber.join(refresh),
+          Fiber.join(coalescedRefresh),
+          Fiber.join(mutationRefresh),
+        ]);
         for (const result of results) {
           expect(result._tag).toBe("Success");
         }

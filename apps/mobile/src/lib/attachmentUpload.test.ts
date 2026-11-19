@@ -48,10 +48,6 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (original) => {
       Cause.squash(result.cause),
   };
 });
-vi.mock("../state/atom-interop", () => ({
-  executeAtomQuery: mocks.executeAtomQuery,
-  runAtomCommand: mocks.runAtomCommand,
-}));
 
 vi.mock("../state/atom-registry", () => ({
   appAtomRegistry: { get: mocks.readAtom },

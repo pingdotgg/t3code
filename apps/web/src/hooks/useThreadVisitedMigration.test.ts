@@ -1,5 +1,7 @@
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+import * as Effect from "effect/Effect";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { runAtomCommand } from "../state/atom-interop";
+
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
@@ -13,7 +15,10 @@ const state = vi.hoisted(() => ({
   localVisits: {} as Record<string, string>,
 }));
 
-vi.mock("../state/atom-interop", () => ({ runAtomCommand: vi.fn() }));
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomCommand: vi.fn(),
+}));
 vi.mock("../uiStateStore", () => ({
   useUiStateStore: { getState: () => ({ threadLastVisitedAtById: state.localVisits }) },
 }));
@@ -36,7 +41,9 @@ function setup(threads: ReadonlyArray<EnvironmentThreadShell>, local = localVisi
       local,
     ]),
   );
-  vi.mocked(runAtomCommand).mockReset().mockResolvedValue(AsyncResult.success(undefined));
+  vi.mocked(observeAtomCommand)
+    .mockReset()
+    .mockReturnValue(Effect.succeed(AsyncResult.success(undefined)));
   const tasks: Array<() => void> = [];
   const registry = AtomRegistry.make({
     scheduleTask: (task) => {
@@ -64,7 +71,7 @@ describe("startThreadVisitedMigration", () => {
   it("preserves mark unread when a client with a newer local visit reloads", () => {
     using _migration = setup([makeThreadFixture({ lastVisitedAt: "2026-10-27T09:59:59.999Z" })]);
 
-    expect(runAtomCommand).not.toHaveBeenCalled();
+    expect(observeAtomCommand).not.toHaveBeenCalled();
   });
 
   it("seeds unset visits once per environment and thread", () => {
@@ -72,7 +79,7 @@ describe("startThreadVisitedMigration", () => {
     const remote = { ...thread, environmentId: EnvironmentId.make("remote") };
     using migration = setup([thread, remote]);
 
-    expect(vi.mocked(runAtomCommand).mock.calls.map((call) => call[2])).toEqual([
+    expect(vi.mocked(observeAtomCommand).mock.calls.map((call) => call[2])).toEqual([
       {
         environmentId: thread.environmentId,
         input: { threadId: thread.id, visitedAt: localVisit },
@@ -83,21 +90,21 @@ describe("startThreadVisitedMigration", () => {
       },
     ]);
     migration.setThreads([{ ...thread }, { ...remote }]);
-    expect(runAtomCommand).toHaveBeenCalledTimes(2);
+    expect(observeAtomCommand).toHaveBeenCalledTimes(2);
   });
 
   it("waits for older servers to support visits before migrating", () => {
     const thread = makeThreadFixture();
     expect(thread.lastVisitedAt).toBeUndefined();
     using migration = setup([thread]);
-    expect(runAtomCommand).not.toHaveBeenCalled();
+    expect(observeAtomCommand).not.toHaveBeenCalled();
 
     migration.setThreads([{ ...thread, lastVisitedAt: null }]);
-    expect(runAtomCommand).toHaveBeenCalledTimes(1);
+    expect(observeAtomCommand).toHaveBeenCalledTimes(1);
   });
 
   it.each(["", "not-a-date"])("ignores invalid local visits: %s", (local) => {
     using _migration = setup([makeThreadFixture({ lastVisitedAt: null })], local);
-    expect(runAtomCommand).not.toHaveBeenCalled();
+    expect(observeAtomCommand).not.toHaveBeenCalled();
   });
 });

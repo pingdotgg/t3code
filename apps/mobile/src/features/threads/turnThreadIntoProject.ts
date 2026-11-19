@@ -1,8 +1,10 @@
+import * as Effect from "effect/Effect";
 import {
+  observeAtomCommand,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
@@ -37,11 +39,13 @@ export async function turnThreadIntoProject(thread: EnvironmentThreadShell): Pro
     return;
   }
   void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    projectEnvironment.createFromThread,
-    { environmentId: thread.environmentId, input: { threadId: thread.id } },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      projectEnvironment.createFromThread,
+      { environmentId: thread.environmentId, input: { threadId: thread.id } },
+      { reportFailure: false },
+    ),
   );
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
     const error = squashAtomCommandFailure(result);

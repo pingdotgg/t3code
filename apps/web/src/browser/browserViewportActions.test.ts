@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -14,11 +15,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  observeAtomCommand: (...args: Parameters<typeof mocks.runAtomCommand>) =>
+    Effect.promise(() => mocks.runAtomCommand(...args)),
+
   squashAtomCommandFailure: (result: { readonly error: unknown }) => result.error,
 }));
-vi.mock("../state/atom-interop", () => ({
-  runAtomCommand: mocks.runAtomCommand,
-}));
+
 vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 vi.mock("~/state/preview", () => ({ previewEnvironment: { resize: mocks.resize } }));
 vi.mock("~/previewStateStore", () => ({
@@ -76,15 +78,10 @@ describe("browserViewportActions", () => {
       viewport,
     );
 
-    expect(mocks.runAtomCommand).toHaveBeenCalledWith(
-      expect.anything(),
-      mocks.resize,
-      {
-        environmentId: threadRef.environmentId,
-        input: { threadId: threadRef.threadId, tabId: "tab-1", viewport },
-      },
-      expect.anything(),
-    );
+    expect(mocks.runAtomCommand).toHaveBeenCalledWith(expect.anything(), mocks.resize, {
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, tabId: "tab-1", viewport },
+    });
     expect(mocks.updatePreviewServerSnapshot).toHaveBeenCalledWith(threadRef, snapshot);
   });
 });

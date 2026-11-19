@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-interop";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import {
   AuthOrchestrationOperateScope,
   EnvironmentAuthorizationError,
@@ -50,35 +51,39 @@ afterEach(() => {
 });
 
 describe("attachment mutation grants", () => {
-  it("uses the attachment environment for both mint and deletion", async () => {
-    const mintResult = await runAtomCommand(registry, attachmentEnvironment.createUploadUrl, {
-      environmentId,
-      input: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
-    });
-    const removeResult = await runAtomCommand(registry, attachmentEnvironment.remove, {
-      environmentId,
-      input: { attachmentId: "pending" },
-    });
-    for (const result of [mintResult, removeResult]) {
-      expect(result._tag).toBe("Failure");
-      if (result._tag !== "Failure") throw new Error("Expected permission denial");
-      const error = Cause.squash<unknown>(result.cause);
-      expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
-      expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
-    }
-    expect(state.create).not.toHaveBeenCalled();
-    expect(state.remove).not.toHaveBeenCalled();
-    state.grantedEnvironments.add("secondary");
-    expect(
-      (
-        await runAtomCommand(registry, attachmentEnvironment.remove, {
+  it.effect("uses the attachment environment for both mint and deletion", () =>
+    Effect.gen(function* () {
+      const mintResult = yield* observeAtomCommand(
+        registry,
+        attachmentEnvironment.createUploadUrl,
+        {
+          environmentId,
+          input: { name: "image.png", mimeType: "image/png", sizeBytes: 1 },
+        },
+      );
+      const removeResult = yield* observeAtomCommand(registry, attachmentEnvironment.remove, {
+        environmentId,
+        input: { attachmentId: "pending" },
+      });
+      for (const result of [mintResult, removeResult]) {
+        expect(result._tag).toBe("Failure");
+        if (result._tag !== "Failure") throw new Error("Expected permission denial");
+        const error = Cause.squash<unknown>(result.cause);
+        expect(error).toBeInstanceOf(EnvironmentAuthorizationError);
+        expect(error).toMatchObject({ requiredScope: AuthOrchestrationOperateScope });
+      }
+      expect(state.create).not.toHaveBeenCalled();
+      expect(state.remove).not.toHaveBeenCalled();
+      state.grantedEnvironments.add("secondary");
+      expect(
+        (yield* observeAtomCommand(registry, attachmentEnvironment.remove, {
           environmentId,
           input: { attachmentId: "pending" },
-        })
-      )._tag,
-    ).toBe("Success");
-    expect(state.remove).toHaveBeenCalledOnce();
-  });
+        }))._tag,
+      ).toBe("Success");
+      expect(state.remove).toHaveBeenCalledOnce();
+    }),
+  );
 
   it.effect("blocks the upload cycle's cleanup after grant revocation", () =>
     Effect.gen(function* () {

@@ -1,6 +1,7 @@
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
-import { runAtomCommand } from "./state/atom-interop";
+
 import {
   type EnvironmentId,
   type ModelSelection,
@@ -167,11 +168,13 @@ export async function refreshTextGeneratorModels(
   environmentId: EnvironmentId,
   id: ProviderInstanceId,
 ): Promise<{ readonly count: number } | { readonly error: string }> {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    serverEnvironment.listTextGeneratorModels,
-    { environmentId, input: { id, refresh: true } },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      serverEnvironment.listTextGeneratorModels,
+      { environmentId, input: { id, refresh: true } },
+      { reportFailure: false },
+    ),
   );
   rereadTextGeneratorModels(environmentId, id);
   return result._tag === "Success"
@@ -185,11 +188,13 @@ export async function checkTextGeneratorConfig(
   id: ProviderInstanceId,
   config: TextGeneratorConfig,
 ): Promise<{ readonly models: ReadonlyArray<TextGeneratorModel> } | { readonly error: string }> {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    serverEnvironment.listTextGeneratorModels,
-    { environmentId, input: { id, config } },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      serverEnvironment.listTextGeneratorModels,
+      { environmentId, input: { id, config } },
+      { reportFailure: false },
+    ),
   );
   return result._tag === "Success"
     ? { models: result.value.models }
@@ -205,11 +210,13 @@ export async function testTextGeneratorModel(
   id: ProviderInstanceId,
   model: string,
 ): Promise<string | null> {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    serverEnvironment.listTextGeneratorModels,
-    { environmentId, input: { id, test: true, model } },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      serverEnvironment.listTextGeneratorModels,
+      { environmentId, input: { id, test: true, model } },
+      { reportFailure: false },
+    ),
   );
   return result._tag === "Success" ? null : formatEnvironmentQueryError(result.cause);
 }

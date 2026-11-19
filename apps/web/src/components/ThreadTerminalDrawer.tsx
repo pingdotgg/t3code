@@ -1,13 +1,15 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomQuery,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "../state/atom-interop";
+
 import {
   INITIAL_TERMINAL_OUTPUT_CURSOR,
   readTerminalOutputUpdate,
@@ -565,7 +567,9 @@ function TerminalSessionViewport({
       metadataThreadRef,
     );
     if (!query) return false;
-    const result = await executeAtomQuery(appAtomRegistry, query, { reportFailure: false });
+    const result = await Effect.runPromise(
+      observeAtomQuery(appAtomRegistry, query, { reportFailure: false }),
+    );
     return (
       result._tag === "Success" &&
       (result.value?.kind === "file" || result.value?.kind === "directory")

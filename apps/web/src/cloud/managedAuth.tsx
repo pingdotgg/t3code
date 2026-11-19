@@ -1,14 +1,16 @@
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import {
+  observeAtomCommand,
+  reportAtomCommandResult,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { useClerk } from "@clerk/react";
 import {
   createCloudAccountService,
   ManagedRelay,
   setManagedRelaySession,
 } from "@t3tools/client-runtime/relay";
-import {
-  reportAtomCommandResult,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand, settleAsyncResult } from "../state/atom-interop";
+
 import * as Effect from "effect/Effect";
 import { useEffect, type ReactNode } from "react";
 
@@ -41,15 +43,17 @@ function clerkTokenReader(clerk: ClerkInstance): () => Promise<string | null> {
 // A failed route removal fails the switch, so the next account never activates over the old routes.
 export async function cleanUpManagedRelayAccount(): Promise<void> {
   const [removal, tokenReset] = await Promise.all([
-    runAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
-      reportFailure: false,
-      reportDefect: false,
-    }),
-    settleAsyncResult(() =>
-      runtime.runPromiseExit(
-        ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
-      ),
+    Effect.runPromise(
+      observeAtomCommand(appAtomRegistry, environmentCatalog.removeRelayEnvironments, undefined, {
+        reportFailure: false,
+        reportDefect: false,
+      }),
     ),
+    runtime
+      .runPromiseExit(
+        ManagedRelay.ManagedRelayClient.pipe(Effect.flatMap((client) => client.resetTokenCache)),
+      )
+      .then(AsyncResult.fromExit),
   ]);
   reportAtomCommandResult(tokenReset, { label: "cloud account cleanup" });
   if (removal._tag !== "Success") throw squashAtomCommandFailure(removal);

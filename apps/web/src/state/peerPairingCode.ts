@@ -1,9 +1,14 @@
-import { runAtomCommand } from "./atom-interop";
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+
 import {
   createMcpApprovalCodeCommand,
   createPeerPairingCodeCommand,
 } from "@t3tools/client-runtime/state/peerPairingCode";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+
 import type {
   AuthMcpClientAccess,
   AuthPairingCredentialResult,
@@ -26,10 +31,12 @@ export async function mintPairingCodeOn(
   environmentId: EnvironmentId,
   access: AuthMcpClientAccess,
 ): Promise<Result.Result<string, unknown>> {
-  const result = await runAtomCommand(appAtomRegistry, mintPairingCode, {
-    environmentId,
-    input: access,
-  });
+  const result = await Effect.runPromise(
+    observeAtomCommand(appAtomRegistry, mintPairingCode, {
+      environmentId,
+      input: access,
+    }),
+  );
   return result._tag === "Success"
     ? Result.succeed(result.value)
     : Result.fail(squashAtomCommandFailure(result));
@@ -40,10 +47,12 @@ export async function mintMcpApprovalCodeOn(
   environmentId: EnvironmentId,
   access: AuthMcpClientAccess,
 ): Promise<Result.Result<AuthPairingCredentialResult, unknown>> {
-  const result = await runAtomCommand(appAtomRegistry, mintMcpApprovalCode, {
-    environmentId,
-    input: access,
-  });
+  const result = await Effect.runPromise(
+    observeAtomCommand(appAtomRegistry, mintMcpApprovalCode, {
+      environmentId,
+      input: access,
+    }),
+  );
   return result._tag === "Success"
     ? Result.succeed(result.value)
     : Result.fail(squashAtomCommandFailure(result));

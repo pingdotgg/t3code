@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-test-interop.ts";
+import { observeAtomCommand, createEnvironmentRpcCommand } from "./runtime.ts";
+
 import { requestGuarded, runStreamGuarded } from "../rpc/client.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -33,7 +34,7 @@ import * as Layer from "effect/Layer";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+
 import { AVAILABLE_CONNECTION_STATE, BearerConnectionTarget } from "../connection/model.ts";
 import { createPeerLinkEnvironmentAtoms } from "./peerLinks.ts";
 
@@ -264,46 +265,52 @@ describe("command permissions", () => {
         yield* permissions.authorize(registry, env);
       }),
   );
-  it("rechecks permission after waiting in a serial command lane", async () => {
-    const registry = AtomRegistry.make();
-    const unmount = registry.mount(sessions(env));
-    registry.set(sessions(env), AsyncResult.success(grant(true)));
-    let release!: () => void;
-    let started!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      started = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let calls = 0;
-    const command = createEnvironmentRpcCommand(runtime, {
-      label: "test.delete",
-      tag: WS_METHODS.scheduledTasksDelete,
-      concurrency: { mode: "serial", key: () => "target" },
-      execute: () =>
-        Effect.promise(async () => {
-          calls++;
-          started();
-          await gate;
-          return { id: ScheduledTaskId.make("task") };
-        }),
-    });
-    const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
-    try {
-      const first = runAtomCommand(registry, command, target);
-      await entered;
-      const second = runAtomCommand(registry, command, target);
-      registry.set(sessions(env), AsyncResult.success(grant(false)));
-      release();
-      expect((await first)._tag).toBe("Success");
-      expect((await second)._tag).toBe("Failure");
-      expect(calls).toBe(1);
-    } finally {
-      unmount();
-      registry.dispose();
-    }
-  });
+  it.effect("rechecks permission after waiting in a serial command lane", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(sessions(env));
+      registry.set(sessions(env), AsyncResult.success(grant(true)));
+      let release!: () => void;
+      let started!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let calls = 0;
+      const command = createEnvironmentRpcCommand(runtime, {
+        label: "test.delete",
+        tag: WS_METHODS.scheduledTasksDelete,
+        concurrency: { mode: "serial", key: () => "target" },
+        execute: () =>
+          Effect.promise(async () => {
+            calls++;
+            started();
+            await gate;
+            return { id: ScheduledTaskId.make("task") };
+          }),
+      });
+      const target = { environmentId: env, input: { id: ScheduledTaskId.make("task") } };
+      try {
+        const first = yield* Effect.forkChild(observeAtomCommand(registry, command, target), {
+          startImmediately: true,
+        });
+        yield* Effect.promise(() => entered);
+        const second = yield* Effect.forkChild(observeAtomCommand(registry, command, target), {
+          startImmediately: true,
+        });
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        release();
+        expect((yield* Fiber.join(first))._tag).toBe("Success");
+        expect((yield* Fiber.join(second))._tag).toBe("Failure");
+        expect(calls).toBe(1);
+      } finally {
+        unmount();
+        registry.dispose();
+      }
+    }),
+  );
 });
 
 it.effect(
@@ -469,15 +476,14 @@ it.effect(
       setAccess(false);
       expect(yield* readLinks).toEqual({ links: [] });
       const linkInput = { url: peer.urls[0]!, pairingCode: "test-code", access: peer.access };
-      const link = Effect.promise(() =>
-        runAtomCommand(registry, peerLinks.link, { environmentId: env, input: linkInput }),
-      );
-      const unlink = Effect.promise(() =>
-        runAtomCommand(registry, peerLinks.unlink, {
-          environmentId: env,
-          input: { environmentId: peer.environmentId },
-        }),
-      );
+      const link = observeAtomCommand(registry, peerLinks.link, {
+        environmentId: env,
+        input: linkInput,
+      });
+      const unlink = observeAtomCommand(registry, peerLinks.unlink, {
+        environmentId: env,
+        input: { environmentId: peer.environmentId },
+      });
       expect(registry.get(peerLinks.link.permissionAtom(env))).toBe(false);
       const deniedLink = yield* link;
       expect(deniedLink._tag).toBe("Failure");

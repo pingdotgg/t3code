@@ -1,8 +1,10 @@
+import * as Effect from "effect/Effect";
 import {
+  observeAtomCommand,
   type AtomCommandResult,
   isAtomCommandInterrupted,
 } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import type {
   EnvironmentId,
   PullRequestFilesViewedResult,
@@ -239,11 +241,13 @@ const filesViewedStore = createFilesViewedStore({
   subscribeAnswers: ({ environmentId, reference }, onAnswer) =>
     subscribePullRequestFilesViewedAnswers({ environmentId, input: reference }, onAnswer),
   send: ({ environmentId, reference }, files) =>
-    runAtomCommand(
-      appAtomRegistry,
-      pullRequestEnvironment.setFilesViewed,
-      { environmentId, input: { ...reference, files } },
-      { reportFailure: false },
+    Effect.runPromise(
+      observeAtomCommand(
+        appAtomRegistry,
+        pullRequestEnvironment.setFilesViewed,
+        { environmentId, input: { ...reference, files } },
+        { reportFailure: false },
+      ),
     ),
   refresh: (target) => appAtomRegistry.refresh(filesViewedAtom(target)),
   reportFailure: () =>

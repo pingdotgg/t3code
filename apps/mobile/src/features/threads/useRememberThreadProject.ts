@@ -1,6 +1,8 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useFocusEffect } from "@react-navigation/native";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
@@ -25,9 +27,11 @@ export function useRememberThreadProject(project: EnvironmentProject | null) {
       if (!AsyncResult.isSuccess(preferences)) return;
       const last = preferences.value.lastThreadProject;
       if (last?.environmentId === environmentId && last.projectId === projectId) return;
-      void runAtomCommand(appAtomRegistry, saveMobilePreferences, {
-        lastThreadProject: { environmentId, projectId },
-      });
+      Effect.runFork(
+        observeAtomCommand(appAtomRegistry, saveMobilePreferences, {
+          lastThreadProject: { environmentId, projectId },
+        }),
+      );
     }, [environmentId, projectId, remember]),
   );
 }

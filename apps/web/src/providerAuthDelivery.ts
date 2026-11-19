@@ -1,4 +1,6 @@
-import { runAtomCommand } from "./state/atom-interop";
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import { readCodexAuthDelivery } from "@t3tools/shared/codexAuthHandoff";
 import { msg } from "gt-react";
 
@@ -39,18 +41,20 @@ export function startProviderAuthDelivery(): void {
 
 async function completeProviderAuth(delivery: ProviderAuthDelivery): Promise<void> {
   try {
-    const result = await runAtomCommand(
-      appAtomRegistry,
-      serverEnvironment.completeProviderAuth,
-      {
-        environmentId: delivery.environmentId,
-        input: {
-          instanceId: delivery.instanceId,
-          flowId: delivery.flowId,
-          callbackUrl: delivery.callbackUrl,
+    const result = await Effect.runPromise(
+      observeAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.completeProviderAuth,
+        {
+          environmentId: delivery.environmentId,
+          input: {
+            instanceId: delivery.instanceId,
+            flowId: delivery.flowId,
+            callbackUrl: delivery.callbackUrl,
+          },
         },
-      },
-      { reportFailure: false },
+        { reportFailure: false },
+      ),
     );
     if (result._tag === "Failure") {
       toastManager.add({

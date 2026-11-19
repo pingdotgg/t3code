@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthPreviewOperateScope,
@@ -7,7 +9,7 @@ import {
   FILL_PREVIEW_VIEWPORT,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import { runAtomCommand } from "../state/atom-interop";
+
 import { type ComponentProps, useState } from "react";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
@@ -104,7 +106,8 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   void openUrlInPreview({
     threadRef: source.threadRef,
     url,
-    openPreview: (input) => runAtomCommand(appAtomRegistry, previewEnvironment.open, input),
+    openPreview: (input) =>
+      Effect.runPromise(observeAtomCommand(appAtomRegistry, previewEnvironment.open, input)),
     profileId: source.snapshot.profileId,
     background,
   });

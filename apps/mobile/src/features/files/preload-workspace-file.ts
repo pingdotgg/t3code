@@ -1,6 +1,8 @@
+import * as Effect from "effect/Effect";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { AuthFilesystemReadScope } from "@t3tools/contracts";
 import { readEnvironmentScope } from "../../state/session";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   isWorkspaceBrowserPreviewPath,
@@ -45,34 +47,38 @@ export function preloadWorkspaceFileContents(input: {
     return;
   }
 
-  const preload = executeAtomQuery(
-    appAtomRegistry,
-    projectEnvironment.readFile({
-      environmentId: input.environmentId,
-      input: { cwd: input.cwd, relativePath: input.relativePath },
-    }),
-    {
-      label: "workspace file preload",
-      reportDefect: false,
-      reportFailure: false,
-    },
+  const preload = Effect.runPromise(
+    observeAtomQuery(
+      appAtomRegistry,
+      projectEnvironment.readFile({
+        environmentId: input.environmentId,
+        input: { cwd: input.cwd, relativePath: input.relativePath },
+      }),
+      {
+        label: "workspace file preload",
+        reportDefect: false,
+        reportFailure: false,
+      },
+    ),
   )
     .then(async (result) => {
       if (result._tag === "Success") {
         const document = prepareSourceFileDocument(result.value.contents);
         if (document.contents.length <= MAX_HIGHLIGHT_PRELOAD_CHARACTERS) {
-          await executeAtomQuery(
-            appAtomRegistry,
-            sourceHighlightAtom({
-              path: input.relativePath,
-              contents: document.contents,
-              theme: input.theme,
-            }),
-            {
-              label: "workspace source highlight preload",
-              reportDefect: false,
-              reportFailure: false,
-            },
+          await Effect.runPromise(
+            observeAtomQuery(
+              appAtomRegistry,
+              sourceHighlightAtom({
+                path: input.relativePath,
+                contents: document.contents,
+                theme: input.theme,
+              }),
+              {
+                label: "workspace source highlight preload",
+                reportDefect: false,
+                reportFailure: false,
+              },
+            ),
           );
         }
       }

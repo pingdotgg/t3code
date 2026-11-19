@@ -1,4 +1,10 @@
-import { runAtomCommand } from "../../state/atom-interop";
+import * as Exit from "effect/Exit";
+import {
+  observeAtomQuery,
+  observeAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
   editHeldPullRequestListEntries,
@@ -6,8 +12,7 @@ import {
   pullRequestPendingEditsFor,
 } from "@t3tools/client-runtime/state/pull-requests";
 import { RegistryContext, useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import type { EnvironmentId, PullRequestDiffStat, PullRequestListInput } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -93,15 +98,18 @@ async function loadNextPages(
 ) {
   const responses = await Promise.allSettled(
     continuations(registry, targets).map(async ({ target, pages, input }) => {
-      const response = await executeAtomQuery(
-        registry,
-        pullRequestHostAnswer(composerPullRequests.list({ ...target, input })),
-        {
-          signal,
-          refresh: retry,
-          reportFailure: false,
-        },
-      );
+      const response = await Effect.runPromiseExit(
+        observeAtomQuery(
+          registry,
+          pullRequestHostAnswer(composerPullRequests.list({ ...target, input })),
+          {
+            signal,
+            refresh: retry,
+            reportFailure: false,
+          },
+        ),
+        { signal: signal },
+      ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
       if (signal.aborted) return;
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       if (response.value.errors.length)
@@ -132,20 +140,21 @@ async function refreshHeads(
 ) {
   const responses = await Promise.allSettled(
     targets.map(async (target) => {
-      await runAtomCommand(registry, composerPullRequests.invalidate, {
-        environmentId: target.environmentId,
-        input: {},
-      });
+      await Effect.runPromise(
+        observeAtomCommand(registry, composerPullRequests.invalidate, {
+          environmentId: target.environmentId,
+          input: {},
+        }),
+      );
       if (signal.aborted) return;
-      const response = await executeAtomQuery(
-        registry,
-        pullRequestHostAnswer(composerPullRequests.list(target)),
-        {
+      const response = await Effect.runPromiseExit(
+        observeAtomQuery(registry, pullRequestHostAnswer(composerPullRequests.list(target)), {
           refresh: true,
           signal,
           reportFailure: false,
-        },
-      );
+        }),
+        { signal: signal },
+      ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
       if (signal.aborted) return;
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       registry.set(

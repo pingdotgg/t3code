@@ -281,12 +281,17 @@ export function observeAtomCommand<W, A, E>(
   registry: AtomRegistry.AtomRegistry,
   command: AtomCommand<W, A, E>,
   input: W,
-  options: Omit<AtomCommandOptions, "signal"> = {},
+  options: AtomCommandOptions = {},
+  reporter: AtomCommandReporter = console,
 ) {
   return captureAtomResult(Effect.suspend(() => command.run(registry, input))).pipe(
     Effect.tap((result) =>
       Effect.sync(() =>
-        reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }),
+        reportAtomCommandResult(
+          result,
+          { ...options, label: options.label ?? command.label },
+          reporter,
+        ),
       ),
     ),
   );
@@ -345,6 +350,17 @@ export const awaitAtomResult = <A, E>(
       });
     }),
   );
+
+export function observeAtomQuery<A, E>(
+  registry: AtomRegistry.AtomRegistry,
+  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+  options: AtomQueryOptions = {},
+  reporter: AtomCommandReporter = console,
+) {
+  return captureAtomResult(awaitAtomResult(registry, atom, options)).pipe(
+    Effect.tap((result) => Effect.sync(() => reportAtomCommandResult(result, options, reporter))),
+  );
+}
 
 export function createRuntimeCommand<R, ER, W, A, E>(
   runtime: Atom.AtomRuntime<R, ER>,

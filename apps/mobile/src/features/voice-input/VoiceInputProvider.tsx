@@ -1,4 +1,6 @@
-import { runAtomCommand } from "../../state/atom-interop";
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import { useAtomValue } from "@effect/atom-react";
 import { AudioModule, RecordingPresets, type RecordingStatus } from "expo-audio";
 import { File } from "expo-file-system";
@@ -109,11 +111,13 @@ const voiceInputAtom = Atom.make((get) => {
       const known = deviceMicrophoneOrder(preferences.value.microphones);
       const order = rememberMicrophones(known, inputs);
       if (order !== known) {
-        void runAtomCommand(registry, saveMobilePreferences, {
-          transform: (current) => ({
-            microphones: rememberMicrophones(deviceMicrophoneOrder(current.microphones), inputs),
+        Effect.runFork(
+          observeAtomCommand(registry, saveMobilePreferences, {
+            transform: (current) => ({
+              microphones: rememberMicrophones(deviceMicrophoneOrder(current.microphones), inputs),
+            }),
           }),
-        });
+        );
       }
       return preferredMicrophoneInput(inputs, order);
     },

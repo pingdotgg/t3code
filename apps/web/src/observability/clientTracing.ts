@@ -1,3 +1,4 @@
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
@@ -6,7 +7,7 @@ import { HttpClient } from "effect/http";
 import { OtlpExporter, OtlpSerialization, OtlpTracer } from "effect/observability";
 
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { settleAsyncResult } from "../state/atom-interop";
+
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary";
 import { releaseChannelOf, releaseResourceAttributes } from "@t3tools/shared/releaseResource";
@@ -105,8 +106,8 @@ async function applyClientTracingConfig(): Promise<void> {
   const runtime = ManagedRuntime.make(layerDelegateRuntime);
   const scope = runtime.runSync(Scope.make());
 
-  const delegateResult = await settleAsyncResult(() =>
-    runtime.runPromiseExit(
+  const delegateResult = await runtime
+    .runPromiseExit(
       Scope.provide(scope)(
         OtlpTracer.make({
           url: otlpTracesUrl,
@@ -114,8 +115,8 @@ async function applyClientTracingConfig(): Promise<void> {
           resource: CLIENT_TRACING_RESOURCE,
         }),
       ),
-    ),
-  );
+    )
+    .then(AsyncResult.fromExit);
   if (delegateResult._tag === "Failure") {
     await disposeTracerRuntime(runtime, scope);
 
@@ -144,6 +145,6 @@ async function disposeTracerRuntime(
     return;
   }
 
-  await settleAsyncResult(() => runtime.runPromiseExit(Scope.close(scope, Exit.void)));
+  await runtime.runPromiseExit(Scope.close(scope, Exit.void));
   runtime.dispose();
 }

@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-test-interop.ts";
+import { observeAtomCommand, type AtomCommandResult } from "./runtime.ts";
+
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -31,7 +32,7 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
-import type { AtomCommandResult } from "./runtime.ts";
+
 import {
   applyVcsActionProgressEvent,
   beginVcsActionState,
@@ -521,13 +522,15 @@ describe("vcsActionState", () => {
       expect(registry.get(state).revision).toBe(0);
       const threadId = ThreadId.make("thread-stacked-action");
       const projectId = ProjectId.make("project-stacked-action");
-      const successfulResult = yield* Effect.promise(() =>
-        runAtomCommand(registry, manager.runStackedAction(targetKey), {
+      const successfulResult = yield* observeAtomCommand(
+        registry,
+        manager.runStackedAction(targetKey),
+        {
           actionId: successfulActionId,
           action,
           threadId,
           projectId,
-        }),
+        },
       );
 
       expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
@@ -538,11 +541,13 @@ describe("vcsActionState", () => {
         { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
       ]);
 
-      const failedResult = yield* Effect.promise(() =>
-        runAtomCommand(registry, manager.runStackedAction(targetKey), {
+      const failedResult = yield* observeAtomCommand(
+        registry,
+        manager.runStackedAction(targetKey),
+        {
           actionId: failedActionId,
           action,
-        }),
+        },
       );
 
       expect(AsyncResult.isFailure(failedResult)).toBe(true);
@@ -555,11 +560,13 @@ describe("vcsActionState", () => {
       expect(registry.get(state).revision).toBe(2);
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
-      const interruptedResult = yield* Effect.promise(() =>
-        runAtomCommand(registry, manager.runStackedAction(targetKey), {
+      const interruptedResult = yield* observeAtomCommand(
+        registry,
+        manager.runStackedAction(targetKey),
+        {
           actionId: interruptedActionId,
           action,
-        }),
+        },
       );
 
       expect(AsyncResult.isFailure(interruptedResult)).toBe(true);

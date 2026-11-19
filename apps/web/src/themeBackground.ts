@@ -1,5 +1,9 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
-import { executeAtomQuery } from "./state/atom-interop";
+
 import type { EnvironmentId } from "@t3tools/contracts";
 
 import { appAtomRegistry, subscribeAtomChanges } from "./rpc/atomRegistry";
@@ -31,14 +35,17 @@ async function loadBackground(
   themeId: string,
   signal: AbortSignal,
 ): Promise<string | null> {
-  const minted = await executeAtomQuery(
-    appAtomRegistry,
-    assetEnvironment.createUrl({
-      environmentId,
-      input: { resource: { _tag: "environment-theme-background", themeId } },
-    }),
-    { label: "theme background", reportFailure: false, refresh: true, signal },
-  );
+  const minted = await Effect.runPromiseExit(
+    observeAtomQuery(
+      appAtomRegistry,
+      assetEnvironment.createUrl({
+        environmentId,
+        input: { resource: { _tag: "environment-theme-background", themeId } },
+      }),
+      { label: "theme background", reportFailure: false, refresh: true, signal },
+    ),
+    { signal: signal },
+  ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
   const connection = appAtomRegistry.get(
     environmentSession.preparedConnectionValueAtom(environmentId),
   );

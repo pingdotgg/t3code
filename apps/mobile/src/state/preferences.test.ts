@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-interop";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -79,9 +80,12 @@ describe("mobile preferences state", () => {
       const registry = AtomRegistry.make();
       const unmountPreferences = registry.mount(state.preferencesAtom);
 
-      const save = runAtomCommand(registry, state.savePreferences, {
-        collapsedProjectGroups: ["project:new"],
-      });
+      const save = yield* Effect.forkChild(
+        observeAtomCommand(registry, state.savePreferences, {
+          collapsedProjectGroups: ["project:new"],
+        }),
+        { startImmediately: true },
+      );
       pendingLoad.resolve({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:old"],
@@ -90,7 +94,7 @@ describe("mobile preferences state", () => {
       const preferences = yield* AtomRegistry.getResult(registry, state.preferencesAtom, {
         suspendOnWaiting: true,
       });
-      const saveResult = yield* Effect.promise(() => save);
+      const saveResult = yield* Fiber.join(save);
       expect(preferences).toEqual({
         baseFontSize: 18,
         collapsedProjectGroups: ["project:new"],
@@ -239,14 +243,20 @@ describe("mobile preferences state", () => {
       const registry = AtomRegistry.make();
       const unmount = registry.mount(state.preferencesAtom);
 
-      const failing = runAtomCommand(registry, state.savePreferences, { baseFontSize: 18 });
-      const succeeding = runAtomCommand(registry, state.savePreferences, {
-        crashReportsEnabled: false,
-      });
+      const failing = yield* Effect.forkChild(
+        observeAtomCommand(registry, state.savePreferences, { baseFontSize: 18 }),
+        { startImmediately: true },
+      );
+      const succeeding = yield* Effect.forkChild(
+        observeAtomCommand(registry, state.savePreferences, {
+          crashReportsEnabled: false,
+        }),
+        { startImmediately: true },
+      );
       slowSave.resolve();
 
-      expect((yield* Effect.promise(() => succeeding))._tag).toBe("Success");
-      expect((yield* Effect.promise(() => failing))._tag).toBe("Failure");
+      expect((yield* Fiber.join(succeeding))._tag).toBe("Success");
+      expect((yield* Fiber.join(failing))._tag).toBe("Failure");
 
       unmount();
       registry.dispose();

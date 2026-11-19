@@ -1,6 +1,8 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { appSignInTargetForRemote } from "@t3tools/client-runtime/source-control-clients";
-import { runAtomCommand } from "../state/atom-interop";
+
 import { msg } from "gt-react";
 
 import { m } from "../i18n/messages";
@@ -18,11 +20,13 @@ export async function suggestAppAccessForRemote(
 ): Promise<void> {
   const target = appSignInTargetForRemote(remoteUrl);
   if (target === null) return;
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    sourceControlEnvironment.checkAppAccess,
-    { environmentId, input: target.input },
-    { label: "check app access", reportFailure: false, reportDefect: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      sourceControlEnvironment.checkAppAccess,
+      { environmentId, input: target.input },
+      { label: "check app access", reportFailure: false, reportDefect: false },
+    ),
   );
   if (result._tag !== "Success" || result.value.status !== "not-covered") return;
   const owner = target.input.repository.split("/")[0] ?? target.input.repository;

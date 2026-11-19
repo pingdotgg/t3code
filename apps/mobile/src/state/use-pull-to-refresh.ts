@@ -1,6 +1,10 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext } from "@effect/atom-react";
-import { executeAtomQuery } from "./atom-interop";
-import { type AsyncResult, type Atom } from "effect/reactivity";
+
+import { type Atom } from "effect/reactivity";
 import { use, useEffect, useRef, useState } from "react";
 
 export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>> | null) {
@@ -32,12 +36,15 @@ export function usePullToRefresh<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A
       .catch(() => undefined)
       .then(() => {
         if (controller.signal.aborted) return;
-        return executeAtomQuery(registry, atom, {
-          refresh: true,
-          signal: controller.signal,
-          reportFailure: false,
-          reportDefect: false,
-        });
+        return Effect.runPromiseExit(
+          observeAtomQuery(registry, atom, {
+            refresh: true,
+            signal: controller.signal,
+            reportFailure: false,
+            reportDefect: false,
+          }),
+          { signal: controller.signal },
+        ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
       })
       .finally(() => {
         if (controller.signal.aborted || request.current?.controller !== controller) return;

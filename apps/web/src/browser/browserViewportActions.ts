@@ -1,6 +1,10 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../state/atom-interop";
+
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
@@ -72,14 +76,11 @@ async function resizeBrowserViewport(
   target: BrowserViewportTarget,
   viewport: PreviewViewportSetting,
 ): Promise<void> {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    previewEnvironment.resize,
-    {
+  const result = await Effect.runPromise(
+    observeAtomCommand(appAtomRegistry, previewEnvironment.resize, {
       environmentId: target.threadRef.environmentId,
       input: { threadId: target.threadRef.threadId, tabId: target.tabId, viewport },
-    },
-    { label: "preview viewport resize" },
+    }),
   );
   if (result._tag === "Failure") {
     const error = squashAtomCommandFailure(result);

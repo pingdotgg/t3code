@@ -1,14 +1,12 @@
+import * as Effect from "effect/Effect";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const query = vi.hoisted(() => vi.fn());
-vi.mock(
-  import("./state/atom-interop"),
-  () =>
-    ({
-      executeAtomQuery: query,
-    }) as never,
-);
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomQuery: (...args: Parameters<typeof query>) => Effect.promise(() => query(...args)),
+}));
 vi.mock(import("./state/primaryEnvironment"), async () => {
   const { Atom } = await import("effect/reactivity");
   return { localEnvironmentIdAtom: Atom.make(EnvironmentId.make("host")) } as never;

@@ -50,10 +50,6 @@ vi.mock("@t3tools/client-runtime/state/runtime", async (original) => {
       Cause.squash(result.cause),
   };
 });
-vi.mock("../state/atom-interop", () => ({
-  executeAtomQuery: mocks.executeAtomQuery,
-  runAtomCommand: mocks.runAtomCommand,
-}));
 
 vi.mock("../rpc/atomRegistry", async () => {
   const { AtomRegistry } = await import("effect/reactivity");

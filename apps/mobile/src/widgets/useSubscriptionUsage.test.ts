@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
@@ -55,15 +56,16 @@ vi.mock("../state/server", () => ({
   serverEnvironment: { refreshProviders: { label: "Refresh providers" } },
 }));
 
-vi.mock("../state/atom-interop", () => ({
-  runAtomCommand: (
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomCommand: (
     _registry: unknown,
     _command: unknown,
     input: { readonly environmentId: string },
-  ) => {
-    fixture.refreshed.push(input.environmentId);
-    return Promise.resolve();
-  },
+  ) =>
+    Effect.sync(() => {
+      fixture.refreshed.push(input.environmentId);
+    }),
 }));
 
 import { environmentCatalog } from "../connection/catalog";

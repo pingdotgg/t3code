@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-test-interop.ts";
+import { observeAtomCommand } from "./runtime.ts";
+
 import {
   EnvironmentId,
   ProviderDriverKind,
@@ -351,13 +352,16 @@ describe("accepted server update recovery", () => {
       const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
         Effect.sync(() => value.dispose()),
       );
-      const pending = runAtomCommand(registry, atoms.updateServer, {
-        environmentId: TARGET.environmentId,
-        input: { targetVersion: "0.0.31" },
-      });
+      const pending = yield* Effect.forkChild(
+        observeAtomCommand(registry, atoms.updateServer, {
+          environmentId: TARGET.environmentId,
+          input: { targetVersion: "0.0.31" },
+        }),
+        { startImmediately: true },
+      );
       if (loss === "cancel") {
         yield* Fiber.interrupt(yield* Deferred.await(cancelFiber));
-        const cancelled = yield* Effect.promise(() => pending);
+        const cancelled = yield* Fiber.join(pending);
         expect(cancelled._tag).toBe("Failure");
         if (cancelled._tag === "Failure")
           expect(Cause.hasInterruptsOnly(cancelled.cause)).toBe(true);
@@ -368,12 +372,12 @@ describe("accepted server update recovery", () => {
         return;
       }
       const first = yield* Effect.raceFirst(
-        Effect.promise(() => pending).pipe(Effect.as("settled")),
+        Fiber.join(pending).pipe(Effect.as("settled")),
         Deferred.await(observing).pipe(Effect.as("observing")),
       );
       if (!resumes) {
         expect(first).toBe("settled");
-        expect(AsyncResult.isFailure(yield* Effect.promise(() => pending))).toBe(true);
+        expect(AsyncResult.isFailure(yield* Fiber.join(pending))).toBe(true);
         expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toMatchObject({
           status: "failed",
         });
@@ -390,7 +394,7 @@ describe("accepted server update recovery", () => {
         status: "running",
       });
       yield* Queue.offer(readyEvents, ready("0.0.31"));
-      expect(AsyncResult.isSuccess(yield* Effect.promise(() => pending))).toBe(true);
+      expect(AsyncResult.isSuccess(yield* Fiber.join(pending))).toBe(true);
       expect(registry.get(serverUpdateStateAtom(TARGET.environmentId))).toEqual({
         status: "idle",
       });
@@ -1585,12 +1589,10 @@ describe("launcher update resume", () => {
     const updateStateAtom = serverUpdateStateAtom(TARGET.environmentId);
     yield* AtomRegistry.mount(registry, updateStateAtom);
 
-    yield* Effect.promise(() =>
-      runAtomCommand(registry, atoms.updateServer, {
-        environmentId: TARGET.environmentId,
-        input: { targetVersion: "0.0.31" },
-      }),
-    ).pipe(Effect.forkScoped);
+    yield* observeAtomCommand(registry, atoms.updateServer, {
+      environmentId: TARGET.environmentId,
+      input: { targetVersion: "0.0.31" },
+    }).pipe(Effect.forkScoped);
     return {
       // The host saw its first call: the update request or a lifecycle subscription.
       started: Deferred.await(started),
@@ -1744,25 +1746,26 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
       const install = (instanceId: string) =>
-        runAtomCommand(registry, atoms.startProviderInstall, {
-          environmentId: TARGET.environmentId,
-          input: { instanceId: ProviderInstanceId.make(instanceId) },
-        });
+        Effect.forkChild(
+          observeAtomCommand(registry, atoms.startProviderInstall, {
+            environmentId: TARGET.environmentId,
+            input: { instanceId: ProviderInstanceId.make(instanceId) },
+          }),
+          { startImmediately: true },
+        );
 
-      const codex = install("codex");
+      const codex = yield* install("codex");
       expect(yield* Queue.take(requested)).toBe("codex");
-      const duplicateCodex = install("codex");
-      const antigravity = install("antigravity");
+      const duplicateCodex = yield* install("codex");
+      const antigravity = yield* install("antigravity");
       yield* Deferred.succeed(release, undefined);
 
-      expect(yield* Effect.promise(() => codex)).toMatchObject({
+      expect(yield* Fiber.join(codex)).toMatchObject({
         _tag: "Success",
         value: { driver: "codex" },
       });
-      expect(yield* Effect.promise(() => duplicateCodex)).toEqual(
-        yield* Effect.promise(() => codex),
-      );
-      expect(yield* Effect.promise(() => antigravity)).toMatchObject({
+      expect(yield* Fiber.join(duplicateCodex)).toEqual(yield* Fiber.join(codex));
+      expect(yield* Fiber.join(antigravity)).toMatchObject({
         _tag: "Success",
         value: { driver: "antigravity" },
       });
@@ -1812,22 +1815,28 @@ describe("provider setup commands", () => {
         Effect.sync(() => registry.dispose()),
       );
 
-      void runAtomCommand(registry, atoms.updateProvider, {
-        environmentId: TARGET.environmentId,
-        input: { provider: ProviderDriverKind.make("opencode") },
-      });
+      yield* Effect.forkChild(
+        observeAtomCommand(registry, atoms.updateProvider, {
+          environmentId: TARGET.environmentId,
+          input: { provider: ProviderDriverKind.make("opencode") },
+        }),
+        { startImmediately: true },
+      );
       yield* Deferred.await(updateStarted);
-      void runAtomCommand(registry, atoms.mutateProviderInstance, {
-        environmentId: TARGET.environmentId,
-        input: {
-          patch: {},
-          providerInstanceMutation: {
-            operation: "upsert",
-            instanceId: ProviderInstanceId.make("codex"),
-            instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+      yield* Effect.forkChild(
+        observeAtomCommand(registry, atoms.mutateProviderInstance, {
+          environmentId: TARGET.environmentId,
+          input: {
+            patch: {},
+            providerInstanceMutation: {
+              operation: "upsert",
+              instanceId: ProviderInstanceId.make("codex"),
+              instance: { driver: ProviderDriverKind.make("codex"), enabled: false },
+            },
           },
-        },
-      });
+        }),
+        { startImmediately: true },
+      );
 
       const saved = yield* Deferred.await(settingsSaved).pipe(
         Effect.as(true),

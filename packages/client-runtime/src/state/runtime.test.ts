@@ -1,4 +1,17 @@
-import { runAtomCommand } from "./atom-test-interop.ts";
+import {
+  observeAtomQuery,
+  observeAtomCommand,
+  createAtomCommandScheduler,
+  createEnvironmentQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
+  isAtomCommandInterrupted,
+  selectEnvironmentQueryData,
+  createEnvironmentSubscriptionAtomFamily,
+  createRuntimeCommand,
+  environmentSessionGenerationAtom,
+  type QueryAnswerHandler,
+} from "./runtime.ts";
+
 import { describe, expect, it } from "@effect/vitest";
 import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
@@ -58,18 +71,6 @@ import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
-import {
-  createAtomCommandScheduler,
-  createEnvironmentQueryAtomFamily,
-  createEnvironmentRpcSubscriptionAtomFamily,
-  isAtomCommandInterrupted,
-  selectEnvironmentQueryData,
-  createEnvironmentSubscriptionAtomFamily,
-  createRuntimeCommand,
-  environmentSessionGenerationAtom,
-  type QueryAnswerHandler,
-} from "./runtime.ts";
-import { executeAtomQuery } from "./atom-test-interop.ts";
 
 const QUERY_ENVIRONMENT = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("query-environment"),
@@ -1011,23 +1012,28 @@ describe("environment query lifecycle", () => {
       });
       const registry = yield* mountEnvironmentQuery(harness.atom);
       // Callers hold the failure a read got while the environment was retrying.
-      const failed = yield* Effect.promise(() =>
-        executeAtomQuery(registry, harness.atom, { reportFailure: false }),
-      );
+      const failed = yield* observeAtomQuery(registry, harness.atom, { reportFailure: false });
       expect(AsyncResult.isFailure(failed)).toBe(true);
 
-      const answered = yield* Deferred.make<AsyncResult.AsyncResult<string, unknown>>();
+      const generationChanged = yield* Deferred.make<void>();
       const sessionGeneration = environmentSessionGenerationAtom(
         harness.runtime,
         QUERY_ENVIRONMENT.environmentId,
       );
       const unmount = registry.mount(sessionGeneration);
       const unsubscribe = registry.subscribe(sessionGeneration, () => {
-        void executeAtomQuery(registry, harness.atom, {
-          refresh: true,
-          reportFailure: false,
-        }).then((result) => Deferred.doneUnsafe(answered, Effect.succeed(result)));
+        Deferred.doneUnsafe(generationChanged, Effect.void);
       });
+      const answered = yield* Effect.forkChild(
+        Deferred.await(generationChanged).pipe(
+          Effect.andThen(
+            observeAtomQuery(registry, harness.atom, {
+              refresh: true,
+              reportFailure: false,
+            }),
+          ),
+        ),
+      );
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           unsubscribe();
@@ -1041,7 +1047,7 @@ describe("environment query lifecycle", () => {
         Option.some({} as RpcSession.RpcSession),
       );
       yield* SubscriptionRef.set(harness.supervisorState, queryConnectionState({ generation: 2 }));
-      expect(yield* Deferred.await(answered)).toMatchObject({
+      expect(yield* Fiber.join(answered)).toMatchObject({
         _tag: "Success",
         value: "connected",
       });
@@ -1464,73 +1470,82 @@ describe("environment query lifecycle", () => {
 });
 
 describe("executeAtomQuery", () => {
-  it("keeps concurrent query results correlated to their atoms", async () => {
-    const firstLatch = Latch.makeUnsafe();
-    const secondLatch = Latch.makeUnsafe();
-    const firstAtom = Atom.make(firstLatch.await.pipe(Effect.as("first")));
-    const secondAtom = Atom.make(secondLatch.await.pipe(Effect.as("second")));
-    const registry = AtomRegistry.make();
+  it.effect("keeps concurrent query results correlated to their atoms", () =>
+    Effect.gen(function* () {
+      const firstLatch = Latch.makeUnsafe();
+      const secondLatch = Latch.makeUnsafe();
+      const firstAtom = Atom.make(firstLatch.await.pipe(Effect.as("first")));
+      const secondAtom = Atom.make(secondLatch.await.pipe(Effect.as("second")));
+      const registry = AtomRegistry.make();
 
-    const firstResult = executeAtomQuery(registry, firstAtom);
-    const secondResult = executeAtomQuery(registry, secondAtom);
+      const firstResult = yield* Effect.forkChild(observeAtomQuery(registry, firstAtom), {
+        startImmediately: true,
+      });
+      const secondResult = yield* Effect.forkChild(observeAtomQuery(registry, secondAtom), {
+        startImmediately: true,
+      });
 
-    secondLatch.openUnsafe();
-    firstLatch.openUnsafe();
+      secondLatch.openUnsafe();
+      firstLatch.openUnsafe();
 
-    const [first, second] = await Promise.all([firstResult, secondResult]);
-    expect(first._tag).toBe("Success");
-    expect(second._tag).toBe("Success");
-    if (first._tag === "Success" && second._tag === "Success") {
-      expect(first.value).toBe("first");
-      expect(second.value).toBe("second");
-    }
+      const [first, second] = yield* Effect.all([
+        Fiber.join(firstResult),
+        Fiber.join(secondResult),
+      ]);
+      expect(first._tag).toBe("Success");
+      expect(second._tag).toBe("Success");
+      if (first._tag === "Success" && second._tag === "Success") {
+        expect(first.value).toBe("first");
+        expect(second.value).toBe("second");
+      }
 
-    registry.dispose();
-  });
+      registry.dispose();
+    }),
+  );
 
-  it("settles when its caller aborts a waiting query", async () => {
-    const registry = AtomRegistry.make();
-    const controller = new AbortController();
-    const resultPromise = executeAtomQuery(registry, Atom.make(Effect.never), {
-      reportDefect: false,
-      signal: controller.signal,
-    });
-
-    controller.abort();
-
-    const result = await resultPromise;
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
-    }
-    registry.dispose();
-  });
+  it.effect("settles when its caller aborts a waiting query", () =>
+    Effect.gen(function* () {
+      const registry = AtomRegistry.make();
+      const running = yield* Effect.forkChild(observeAtomQuery(registry, Atom.make(Effect.never)), {
+        startImmediately: true,
+      });
+      yield* Fiber.interrupt(running);
+      const result = AsyncResult.fromExit(yield* Fiber.await(running));
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(Cause.hasInterruptsOnly(result.cause)).toBe(true);
+      }
+      registry.dispose();
+    }),
+  );
 });
 
 describe("runtime command runner", () => {
-  it("settles generated command scheduler defects from direct callers", async () => {
-    const defect = new Error("invalid command key");
-    const runtime = Atom.runtime(Layer.empty);
-    const command = createRuntimeCommand(runtime, {
-      label: "test.invalid-key",
-      concurrency: {
-        mode: "serial",
-        key: () => {
-          throw defect;
+  it.effect("settles generated command scheduler defects from direct callers", () =>
+    Effect.gen(function* () {
+      const defect = new Error("invalid command key");
+      const runtime = Atom.runtime(Layer.empty);
+      const command = createRuntimeCommand(runtime, {
+        label: "test.invalid-key",
+        concurrency: {
+          mode: "serial",
+          key: () => {
+            throw defect;
+          },
         },
-      },
-      execute: () => Effect.void,
-    });
-    const registry = AtomRegistry.make();
+        execute: () => Effect.void,
+      });
+      const registry = AtomRegistry.make();
 
-    const result = await runAtomCommand(registry, command, undefined);
-    expect(result._tag).toBe("Failure");
-    if (result._tag === "Failure") {
-      expect(Cause.hasDies(result.cause)).toBe(true);
-      expect(Cause.squash(result.cause)).toBe(defect);
-    }
-    registry.dispose();
-  });
+      const result = yield* observeAtomCommand(registry, command, undefined);
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(Cause.hasDies(result.cause)).toBe(true);
+        expect(Cause.squash(result.cause)).toBe(defect);
+      }
+      registry.dispose();
+    }),
+  );
 
   it.effect("stops a caller's own run when its fiber is interrupted", () =>
     Effect.gen(function* () {
@@ -1555,76 +1570,87 @@ describe("runtime command runner", () => {
     }),
   );
 
-  it("settles a queued serial command immediately when its signal aborts", async () => {
-    let markFirstStarted!: () => void;
-    const firstStarted = new Promise<void>((resolve) => {
-      markFirstStarted = resolve;
-    });
-    const releaseFirst = Latch.makeUnsafe();
-    let secondStarted = false;
-    const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
-      label: "test.serial-abortable",
-      concurrency: { mode: "serial", key: () => "lane" },
-      execute: (id: number) =>
-        id === 1
-          ? Effect.sync(markFirstStarted).pipe(Effect.andThen(releaseFirst.await))
-          : Effect.sync(() => {
-              secondStarted = true;
-            }),
-    });
-    const registry = AtomRegistry.make();
+  it.effect("settles a queued serial command immediately when its signal aborts", () =>
+    Effect.gen(function* () {
+      let markFirstStarted!: () => void;
+      const firstStarted = new Promise<void>((resolve) => {
+        markFirstStarted = resolve;
+      });
+      const releaseFirst = Latch.makeUnsafe();
+      let secondStarted = false;
+      const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
+        label: "test.serial-abortable",
+        concurrency: { mode: "serial", key: () => "lane" },
+        execute: (id: number) =>
+          id === 1
+            ? Effect.sync(markFirstStarted).pipe(Effect.andThen(releaseFirst.await))
+            : Effect.sync(() => {
+                secondStarted = true;
+              }),
+      });
+      const registry = AtomRegistry.make();
 
-    const first = runAtomCommand(registry, command, 1);
-    await firstStarted;
+      const first = yield* Effect.forkChild(observeAtomCommand(registry, command, 1), {
+        startImmediately: true,
+      });
+      yield* Effect.promise(() => firstStarted);
 
-    const controller = new AbortController();
-    const second = runAtomCommand(registry, command, 2, { signal: controller.signal });
-    controller.abort();
+      const second = yield* Effect.forkChild(observeAtomCommand(registry, command, 2), {
+        startImmediately: true,
+      });
+      yield* Fiber.interrupt(second);
+      const secondResult = AsyncResult.fromExit(yield* Fiber.await(second));
+      expect(isAtomCommandInterrupted(secondResult)).toBe(true);
+      expect(secondStarted).toBe(false);
 
-    const secondResult = await second;
-    expect(isAtomCommandInterrupted(secondResult)).toBe(true);
-    expect(secondStarted).toBe(false);
+      releaseFirst.openUnsafe();
+      expect((yield* Fiber.join(first))._tag).toBe("Success");
+      expect(secondStarted).toBe(false);
+      registry.dispose();
+    }),
+  );
 
-    releaseFirst.openUnsafe();
-    expect((await first)._tag).toBe("Success");
-    expect(secondStarted).toBe(false);
-    registry.dispose();
-  });
+  it.effect("serializes commands that share a scheduler and lane", () =>
+    Effect.gen(function* () {
+      const firstLatch = Latch.makeUnsafe();
+      const events: string[] = [];
+      const runtime = Atom.runtime(Layer.empty);
+      const scheduler = createAtomCommandScheduler();
+      const concurrency = { mode: "serial" as const, key: () => "shared" };
+      const firstCommand = createRuntimeCommand(runtime, {
+        label: "test.first",
+        scheduler,
+        concurrency,
+        execute: () =>
+          Effect.sync(() => events.push("first:start")).pipe(
+            Effect.andThen(firstLatch.await),
+            Effect.tap(() => Effect.sync(() => events.push("first:end"))),
+          ),
+      });
+      const secondCommand = createRuntimeCommand(runtime, {
+        label: "test.second",
+        scheduler,
+        concurrency,
+        execute: () => Effect.sync(() => events.push("second:start")),
+      });
+      const registry = AtomRegistry.make();
 
-  it("serializes commands that share a scheduler and lane", async () => {
-    const firstLatch = Latch.makeUnsafe();
-    const events: string[] = [];
-    const runtime = Atom.runtime(Layer.empty);
-    const scheduler = createAtomCommandScheduler();
-    const concurrency = { mode: "serial" as const, key: () => "shared" };
-    const firstCommand = createRuntimeCommand(runtime, {
-      label: "test.first",
-      scheduler,
-      concurrency,
-      execute: () =>
-        Effect.sync(() => events.push("first:start")).pipe(
-          Effect.andThen(firstLatch.await),
-          Effect.tap(() => Effect.sync(() => events.push("first:end"))),
-        ),
-    });
-    const secondCommand = createRuntimeCommand(runtime, {
-      label: "test.second",
-      scheduler,
-      concurrency,
-      execute: () => Effect.sync(() => events.push("second:start")),
-    });
-    const registry = AtomRegistry.make();
+      const first = yield* Effect.forkChild(observeAtomCommand(registry, firstCommand, undefined), {
+        startImmediately: true,
+      });
+      const second = yield* Effect.forkChild(
+        observeAtomCommand(registry, secondCommand, undefined),
+        { startImmediately: true },
+      );
+      yield* Effect.promise(() => Promise.resolve());
+      expect(events).toEqual(["first:start"]);
 
-    const first = runAtomCommand(registry, firstCommand, undefined);
-    const second = runAtomCommand(registry, secondCommand, undefined);
-    await Promise.resolve();
-    expect(events).toEqual(["first:start"]);
-
-    firstLatch.openUnsafe();
-    await Promise.all([first, second]);
-    expect(events).toEqual(["first:start", "first:end", "second:start"]);
-    registry.dispose();
-  });
+      firstLatch.openUnsafe();
+      yield* Effect.all([Fiber.join(first), Fiber.join(second)]);
+      expect(events).toEqual(["first:start", "first:end", "second:start"]);
+      registry.dispose();
+    }),
+  );
 
   it.effect("releases a shared scheduler lane before the outer command finishes", () =>
     Effect.gen(function* () {
@@ -1656,18 +1682,24 @@ describe("runtime command runner", () => {
       });
       const registry = AtomRegistry.make();
 
-      const update = runAtomCommand(registry, updateCommand, undefined);
+      const update = yield* Effect.forkChild(
+        observeAtomCommand(registry, updateCommand, undefined),
+        { startImmediately: true },
+      );
       yield* handoffStarted.await;
-      const config = runAtomCommand(registry, configCommand, undefined);
+      const config = yield* Effect.forkChild(
+        observeAtomCommand(registry, configCommand, undefined),
+        { startImmediately: true },
+      );
       handoffComplete.openUnsafe();
 
-      expect(yield* Effect.promise(() => config)).toMatchObject({
+      expect(yield* Fiber.join(config)).toMatchObject({
         _tag: "Success",
         value: "configured",
         waiting: false,
       });
       resumeComplete.openUnsafe();
-      expect(yield* Effect.promise(() => update)).toMatchObject({
+      expect(yield* Fiber.join(update)).toMatchObject({
         _tag: "Success",
         waiting: false,
       });
@@ -1716,9 +1748,7 @@ describe("runtime command runner", () => {
       });
       const registry = AtomRegistry.make();
 
-      expect(
-        yield* Effect.promise(() => runAtomCommand(registry, command, undefined)),
-      ).toMatchObject({
+      expect(yield* observeAtomCommand(registry, command, undefined)).toMatchObject({
         _tag: "Success",
       });
       registry.dispose();
@@ -1757,33 +1787,45 @@ describe("runtime command runner", () => {
     }),
   );
 
-  it("coalesces pending latest-value commands without interrupting the active call", async () => {
-    const firstLatch = Latch.makeUnsafe();
-    const executed: number[] = [];
-    const runtime = Atom.runtime(Layer.empty);
-    const command = createRuntimeCommand(runtime, {
-      label: "test.latest",
-      concurrency: { mode: "latest", key: () => "shared" },
-      execute: (value: number) =>
-        Effect.sync(() => executed.push(value)).pipe(
-          Effect.andThen(value === 1 ? firstLatch.await : Effect.void),
-          Effect.as(value),
-        ),
-    });
-    const registry = AtomRegistry.make();
+  it.effect("coalesces pending latest-value commands without interrupting the active call", () =>
+    Effect.gen(function* () {
+      const firstLatch = Latch.makeUnsafe();
+      const executed: number[] = [];
+      const runtime = Atom.runtime(Layer.empty);
+      const command = createRuntimeCommand(runtime, {
+        label: "test.latest",
+        concurrency: { mode: "latest", key: () => "shared" },
+        execute: (value: number) =>
+          Effect.sync(() => executed.push(value)).pipe(
+            Effect.andThen(value === 1 ? firstLatch.await : Effect.void),
+            Effect.as(value),
+          ),
+      });
+      const registry = AtomRegistry.make();
 
-    const first = runAtomCommand(registry, command, 1);
-    await Promise.resolve();
-    const second = runAtomCommand(registry, command, 2);
-    const third = runAtomCommand(registry, command, 3);
-    firstLatch.openUnsafe();
+      const first = yield* Effect.forkChild(observeAtomCommand(registry, command, 1), {
+        startImmediately: true,
+      });
+      yield* Effect.promise(() => Promise.resolve());
+      const second = yield* Effect.forkChild(observeAtomCommand(registry, command, 2), {
+        startImmediately: true,
+      });
+      const third = yield* Effect.forkChild(observeAtomCommand(registry, command, 3), {
+        startImmediately: true,
+      });
+      firstLatch.openUnsafe();
 
-    expect(await first).toMatchObject({ _tag: "Success", value: 1, waiting: false });
-    expect(await second).toMatchObject({ _tag: "Success", value: 3, waiting: false });
-    expect(await third).toMatchObject({ _tag: "Success", value: 3, waiting: false });
-    expect(executed).toEqual([1, 3]);
-    registry.dispose();
-  });
+      expect(yield* Fiber.join(first)).toMatchObject({ _tag: "Success", value: 1, waiting: false });
+      expect(yield* Fiber.join(second)).toMatchObject({
+        _tag: "Success",
+        value: 3,
+        waiting: false,
+      });
+      expect(yield* Fiber.join(third)).toMatchObject({ _tag: "Success", value: 3, waiting: false });
+      expect(executed).toEqual([1, 3]);
+      registry.dispose();
+    }),
+  );
 });
 
 describe("persisted environment queries", () => {

@@ -1,4 +1,6 @@
-import { runAtomCommand } from "../../state/atom-interop";
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import {
   isFileDiffCollapsed,
   withFileDiffFold,
@@ -565,10 +567,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const refresh = () =>
     pullRefresh.onRefresh(async (signal) => {
       const target = requestTarget(params);
-      await runAtomCommand(registry, composerPullRequests.invalidate, {
-        environmentId: target.environmentId,
-        input: { reference: target.input },
-      }).catch(() => undefined);
+      await Effect.runPromise(
+        observeAtomCommand(registry, composerPullRequests.invalidate, {
+          environmentId: target.environmentId,
+          input: { reference: target.input },
+        }),
+      ).catch(() => undefined);
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
       stack.refresh();

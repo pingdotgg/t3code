@@ -1,6 +1,11 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomQuery,
+  observeAtomCommand,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery, runAtomCommand } from "../state/atom-interop";
+
 import { scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type {
   EnvironmentId,
@@ -113,13 +118,15 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   // Read first, so the copy reflects the files as they were when the user asked.
   const reads = await Promise.all(
     input.files.map(async (relativePath) => {
-      const result = await executeAtomQuery(
-        appAtomRegistry,
-        projectEnvironment.readFile({
-          environmentId: input.source.environmentId,
-          input: { cwd: input.source.cwd, relativePath },
-        }),
-        { label: "Read file to copy", reportFailure: false, refresh: true },
+      const result = await Effect.runPromise(
+        observeAtomQuery(
+          appAtomRegistry,
+          projectEnvironment.readFile({
+            environmentId: input.source.environmentId,
+            input: { cwd: input.source.cwd, relativePath },
+          }),
+          { label: "Read file to copy", reportFailure: false, refresh: true },
+        ),
       );
       if (result._tag === "Failure") return { relativePath, error: failureMessage(result) };
       if (result.value.truncated) return { relativePath, error: m(msg("Too large to copy.")) };
@@ -132,20 +139,22 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
   // Marked before the start request, since the clone list can arrive before its reply.
   silenceProjectCloneToasts(requestedRef);
   if (reads.length > 0) setFileCopy(requestedKey, { phase: "copying" });
-  const started = await runAtomCommand(
-    appAtomRegistry,
-    sourceControlEnvironment.startProjectClone,
-    {
-      environmentId: input.target.environmentId,
-      input: {
-        projectId: input.projectId,
-        title: input.title,
-        createdAt: new Date().toISOString(),
-        remoteUrl: input.remoteUrl,
-        destinationPath: input.destinationPath,
+  const started = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      sourceControlEnvironment.startProjectClone,
+      {
+        environmentId: input.target.environmentId,
+        input: {
+          projectId: input.projectId,
+          title: input.title,
+          createdAt: new Date().toISOString(),
+          remoteUrl: input.remoteUrl,
+          destinationPath: input.destinationPath,
+        },
       },
-    },
-    { label: "Add project to machine", reportFailure: false },
+      { label: "Add project to machine", reportFailure: false },
+    ),
   );
   if (started._tag === "Failure") {
     setFileCopy(requestedKey, null);
@@ -177,20 +186,22 @@ export async function addProjectToMachine(input: AddProjectToMachineInput): Prom
         failed.push(`${read.relativePath}: ${read.error}`);
         continue;
       }
-      const written = await runAtomCommand(
-        appAtomRegistry,
-        projectEnvironment.writeFile,
-        {
-          environmentId: input.target.environmentId,
-          input: {
-            cwd: started.value.cwd,
-            relativePath: input.subdirectory
-              ? `${input.subdirectory}/${read.relativePath}`
-              : read.relativePath,
-            contents: read.contents,
+      const written = await Effect.runPromise(
+        observeAtomCommand(
+          appAtomRegistry,
+          projectEnvironment.writeFile,
+          {
+            environmentId: input.target.environmentId,
+            input: {
+              cwd: started.value.cwd,
+              relativePath: input.subdirectory
+                ? `${input.subdirectory}/${read.relativePath}`
+                : read.relativePath,
+              contents: read.contents,
+            },
           },
-        },
-        { label: "Copy file to machine", reportFailure: false },
+          { label: "Copy file to machine", reportFailure: false },
+        ),
       );
       if (written._tag === "Failure")
         failed.push(`${read.relativePath}: ${failureMessage(written)}`);

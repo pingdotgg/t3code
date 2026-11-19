@@ -1,3 +1,10 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomQuery,
+  observeAtomCommand,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -12,11 +19,7 @@ import {
   findPromptLinkPullRequestThread,
   resolvePromptLinkModelSelection,
 } from "@t3tools/client-runtime/prompt-links";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery, runAtomCommand } from "../../state/atom-interop";
+
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type {
@@ -144,10 +147,12 @@ function dispatchFromNewTask(action: StackActionType): void {
 }
 
 function runQuery<A, E>(atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>) {
-  return executeAtomQuery(appAtomRegistry, atom, {
-    label: atom.label?.[0] ?? "atom query",
-    reportFailure: false,
-  });
+  return Effect.runPromise(
+    observeAtomQuery(appAtomRegistry, atom, {
+      label: atom.label?.[0] ?? "atom query",
+      reportFailure: false,
+    }),
+  );
 }
 
 function writeDraft(
@@ -307,11 +312,13 @@ async function openScratchDraft(request: LinkedDraftRequest) {
     );
     return;
   }
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    projectEnvironment.openScratch,
-    { environmentId, input: {} },
-    { reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      projectEnvironment.openScratch,
+      { environmentId, input: {} },
+      { reportFailure: false },
+    ),
   );
   if (result._tag === "Failure") {
     if (!isAtomCommandInterrupted(result)) {

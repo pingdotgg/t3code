@@ -1,5 +1,7 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, SourceControlProviderKind } from "@t3tools/contracts";
-import { runAtomCommand } from "../state/atom-interop";
+
 import * as Schema from "effect/Schema";
 import { msg } from "gt-react";
 import { StarIcon } from "lucide-react";
@@ -123,21 +125,24 @@ const starInput = (environmentId: EnvironmentId) => ({
 });
 
 async function alreadyStarred(environmentId: EnvironmentId) {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    sourceControlEnvironment.checkStarred,
-    starInput(environmentId),
-    { label: "check GitHub star", reportFailure: false, reportDefect: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(
+      appAtomRegistry,
+      sourceControlEnvironment.checkStarred,
+      starInput(environmentId),
+      { label: "check GitHub star", reportFailure: false, reportDefect: false },
+    ),
   );
   return result._tag === "Success" ? result.value : undefined;
 }
 
 async function starRepository(environmentId: EnvironmentId) {
-  const result = await runAtomCommand(
-    appAtomRegistry,
-    sourceControlEnvironment.star,
-    starInput(environmentId),
-    { label: "star on GitHub", reportFailure: false, reportDefect: false },
+  const result = await Effect.runPromise(
+    observeAtomCommand(appAtomRegistry, sourceControlEnvironment.star, starInput(environmentId), {
+      label: "star on GitHub",
+      reportFailure: false,
+      reportDefect: false,
+    }),
   );
   return result._tag === "Success" && result.value;
 }

@@ -1,4 +1,6 @@
-import { runAtomCommand } from "../state/atom-interop";
+import * as Effect from "effect/Effect";
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
+
 import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -39,11 +41,13 @@ const refreshableEnvironmentsAtom = Atom.make((get) =>
  */
 export function installSubscriptionUsageRefresh(): () => void {
   const refresh = createWidgetRefresher((environmentId: EnvironmentId) =>
-    runAtomCommand(
-      appAtomRegistry,
-      serverEnvironment.refreshProviders,
-      { environmentId, input: {} },
-      { label: serverEnvironment.refreshProviders.label, reportFailure: false },
+    Effect.runPromise(
+      observeAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.refreshProviders,
+        { environmentId, input: {} },
+        { label: serverEnvironment.refreshProviders.label, reportFailure: false },
+      ),
     ),
   );
   const update = () => {

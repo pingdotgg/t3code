@@ -1,12 +1,14 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { RegistryContext } from "@effect/atom-react";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../state/atom-interop";
+
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
@@ -67,11 +69,13 @@ export function createScratchProjectActions(input: {
     failureTitle = m(msg("Could not start without a project")),
   ): Promise<EnvironmentProject | null> => {
     const command = projectEnvironment.openScratch;
-    const result = await runAtomCommand(
-      input.registry,
-      command,
-      { environmentId, input: {} },
-      { label: command.label, reportFailure: false, reportDefect: true },
+    const result = await Effect.runPromise(
+      observeAtomCommand(
+        input.registry,
+        command,
+        { environmentId, input: {} },
+        { label: command.label, reportFailure: false, reportDefect: true },
+      ),
     );
     if (result._tag === "Success") return result.value;
     if (!isAtomCommandInterrupted(result)) {

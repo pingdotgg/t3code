@@ -1,8 +1,13 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomQuery,
+  settlePromise,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "../../state/atom-interop";
+
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
 import { Atom, AsyncResult } from "effect/reactivity";
 import { useGT, useMessages } from "gt-react-native";
@@ -68,10 +73,12 @@ export function usePullRequestListActions(
     const result = await settlePromise(async () => {
       const target = pullRequestTarget(params(entry));
       // List rows do not subscribe to expensive detail reads.
-      const response = await executeAtomQuery(registry, composerPullRequests.detail(target), {
-        refresh: true,
-        reportFailure: false,
-      });
+      const response = await Effect.runPromise(
+        observeAtomQuery(registry, composerPullRequests.detail(target), {
+          refresh: true,
+          reportFailure: false,
+        }),
+      );
       if (response._tag === "Failure") throw squashAtomCommandFailure(response);
       const pr = response.value;
       if (action === "request-review") {

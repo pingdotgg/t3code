@@ -1,10 +1,14 @@
-import { RegistryContext } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
 import {
+  observeAtomCommand,
   type AtomCommand,
   type AtomCommandOptions,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "./atom-interop";
+import { RegistryContext } from "@effect/atom-react";
+
 import { useContext } from "react";
 
 export function useAtomCommand<A, E, W>(
@@ -17,5 +21,8 @@ export function useAtomCommand<A, E, W>(
   const reportDefect = typeof options === "string" ? true : (options?.reportDefect ?? true);
 
   return (value, call) =>
-    runAtomCommand(registry, command, value, { label, reportFailure, reportDefect, ...call });
+    Effect.runPromiseExit(
+      observeAtomCommand(registry, command, value, { label, reportFailure, reportDefect, ...call }),
+      { signal: call?.signal },
+    ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
 }

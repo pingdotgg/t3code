@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import {
   act,
   createElement,
@@ -164,9 +165,10 @@ vi.mock("../features/threads/ThreadMarkdownVideo", async (importOriginal) => {
   };
 });
 
-vi.mock("../state/atom-interop", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../state/atom-interop")>()),
-  executeAtomQuery: (...args: unknown[]) => audio.query(...args),
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomQuery: (...args: unknown[]) =>
+    Effect.promise(() => ((...args: unknown[]) => audio.query(...args))(...args)),
 }));
 vi.mock("../state/projects", () => ({
   projectEnvironment: {

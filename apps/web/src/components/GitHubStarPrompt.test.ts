@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -19,12 +20,14 @@ vi.mock("./ui/toast", () => ({ toastManager: { add, update, close: vi.fn() } }))
 vi.mock("../localApi", () => ({ readLocalApi: () => ({ shell: { openExternal } }) }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/sourceControl", () => ({ sourceControlEnvironment: commands }));
-vi.mock("../state/atom-interop", () => ({
-  runAtomCommand: async (_registry: unknown, command: unknown) => {
-    if (command === commands.star) return { _tag: "Success", value: starred.starWorks };
-    starred.duringCheck();
-    return starred.failed ? { _tag: "Failure" } : { _tag: "Success", value: starred.value };
-  },
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomCommand: (_registry: unknown, command: unknown) =>
+    Effect.sync(() => {
+      if (command === commands.star) return { _tag: "Success", value: starred.starWorks };
+      starred.duringCheck();
+      return starred.failed ? { _tag: "Failure" } : { _tag: "Success", value: starred.value };
+    }),
 }));
 
 const environmentId = EnvironmentId.make("environment-1");

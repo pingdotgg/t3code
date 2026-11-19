@@ -1,3 +1,9 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { useRef, useSyncExternalStore, use } from "react";
 import { useSyncExternalStoreWithSelector } from "use-sync-external-store/with-selector";
@@ -21,11 +27,7 @@ import {
   type UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../state/atom-interop";
+
 import {
   filterSharedServerPatch,
   splitSharedServerPatch,
@@ -379,11 +381,13 @@ function migrateModelPreferences(): void {
     const patch = modelPreferencesMigrationPatch(settings, clientSettingsSnapshot);
     if (!patch) continue;
     attemptedMigrationGenerations.set(environmentId, generation);
-    void runAtomCommand(
-      appAtomRegistry,
-      serverEnvironment.updateSettings,
-      { environmentId, input: { patch } },
-      { reportFailure: false },
+    Effect.runFork(
+      observeAtomCommand(
+        appAtomRegistry,
+        serverEnvironment.updateSettings,
+        { environmentId, input: { patch } },
+        { reportFailure: false },
+      ),
     );
   }
 }

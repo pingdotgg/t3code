@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import { render, fakeTimers } from "../../../test/render";
 import { type AuthSessionState, EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
@@ -8,7 +9,11 @@ const { runAtomCommand, getUnsavedFile } = vi.hoisted(() => ({
   runAtomCommand: vi.fn(),
   getUnsavedFile: vi.fn(),
 }));
-vi.mock(import("../../state/atom-interop"), () => ({ runAtomCommand }));
+vi.mock("@t3tools/client-runtime/state/runtime", async (original) => ({
+  ...(await original<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  observeAtomCommand: (...args: Parameters<typeof runAtomCommand>) =>
+    Effect.promise(() => runAtomCommand(...args)),
+}));
 // The real session atom boots the connection runtime, whose endless discovery poll
 // would keep vi.runAllTimersAsync from ever draining once its timers are faked.
 vi.mock(import("~/state/session"), async (original) => {

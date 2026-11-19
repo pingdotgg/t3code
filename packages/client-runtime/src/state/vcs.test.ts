@@ -1,4 +1,5 @@
-import { runAtomCommand } from "./atom-test-interop.ts";
+import { observeAtomCommand } from "./runtime.ts";
+
 import { vi } from "vite-plus/test";
 import {
   EnvironmentId,
@@ -427,23 +428,19 @@ describe("cached VCS refs", () => {
         Effect.sync(() => registry.dispose()),
       );
 
-      const result = yield* Effect.promise(() =>
-        runAtomCommand(registry, atoms.pull, {
-          environmentId: TARGET.environmentId,
-          input: { cwd: "/repo" },
-        }),
-      );
+      const result = yield* observeAtomCommand(registry, atoms.pull, {
+        environmentId: TARGET.environmentId,
+        input: { cwd: "/repo" },
+      });
 
       expect(AsyncResult.isFailure(result)).toBe(true);
       expect(yield* Ref.get(clears)).toBe(1);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
 
-      const refreshResult = yield* Effect.promise(() =>
-        runAtomCommand(registry, atoms.refreshStatus, {
-          environmentId: TARGET.environmentId,
-          input: { cwd: "/repo" },
-        }),
-      );
+      const refreshResult = yield* observeAtomCommand(registry, atoms.refreshStatus, {
+        environmentId: TARGET.environmentId,
+        input: { cwd: "/repo" },
+      });
 
       expect(AsyncResult.isSuccess(refreshResult)).toBe(true);
       expect(yield* Ref.get(clears)).toBe(2);
@@ -503,21 +500,22 @@ describe("cached VCS refs", () => {
       );
       const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
 
-      const refresh = runAtomCommand(registry, atoms.refreshLocalStatusForPicker, {
-        ...target,
-        input: { cwd: "/repo", localOnly: true },
-      });
-      yield* Deferred.await(refreshStarted);
-      const checkout = yield* Effect.promise(() =>
-        runAtomCommand(registry, atoms.switchRef, {
+      const refresh = yield* Effect.forkChild(
+        observeAtomCommand(registry, atoms.refreshLocalStatusForPicker, {
           ...target,
-          input: { cwd: "/repo", refName: "feature" },
+          input: { cwd: "/repo", localOnly: true },
         }),
+        { startImmediately: true },
       );
+      yield* Deferred.await(refreshStarted);
+      const checkout = yield* observeAtomCommand(registry, atoms.switchRef, {
+        ...target,
+        input: { cwd: "/repo", refName: "feature" },
+      });
 
       expect(AsyncResult.isSuccess(checkout)).toBe(true);
       yield* Deferred.succeed(releaseRefresh, undefined);
-      expect(AsyncResult.isSuccess(yield* Effect.promise(() => refresh))).toBe(true);
+      expect(AsyncResult.isSuccess(yield* Fiber.join(refresh))).toBe(true);
     }),
   );
 

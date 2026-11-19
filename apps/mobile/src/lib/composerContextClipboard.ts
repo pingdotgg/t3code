@@ -1,3 +1,5 @@
+import * as Effect from "effect/Effect";
+import { observeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { requireNativeModule } from "expo";
 import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
@@ -19,8 +21,7 @@ import {
   threadContextsOutsideEnvironment,
   threadLinkContextReferences,
 } from "@t3tools/shared/composerContextReferences";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "../state/atom-interop";
+
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import * as Option from "effect/Option";
 import { appAtomRegistry } from "../state/atom-registry";
@@ -204,15 +205,21 @@ async function importAttachment(
     environmentSession.preparedConnectionValueAtom(environmentId),
   );
   if (Option.isNone(connection)) throw new Error(m(msg("Reconnect to the source environment")));
-  const result = await executeAtomQuery(
-    appAtomRegistry,
-    assetEnvironment.createUrl({
-      environmentId,
-      input: {
-        resource: { _tag: "attachment", attachmentId: record.attachmentId, fileName: record.name },
-      },
-    }),
-    { refresh: true, reportFailure: false },
+  const result = await Effect.runPromise(
+    observeAtomQuery(
+      appAtomRegistry,
+      assetEnvironment.createUrl({
+        environmentId,
+        input: {
+          resource: {
+            _tag: "attachment",
+            attachmentId: record.attachmentId,
+            fileName: record.name,
+          },
+        },
+      }),
+      { refresh: true, reportFailure: false },
+    ),
   );
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   checkAborted(signal);

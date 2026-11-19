@@ -1,6 +1,7 @@
+import { observeAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import type * as Effect from "effect/Effect";
-import { runAtomCommand } from "../../state/atom-interop";
+import * as Effect from "effect/Effect";
+
 import { sentMessageFromToolItem } from "@t3tools/shared/toolOutput";
 import { Atom, type AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
@@ -213,11 +214,13 @@ const citedHistoryAtom = Atom.family(
         signal: controller.signal,
         readThread: () => waitForSettledThread(get.registry, settledThreadAtom, controller.signal),
         loadThrough: async () => {
-          const result = await runAtomCommand(
-            get.registry,
-            threadEnvironment.loadEarlierHistory,
-            { environmentId, input: { threadId, throughEntryId: messageId } },
-            { label: HISTORY_COMMAND_LABEL, reportFailure: false },
+          const result = await Effect.runPromise(
+            observeAtomCommand(
+              get.registry,
+              threadEnvironment.loadEarlierHistory,
+              { environmentId, input: { threadId, throughEntryId: messageId } },
+              { label: HISTORY_COMMAND_LABEL, reportFailure: false },
+            ),
           );
           return result._tag === "Success"
             ? result.value

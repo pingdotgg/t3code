@@ -1,6 +1,10 @@
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import { observeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { chooseLoadBalancedEnvironment } from "@t3tools/client-runtime/load-balancing";
-import { executeAtomQuery } from "../state/atom-interop";
+
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { useContext } from "react";
@@ -54,11 +58,15 @@ export function useLoadBalancedEnvironment(
   const refreshSelection = async (ids: readonly EnvironmentId[]) => {
     const candidates = await Promise.all(
       ids.map(async (environmentId) => {
-        const result = await executeAtomQuery(
-          registry,
-          serverEnvironment.hostResources({ environmentId, input: {} }),
-          { refresh: true, reportFailure: false, signal: AbortSignal.timeout(5_000) },
-        );
+        const signal = AbortSignal.timeout(5_000);
+        const result = await Effect.runPromiseExit(
+          observeAtomQuery(
+            registry,
+            serverEnvironment.hostResources({ environmentId, input: {} }),
+            { refresh: true, reportFailure: false, signal },
+          ),
+          { signal },
+        ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
         return {
           environmentId,
           resources: result._tag === "Success" ? result.value : null,

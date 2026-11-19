@@ -1,3 +1,5 @@
+import * as Exit from "effect/Exit";
+import { observeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useAtomMount, useAtomSubscribe, useAtomValue } from "@effect/atom-react";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
@@ -9,8 +11,7 @@ import {
   EMPTY_ASSET_URL_ATOM,
   makeRevisionedAssetUrlFamily,
 } from "@t3tools/client-runtime/state/assets";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { executeAtomQuery } from "./atom-interop";
+
 import { msg, useMessages } from "gt-react-native";
 import { m } from "../i18n/messages";
 import type { AssetResource, EnvironmentId } from "@t3tools/contracts";
@@ -129,12 +130,15 @@ export async function refreshAssetUrl(
   const connectionAtom = environmentSession.preparedConnectionValueAtom(environmentId);
   if (appAtomRegistry.get(connectionAtom)._tag === "None") return null;
   const atom = assetEnvironment.createUrl({ environmentId, input: { resource } });
-  const result = await executeAtomQuery(appAtomRegistry, atom, {
-    label: atom.label?.[0] ?? "asset url",
-    refresh: true,
-    reportFailure: false,
-    ...(signal ? { signal } : {}),
-  });
+  const result = await Effect.runPromiseExit(
+    observeAtomQuery(appAtomRegistry, atom, {
+      label: atom.label?.[0] ?? "asset url",
+      refresh: true,
+      reportFailure: false,
+      ...(signal ? { signal } : {}),
+    }),
+    { signal: signal },
+  ).then((exit) => (Exit.isSuccess(exit) ? exit.value : AsyncResult.failure(exit.cause)));
   if (result._tag === "Failure") throw squashAtomCommandFailure(result);
   // A route can change while the query runs; resolve against the connection now current.
   const connection = appAtomRegistry.get(connectionAtom);

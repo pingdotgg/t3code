@@ -1,6 +1,7 @@
+import * as Effect from "effect/Effect";
+import { observeAtomCommand, type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { AuthFilesystemWriteScope, type EnvironmentId } from "@t3tools/contracts";
-import { type AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import { useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -152,10 +153,12 @@ const fileSaveSessions = createFileSaveSessions({
     );
   },
   persist: ({ environmentId, cwd, relativePath }, contents) =>
-    runAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
-      environmentId,
-      input: { cwd, relativePath, contents },
-    }),
+    Effect.runPromise(
+      observeAtomCommand(appAtomRegistry, projectEnvironment.writeFile, {
+        environmentId,
+        input: { cwd, relativePath, contents },
+      }),
+    ),
   confirm: ({ environmentId, cwd, relativePath }, contents) =>
     confirmProjectFileQueryData(environmentId, cwd, relativePath, contents),
   readUnsaved: ({ environmentId, cwd, relativePath }) =>

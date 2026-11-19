@@ -1,3 +1,9 @@
+import * as Effect from "effect/Effect";
+import {
+  observeAtomCommand,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import {
@@ -11,11 +17,7 @@ import { msg, T, useGT } from "gt-react-native";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  isAtomCommandInterrupted,
-  squashAtomCommandFailure,
-} from "@t3tools/client-runtime/state/runtime";
-import { runAtomCommand } from "../../state/atom-interop";
+
 import { AsyncResult, Atom } from "effect/reactivity";
 import { AppText as Text } from "../../components/ui/AppText";
 import { m } from "../../i18n/messages";
@@ -57,13 +59,17 @@ const branchCheckouts = makeNewTaskBranchCheckouts({
           : null,
       workspaceMode: "local",
       readRefs: (input) =>
-        runAtomCommand(appAtomRegistry, vcsEnvironment.readRefs, input, {
-          reportFailure: false,
-        }),
+        Effect.runPromise(
+          observeAtomCommand(appAtomRegistry, vcsEnvironment.readRefs, input, {
+            reportFailure: false,
+          }),
+        ),
       switchRef: (input) =>
-        runAtomCommand(appAtomRegistry, vcsEnvironment.switchRef, input, {
-          reportFailure: false,
-        }),
+        Effect.runPromise(
+          observeAtomCommand(appAtomRegistry, vcsEnvironment.switchRef, input, {
+            reportFailure: false,
+          }),
+        ),
     }),
   holdNavigation: threadSelectionDeferral.waitFor,
   onFailure: (request, result) => {

@@ -289,24 +289,23 @@ Object.assign(globalThis, {
     state: () => JSON.stringify(snapshot()),
     /** Removes these saved environments (and their cached threads) through the app's own command. */
     async forgetEnvironments(ids: ReadonlyArray<string>) {
-      const { runAtomCommand } = require("../../state/atom-interop") as {
-        runAtomCommand: (
-          registry: unknown,
-          command: unknown,
-          value: unknown,
-          options: object,
-        ) => Promise<unknown>;
-      };
-      const { appAtomRegistry } = require("../../state/atom-registry") as {
-        appAtomRegistry: unknown;
-      };
-      const { environmentCatalog } = require("../../connection/catalog") as {
-        environmentCatalog: { remove: unknown };
-      };
-      for (const id of ids)
-        await runAtomCommand(appAtomRegistry, environmentCatalog.remove, id, {
-          label: "behavior probe",
-        });
+      const Effect = require("effect/Effect") as typeof import("effect/Effect");
+      const { EnvironmentId } =
+        require("@t3tools/contracts") as typeof import("@t3tools/contracts");
+      const { observeAtomCommand } =
+        require("@t3tools/client-runtime/state/runtime") as typeof import("@t3tools/client-runtime/state/runtime");
+      const { appAtomRegistry } =
+        require("../../state/atom-registry") as typeof import("../../state/atom-registry");
+      const { environmentCatalog } =
+        require("../../connection/catalog") as typeof import("../../connection/catalog");
+      await Effect.runPromise(
+        Effect.forEach(
+          ids,
+          (id) =>
+            observeAtomCommand(appAtomRegistry, environmentCatalog.remove, EnvironmentId.make(id)),
+          { discard: true },
+        ),
+      );
       return true;
     },
     /** Records JS and UI frame times, and the visible feed on every JS frame. */
