@@ -1005,10 +1005,10 @@ export default function ChatView(props: ChatViewProps) {
   const activeMessageCount = isServerThread
     ? Math.max(committedServerMessageIds.size, serverProjection?.messages.length ?? 0)
     : 0;
-  const terminalThreadId =
-    usePanelScopeRef(
-      activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
-    )?.threadId ?? null;
+  const panelScopeRef = usePanelScopeRef(
+    activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null,
+  );
+  const terminalThreadId = panelScopeRef?.threadId ?? null;
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: activeThread?.environmentId ?? null,
     threadId: terminalThreadId,
@@ -4045,7 +4045,7 @@ export default function ChatView(props: ChatViewProps) {
         <ChatRightPanel
           sheet={shouldUsePlanSidebarSheet}
           workspaceLayoutElement={workspaceLayoutElement}
-          widthStorageKey={`t3code:preview-panel-width:${activeThreadKey}`}
+          widthStorageKey={`t3code:preview-panel-width:${panelScopeRef ? scopedThreadKey(panelScopeRef) : activeThreadKey}`}
           sheetAnimationDurationMs={panelAnimationsActive ? panelAnimationDurationMs : 0}
           onCloseSheet={closePreviewPanelStable}
           open={rightPanelOpen}
