@@ -22,6 +22,52 @@ here is about who can get a session, what each kind of session can reach, and
 whether revocation and ceilings hold. It is not about what a full session can do
 once it has one.
 
+## What each scope really grants
+
+A scope's name says what it is for, not how far it reaches. Rank a finding,
+and choose scopes for a narrow pairing link, by the tier below. Any code
+execution is the top tier: a shell can run `t3 auth session issue` and mint
+every scope.
+
+**Tier 1: code execution as the server's user.**
+
+- `terminal:operate`: opens a shell.
+- `orchestration:operate`: starts a turn in full access. Under a managed
+  `approval-required` ceiling the same client approves its own requests.
+  Launching a worktree thread runs the configured setup scripts with no mode
+  check.
+- `settings:write`: sets `defaultProjectScripts`, which the next worktree
+  launch runs. It takes effect later, not immediately.
+- `providers:manage`: sets a provider's binary path and environment, which run
+  on the next turn or provider check.
+- `filesystem:write`: writes project files that tools run later, such as
+  `.claude/settings.json` hooks (run on the next Claude turn), `package.json`
+  scripts and `.envrc`. `.git` is refused.
+
+**Tier 2: credentials or reach beyond this environment.**
+
+- `filesystem:read`: every file the user can read, including SSH keys,
+  provider logins, forge tokens, terminal logs and traces. Only this server's
+  own `secrets` and database are refused. Another T3 home on the same machine
+  is readable.
+- `source-control:write`: pushes, merges and comments with the stored forge
+  credentials.
+- `access:write`: creates pairing links within its own scopes, but revokes any
+  session and approves Connect devices to a full grant.
+- `preview:operate`: the server-side browser loads any http(s) URL, including
+  loopback and LAN services, and streams the page back.
+- `environment:maintain`: installs any published version, including older
+  ones, and restarts the server.
+
+**Tier 3: reads that may contain secrets.**
+
+- `orchestration:read`: every transcript and diff, and anything agents printed.
+  Settings come back with secret fields redacted.
+- `terminal:read`: the scrollback of every terminal.
+- `diagnostics:read`: traces and the process list.
+- `access:read`, `relay:read`: metadata only.
+- `relay:write`: installs the pinned tunnel client. It takes no input.
+
 ## Principals
 
 | Principal                                                                                        | How it gets in                              | What it may do                                                                                                                                                                             |
