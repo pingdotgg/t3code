@@ -1,3 +1,4 @@
+import { parseGoalCommand } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as JsonSchema from "effect/JsonSchema";
 import * as Result from "effect/Result";
@@ -26,6 +27,24 @@ export const outputSchemaProblem = (schema: OutputSchema): string | null =>
       ? "The output schema is not a usable JSON Schema."
       : null;
 
+/** Whether a message is a command its provider runs itself, which takes no appended instructions. */
+export const isProviderCommand = (message: {
+  readonly text: string;
+  readonly attachments?: ReadonlyArray<unknown> | undefined;
+}): boolean =>
+  (message.attachments?.length ?? 0) === 0 &&
+  (["/compact", "/logout"].includes(message.text.trim().toLowerCase()) ||
+    parseGoalCommand(message) !== null);
+
+/** Why a message cannot be asked for a result under this schema, or null when it can. */
+export const outputRequestProblem = (
+  schema: OutputSchema,
+  message: { readonly text: string; readonly attachments?: ReadonlyArray<unknown> | undefined },
+): string | null =>
+  isProviderCommand(message)
+    ? "A command cannot be asked for a result. Ask for it in a message."
+    : outputSchemaProblem(schema);
+
 /** Appended to the turn's prompt: the agent learns the shape and how to hand the result back. */
 export const outputInstructions = (schema: OutputSchema): string =>
   [
@@ -35,9 +54,16 @@ export const outputInstructions = (schema: OutputSchema): string =>
     "If you could not finish, still submit, with the fields that say so. A rejected submission names what did not fit: correct it and submit again.",
   ].join("\n");
 
+/** Why a submission was turned down. What did not fit is in `cause`, never in the problem. */
+export interface OutputRejection {
+  readonly problem: string;
+  readonly cause?: unknown;
+}
+
 /**
  * Checks what an agent submitted against the schema its run declared. The value is kept as
- * submitted: decoding drops keys the schema does not name, and the caller asked for the agent's data.
+ * submitted. A schema that closes its object turns down keys it does not name; an open one keeps
+ * them.
  */
 export const checkOutput = Effect.fn("runOutput.checkOutput")(function* (
   schema: OutputSchema,
@@ -45,17 +71,23 @@ export const checkOutput = Effect.fn("runOutput.checkOutput")(function* (
 ) {
   const parsed = Result.try(() => JSON.parse(json) as Schema.Json);
   if (Result.isFailure(parsed)) {
-    return Result.fail("`json` is not valid JSON text.");
+    return Result.fail<OutputRejection>({ problem: "`json` is not valid JSON text." });
   }
   const compiled = compile(schema);
   if (Result.isFailure(compiled)) {
-    return Result.fail("The output schema is not a usable JSON Schema.");
+    return Result.fail<OutputRejection>({
+      problem: "The output schema is not a usable JSON Schema.",
+    });
   }
   const outputSchema = compiled.success;
   const decoded = yield* Schema.decodeEffect(outputSchema)(parsed.success, {
     errors: "all",
+    onExcessProperty: "error",
   }).pipe(Effect.result);
   return Result.isFailure(decoded)
-    ? Result.fail(decoded.failure.message.slice(0, 2000))
+    ? Result.fail<OutputRejection>({
+        problem: "The result does not match the schema.",
+        cause: decoded.failure,
+      })
     : Result.succeed(parsed.success);
 });

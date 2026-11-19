@@ -73,7 +73,7 @@ import { cancelledBeforeStart } from "./RestartBackgroundNote.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
-import { checkOutput, outputSchemaProblem } from "./runOutput.ts";
+import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
 
@@ -281,7 +281,9 @@ export class ThreadManagementRunOutputRejectedError extends Schema.TaggedError<T
   "ThreadManagementRunOutputRejectedError",
   {
     threadId: ThreadId,
+    /** One of a few fixed sentences. What a submission got wrong is in `cause`. */
     problem: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
@@ -899,7 +901,7 @@ const make = Effect.gen(function* () {
       });
     }
     const schemaProblem =
-      input.outputSchema === undefined ? null : outputSchemaProblem(input.outputSchema);
+      input.outputSchema === undefined ? null : outputRequestProblem(input.outputSchema, input);
     if (schemaProblem !== null) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
@@ -1039,7 +1041,8 @@ const make = Effect.gen(function* () {
     if (Result.isFailure(checked)) {
       return yield* new ThreadManagementRunOutputRejectedError({
         threadId: input.threadId,
-        problem: `The result does not match the schema:\n${checked.failure}`,
+        problem: checked.failure.problem,
+        ...(checked.failure.cause === undefined ? {} : { cause: checked.failure.cause }),
       });
     }
     yield* dispatch({
