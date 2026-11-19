@@ -42,7 +42,7 @@ const layerProvidedClientConnection = layerSnapshotLoader.pipe(
       providerCatalogsOnDemand: true,
       providerCatalogDigests: true,
       providerStatusDeltas: true,
-      pingInterval: "20 seconds",
+      pingInterval: "10 seconds",
     }),
   ),
   Layer.provideMerge(
