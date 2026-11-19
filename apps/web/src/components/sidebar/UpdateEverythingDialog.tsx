@@ -202,9 +202,20 @@ function UpdateEverythingDialogContent({
               role="row"
               className="col-span-full grid grid-cols-subgrid border-b pb-1.5 text-muted-foreground text-xs"
             >
-              <span role="columnheader">
+              <label role="columnheader" className="flex items-center gap-2">
+                {selectable ? (
+                  <Checkbox
+                    aria-label={gt("Select all machines")}
+                    checked={selected.length === updating.length}
+                    indeterminate={selected.length > 0 && selected.length < updating.length}
+                    disabled={busy || updating.length === 0}
+                    onCheckedChange={(checked) =>
+                      setExcluded(checked ? new Set() : new Set(updating.map(rowKey)))
+                    }
+                  />
+                ) : null}
                 <T>Machine</T>
-              </span>
+              </label>
               <span role="columnheader">T3 Code</span>
               <span role="columnheader">
                 <T>Providers</T>

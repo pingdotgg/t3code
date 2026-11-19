@@ -11701,6 +11701,7 @@
   "0576c87870fb6389": "Atualizar",
   "948185631ef288e6": "{count, plural, one {{count} em execução} other {{count} em execução}}",
   "fc79eb5b32f47c10": "Escolha quais máquinas atualizar. Somente as máquinas selecionadas serão atualizadas ou reiniciadas.",
+  "0c63d52b2eb9fbb5": "Selecionar todas as máquinas",
   "3d9a2f6b9c114039": "Provedores",
   "f4baf8deafbb227d": "Ignorado",
   "f938bb483eb3d189": "reinicia por último",

@@ -38,8 +38,15 @@ it("lets a remote user update the laptop without updating the PC host", async ()
       onConfirm={onConfirm}
     />,
   );
+  const selectAll = page.getByRole("checkbox", { name: "Select all machines" });
+  await expect.element(page.getByRole("heading", { name: "Update 2 machines?" })).toBeVisible();
+  await userEvent.click(selectAll);
+  await expect.element(page.getByRole("checkbox", { name: "Laptop" })).not.toBeChecked();
+  await expect.element(page.getByRole("button", { name: "Update", exact: true })).toBeDisabled();
+  await userEvent.click(selectAll);
   await expect.element(page.getByRole("heading", { name: "Update 2 machines?" })).toBeVisible();
   await userEvent.click(page.getByRole("checkbox", { name: "PC host" }));
+  await expect.element(selectAll).toHaveAttribute("aria-checked", "mixed");
   await expect.element(page.getByRole("heading", { name: "Update 1 machine?" })).toBeVisible();
   await expect.element(page.getByText(/1 provider update$/)).toBeVisible();
   await userEvent.click(page.getByRole("checkbox", { name: "Laptop" }));
