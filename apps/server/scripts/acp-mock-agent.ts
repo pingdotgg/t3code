@@ -1287,6 +1287,14 @@ const program = Effect.gen(function* () {
             rawInput: { query: "TODO" },
             rawOutput: "src/a.ts: TODO",
           },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "structured-search-query-no-output",
+            title: "Grep",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "FIXME" },
+          },
           // Grok backend searches: the query only arrives in the completed rawOutput.
           {
             sessionUpdate: "tool_call_update",
@@ -1360,6 +1368,14 @@ const program = Effect.gen(function* () {
             rawInput: { query: "  top story on Hacker News today  " },
             rawOutput:
               "Sources:\n<https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz>.",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "antigravity-run-search-web",
+            title: "Running search_web",
+            kind: "search",
+            status: "completed",
+            rawInput: { query: "top story on Hacker News today" },
           },
           {
             sessionUpdate: "tool_call_update",

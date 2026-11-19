@@ -1367,9 +1367,10 @@ function acpBackendWebSearch(
   const variant = typeof rawInput?.variant === "string" ? rawInput.variant.toLowerCase() : "";
   const rawOutputRecord = unknownRecord(rawOutput);
   const action = unknownRecord(rawOutputRecord?.action);
-  const isWebSearchTitle = /^\s*(?:web search|search the web|(?:web_search|search_web)\s*$)/iu.test(
-    title ?? "",
-  );
+  const isWebSearchTitle =
+    /^\s*(?:web search|search the web|(?:run(?:ning)?\s+)?(?:web_search|search_web)\s*$)/iu.test(
+      title ?? "",
+    );
   const isWebSearchVariant = [
     "xsearch",
     "websearch",
@@ -4602,10 +4603,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   typeof toolCall.data.title === "string" ? toolCall.data.title : title,
                 );
                 if (backendSearch !== undefined) {
-                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search").replace(
-                    /:\s*$/u,
-                    "",
-                  );
+                  const label = nonEmptyText(toolCall.data.title, title ?? "Web search")
+                    .replace(/:\s*$/u, "")
+                    // Antigravity titles the call "Running search_web".
+                    .replace(
+                      /^\s*(?:run(?:ning)?\s+)?(?:web_search|search_web)\s*$/iu,
+                      "Web search",
+                    );
                   turnItem = {
                     ...base,
                     title:
@@ -4633,7 +4637,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     }) ?? title,
                   type: "file_search",
                   ...(path === undefined ? {} : { pattern: path }),
-                  ...(path === undefined || pathIsQuery
+                  ...(path === undefined ||
+                  (pathIsQuery && textFromUnknown(rawOutput) === undefined)
                     ? {}
                     : {
                         results: [

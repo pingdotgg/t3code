@@ -4663,6 +4663,10 @@ describe("AcpAdapterV2", () => {
       });
       assert.deepEqual(fileSearch("structured-search-query-only"), {
         pattern: "TODO",
+        results: [{ fileName: "TODO", preview: "src/a.ts: TODO" }],
+      });
+      assert.deepEqual(fileSearch("structured-search-query-no-output"), {
+        pattern: "FIXME",
         results: undefined,
       });
       const webItem = (nativeId: string, status: string) => {
@@ -4699,6 +4703,11 @@ describe("AcpAdapterV2", () => {
             url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/AUZIYQGYNzfz",
           },
         ],
+      });
+      assert.deepEqual(webItem("antigravity-run-search-web", "completed"), {
+        title: "Web search: top story on Hacker News today",
+        patterns: ["top story on Hacker News today"],
+        results: undefined,
       });
       assert.deepEqual(webItem("antigravity-web-search-streamed", "completed"), {
         title: "Web search: streamed citations",
