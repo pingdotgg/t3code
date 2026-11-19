@@ -767,6 +767,8 @@ export function useComposerSend(input: ComposerSendInput) {
       selectedProviderModels: ctxSelectedProviderModels,
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
+      selectedModelSelectionExplicit: ctxSelectedModelSelectionExplicit,
+      selectedAgentId: ctxSelectedAgentId,
     } = sendCtx;
     const { images: composerImages, previewAnnotations: composerPreviewAnnotations } =
       mergeDirectPreviewAnnotation({
@@ -1299,6 +1301,7 @@ export function useComposerSend(input: ComposerSendInput) {
         project: activeProject,
         branch: activeThreadBranch!,
         selections: multipleModelSelections,
+        selectedAgentId: ctxSelectedAgentId,
         targets: multipleTargets,
         sendSnapshot,
         createdAt: messageCreatedAt,
@@ -1445,6 +1448,8 @@ export function useComposerSend(input: ComposerSendInput) {
                       projectId: activeProject.id,
                       title,
                       modelSelection: threadCreateModelSelection,
+                      ...(ctxSelectedAgentId === undefined ? {} : { agentId: ctxSelectedAgentId }),
+                      modelSelectionExplicit: ctxSelectedModelSelectionExplicit,
                       runtimeMode,
                       interactionMode: DEFAULT_INTERACTION_MODE,
                       branch: activeThreadBranch,

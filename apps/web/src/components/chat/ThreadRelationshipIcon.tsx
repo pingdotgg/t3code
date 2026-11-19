@@ -47,6 +47,8 @@ export function threadRelationshipStatusLabel(
       return resolve(msg("Superseded", { $context: "agent status" }));
     case "idle":
       return resolve(msg("Idle", { $context: "agent status" }));
+    case "unavailable":
+      return resolve(msg("Unavailable", { $context: "agent status" }));
     default:
       return resolve(msg("Unknown", { $context: "agent status" }));
   }

@@ -4,6 +4,7 @@ import * as DateTime from "effect/DateTime";
 
 import {
   deriveThreadRelationshipGraph,
+  omitSettledOrDeletedSubagentRelationships,
   immediateThreadRelationships,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
@@ -299,6 +300,73 @@ describe("thread relationships", () => {
         },
       } as never),
     ).toBeNull();
+  });
+});
+
+describe("visible subagent relationships", () => {
+  it("hides settled and confirmed-deleted children but keeps active, unavailable, parent, and non-subagent rows", () => {
+    const parent = ThreadId.make("thread-parent");
+    const current = ThreadId.make("thread-current");
+    const settled = ThreadId.make("thread-settled");
+    const deleted = ThreadId.make("thread-deleted");
+    const active = ThreadId.make("thread-active");
+    const missing = ThreadId.make("thread-missing");
+    const fork = ThreadId.make("thread-fork");
+    const transfer = ThreadId.make("thread-transfer");
+    const graph = deriveThreadRelationshipGraph({
+      threads: [
+        {
+          id: parent,
+          lineage: { parentThreadId: null },
+        },
+        {
+          id: current,
+          lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
+        },
+        {
+          id: settled,
+          status: "completed",
+          settledOverride: "settled",
+          deletedAt: null,
+          lineage: { parentThreadId: current, relationshipToParent: "subagent" },
+        },
+        {
+          id: deleted,
+          status: "completed",
+          settledOverride: null,
+          deletedAt: "2026-11-11T00:00:00.000Z",
+          lineage: { parentThreadId: current, relationshipToParent: "subagent" },
+        },
+        {
+          id: active,
+          status: "running",
+          settledOverride: null,
+          deletedAt: null,
+          lineage: { parentThreadId: current, relationshipToParent: "subagent" },
+        },
+        {
+          id: fork,
+          status: "completed",
+          settledOverride: "settled",
+          lineage: { parentThreadId: current, relationshipToParent: "fork" },
+        },
+      ] as never,
+      projection: {
+        thread: { id: current },
+        subagents: [{ childThreadId: missing, status: "completed" }],
+        contextTransfers: [
+          { sourceThreadId: current, targetThreadId: transfer, status: "completed" },
+        ],
+      } as never,
+    });
+
+    expect(
+      omitSettledOrDeletedSubagentRelationships(
+        graph,
+        immediateThreadRelationships(graph, current),
+        current,
+      ).map(({ threadId }) => threadId),
+    ).toEqual([parent, active, fork, missing, transfer]);
   });
 });
 

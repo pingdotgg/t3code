@@ -33,6 +33,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
@@ -132,6 +133,7 @@ const serveOrchestrationHttp = (allowed: () => boolean) =>
           Layer.provide(
             Layer.mergeAll(runtime, CommandReceiptStore.layer, ServerSettings.layerTest({})),
           ),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
         ),
         OrchestrationEventStore.layer,
         ProjectStore.layer,

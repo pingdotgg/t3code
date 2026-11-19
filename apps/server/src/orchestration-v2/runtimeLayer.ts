@@ -285,6 +285,13 @@ export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe
 const layerManagedProjectFoldersProvided = ManagedProjectFolders.layer.pipe(
   Layer.provide(layerProjectService),
 );
+const layerThreadLaunchDependencies = Layer.mergeAll(
+  layerProjectSetupScriptRunner,
+  layerManagedProjectFoldersProvided,
+  layerThreadManagementProvided,
+  layerCommandReceiptStoreProvided,
+  IdAllocator.layer,
+).pipe(Layer.provideMerge(layerProjectService));
 const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(

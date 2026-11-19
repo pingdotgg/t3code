@@ -126,6 +126,47 @@ returns to the remembered selection.
 
 Leaving reasoning level or service tier unset uses the provider's own configuration.
 
+## Custom agents
+
+On web and desktop, choose **Agent** in the composer to use a custom agent for a
+new thread. Choose **Project default** to inherit the configured default, or
+**No custom agent** to ignore it for that thread. T3 Code saves the choice on
+the thread and sends the agent's instructions with its first provider turn. If
+setup fails before a provider turn starts, T3 Code sends the instructions on
+retry; it does not repeat them when continuing or compacting an existing
+provider conversation. To use an agent by default, open
+**Settings → General → Agent**. Choose **All projects** for an environment
+default, or select a project to set an override; project settings take
+precedence. These defaults affect new threads, not existing ones. The composer
+does not yet offer per-draft agent selection on mobile.
+
+Create a Markdown file in the project's workspace root under `.agents/` or
+`.github/agents/`, or use its root `AGENTS.md`. T3 Code uses these project-root
+files for launches and named delegation, including threads running in a
+worktree. Include YAML frontmatter with an `id`, `name`, and `description`; write
+the instructions in the Markdown body.
+For example:
+
+```markdown
+---
+id: reviewer
+name: Reviewer
+description: Reviews changes for concrete bugs.
+tier: reasoning
+---
+
+Check edge cases and report only actionable findings.
+```
+
+An optional `tier` of `economy` or `reasoning` selects a matching model when an
+available provider offers one; if it does not, the chosen model is kept. An
+optional fixed `model` must be available in that environment. A model you
+explicitly choose in the composer takes precedence. Add `canDelegateTo` with
+agent IDs to limit which named agents the lead may choose through T3's
+`delegate_task` tool; provider-native delegation tools are controlled by the
+provider and do not use this allowlist. Custom-agent files do not configure
+provider tools or permission modes; `tools` frontmatter is not supported.
+
 ## Quote an assistant response
 
 On web and desktop, select text within one assistant response and choose

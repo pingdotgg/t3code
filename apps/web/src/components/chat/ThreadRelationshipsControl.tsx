@@ -18,6 +18,7 @@ import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
   isParentThreadRelationship,
+  omitSettledOrDeletedSubagentRelationships,
   threadRelationshipRowStatus,
   orderWebThreadLineageRows,
   resolveMergeBackTargetThreadId,
@@ -573,7 +574,11 @@ export function ThreadRelationshipsPanel(props: {
   const mergeTargetThreadId = resolveMergeBackTargetThreadId(projection);
   const relationshipRows = orderWebThreadLineageRows({
     graph,
-    rows: immediateThreadRelationships(graph, props.threadId),
+    rows: omitSettledOrDeletedSubagentRelationships(
+      graph,
+      immediateThreadRelationships(graph, props.threadId),
+      props.threadId,
+    ),
     currentThreadId: props.threadId,
     mergeTargetThreadId,
   })
@@ -776,10 +781,11 @@ export function ThreadRelationshipsPanel(props: {
     const isSubagent = edge.kind === "subagent";
     const isMergeTarget = threadId === mergeTargetThreadId;
     const isParent = isParentThreadRelationship(edge, props.threadId);
-    const rowStatus =
-      (isParent && threadId === parentRef?.threadId
-        ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
-        : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge });
+    const rowStatus = node?.missing
+      ? "unavailable"
+      : ((isParent && threadId === parentRef?.threadId
+          ? (node?.thread?.activityRunStatus ?? parentNativeStatus)
+          : undefined) ?? threadRelationshipRowStatus(graph, { threadId, edge }));
     const RelationshipIcon = isParent
       ? CornerLeftUpIcon
       : isSubagent

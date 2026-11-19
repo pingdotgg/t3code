@@ -152,6 +152,19 @@ export function immediateThreadRelationships(
   return rows;
 }
 
+export function omitSettledOrDeletedSubagentRelationships(
+  graph: ThreadRelationshipGraph,
+  rows: ReadonlyArray<ThreadRelationshipWalkRow>,
+  currentThreadId: ThreadId,
+): ReadonlyArray<ThreadRelationshipWalkRow> {
+  return rows.filter(({ threadId, edge }) => {
+    if (edge.kind !== "subagent" || isParentThreadRelationship(edge, currentThreadId)) return true;
+    const thread = graph.nodes.get(threadId)?.thread;
+    if (thread === undefined || thread === null) return true;
+    return thread.settledOverride !== "settled" && thread.deletedAt === null;
+  });
+}
+
 export function isParentThreadRelationship(
   edge: ThreadRelationshipEdge,
   currentThreadId: ThreadId,

@@ -1,5 +1,6 @@
 import type { ChatComposerProps } from "./ChatComposer";
 import type { PromptUltrathink } from "./TraitsPicker";
+import { AgentPicker, AgentPickerMenuContent } from "./AgentPicker";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { type AppModelOption } from "../../modelSelection";
 import { useGT, useMessages } from "gt-react";
@@ -18,6 +19,8 @@ import {
   type ProviderInstanceId,
   type RuntimeMode,
   type ServerProvider,
+  type AgentId,
+  type AgentSummary,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
@@ -87,6 +90,11 @@ export function ComposerControlsBar(props: {
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
+  agents?: ReadonlyArray<AgentSummary> | undefined;
+  selectedAgentId?: AgentId | null | undefined;
+  defaultAgentId?: AgentId | null | undefined;
+  onSelectAgent?: ChatComposerProps["onSelectAgent"] | undefined;
+  agentPickerDisabled?: boolean | undefined;
 }) {
   const {
     environmentId,
@@ -131,6 +139,11 @@ export function ComposerControlsBar(props: {
     onModelPickerOpenChange,
     modelPickerIconClassName,
     getModelDisabledReason,
+    agents,
+    selectedAgentId,
+    defaultAgentId,
+    onSelectAgent,
+    agentPickerDisabled = false,
   } = props;
   const accessMatchesDefault = compatibleRuntimeMode === defaultRuntimeMode;
   const {

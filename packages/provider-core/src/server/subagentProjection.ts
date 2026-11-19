@@ -1,5 +1,6 @@
 import type {
   EventId,
+  AgentId,
   MessageId,
   ModelSelection,
   NodeId,
@@ -61,11 +62,17 @@ export function makeSubagentChildThread(input: {
   readonly now: DateTime.Utc;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
+  readonly targetAgentId?: AgentId | undefined;
 }): OrchestrationV2AppThread {
-  // The remote parent delegated the parent thread, not its subagents.
-  const { delegatedFrom: _delegatedFrom, ...inherited } = input.parentThread;
+  // A delegated parent does not make its child a delegated thread; a child agent is explicit.
+  const {
+    delegatedFrom: _delegatedFrom,
+    agentId: _parentAgentId,
+    ...inherited
+  } = input.parentThread;
   return {
     ...inherited,
+    ...(input.targetAgentId === undefined ? {} : { agentId: input.targetAgentId }),
     createdBy: input.createdBy,
     creationSource: input.creationSource,
     id: input.childThreadId,

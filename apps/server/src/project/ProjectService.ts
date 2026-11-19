@@ -1,5 +1,8 @@
 import {
   CommandId,
+  AgentListError,
+  AgentListInput,
+  type AgentSummary,
   type OrchestrationProjectShell,
   ProjectId,
   type Project,
@@ -17,6 +20,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -41,6 +45,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectEnrichmentService from "./ProjectEnrichmentService.ts";
 import { makeIsWorktreeContainer } from "./worktreeContainer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { listAgentSummaries } from "../agent/AgentService.ts";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly commandId: CommandId;
@@ -149,6 +154,9 @@ export class ProjectService extends Context.Service<
       workspaceRoot: string,
       options?: { readonly includeDeleted?: boolean },
     ) => Effect.Effect<Option.Option<Project>, ProjectOperationError>;
+    readonly listAgents: (
+      input: AgentListInput,
+    ) => Effect.Effect<ReadonlyArray<AgentSummary>, AgentListError>;
     /**
      * Where to scan `cwd`'s workspace inventory. A thread's removed managed worktree scans its
      * project, which turn start recreates the worktree from; anything else, or a failure, is `cwd`.
@@ -179,13 +187,14 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectEnrichment = yield* ProjectEnrichmentService.ProjectEnrichmentService;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const threadProjections = yield* ProjectionStore.ProjectionStoreV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const idAllocator = yield* IdAllocator.IdAllocatorV2;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
-  const fileSystem = yield* FileSystem.FileSystem;
   const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
   const isWorktreeContainer = yield* makeIsWorktreeContainer.pipe(
     Effect.provide(ProcessRunner.layer),
@@ -406,6 +415,34 @@ export const make = Effect.gen(function* () {
       Effect.mapError((cause) => new ProjectOperationError({ operation: "list-projects", cause })),
     );
     return Option.isNone(row) ? Option.none() : Option.some(yield* hydrate(row.value));
+  });
+
+  const listAgents: ProjectService["Service"]["listAgents"] = Effect.fn(
+    "ProjectService.listAgents",
+  )(function* (input) {
+    const project = yield* getById(input.projectId).pipe(
+      Effect.mapError((cause) => new AgentListError({ projectId: input.projectId, cause })),
+    );
+    if (Option.isNone(project)) {
+      return yield* new AgentListError({ projectId: input.projectId, cause: "Project not found." });
+    }
+    if (input.threadId !== undefined) {
+      const shell = yield* threadProjections
+        .getThreadShell(input.threadId)
+        .pipe(
+          Effect.mapError((cause) => new AgentListError({ projectId: input.projectId, cause })),
+        );
+      if (shell === null || shell.deletedAt !== null || shell.projectId !== input.projectId) {
+        return yield* new AgentListError({
+          projectId: input.projectId,
+          cause: "The requested thread does not belong to this active project.",
+        });
+      }
+    }
+    return yield* listAgentSummaries(project.value.workspaceRoot).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(Path.Path, path),
+    );
   });
 
   const create: ProjectService["Service"]["create"] = Effect.fn("ProjectService.create")(
@@ -686,6 +723,7 @@ export const make = Effect.gen(function* () {
     delete: deleteProject,
     getById,
     getByWorkspaceRoot,
+    listAgents,
     workspaceScanDirectory,
     snapshot,
     listPage,

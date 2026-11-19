@@ -157,10 +157,32 @@ function makeHarness(options: HarnessOptions = {}) {
   );
   const layerServerSettings = ServerSettings.layerTest(options.serverSettings);
   const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
+  const layerProjectService = Layer.succeed(ProjectService.ProjectService, {
+    create: () => Effect.die("unused"),
+    bootstrap: () => Effect.die("unused"),
+    update: () => Effect.die("unused"),
+    delete: () => Effect.die("unused"),
+    getById: (id) =>
+      Effect.succeed(
+        id === projectId
+          ? Option.some(project)
+          : id === otherProjectId
+            ? Option.some(otherProject)
+            : Option.none(),
+      ),
+    getByWorkspaceRoot: () => Effect.succeedSome(project),
+    listAgents: () => Effect.succeed([]),
+    workspaceScanDirectory: () => Effect.succeed("/workspace"),
+    snapshot: Effect.die("unused"),
+    listPage: () => Effect.succeed({ projects: [], nextCursor: null }),
+    getShell: () => Effect.die("unused"),
+    listShells: () => Effect.die("unused"),
+  });
   const layerThreadManagement = ThreadManagement.layer.pipe(
     Layer.provide(layerOrchestrator),
     Layer.provide(layerServerSettings),
     Layer.provide(layerReceipts),
+    Layer.provide(layerProjectService),
   );
   const layerOutbox = EffectOutbox.layer.pipe(Layer.provide(layerDatabase));
   const createWorktree = vi.fn(
@@ -192,6 +214,7 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const layerExternalServices = Layer.mergeAll(
+    NodeServices.layer,
     WorktreeSetupTracker.layer,
     Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
     Layer.mock(TerminalManager.TerminalManager)({ close: closeTerminal }),
@@ -213,6 +236,7 @@ function makeHarness(options: HarnessOptions = {}) {
               : Option.none(),
         ),
       getByWorkspaceRoot: () => Effect.succeedSome(project),
+      listAgents: () => Effect.succeed([]),
       workspaceScanDirectory: () => Effect.die("unused"),
       snapshot: Effect.die("unused"),
       getShell: () => Effect.die("unused"),

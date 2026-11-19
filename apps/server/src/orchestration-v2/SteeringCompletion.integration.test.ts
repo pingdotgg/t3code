@@ -42,6 +42,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -3219,6 +3220,7 @@ it.effect("reports a restart that stops the running turn as restarted", () =>
       Effect.provide(
         ThreadManagementService.layer.pipe(
           Layer.provideMerge(layer),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(
             CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
@@ -3306,6 +3308,7 @@ it.effect("replays an accepted steer after its target turn completes", () =>
       Effect.provide(
         ThreadManagementService.layer.pipe(
           Layer.provideMerge(layer),
+          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(
             CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),

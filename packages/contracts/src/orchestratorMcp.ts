@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
+import { AgentId, AgentSummary } from "./agentDefinition.ts";
 import {
   ContextTransferId,
   EnvironmentId,
@@ -173,6 +174,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   // Some providers send the whole target object as JSON text.
   target: Schema.optional(
     Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
+  ),
+  targetAgentId: Schema.optional(
+    AgentId.annotate({
+      description:
+        "Custom agent from orchestrator_capabilities.agents to run the child as. Its instructions and configured model or tier apply at child startup unless target specifies a model. A custom lead's canDelegateTo allowlist applies to this T3 tool only; provider-native delegation is outside that enforcement scope. The tools frontmatter field is unsupported.",
+    }),
   ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
@@ -694,6 +701,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  agents: Schema.optional(Schema.Array(AgentSummary)),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

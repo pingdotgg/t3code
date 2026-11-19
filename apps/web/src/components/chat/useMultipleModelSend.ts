@@ -2,6 +2,7 @@ import { msg } from "gt-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
 import {
+  type AgentId,
   type EnvironmentId,
   type ModelSelection,
   type RuntimeMode,
@@ -92,6 +93,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     project,
     branch,
     selections,
+    selectedAgentId,
     targets,
     sendSnapshot,
     createdAt,
@@ -106,6 +108,7 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
     readonly project: EnvironmentProject;
     readonly branch: string;
     readonly selections: ReadonlyArray<ModelSelection>;
+    readonly selectedAgentId?: AgentId | null | undefined;
     readonly targets: ReadonlyArray<MultipleModelTarget>;
     readonly sendSnapshot: ComposerSendSnapshot;
     readonly createdAt: string;
@@ -190,6 +193,8 @@ export function useMultipleModelSend(input: MultipleModelSendInput) {
                       projectId: project.id,
                       title,
                       modelSelection: target.selection,
+                      ...(selectedAgentId === undefined ? {} : { agentId: selectedAgentId }),
+                      modelSelectionExplicit: true,
                       runtimeMode,
                       interactionMode: DEFAULT_INTERACTION_MODE,
                       branch,

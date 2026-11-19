@@ -30,6 +30,7 @@ import * as EventStore from "./EventStore.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { CLAUDE_PROVIDER } from "./Adapters/ClaudeAdapterV2.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
@@ -68,6 +69,9 @@ const layerTest = ThreadManagementService.layer.pipe(
         ProviderAdapterRegistry.layerFromAdapters([adapter]),
         { databaseLayer: layerDatabase, runEffectWorker: false },
       ),
+      Layer.mock(ProjectService.ProjectService)({
+        listAgents: () => Effect.succeed([]),
+      }),
     ),
   ),
   Layer.provideMerge(ServerSettings.layerTest()),
@@ -2117,6 +2121,9 @@ it.effect.each([
       );
       const layerLive = ThreadManagementService.layer.pipe(
         Layer.provide(layerSessionsStartingFollowUpFirst),
+        Layer.provide(
+          Layer.mock(ProjectService.ProjectService)({ listAgents: () => Effect.succeed([]) }),
+        ),
         Layer.provideMerge(
           Layer.mergeAll(
             layerDatabase,

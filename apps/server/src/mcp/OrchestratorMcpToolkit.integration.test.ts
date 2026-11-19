@@ -89,6 +89,8 @@ const decodeThreadInterruptResult = Schema.decodeUnknownEffect(
 );
 const decodeThreadSendResult = Schema.decodeUnknownEffect(OrchestratorMcpThreadSendResult);
 
+const layerProjectService = Layer.mock(ProjectService.ProjectService)({});
+
 const codexSelection = {
   instanceId: codexInstanceId,
   model: codexModel,
@@ -246,6 +248,7 @@ describe("orchestrator MCP toolkit", () => {
               Layer.provide(
                 CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
               ),
+              Layer.provide(layerProjectService),
             ),
           ),
         ),
