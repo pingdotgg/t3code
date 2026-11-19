@@ -551,11 +551,11 @@ const GIT_FAILURE_REASON_DETAILS: Partial<Record<GitCommandFailureReason, string
     "Git was denied access to a file or folder it needed. Check that the location is writable, then retry.",
 };
 
-function gitFailureDetail(reason: GitCommandFailureReason | null): string {
-  return (
-    (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-    "Git command exited with a non-zero status."
-  );
+function gitFailureDetail(
+  reason: GitCommandFailureReason | null,
+  fallback = "Git command exited with a non-zero status.",
+): string {
+  return (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ?? fallback;
 }
 
 // Existing non-commit objects share the missing-ref fatal diagnostic; Git
@@ -1279,10 +1279,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           new GitCommandError({
             ...gitCommandContext({ operation, cwd, args }),
             ...(reason === null ? {} : { reason }),
-            detail:
-              (reason === null ? undefined : GIT_FAILURE_REASON_DETAILS[reason]) ??
-              options.fallbackErrorDetail ??
-              gitFailureDetail(reason),
+            detail: gitFailureDetail(reason, options.fallbackErrorDetail),
             ...(result.exitCode === null ? {} : { exitCode: result.exitCode }),
             stdoutLength: result.stdout.length,
             stderrLength: result.stderr.length,

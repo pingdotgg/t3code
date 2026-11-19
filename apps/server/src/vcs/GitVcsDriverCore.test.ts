@@ -2699,7 +2699,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
-    // regression: #38935 an unwritable worktree location reported only "git worktree add failed"
     it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32" || process.getuid?.() === 0)(
       "names a worktree location Git may not write to",
       () =>
