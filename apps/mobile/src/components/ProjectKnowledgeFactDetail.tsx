@@ -17,9 +17,11 @@ import type {
 import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  canRestoreFactToRecall,
   isSupersededFact,
   knowledgeConflictHintLabel,
   knowledgeOriginLabel,
+  memoryCurationRunLabel,
   projectFactVerdictLabel,
   projectFactHistoryLabel,
 } from "@t3tools/client-runtime/projectKnowledge";
@@ -96,6 +98,9 @@ function HistoryRow(props: { readonly entry: ProjectFactHistoryEntry }) {
           Trust {entry.trustBefore.toFixed(2)} → {entry.trustAfter.toFixed(2)}
         </AppText>
       ) : null}
+      {entry.reason ? (
+        <AppText className="text-xs text-foreground-muted">{entry.reason}</AppText>
+      ) : null}
       {content !== null ? (
         <AppText className="text-sm" numberOfLines={4}>
           {content.length > REVISION_PREVIEW_LENGTH
@@ -118,6 +123,7 @@ export function ProjectFactInspector(props: {
   readonly detail: ProjectKnowledgeFactDetail | null;
   readonly detailError: string | null;
   readonly history: boolean;
+  readonly curation: boolean;
   readonly sourceUnavailable: KnowledgeSourceUnavailableReason | null;
   readonly hints: ReadonlyArray<KnowledgeConflictHint>;
   readonly selection: KnowledgeSelectionState | null;
@@ -129,6 +135,7 @@ export function ProjectFactInspector(props: {
   readonly onOpenFact: OpenFact;
   readonly onEdit: (mode: "edit" | "supersede") => void;
   readonly onForget: () => void;
+  readonly onRestore: () => void;
   readonly onFeedback: (helpful: boolean) => void;
   readonly onDismissHints: () => void;
 }) {
@@ -203,6 +210,14 @@ export function ProjectFactInspector(props: {
 
       {active ? (
         <View className="flex-row flex-wrap gap-2">
+          {props.curation && canRestoreFactToRecall(fact) ? (
+            <Button
+              label="Restore to recall"
+              tone="secondary"
+              disabled={!mutable}
+              onPress={props.onRestore}
+            />
+          ) : null}
           {!superseded ? (
             <Button
               label="Edit"
@@ -350,6 +365,14 @@ export function KnowledgeHealthRow(props: {
         {status.belowRecallThreshold} below recall · {status.feedback.helpful} helpful ·{" "}
         {status.feedback.unhelpful} unhelpful
       </AppText>
+      {status.curation ? (
+        <AppText className="text-xs text-foreground-muted">
+          {memoryCurationRunLabel(status.curation)}
+          {status.curation.completedAt
+            ? ` · ${historyTimeFormatter.format(new Date(status.curation.completedAt))}`
+            : ""}
+        </AppText>
+      ) : null}
       {lost > 0 ? (
         <Button
           label={`${status.unavailableSourcesCoverage === "partial" ? "At least " : ""}${

@@ -24,6 +24,7 @@ const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateModelEvaluation",
   "generateTranscriptionPostProcessing",
   "checkFactStanding",
+  "curateProjectMemory",
 ]);
 
 const openCodeTextGenerationErrorContext = {
@@ -196,7 +197,10 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
   ) {
     const blindEvaluation = input.operation === "generateModelEvaluation";
     // The standing check gets the evaluator's isolation, without its exact-model checks.
-    const blind = blindEvaluation || input.operation === "checkFactStanding";
+    const blind =
+      blindEvaluation ||
+      input.operation === "checkFactStanding" ||
+      input.operation === "curateProjectMemory";
     const isolated = BlindEvaluation.runsIsolated(input.operation);
     if (isolated && input.operation !== "checkFactStanding") {
       yield* BlindEvaluation.validateBlindEvaluationSelection(

@@ -162,7 +162,12 @@ import {
   SettingsWorktreesRouteScreen,
 } from "./SettingsServerControlsRouteScreen";
 
-function environment(environmentId: string, label: string, assistedLearning?: boolean) {
+function environment(
+  environmentId: string,
+  label: string,
+  assistedLearning?: boolean,
+  memoryCuration?: boolean,
+) {
   return {
     environmentId,
     label,
@@ -179,6 +184,7 @@ function environment(environmentId: string, label: string, assistedLearning?: bo
           threadAutoSettlement: true,
           projectKnowledge: true,
           projectKnowledgeAssistedLearning: assistedLearning,
+          projectKnowledgeCuration: memoryCuration,
         },
       },
     },
@@ -241,25 +247,37 @@ describe("SettingsServerControlsRouteScreen", () => {
     expect(container.textContent).toContain("Old server");
   });
 
-  it("turns automatic memory off for a supported project without targeting unrelated older environments", async () => {
-    mocks.targets = [environment("new", "New server", true), environment("old", "Old server")];
-    mocks.projectSelected = true;
-    mocks.projectEnvironmentIds = ["new"];
-    act(() => root.render(<SettingsZackRouteScreen />));
-    const toggle = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
-    ).find((button) => button.textContent === "Save facts from finished runs")!;
+  it.each(["enableAssistedLearning", "enableMemoryCuration"] as const)(
+    "turns %s off for a supported project without targeting unrelated older environments",
+    async (setting) => {
+      mocks.targets = [
+        environment("new", "New server", true, true),
+        environment("old", "Old server"),
+      ];
+      mocks.projectSelected = true;
+      mocks.projectEnvironmentIds = ["new"];
+      act(() => root.render(<SettingsZackRouteScreen />));
+      const toggle = Array.from(
+        container.querySelectorAll<HTMLButtonElement>('[role="switch"]'),
+      ).find(
+        (button) =>
+          button.textContent ===
+          (setting === "enableMemoryCuration"
+            ? "Curate project memories"
+            : "Save facts from finished runs"),
+      )!;
 
-    await act(async () => toggle.click());
+      await act(async () => toggle.click());
 
-    expect(toggle.disabled).toBe(false);
-    expect(mocks.updateSettings).toHaveBeenCalledExactlyOnceWith({
-      environmentId: "new",
-      input: {
-        patch: { projectSettingsOverrides: { project: { enableAssistedLearning: false } } },
-      },
-    });
-  });
+      expect(toggle.disabled).toBe(false);
+      expect(mocks.updateSettings).toHaveBeenCalledExactlyOnceWith({
+        environmentId: "new",
+        input: {
+          patch: { projectSettingsOverrides: { project: { [setting]: false } } },
+        },
+      });
+    },
+  );
 
   it("sends a draft saved during a pending write once that write settles", async () => {
     const pending = Promise.withResolvers<AsyncResult.Success<void>>();

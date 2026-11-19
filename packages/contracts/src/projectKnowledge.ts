@@ -38,6 +38,7 @@ export const KnowledgeFactSource = Schema.Union([
 export type KnowledgeFactSource = typeof KnowledgeFactSource.Type;
 const knownKnowledgeOrigins = [
   Schema.Struct({ kind: Schema.Literal("user") }),
+  Schema.Struct({ kind: Schema.Literal("curator") }),
   Schema.Struct({
     kind: Schema.Literal("agent-thread"),
     threadId: ThreadId,
@@ -156,6 +157,7 @@ const ProjectKnowledgeMutationSchema = Schema.Union([
   }),
   Schema.Struct({ action: Schema.Literal("edit"), ...ExistingFact, ...ProjectFactFields.fields }),
   Schema.Struct({ action: Schema.Literal("forget"), ...ExistingFact }),
+  Schema.Struct({ action: Schema.Literal("restore"), ...ExistingFact }),
   Schema.Struct({ action: Schema.Literal("feedback"), ...ExistingFact, helpful: Schema.Boolean }),
   // Creates replacementFactId and links it to factId, which keeps its content (unlike forget).
   Schema.Struct({
@@ -249,6 +251,8 @@ export type ProjectFactHistoryEvent = typeof ProjectFactHistoryEvent.Type;
 export const ProjectFactHistoryEntry = Schema.Struct({
   sequence: PositiveInt,
   event: ProjectFactHistoryEvent,
+  // Keep event values readable by older clients; newer clients can name these memory actions.
+  memoryAction: Schema.optionalKey(Schema.Literals(["curated", "restored"])),
   revision: PositiveInt,
   actor: KnowledgeOrigin,
   at: IsoDateTime,
@@ -261,6 +265,7 @@ export const ProjectFactHistoryEntry = Schema.Struct({
   helpful: Schema.NullOr(Schema.Boolean),
   // The replacement for "superseded"; the replaced fact for a superseding "created".
   relatedFactId: Schema.NullOr(ProjectFactId),
+  reason: Schema.optionalKey(Schema.String),
   sourceUnavailable: Schema.NullOr(KnowledgeSourceUnavailableReason),
 });
 export type ProjectFactHistoryEntry = typeof ProjectFactHistoryEntry.Type;
@@ -323,6 +328,18 @@ export const ProjectKnowledgeStatus = Schema.Struct({
   // Optional so older servers still decode.
   assistedLearning: Schema.optionalKey(
     Schema.Struct({ lastRun: Schema.NullOr(AssistedLearningRun) }),
+  ),
+  curation: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        status: Schema.Literals(["running", "ran", "skipped", "failed"]),
+        completedAt: Schema.NullOr(IsoDateTime),
+        reviewed: NonNegativeInt,
+        changed: NonNegativeInt,
+        skipped: NonNegativeInt,
+        reason: Schema.NullOr(Schema.String),
+      }),
+    ),
   ),
 });
 export type ProjectKnowledgeStatus = typeof ProjectKnowledgeStatus.Type;
@@ -480,6 +497,7 @@ export const ProjectKnowledgeSearchInput = Schema.Struct({
   entities: Schema.optionalKey(Labels),
   entityMatch: Schema.optionalKey(Schema.Literals(["any", "all"])),
   includeSuperseded: Schema.optionalKey(Schema.Boolean),
+  includeSetAside: Schema.optionalKey(Schema.Boolean),
   // Retrieval reinforces ranking. Browsing surfaces pass false so only
   // deliberate lookups count; omitted means true.
   recordRetrieval: Schema.optionalKey(Schema.Boolean),
@@ -534,6 +552,8 @@ export class ProjectKnowledgeError extends Schema.TaggedError<ProjectKnowledgeEr
       "invalid_cursor",
       "scoring",
       "superseded",
+      "user_required",
+      "invalid_curation",
     ]),
     projectId: ProjectId,
     factId: Schema.optionalKey(ProjectFactId),
@@ -574,6 +594,10 @@ export class ProjectKnowledgeError extends Schema.TaggedError<ProjectKnowledgeEr
         return "Project knowledge storage is unavailable.";
       case "superseded":
         return "This fact was superseded. Edit or supersede its replacement instead.";
+      case "user_required":
+        return "Only the user can restore a memory to automatic recall.";
+      case "invalid_curation":
+        return "The memory review did not match the reviewed project facts.";
     }
   }
 }

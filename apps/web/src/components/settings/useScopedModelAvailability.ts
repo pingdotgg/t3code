@@ -31,6 +31,7 @@ const OPERATION_LABELS: Record<TextGenerationOperation, string> = {
   generateConversationSummary: "conversation summaries",
   generateModelEvaluation: "model evaluations",
   checkFactStanding: "project knowledge checks",
+  curateProjectMemory: "project memory curation",
 };
 
 export function useScopedModelDisabledReason(

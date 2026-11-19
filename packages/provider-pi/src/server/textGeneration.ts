@@ -44,6 +44,10 @@ const ISOLATED_SYSTEM_PROMPTS: Partial<
     system: "You summarize the supplied conversation sources.",
     append: "Use only the supplied sources. Do not use tools.",
   },
+  curateProjectMemory: {
+    system: "You review the supplied project memories.",
+    append: "Use only the supplied facts and evidence. Do not use tools.",
+  },
   checkFactStanding: {
     system: "You classify the supplied statements.",
     append: "Use only the supplied statements. Do not use tools.",

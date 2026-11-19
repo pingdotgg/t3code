@@ -101,9 +101,9 @@ function useProjectMemoryHistoryAvailable(environmentId: EnvironmentId): boolean
   return config?.environment.capabilities.projectKnowledgeHistory === true;
 }
 
-function useProjectMemoryStandingCheckAvailable(environmentId: EnvironmentId): boolean {
+function useProjectMemoryCurationAvailable(environmentId: EnvironmentId): boolean {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  return config?.environment.capabilities.projectKnowledgeStandingCheck === true;
+  return config?.environment.capabilities.projectKnowledgeCuration === true;
 }
 
 function useProjectMemoryAssistedAvailable(environmentId: EnvironmentId): boolean {
@@ -178,11 +178,10 @@ export function ProjectMemoryDialogHost(props: Scope) {
   );
 }
 
-type ListFilter = "saved" | "automatic" | "set_aside" | "forgotten" | "lost";
+type ListFilter = "saved" | "automatic" | "forgotten" | "lost";
 const FILTER_LABEL: Record<Exclude<ListFilter, "lost">, string> = {
   saved: "Saved",
   automatic: "Automatic",
-  set_aside: "Set aside",
   forgotten: "Forgotten",
 };
 
@@ -260,7 +259,7 @@ function MemoryContents(
   const historyAvailable = useProjectMemoryHistoryAvailable(props.environmentId);
   const showSuperseded = historyAvailable && includeSuperseded;
   const assistedAvailable = useProjectMemoryAssistedAvailable(props.environmentId);
-  const standingCheckAvailable = useProjectMemoryStandingCheckAvailable(props.environmentId);
+  const curationAvailable = useProjectMemoryCurationAvailable(props.environmentId);
   const list = useEnvironmentQuery(
     projectKnowledge.list({
       environmentId: props.environmentId,
@@ -270,9 +269,7 @@ function MemoryContents(
           ? { sourceState: "unavailable" as const }
           : filter === "automatic"
             ? { status: "saved" as const, origin: "assisted" as const }
-            : filter === "set_aside"
-              ? { status: "saved" as const, verdict: "set_aside" as const }
-              : { status: filter === "lost" ? ("saved" as const) : filter }),
+            : { status: filter === "lost" ? ("saved" as const) : filter }),
         ...(afterId ? { afterId } : {}),
         ...(showSuperseded ? { includeSuperseded: true } : {}),
       },
@@ -370,6 +367,7 @@ function MemoryContents(
             query: current.query,
             includeArchived: current.includeArchived ?? false,
             ...(superseded ? { includeSuperseded: true } : {}),
+            ...(current.includeSetAside ? { includeSetAside: true } : {}),
             requestId: CommandId.make(randomUUID()),
           },
     );
@@ -421,7 +419,11 @@ function MemoryContents(
     }
     refresh([input.factId, ...(result._tag === "Success" ? [result.value.id] : [])]);
   };
-  const revise = async (fact: ProjectFact, action: "forget" | "feedback", helpful = true) => {
+  const revise = async (
+    fact: ProjectFact,
+    action: "forget" | "feedback" | "restore",
+    helpful = true,
+  ) => {
     if (action === "forget") {
       const message = `Forget this fact permanently?\n${FORGET_CONFIRM_DETAIL}`;
       const confirmed =
@@ -491,7 +493,6 @@ function MemoryContents(
   const filters: ReadonlyArray<ListFilter> = [
     "saved",
     ...(assistedAvailable ? (["automatic"] as const) : []),
-    ...(standingCheckAvailable ? (["set_aside"] as const) : []),
     "forgotten",
     ...(historyAvailable && (lostCount > 0 || filter === "lost") ? (["lost"] as const) : []),
   ];
@@ -792,6 +793,7 @@ function MemoryContents(
                   score={inspectedScore}
                   unavailableReason={unavailableReasons.get(inspection.factId)}
                   historyAvailable={historyAvailable}
+                  curationAvailable={curationAvailable}
                   canMutate={canMutate}
                   busy={busy}
                   onEdit={(fact: EditableFact, supersede) =>

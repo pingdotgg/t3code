@@ -1246,6 +1246,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "enableAgentBrowserAccess",
   "enableAgentDeviceAccess",
   "enableAssistedLearning",
+  "enableMemoryCuration",
   "enableConversationSummaries",
   "contextRestartAboveTokens",
   "textGenerationModelSelection",
@@ -1287,6 +1288,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   enableAgentBrowserAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAssistedLearning: Schema.optionalKey(Schema.Boolean),
+  enableMemoryCuration: Schema.optionalKey(Schema.Boolean),
   enableConversationSummaries: Schema.optionalKey(Schema.Boolean),
   contextRestartAboveTokens: Schema.optionalKey(Schema.NullOr(ContextRestartAboveTokens)),
   textGenerationModelSelection: Schema.optionalKey(ModelSelection),
@@ -1521,6 +1523,7 @@ export const ServerSettings = Schema.Struct({
   skillsLibraryEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** On by default: each settled run costs a text generation call unless its project opts out. */
   enableAssistedLearning: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableMemoryCuration: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /** Off by default: summarizing older history costs text generation calls. */
   enableConversationSummaries: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
@@ -2008,6 +2011,7 @@ export const ServerSettingsPatch = Schema.Struct({
   pstackEnabled: Schema.optionalKey(Schema.Boolean),
   skillsLibraryEnabled: Schema.optionalKey(Schema.Boolean),
   enableAssistedLearning: Schema.optionalKey(Schema.Boolean),
+  enableMemoryCuration: Schema.optionalKey(Schema.Boolean),
   enableConversationSummaries: Schema.optionalKey(Schema.Boolean),
   contextRestartAboveTokens: Schema.optionalKey(Schema.NullOr(ContextRestartAboveTokens)),
   enableModelEvaluations: Schema.optionalKey(Schema.Boolean),

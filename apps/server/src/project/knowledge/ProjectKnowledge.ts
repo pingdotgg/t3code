@@ -9,6 +9,7 @@ import {
   type ThreadId,
   type KnowledgeConflictHint,
   type KnowledgeFactSource,
+  type KnowledgeMessageRef,
   KnowledgeOrigin,
   KnowledgeScore,
   type KnowledgeSourceUnavailableReason,
@@ -24,7 +25,6 @@ import {
   ProjectKnowledgeMutation,
   ProjectKnowledgeSearchInput,
   ProjectFactId,
-  type ProjectFactVerdict,
   type ProjectKnowledgePreparedContext,
   type ProjectKnowledgeReadSourceInput,
   type ProjectKnowledgeSearchResult,
@@ -40,6 +40,10 @@ import {
   projectComposerContextForProvider,
   projectKnowledgeContextRecord,
 } from "@t3tools/shared/composerContextReferences";
+import {
+  type ProjectMemoryCurationDecision,
+  validateProjectMemoryCuration,
+} from "@t3tools/provider-core/server/textGeneration";
 import * as Digest from "effect/crypto/Digest";
 import * as Hex from "effect/encoding/Hex";
 import * as Schema from "effect/Schema";
@@ -140,6 +144,19 @@ export class ProjectKnowledge extends Context.Service<
     readonly status: (
       input: ProjectKnowledgeStatusInput,
     ) => Effect.Effect<ProjectKnowledgeStatus, ProjectKnowledgeError>;
+    readonly applyCuration: (input: {
+      readonly projectId: ProjectId;
+      readonly facts: ReadonlyArray<{
+        readonly id: ProjectFactId;
+        readonly revision: number;
+        readonly protected?: boolean;
+      }>;
+      readonly decisions: ReadonlyArray<ProjectMemoryCurationDecision>;
+      readonly reviewedSources: ReadonlyArray<KnowledgeMessageRef>;
+    }) => Effect.Effect<
+      { readonly changed: number; readonly skipped: number },
+      ProjectKnowledgeError
+    >;
     readonly readSource: (
       input: ProjectKnowledgeReadSourceInput,
     ) => Effect.Effect<ProjectKnowledgeSource, ProjectKnowledgeError>;
@@ -202,14 +219,12 @@ export class ProjectKnowledge extends Context.Service<
       readonly afterId?: string | undefined;
     }) => Effect.Effect<string | null, ProjectKnowledgeError>;
     /**
-     * Saves an automatically learned fact through the normal create path with the blind check's
-     * verdict; recall skips it unless that is standing. An exact duplicate adds only new validated
-     * citations and keeps the existing fact's verdict; lexical similarities never replace a fact.
+     * Saves a standing automatic fact. An exact duplicate adds only new validated citations and
+     * keeps the existing fact's verdict; similarities never replace a fact.
      */
     readonly saveAutomatic: (
       input: Extract<ProjectKnowledgeMutation, { readonly action: "create" }>,
       actor: Extract<KnowledgeOrigin, { readonly kind: "assisted" }>,
-      verdict: ProjectFactVerdict,
     ) => Effect.Effect<
       { readonly outcome: "saved" | "duplicate" | "existing" },
       ProjectKnowledgeError
@@ -251,6 +266,7 @@ const encodeQuery = Schema.encodeEffect(
       includeArchived: Schema.Boolean,
       minTrust: Schema.Number,
       includeSuperseded: Schema.optionalKey(Schema.Boolean),
+      includeSetAside: Schema.optionalKey(Schema.Boolean),
     }),
   ),
 );
@@ -550,6 +566,12 @@ const make = Effect.gen(function* () {
         .withTransaction(
           Effect.gen(function* () {
             yield* requireProject(projectId);
+            if (input.action === "restore" && actor.kind !== "user")
+              return yield* new ProjectKnowledgeError({
+                reason: "user_required",
+                projectId,
+                factId,
+              });
             const prior = yield* store.receipt(input.commandId);
             const existing = yield* store.find(projectId, factId);
             if (prior !== null) {
@@ -749,17 +771,47 @@ const make = Effect.gen(function* () {
                 });
               fact = { ...existing, revision: existing.revision + 1, updatedAt: now };
               // A person's edit is the owner's way back to recall; an agent's edit keeps the verdict.
-              const clearsCheck =
+              const clearsAutomaticVerdict =
                 input.action === "edit" &&
                 actor.kind === "user" &&
                 input.content !== existing.content &&
-                existing.verdict?.by === "check";
+                (existing.verdict?.by === "check" || existing.verdict?.by === "agent");
               switch (input.action) {
+                case "restore": {
+                  if (existing.supersededBy != null) {
+                    const replacement = yield* store.find(projectId, existing.supersededBy);
+                    if (replacement?.supersedes === factId) {
+                      const unlinked: ProjectFact = {
+                        ...replacement,
+                        supersedes: null,
+                        revision: replacement.revision + 1,
+                        updatedAt: now,
+                      };
+                      if (!(yield* store.update(unlinked, replacement.revision)))
+                        return yield* new ProjectKnowledgeError({
+                          reason: "conflict",
+                          projectId,
+                          factId: replacement.id,
+                        });
+                      yield* history(unlinked, "edited", {
+                        relatedFactId: factId,
+                        reason:
+                          "Removed the supersession link because the prior memory was restored.",
+                      });
+                    }
+                  }
+                  fact = {
+                    ...fact,
+                    supersededBy: null,
+                    verdict: { value: "standing", by: "person", at: now },
+                  };
+                  break;
+                }
                 case "edit": {
                   const { verdict, ...rest } = fact;
                   fact = {
                     ...rest,
-                    ...(verdict && !clearsCheck ? { verdict } : {}),
+                    ...(verdict && !clearsAutomaticVerdict ? { verdict } : {}),
                     content: input.content,
                     entities: input.entities,
                     tags: input.tags,
@@ -790,6 +842,9 @@ const make = Effect.gen(function* () {
               if (!(yield* store.update(fact, input.expectedRevision)))
                 return yield* new ProjectKnowledgeError({ reason: "conflict", projectId, factId });
               switch (input.action) {
+                case "restore":
+                  yield* history(fact, "restored");
+                  break;
                 case "edit":
                   yield* history(fact, "edited");
                   break;
@@ -812,6 +867,161 @@ const make = Effect.gen(function* () {
         )
         .pipe(Effect.mapError(storageError(projectId)));
     },
+  );
+
+  const applyCuration: ProjectKnowledge["Service"]["applyCuration"] = Effect.fn(
+    "ProjectKnowledge.applyCuration",
+  )(
+    function* (input) {
+      yield* requireProject(input.projectId);
+      const changing = input.decisions.filter((decision) => decision.action !== "keep");
+      if (
+        input.facts.length > 24 ||
+        input.reviewedSources.length > 24 ||
+        new Set(input.facts.map((fact) => fact.id)).size !== input.facts.length
+      )
+        return yield* new ProjectKnowledgeError({
+          reason: "invalid_curation",
+          projectId: input.projectId,
+        });
+      const current = yield* store.findMany(
+        input.projectId,
+        input.facts.map((fact) => fact.id),
+      );
+      const snapshots = new Map(input.facts.map((fact) => [fact.id, fact]));
+      if (
+        current.length !== snapshots.size ||
+        current.some(
+          (fact) =>
+            fact.revision !== snapshots.get(fact.id)?.revision ||
+            fact.status !== "saved" ||
+            fact.supersededBy != null,
+        )
+      )
+        return { changed: 0, skipped: changing.length };
+      const active = current.filter(
+        (fact): fact is typeof ActiveProjectFact.Type => fact.status === "saved",
+      );
+      const packet = active.map((fact) => ({
+        id: fact.id,
+        revision: fact.revision,
+        kind: fact.kind,
+        content: fact.content,
+        sources: [],
+        protected:
+          snapshots.get(fact.id)?.protected === true ||
+          !["agent-thread", "agent-client", "assisted"].includes(fact.origin.kind) ||
+          fact.sources.some((source) => source.kind === "user") ||
+          fact.verdict?.by === "person" ||
+          (fact.verdict !== undefined && fact.verdict.value !== "standing"),
+      }));
+      if (!validateProjectMemoryCuration(input.decisions, packet))
+        return yield* new ProjectKnowledgeError({
+          reason: "invalid_curation",
+          projectId: input.projectId,
+        });
+      const citations = active.flatMap((fact) => fact.sources);
+      if (
+        input.reviewedSources.some(
+          (reviewed) =>
+            !citations.some(
+              (source) =>
+                source.kind === "message" &&
+                source.threadId === reviewed.threadId &&
+                source.messageId === reviewed.messageId &&
+                source.digest === reviewed.digest &&
+                (source.runId === undefined || source.runId === reviewed.runId),
+            ),
+        )
+      )
+        return yield* new ProjectKnowledgeError({
+          reason: "invalid_curation",
+          projectId: input.projectId,
+        });
+      if (
+        (yield* unavailableSources(
+          input.projectId,
+          [
+            {
+              id: "reviewed-evidence",
+              sources: input.reviewedSources,
+            },
+          ],
+          true,
+        )).length > 0
+      )
+        return { changed: 0, skipped: changing.length };
+      const lostSources = new Set(
+        (yield* unavailableSources(input.projectId, active, true)).map((source) => source.factId),
+      );
+      const byId = new Map(active.map((fact) => [String(fact.id), fact]));
+      const now = DateTime.formatIso(yield* DateTime.now);
+      const removed: Array<ProjectFactId> = [];
+      let skipped = 0;
+      for (const decision of changing) {
+        const fact = byId.get(decision.factId)!;
+        const replacement =
+          decision.action === "supersede" ? byId.get(decision.replacementFactId)! : undefined;
+        if (
+          lostSources.has(fact.id) ||
+          (replacement !== undefined && lostSources.has(replacement.id))
+        ) {
+          skipped++;
+          continue;
+        }
+        if (replacement?.verdict !== undefined && replacement.verdict.value !== "standing")
+          return yield* new ProjectKnowledgeError({
+            reason: "invalid_curation",
+            projectId: input.projectId,
+          });
+        const changed: ProjectFact = {
+          ...fact,
+          revision: fact.revision + 1,
+          updatedAt: now,
+          status: "forgotten",
+          content: null,
+          entities: [],
+          tags: [],
+          sources: [],
+          forgottenAt: now,
+          ...(decision.action === "set_aside"
+            ? { verdict: { value: decision.verdict, by: "agent" as const, at: now } }
+            : { supersededBy: replacement!.id }),
+        };
+        if (!(yield* store.update(changed, fact.revision)))
+          return yield* new ProjectKnowledgeError({
+            reason: "conflict",
+            projectId: input.projectId,
+            factId: fact.id,
+          });
+        yield* store.recordHistory({
+          projectId: input.projectId,
+          factId: fact.id,
+          revision: changed.revision,
+          event: "curated",
+          actor: { kind: "curator" },
+          at: now,
+          contentDigest: yield* digest(fact.content),
+          content: null,
+          sources: [],
+          trustBefore: null,
+          trustAfter: fact.trust,
+          helpful: null,
+          relatedFactId: replacement?.id ?? null,
+          reason: decision.reason.trim(),
+          reviewedFactIds: input.facts.map((snapshot) => snapshot.id),
+        });
+        removed.push(fact.id);
+      }
+      // A later decision in this batch can quote an earlier removed fact.
+      for (const factId of removed) {
+        yield* store.eraseHistory(input.projectId, factId);
+        yield* store.scrubDeliveries(input.projectId, factId);
+      }
+      return { changed: changing.length - skipped, skipped };
+    },
+    (effect, input) =>
+      sql.withTransaction(effect).pipe(Effect.mapError(storageError(input.projectId))),
   );
 
   const resolveForTurn: ProjectKnowledge["Service"]["resolveForTurn"] = Effect.fn(
@@ -894,7 +1104,9 @@ const make = Effect.gen(function* () {
                   ? `Extracted from run ${fact.origin.runId} in thread ${fact.origin.threadId} (${fact.origin.runOutcome})`
                   : fact.origin.kind === "agent-client"
                     ? `Agent observation from ${fact.origin.label}`
-                    : `Origin ${fact.origin.originKind}`;
+                    : fact.origin.kind === "curator"
+                      ? "Memory curator"
+                      : `Origin ${fact.origin.originKind}`;
           parts.push(
             `[Fact ${fact.id} revision:${fact.revision} status:${fact.status} trust:${fact.trust}; ${origin}${citations ? `; ${citations}` : ""}]\n${fact.content}`,
           );
@@ -962,6 +1174,7 @@ const make = Effect.gen(function* () {
       includeArchived: input.includeArchived ?? false,
       minTrust,
       ...(input.includeSuperseded ? { includeSuperseded: true } : {}),
+      ...(input.includeSetAside ? { includeSetAside: true } : {}),
     }).pipe(Effect.flatMap(digest), Effect.mapError(storageError(input.projectId)));
     const { cursor: _messageCursor, ...factInput } = input;
     const requestDigest = yield* encodeSearch(factInput).pipe(
@@ -1017,6 +1230,7 @@ const make = Effect.gen(function* () {
           entities,
           minTrust,
           input.includeSuperseded ?? false,
+          input.includeSetAside ?? false,
         )
         .pipe(Effect.mapError(storageError(input.projectId)));
       const eligible = candidates.facts.filter(
@@ -1108,7 +1322,10 @@ const make = Effect.gen(function* () {
       fact.revision === revision &&
       fact.status !== "forgotten" &&
       fact.content !== null &&
-      (fact.supersededBy == null || input.includeSuperseded === true);
+      (fact.supersededBy == null || input.includeSuperseded === true) &&
+      (fact.verdict === undefined ||
+        fact.verdict.value === "standing" ||
+        input.includeSetAside === true);
     // Walks ranked positions in order and checks citations a batch at a time, so a page reads
     // sources for about as many facts as it returns instead of for the whole ranking.
     const resolveMatches = Effect.fn("ProjectKnowledge.resolveMatches")(function* (
@@ -1576,7 +1793,7 @@ const make = Effect.gen(function* () {
   });
   const saveAutomatic: ProjectKnowledge["Service"]["saveAutomatic"] = Effect.fn(
     "ProjectKnowledge.saveAutomatic",
-  )(function* (input, actor, verdict) {
+  )(function* (input, actor) {
     return yield* sql
       .withTransaction(
         Effect.gen(function* () {
@@ -1644,7 +1861,7 @@ const make = Effect.gen(function* () {
             return { outcome: "duplicate" as const };
           }
           const saved = yield* mutate(input, actor);
-          yield* store.writeCheckVerdict(input.projectId, saved.id, verdict, saved.createdAt);
+          yield* store.writeCheckVerdict(input.projectId, saved.id, "standing", saved.createdAt);
           return { outcome: "saved" as const };
         }),
       )
@@ -1730,6 +1947,9 @@ const make = Effect.gen(function* () {
       return yield* Effect.gen(function* () {
         const counts = yield* store.statusCounts(input.projectId, RECALL_THRESHOLD);
         const assistedLearning = yield* store.assistedStatus(input.projectId);
+        const [curation] = yield* sql<NonNullable<ProjectKnowledgeStatus["curation"]>>`
+          SELECT status, last_completed_at AS "completedAt", reviewed, changed, skipped, reason
+          FROM project_knowledge_curation_state WHERE project_id = ${input.projectId}`;
         const cited = yield* store.citedFacts(
           input.projectId,
           "saved",
@@ -1760,6 +1980,7 @@ const make = Effect.gen(function* () {
           unavailableSourcesCoverage:
             cited.length > SOURCE_CHECK_LIMIT ? ("partial" as const) : ("complete" as const),
           assistedLearning,
+          curation: curation ?? null,
         };
       }).pipe(Effect.mapError(storageError(input.projectId)));
     },
@@ -1770,6 +1991,7 @@ const make = Effect.gen(function* () {
     mutateWithHints,
     readFact,
     status,
+    applyCuration,
     readSource,
     readSources,
     search,

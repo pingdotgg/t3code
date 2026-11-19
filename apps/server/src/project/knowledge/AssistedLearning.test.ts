@@ -62,6 +62,7 @@ const makeLayer = (
       Layer.mock(TextGeneration.TextGeneration)({
         generateKnowledgeCandidates: generate,
         checkFactStanding: check,
+        curateProjectMemory: () => Effect.die("unused"),
         supportsOperation: (operation) =>
           Effect.succeed(operation !== "checkFactStanding" || canCheck),
       }),
@@ -326,7 +327,7 @@ it.effect("saves a settled run's cited facts exactly once, recallable without re
   }).pipe(Effect.provide(makeLayer(model.generate)));
 });
 
-it.effect("stores what the blind check set aside without making it recallable", () => {
+it.effect("discards task-only proposals without saving a review queue", () => {
   const scopeLimit = {
     kind: "constraint" as const,
     content: "Keep this change limited to the API handlers.",
@@ -353,20 +354,13 @@ it.effect("stores what the blind check set aside without making it recallable", 
     assert.notEqual(checks[0]!.cwd, `/work/${projectId}`);
     const saved = (yield* knowledge.list({ projectId, status: "saved" })).facts;
     assert.deepEqual(
-      saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]).toSorted(),
-      [
-        [snakeCase.content, "standing", "check"],
-        [scopeLimit.content, "task", "check"],
-      ],
+      saved.map((fact) => [fact.content, fact.verdict?.value, fact.verdict?.by]),
+      [[snakeCase.content, "standing", "check"]],
     );
-    assert.deepEqual(
-      (yield* knowledge.list({ projectId, verdict: "set_aside" })).facts.map(
-        (fact) => fact.content,
-      ),
-      [scopeLimit.content],
-    );
+    assert.deepEqual((yield* knowledge.list({ projectId, verdict: "set_aside" })).facts, []);
+    assert.deepEqual((yield* knowledge.list({ projectId, status: "forgotten" })).facts, []);
     const lastRun = (yield* knowledge.status({ projectId })).assistedLearning?.lastRun;
-    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 set aside: 1 task note."]);
+    assert.deepEqual([lastRun?.saved, lastRun?.reason], [1, "1 discarded: 1 task note."]);
   }).pipe(Effect.provide(makeLayer(model.generate, {}, check)));
 });
 
@@ -686,7 +680,6 @@ it.effect(
         const result = yield* knowledge.saveAutomatic(
           { ...create(`crowded-auto-${index}`, content), sources: facts[0]!.sources },
           { kind: "assisted", threadId, runId, runOutcome: "completed" },
-          "standing",
         );
         assert.equal(result.outcome, "duplicate");
       }
@@ -726,7 +719,6 @@ it.effect(
             .saveAutomatic(
               { ...create(`negation-${index}`, content), sources: facts[0]!.sources },
               { kind: "assisted", threadId, runId, runOutcome: "completed" },
-              "standing",
             )
             .pipe(Effect.map((result) => result.outcome)),
       );

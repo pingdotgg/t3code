@@ -303,6 +303,8 @@ export const makeManagedCodexProvider = Effect.fn("makeManagedCodexProvider")(fu
       protect("generateConversationSummary", nativeGeneration.generateConversationSummary(value)),
     checkFactStanding: (value) =>
       protect("checkFactStanding", nativeGeneration.checkFactStanding(value)),
+    curateProjectMemory: (value) =>
+      protect("curateProjectMemory", nativeGeneration.curateProjectMemory(value)),
     generateTranscriptionPostProcessing: (value) =>
       protect(
         "generateTranscriptionPostProcessing",

@@ -12,6 +12,7 @@ import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
   knowledgeConflictHintLabel,
   knowledgeOriginLabel,
+  memoryCurationRunLabel,
   projectFactHistoryLabel,
   projectFactTrustPoints,
 } from "@t3tools/client-runtime/projectKnowledge";
@@ -135,6 +136,7 @@ function HistoryRow(props: {
           Trust {entry.trustBefore.toFixed(2)} → {entry.trustAfter.toFixed(2)}
         </p>
       ) : null}
+      {entry.reason ? <p className="text-xs text-muted-foreground">{entry.reason}</p> : null}
       {showsContent ? (
         <details>
           <summary className="text-xs">Revision {entry.revision} content</summary>
@@ -235,16 +237,28 @@ export function KnowledgeHealthStrip(props: { readonly status: ProjectKnowledgeS
     ["Unhelpful", status.feedback.unhelpful],
   ] as const;
   return (
-    <dl
-      aria-label="Memory health"
-      className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground"
-    >
-      {counters.map(([label, value]) => (
-        <div key={label} className="flex gap-1">
-          <dt>{label}</dt>
-          <dd className="tabular-nums text-foreground">{value}</dd>
-        </div>
-      ))}
-    </dl>
+    <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+      <dl aria-label="Memory health" className="flex flex-wrap gap-x-3 gap-y-1">
+        {counters.map(([label, value]) => (
+          <div key={label} className="flex gap-1">
+            <dt>{label}</dt>
+            <dd className="tabular-nums text-foreground">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {status.curation ? (
+        <p>
+          {memoryCurationRunLabel(status.curation)}
+          {status.curation.completedAt ? (
+            <>
+              {" · "}
+              <time dateTime={status.curation.completedAt}>
+                {historyTimeFormatter.format(new Date(status.curation.completedAt))}
+              </time>
+            </>
+          ) : null}
+        </p>
+      ) : null}
+    </div>
   );
 }

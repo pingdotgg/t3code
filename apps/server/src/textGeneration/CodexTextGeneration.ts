@@ -476,7 +476,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         )?.slug ??
         listed.find((candidate) => codexModelFamily(candidate.slug) === requestedFamily)?.slug;
       const model =
-        operation === "generateModelEvaluation" || operation === "generateConversationSummary"
+        operation === "generateModelEvaluation" ||
+        operation === "generateConversationSummary" ||
+        operation === "curateProjectMemory"
           ? requestedModel
           : (matchedModel ??
             listed.find((candidate) => candidate.isDefault)?.slug ??
@@ -512,7 +514,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       const isolatedConfiguration =
         operation === "generateModelEvaluation" ||
         operation === "generateConversationSummary" ||
-        operation === "checkFactStanding"
+        operation === "checkFactStanding" ||
+        operation === "curateProjectMemory"
           ? yield* readIsolatedConfiguration(originalHome, launchArgs, operation).pipe(
               Effect.mapError(
                 (cause) =>
@@ -702,7 +705,9 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
 
       const decodeOutput = Schema.decodeEffect(
         Schema.fromJsonString(outputSchemaJson),
-        operation === "generateModelEvaluation" ? { onExcessProperty: "error" } : undefined,
+        operation === "generateModelEvaluation" || operation === "curateProjectMemory"
+          ? { onExcessProperty: "error" }
+          : undefined,
       );
 
       return yield* fileSystem.readFileString(outputPath).pipe(

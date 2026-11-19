@@ -14,6 +14,15 @@ import type * as Effect from "effect/Effect";
 
 import type { TextGenerationPolicy } from "./textGenerationPolicy.ts";
 import type {
+  ProjectMemoryCurationDecision,
+  ProjectMemoryCurationFact,
+} from "./textGenerationCuration.ts";
+export type {
+  ProjectMemoryCurationDecision,
+  ProjectMemoryCurationFact,
+} from "./textGenerationCuration.ts";
+export { validateProjectMemoryCuration } from "./textGenerationCuration.ts";
+import type {
   ConversationSummaryPromptMessage,
   FactStandingCheckStatement,
   KnowledgeCandidatesPromptMessage,
@@ -142,6 +151,17 @@ export interface FactStandingCheckResult {
   verdicts: ReadonlyArray<ProjectFactVerdict>;
 }
 
+export interface ProjectMemoryCurationInput {
+  /** An empty directory keeps project-local configuration out of the curator. */
+  cwd: string;
+  modelSelection: ModelSelection;
+  facts: ReadonlyArray<ProjectMemoryCurationFact>;
+}
+
+export interface ProjectMemoryCurationResult {
+  decisions: ReadonlyArray<ProjectMemoryCurationDecision>;
+}
+
 export interface ConversationSummaryGenerationInput {
   cwd: string;
   /**
@@ -211,6 +231,10 @@ export interface ProviderTextGeneration {
   readonly checkFactStanding: (
     input: FactStandingCheckInput,
   ) => Effect.Effect<FactStandingCheckResult, TextGenerationError>;
+
+  readonly curateProjectMemory: (
+    input: ProjectMemoryCurationInput,
+  ) => Effect.Effect<ProjectMemoryCurationResult, TextGenerationError>;
 }
 
 /** A provider declares the operations it implements; the application facade validates each call. */

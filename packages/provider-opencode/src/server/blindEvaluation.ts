@@ -54,7 +54,8 @@ function mergeConfig(target: Config, source: Config): Config {
 export const runsIsolated = (operation: TextGenerationOperation) =>
   operation === "generateModelEvaluation" ||
   operation === "generateConversationSummary" ||
-  operation === "checkFactStanding";
+  operation === "checkFactStanding" ||
+  operation === "curateProjectMemory";
 
 export const makeIsolatedGenerationEnvironment = Effect.fn(
   "OpenCode.makeBlindEvaluationEnvironment",

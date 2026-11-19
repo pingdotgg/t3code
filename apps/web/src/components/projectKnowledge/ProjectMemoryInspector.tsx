@@ -11,6 +11,7 @@ import type {
 import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  canRestoreFactToRecall,
   isSupersededFact,
   knowledgeOriginLabel,
   projectFactVerdictLabel,
@@ -94,10 +95,15 @@ export function FactInspector(props: {
   readonly score: KnowledgeScore | undefined;
   readonly unavailableReason: KnowledgeSourceUnavailableReason | undefined;
   readonly historyAvailable: boolean;
+  readonly curationAvailable: boolean;
   readonly canMutate: boolean;
   readonly busy: boolean;
   readonly onEdit: (fact: EditableFact, supersede: boolean) => void;
-  readonly onRevise: (fact: ProjectFact, action: "forget" | "feedback", helpful?: boolean) => void;
+  readonly onRevise: (
+    fact: ProjectFact,
+    action: "forget" | "feedback" | "restore",
+    helpful?: boolean,
+  ) => void;
   readonly onOpenSource: (source: KnowledgeMessageRef) => void;
   readonly onOpenFact: (factId: ProjectFactId) => void;
   readonly onBackToResults: () => void;
@@ -179,6 +185,16 @@ export function FactInspector(props: {
       {fact.status !== "forgotten" ? (
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
+            {props.curationAvailable && canRestoreFactToRecall(fact) ? (
+              <Button
+                disabled={locked}
+                size="sm"
+                variant="outline"
+                onClick={() => props.onRevise(fact, "restore")}
+              >
+                Restore to recall
+              </Button>
+            ) : null}
             {/* The server rejects revisions of a superseded fact; its replacement is the one to change. */}
             {!superseded ? (
               <Button

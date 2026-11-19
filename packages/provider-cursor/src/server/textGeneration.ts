@@ -90,7 +90,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
     function* (input) {
       const { operation, prompt, modelSelection } = input;
       const evaluating = operation === "generateModelEvaluation";
-      const blind = evaluating || operation === "checkFactStanding";
+      const blind =
+        evaluating || operation === "checkFactStanding" || operation === "curateProjectMemory";
       if (evaluating && ["", "auto", "default"].includes(modelSelection.model.trim())) {
         return yield* new TextGenerationError({
           operation,

@@ -60,6 +60,7 @@ const ISOLATED_OPERATIONS: ReadonlySet<TextGenerationOperations.Operation> = new
   "generateModelEvaluation",
   "generateKnowledgeCandidates",
   "checkFactStanding",
+  "curateProjectMemory",
   "generateConversationSummary",
 ]);
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
@@ -392,7 +393,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
 
     const decodeOutput = Schema.decodeEffect(
       outputSchemaJson,
-      operation === "generateModelEvaluation" ? { onExcessProperty: "error" } : undefined,
+      operation === "generateModelEvaluation" || operation === "curateProjectMemory"
+        ? { onExcessProperty: "error" }
+        : undefined,
     );
     return yield* decodeOutput(envelope?.structured_output).pipe(
       Effect.catchTags({

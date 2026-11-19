@@ -856,6 +856,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "memory-curation",
+    title: "Curate project memories",
+    to: "/settings/labs",
+    scope: "project-defaults",
+    searchTerms: [
+      "zack holographic memory curation curate cleanup outdated duplicate project knowledge",
+    ],
+  },
+  {
     id: "conversation-summaries",
     title: "Summarize older messages",
     to: "/settings/labs",

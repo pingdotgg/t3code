@@ -23,6 +23,7 @@ import type { SheetProps } from "./ui/Sheet.types";
 const state = vi.hoisted(() => ({
   uuidSequence: 0,
   deliveryCapabilities: {} as Record<string, boolean | undefined>,
+  curation: false,
   deliveries: null as unknown,
   readDeliveries: vi.fn(),
   focused: true,
@@ -165,6 +166,7 @@ vi.mock("../state/server", () => ({
         capabilities: {
           projectKnowledge: true,
           projectKnowledgeHistory: true,
+          projectKnowledgeCuration: state.curation,
           projectKnowledgeDeliveries: state.deliveryCapabilities[environmentId],
         },
       },
@@ -287,9 +289,10 @@ const deliveryRecord: ProjectKnowledgeDeliveries = {
     },
   ],
 };
-function setup(entries: Array<typeof scope> = [scope]) {
+function setup(entries: Array<typeof scope> = [scope], curation = false) {
   state.uuidSequence = 0;
   state.deliveryCapabilities = {};
+  state.curation = curation;
   state.deliveries = null;
   state.readDeliveries.mockReset();
   state.focused = true;
@@ -672,8 +675,8 @@ it("forgets a fact only after the permanent-erase warning is confirmed", async (
   });
 });
 
-it("marks a superseded fact read-only and lists superseded facts on request", async () => {
-  using screen = setup();
+it.each([false, true])("handles superseded facts with curation support %s", async (curation) => {
+  using screen = setup([scope], curation);
   state.list = {
     facts: [{ ...fact, supersededBy: ProjectFactId.make("replacement") }],
     nextCursor: null,
@@ -684,6 +687,7 @@ it("marks a superseded fact read-only and lists superseded facts on request", as
   const labels = [...screen.container.querySelectorAll("button")].map((item) => item.textContent);
   expect(labels).not.toContain("Edit");
   expect(labels).not.toContain("Supersede");
+  expect(labels.includes("Restore to recall")).toBe(curation);
   await screen.click("Back");
   expect(state.listInputs.at(-1)).not.toHaveProperty("includeSuperseded");
   await act(async () =>
@@ -692,6 +696,20 @@ it("marks a superseded fact read-only and lists superseded facts on request", as
     ).click(),
   );
   expect(state.listInputs.at(-1)).toMatchObject({ includeSuperseded: true });
+  if (!curation) return;
+  await screen.click(`Inspect fact: ${fact.content}`);
+  await screen.click("Restore to recall");
+  expect(state.mutate).toHaveBeenCalledWith({
+    environmentId: scope.environmentId,
+    input: {
+      action: "restore",
+      commandId: expect.any(String),
+      projectId: scope.projectId,
+      factId: fact.id,
+      expectedRevision: fact.revision,
+    },
+  });
+  expect(screen.container.textContent).not.toContain("Restore to recall");
 });
 
 it("supersedes a fact with a new replacement and shows the returned conflict hints", async () => {

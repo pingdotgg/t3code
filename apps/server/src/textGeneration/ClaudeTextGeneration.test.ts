@@ -267,6 +267,24 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           }),
       );
       expect(checked.verdicts).toEqual(["standing"]);
+      yield* withFakeClaudeEnv(
+        { ...isolation, output: JSON.stringify({ structured_output: { decisions: [] } }) },
+        (textGeneration) =>
+          textGeneration.curateProjectMemory({
+            cwd: process.cwd(),
+            modelSelection,
+            facts: [
+              {
+                id: "fact",
+                revision: 1,
+                kind: "convention",
+                content: "Acme uses pnpm.",
+                sources: [],
+                protected: false,
+              },
+            ],
+          }),
+      );
     }),
   );
 

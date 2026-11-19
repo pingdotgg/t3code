@@ -488,6 +488,8 @@ export const CodexDriver: ProviderDriver<
             ),
           checkFactStanding: (input) =>
             protect("checkFactStanding", nativeGeneration.checkFactStanding(input)),
+          curateProjectMemory: (input) =>
+            protect("curateProjectMemory", nativeGeneration.curateProjectMemory(input)),
         }
       : nativeGeneration;
     const probeSkills = yield* makeCodexSkillsProbe().pipe(

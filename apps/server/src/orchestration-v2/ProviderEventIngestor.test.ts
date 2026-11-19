@@ -266,6 +266,7 @@ it.effect("takes a hub's reset for an unreset usage_limit, then refreshes the sn
         generateKnowledgeCandidates: () => Effect.die("unused"),
         generateConversationSummary: () => Effect.die("unused"),
         checkFactStanding: () => Effect.die("unused"),
+        curateProjectMemory: () => Effect.die("unused"),
         generateTranscriptionPostProcessing: () => Effect.die("unused"),
       },
       snapshot: {

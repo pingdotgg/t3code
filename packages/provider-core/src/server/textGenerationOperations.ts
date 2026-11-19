@@ -13,6 +13,10 @@ import { extractJsonObject } from "@t3tools/shared/schemaJson";
 import type { ProviderTextGeneration, ProviderTextGenerationRuntime } from "./textGeneration.ts";
 import { buildModelEvaluationPrompt, validateModelEvaluationVerdict } from "./modelEvaluation.ts";
 import {
+  buildProjectMemoryCurationPrompt,
+  validateProjectMemoryCuration,
+} from "./textGenerationCuration.ts";
+import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
   buildConversationSummaryPrompt,
@@ -62,7 +66,9 @@ export const decodeJsonReply = <S extends Schema.Top>(
 ) => {
   const decodeOutput = Schema.decodeEffect(
     Schema.fromJsonString(request.outputSchema),
-    request.operation === "generateModelEvaluation" ? { onExcessProperty: "error" } : undefined,
+    request.operation === "generateModelEvaluation" || request.operation === "curateProjectMemory"
+      ? { onExcessProperty: "error" }
+      : undefined,
   );
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(
@@ -285,12 +291,48 @@ export function fromRunner(
       });
     });
 
+  const curateProjectMemory: ProviderTextGeneration["curateProjectMemory"] = Effect.fn(
+    `${name}.curateProjectMemory`,
+  )(function* (input) {
+    if (options.supportsBlindEvaluation !== true) {
+      return yield* new TextGenerationError({
+        operation: "curateProjectMemory",
+        detail:
+          "This provider cannot isolate memory curation from tools and workspace instructions.",
+      });
+    }
+    if (!validateProjectMemoryCuration([], input.facts)) {
+      return yield* new TextGenerationError({
+        operation: "curateProjectMemory",
+        detail: "The memory review exceeds its budget or contains duplicate fact ids.",
+      });
+    }
+    if (input.facts.length === 0) return { decisions: [] };
+    const result = yield* run({
+      operation: "curateProjectMemory",
+      cwd: input.cwd,
+      modelSelection: input.modelSelection,
+      ...buildProjectMemoryCurationPrompt(input.facts),
+    });
+    if (!validateProjectMemoryCuration(result.decisions, input.facts)) {
+      return yield* new TextGenerationError({
+        operation: "curateProjectMemory",
+        detail:
+          "The curator returned unsupported facts, revisions, or unsafe retirement decisions.",
+        kind: "invalid-output",
+      });
+    }
+    return result;
+  });
+
   return {
     supportedOperations: TextGenerationOperation.literals.filter(
       (operation) =>
         (operation !== "generateReviewGuide" || options.supportsInvestigation) &&
         // The standing check must not see tools or workspace instructions either.
-        ((operation !== "generateModelEvaluation" && operation !== "checkFactStanding") ||
+        ((operation !== "generateModelEvaluation" &&
+          operation !== "checkFactStanding" &&
+          operation !== "curateProjectMemory") ||
           options.supportsBlindEvaluation === true) &&
         (operation !== "generateConversationSummary" ||
           options.supportsConversationSummary !== false),
@@ -305,5 +347,6 @@ export function fromRunner(
     generateModelEvaluation,
     generateTranscriptionPostProcessing,
     checkFactStanding,
+    curateProjectMemory,
   } satisfies ProviderTextGenerationRuntime;
 }

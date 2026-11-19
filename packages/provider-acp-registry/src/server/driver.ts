@@ -152,6 +152,7 @@ const makeUnsupportedTextGeneration = (): ProviderTextGenerationRuntime => {
     generateConversationSummary: () => unsupported("generateConversationSummary"),
     generateModelEvaluation: () => unsupported("generateModelEvaluation"),
     checkFactStanding: () => unsupported("checkFactStanding"),
+    curateProjectMemory: () => unsupported("curateProjectMemory"),
     generateTranscriptionPostProcessing: () => unsupported("generateTranscriptionPostProcessing"),
   };
 };

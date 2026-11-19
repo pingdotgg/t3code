@@ -10,6 +10,7 @@ import {
   KnowledgeOrigin,
   ProjectFact,
   ProjectFactHistoryEntry,
+  ProjectFactHistoryEvent,
   ProjectFactId,
   ProjectFactStatus,
   ProjectFactVerdict,
@@ -91,11 +92,17 @@ const decodeFacts = Effect.fn("ProjectKnowledgeStore.decodeFacts")(function* (ro
   );
 });
 
+const StoredHistoryEvent = Schema.Union([
+  ProjectFactHistoryEvent,
+  Schema.Literals(["curated", "restored"]),
+]);
 const HistoryRow = Schema.Struct({
   ...ProjectFactHistoryEntry.fields,
+  event: StoredHistoryEvent,
   actor: Schema.fromJsonString(KnowledgeOrigin),
   sources: Schema.fromJsonString(Schema.Array(KnowledgeFactSource)),
   helpful: Schema.NullOr(Schema.Number),
+  reason: Schema.NullOr(Schema.String),
 });
 const decodeHistory = Schema.decodeUnknownEffect(Schema.Array(HistoryRow));
 const decodeSources = Schema.decodeUnknownEffect(
@@ -103,12 +110,13 @@ const decodeSources = Schema.decodeUnknownEffect(
 );
 export type HistoryRecord = Omit<
   ProjectFactHistoryEntry,
-  "sequence" | "sourceUnavailable" | "at" | "event"
+  "sequence" | "sourceUnavailable" | "at" | "event" | "memoryAction"
 > & {
   readonly projectId: ProjectId;
   readonly factId: ProjectFactId;
-  readonly event: Exclude<ProjectFactHistoryEntry["event"], "baseline">;
+  readonly event: Exclude<typeof StoredHistoryEvent.Type, "baseline">;
   readonly at: string;
+  readonly reviewedFactIds?: ReadonlyArray<ProjectFactId>;
 };
 
 const DeliveryRow = Schema.Struct({
@@ -224,7 +232,7 @@ export const makeStore = Effect.gen(function* () {
         AND (${includeSuperseded ? 1 : 0} = 1 OR status = 'forgotten' OR superseded_by_id IS NULL)
         AND ${onlyIds === null ? sql`1 = 1` : sql.in("id", onlyIds)}
         AND ${origin === null ? sql`1 = 1` : sql`json_extract(origin_json, '$.kind') = ${origin}`}
-        AND ${setAside ? sql`verdict IN ('task', 'code')` : sql`1 = 1`}
+        AND ${setAside ? sql`verdict IN ('task', 'code')` : status === "forgotten" ? sql`1 = 1` : sql`(verdict IS NULL OR verdict = 'standing')`}
       ORDER BY id ASC LIMIT ${limit}
     `.pipe(Effect.flatMap(decodeFacts));
   });
@@ -320,9 +328,11 @@ export const makeStore = Effect.gen(function* () {
     entities: ReadonlyArray<string>,
     minTrust: number,
     includeSuperseded: boolean,
+    includeSetAside = false,
   ) {
     const searchable = sql`f.status = 'saved' AND f.trust >= ${minTrust}
-      AND (${includeSuperseded ? 1 : 0} = 1 OR f.superseded_by_id IS NULL)`;
+      AND (${includeSuperseded ? 1 : 0} = 1 OR f.superseded_by_id IS NULL)
+      AND (${includeSetAside ? 1 : 0} = 1 OR f.verdict IS NULL OR f.verdict = 'standing')`;
     const ftsQuery = ftsMatch(terms);
     const lexical =
       ftsQuery === ""
@@ -469,20 +479,25 @@ export const makeStore = Effect.gen(function* () {
   ) {
     yield* sql`INSERT INTO project_knowledge_fact_history (
       project_id, fact_id, revision, event, actor_json, content_digest, content, sources_json,
-      trust_before, trust_after, helpful, related_fact_id, created_at
+      trust_before, trust_after, helpful, related_fact_id, created_at, reason, reviewed_fact_ids_json
     ) VALUES (
       ${entry.projectId}, ${entry.factId}, ${entry.revision}, ${entry.event},
       ${encodeOrigin(entry.actor)}, ${entry.contentDigest}, ${entry.content},
       ${encodeSources(entry.sources)}, ${entry.trustBefore}, ${entry.trustAfter},
-      ${entry.helpful === null ? null : entry.helpful ? 1 : 0}, ${entry.relatedFactId}, ${entry.at}
+      ${entry.helpful === null ? null : entry.helpful ? 1 : 0}, ${entry.relatedFactId}, ${entry.at}, ${entry.reason ?? null},
+      ${encodeFactIds(entry.reviewedFactIds ?? [])}
     )`;
   });
   const eraseHistory = Effect.fn("ProjectKnowledgeStore.eraseHistory")(function* (
     projectId: ProjectId,
     factId: ProjectFactId,
   ) {
-    yield* sql`UPDATE project_knowledge_fact_history SET content = NULL, sources_json = '[]'
+    yield* sql`UPDATE project_knowledge_fact_history SET content = NULL, sources_json = '[]', reason = NULL
       WHERE project_id = ${projectId} AND fact_id = ${factId}`;
+    // A curator's rationale can quote any fact in its bounded review packet.
+    yield* sql`UPDATE project_knowledge_fact_history SET reason = NULL
+      WHERE project_id = ${projectId} AND reason IS NOT NULL
+        AND EXISTS (SELECT 1 FROM json_each(reviewed_fact_ids_json) reviewed WHERE reviewed.value = ${factId})`;
   });
   const history = Effect.fn("ProjectKnowledgeStore.history")(function* (
     projectId: ProjectId,
@@ -493,12 +508,26 @@ export const makeStore = Effect.gen(function* () {
       SELECT sequence, event, revision, actor_json AS actor, created_at AS at,
         content_digest AS "contentDigest", content, sources_json AS sources,
         trust_before AS "trustBefore", trust_after AS "trustAfter", helpful,
-        related_fact_id AS "relatedFactId", NULL AS "sourceUnavailable"
+        related_fact_id AS "relatedFactId", NULL AS "sourceUnavailable", reason
       FROM project_knowledge_fact_history
       WHERE project_id = ${projectId} AND fact_id = ${factId}
       ORDER BY sequence DESC LIMIT ${limit}`;
     return (yield* decodeHistory(rows))
-      .map((row) => ({ ...row, helpful: row.helpful === null ? null : row.helpful !== 0 }))
+      .map(({ reason, event, ...row }): ProjectFactHistoryEntry => ({
+        ...row,
+        // Persist the exact audit action while keeping the wire event enum compatible.
+        event:
+          event === "curated"
+            ? row.relatedFactId === null
+              ? "edited"
+              : "superseded"
+            : event === "restored"
+              ? "edited"
+              : event,
+        ...(event === "curated" || event === "restored" ? { memoryAction: event } : {}),
+        helpful: row.helpful === null ? null : row.helpful !== 0,
+        ...(reason === null ? {} : { reason }),
+      }))
       .toReversed();
   });
   const sourcesAtRevision = Effect.fn("ProjectKnowledgeStore.sourcesAtRevision")(function* (

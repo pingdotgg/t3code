@@ -715,6 +715,59 @@ it("shows real score components and sends the viewed revision for feedback", asy
   });
 });
 
+it("restores a manually superseded fact using the inspected revision", async () => {
+  const registry = await setup();
+  let currentFact: ProjectFact = {
+    ...fact,
+    revision: 3,
+    supersededBy: ProjectFactId.make("replacement"),
+  };
+  state.config = Atom.make({
+    environment: {
+      capabilities: {
+        projectKnowledge: true,
+        projectKnowledgeHistory: true,
+        projectKnowledgeCuration: true,
+      },
+    },
+  });
+  state.detail = Atom.make(() => AsyncResult.success(factDetail(currentFact)));
+  state.mutate.mockImplementation(async () => {
+    currentFact = {
+      ...currentFact,
+      revision: 4,
+      supersededBy: null,
+      verdict: { value: "standing", by: "person", at: fact.updatedAt },
+    };
+    return { _tag: "Success", value: currentFact };
+  });
+  await using screen = await mount(registry);
+  await openMemory(screen);
+  await page.getByRole("checkbox", { name: "Show superseded" }).click();
+  await page.getByRole("searchbox", { name: "Search project knowledge" }).fill("tenant cache");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  expect(state.searchRequest).toHaveBeenLastCalledWith({
+    environmentId: scope.environmentId,
+    input: expect.objectContaining({ includeSuperseded: true, recordRetrieval: false }),
+  });
+  await factRow(fact.content!).click();
+  await inspector().getByRole("button", { name: "Restore to recall", exact: true }).click();
+  expect(state.mutate).toHaveBeenCalledWith({
+    environmentId: scope.environmentId,
+    input: {
+      action: "restore",
+      commandId: expect.any(String),
+      projectId: scope.projectId,
+      factId: fact.id,
+      expectedRevision: 3,
+    },
+  });
+  await expect
+    .element(inspector().getByRole("button", { name: "Restore to recall", exact: true }))
+    .not.toBeInTheDocument();
+  await expect.element(inspector().getByText(/Standing, recalled into related work/)).toBeVisible();
+});
+
 it("forgets a fact only after the permanent-erase warning is confirmed", async () => {
   const registry = await setup();
   await using screen = await mount(registry);
@@ -1170,7 +1223,6 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
         projectKnowledge: true,
         projectKnowledgeHistory: true,
         projectKnowledgeAssistedLearning: true,
-        projectKnowledgeStandingCheck: true,
         projectSettingsOverrides: true,
       },
     },
@@ -1205,11 +1257,6 @@ it("shows automatic facts as saved, with citations and the project switch", asyn
   await expect.element(toggle).toBeChecked();
   await expect.element(page.getByText("Last run: saved 1.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Set aside", exact: true }).click();
-  expect(state.listRequest).toHaveBeenLastCalledWith({
-    environmentId: scope.environmentId,
-    input: { projectId: scope.projectId, status: "saved", verdict: "set_aside" },
-  });
   await page.getByRole("button", { name: "Automatic", exact: true }).click();
   expect(state.listRequest).toHaveBeenLastCalledWith({
     environmentId: scope.environmentId,
