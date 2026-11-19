@@ -11768,6 +11768,7 @@
     }
   ],
   "86beb6c9c15d2391": "No hay proveedores de uso configurados.",
+  "c665240c833491b0": "Add a CLIProxyAPI hub to show the quota of every account it pools next to your providers.",
   "3c98c35d600e6738": "Añadir proveedor de uso",
   "1d1e9cda847bd398": "La clave de gestión del hub se elimina de este servidor. Sus cuentas salen de la vista Límites; el hub en sí no se toca. Vuelve a añadirlo con la URL y la clave para recuperarlas.",
   "c9bee4f93481b77a": "Quitar hub",

@@ -11776,6 +11776,7 @@
     " wechseln"
   ],
   "86beb6c9c15d2391": "Keine Nutzungsanbieter konfiguriert.",
+  "c665240c833491b0": "Add a CLIProxyAPI hub to show the quota of every account it pools next to your providers.",
   "3c98c35d600e6738": "Nutzungsanbieter hinzufügen",
   "1d1e9cda847bd398": "Der Verwaltungsschlüssel des Hubs wird von diesem Server gelöscht. Seine Konten verschwinden aus der Limits-Ansicht; der Hub selbst bleibt unberührt. Füge ihn mit URL und Schlüssel erneut hinzu, um sie zurückzuholen.",
   "c9bee4f93481b77a": "Hub entfernen",

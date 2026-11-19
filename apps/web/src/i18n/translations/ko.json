@@ -11727,6 +11727,7 @@
     "(으)로 전환"
   ],
   "86beb6c9c15d2391": "구성된 사용량 제공자가 없습니다.",
+  "c665240c833491b0": "Add a CLIProxyAPI hub to show the quota of every account it pools next to your providers.",
   "3c98c35d600e6738": "사용량 제공자 추가",
   "1d1e9cda847bd398": "허브의 관리 키가 이 서버에서 삭제됩니다. 해당 계정은 한도 보기에서 사라지며 허브 자체는 변경되지 않습니다. 다시 표시하려면 URL과 키로 다시 추가하세요.",
   "c9bee4f93481b77a": "허브 제거",
