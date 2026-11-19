@@ -72,6 +72,36 @@ function permissionRequest(
 }
 
 describe("AntigravityAdapterV2 flavor", () => {
+  it("keeps explicit approval or sandbox policies in default session mode", () => {
+    const base = {
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      cwd: "/workspace",
+    };
+    assert.strictEqual(
+      flavor.sessionModeForPolicy?.(ProviderAdapter.ProviderAdapterV2RuntimePolicy.make(base)),
+      "yolo",
+    );
+    assert.strictEqual(
+      flavor.sessionModeForPolicy?.(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...base,
+          approvalPolicy: "on-request",
+        }),
+      ),
+      "default",
+    );
+    assert.strictEqual(
+      flavor.sessionModeForPolicy?.(
+        ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          ...base,
+          sandboxPolicy: { type: "readOnly" },
+        }),
+      ),
+      "default",
+    );
+  });
+
   it("keeps a successful subagent launch running until the parent turn becomes idle", () => {
     const batch = flavor.extractSubagentUpdate?.({
       toolCallId: "trajectory:4",
@@ -1707,7 +1737,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
 });
 
 describe("AntigravityAdapterV2 runtime mode ceiling", () => {
-  const modesSetFor = (pickedMode: string) =>
+  const modesSetFor = (pickedMode: string, availableModes?: string) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -1729,7 +1759,10 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
               command: process.execPath,
               args: [mockAgentPath],
               cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
+              env: {
+                T3_ACP_ANTIGRAVITY: "1",
+                ...(availableModes === undefined ? {} : { T3_ACP_AVAILABLE_MODES: availableModes }),
+              },
             },
           }).pipe(
             Effect.provideService(SecureRandom.SecureRandom, crypto),
@@ -1768,6 +1801,11 @@ describe("AntigravityAdapterV2 runtime mode ceiling", () => {
       assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
       // A mode under the ceiling is still the user's to pick.
       assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+      assert.deepEqual(yield* modesSetFor("auto", "default,accept-edits,auto,plan"), ["default"]);
+      assert.deepEqual(yield* modesSetFor("accept-edits", "default,accept-edits,auto,plan"), [
+        "default",
+        "accept-edits",
+      ]);
     }),
   );
 });

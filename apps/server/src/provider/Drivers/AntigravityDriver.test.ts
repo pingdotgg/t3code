@@ -10,16 +10,20 @@ import {
   type AntigravitySettings,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { HttpClient } from "effect/http";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
+import { makeTurnInput } from "../../orchestration-v2/Adapters/AcpAdapterV2.testkit.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import * as AntigravityInstallation from "../AntigravityInstallation.ts";
@@ -88,6 +92,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
       /** `data` of the agent's "Internal error" response to `session/new`. */
       readonly newSessionErrorData?: unknown;
       readonly initialMode?: string;
+      readonly availableModes?: ReadonlyArray<string>;
     } = {},
   ) {
     const directory = path.join(root, name);
@@ -111,6 +116,9 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
         ...(options.initialMode === undefined
           ? []
           : [`export T3_ACP_INITIAL_MODE=${shellQuote(options.initialMode)}`]),
+        ...(options.availableModes === undefined
+          ? []
+          : [`export T3_ACP_AVAILABLE_MODES=${shellQuote(options.availableModes.join(","))}`]),
         `exec ${shellQuote(nodePath)} ${shellQuote(mockAgentPath)} "$@"`,
         "",
       ].join("\n"),
@@ -414,47 +422,122 @@ it.layer(layerTest)("AntigravityDriver", (it) => {
           },
         ]);
 
-        // The agy CLI rejects `yolo` and `auto_edit`; it stays in `default` and T3 answers its requests.
-        h.controls.selected = {
-          ...(yield* h.makeExecutable("runtime cli", { initialMode: "auto_edit" })),
-          harnessPath: null,
-        };
-        for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
-          const requestsBefore = (yield* h.readRequests).length;
-          const cliThreadId = ThreadId.make(`thread-antigravity-cli-${runtimeMode}`);
-          const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-            runtimeMode,
-            interactionMode: "default",
-            cwd: workspace,
-          });
-          const cliSession = yield* h.instance.orchestrationAdapter.openSession({
-            threadId: cliThreadId,
-            providerSessionId: ProviderSessionId.make(`provider-session-cli-${runtimeMode}`),
-            modelSelection,
-            runtimePolicy: cliPolicy,
-          });
-          yield* cliSession.ensureThread({
-            threadId: cliThreadId,
-            modelSelection,
-            runtimePolicy: cliPolicy,
-          });
-          expect(h.launches.at(-1)?.args).toEqual([
-            "acp",
-            "--gemini-dir",
-            h.profileDirectory,
-            "--app-data-dir",
-            "antigravity-acp",
-          ]);
-          expect(
-            (yield* h.readRequests)
-              .slice(requestsBefore)
-              .filter(
-                (request) =>
-                  request.method === "session/set_config_option" &&
-                  request.params?.configId === "mode",
-              )
-              .map((request) => request.params?.value),
-          ).toEqual(["default"]);
+        // The agy CLI rejects `yolo` and `auto_edit`, mapping them to advertised CLI modes or `default`.
+        const readModeChangesSince = (offset: number) =>
+          h.readRequests.pipe(
+            Effect.map((requests) =>
+              requests
+                .slice(offset)
+                .filter(
+                  (request) =>
+                    request.method === "session/set_config_option" &&
+                    request.params?.configId === "mode",
+                )
+                .map((request) => request.params?.value),
+            ),
+          );
+
+        for (const scenario of [
+          {
+            name: "runtime cli fallback",
+            initialMode: "auto_edit",
+            availableModes: undefined,
+            expectedByMode: {
+              "full-access": "default",
+              "auto-accept-edits": "default",
+            },
+          },
+          {
+            name: "runtime cli native auto",
+            initialMode: "default",
+            availableModes: ["default", "accept-edits", "auto", "plan"],
+            expectedByMode: {
+              "full-access": "auto",
+              "auto-accept-edits": "accept-edits",
+            },
+          },
+          {
+            name: "runtime cli without auto",
+            initialMode: "default",
+            availableModes: ["default", "accept-edits", "plan"],
+            expectedByMode: {
+              "full-access": "accept-edits",
+              "auto-accept-edits": "accept-edits",
+            },
+          },
+        ] as const) {
+          h.controls.selected = {
+            ...(yield* h.makeExecutable(scenario.name, {
+              initialMode: scenario.initialMode,
+              ...(scenario.availableModes === undefined
+                ? {}
+                : { availableModes: scenario.availableModes }),
+            })),
+            harnessPath: null,
+          };
+          for (const runtimeMode of ["full-access", "auto-accept-edits"] as const) {
+            const requestsBefore = (yield* h.readRequests).length;
+            const cliThreadId = ThreadId.make(
+              `thread-antigravity-cli-${scenario.name.replaceAll(" ", "-")}-${runtimeMode}`,
+            );
+            const cliPolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode,
+              interactionMode: "default",
+              cwd: workspace,
+            });
+            const cliSession = yield* h.instance.orchestrationAdapter.openSession({
+              threadId: cliThreadId,
+              providerSessionId: ProviderSessionId.make(
+                `provider-session-cli-${scenario.name.replaceAll(" ", "-")}-${runtimeMode}`,
+              ),
+              modelSelection,
+              runtimePolicy: cliPolicy,
+            });
+            const providerThread = yield* cliSession.ensureThread({
+              threadId: cliThreadId,
+              modelSelection,
+              runtimePolicy: cliPolicy,
+            });
+            expect(h.launches.at(-1)?.args).toEqual([
+              "acp",
+              "--gemini-dir",
+              h.profileDirectory,
+              "--app-data-dir",
+              "antigravity-acp",
+            ]);
+            expect(yield* readModeChangesSince(requestsBefore)).toEqual([
+              scenario.expectedByMode[runtimeMode],
+            ]);
+            if (scenario.expectedByMode[runtimeMode] === "auto") {
+              const launchesBefore = h.launches.length;
+              const downgradeBefore = (yield* h.readRequests).length;
+              const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+              yield* cliSession.events.pipe(
+                Stream.runForEach((event) => Queue.offer(events, event)),
+                Effect.forkScoped,
+              );
+              yield* cliSession.startTurn(
+                makeTurnInput({
+                  threadId: cliThreadId,
+                  providerThread,
+                  instanceId: h.instance.instanceId,
+                  modelSelection,
+                  runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+                    runtimeMode: "approval-required",
+                    interactionMode: "default",
+                    cwd: workspace,
+                  }),
+                  now: yield* DateTime.now,
+                }),
+              );
+              yield* Stream.fromQueue(events).pipe(
+                Stream.filter((event) => event.type === "turn.terminal"),
+                Stream.runHead,
+              );
+              expect(h.launches.length).toBe(launchesBefore);
+              expect(yield* readModeChangesSince(downgradeBefore)).toEqual(["default"]);
+            }
+          }
         }
       }),
   );

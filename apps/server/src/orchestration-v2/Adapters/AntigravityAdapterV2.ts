@@ -268,7 +268,10 @@ export function makeAntigravityAcpAdapterFlavor(
         mapError: (cause) => cause,
       });
     }),
-    sessionModeForPolicy: (policy) => antigravityPermissionMode(policy.runtimeMode),
+    sessionModeForPolicy: (policy) =>
+      policy.approvalPolicy !== undefined || policy.sandboxPolicy !== undefined
+        ? "default"
+        : antigravityPermissionMode(policy.runtimeMode),
     runtimeModeForSessionMode: antigravityRuntimeModeForSessionMode,
     clientFileSystem: {
       readTextFile: (request, cwd) =>
