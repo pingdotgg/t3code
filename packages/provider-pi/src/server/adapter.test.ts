@@ -20,6 +20,7 @@ import {
   type OrchestrationV2ProviderTurn,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as PlatformError from "effect/PlatformError";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -7188,7 +7189,10 @@ process.stdout.write('{"type":"ready"}\\n');
     () =>
       Effect.gen(function* () {
         const realSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-        const childExit = yield* Deferred.make<ChildProcessSpawner.ExitCode, unknown>();
+        const childExit = yield* Deferred.make<
+          ChildProcessSpawner.ExitCode,
+          PlatformError.PlatformError
+        >();
         const spawner = ChildProcessSpawner.make((command) =>
           realSpawner
             .spawn(command)
