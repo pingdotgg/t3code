@@ -1,12 +1,8 @@
-import * as NodeEvents from "node:events";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The test runs a loopback OTLP receiver.
 import * as NodeHttp from "node:http";
 import { expect } from "e2e";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { runPromise, test, WEB } from "./t3.ts";
+import { environmentId, runPromise, test, WEB } from "./t3.ts";
 
 test(
   "The corrected traces endpoint can be tested while the previous URL is still checking",
@@ -25,26 +21,16 @@ test(
       }
       response.writeHead(200).end();
     });
-    collector.listen(0, "127.0.0.1");
     try {
-      // @ts-expect-error @types/node types node:events as `export =`, hiding the namespace export `once` that Node provides.
-      await NodeEvents.once(collector, "listening");
+      await new Promise<void>((resolve) => collector.listen(0, "127.0.0.1", resolve));
       const address = collector.address();
       if (address === null || typeof address === "string") throw new Error("No collector port");
       const origin = `http://127.0.0.1:${address.port}`;
 
       await t3.project("demo");
-      const { environmentId } = await runPromise(
-        HttpClient.get(`${app.baseUrl}/.well-known/t3/environment`).pipe(
-          Effect.flatMap(HttpClientResponse.filterStatusOk),
-          Effect.flatMap(
-            HttpClientResponse.schemaBodyJson(Schema.Struct({ environmentId: Schema.String })),
-          ),
-          Effect.provide(FetchHttpClient.layer),
-        ),
-      );
+      const environment = await runPromise(environmentId(app.baseUrl ?? ""));
       await t3.open(
-        `/settings/diagnostics?machine=${encodeURIComponent(environmentId)}#telemetry-export`,
+        `/settings/diagnostics?machine=${encodeURIComponent(environment)}#telemetry-export`,
       );
 
       const traces = browser.locator("#otlpTracesUrl");
