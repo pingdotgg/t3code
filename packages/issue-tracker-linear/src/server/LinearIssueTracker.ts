@@ -512,10 +512,14 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
 
       getComments: Effect.fn("LinearIssueTracker.getComments")(function* (input) {
         const identifier = yield* requireIdentifier("getComments", input.key);
-        const [page, viewer] = yield* Effect.all([
-          linear.getComments({ identifier, first: COMMENTS_PAGE, after: input.cursor }),
-          viewerId,
-        ]);
+        const page = yield* linear.getComments({
+          identifier,
+          first: COMMENTS_PAGE,
+          after: input.cursor,
+        });
+        const viewer = page.nodes.some((comment) => comment.reactions.length > 0)
+          ? yield* viewerId
+          : null;
         return {
           comments: page.nodes.map((comment) => toComment(comment, viewer)),
           nextCursor: page.nextCursor,
