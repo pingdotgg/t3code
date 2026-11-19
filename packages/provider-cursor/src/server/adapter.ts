@@ -222,6 +222,7 @@ export function cursorMcpServers(
         Authorization: session.authorizationHeader,
       },
     },
+    ...McpProviderSession.cuaStdioMcpServers(session),
   };
 }
 
@@ -2679,7 +2680,9 @@ export const makeCursorAdapterV2 = Effect.fn("makeCursorAdapterV2")(function* (
               detail: "Cursor turn requires non-empty text or attachments.",
             });
           }
-          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model })}`;
+          const computerUse =
+            (yield* mcpSessions.read(turnInput.threadId))?.cuaDriver !== undefined;
+          const text = `${userText}\n\n${buildRuntimeInstructions({ harness: "Cursor", model: turnInput.modelSelection.model, computerUse })}`;
           return {
             message: images.length === 0 ? text : ({ text, images } satisfies SDKUserMessage),
             prompt: userText,

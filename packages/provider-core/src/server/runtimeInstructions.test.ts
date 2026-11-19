@@ -53,4 +53,11 @@ describe("buildRuntimeInstructions", () => {
     );
     assert.include(instructions, "call unwatch_pull_request");
   });
+
+  it("steers computer use to the background only when Cua is attached", () => {
+    assert.notInclude(buildRuntimeInstructions({ harness: "Claude Code" }), "<computer_use>");
+    const instructions = buildRuntimeInstructions({ harness: "Claude Code", computerUse: true });
+    assert.include(instructions, "<computer_use>");
+    assert.include(instructions, 'defaults to delivery_mode "background"');
+  });
 });
