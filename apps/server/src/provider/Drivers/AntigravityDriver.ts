@@ -40,7 +40,6 @@ import {
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
-  isNoExecMount,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -55,6 +54,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 import type { ServerProviderDraft } from "@t3tools/provider-core/server/snapshotProbe";
 import {
   removeAntigravitySessionFiles,
+  linkAntigravityRuntimeTemp,
   retireAntigravityRuntimeTempDirs,
 } from "../acp/AntigravitySessionFiles.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -153,22 +153,14 @@ export const AntigravityDriver: ProviderDriver<
     };
     const authConfigIssue = antigravityAuthConfigIssue(auth);
     const processEnvironment = yield* mergeProviderInstanceEnvironment(environment);
-    const platform = yield* HostProcess.Platform;
     const userHome = resolveAntigravityUserHome(
-      platform,
+      yield* HostProcess.Platform,
       processEnvironment,
       yield* HostProcess.HomeDirectory,
     );
-    const tmpIsNoExec =
-      platform === "linux" &&
-      isNoExecMount(
-        yield* fileSystem.readFileString("/proc/self/mounts").pipe(Effect.orElseSucceed(() => "")),
-        "/tmp",
-      );
     const directories = yield* resolveAntigravityInstanceDirectories(
       host.paths.stateDir,
       instanceId,
-      { tmpIsNoExec },
     ).pipe(
       Effect.provideService(Digest.Digest, digest),
       Effect.provideService(Path.Path, path),
@@ -183,13 +175,20 @@ export const AntigravityDriver: ProviderDriver<
       ),
     );
     const profileDirectory = directories.profile;
-    for (const directory of [directories.runtimeTemp, ...directories.legacyRuntimeTemps]) {
+    for (const directory of [
+      directories.runtimeTempStore,
+      path.join(profileDirectory, "antigravity-acp", "tmp"),
+    ]) {
       const removeRetired = yield* retireAntigravityRuntimeTempDirs(directory).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
       );
       yield* Effect.forkScoped(removeRetired);
     }
+    const runtimeTempParent = yield* linkAntigravityRuntimeTemp(
+      directories.runtimeTemp,
+      directories.runtimeTempStore,
+    ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
     const continuationIdentity = defaultProviderContinuationIdentity({
       driverKind: DRIVER,
       instanceId,
@@ -236,7 +235,7 @@ export const AntigravityDriver: ProviderDriver<
         baseEnv: processEnvironment,
         auth,
         userHome,
-        tempDirectory: directories.runtimeTemp,
+        tempDirectory: directories.runtimeTempStore,
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -294,7 +293,7 @@ export const AntigravityDriver: ProviderDriver<
           cwd: runtimeInput.cwd,
           baseEnv: spawnEnvironment,
           auth,
-          runtimeTempDirectory,
+          runtimeTempDirectory: path.join(runtimeTempParent, path.basename(runtimeTempDirectory)),
         }),
       }).pipe(Effect.provideService(SecureRandom.SecureRandom, random));
       return {

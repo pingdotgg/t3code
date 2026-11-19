@@ -177,66 +177,34 @@ export function isAntigravitySignInRequiredError(error: unknown): boolean {
 
 export interface AntigravityInstanceDirectories {
   readonly profile: string;
+  /** Holds the unpacked runtime. Keep beside the profile: 120-character archive members under its longer name would exceed Windows' 260-character limit. */
+  readonly runtimeTempStore: string;
   /**
-   * Becomes the agent's TMPDIR, so off Windows it sits in /tmp: tools that put a Unix socket under
-   * it need room in the 104-byte sun_path. It stays beside the state directory on Windows, where
-   * the profile's longer name would push archive members past MAX_PATH, and when /tmp is noexec,
-   * where the PyInstaller bundle could not load the libraries it unpacks.
+   * Parent of the agent's TMPDIR. Off Windows, a short /tmp symlink to the store, so tools that put
+   * a Unix socket under TMPDIR stay within the 104-byte sun_path while the data stays on disk.
    */
   readonly runtimeTemp: string;
-  /** Other runtime temp roots, swept on start to reclaim what a force-killed run left there. */
-  readonly legacyRuntimeTemps: ReadonlyArray<string>;
-}
-
-/** Whether `target` (/tmp or a directory directly under /) is on a noexec mount, per /proc/self/mounts. */
-export function isNoExecMount(mounts: string, target: string): boolean {
-  let mountPoint = "";
-  let noExec = false;
-  for (const line of mounts.split("\n")) {
-    const [, point, , options] = line.split(" ");
-    if (point === undefined || options === undefined) continue;
-    // Later lines are mounted over earlier ones at the same point.
-    if ((point === target || point === "/") && point.length >= mountPoint.length) {
-      mountPoint = point;
-      noExec = options.split(",").includes("noexec");
-    }
-  }
-  return noExec;
 }
 
 /** Hashes the instance ID so case-only differences stay separate on case-insensitive filesystems. */
 export const resolveAntigravityInstanceDirectories = Effect.fn(
   "resolveAntigravityInstanceDirectories",
-)(function* (
-  stateDir: string,
-  instanceId: ProviderInstanceId,
-  options?: { readonly tmpIsNoExec?: boolean },
-) {
+)(function* (stateDir: string, instanceId: ProviderInstanceId) {
   const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
   const hash = (value: string) =>
     digest.digest(Digest.sha256, new TextEncoder().encode(value)).pipe(Effect.map(Hex.encode));
   const key = yield* hash(instanceId);
-  const profile = path.join(stateDir, "providers", "antigravity", key);
-  const stateRuntimeTemp = path.join(stateDir, "antigravity-tmp", key.slice(0, 12));
-  const legacyProfileTemp = path.join(profile, "antigravity-acp", "tmp");
-  if (path.sep === "\\") {
-    return {
-      profile,
-      runtimeTemp: stateRuntimeTemp,
-      legacyRuntimeTemps: [legacyProfileTemp],
-    } satisfies AntigravityInstanceDirectories;
-  }
-  // /tmp is shared by every T3 home, so the name also covers the state directory.
-  const sharedKey = yield* hash(`${stateDir}\0${instanceId}`);
-  const tmpRuntimeTemp = path.join("/tmp", `t3-agy-${sharedKey.slice(0, 12)}`);
-  const [runtimeTemp, otherRoot] = options?.tmpIsNoExec
-    ? [stateRuntimeTemp, tmpRuntimeTemp]
-    : [tmpRuntimeTemp, stateRuntimeTemp];
+  const runtimeTempStore = path.join(stateDir, "antigravity-tmp", key.slice(0, 12));
+  // /tmp is shared by every T3 home, so the link name also covers the state directory.
+  const linkKey = path.sep === "\\" ? undefined : yield* hash(`${stateDir}\0${instanceId}`);
   return {
-    profile,
-    runtimeTemp,
-    legacyRuntimeTemps: [otherRoot, legacyProfileTemp],
+    profile: path.join(stateDir, "providers", "antigravity", key),
+    runtimeTempStore,
+    runtimeTemp:
+      linkKey === undefined
+        ? runtimeTempStore
+        : path.join("/tmp", `t3-agy-${linkKey.slice(0, 12)}`),
   } satisfies AntigravityInstanceDirectories;
 });
 

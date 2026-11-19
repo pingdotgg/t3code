@@ -1,4 +1,5 @@
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -74,3 +75,27 @@ export const retireAntigravityRuntimeTempDirs = Effect.fn("retireAntigravityRunt
   },
   Effect.catch(() => warnRuntimeTempLeftovers.pipe(Effect.as(Effect.void))),
 );
+
+/**
+ * Points `link` at `target`, replacing a stale link of ours. Returns the path the agent should use:
+ * `link`, or `target` when the link cannot be made (another user's entry, a real directory there).
+ */
+export const linkAntigravityRuntimeTemp = Effect.fn("linkAntigravityRuntimeTemp")(function* (
+  link: string,
+  target: string,
+) {
+  if (link === target) return target;
+  const fs = yield* FileSystem.FileSystem;
+  const pointsAtTarget = fs.readLink(link).pipe(
+    Effect.option,
+    Effect.map((current) => Option.contains(current, target)),
+  );
+  if (yield* pointsAtTarget) return link;
+  yield* fs.remove(link).pipe(Effect.ignore);
+  // Another driver for the same instance may have made it between the check and here.
+  const linked = yield* fs.symlink(target, link).pipe(
+    Effect.as(true),
+    Effect.catch(() => pointsAtTarget),
+  );
+  return linked ? link : target;
+});
