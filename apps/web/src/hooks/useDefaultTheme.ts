@@ -1,10 +1,11 @@
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { primaryEnvironmentIdAtom } from "../state/primaryEnvironment";
-import { primaryServerSettingsAtom } from "../state/server";
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
+import { themeServerSettingsAtom } from "../state/server";
 import { getThemeDefinition, singleAppearanceOf, subscribeToCustomThemes } from "../themePalette";
-import { setAppearanceMode, setTheme } from "./useTheme";
+import { getThemeSnapshot, setAppearanceMode, setTheme } from "./useTheme";
 
 const APPLIED_DEFAULT_THEME_STORAGE_PREFIX = "t3code:default-theme-applied:v2:";
+const APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX = "t3code:default-appearance-applied:v1:";
 
 /** Include set time so reasserting the same theme still applies. */
 export function defaultThemeGeneration(theme: string, setAt: string): string {
@@ -18,7 +19,9 @@ export function defaultThemeToApply(input: {
   readonly appliedGeneration: string | null;
   readonly resolves: boolean;
 }): string | null {
-  if (input.environmentId === null || input.defaultTheme.length === 0) return null;
+  // Empty with a set time means the stock theme was set; with none, no theme was.
+  if (input.environmentId === null) return null;
+  if (input.defaultTheme.length === 0 && input.defaultThemeSetAt.length === 0) return null;
   const generation = defaultThemeGeneration(input.defaultTheme, input.defaultThemeSetAt);
   if (input.appliedGeneration === generation) return null;
   // The setting and the palette it names arrive independently, so an id that
@@ -26,6 +29,16 @@ export function defaultThemeToApply(input: {
   // published set changes.
   if (!input.resolves) return null;
   return generation;
+}
+
+/** A single-appearance theme sets its own mode unless a mode was set with it or after it. */
+export function themeSetsOwnMode(input: {
+  readonly defaultThemeSetAt: string;
+  readonly defaultAppearance: string;
+  readonly defaultAppearanceSetAt: string;
+}): boolean {
+  // ISO timestamps from one server compare correctly as strings.
+  return input.defaultAppearance === "" || input.defaultAppearanceSetAt < input.defaultThemeSetAt;
 }
 
 function readAppliedGeneration(storageKey: string): string | null {
@@ -45,9 +58,10 @@ function writeAppliedGeneration(storageKey: string, generation: string): void {
 
 function adoptDefaultTheme(): void {
   if (typeof window === "undefined") return;
-  const environmentId = appAtomRegistry.get(primaryEnvironmentIdAtom);
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
   if (environmentId === null) return;
-  const { defaultTheme, defaultThemeSetAt } = appAtomRegistry.get(primaryServerSettingsAtom);
+  const settings = appAtomRegistry.get(themeServerSettingsAtom);
+  const { defaultTheme, defaultThemeSetAt } = settings;
   const definition = getThemeDefinition(defaultTheme);
   const storageKey = `${APPLIED_DEFAULT_THEME_STORAGE_PREFIX}${environmentId}`;
   const generation = defaultThemeToApply({
@@ -55,31 +69,59 @@ function adoptDefaultTheme(): void {
     defaultTheme,
     defaultThemeSetAt,
     appliedGeneration: readAppliedGeneration(storageKey),
-    resolves: definition !== null,
+    resolves: definition !== null || defaultTheme === "",
   });
-  if (generation === null || definition === null) return;
+  if (generation === null) return;
+  if (definition === null) {
+    // The stock theme keeps the client's own light, dark, or system mode.
+    if (setTheme(getThemeSnapshot().appearanceMode)) writeAppliedGeneration(storageKey, generation);
+    return;
+  }
 
   // A single-appearance theme needs both preference and appearance writes to take effect.
   if (!setTheme(defaultTheme)) return;
   const half = singleAppearanceOf(definition);
   // Only record adoption after both writes succeed, so an appearance failure remains retryable.
-  if (half !== null && !setAppearanceMode(half)) return;
+  if (half !== null && themeSetsOwnMode(settings) && !setAppearanceMode(half)) return;
   writeAppliedGeneration(storageKey, generation);
 }
 
+/** Like the theme, the environment's mode applies once per set, then local choices win. */
+function adoptDefaultAppearance(): void {
+  if (typeof window === "undefined") return;
+  const environmentId = appAtomRegistry.get(localEnvironmentIdAtom);
+  const { defaultAppearance, defaultAppearanceSetAt } =
+    appAtomRegistry.get(themeServerSettingsAtom);
+  const storageKey = `${APPLIED_DEFAULT_APPEARANCE_STORAGE_PREFIX}${environmentId}`;
+  const generation = defaultThemeToApply({
+    environmentId,
+    defaultTheme: defaultAppearance,
+    defaultThemeSetAt: defaultAppearanceSetAt,
+    appliedGeneration: readAppliedGeneration(storageKey),
+    resolves: true,
+  });
+  if (generation === null || defaultAppearance === "") return;
+  if (setAppearanceMode(defaultAppearance)) writeAppliedGeneration(storageKey, generation);
+}
+
+function adoptDefaults(): void {
+  adoptDefaultTheme();
+  adoptDefaultAppearance();
+}
+
 /**
- * Applies the primary environment's default theme once per generation. Start it after the
+ * Applies the theme environment's default theme once per generation. Start it after the
  * environment theme sync so a first-run client adopting the environment's own theme finds it
  * already in the library; it re-checks when published or custom palettes change, so a theme
  * that resolves late still applies.
  */
 export function startDefaultThemeAdoption(): () => void {
   const unsubscribes = [
-    appAtomRegistry.subscribe(primaryEnvironmentIdAtom, adoptDefaultTheme),
-    appAtomRegistry.subscribe(primaryServerSettingsAtom, adoptDefaultTheme),
-    subscribeToCustomThemes(adoptDefaultTheme),
+    appAtomRegistry.subscribe(localEnvironmentIdAtom, adoptDefaults),
+    appAtomRegistry.subscribe(themeServerSettingsAtom, adoptDefaults),
+    subscribeToCustomThemes(adoptDefaults),
   ];
-  adoptDefaultTheme();
+  adoptDefaults();
   return () => {
     for (const unsubscribe of unsubscribes) unsubscribe();
   };

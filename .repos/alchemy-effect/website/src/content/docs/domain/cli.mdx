@@ -1,0 +1,118 @@
+---
+title: CLI
+description: Run an Api's calls from a terminal, as a person or an agent, against the deployed Api.
+---
+
+An Api's typed client works from Effect code. A person at a terminal, a shell script or a coding agent wants a command line instead. `toCli` from `@alchemy.run/domain/Cli` builds an [Effect CLI](https://effect.website) command from the Api you already have. It calls the deployed Api over its HTTP protocol, so the server runs the same middleware and checks as for every other client.
+
+## Build the command
+
+```typescript title="packages/cli/src/bank.ts"
+import * as Domain from "@alchemy.run/domain";
+import { toCli } from "@alchemy.run/domain/Cli";
+import { BunRuntime, BunServices } from "@effect/platform-bun";
+import * as Command from "effect/cli/Command";
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
+import * as FetchHttpClient from "effect/http/FetchHttpClient";
+import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
+import { CustomerApi } from "@bank/domain/CustomerApi.api";
+
+const bank = toCli(CustomerApi, {
+  name: "bank",
+  // The session middleware runs on the server; the CLI sends its token.
+  headers: Config.redacted("BANK_TOKEN").pipe(
+    Effect.map((token) => ({ authorization: `Bearer ${Redacted.value(token)}` })),
+  ),
+});
+
+Command.run(bank, { version: "1.0.0" }).pipe(
+  Effect.provide(
+    Layer.mergeAll(
+      Domain.protocolHttp("https://bank.example.com/api").pipe(Layer.provide(FetchHttpClient.layer)),
+      BunServices.layer,
+    ),
+  ),
+  BunRuntime.runMain,
+);
+```
+
+`toCli` is its own module, so an app that builds no CLI never loads `effect/cli`.
+
+## Send a command
+
+Each command is a subcommand in kebab-case, and its payload and input fields are flags. It prints the receipt as JSON:
+
+```sh
+$ bank deposit-money --target a-1 --amount 1000
+{
+  "reply": { "balance": 1000 },
+  "stream": "Account/a-1",
+  "version": 1
+}
+```
+
+`--json` takes the same fields as one object, and any flag you also give wins over it:
+
+```sh
+$ bank deposit-money --json '{"target":"a-1","amount":1000}' --amount 50
+```
+
+It also takes the call's own wire payload, with the input nested, as the HTTP API and MCP tools take it:
+
+```sh
+$ bank deposit-money --json '{"target":"a-1","input":{"amount":1000}}'
+```
+
+## Read a view
+
+A view, a stream or an aggregate is a subcommand with one subcommand per read, `get`, `peek`, `list` or `snapshot`:
+
+```sh
+$ bank account-summary get --key a-1
+{ "balance": 1000 }
+$ bank statement list --key a-1 --order desc --take 20
+```
+
+`watch` and `events` stream, so they aren't commands.
+
+## Pass structured values
+
+A string, a number, a boolean or a set of string literals takes a typed flag. Anything else, such as a struct, an array or a date, takes its JSON:
+
+```sh
+$ bank account-summary get --key a-1 --at-least '{"stream":"Account/a-1","version":1}'
+```
+
+A command whose input has a field named like a payload field, such as its own `target`, takes its whole input as `--input` JSON instead.
+
+## Read failures
+
+The CLI decodes the input against the call's schema before it sends anything, so a bad flag fails without a request:
+
+```sh
+$ bank deposit-money --amount 1000   # exit code 1, nothing sent
+# stderr: Invalid input for deposit-money, naming the missing `target`
+```
+
+A rejection, or an error of the call's middleware, goes to stderr as its wire JSON, and the run fails with `CallRejected`, exiting with code 1:
+
+```sh
+$ bank withdraw-money --target a-1 --amount 5000   # exit code 1
+{ "_tag": "InsufficientFunds", "balance": 1000, "requested": 5000 }
+```
+
+## Names the CLI refuses
+
+Every run dies with a `DefinitionError` when two things the Api serves get one command name, or when a field would take a flag the CLI reserves (`--json`, `--help`, `--version`, `--wizard`, `--completions`, `--log-level`):
+
+```typescript
+class Reserved extends Domain.Command("Reserved", {
+  target: AccountId,
+  input: { json: Schema.String },
+}) {}
+// bank reserved ... -> DefinitionError: field `json` would be the flag --json, which the CLI reserves
+```
+
+To give a terminal fewer calls, give it its own Api, as in [Give each kind of client its own Api](/domain/api#give-each-kind-of-client-its-own-api).

@@ -78,6 +78,6 @@ describe("DefectReporter", () => {
         assert.equal(next, 2);
         assert.equal(yield* Queue.size(logs), 0);
       }),
-    ).pipe(Effect.scoped),
+    ),
   );
 });

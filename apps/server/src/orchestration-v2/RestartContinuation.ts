@@ -11,7 +11,12 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
+import type {
+  ProjectionRecordField,
+  ProjectionRecordFilter,
+  ProjectionRecords,
+  ProjectionRuntimeRecoveryState,
+} from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
 import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
@@ -30,12 +35,13 @@ import {
   restartContinuationNote,
 } from "./RestartBackgroundNote.ts";
 
-const CONTINUE_PROMPT = "Continue where you left off.";
+const CONTINUE_PROMPT =
+  "Continue where you left off. Your last turn was cut short, so a command or other action it started may have finished or may still be running. Before you repeat one that changes state, confirm it did not take effect and is not still running; if you cannot tell, say so instead of repeating it.";
 
 const MAX_CONTINUATION_CHAIN = 3;
 const CONTINUATION_LOOP_WINDOW_MS = 5 * 60 * 1_000;
 
-function restartContinuationBlocked(
+export function restartContinuationBlocked(
   projection: Pick<
     ProjectionRuntimeRecoveryState,
     "thread" | "runtimeRequests" | "providerTurns" | "turnItems"
@@ -82,6 +88,52 @@ function restartContinuationBlocked(
           DateTime.Equivalence(item.completedAt, source.completedAt))),
   );
 }
+
+/** A Stop from the user, or from the parent that delegated the task, that a restart cut short. */
+export const restartStopRequested = Effect.fn("RestartContinuation.restartStopRequested")(
+  function* <E>(
+    getThreadRecords: <K extends ProjectionRecordField>(
+      threadId: ThreadId,
+      fields: ReadonlyArray<K>,
+      filter: ProjectionRecordFilter,
+    ) => Effect.Effect<ProjectionRecords<K>, E>,
+    thread: Pick<ProjectionRuntimeRecoveryState["thread"], "id" | "lineage" | "forkedFrom">,
+    source: Pick<OrchestrationV2Run, "id" | "delegatedTaskId">,
+  ) {
+    const { turnItems } = yield* getThreadRecords(thread.id, ["turnItems"], {
+      turnItemRunIds: [source.id],
+      turnItemTypes: ["run_interrupt_request"],
+    });
+    if (turnItems.some((item) => item.runId === source.id && item.type === "run_interrupt_request"))
+      return true;
+    const { lineage, forkedFrom } = thread;
+    const taskId =
+      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
+    if (
+      lineage.relationshipToParent !== "subagent" ||
+      lineage.parentThreadId === null ||
+      taskId === undefined
+    )
+      return false;
+    const task = (yield* getThreadRecords(lineage.parentThreadId, ["subagents"], {
+      subagentIds: [taskId],
+    })).subagents.find((candidate) => candidate.id === taskId);
+    // A settled task no longer owns later work in its thread.
+    if (
+      task === undefined ||
+      task.runId === null ||
+      task.result !== null ||
+      !isOrchestrationV2WorkActive(task.status)
+    )
+      return false;
+    return (
+      (yield* getThreadRecords(lineage.parentThreadId, ["turnItems"], {
+        turnItemTypes: ["run_interrupt_request"],
+        turnItemRunIds: [task.runId],
+      })).turnItems.length > 0
+    );
+  },
+);
 
 /** App-owned delegations continue in their own threads and report back. */
 function hasOpenAwaitedWork(
@@ -182,7 +234,11 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    readonly processLossCount?: number;
+  }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -238,57 +294,21 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       if (DateTime.toEpochMillis(run.requestedAt) < loopWindowStart) break;
       chainLength += 1;
     }
-    if (chainLength >= MAX_CONTINUATION_CHAIN) {
+    if (
+      input.processLossCount === undefined
+        ? chainLength >= MAX_CONTINUATION_CHAIN
+        : input.processLossCount > MAX_CONTINUATION_CHAIN
+    ) {
       yield* Effect.logWarning("Not continuing a run restarted too many times in a row", {
         threadId: input.threadId,
         sourceRunId: input.sourceRunId,
       });
       return;
     }
-    const sourceRecords = yield* threads.getThreadRecords(
-      input.threadId,
-      ["messages", "turnItems"],
-      {
-        messageIds: [source.userMessageId],
-        turnItemRunIds: [source.id],
-        turnItemTypes: ["run_interrupt_request"],
-      },
-    );
-    if (
-      sourceRecords.turnItems.some(
-        (item) => item.runId === source.id && item.type === "run_interrupt_request",
-      )
-    )
-      return;
-    // A parent's Stop reaches its open delegated tasks through an effect a restart can cut short.
-    const { lineage, forkedFrom } = projection.thread;
-    const taskId =
-      source.delegatedTaskId ?? (forkedFrom?.type === "node" ? forkedFrom.nodeId : undefined);
-    if (
-      lineage.relationshipToParent === "subagent" &&
-      lineage.parentThreadId !== null &&
-      taskId !== undefined
-    ) {
-      const task = (yield* threads.getThreadRecords(lineage.parentThreadId, ["subagents"], {
-        subagentIds: [taskId],
-      })).subagents.find((candidate) => candidate.id === taskId);
-      // A settled task no longer owns later work in its thread.
-      const parentRunId =
-        task !== undefined && task.result === null && isOrchestrationV2WorkActive(task.status)
-          ? task.runId
-          : null;
-      if (
-        parentRunId !== null &&
-        (yield* threads.getThreadRecords(lineage.parentThreadId, ["turnItems"], {
-          turnItemTypes: ["run_interrupt_request"],
-          turnItemRunIds: [parentRunId],
-        })).turnItems.length > 0
-      )
-        return;
-    }
-    const sourceMessage = sourceRecords.messages.find(
-      (message) => message.id === source.userMessageId,
-    );
+    if (yield* restartStopRequested(threads.getThreadRecords, projection.thread, source)) return;
+    const sourceMessage = (yield* threads.getThreadRecords(input.threadId, ["messages"], {
+      messageIds: [source.userMessageId],
+    })).messages.find((message) => message.id === source.userMessageId);
     if (sourceMessage !== undefined && isNativeMaintenanceCommand(sourceMessage)) return;
     const note = restartContinuationNote(
       source,
@@ -327,7 +347,8 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         restartContinuationOfRunId: input.sourceRunId,
       })
       .pipe(
-        // Disabled instances cannot resume; still run success cleanup so delegated children recover without futile retries.
+        // Disabled instances, and threads above a policy ceiling, cannot resume; still run success
+        // cleanup so delegated children recover without futile retries.
         Effect.catchTags({
           ThreadManagementProviderInstanceDisabledError: (error) =>
             Effect.logInfo("orchestration-v2.restart-continuation.instance-disabled", {
@@ -335,6 +356,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
               sourceRunId: input.sourceRunId,
               projectId: error.projectId,
               instanceId: error.instanceId,
+            }),
+          OrchestratorRuntimeModeAboveCeilingError: () =>
+            Effect.logInfo("orchestration-v2.restart-continuation.above-ceiling", {
+              threadId: input.threadId,
+              sourceRunId: input.sourceRunId,
             }),
         }),
       );
@@ -345,7 +371,7 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       Effect.andThen(
         Effect.gen(function* () {
           const threads = yield* ThreadManagementService.ThreadManagementService;
-          yield* threads.recoverDelegatedTask(input.threadId, input.sourceRunId);
+          yield* threads.recoverDelegatedTask(input.threadId, { sourceRunId: input.sourceRunId });
         }),
       ),
     ),

@@ -13,6 +13,8 @@ import {
   type ConnectionRoute,
 } from "./catalog.ts";
 import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type ConnectionRouteKind =
   | "relay"
@@ -81,6 +83,13 @@ function routeHostname(route: ConnectionRoute): string | null {
   }
 }
 
+function directAddressKind(hostname: string, tailscale = false) {
+  if (isLocalLoopbackHost(hostname)) return "loopback";
+  if (tailscale || isTailnetHost(hostname)) return "tailnet";
+  if (isSharedAddressSpaceHost(hostname)) return "vpn";
+  return isPrivateNetworkHost(hostname) ? "lan" : "public";
+}
+
 export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind {
   switch (route.target._tag) {
     case "RelayConnectionTarget":
@@ -91,14 +100,33 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
     case "BearerConnectionTarget": {
       const hostname = routeHostname(route);
       if (hostname === null) return "public";
-      if (isLocalLoopbackHost(hostname)) return "loopback";
       const profile = Option.getOrNull(route.profile);
-      const tailscale =
-        profile?._tag === "BearerConnectionProfile" && profile.network === "tailscale";
-      if (tailscale || isTailnetHost(hostname)) return "tailnet";
-      if (isSharedAddressSpaceHost(hostname)) return "vpn";
-      return isPrivateNetworkHost(hostname) ? "lan" : "public";
+      return directAddressKind(
+        hostname,
+        profile?._tag === "BearerConnectionProfile" && profile.network === "tailscale",
+      );
     }
+  }
+}
+
+/**
+ * Whether the route's address reaches the same machine on every network: TLS
+ * proves who answers, and loopback cannot move. Any other plain http address,
+ * a tailnet one too once Tailscale is down, can belong to another machine after
+ * a network change, so an answer from it is not kept.
+ */
+export function routeKeepsItsHost(route: ConnectionRoute): boolean {
+  if (routeHttpBaseUrl(route)?.startsWith("https:") === true) return true;
+  return connectionRouteKind(route) === "loopback";
+}
+
+/** A loopback or LAN host answers within a few seconds or is not there. */
+export function isNearbyAddress(httpBaseUrl: string): boolean {
+  try {
+    const kind = directAddressKind(new URL(httpBaseUrl).hostname);
+    return kind === "loopback" || kind === "lan";
+  } catch {
+    return false;
   }
 }
 
@@ -115,11 +143,14 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
 export function insertRoute(
   routes: ReadonlyArray<ConnectionRoute>,
   route: ConnectionRoute,
+  { aheadOfSameKind = false }: { readonly aheadOfSameKind?: boolean } = {},
 ): ReadonlyArray<ConnectionRoute> {
-  const rank = ROUTE_KIND_RANK[connectionRouteKind(route)];
-  const index = routes.findIndex(
-    (existing) => ROUTE_KIND_RANK[connectionRouteKind(existing)] > rank,
-  );
+  const kind = connectionRouteKind(route);
+  const rank = ROUTE_KIND_RANK[kind];
+  const index = routes.findIndex((existing) => {
+    const existingKind = connectionRouteKind(existing);
+    return ROUTE_KIND_RANK[existingKind] > rank || (aheadOfSameKind && existingKind === kind);
+  });
   return index === -1
     ? [...routes, route]
     : [...routes.slice(0, index), route, ...routes.slice(index)];
@@ -132,7 +163,9 @@ export function upsertRoute(
   const id = connectionRouteId(route.target);
   return routes.some((existing) => connectionRouteId(existing.target) === id)
     ? routes.map((existing) => (connectionRouteId(existing.target) === id ? route : existing))
-    : insertRoute(routes, route);
+    : // A route paired at a new address, such as localhost beside a saved
+      // 127.0.0.1, goes first among its kind so its fresh credential connects.
+      insertRoute(routes, route, { aheadOfSameKind: true });
 }
 
 export function findRouteToSameAddress(
@@ -155,12 +188,15 @@ function routeAddressKey(route: ConnectionRoute): string | null {
   }
 }
 
+const T3_CONNECT_NAME = "T3 Connect";
+
+/** The route's label in English. Display sites use `connectionRouteLabelText`. */
 export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
-      return "T3 Connect";
+      return T3_CONNECT_NAME;
     case "loopback":
-      return "This device";
+      return msg("This device");
     case "lan":
       return "LAN";
     case "tailnet":
@@ -174,7 +210,22 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
         : "SSH";
     }
     case "public":
-      return routeHostname(route) ?? "Remote link";
+      return routeHostname(route) ?? msg("Remote link");
+  }
+}
+
+/** @public */
+export function connectionRouteLabelText(
+  route: ConnectionRoute,
+  resolve: MFunctionType = mFallback,
+): string {
+  switch (connectionRouteKind(route)) {
+    case "loopback":
+      return resolve(msg("This device"));
+    case "public":
+      return routeHostname(route) ?? resolve(msg("Remote link"));
+    default:
+      return connectionRouteLabel(route);
   }
 }
 

@@ -6,10 +6,7 @@ import {
 } from "@vitejs/plugin-rsc/browser";
 import { startTransition, StrictMode } from "react";
 import { hydrateRoot } from "react-dom/client";
-import type {
-  DataRouter,
-  unstable_RSCPayload as RSCServerPayload,
-} from "react-router";
+import type { DataRouter, unstable_RSCPayload as RSCServerPayload } from "react-router";
 import {
   unstable_createCallServer as createCallServer,
   unstable_getRSCStream as getRSCStream,
@@ -26,19 +23,14 @@ setServerCallback(
 
 createFromReadableStream<RSCServerPayload>(getRSCStream()).then((payload) => {
   startTransition(async () => {
-    const formState =
-      payload.type === "render" ? await payload.formState : undefined;
+    const formState = payload.type === "render" ? await payload.formState : undefined;
 
     hydrateRoot(
       document,
       <StrictMode>
-        <RSCHydratedRouter
-          createFromReadableStream={createFromReadableStream}
-          payload={payload}
-        />
+        <RSCHydratedRouter createFromReadableStream={createFromReadableStream} payload={payload} />
       </StrictMode>,
       {
-        // @ts-expect-error - no types for this yet
         formState,
       },
     );

@@ -1,5 +1,6 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import {
   MessageId,
   NodeId,
@@ -20,7 +21,9 @@ import { ProviderAdapterV2RuntimePolicy } from "@t3tools/provider-core/server/Pr
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -36,20 +39,23 @@ import {
 
 const testLayer = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 const SESSION_ID = "fx-session-01";
 const ENABLED_FX_SETTINGS = Schema.decodeSync(FxSettings)({ enabled: true });
-/** The model `fx status --json` reports. */
+/** The model `fx status --json` reports in the thread's folder, on the gateway. */
 const FX_DEFAULT_MODEL = "anthropic/claude-opus-5.5";
 const NAMED_MODEL = "anthropic/claude-sonnet-5.5";
 const CUSTOM_MODEL = "openai/gpt-6.1-sol";
 const CODEX_MODEL = "gpt-6.1-sol";
 const FX_0_0_13_MODES = ["code", "ask"];
-/** fx `main` after vercel-labs/fx#1189. */
+/** fx 0.0.14+, after vercel-labs/fx#1189. */
 const FX_MAIN_MODES = ["auto", "ask", "full-access"];
 
 type Frame = Record<string, unknown>;
@@ -87,10 +93,11 @@ const fxConfig = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
   readonly mode?: string;
+  readonly backend?: string;
   /** The session's own model list, on a backend other than the gateway. */
   readonly models?: ReadonlyArray<string>;
 }) => [
-  select("provider", "model", "gateway", ["gateway", "codex", "grok"]),
+  select("provider", "model", input.backend ?? "gateway", ["gateway", "codex", "grok"]),
   select(
     "model",
     "model",
@@ -108,6 +115,7 @@ const fxConfig = (input: {
 const fxSession = (input: {
   readonly model: string;
   readonly modes: ReadonlyArray<string>;
+  readonly backend?: string;
   readonly models?: ReadonlyArray<string>;
 }) => ({
   sessionId: SESSION_ID,
@@ -147,6 +155,8 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   readonly frames: ReadonlyArray<Frame>;
   readonly runtimeMode: RuntimeMode;
   readonly model?: string;
+  readonly defaultBackend?: string;
+  readonly modeOptions?: ReadonlyArray<{ readonly id: string; readonly value: string }>;
   /** Loads this fx session instead of creating one. */
   readonly loadSessionId?: string;
   /** Then starts a turn on this model. */
@@ -175,7 +185,13 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
     settings: ENABLED_FX_SETTINGS,
     environment: {},
     selfInvocation: yield* resolveSelfInvocation(),
-    defaultModel: Effect.succeed(FX_DEFAULT_MODEL),
+    defaultChoice: (cwd) =>
+      // "Default" resolves in the thread's own folder.
+      Effect.succeed(
+        cwd === replayDir
+          ? { backend: input.defaultBackend ?? "gateway", model: FX_DEFAULT_MODEL }
+          : undefined,
+      ),
     makeRuntime: makeAcpReplayRuntime({
       transcript,
       statusPath,
@@ -191,7 +207,7 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
   const selectionOn = (model: string) => ({
     instanceId,
     model,
-    options: [{ id: "effort", value: "xhigh" }],
+    options: [{ id: "effort", value: "xhigh" }, ...(input.modeOptions ?? [])],
   });
   const modelSelection = selectionOn(input.model ?? "default");
   const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
@@ -261,19 +277,29 @@ const openFxSession = Effect.fn("openFxSession")(function* (input: {
 });
 
 describe("FxAdapterV2", () => {
-  it.effect("runs Auto as fx's `code` mode on 0.0.13 and as `auto` where fx advertises it", () =>
+  it.effect("runs Auto as `code` on 0.0.13, and Auto and Full access as fx names them later", () =>
     Effect.forEach(
       [
-        { scenario: "auto-0-0-13", modes: FX_0_0_13_MODES, written: "code" },
-        { scenario: "auto-main", modes: FX_MAIN_MODES, written: "auto" },
-      ],
-      ({ scenario, modes, written }) =>
+        { scenario: "auto-0-0-13", runtimeMode: "auto", modes: FX_0_0_13_MODES, written: "code" },
+        { scenario: "auto-main", runtimeMode: "auto", modes: FX_MAIN_MODES, written: "auto" },
+        {
+          scenario: "full-access-main",
+          runtimeMode: "full-access",
+          modes: FX_MAIN_MODES,
+          written: "full-access",
+        },
+      ] as const,
+      ({ scenario, runtimeMode, modes, written }) =>
         openFxSession({
           scenario,
-          runtimeMode: "auto",
+          runtimeMode,
           frames: [
             ...initialize,
-            outbound("session/new", { cwd: "<workspace>", mcpServers: "<any>" }),
+            outbound("session/new", {
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: { fx: { profileMcpServers: true } },
+            }),
             answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes })),
             ...setConfig(
               "mode",
@@ -283,54 +309,194 @@ describe("FxAdapterV2", () => {
           ],
         }),
       { discard: true },
-    ).pipe(Effect.provide(testLayer), Effect.scoped),
+    ).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect("puts a loaded session that ran a named model back on fx's default for Default", () =>
+  it.effect("keeps supervised sessions in the mode set by their runtime policy", () =>
     openFxSession({
-      scenario: "default-model",
+      scenario: "supervised-mode-policy",
       runtimeMode: "approval-required",
-      model: "default",
-      loadSessionId: SESSION_ID,
-      frames: [
-        ...initialize,
-        outbound("session/load"),
-        answer("session/load", fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES })),
-        // Config id `model`, never fx's `provider`, and never T3's "default".
-        ...setConfig(
-          "model",
-          FX_DEFAULT_MODEL,
-          fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
-        ),
-        // Written on load even though fx reports ask.
-        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+      modeOptions: [
+        { id: "_t3/session-mode", value: "auto" },
+        { id: "mode", value: "auto" },
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
-  );
-
-  // `fx status` names the gateway default, but this loaded session runs on
-  // Codex, whose catalog lacks it; fx would refuse the write and the thread
-  // could not start.
-  it.effect("keeps the session's model when its backend lacks fx's default", () =>
-    openFxSession({
-      scenario: "default-other-backend",
-      runtimeMode: "approval-required",
-      model: "default",
-      loadSessionId: SESSION_ID,
       frames: [
         ...initialize,
-        outbound("session/load"),
-        answer(
-          "session/load",
-          fxSession({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+        outbound("session/new", {
+          cwd: "<workspace>",
+          mcpServers: "<any>",
+          _meta: { fx: { profileMcpServers: true } },
+        }),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+        ...setConfig("mode", "ask", fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_MAIN_MODES })),
+      ],
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("restores Default only when its backend is selectable", () =>
+    Effect.forEach(
+      [
+        { backend: "gateway", hasBackendOption: true, restore: true },
+        { backend: "unavailable", hasBackendOption: true, restore: false },
+        { backend: "gateway", hasBackendOption: false, restore: false },
+      ],
+      ({ backend, hasBackendOption, restore }) =>
+        openFxSession({
+          scenario: `default-model-${backend}-${hasBackendOption}`,
+          runtimeMode: "approval-required",
+          model: "default",
+          defaultBackend: backend,
+          loadSessionId: SESSION_ID,
+          frames: [
+            ...initialize,
+            outbound("session/load", {
+              sessionId: SESSION_ID,
+              cwd: "<workspace>",
+              mcpServers: "<any>",
+              _meta: { fx: { profileMcpServers: true } },
+            }),
+            answer("session/load", {
+              ...fxSession({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
+              configOptions: fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }).filter(
+                (option) => hasBackendOption || option.id !== "provider",
+              ),
+            }),
+            ...(restore
+              ? setConfig(
+                  "model",
+                  FX_DEFAULT_MODEL,
+                  fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                )
+              : []),
+            ...setConfig(
+              "mode",
+              "ask",
+              fxConfig({ model: restore ? FX_DEFAULT_MODEL : NAMED_MODEL, modes: FX_0_0_13_MODES }),
+            ),
+          ],
+        }),
+      { discard: true },
+    ).pipe(Effect.provide(testLayer)),
+  );
+
+  // `fx status` names a gateway model, but this loaded session runs on Codex,
+  // whose catalog lacks it: the backend goes back first.
+  it.effect("moves a loaded session on another backend back to fx's default backend", () =>
+    Effect.gen(function* () {
+      for (const modelAvailable of [true, false]) {
+        const result = yield* openFxSession({
+          scenario: `default-other-backend-${modelAvailable}`,
+          runtimeMode: "approval-required",
+          model: "default",
+          loadSessionId: SESSION_ID,
+          frames: [
+            ...initialize,
+            outbound("session/load"),
+            answer(
+              "session/load",
+              fxSession({
+                model: CODEX_MODEL,
+                backend: "codex",
+                models: [CODEX_MODEL],
+                modes: FX_0_0_13_MODES,
+              }),
+            ),
+            // fx then runs the gateway model it saved for that backend.
+            ...setConfig(
+              "provider",
+              "gateway",
+              fxConfig({
+                model: NAMED_MODEL,
+                ...(modelAvailable ? {} : { models: [NAMED_MODEL] }),
+                modes: FX_0_0_13_MODES,
+              }),
+            ),
+            ...(modelAvailable
+              ? [
+                  ...setConfig(
+                    "model",
+                    FX_DEFAULT_MODEL,
+                    fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                  ),
+                  ...setConfig(
+                    "mode",
+                    "ask",
+                    fxConfig({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES }),
+                  ),
+                ]
+              : setConfig(
+                  "provider",
+                  "codex",
+                  fxConfig({
+                    backend: "codex",
+                    model: CODEX_MODEL,
+                    models: [CODEX_MODEL],
+                    modes: FX_0_0_13_MODES,
+                  }),
+                )),
+          ],
+        }).pipe(Effect.exit);
+        if (modelAvailable) {
+          assert.isTrue(Exit.isSuccess(result));
+        } else if (Exit.isFailure(result)) {
+          assert.include(
+            Cause.pretty(result.cause),
+            "The default fx model is unavailable on its configured backend.",
+          );
+        } else {
+          assert.fail("Expected Default selection to reject the unavailable model");
+        }
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("switches the session's backend, then its model, for a backend's model", () =>
+    openFxSession({
+      scenario: "backend-model",
+      runtimeMode: "approval-required",
+      model: `codex:${CODEX_MODEL}`,
+      turnModel: "gateway:openai/gpt-5.6-sol",
+      frames: [
+        ...initialize,
+        outbound("session/new"),
+        answer("session/new", fxSession({ model: FX_DEFAULT_MODEL, modes: FX_0_0_13_MODES })),
+        // fx already picks the thread's model on Codex, so only the backend is written.
+        ...setConfig(
+          "provider",
+          "codex",
+          fxConfig({
+            model: CODEX_MODEL,
+            backend: "codex",
+            models: [CODEX_MODEL, "gpt-5.4-mini"],
+            modes: FX_0_0_13_MODES,
+          }),
         ),
         ...setConfig(
           "mode",
           "ask",
-          fxConfig({ model: CODEX_MODEL, models: [CODEX_MODEL], modes: FX_0_0_13_MODES }),
+          fxConfig({
+            model: CODEX_MODEL,
+            backend: "codex",
+            models: [CODEX_MODEL, "gpt-5.4-mini"],
+            modes: FX_0_0_13_MODES,
+          }),
         ),
+        // The next turn moves the same session to a gateway model; the id
+        // after the backend goes to fx whole, slash included.
+        ...setConfig(
+          "provider",
+          "gateway",
+          fxConfig({ model: NAMED_MODEL, modes: FX_0_0_13_MODES }),
+        ),
+        ...setConfig(
+          "model",
+          "openai/gpt-5.6-sol",
+          fxConfig({ model: "openai/gpt-5.6-sol", modes: FX_0_0_13_MODES }),
+        ),
+        outbound("session/prompt"),
+        answer("session/prompt", { stopReason: "end_turn" }),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   // fx 0.0.13's gateway takes any model id (src/acp/server.zig
@@ -363,6 +529,6 @@ describe("FxAdapterV2", () => {
         outbound("session/prompt"),
         answer("session/prompt", { stopReason: "end_turn" }),
       ],
-    }).pipe(Effect.provide(testLayer), Effect.scoped),
+    }).pipe(Effect.provide(testLayer)),
   );
 });

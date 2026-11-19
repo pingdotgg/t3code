@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
@@ -13,17 +14,20 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/process";
+import * as TestClock from "effect/testing/TestClock";
 import type * as EffectAcpSchema from "effect-acp/compat";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -32,28 +36,28 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
-import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
+import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
+  type AntigravityAdapterV2RuntimeInput,
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
 } from "./AntigravityAdapterV2.ts";
 
 const flavor = makeAntigravityAcpAdapterFlavor({
   instanceId: ProviderInstanceId.make("antigravity-test"),
-  crypto: undefined as never,
+  random: undefined as never,
   fileSystem: undefined as never,
   path: undefined as never,
   host: undefined as never,
   selfInvocation: undefined as never,
   makeRuntime: () => Effect.die("not spawned in this test"),
   withProcess: (_stop, task) => task,
-  // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-  defaultModel: Effect.succeed(undefined),
+  defaultModel: Effect.undefined,
 });
 
 function permissionRequest(
@@ -80,6 +84,21 @@ describe("AntigravityAdapterV2 flavor", () => {
     assert.equal(batch?.prompt, "Started two agents.");
     assert.isNull(batch?.result);
     assert.isTrue(flavor.subagentsIdleOnTurnCompletion);
+
+    // Permission prompts carry the launch; later updates for the same call do not.
+    const launch = flavor.extractSubagentUpdate?.({
+      toolCallId: "35bea692fa95447fbdae6333fec5515f",
+      title: "Run invoke_subagent?",
+      kind: "other",
+      status: "pending",
+      data: {
+        rawInput: {
+          Subagents: [{ TypeName: "research", Role: "Readme Reader", Prompt: "Read README.md" }],
+        },
+      },
+    });
+    assert.equal(launch?.title, "Readme Reader");
+    assert.equal(launch?.prompt, "Read README.md");
   });
 
   it("routes interaction_* permission requests to the question card", () => {
@@ -125,9 +144,12 @@ describe("AntigravityAdapterV2 flavor", () => {
 
 const layerSession = Layer.mergeAll(
   NodeServices.layer,
+  NodeCrypto.layer,
   IdAllocator.layer,
   McpProviderSessions.layer,
-  TestProviderHost.layer().pipe(Layer.provide(NodeServices.layer)),
+  TestProviderHost.layer().pipe(
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  ),
 );
 
 describe("AntigravityAdapterV2 harness recovery", () => {
@@ -140,7 +162,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -186,7 +208,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
                 },
               },
             }).pipe(
-              Effect.provideService(Crypto.Crypto, crypto),
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
               Effect.tap((runtime) =>
                 Effect.sync(() => {
                   if (processNumber === 1) firstRuntime = runtime;
@@ -195,8 +217,7 @@ describe("AntigravityAdapterV2 harness recovery", () => {
             );
           }),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - The optional model requires undefined rather than void.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-recovery");
       const modelSelection = { instanceId, model: "gemini-test-low" } as const;
@@ -282,45 +303,73 @@ describe("AntigravityAdapterV2 harness recovery", () => {
 });
 
 describe("AntigravityAdapterV2 compaction", () => {
-  it.effect("does not expose unsupported manual compaction on the provider session", () =>
-    Effect.gen(function* () {
-      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
-      const mockAgentPath = yield* path.fromFileUrl(
-        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
-      );
-      const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
-      const adapter = yield* makeAntigravityAdapterV2({
-        instanceId,
-        selfInvocation: yield* resolveSelfInvocation(),
-        makeRuntime: (input) =>
-          makeAntigravityAcpRuntime({
-            ...input,
-            childProcessSpawner,
-            spawn: {
-              command: process.execPath,
-              args: [mockAgentPath],
-              cwd: input.cwd,
-              env: { T3_ACP_ANTIGRAVITY: "1" },
-            },
-          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
-        withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
-      });
-      const session = yield* adapter.openSession({
-        threadId: ThreadId.make("thread-antigravity-compaction"),
-        providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
-        modelSelection: { instanceId, model: "gemini-test-low" },
-        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-        }),
-      });
-      assert.isUndefined(session.compactThread);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+  it.live.each([false, true])(
+    "negotiates native goals (%s) without enabling manual compaction",
+    (nativeGoals) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const instanceId = ProviderInstanceId.make("antigravity-compaction-test");
+        const goalSupport = yield* Ref.make(false);
+        const startupMilestone = yield* Deferred.make<void>();
+        const consumeStartupCommands = yield* Deferred.make<void>();
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime) => ({
+                ...runtime,
+                drainEvents: Deferred.succeed(startupMilestone, undefined).pipe(
+                  Effect.andThen(runtime.drainEvents),
+                ),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+          supportsNativeGoals: Ref.get(goalSupport).pipe(
+            Effect.tap(() => Deferred.succeed(startupMilestone, undefined)),
+          ),
+          onSessionEvent: (event) =>
+            event._tag === "AvailableCommandsUpdated"
+              ? Deferred.await(consumeStartupCommands).pipe(
+                  Effect.andThen(Ref.set(goalSupport, nativeGoals)),
+                )
+              : Effect.void,
+        });
+        const opening = yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-antigravity-compaction"),
+            providerSessionId: ProviderSessionId.make("provider-session-antigravity-compaction"),
+            modelSelection: { instanceId, model: "gemini-test-low" },
+            runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(startupMilestone);
+        yield* Deferred.succeed(consumeStartupCommands, undefined);
+        const session = yield* Fiber.join(opening);
+        assert.isUndefined(session.compactThread);
+        assert.equal(session.providerSession.capabilities.turns.supportsNativeGoals, nativeGoals);
+        assert.equal((yield* adapter.getCapabilities()).turns.supportsNativeGoals, nativeGoals);
+      }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -355,8 +404,7 @@ describe("AntigravityAdapterV2 session open", () => {
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: () => Effect.fail(cause),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const threadId = ThreadId.make("thread-antigravity-sign-in");
       const error = yield* adapter
@@ -377,7 +425,7 @@ describe("AntigravityAdapterV2 session open", () => {
         error._tag === "ProviderAdapterOpenSessionError" && error.requiresSignIn,
         requiresSignIn,
       );
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -397,7 +445,7 @@ describe("AntigravityAdapterV2 client file system", () => {
       let writeTextFile: Parameters<RuntimeService["handleWriteTextFile"]>[0] | undefined;
       const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
       const requestLog = path.join(logs, "requests.ndjson");
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const instanceId = ProviderInstanceId.make("antigravity-containment-test");
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -413,7 +461,7 @@ describe("AntigravityAdapterV2 client file system", () => {
               env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_REQUEST_LOG_PATH: requestLog },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleReadTextFile: (handler) =>
@@ -427,8 +475,7 @@ describe("AntigravityAdapterV2 client file system", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const workspace = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-antigravity-workspace-",
@@ -524,7 +571,7 @@ describe("AntigravityAdapterV2 client file system", () => {
         context("fs/read_text_file"),
       );
       assert.equal(viaInsideLink.content, "inside");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -534,7 +581,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -548,10 +595,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         mimeType: "application/pdf",
         sizeBytes: 9,
       });
-      const documentPath = resolveAttachmentPath({
-        attachmentsDir: host.paths.attachmentsDir,
-        attachment: document,
-      })!;
+      const documentPath = host.resolveAttachmentPath(document)!;
       yield* fileSystem.writeFileString(documentPath, "%PDF-1.7");
       let readTextFile: Parameters<RuntimeService["handleReadTextFile"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-workspace-change-test");
@@ -569,7 +613,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
               env: { T3_ACP_ANTIGRAVITY: "1", T3_ACP_HANG_PROMPT_FOREVER: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               prompt: (request) =>
@@ -596,8 +640,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const workspaceA = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-a-" });
       const workspaceB = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-b-" });
@@ -679,10 +722,11 @@ describe("AntigravityAdapterV2 workspace changes", () => {
             uri: (yield* path.toFileUrl(documentPath)).href,
             name: "diagram.pdf",
             mimeType: "application/pdf",
+            size: 8,
           },
         ],
       );
-      assert.include(JSON.stringify(sent.prompt), host.resolveAttachmentPath(document)!);
+      assert.include(JSON.stringify(sent.prompt), JSON.stringify(documentPath).slice(1, -1));
       if (readTextFile === undefined) {
         return yield* Effect.die("Antigravity sessions must serve client file requests");
       }
@@ -697,7 +741,7 @@ describe("AntigravityAdapterV2 workspace changes", () => {
         context,
       ).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(fromA), "the previous workspace is no longer readable");
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+    }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -706,7 +750,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
@@ -725,6 +769,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       const report = { html: `<table>${rows.join("")}</table>`, title: "Revenue", height: 240 };
       const failed = { ...report, html: "<p>Revenue</p>" };
       const errored = { ...report, html: "<p>Revenue error</p>" };
+      const telemetry = {
+        html: `<ul>${rows.join("").replaceAll("tr", "li")}</ul>`,
+        title: "Telemetry",
+        height: 411,
+      };
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -739,7 +788,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleSessionUpdate: (handler) =>
@@ -841,13 +890,27 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                     status: "completed",
                     rawOutput: "Summary of published",
                   });
+                  // agy 1.5.8 titles the call with its MCP name and completes without any output.
+                  yield* send({
+                    sessionUpdate: "tool_call",
+                    toolCallId: "agy-1.5.8",
+                    title: "Run mcp_t3-code_html_render",
+                    kind: "other",
+                    status: "in_progress",
+                    rawInput: { ...telemetry, toolSummary: "Render telemetry" },
+                  });
+                  yield* mcpSessions.recordHtmlRender(threadId, telemetry, page("agy-1.5.8"));
+                  yield* send({
+                    sessionUpdate: "tool_call_update",
+                    toolCallId: "agy-1.5.8",
+                    status: "completed",
+                  });
                   return { stopReason: "end_turn" as const };
                 }),
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -967,7 +1030,7 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         ),
         [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      for (const name of ["failed-retry", "error-retry"]) {
+      for (const name of ["failed-retry", "error-retry", "agy-1.5.8"]) {
         assert.deepEqual(tool(name), {
           status: "completed",
           toolName: "t3-code.html_render",
@@ -978,7 +1041,325 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
       assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, telemetry), undefined);
+    }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+/**
+ * A session whose prompt reports one running command and returns end_turn, as agy 1.5.11 does
+ * for `run_command` once `WaitMsBeforeAsync` passes. The test sends every later frame.
+ */
+const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")(function* (
+  commandInput: Record<string, unknown>,
+) {
+  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const path = yield* Path.Path;
+  const crypto = yield* SecureRandom.SecureRandom;
+  const mockAgentPath = yield* path.fromFileUrl(
+    new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+  );
+  type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+  let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+  let requestPermission: Parameters<RuntimeService["handleRequestPermission"]>[0] | undefined;
+  const send = (update: EffectAcpSchema.SessionUpdate) =>
+    sessionUpdate === undefined
+      ? Effect.die("the adapter must handle session updates")
+      : sessionUpdate(normalizeAntigravitySessionUpdate({ sessionId: "mock-session-1", update }));
+  const command = {
+    toolCallId: "call_fetch",
+    kind: "execute",
+    title: "node fetch_throughput.mjs",
+    rawInput: { CommandLine: "node fetch_throughput.mjs", ...commandInput },
+  } as const;
+  let cancels = 0;
+  let terminate: AntigravityAdapterV2RuntimeInput["onTermination"];
+  const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
+  const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+  const instanceId = ProviderInstanceId.make("antigravity-wake-test");
+  const threadId = ThreadId.make("thread-antigravity-wake");
+  const adapter = yield* makeAntigravityAdapterV2({
+    instanceId,
+    selfInvocation: yield* resolveSelfInvocation(),
+    continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
+    makeRuntime: (input) => {
+      terminate = input.onTermination;
+      return makeAntigravityAcpRuntime({
+        ...input,
+        childProcessSpawner,
+        spawn: {
+          command: process.execPath,
+          args: [mockAgentPath],
+          cwd: input.cwd,
+          env: { T3_ACP_ANTIGRAVITY: "1" },
+        },
+      }).pipe(
+        Effect.provideService(SecureRandom.SecureRandom, crypto),
+        Effect.map((runtime): RuntimeService => ({
+          ...runtime,
+          cancel: Effect.sync(() => {
+            cancels += 1;
+          }),
+          handleSessionUpdate: (handler) =>
+            Effect.sync(() => {
+              sessionUpdate = handler;
+            }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+          handleRequestPermission: (handler) =>
+            Effect.sync(() => {
+              requestPermission = handler;
+            }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
+          prompt: () =>
+            Effect.gen(function* () {
+              yield* send({ sessionUpdate: "tool_call", ...command, status: "in_progress" });
+              yield* send({
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text: "I'll render once the fetch finishes." },
+              });
+              yield* send(usage);
+              return { stopReason: "end_turn" as const };
+            }),
+        })),
+      );
+    },
+    withProcess: (_stop, task) => task,
+    defaultModel: Effect.undefined,
+  });
+  const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    cwd: process.cwd(),
+  });
+  const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+  const session = yield* adapter.openSession({
+    threadId,
+    providerSessionId: ProviderSessionId.make("provider-session-antigravity-wake"),
+    modelSelection,
+    runtimePolicy,
+  });
+  const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
+  yield* session.events.pipe(
+    Stream.runForEach((event) => Queue.offer(events, event)),
+    Effect.forkScoped,
+  );
+  const until = (done: (event: ProviderAdapter.ProviderAdapterV2Event) => boolean) =>
+    Effect.gen(function* () {
+      const seen: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+      while (true) {
+        const event = yield* Queue.take(events);
+        seen.push(event);
+        if (done(event)) return seen;
+      }
+    });
+  const providerThread = yield* session.ensureThread({
+    threadId,
+    modelSelection,
+    runtimePolicy,
+  });
+  const now = yield* DateTime.now;
+  const startTurn = (ordinal: number, continuation: boolean) =>
+    session.startTurn({
+      appThread: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project-antigravity-wake"),
+        title: "Antigravity wake",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+      threadId,
+      runId: RunId.make(`run-antigravity-wake-${ordinal}`),
+      runOrdinal: ordinal,
+      providerTurnOrdinal: ordinal,
+      attemptId: RunAttemptId.make(`attempt-antigravity-wake-${ordinal}`),
+      rootNodeId: NodeId.make(`node-antigravity-wake-${ordinal}`),
+      providerThread,
+      message: {
+        ...(continuation
+          ? { createdBy: "agent" as const, creationSource: "provider" as const }
+          : { createdBy: "user" as const, creationSource: "web" as const }),
+        messageId: MessageId.make(`message-antigravity-wake-${ordinal}`),
+        text: "chart the throughput",
+        attachments: [],
+      },
+      modelSelection,
+      runtimePolicy,
+    });
+
+  return {
+    session,
+    providerThread,
+    command,
+    usage,
+    offers,
+    send,
+    startTurn,
+    until,
+    throughTerminal: until((event) => event.type === "turn.terminal"),
+    // The reply before end_turn closes when the prompt settles, held open or not.
+    throughPromptSettled: until(
+      (event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "assistant_message" &&
+        event.turnItem.status === "completed",
+    ),
+    requestPermission: (...args: Parameters<NonNullable<typeof requestPermission>>) =>
+      requestPermission === undefined
+        ? Effect.die("the adapter must handle permission requests")
+        : requestPermission(...args),
+    cancels: () => cancels,
+    runtimeDies: Effect.suspend(
+      () =>
+        terminate?.(
+          new EffectAcpErrors.AcpTransportError({ detail: "agent exited", cause: "exit" }),
+        ) ?? Effect.die("the adapter must watch its runtime"),
+    ),
+  };
+});
+
+describe("AntigravityAdapterV2 work after the prompt ends", () => {
+  // agy sets `IsDaemon` on a command it does not wait for. When it exits, the agent replies
+  // with no prompt open.
+  it.effect("continues in one run when a finished daemon wakes the agent", () =>
+    Effect.gen(function* () {
+      const { command, usage, offers, send, startTurn, throughTerminal, requestPermission } =
+        yield* openSessionWithRunningCommand({ IsDaemon: true, WaitMsBeforeAsync: 500 });
+      yield* startTurn(1, false);
+      const promptTerminal = (yield* throughTerminal).at(-1);
+      assert.equal(promptTerminal?.type === "turn.terminal" && promptTerminal.status, "completed");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the finished daemon must wake the thread");
+      // The agent can ask before the app has started the continuation run.
+      const followUp = { toolCallId: "call_analyze", kind: "execute", title: "node analyze.mjs" };
+      const permission = yield* requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: { ...followUp, status: "pending" },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "deny", name: "Deny", kind: "reject_once" },
+          ],
+        },
+        { requestId: "permission-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      assert.deepEqual(yield* Fiber.join(permission), {
+        outcome: { outcome: "selected", optionId: "allow" },
+      });
+
+      // The model took 6.7 s to answer the finished command; the run must outlast that silence.
+      yield* TestClock.adjust("10 seconds");
+      yield* send({ sessionUpdate: "tool_call", ...followUp, status: "completed" });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Here is the chart." },
+      });
+      yield* TestClock.adjust("10 seconds");
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const continued = yield* throughTerminal;
+      const continuedTerminal = continued.at(-1);
+      assert.equal(
+        continuedTerminal?.type === "turn.terminal" && continuedTerminal.status,
+        "completed",
+      );
+      assert.isTrue(
+        continued.some(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "assistant_message" &&
+            event.turnItem.runId === RunId.make("run-antigravity-wake-2"),
+        ),
+        "the reply belongs to the continuation run",
+      );
+      const finished = continued.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.equal(finished?.type === "turn_item.updated" && finished.turnItem.status, "completed");
+      assert.lengthOf(offers, 1, "one wake is one run");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // Frames as agy 1.5.11 sent them for `run_command` with `WaitMsBeforeAsync`: the prompt returns
+  // end_turn while the command runs, and the agent replies when the command finishes.
+  it.effect("keeps the run open while a command the agent waits for still runs", () =>
+    Effect.gen(function* () {
+      const { command, usage, offers, send, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      yield* throughPromptSettled;
+      yield* TestClock.adjust("10 minutes");
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* TestClock.adjust("10 seconds");
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Here is the chart." },
+      });
+      yield* send(usage);
+      yield* TestClock.adjust("3 seconds");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
+      assert.lengthOf(offers, 0, "the open run needs no continuation");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect.each([
+    // session/cancel ends the agent's commands, so only Stop may send it.
+    { ending: "Stop", cancels: 1, status: "interrupted" },
+    { ending: "a new message", cancels: 0, status: "interrupted" },
+    { ending: "the agent exiting", cancels: 0, status: "failed" },
+  ] as const)(
+    "ends a run held open by a running command on $ending",
+    ({ ending, cancels, status }) =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.throughPromptSettled;
+        const turn = started.find((event) => event.type === "provider_turn.updated");
+        if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+        if (ending === "the agent exiting") {
+          yield* opened.runtimeDies;
+        } else {
+          yield* opened.session.interruptTurn({
+            providerThread: opened.providerThread,
+            providerTurnId: turn.providerTurn.id,
+            ...(ending === "Stop" ? { requestRuntimeRestart: true } : {}),
+          });
+        }
+        const terminal = (yield* opened.throughTerminal).at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
+        assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
   );
 });
 
@@ -988,7 +1369,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
+      const crypto = yield* SecureRandom.SecureRandom;
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
@@ -1024,7 +1405,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
               env: { T3_ACP_ANTIGRAVITY: "1" },
             },
           }).pipe(
-            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
             Effect.map((runtime): RuntimeService => ({
               ...runtime,
               handleSessionUpdate: (handler) =>
@@ -1091,8 +1472,7 @@ describe("AntigravityAdapterV2 subagent reads", () => {
             })),
           ),
         withProcess: (_stop, task) => task,
-        // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-        defaultModel: Effect.succeed(undefined),
+        defaultModel: Effect.undefined,
       });
       const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         runtimeMode: "full-access",
@@ -1187,6 +1567,203 @@ describe("AntigravityAdapterV2 subagent reads", () => {
       assert.deepEqual(read("call_missing"), failed);
       assert.deepEqual(read("call_denied"), failed);
       assert.deepEqual(read("call_unseen"), failed);
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+    }).pipe(Effect.provide(layerSession)),
+  );
+});
+
+describe("AntigravityAdapterV2 runtime mode ceiling", () => {
+  const modesSetFor = (pickedMode: string) =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const crypto = yield* SecureRandom.SecureRandom;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      const modesSet: Array<string> = [];
+      const instanceId = ProviderInstanceId.make("antigravity-ceiling-test");
+      const adapter = yield* makeAntigravityAdapterV2({
+        instanceId,
+        selfInvocation: yield* resolveSelfInvocation(),
+        makeRuntime: (input) =>
+          makeAntigravityAcpRuntime({
+            ...input,
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [mockAgentPath],
+              cwd: input.cwd,
+              env: { T3_ACP_ANTIGRAVITY: "1" },
+            },
+          }).pipe(
+            Effect.provideService(SecureRandom.SecureRandom, crypto),
+            Effect.map((runtime): RuntimeService => ({
+              ...runtime,
+              setMode: (modeId) =>
+                Effect.sync(() => {
+                  modesSet.push(modeId);
+                }).pipe(Effect.andThen(runtime.setMode(modeId))),
+            })),
+          ),
+        withProcess: (_stop, task) => task,
+        defaultModel: Effect.undefined,
+      });
+      const threadId = ThreadId.make("thread-antigravity-ceiling");
+      yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-antigravity-ceiling"),
+        modelSelection: {
+          instanceId,
+          model: "gemini-test-low",
+          options: [{ id: "_t3/session-mode", value: pickedMode }],
+        },
+        runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          maxRuntimeMode: "auto-accept-edits",
+        }),
+      });
+      return modesSet;
+    }).pipe(Effect.provide(layerSession), Effect.scoped);
+
+  it.effect("does not apply a picked session mode above the policy ceiling", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* modesSetFor("yolo"), ["default"]);
+      // A mode under the ceiling is still the user's to pick.
+      assert.deepEqual(yield* modesSetFor("auto_edit"), ["default", "auto_edit"]);
+    }),
+  );
+});
+
+describe("AntigravityAdapterV2 session system prompt", () => {
+  it.effect.each(["1.4.5", "1.4.1"])(
+    "carries PR linking once in the %s session setup or once per turn",
+    (agentVersion) =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const logs = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-log-" });
+        const requestLog = path.join(logs, "requests.ndjson");
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        const promptReceived = yield* Deferred.make<Parameters<RuntimeService["prompt"]>[0]>();
+        const instanceId = ProviderInstanceId.make("antigravity-system-prompt-test");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: {
+                  T3_ACP_ANTIGRAVITY: "1",
+                  T3_ACP_AGENT_VERSION: agentVersion,
+                  T3_ACP_REQUEST_LOG_PATH: requestLog,
+                  T3_ACP_HANG_PROMPT_FOREVER: "1",
+                },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                prompt: (request) =>
+                  Deferred.succeed(promptReceived, request).pipe(
+                    Effect.andThen(runtime.prompt(request)),
+                  ),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-sp-" });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: workspace,
+        });
+        const threadId = ThreadId.make("thread-antigravity-system-prompt");
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-system-prompt"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        yield* session
+          .startTurn({
+            appThread: {
+              createdBy: "user",
+              creationSource: "web",
+              id: threadId,
+              projectId: ProjectId.make("project-antigravity-system-prompt"),
+              title: "Antigravity system prompt",
+              providerInstanceId: instanceId,
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              activeProviderThreadId: providerThread.id,
+              lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+              forkedFrom: null,
+              createdAt: now,
+              updatedAt: now,
+              archivedAt: null,
+              settledOverride: null,
+              settledAt: null,
+              lastVisitedAt: null,
+              deletedAt: null,
+            },
+            threadId,
+            runId: RunId.make("run-antigravity-system-prompt"),
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: RunAttemptId.make("attempt-antigravity-system-prompt"),
+            rootNodeId: NodeId.make("node-antigravity-system-prompt"),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: MessageId.make("message-antigravity-system-prompt"),
+              text: "open a PR",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkScoped);
+        const sent = JSON.stringify((yield* Deferred.await(promptReceived)).prompt);
+        const sessionNew = (yield* fileSystem.readFileString(requestLog))
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as { method?: string; params?: { _meta?: unknown } })
+          .find((request) => request.method === "session/new");
+        const append = JSON.stringify(sessionNew?.params?._meta ?? null);
+        // Identity stays per turn either way.
+        assert.include(sent, "through the Antigravity harness, as gemini-test-low");
+        if (agentVersion === "1.4.5") {
+          assert.include(append, "pull_request_linking");
+          assert.notInclude(sent, "<pull_request_linking>");
+        } else {
+          assert.notInclude(append, "systemPrompt");
+          assert.include(sent, "<pull_request_linking>");
+        }
+      }).pipe(Effect.provide(layerSession)),
   );
 });

@@ -3,6 +3,7 @@ const path = require("node:path");
 
 const ARTIFACT_NAME = "thread-transfer-results";
 const RESULT_FILE = "thread-transfer-result.json";
+const SCENARIOS_FILE = "thread-transfer-scenarios.json";
 const COMMENT_MARKER = "<!-- t3-thread-transfer-report -->";
 const PROVIDERS = ["codex", "claudeAgent"];
 const OBSERVED_KEYS = [
@@ -28,6 +29,12 @@ const SCENARIO_KEYS = [
   "measuredCommandTools",
   "measuredMcpResultBytes",
 ];
+
+const SCENARIO_ROW_KEYS = ["phase", "metric", "unit", "observed", "ceiling"];
+// These labels come from the PR and reach a comment the bot posts: no markup, links or mentions.
+// GitHub still links plain text such as `GH-26`, so they are rendered as code spans.
+const SCENARIO_LABEL = /^[A-Za-z0-9][A-Za-z0-9 ,-]{0,79}$/;
+const MAX_SCENARIO_ROWS = 100;
 
 function resultShaMarker(sha) {
   return `<!-- t3-thread-transfer-result-sha:${sha} -->`;
@@ -85,15 +92,63 @@ function validateResult(value) {
   return value;
 }
 
-function readResult(directory) {
+function validateScenarios(value) {
+  assertExactKeys(value, ["schemaVersion", "providers"], "scenarios");
+  if (value.schemaVersion !== 1) {
+    throw new Error("scenarios.schemaVersion must be 1");
+  }
+  assertExactKeys(value.providers, PROVIDERS, "scenarios.providers");
+  for (const provider of PROVIDERS) {
+    const rows = value.providers[provider];
+    if (!Array.isArray(rows) || rows.length > MAX_SCENARIO_ROWS) {
+      throw new Error(
+        `scenarios.providers.${provider} must list at most ${MAX_SCENARIO_ROWS} rows`,
+      );
+    }
+    const seen = new Set();
+    for (const [index, row] of rows.entries()) {
+      const label = `scenarios.providers.${provider}[${index}]`;
+      assertExactKeys(row, SCENARIO_ROW_KEYS, label);
+      for (const key of ["phase", "metric"]) {
+        if (typeof row[key] !== "string" || !SCENARIO_LABEL.test(row[key])) {
+          throw new Error(`${label}.${key} must be a short plain label`);
+        }
+      }
+      if (row.unit !== "bytes" && row.unit !== "count") {
+        throw new Error(`${label}.unit must be bytes or count`);
+      }
+      assertMetric(row.observed, `${label}.observed`);
+      assertMetric(row.ceiling, `${label}.ceiling`);
+      const key = scenarioKey(row);
+      if (seen.has(key)) throw new Error(`${label} repeats an earlier row`);
+      seen.add(key);
+    }
+  }
+  return value;
+}
+
+function scenarioKey(row) {
+  return `${row.phase}|${row.metric}`;
+}
+
+function readArtifactFile(directory, name, validate) {
   if (!directory) return undefined;
-  const file = path.join(directory, RESULT_FILE);
+  const file = path.join(directory, name);
   if (!fs.existsSync(file)) return undefined;
   const stat = fs.lstatSync(file);
   if (!stat.isFile() || stat.size > 64 * 1_024) {
-    throw new Error("thread transfer result must be a regular file smaller than 64 KiB");
+    throw new Error(`${name} must be a regular file smaller than 64 KiB`);
   }
-  return validateResult(JSON.parse(fs.readFileSync(file, "utf8")));
+  return validate(JSON.parse(fs.readFileSync(file, "utf8")));
+}
+
+function readResult(directory) {
+  return readArtifactFile(directory, RESULT_FILE, validateResult);
+}
+
+// Older runs upload only the result file, so a run without scenarios is still a valid run.
+function readScenarios(directory) {
+  return readArtifactFile(directory, SCENARIOS_FILE, validateScenarios);
 }
 
 function formatBytes(bytes) {
@@ -103,7 +158,7 @@ function formatBytes(bytes) {
 }
 
 function formatValue(value, kind) {
-  return kind === "messages" ? value.toLocaleString("en-US") : formatBytes(value);
+  return kind === "bytes" ? formatBytes(value) : value.toLocaleString("en-US");
 }
 
 function formatImpact(current, baseline, kind) {
@@ -136,6 +191,77 @@ const METRICS = [
   { key: "measuredTurnWebSocketMessages", label: "Live turn messages", kind: "messages" },
 ];
 
+function providerLabel(provider) {
+  return provider === "codex" ? "Codex" : "Claude";
+}
+
+/**
+ * The scenario rows of a run against the same rows on `main`. Rows that fail or differ from
+ * `main` are listed in the open; the full table is collapsed below them.
+ */
+function renderScenarios(current, baseline, ceilingChanges) {
+  if (!current) return { lines: [], failed: false };
+  const header = [
+    "| Provider | Scenario | Metric | Main baseline | This PR | Impact | PR ceiling | |",
+    "| --- | --- | --- | ---: | ---: | ---: | ---: | --- |",
+  ];
+  const all = [];
+  const notable = [];
+  let failed = false;
+  let withoutBaseline = 0;
+
+  for (const provider of PROVIDERS) {
+    const baselineRows = new Map(
+      (baseline?.providers[provider] ?? []).map((row) => [scenarioKey(row), row]),
+    );
+    for (const row of current.providers[provider]) {
+      const before = baselineRows.get(scenarioKey(row));
+      const beforeObserved = before?.unit === row.unit ? before.observed : undefined;
+      const pass = row.observed <= row.ceiling;
+      failed ||= !pass;
+      if (beforeObserved === undefined) withoutBaseline += 1;
+      const line = `| ${providerLabel(provider)} | \`${row.phase}\` | \`${row.metric}\` | ${beforeObserved === undefined ? "—" : formatValue(beforeObserved, row.unit)} | ${formatValue(row.observed, row.unit)} | ${formatImpact(row.observed, beforeObserved, row.unit)} | ${formatValue(row.ceiling, row.unit)} | ${pass ? "✅" : "❌"} |`;
+      all.push(line);
+      if (!pass || (beforeObserved !== undefined && beforeObserved !== row.observed)) {
+        notable.push(line);
+      }
+      if (beforeObserved !== undefined && before.ceiling !== row.ceiling) {
+        ceilingChanges.push(
+          `- ${providerLabel(provider)} \`${row.phase}\` \`${row.metric}\`: ${formatValue(before.ceiling, row.unit)} → ${formatValue(row.ceiling, row.unit)}`,
+        );
+      }
+    }
+  }
+
+  const compared = all.length - withoutBaseline;
+  const summary = !baseline
+    ? `No \`main\` baseline exists yet for these ${all.length} scenario measurements.`
+    : [
+        notable.length > 0
+          ? `${notable.length} of ${all.length} scenario measurements changed or failed.`
+          : `${compared === all.length ? "All " : ""}${compared} scenario measurements match \`main\`.`,
+        ...(withoutBaseline > 0 ? [`${withoutBaseline} have no \`main\` baseline.`] : []),
+      ].join(" ");
+  return {
+    failed,
+    lines: [
+      "### Other scenarios",
+      "",
+      summary,
+      ...(notable.length > 0 ? ["", ...header, ...notable] : []),
+      "",
+      "<details>",
+      `<summary>All ${all.length} scenario measurements</summary>`,
+      "",
+      ...header,
+      ...all,
+      "",
+      "</details>",
+      "",
+    ],
+  };
+}
+
 function renderComment(input) {
   const current = input.current;
   const baseline = input.baseline;
@@ -154,16 +280,22 @@ function renderComment(input) {
       const pass = observed <= ceiling;
       failed ||= !pass;
       rows.push(
-        `| ${provider === "codex" ? "Codex" : "Claude"} | ${metric.label} | ${baselineObserved === undefined ? "—" : formatValue(baselineObserved, metric.kind)} | ${formatValue(observed, metric.kind)} | ${formatImpact(observed, baselineObserved, metric.kind)} | ${formatValue(ceiling, metric.kind)} | ${pass ? "✅" : "❌"} |`,
+        `| ${providerLabel(provider)} | ${metric.label} | ${baselineObserved === undefined ? "—" : formatValue(baselineObserved, metric.kind)} | ${formatValue(observed, metric.kind)} | ${formatImpact(observed, baselineObserved, metric.kind)} | ${formatValue(ceiling, metric.kind)} | ${pass ? "✅" : "❌"} |`,
       );
 
       if (comparable && baseline.providers[provider].ceiling[metric.key] !== ceiling) {
         ceilingChanges.push(
-          `- ${provider === "codex" ? "Codex" : "Claude"} ${metric.label}: ${formatValue(baseline.providers[provider].ceiling[metric.key], metric.kind)} → ${formatValue(ceiling, metric.kind)}`,
+          `- ${providerLabel(provider)} ${metric.label}: ${formatValue(baseline.providers[provider].ceiling[metric.key], metric.kind)} → ${formatValue(ceiling, metric.kind)}`,
         );
       }
     }
   }
+  const scenarios = renderScenarios(
+    input.currentScenarios,
+    input.baselineScenarios,
+    ceilingChanges,
+  );
+  failed ||= scenarios.failed;
 
   const baselineLink = input.baselineRun
     ? `[\`${input.baselineRun.sha.slice(0, 7)}\`](${input.baselineRun.url})`
@@ -203,6 +335,7 @@ function renderComment(input) {
     "| --- | --- | ---: | ---: | ---: | ---: | --- |",
     ...rows,
     "",
+    ...scenarios.lines,
     `Baseline: ${baselineLink} · PR result: ${currentLink} · Source CI: ${input.currentRun.conclusion}`,
     "",
     "<details>",
@@ -212,7 +345,7 @@ function renderComment(input) {
     "",
     ...PROVIDERS.map(
       (provider) =>
-        `- ${provider === "codex" ? "Codex" : "Claude"} decoded thread snapshot: ${formatBytes(current.providers[provider].observed.threadSnapshotDecodedBytes)}`,
+        `- ${providerLabel(provider)} decoded thread snapshot: ${formatBytes(current.providers[provider].observed.threadSnapshotDecodedBytes)}`,
     ),
     "",
     "</details>",
@@ -300,18 +433,28 @@ async function resolve({ github, context, core }) {
     core.setOutput("publish", "false");
     return;
   }
-  const workflowRuns = await github.paginate(github.rest.actions.listWorkflowRuns, {
-    owner,
-    repo,
-    workflow_id: source.workflow_id,
-    branch: pull.base.ref,
-    event: "push",
-    status: "success",
-    per_page: 100,
-  });
+  // One page each for the exact base and the newest runs; paging through
+  // every successful main run costs up to ten requests to keep 20.
+  const listRuns = async (filters) => {
+    const { data } = await github.rest.actions.listWorkflowRuns({
+      owner,
+      repo,
+      workflow_id: source.workflow_id,
+      branch: pull.base.ref,
+      event: "push",
+      status: "success",
+      per_page: 20,
+      ...filters,
+    });
+    return data.workflow_runs;
+  };
+  const [baseRuns, recentRuns] = await Promise.all([
+    listRuns({ head_sha: pull.base.sha }),
+    listRuns({}),
+  ]);
   const orderedRuns = [
-    ...workflowRuns.filter((run) => run.head_sha === pull.base.sha),
-    ...workflowRuns.filter((run) => run.head_sha !== pull.base.sha),
+    ...baseRuns,
+    ...recentRuns.filter((run) => run.head_sha !== pull.base.sha),
   ].slice(0, 20);
 
   let baselineRun;
@@ -427,7 +570,14 @@ async function publish({ github, context, core }) {
         url: `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${process.env.BASELINE_RUN_ID}`,
       }
     : undefined;
-  const body = renderComment({ current, baseline, currentRun, baselineRun });
+  const body = renderComment({
+    current,
+    baseline,
+    currentScenarios: readScenarios(process.env.PR_RESULT_DIR),
+    baselineScenarios: readScenarios(process.env.BASELINE_RESULT_DIR),
+    currentRun,
+    baselineRun,
+  });
   const published = await upsertCommentForCurrentHead(
     github,
     context,
@@ -448,4 +598,5 @@ module.exports = {
   resolve,
   upsertCommentForCurrentHead,
   validateResult,
+  validateScenarios,
 };

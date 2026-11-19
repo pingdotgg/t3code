@@ -203,7 +203,20 @@ function normalizeReplayFrame(value: unknown): unknown {
     normalized.params !== null
   ) {
     const params = { ...(normalized.params as Record<string, unknown>) };
-    if (params.approvalPolicy === "never") {
+    // Older recordings used `never` for full access, before MCP prompts were kept interactive.
+    if (
+      params.approvalPolicy === "never" ||
+      stableStringify(params.approvalPolicy) ===
+        stableStringify({
+          granular: {
+            mcp_elicitations: true,
+            request_permissions: false,
+            rules: false,
+            sandbox_approval: false,
+            skill_approval: false,
+          },
+        })
+    ) {
       delete params.approvalPolicy;
     }
     if (
@@ -237,9 +250,9 @@ function recorderThreadConfigKeys(transcript: CodexAppServerReplayTranscript): R
 }
 
 /**
- * `cwd`, `model` and host-supplied MCP servers (machine-local URLs, short-lived
- * authorization headers) vary per machine, and recorder-only keys are not the
- * client's.
+ * `cwd`, `model`, host-supplied MCP servers (machine-local URLs, short-lived
+ * authorization headers) and the T3 thread id vary per machine or run, and
+ * recorder-only keys are not the client's.
  */
 function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<string>): unknown {
   if (typeof frame !== "object" || frame === null) return frame;
@@ -257,7 +270,10 @@ function normalizeThreadRequest(frame: unknown, ignoredConfigKeys: ReadonlySet<s
   if (typeof config !== "object" || config === null) return { ...record, params };
   const owned = Object.fromEntries(
     Object.entries(config as Record<string, unknown>).filter(
-      ([key]) => key !== "mcp_servers" && !key.startsWith("mcp_servers."),
+      ([key]) =>
+        key !== "mcp_servers" &&
+        !key.startsWith("mcp_servers.") &&
+        key !== "shell_environment_policy.set.T3CODE_THREAD_ID",
     ),
   );
   for (const key of ignoredConfigKeys) delete owned[key];

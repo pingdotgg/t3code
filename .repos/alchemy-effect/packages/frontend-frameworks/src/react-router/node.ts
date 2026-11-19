@@ -27,13 +27,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import { runBuildChild } from "../core/BuildChild.ts";
+import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import {
   NODE_BUNDLE_CONDITIONS,
   NODE_SERVE_ENTRY_FILE_NAME,
   relativeClientDirExpression,
   writeNodeServeEntry,
 } from "../core/NodeServe.ts";
-import { DeployTargetError, makeDeployTarget } from "../core/index.ts";
 import {
   DEFAULT_SERVER_BUILD_FILE,
   make,
@@ -70,9 +70,7 @@ const fetchHandler =
     ? entry
     : (request) => entry.fetch(request);`;
 
-const makeNodeFinishTarget = (
-  config: ReactRouterNodeTargetConfig = {},
-): ReactRouterNodeTarget =>
+const makeNodeFinishTarget = (config: ReactRouterNodeTargetConfig = {}): ReactRouterNodeTarget =>
   makeDeployTarget({
     platform: "node",
     config,
@@ -85,42 +83,24 @@ const makeNodeFinishTarget = (
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         if (context.entry === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The React Router build produced no on-disk server entry to finish",
-            ),
-          );
+          return yield* fail("The React Router build produced no on-disk server entry to finish");
         }
         if (output.clientDirectory === undefined) {
-          return yield* Effect.fail(
-            fail(
-              "The React Router build produced no client directory for the Node serve entry",
-            ),
+          return yield* fail(
+            "The React Router build produced no client directory for the Node serve entry",
           );
         }
         const serverDir = path.dirname(context.entry);
         const serverEntryFileName = path.basename(context.entry);
         yield* fs
-          .writeFileString(
-            path.join(serverDir, "package.json"),
-            '{"type":"module"}\n',
-          )
-          .pipe(
-            Effect.mapError((error) =>
-              fail("Failed to write the server package.json", error),
-            ),
-          );
+          .writeFileString(path.join(serverDir, "package.json"), '{"type":"module"}\n')
+          .pipe(Effect.mapError((error) => fail("Failed to write the server package.json", error)));
         const servePath = path.join(serverDir, NODE_SERVE_ENTRY_FILE_NAME);
         return yield* writeNodeServeEntry({
           output,
           servePath,
-          serveModuleName: path
-            .join("server", NODE_SERVE_ENTRY_FILE_NAME)
-            .replaceAll("\\", "/"),
-          clientDirExpression: relativeClientDirExpression(
-            servePath,
-            output.clientDirectory,
-          ),
+          serveModuleName: path.join("server", NODE_SERVE_ENTRY_FILE_NAME).replaceAll("\\", "/"),
+          clientDirExpression: relativeClientDirExpression(servePath, output.clientDirectory),
           handler: {
             kind: "fetch",
             imports: fetchHandlerImports(serverEntryFileName),

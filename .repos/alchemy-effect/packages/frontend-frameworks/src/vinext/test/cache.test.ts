@@ -1,13 +1,14 @@
-import { describe, expect, it } from "vitest";
-import { makeDataCacheHandler, type DataCacheStore } from "../cache/handler.ts";
-import { makeVinextCachePlugin } from "../cache/plugin.ts";
 import { fileURLToPath } from "node:url";
+import * as Effect from "effect/Effect";
+import { describe, expect, it } from "vitest";
 import { loadProjectModule } from "../../core/Loader.ts";
-import { kvAdapter } from "../cache/kv.ts";
+import { makeDataCacheHandler, type DataCacheStore } from "../cache/handler.ts";
+import { kvHttpNamespaceFromEnv } from "../cache/kv-http.ts";
 import createKvDataCacheAdapter from "../cache/kv-runtime.ts";
+import { kvAdapter } from "../cache/kv.ts";
+import { makeVinextCachePlugin } from "../cache/plugin.ts";
 import { redisAdapter } from "../cache/redis.ts";
 import { s3Adapter } from "../cache/s3.ts";
-import { kvHttpNamespaceFromEnv } from "../cache/kv-http.ts";
 import { seedPrerenderTo, type SeedSink } from "../cache/seed.ts";
 import {
   keySpace,
@@ -17,7 +18,6 @@ import {
   validateCacheEntry,
   validateTag,
 } from "../cache/shared.ts";
-import * as Effect from "effect/Effect";
 
 const memoryStore = (): DataCacheStore & { data: Map<string, string> } => {
   const data = new Map<string, string>();
@@ -40,15 +40,10 @@ describe("vinext cache adapters", () => {
     "injects the %s cache without application configuration",
     async (kind) => {
       const root = fileURLToPath(
-        new URL(
-          "../../../../../examples/prisma-website-vinext/",
-          import.meta.url,
-        ),
+        new URL("../../../../../examples/prisma-website-vinext/", import.meta.url),
       );
       const plugin = await Effect.runPromise(makeVinextCachePlugin(root, kind));
-      const vite = await Effect.runPromise(
-        loadProjectModule<typeof import("vite")>(root, "vite"),
-      );
+      const vite = await Effect.runPromise(loadProjectModule<typeof import("vite")>(root, "vite"));
       const server = await vite.createServer({
         root,
         configFile: false,
@@ -60,9 +55,7 @@ describe("vinext cache adapters", () => {
         const container = server.environments.ssr.pluginContainer;
         const id = await container.resolveId("virtual:vinext-cache-adapters");
         expect(await container.load(id!.id)).toContain(`${kind}-runtime.js`);
-        const cdnId = await container.resolveId(
-          "virtual:vinext-cdn-cache-adapter",
-        );
+        const cdnId = await container.resolveId("virtual:vinext-cdn-cache-adapter");
         const cdn = await container.load(cdnId!.id);
         expect(cdn).toContain("hasConfiguredDataCache = true");
         expect(cdn).not.toContain(`${kind}-runtime.js`);
@@ -72,7 +65,7 @@ describe("vinext cache adapters", () => {
     },
   );
 
-  it("redisAdapter points at alchemy/Redis connect runtime", () => {
+  it("redisAdapter points at @alchemy.run/redis connect runtime", () => {
     const descriptor = redisAdapter({
       urlEnv: "REDIS_URL",
       appPrefix: "app",
@@ -97,9 +90,7 @@ describe("vinext cache adapters", () => {
   });
 
   it("KV factory throws without a binding and round-trips through a mock namespace", async () => {
-    expect(() => createKvDataCacheAdapter({ env: {} })).toThrow(
-      /VINEXT_KV_CACHE/,
-    );
+    expect(() => createKvDataCacheAdapter({ env: {} })).toThrow(/VINEXT_KV_CACHE/);
     const data = new Map<string, string>();
     const ns = {
       async get(key: string) {
@@ -136,9 +127,7 @@ describe("vinext cache adapters", () => {
     expect(typeof serialized.rscData).toBe("string");
     const restored = restoreArrayBuffers(serialized);
     expect(restored?.rscData).toBeInstanceOf(ArrayBuffer);
-    expect([...new Uint8Array(restored!.rscData as ArrayBuffer)]).toEqual([
-      1, 2, 3, 4,
-    ]);
+    expect([...new Uint8Array(restored!.rscData as ArrayBuffer)]).toEqual([1, 2, 3, 4]);
   });
 
   it("rejects invalid tags and cache entries", () => {
@@ -172,18 +161,12 @@ describe("vinext cache adapters", () => {
   });
 
   it("rejects a non-string redis urlEnv", () => {
-    expect(() => redisAdapter({ urlEnv: 1 as unknown as string })).toThrow(
-      /urlEnv/,
-    );
+    expect(() => redisAdapter({ urlEnv: 1 as unknown as string })).toThrow(/urlEnv/);
   });
 
   it("reads env strings from the bag then process.env", () => {
-    expect(readEnvString({ REDIS_URL: "redis://bag" }, "REDIS_URL")).toBe(
-      "redis://bag",
-    );
-    expect(readEnvString({ REDIS_URL: "" }, "REDIS_URL")).toBe(
-      process.env.REDIS_URL || undefined,
-    );
+    expect(readEnvString({ REDIS_URL: "redis://bag" }, "REDIS_URL")).toBe("redis://bag");
+    expect(readEnvString({ REDIS_URL: "" }, "REDIS_URL")).toBe(process.env.REDIS_URL || undefined);
     expect(readEnvString(undefined, "VINEXT_MISSING_ENV_KEY")).toBeUndefined();
   });
 

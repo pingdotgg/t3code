@@ -1,0 +1,106 @@
+---
+title: Create & configure databases
+description: Create, copy, and protect Turso databases.
+---
+
+A Turso database is a SQLite database that lives in a [group](/turso/groups).
+
+## Create a database
+
+```typescript
+const group = yield* Turso.Group("Group", { location: "aws-us-east-1" });
+const db = yield* Turso.Database("Db", { group: group.name });
+```
+
+`db.url` is the URL apps connect to. `db.hostname` and `db.httpUrl` are there too.
+
+Moving a database to another group creates a new, empty one.
+
+## Name it
+
+```typescript
+const db = yield* Turso.Database("Db", { group: group.name, name: "app" });
+```
+
+Without `name`, Alchemy picks one for each stage. Names must be unique in your organization.
+
+## Apply migrations
+
+```typescript
+const db = yield* Turso.Database("Db", {
+  group: group.name,
+  migrations: "./migrations",
+});
+```
+
+See [Migrations](/turso/migrations).
+
+## Copy another database
+
+```typescript
+const preview = yield* Turso.Database("Preview", {
+  group: group.name,
+  seed: { type: "database", name: db.name },
+});
+```
+
+The new database starts with all of `db`'s tables and rows. Add `timestamp` to copy it as it was at that time:
+
+```typescript
+seed: { type: "database", name: db.name, timestamp: "2026-10-07T12:00:00Z" },
+```
+
+`seed` only matters when the database is first created.
+
+## Block reads or writes
+
+```typescript
+const db = yield* Turso.Database("Db", {
+  group: group.name,
+  blockWrites: true,
+});
+```
+
+`blockWrites` makes the database read-only. `blockReads` turns it off completely. Remove the prop and deploy to undo it.
+
+## Protect it from deletion
+
+```typescript
+const db = yield* Turso.Database("Db", {
+  group: group.name,
+  deleteProtection: true,
+});
+```
+
+While this is on, you can't destroy the database. Set it to `false` and deploy first.
+
+## Limit who can connect
+
+```typescript
+const db = yield* Turso.Database("Db", {
+  group: group.name,
+  allowedIps: ["203.0.113.0/24"],
+});
+```
+
+`allowedIps` and `allowedAwsVpcIds` need a paid Turso plan.
+
+## Encrypt with your own key
+
+```typescript
+const db = yield* Turso.Database("Db", {
+  group: group.name,
+  encryption: {
+    key: Redacted.make(process.env.DB_KEY!),
+    cipher: "aes256gcm",
+  },
+});
+```
+
+The key is 32 random bytes, base64-encoded. Changing `encryption` creates a new database. Encryption needs a Pro or Enterprise plan.
+
+## Where next
+
+- [Connections](/turso/connections)
+- [Preview databases](/turso/preview-databases)
+- [Database reference](/providers/turso/reference/database)
