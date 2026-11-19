@@ -422,7 +422,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 acpRegistryAgentId={activeEntry.acpRegistryAgentId}
                 acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
                 showBadge={showInstanceBadge}
-                className="size-4"
+                // The account tab reaches past the icon; the margin keeps it off the label.
+                className={cn("size-4", showInstanceBadge && "mr-1")}
                 size="compact"
                 iconClassName={cn("size-4", props.activeProviderIconClassName)}
                 indicatorBackground={props.instanceIndicatorBackground ?? "var(--contrast-input)"}
