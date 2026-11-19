@@ -187,7 +187,9 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
           checkpointRef: fromCheckpointRef,
         });
         yield* writeTextFile(NodePath.join(tmp, "README.md"), "# test\n\nafter\n");
-        yield* git(sub, ["commit", "--allow-empty", "-m", "moved"]);
+        yield* writeTextFile(NodePath.join(sub, "nested.md"), "nested\n\nline\n");
+        yield* git(sub, ["add", "nested.md"]);
+        yield* git(sub, ["commit", "-m", "moved"]);
         yield* checkpointStore.captureCheckpoint({
           cwd: tmp,
           checkpointRef: toCheckpointRef,
@@ -202,8 +204,9 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
 
         expect(diff).toContain("diff --git a/README.md b/README.md");
         expect(diff).toContain(" # test\n \n-before\n+after\n");
-        expect(diff).toContain("diff --git a/sub b/sub");
-        expect(diff).toContain("+Subproject commit ");
+        expect(diff).toContain("diff --git a/sub/nested.md b/sub/nested.md");
+        expect(diff).toContain("+nested\n+\n+line\n");
+        expect(diff).not.toContain("Subproject commit");
       }),
     );
 

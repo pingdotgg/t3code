@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
+import { isGitImport, parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 
 describe("parseTurnDiffFilesFromNumstat", () => {
   it("sorts files and preserves addition and deletion counts", () => {
@@ -48,5 +48,32 @@ describe("parseTurnDiffFilesFromNumstat", () => {
     expect(parseTurnDiffFilesFromNumstat(`1\t0\t${path}\0`)).toEqual([
       { path, additions: 1, deletions: 0 },
     ]);
+  });
+});
+
+describe("isGitImport", () => {
+  const file = (path: string, previousPath?: string) => ({
+    path,
+    ...(previousPath === undefined ? {} : { previousPath }),
+    additions: 1,
+    deletions: 0,
+  });
+
+  it("keeps every file when no authored paths were found", () => {
+    expect(isGitImport(file("a.txt"), null)).toBe(false);
+  });
+
+  it("keeps a file whose path or previous path was authored", () => {
+    const authored = new Set(["a.txt", "old.txt"]);
+    expect(isGitImport(file("a.txt"), authored)).toBe(false);
+    expect(isGitImport(file("new.txt", "old.txt"), authored)).toBe(false);
+    expect(isGitImport(file("b.txt"), authored)).toBe(true);
+  });
+
+  it("keeps a file inside a nested repository whose gitlink was authored", () => {
+    const authored = new Set(["repos/app.worktrees/1"]);
+    expect(isGitImport(file("repos/app.worktrees/1/src/a.ts"), authored)).toBe(false);
+    expect(isGitImport(file("repos/app.worktrees/10/src/a.ts"), authored)).toBe(true);
+    expect(isGitImport(file("repos/app.worktrees"), authored)).toBe(true);
   });
 });

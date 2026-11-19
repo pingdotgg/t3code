@@ -3042,6 +3042,112 @@ it.effect("restores and deletes checkpoints inside populated submodules", () =>
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+it.effect(
+  "diffs each moved nested repository of a folder of repositories in its own repository",
+  () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.makeVcsDriverShape();
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        driver.execute({ operation: "test", cwd, args });
+      const commitFiles = Effect.fn("commitFiles")(function* (
+        cwd: string,
+        files: Record<string, string>,
+        message: string,
+      ) {
+        for (const [file, contents] of Object.entries(files)) {
+          yield* fileSystem.makeDirectory(path.dirname(path.join(cwd, file)), { recursive: true });
+          yield* fileSystem.writeFileString(path.join(cwd, file), contents);
+        }
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", message]);
+      });
+      const makeRepository = Effect.fn("makeRepository")(function* (cwd: string) {
+        yield* fileSystem.makeDirectory(cwd, { recursive: true });
+        yield* git(cwd, ["init", "-b", "main"]);
+        yield* git(cwd, ["config", "user.email", "test@test.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+      });
+      const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-nested-repositories-" });
+      const app = path.join(root, "app");
+      yield* makeRepository(app);
+      yield* commitFiles(app, { "base.txt": "base\n", "src/old.txt": "old\n" }, "initial");
+      const bulk = path.join(root, "bulk");
+      yield* makeRepository(bulk);
+      yield* commitFiles(bulk, { "seed.txt": "seed\n" }, "initial");
+      yield* git(app, ["worktree", "add", "-q", "--detach", "../app.worktrees/3"]);
+      yield* makeRepository(root);
+      yield* commitFiles(root, { "notes.txt": "notes\n" }, "track checkouts");
+      const [before, after] = ["before", "after"].map((name) =>
+        CheckpointRef.make(`refs/t3/checkpoints/nested/${name}`),
+      ) as [CheckpointRef, CheckpointRef];
+      yield* driver.checkpoints.captureCheckpoint({ cwd: root, checkpointRef: before });
+
+      yield* git(app, ["worktree", "add", "-q", "-b", "feature", "../app.worktrees/1"]);
+      yield* commitFiles(
+        path.join(root, "app.worktrees/1"),
+        { "feature.txt": "feature\n" },
+        "feature",
+      );
+      yield* git(app, ["worktree", "add", "-q", "-b", "untouched", "../app.worktrees/2"]);
+      yield* git(app, ["mv", "src/old.txt", "src/new.txt"]);
+      yield* git(app, ["commit", "-m", "rename"]);
+      const reused = path.join(root, "app.worktrees/3");
+      yield* git(reused, ["checkout", "-q", "-b", "reuse", "main"]);
+      yield* commitFiles(reused, { "reuse.txt": "reuse\n" }, "reuse");
+      yield* commitFiles(
+        bulk,
+        Object.fromEntries(Array.from({ length: 51 }, (_, index) => [`file-${index}.txt`, "x\n"])),
+        "bulk",
+      );
+      yield* fileSystem.writeFileString(path.join(root, "notes.txt"), "notes\nmore\n");
+      yield* driver.checkpoints.captureCheckpoint({
+        cwd: root,
+        checkpointRef: after,
+        previousCheckpointRef: before,
+      });
+
+      const refs = { cwd: root, fromCheckpointRef: before, toCheckpointRef: after };
+      const numstat = yield* driver.checkpoints.diffCheckpoints({
+        ...refs,
+        ignoreWhitespace: false,
+        format: "numstat",
+      });
+      assert.deepStrictEqual(
+        numstat.split("\0").filter((record) => record !== ""),
+        [
+          "1\t1\tbulk",
+          "1\t0\tnotes.txt",
+          "1\t0\tapp/src/new.txt",
+          "0\t1\tapp/src/old.txt",
+          "1\t0\tapp.worktrees/1/feature.txt",
+          "1\t0\tapp.worktrees/3/reuse.txt",
+        ],
+      );
+
+      const patch = yield* driver.checkpoints.diffCheckpoints({ ...refs, ignoreWhitespace: false });
+      assert.include(
+        patch,
+        "diff --git a/app.worktrees/1/feature.txt b/app.worktrees/1/feature.txt",
+      );
+      assert.include(patch, "+++ b/app.worktrees/3/reuse.txt");
+      assert.include(patch, "Subproject commit");
+      assert.notInclude(patch, "app.worktrees/2");
+      assert.include(patch, "+++ b/app/src/new.txt");
+      assert.notInclude(patch, "base.txt");
+
+      const filtered = yield* driver.checkpoints.diffCheckpoints({
+        ...refs,
+        ignoreWhitespace: false,
+        filePaths: ["app.worktrees/1/feature.txt"],
+      });
+      assert.match(filtered, /^diff --git a\/app\.worktrees\/1\/feature\.txt /);
+      assert.notInclude(filtered, "notes.txt");
+      assert.notInclude(filtered, "reuse.txt");
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);
+
 // The real VCS process, spawning `command` wherever the driver runs git.
 const vcsProcessSpawning = (command: string) =>
   Layer.effect(

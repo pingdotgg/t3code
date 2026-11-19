@@ -34,13 +34,21 @@ export function parseTurnDiffFilesFromNumstat(numstat: string): ReadonlyArray<Tu
   return files.toSorted((left, right) => left.path.localeCompare(right.path));
 }
 
+// A file inside a nested repository counts as authored when its gitlink was.
+function isAuthored(filePath: string, authoredPaths: ReadonlySet<string>): boolean {
+  for (let end = filePath.length; end > 0; end = filePath.lastIndexOf("/", end - 1)) {
+    if (authoredPaths.has(filePath.slice(0, end))) return true;
+  }
+  return false;
+}
+
 export function isGitImport(
   file: TurnDiffFileSummary,
   authoredPaths: ReadonlySet<string> | null,
 ): boolean {
   return (
     authoredPaths !== null &&
-    !authoredPaths.has(file.path) &&
-    (file.previousPath === undefined || !authoredPaths.has(file.previousPath))
+    !isAuthored(file.path, authoredPaths) &&
+    (file.previousPath === undefined || !isAuthored(file.previousPath, authoredPaths))
   );
 }
