@@ -38,17 +38,21 @@ export function useLinkedIssueDetail(
   ).data;
 }
 
-const mergedIssueLists = createMergedIssueListAtoms(
-  issueEnvironment.list,
-  formatEnvironmentQueryError,
-);
+const mergedIssueLists = createMergedIssueListAtoms(issueEnvironment, formatEnvironmentQueryError);
 
 /** The same listing read across every connected environment, as the pull-request page does. */
-export function useIssueList(
-  targets: ReadonlyArray<IssueListTarget>,
-): MergedIssueList & { readonly refresh: () => void } {
+export function useIssueList(targets: ReadonlyArray<IssueListTarget>): MergedIssueList & {
+  readonly refresh: () => void;
+  readonly reload: () => void;
+  readonly retry: () => void;
+} {
   const view = useAtomValue(mergedIssueLists.atom(targets));
-  return { ...view, refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets) };
+  return {
+    ...view,
+    refresh: () => mergedIssueLists.refresh(appAtomRegistry, targets, "manual"),
+    reload: () => mergedIssueLists.refresh(appAtomRegistry, targets, "background"),
+    retry: () => mergedIssueLists.retry(appAtomRegistry, targets),
+  };
 }
 
 /** After a write made beside the list, such as a state change in the detail panel. */
