@@ -163,9 +163,14 @@ function authSupportError(detail: string) {
   return new AcpErrors.AcpTransportError({ detail, cause: undefined });
 }
 
+// The 1.5 CLI answers `authenticate` with this internal error when it has no sign-in and no display.
+const NATIVE_CLI_NO_BROWSER_PREFIX = "No browser is available here";
+
 export function isAntigravitySignInRequiredError(error: unknown): boolean {
   return (
-    (isAcpRequestError(error) && error.code === -32000) ||
+    (isAcpRequestError(error) &&
+      (error.code === -32000 ||
+        (error.code === -32603 && error.errorMessage.startsWith(NATIVE_CLI_NO_BROWSER_PREFIX)))) ||
     (isAcpTransportError(error) && error.detail === ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE)
   );
 }
@@ -467,7 +472,14 @@ export function buildAntigravityAcpSpawnInput(input: {
     // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
     args:
       input.installation.harnessPath === null
-        ? ["acp"]
+        ? [
+            "acp",
+            "--gemini-dir",
+            input.profile.geminiHome,
+            "--app-data-dir",
+            // The CLI joins this beneath gemini-dir, including when the value is absolute.
+            "antigravity-acp",
+          ]
         : input.profile.platform === "linux"
           ? ["--uid="]
           : [],

@@ -1,11 +1,20 @@
-import { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildPendingNewTasks,
   type PendingDraftProjectDefaults,
   pendingDraftBranchNeedsRefs,
   resolvePendingDraftBranch,
 } from "./pending-new-tasks-model";
+import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { ComposerDraft, ComposerDraftWorkspaceSelection } from "./use-composer-drafts";
 
 const projectCwd = "/repo";
@@ -80,5 +89,57 @@ describe("resolvePendingDraftBranch", () => {
     const chosen = draft({ mode: "local", branch: "release", worktreePath: null });
     expect(pendingDraftBranchNeedsRefs(chosen, localDefault)).toBe(false);
     expect(resolve({ draft: chosen, branches, projectCwd })).toBe("release");
+  });
+});
+
+function queuedCreation(environmentId: string): QueuedThreadMessage {
+  return {
+    environmentId: EnvironmentId.make(environmentId),
+    threadId: ThreadId.make(`thread-${environmentId}`),
+    messageId: MessageId.make(`message-${environmentId}`),
+    commandId: CommandId.make(`command-${environmentId}`),
+    text: "Test",
+    attachments: [],
+    modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+    creation: {
+      projectId: ProjectId.make("project-1"),
+      workspaceMode: "local",
+      branch: null,
+      worktreePath: null,
+    },
+    createdAt: "2026-11-10T01:10:00.000Z",
+  };
+}
+
+describe("buildPendingNewTasks", () => {
+  it("lists only creations the outbox is not sending yet", () => {
+    const sending = EnvironmentId.make("sending");
+    const syncing = EnvironmentId.make("syncing");
+    const readOnly = EnvironmentId.make("read-only");
+    const retrying = EnvironmentId.make("retrying");
+    const { modelSelection: _model, ...modelless } = queuedCreation("sending");
+    const tasks = buildPendingNewTasks({
+      queuedMessages: [
+        ...["sending", "syncing", "read-only", "retrying", "offline"].map(queuedCreation),
+        { ...modelless, messageId: MessageId.make("message-modelless") },
+      ],
+      drafts: {},
+      sendGate: {
+        connectedEnvironmentIds: new Set([sending, syncing, readOnly, retrying]),
+        operableEnvironmentIds: new Set([sending, syncing, retrying]),
+        shellStatuses: new Map([
+          [sending, "live"],
+          [syncing, "synchronizing"],
+          [readOnly, "live"],
+          [retrying, "live"],
+        ]),
+        retryingMessageIds: { [MessageId.make("message-retrying")]: true },
+      },
+    });
+
+    expect(tasks).toHaveLength(5);
+    expect(new Set(tasks.map((task) => task.environmentId))).toEqual(
+      new Set(["syncing", "read-only", "retrying", "offline", "sending"]),
+    );
   });
 });
