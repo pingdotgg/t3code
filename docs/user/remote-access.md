@@ -490,8 +490,11 @@ can access, even when the pairing link omits file permissions. With
 credentials. Grant these permissions only to clients you trust with those
 capabilities.
 
-To remove an environment from T3 Connect, open your account menu's **T3 Connect**
-page, or **Settings → T3 Connect** on mobile, and choose **Deregister**. This
+To remove an environment from T3 Connect, open the **T3 Connect** page from your
+account avatar at the bottom of the Settings sidebar, or open **Settings → T3
+Connect** on mobile, and choose **Deregister**. In **Settings → Environments**, an
+environment you haven't added on this device also has **Manage in T3 Connect…**
+in its menu. This
 revokes its cloud access and frees its host space even when the environment is
 offline or has been wiped. When T3 Connect rejects a host's link, the host
 shows that it was removed from T3 Connect. To link it again, turn on

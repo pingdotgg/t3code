@@ -4918,6 +4918,7 @@
   "ce6b7e994161e68f": "Route hinzufügen",
   "d3ef4f9486e31279": "Hinzufügen",
   "c246e33dafd359cc": "Hinzufügen",
+  "d24cc1734912f197": "In T3 Connect verwalten…",
   "b0c1beb79a87d97b": "Autorisierungsanfrage",
   "0311d7ed2b7eb2f6": "Dieser Verbindungslink ist unvollständig",
   "09e69d04f7e588eb": "Dem Link fehlt die Autorisierungsanfrage. Führe `t3 connect` in deinem Terminal erneut aus und öffne die neu ausgegebene URL.",
