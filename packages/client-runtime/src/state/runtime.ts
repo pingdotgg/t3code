@@ -140,6 +140,7 @@ export interface AtomCommandOptions {
   readonly label?: string;
   readonly reportFailure?: boolean;
   readonly reportDefect?: boolean;
+  readonly signal?: AbortSignal | undefined;
 }
 
 export interface AtomCommandReporter {
@@ -149,7 +150,11 @@ export interface AtomCommandReporter {
 
 export interface AtomCommand<W, A, E> {
   readonly label: string;
-  readonly run: (registry: AtomRegistry.AtomRegistry, input: W) => Promise<AtomCommandResult<A, E>>;
+  readonly run: (
+    registry: AtomRegistry.AtomRegistry,
+    input: W,
+    options?: { readonly signal?: AbortSignal | undefined },
+  ) => Promise<AtomCommandResult<A, E>>;
 }
 
 export type AtomCommandConcurrency<W> =
@@ -344,7 +349,11 @@ export async function runAtomCommand<W, A, E>(
   options: AtomCommandOptions = {},
   reporter: AtomCommandReporter = console,
 ): Promise<AtomCommandResult<A, E>> {
-  const result = await settleAtomCommandResult(() => command.run(registry, input));
+  const result = await settleAtomCommandResult(() =>
+    options.signal === undefined
+      ? command.run(registry, input)
+      : command.run(registry, input, { signal: options.signal }),
+  );
   reportAtomCommandResult(result, { ...options, label: options.label ?? command.label }, reporter);
   return result;
 }
@@ -395,7 +404,6 @@ export interface AtomQueryOptions extends AtomCommandOptions {
    * verification flows where a cached failure must not satisfy a retry.
    */
   readonly refresh?: boolean;
-  readonly signal?: AbortSignal;
 }
 
 /**
@@ -451,15 +459,41 @@ export function createRuntimeCommand<R, ER, W, A, E>(
   const concurrency = options.concurrency ?? { mode: "parallel" as const };
   return {
     label: options.label,
-    run: (registry, input) =>
-      settleAtomCommandResult(() =>
-        scheduler.schedule(registry, concurrency, input, () => {
+    run: (registry, input, call) => {
+      // A run that several callers share must not end when one of them stops waiting.
+      const signal =
+        concurrency.mode === "parallel" || concurrency.mode === "serial" ? call?.signal : undefined;
+      const interrupted = (): AtomCommandResult<A, E | ER> =>
+        AsyncResult.failure(Cause.interrupt());
+      if (signal?.aborted) return Promise.resolve(interrupted());
+      const scheduled: Promise<AtomCommandResult<A, E | ER>> = settleAtomCommandResult(() =>
+        scheduler.schedule(registry, concurrency, input, async () => {
+          if (signal?.aborted) return interrupted();
           const atom = runtime
             .atom(options.execute(input, registry))
             .pipe(Atom.withLabel(options.label));
-          return executeAtomQuery(registry, atom, { reportDefect: false, reportFailure: false });
+          return executeAtomQuery(registry, atom, {
+            reportDefect: false,
+            reportFailure: false,
+            signal,
+          });
         }),
-      ),
+      );
+      if (signal === undefined || concurrency.mode !== "serial") return scheduled;
+      // A queued serial call settles right away when its signal aborts instead of waiting for earlier turns.
+      return new Promise<AtomCommandResult<A, E | ER>>((resolve) => {
+        const onAbort = () => resolve(interrupted());
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener("abort", onAbort, { once: true });
+        void scheduled.then((result) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(result);
+        });
+      });
+    },
   };
 }
 

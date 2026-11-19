@@ -24,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -60,6 +61,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
   createEnvironmentRpcSubscriptionAtomFamily,
+  isAtomCommandInterrupted,
   selectEnvironmentQueryData,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
@@ -1527,6 +1529,67 @@ describe("runtime command runner", () => {
       expect(Cause.hasDies(result.cause)).toBe(true);
       expect(Cause.squash(result.cause)).toBe(defect);
     }
+    registry.dispose();
+  });
+
+  it.effect("stops a caller's own run when its signal aborts", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const stopped = yield* Deferred.make<void>();
+      const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
+        label: "test.abortable",
+        execute: () =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.onInterrupt(() => Deferred.succeed(stopped, undefined)),
+          ),
+      });
+      const registry = AtomRegistry.make();
+
+      const caller = yield* Effect.forkChild(
+        Effect.promise((signal) => command.run(registry, undefined, { signal })),
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(caller);
+
+      yield* Deferred.await(stopped);
+      registry.dispose();
+    }),
+  );
+
+  it("settles a queued serial command immediately when its signal aborts", async () => {
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const releaseFirst = Latch.makeUnsafe();
+    let secondStarted = false;
+    const command = createRuntimeCommand(Atom.runtime(Layer.empty), {
+      label: "test.serial-abortable",
+      concurrency: { mode: "serial", key: () => "lane" },
+      execute: (id: number) =>
+        id === 1
+          ? Effect.sync(markFirstStarted).pipe(Effect.andThen(releaseFirst.await))
+          : Effect.sync(() => {
+              secondStarted = true;
+            }),
+    });
+    const registry = AtomRegistry.make();
+
+    const first = command.run(registry, 1);
+    await firstStarted;
+
+    const controller = new AbortController();
+    const second = command.run(registry, 2, { signal: controller.signal });
+    controller.abort();
+
+    const secondResult = await second;
+    expect(isAtomCommandInterrupted(secondResult)).toBe(true);
+    expect(secondStarted).toBe(false);
+
+    releaseFirst.openUnsafe();
+    expect((await first)._tag).toBe("Success");
+    expect(secondStarted).toBe(false);
     registry.dispose();
   });
 

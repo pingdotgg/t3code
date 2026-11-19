@@ -130,12 +130,12 @@ export const deviceDetailAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
   Atom.make((get) =>
-    Effect.promise(() =>
+    Effect.promise((signal) =>
       runAtomCommand(
         get.registry,
         deviceEnvironment.detail,
         { environmentId: key.environmentId, input: { hostId: key.hostId, deviceId: key.deviceId } },
-        { reportFailure: false },
+        { reportFailure: false, signal },
       ),
     ).pipe(
       Effect.map((result) =>
@@ -156,12 +156,12 @@ export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceHostProbeAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
-    Effect.promise(() =>
+    Effect.promise((signal) =>
       runAtomCommand(
         get.registry,
         deviceEnvironment.list,
         { environmentId, input: {} },
-        { reportFailure: false },
+        { reportFailure: false, signal },
       ),
     ).pipe(Effect.asVoid),
   ).pipe(Atom.withLabel(`device-host-probe:${environmentId}`)),
