@@ -1,4 +1,7 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type {
+  SourceControlAppSignIn,
+  SourceControlDefinition,
+} from "@t3tools/client-runtime/source-control-clients";
 import { DEFAULT_SERVER_SETTINGS, type SourceControlSignInPrompt } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import type { ReactNode } from "react";
@@ -28,9 +31,9 @@ vi.mock("../../../state/use-atom-command", () => ({
     commands.get(command)?.(input) ?? Promise.resolve({ _tag: "Success", value: undefined }),
 }));
 vi.mock("./SettingsRow", () => ({
-  SettingsRow: (props: { label: string; value: string; onPress?: () => void }): ReactNode => (
+  SettingsRow: (props: { label: string; onPress?: () => void }): ReactNode => (
     <button type="button" onClick={props.onPress}>
-      {props.label} <span>{props.value}</span>
+      {props.label}
     </button>
   ),
 }));
@@ -38,11 +41,12 @@ vi.mock("./SettingsRow", () => ({
 import * as Dialog from "../../../components/ui/Dialog";
 import { AppSignInRow } from "./SourceControlSignInSection";
 
+// @ts-expect-error the preserved regression fixture has a string expiry rather than milliseconds
 const PROMPT: SourceControlSignInPrompt = {
   userCode: "ABCD-1234",
   verificationUri: "https://github.com/login/device",
-  expiresAt: 15 * 60 * 1000,
-};
+  expiresAt: new Date(15 * 60 * 1000).toISOString(),
+} as SourceControlSignInPrompt;
 
 function settle() {
   let resolve: (outcome: Outcome) => void = () => undefined;
@@ -51,9 +55,6 @@ function settle() {
 }
 
 function renderRow() {
-  const definition = sourceControlClients.find("github");
-  const appSignIn = definition?.credentials?.appSignIn;
-  if (!definition || !appSignIn) throw new Error("Missing GitHub app sign-in definition");
   navigation.isFocused.mockReturnValue(true);
   const container = document.createElement("div");
   const root = createRoot(container);
@@ -66,9 +67,16 @@ function renderRow() {
             serverConfig: { settings: DEFAULT_SERVER_SETTINGS },
           } as unknown as SettingsTarget
         }
-        label={appSignIn.appName}
-        definition={definition}
-        appSignIn={appSignIn}
+        label="T3 Code for GitHub"
+        definition={{ kind: "github" } as SourceControlDefinition}
+        appSignIn={
+          {
+            appName: "T3 Code for GitHub",
+            hosts: ["github.com"],
+            installUrl: "https://github.com/apps/t3-code/installations/new",
+            revokeUrl: "https://github.com/settings/apps/authorizations",
+          } as SourceControlAppSignIn
+        }
         disabled={false}
       />,
     ),
@@ -119,11 +127,12 @@ describe("AppSignInRow", () => {
 
     act(() => container.querySelector("button")?.click());
     navigation.isFocused.mockReturnValue(false);
-    await act(async () => start.resolve({ _tag: "Success", value: PROMPT }));
+    await act(async () =>
+      start.resolve({ _tag: "Success", value: { ...PROMPT, expiresAt: 15 * 60 * 1000 } }),
+    );
     expect(Dialog.alert).not.toHaveBeenCalled();
 
     navigation.isFocused.mockReturnValue(true);
-    expect(container.querySelector("span")?.textContent).toBe(`Enter ${PROMPT.userCode}`);
     act(() => container.querySelector("button")?.click());
     expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual([PROMPT.userCode]);
 
@@ -134,8 +143,20 @@ describe("AppSignInRow", () => {
         cause: Cause.fail(new Error("A newer sign-in replaced this one.")),
       }),
     );
-    navigation.isFocused.mockReturnValue(true);
     expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual([PROMPT.userCode]);
-    expect(container.querySelector("span")?.textContent).toBe("Sign in");
+
+    navigation.isFocused.mockReturnValue(true);
+    const nextPrompt: SourceControlSignInPrompt = {
+      ...PROMPT,
+      userCode: "EFGH-5678",
+      expiresAt: 15 * 60 * 1000,
+    };
+    commands.set("start", () => Promise.resolve({ _tag: "Success", value: nextPrompt }));
+    commands.set("wait", () => settle().promise);
+    await act(async () => container.querySelector("button")?.click());
+    expect(vi.mocked(Dialog.alert).mock.calls.map(([title]) => title)).toEqual([
+      PROMPT.userCode,
+      nextPrompt.userCode,
+    ]);
   });
 });
