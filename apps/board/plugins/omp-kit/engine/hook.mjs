@@ -1,7 +1,6 @@
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
 import {
   defaultRulesDir,
@@ -136,7 +135,7 @@ function sessionStart(rulesDir, env) {
   }
 }
 
-export function handle(input, env = process.env) {
+export function handle(input, env) {
   const rulesDir = defaultRulesDir(env);
   if (input.hook_event_name === "SessionStart") return sessionStart(rulesDir, env);
 
@@ -158,10 +157,4 @@ export function handle(input, env = process.env) {
     default:
       return null;
   }
-}
-
-if (process.argv[1] && import.meta.url === NodeURL.pathToFileURL(process.argv[1]).href) {
-  const input = JSON.parse(NodeFS.readFileSync(0, "utf8"));
-  const output = handle(input);
-  if (output) process.stdout.write(JSON.stringify(output));
 }

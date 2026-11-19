@@ -6,7 +6,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }
@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }
@@ -29,7 +29,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }
@@ -41,7 +41,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }
@@ -53,7 +53,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }
@@ -64,7 +64,7 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PLUGIN_ROOT}/engine/hook.mjs"]
+            "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.mjs"]
           }
         ]
       }

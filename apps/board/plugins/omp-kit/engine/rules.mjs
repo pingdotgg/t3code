@@ -2,7 +2,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-export function defaultRulesDir(env = process.env) {
+export function defaultRulesDir(env) {
   return env.OMP_KIT_RULES_DIR || NodePath.join(NodeOS.homedir(), ".omp", "agent", "rules");
 }
 
@@ -112,7 +112,7 @@ export function parseScope(raw) {
   return scope;
 }
 
-export function loadRules(dir = defaultRulesDir()) {
+export function loadRules(dir) {
   let files;
   try {
     files = NodeFS.readdirSync(dir)

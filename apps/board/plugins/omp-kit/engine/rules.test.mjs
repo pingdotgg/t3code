@@ -7,9 +7,15 @@ import * as NodeTest from "node:test";
 import * as NodeURL from "node:url";
 
 import { handle } from "./hook.mjs";
+import { run } from "../scripts/run-hook.mjs";
 import { parseFrontmatter, parseScope } from "./rules.mjs";
 
-const HOOK = NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "hook.mjs");
+const HOOK = NodePath.join(
+  NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+  "..",
+  "scripts",
+  "run-hook.mjs",
+);
 
 const FIXTURE_RULES = {
   "no-any.md": `---
@@ -288,7 +294,7 @@ NodeTest.describe("omp-kit hook engine", () => {
   );
 
   NodeTest.test(
-    "Given a hook payload on stdin, when hook.mjs runs as a process, then stdout carries the same JSON",
+    "Given a hook payload on stdin, when run-hook.mjs runs as a process, then stdout carries the same JSON",
     (t) => {
       const { root, env } = makeEnvironment();
       t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
@@ -310,6 +316,28 @@ NodeTest.describe("omp-kit hook engine", () => {
           "Never run rm -rf.",
         ),
         true,
+      );
+    },
+  );
+
+  NodeTest.test(
+    "Given a payload no rule matches, when run formats it, then the output is empty, and a matching payload yields the hook JSON",
+    (t) => {
+      const { root, env } = makeEnvironment();
+      t.after(() => NodeFS.rmSync(root, { recursive: true, force: true }));
+      const payload = (command) =>
+        JSON.stringify({
+          hook_event_name: "PreToolUse",
+          session_id: "s10",
+          tool_name: "Bash",
+          tool_use_id: "toolu_10",
+          tool_input: { command },
+        });
+
+      NodeAssert.equal(run(payload("ls"), env), "");
+      NodeAssert.equal(
+        JSON.parse(run(payload("rm -rf x"), env)).hookSpecificOutput.permissionDecision,
+        "deny",
       );
     },
   );
