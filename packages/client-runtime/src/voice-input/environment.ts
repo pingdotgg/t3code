@@ -213,6 +213,17 @@ export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, model
     run: ({ client, headers }) => client.selectModel({ headers, payload: { modelId } }),
   });
 
+/** Downloads a model and makes it the environment's transcription model once it is installed. */
+export const installEnvironmentSpeechModel = Effect.fn(
+  "clientRuntime.voiceInput.installEnvironmentSpeechModel",
+)(function* (prepared: PreparedConnection, modelId: string) {
+  const downloaded = yield* downloadEnvironmentSpeechModel(prepared, modelId);
+  // A cancelled download still answers, with the model left uninstalled.
+  const model = downloaded.models.find(({ id }) => id === modelId);
+  if (model?.state !== "installed" || model.active) return downloaded;
+  return yield* selectEnvironmentSpeechModel(prepared, modelId);
+});
+
 export const cancelEnvironmentSpeechModelDownload = (
   prepared: PreparedConnection,
   modelId: string,
