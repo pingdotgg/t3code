@@ -12,7 +12,6 @@ function projectRows(overlay: HTMLElement) {
   );
 }
 
-/** What a plain Tab from the message box reached before the project rows took that stop. */
 function tabStopAfterEditor(overlay: HTMLElement, editor: HTMLElement) {
   return Array.from(overlay.querySelectorAll<HTMLElement>(TABBABLE_SELECTOR)).find(
     (element) =>
@@ -23,10 +22,6 @@ function tabStopAfterEditor(overlay: HTMLElement, editor: HTMLElement) {
   );
 }
 
-/**
- * An empty draft's Tab order runs message box → project picker → the box's next control (send),
- * though the picker sits above the box. Returns whether it moved focus.
- */
 export function routeDraftHeroTab(
   event: Pick<KeyboardEvent, "key" | "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | "target">,
   overlay: HTMLElement,
@@ -62,7 +57,6 @@ export function routeDraftHeroTab(
   return false;
 }
 
-/** Up and down move between the picker's rows, now that Tab leaves the picker. */
 export function moveDraftHeroRowFocus(
   event: Pick<KeyboardEvent, "key" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "target">,
   list: HTMLElement,
