@@ -516,9 +516,12 @@ const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefin
   t3_queue: (action) => `t3_queue_${action}`,
   t3_pending_request: (action) => `t3_pending_request_${action}`,
   t3_thread_transfer: (action) =>
-    ({ fork: "t3_thread_fork", merge_back: "t3_thread_merge_back", status: "t3_thread_transfers" })[
-      action
-    ],
+    ({
+      fork: "t3_thread_fork",
+      merge_back: "t3_thread_merge_back",
+      status: "t3_thread_transfers",
+      continue: "t3_thread_continue",
+    })[action],
 };
 
 /** Pass the call's input so an action tool resolves to the labels and summary of its action. */

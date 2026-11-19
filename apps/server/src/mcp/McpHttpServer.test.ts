@@ -137,6 +137,32 @@ const snapshotResult = {
   },
 };
 
+it("tracks result-target actions only when their response names a recipient", () => {
+  const result = (structuredContent: unknown) =>
+    ({ content: [], structuredContent }) as McpSchema.CallToolResult;
+  expect(
+    McpHttpServer.isResultTargetHandoff(
+      "t3_thread_transfer",
+      { action: "continue" },
+      result({ enabled: true }),
+    ),
+  ).toBe(false);
+  expect(
+    McpHttpServer.isResultTargetHandoff(
+      "t3_thread_transfer",
+      { action: "continue" },
+      result({ enabled: false }),
+    ),
+  ).toBe(false);
+  expect(
+    McpHttpServer.isResultTargetHandoff(
+      "t3_thread_transfer",
+      { action: "continue" },
+      result({ enabled: true, targetThreadId: "continuation-target" }),
+    ),
+  ).toBe(true);
+});
+
 const serveSnapshots = (clientId: string, result: unknown) =>
   Effect.gen(function* () {
     const broker = yield* PreviewAutomationBroker.PreviewAutomationBroker;
