@@ -46,7 +46,6 @@ export const resolveEarlyLinuxElectronOptionsFromProcess = (
     homeDirectory,
     joinPath: NodePath.posix.join,
     readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
-    fileExists: (path) => NodeFS.existsSync(path),
     sessionBus: {
       listNames: () =>
         ["ListNames", "ListActivatableNames"].flatMap((method) =>

@@ -50,23 +50,16 @@ export function resolveLinuxPasswordStoreSwitch(input: {
   readonly preference: LinuxPasswordStorePreference;
   readonly env: NodeJS.ProcessEnv;
   readonly sessionBus: LinuxSessionBus;
-  /** Whether secrets saved under the previous auto choice (gnome-libsecret) are on disk. */
-  readonly hasSavedSecrets: () => boolean;
 }): LinuxPasswordStoreSwitch | null {
   if (input.preference !== "auto") {
     return input.preference;
   }
 
-  return electronSelectsProtectedBackend(input.env)
-    ? null
-    : resolveForcedBackend(input.sessionBus, input.hasSavedSecrets);
+  return electronSelectsProtectedBackend(input.env) ? null : resolveForcedBackend(input.sessionBus);
 }
 
 // KWallet also serves the Secret Service API, but Chromium's libsecret backend fails against it.
-function resolveForcedBackend(
-  bus: LinuxSessionBus,
-  hasSavedSecrets: () => boolean,
-): LinuxPasswordStoreSwitch {
+function resolveForcedBackend(bus: LinuxSessionBus): LinuxPasswordStoreSwitch {
   let names: ReadonlySet<string>;
   try {
     names = new Set(bus.listNames());
@@ -80,8 +73,6 @@ function resolveForcedBackend(
   // An activatable Secret Service may be another keyring, and starting it to find out can hang.
   const secretServiceOwner = bus.getNameOwner(SECRET_SERVICE_BUS_NAME);
   if (secretServiceOwner === null) return "gnome-libsecret";
-  // Saved secrets mean libsecret worked through this wallet; switching would orphan their key.
-  if (hasSavedSecrets()) return "gnome-libsecret";
   return (
     wallets.find(({ busName }) => bus.getNameOwner(busName) === secretServiceOwner)?.backend ??
     "gnome-libsecret"
