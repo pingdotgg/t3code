@@ -108,6 +108,12 @@ query T3Viewer {
   }
 }
 
+query T3CurrentUser {
+  viewer {
+    ...LinearUser
+  }
+}
+
 query T3Issues($first: Int!, $after: String, $filter: IssueFilter!, $orderBy: PaginationOrderBy!) {
   issues(first: $first, after: $after, filter: $filter, orderBy: $orderBy) {
     nodes {

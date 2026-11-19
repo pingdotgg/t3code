@@ -234,6 +234,27 @@ export declare namespace T3Viewer {
   export type Result = typeof T3Viewer.result.Type
 }
 
+/** `query T3CurrentUser` */
+export const T3CurrentUser = GraphQL.query("T3CurrentUser", {
+  document: {
+    variables: [],
+    selections: [
+      { name: "viewer", body: ["{...LinearUser}"] }
+    ],
+    fragments: [
+      { name: "LinearUser", body: ["on User{id name displayName email avatarUrl}"] }
+    ]
+  },
+  result: Schema.Struct({
+    /** The currently authenticated user making the API request. */
+    viewer: LinearUser
+  })
+})
+export declare namespace T3CurrentUser {
+  export type Variables = typeof T3CurrentUser.variables.Type
+  export type Result = typeof T3CurrentUser.result.Type
+}
+
 export const IssueConnection = Schema.Struct({
   nodes: Schema.Array(LinearIssue),
   pageInfo: LinearPageInfo
@@ -818,4 +839,4 @@ export declare namespace T3CommentReactions {
 }
 
 /** Every operation in LinearApi.graphql. */
-export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3Issues, T3Issue, T3Comments, T3Team, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueReactions, T3CommentReactions)
+export const LinearApiGraphQLGroup = GraphQLGroup.make(T3Viewer, T3CurrentUser, T3Issues, T3Issue, T3Comments, T3Team, T3IssueCreate, T3IssueUpdate, T3CommentCreate, T3ReactionCreate, T3ReactionDelete, T3IssueReactions, T3CommentReactions)

@@ -93,8 +93,10 @@ export interface LinearTeamScope {
 export class LinearApi extends Context.Service<
   LinearApi,
   {
-    /** Who a credential is, and the teams it reaches. Takes the token so it can vet a new one. */
-    readonly viewer: (token?: string) => Effect.Effect<
+    /** The identity used for involvement filters and reactions. */
+    readonly viewer: Effect.Effect<LinearUser, IssueTrackerError>;
+    /** Who a new credential belongs to, and the workspace and teams it reaches. */
+    readonly inspectCredential: (token: string) => Effect.Effect<
       {
         readonly viewer: LinearUser;
         /** The workspace's URL key, the first path segment of its issue links. */
@@ -295,7 +297,11 @@ export const make = Effect.gen(function* () {
       ? Effect.void
       : Effect.fail(fail(operation, "failed", "Linear did not apply the change."));
 
-  const viewer: LinearApi["Service"]["viewer"] = (token) =>
+  const viewer = call("viewer", (linear) => linear.T3CurrentUser()).pipe(
+    Effect.map((data) => data.viewer),
+  );
+
+  const inspectCredential: LinearApi["Service"]["inspectCredential"] = (token) =>
     call("viewer", (linear) => linear.T3Viewer(), token).pipe(
       Effect.map((data) => ({
         viewer: data.viewer,
@@ -426,6 +432,7 @@ export const make = Effect.gen(function* () {
 
   return LinearApi.of({
     viewer,
+    inspectCredential,
     listIssues,
     getIssue,
     getComments,

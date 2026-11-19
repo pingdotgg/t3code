@@ -407,8 +407,8 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         : Effect.succeed(member.id);
     };
 
-    const viewerId: Effect.Effect<string | null> = linear.viewer().pipe(
-      Effect.map((data) => data.viewer.id),
+    const viewerId: Effect.Effect<string | null> = linear.viewer.pipe(
+      Effect.map((viewer) => viewer.id),
       Effect.orElseSucceed(() => null),
     );
 
@@ -419,7 +419,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
       parseIssueUrl: parseLinearIssueUrl,
 
       probeCredential: (token) =>
-        linear.viewer(token).pipe(
+        linear.inspectCredential(token).pipe(
           Effect.map((data) => ({
             account: userName(data.viewer),
             workspace: data.workspace,
@@ -427,8 +427,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
           })),
         ),
 
-      // The id, not the display name: it is what the involvement filters compare against.
-      getViewer: () => linear.viewer().pipe(Effect.map((data) => toActor(data.viewer).login)),
+      getViewer: () => linear.viewer.pipe(Effect.map((viewer) => toActor(viewer).login)),
 
       listIssues: (input) => {
         // `ENG-12`, `#12` or `12` asks for one issue of this team by number.
@@ -487,10 +486,7 @@ export const make: Effect.Effect<StandaloneIssueTrackerApi, never, LinearApi.Lin
         // One read of the viewer: the id matches reactions, the handle is what the client sees.
         const [issue, me] = yield* Effect.all([
           linear.getIssue(identifier, COMMENTS_PAGE),
-          linear.viewer().pipe(
-            Effect.map((data) => data.viewer),
-            Effect.orElseSucceed(() => null),
-          ),
+          linear.viewer.pipe(Effect.orElseSucceed(() => null)),
         ]);
         const viewer = me?.id ?? null;
         if (issue === null) return yield* notFound("getIssue");

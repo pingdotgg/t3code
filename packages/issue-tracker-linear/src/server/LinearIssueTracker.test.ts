@@ -255,11 +255,7 @@ describe("LinearIssueTracker", () => {
       const created: Array<unknown> = [];
       const deleted: Array<unknown> = [];
       const { tracker } = fakeLinear({
-        T3Viewer: () => ({
-          viewer: JULIUS,
-          organization: { urlKey: "acme" },
-          teams: { nodes: [] },
-        }),
+        T3CurrentUser: () => ({ viewer: JULIUS }),
         T3Issue: (variables) => {
           // Linear refuses a page of zero comments, which fails the write that looked the issue up.
           expect(variables.comments).toBeGreaterThan(0);
@@ -300,6 +296,7 @@ describe("LinearIssueTracker", () => {
   it.effect("reads an issue with its comments, reactions, history and linked pull requests", () =>
     Effect.gen(function* () {
       const { tracker } = fakeLinear({
+        T3CurrentUser: () => ({ viewer: JULIUS }),
         T3Viewer: () => ({
           viewer: JULIUS,
           organization: { urlKey: "acme" },
@@ -395,6 +392,31 @@ describe("LinearIssueTracker", () => {
 
       const missing = yield* Effect.flip(api.getIssue({ ...target, key: "123" }));
       expect(missing.reason).toBe("not-found");
+    }),
+  );
+
+  it.effect("reserves workspace and team discovery for inspecting a new credential", () =>
+    Effect.gen(function* () {
+      const team = { id: "team_1", key: "ENG", name: "Engineering" };
+      const { tracker, requests } = fakeLinear({
+        T3CurrentUser: () => ({ viewer: JULIUS }),
+        T3Viewer: () => ({
+          viewer: THEO,
+          organization: { urlKey: "other" },
+          teams: { nodes: [team] },
+        }),
+      });
+      const api = yield* tracker;
+      expect(yield* api.getViewer(target)).toBe("julius");
+      expect(yield* api.probeCredential("lin_api_new")).toEqual({
+        account: "theo",
+        workspace: "other",
+        scopes: [{ key: "ENG", name: "Engineering" }],
+      });
+      expect(requests).toEqual([
+        { operation: "T3CurrentUser", authorization: "lin_api_stored" },
+        { operation: "T3Viewer", authorization: "lin_api_new" },
+      ]);
     }),
   );
 
