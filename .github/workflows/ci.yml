@@ -101,17 +101,19 @@ jobs:
               pull_number: context.issue.number,
               per_page: 100,
             });
-            const commits = await github.paginate(github.rest.pulls.listCommits, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-              per_page: 100,
-            });
+            // Only commits outside the pinned upstream base are ours to check. The one-off
+            // reconcile PR pulls in all of upstream's history (and listCommits caps at 250).
+            // Commits touching no product path (ci:, docs:) need no patch: prefix.
+            const { pull_request: pr } = context.payload;
+            const baseSha = require("fs").readFileSync(".github/workflows/patched-nightly.yml", "utf8").match(/PATCH_BASE_SHA: (\w+)/)[1];
+            await exec.exec("git", ["fetch", "--no-tags", "--filter=tree:0", "origin", `refs/pull/${pr.number}/head`, pr.base.sha, baseSha]);
+            const { stdout } = await exec.getExecOutput("git", ["log", "--no-merges", "--format=%B%x00", pr.head.sha, `^${pr.base.sha}`, `^${baseSha}`, "--", "apps", "packages", "native", "scripts", "packaging", "patches", ".github/patches", "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml"]);
+            const commits = stdout.split("\0").map((message) => message.trim()).filter(Boolean);
             const result = validatePatchIntent({
               files: files.map(({ filename }) => filename),
-              title: context.payload.pull_request.title,
-              body: context.payload.pull_request.body ?? "",
-              commits: commits.map(({ commit }) => commit.message),
+              title: pr.title,
+              body: pr.body ?? "",
+              commits,
             });
             if (result.errors.length > 0) {
               core.setFailed(result.errors.join("\n"));
