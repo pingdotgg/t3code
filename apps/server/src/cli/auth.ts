@@ -325,7 +325,7 @@ const sessionRevokeCommand = Command.make("revoke", {
   ),
 }).pipe(
   Command.withDescription(
-    "Revoke an active session. A T3 Connect device's session takes the device's trust and other sessions with it, so it cannot sign itself back in.",
+    "Revoke an active session. A T3 Connect device's session takes the device's trust and other sessions with it; if approval for new devices is off, the device can connect again on its own.",
   ),
   Command.withHandler((flags) =>
     runWithEnvironmentAuth(flags, (environmentAuth) =>
