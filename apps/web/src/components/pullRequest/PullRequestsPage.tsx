@@ -86,6 +86,7 @@ import { PullRequestListEmptyState, PullRequestListNotice } from "./PullRequestL
 import { PullRequestGlyph } from "./pullRequestIcons";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
+import { changeRequestTermKind } from "./changeRequestTerm";
 import { RightPanelTabs } from "../RightPanelTabs";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";

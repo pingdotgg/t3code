@@ -63,6 +63,7 @@ import { RightPanelTabs } from "~/components/RightPanelTabs";
 import { WorkspaceBreadcrumb, WorkspaceBreadcrumbItem } from "~/components/WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
+import { PanelLayoutControls } from "~/components/chat/PanelLayoutControls";
 import { Button } from "~/components/ui/button";
 import {
   Empty,
@@ -76,7 +77,7 @@ import { SidebarInset } from "~/components/ui/sidebar";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
-import { resolveShortcutCommand } from "~/keybindings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
 import { isTerminalFocused } from "~/lib/terminalFocus";
 import { usePanelAnimationSettings, usePanelPresence } from "~/panelAnimations";
 import {
@@ -605,6 +606,28 @@ export function IssuesPage() {
               </WorkspaceBreadcrumbItem>
             </WorkspaceBreadcrumb>
             <div className="min-w-0 flex-1" />
+            <div
+              className="flex items-center gap-1 [-webkit-app-region:no-drag]"
+              data-workspace-titlebar-controls
+            >
+              <PanelLayoutControls
+                showTerminalControl={false}
+                showThreadPanelControl={false}
+                terminalAvailable={false}
+                terminalOpen={false}
+                terminalShortcutLabel={null}
+                threadPanelOpen={false}
+                threadPanelPresentation="inline"
+                threadPanelShortcutLabel={null}
+                onToggleThreadPanel={() => undefined}
+                rightPanelAvailable={panelSurface !== null}
+                rightPanelOpen={rightPanelState.isOpen}
+                rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
+                rightPanelUnavailableLabel={gt("Select an issue first")}
+                onToggleTerminal={() => undefined}
+                onToggleRightPanel={toggleRightPanel}
+              />
+            </div>
           </WorkspacePageHeader>
 
           <div className="scrollbar-gutter-both min-h-0 flex-1 overflow-y-auto">
@@ -627,6 +650,7 @@ export function IssuesPage() {
                   label={gt("Sort issues")}
                   triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}
                   triggerLabel={gt("Sort", { $context: "verb, button that sorts a list" })}
+                  outlined
                   value={search.order ?? "updated"}
                   options={resolveFilterOptions(SORT_OPTIONS, resolve)}
                   onChange={(order) =>
@@ -693,6 +717,7 @@ export function IssuesPage() {
             mode="inline"
             open={rightPanelState.isOpen}
             keybindings={keybindings}
+            getShortcutContext={getShortcutContext}
             widthStorageKey="t3code:issue-panel-width"
             defaultWidth={typeof window === "undefined" ? 640 : Math.floor(window.innerWidth / 2)}
             surfaces={presence.value?.surfaces ?? []}

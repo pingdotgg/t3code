@@ -277,7 +277,27 @@ function AddToChatIconButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function Section({
+export function PullRequestMetaRow({
+  icon,
+  label,
+  children,
+}: {
+  icon: ReactNode;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-meta sm:min-h-6">
+      <span className="flex items-center gap-1.5 text-muted-foreground">
+        {icon}
+        {label}
+      </span>
+      <span className="min-w-0 text-foreground">{children}</span>
+    </div>
+  );
+}
+
+export function PullRequestSection({
   title,
   name,
   count,
@@ -1020,7 +1040,7 @@ export function PullRequestSummaryTab({
     >
       {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
 
-      <Section
+      <PullRequestSection
         key={`description:${detail.url}`}
         title={gt("Description")}
         keepMounted
@@ -1094,10 +1114,10 @@ export function PullRequestSummaryTab({
             ) : null}
           </div>
         ) : null}
-      </Section>
+      </PullRequestSection>
 
       {attachments.length > 0 ? (
-        <Section
+        <PullRequestSection
           key={`attachments:${detail.url}`}
           title={gt("Attachments")}
           count={attachments.length}
@@ -1129,10 +1149,10 @@ export function PullRequestSummaryTab({
               ))}
             </div>
           </ScrollArea>
-        </Section>
+        </PullRequestSection>
       ) : null}
 
-      <Section
+      <PullRequestSection
         key={`conversation:${detail.url}`}
         title={gt("Conversation")}
         revealCount={linked?.url === detail.url ? linked.count : 0}
@@ -1285,7 +1305,7 @@ export function PullRequestSummaryTab({
             )}
           </>
         )}
-      </Section>
+      </PullRequestSection>
     </div>
   );
 }

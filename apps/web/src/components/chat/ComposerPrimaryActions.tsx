@@ -583,7 +583,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
  * The mic + send pill. Send and stop render inside it, and dictation's mic
  * joins as a sibling slot before them, so the pill keeps one shape in every state.
  */
-function ComposerSendPill({ className, children }: { className?: string; children: ReactNode }) {
+export function ComposerSendPill({ className, children }: { className?: string; children: ReactNode }) {
   return (
     <span data-composer-send-pill="true" className={cn(COMPOSER_PILL_CLASS_NAME, className)}>
       {children}

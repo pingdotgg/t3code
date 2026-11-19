@@ -9,9 +9,7 @@ import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFie
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { cn } from "~/lib/utils";
-
-import { COMPOSER_PILL_BUTTON_CLASS_NAME, ComposerSendPill } from "../chat/ComposerPrimaryActions";
+import { COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME, ComposerSendPill } from "../chat/ComposerPrimaryActions";
 import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
 import { Spinner } from "../ui/spinner";
@@ -102,7 +100,7 @@ export function IssueCommentComposer({
               <ComposerSendPill>
                 <button
                   type="submit"
-                  className={cn(COMPOSER_PILL_BUTTON_CLASS_NAME, "w-8")}
+                  className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
                   disabled={submitDisabled}
                   aria-label={
                     submitting

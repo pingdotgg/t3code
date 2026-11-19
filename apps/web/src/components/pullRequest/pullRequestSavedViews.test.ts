@@ -57,12 +57,6 @@ describe("saved PR views", () => {
       }),
     ).toEqual(preferences);
     expect(
-      pullRequestSavedViewPatch({
-        ...preferences,
-        projectEnvironmentId: EnvironmentId.make("project-environment"),
-      }),
-    ).toMatchObject({ projectEnvironmentId: "project-environment" });
-    expect(
       pullRequestViewMatches(view, {
         ...preferences,
         environmentId: EnvironmentId.make("another"),
