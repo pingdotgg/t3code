@@ -205,6 +205,26 @@ describe("resolveAutoModelSelection", () => {
       withWeekly(claude("claudeAutoB", 10), 40, inHours(100)),
     ];
     expect(routeTo(providers)).toBe("claudeAutoB");
+
+    // A weekly window that has not started reports no reset; it runs a full week from now
+    // (0.6%/h), so the fresh account beats A's 0.47%/h.
+    const unstarted = {
+      ...claude("claudeAutoB", 0),
+      usageLimits: {
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 0,
+            windowDurationMins: 10_080,
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    expect(routeTo([withWeekly(claude("claudeAuto", 50), 30, inHours(150)), unstarted])).toBe(
+      "claudeAutoB",
+    );
   });
 
   it("counts a one-model weekly window only for that model", () => {
