@@ -1,6 +1,4 @@
 import { T, useGT, Var } from "gt-react";
-import { ChevronDownIcon } from "lucide-react";
-
 import { updateClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { ThreadDetailsItemsMenuItems } from "../chat/ThreadDetailsItemsMenu";
 import {
@@ -9,7 +7,7 @@ import {
   RESET_THREAD_DETAILS_ITEMS,
   THREAD_DETAILS_ITEMS,
 } from "../chat/threadDetailsItems";
-import { Button } from "../ui/button";
+import { SelectButton } from "../ui/select";
 import { Menu, MenuPopup, MenuTrigger } from "../ui/menu";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
@@ -37,8 +35,8 @@ export function ThreadDetailsItemsRow() {
         <Menu>
           <MenuTrigger
             render={
-              <Button
-                variant="secondary"
+              <SelectButton
+                variant="well"
                 size="sm"
                 className="w-full @min-[26rem]/settings-row:w-40"
                 aria-label={gt("Thread details: {enabled} of {total} on", {
@@ -48,12 +46,9 @@ export function ThreadDetailsItemsRow() {
               />
             }
           >
-            <span className="flex-1 text-start">
-              <T>
-                <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
-              </T>
-            </span>
-            <ChevronDownIcon aria-hidden />
+            <T>
+              <Var>{enabled}</Var> of <Var>{THREAD_DETAILS_ITEMS.length}</Var> on
+            </T>
           </MenuTrigger>
           <MenuPopup align="end">
             <ThreadDetailsItemsMenuItems />

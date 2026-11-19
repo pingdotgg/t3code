@@ -133,10 +133,7 @@ export function useMediaByteAction(source: MediaActionSource) {
     });
     try {
       await (action === "save" ? save() : copyImage());
-      toastManager.update(progressToast, {
-        type: "success",
-        title: action === "save" ? m(msg("Download started")) : m(msg("Image copied")),
-      });
+      toastManager.close(progressToast);
     } catch (error) {
       toastManager.update(
         progressToast,

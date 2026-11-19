@@ -211,7 +211,12 @@ export function ProviderAuthenticationSection({
               disabled={disabled}
               onValueChange={(value) => setMethodId(value ?? "")}
             >
-              <SelectTrigger size="sm" aria-label={gt("Sign-in method")} className="w-44">
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label={gt("Sign-in method")}
+                className="w-44"
+              >
                 <SelectValue>
                   {auth?.methods?.find((method) => method.id === methodId)?.name ??
                     gt("Provider default")}

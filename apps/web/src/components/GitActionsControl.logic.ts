@@ -793,11 +793,13 @@ export function buildSyncMenuItems(
     resolve(msg("Pull")),
     busyReason ??
       detachedReason ??
-      (!isBehind
-        ? resolve(msg("Already up to date with upstream."))
-        : hasChanges
-          ? resolve(msg("Commit or stash local changes before pulling."))
-          : null),
+      (isAhead && isBehind
+        ? resolve(msg("Branch has diverged from upstream. Rebase/merge first."))
+        : !isBehind
+          ? resolve(msg("Already up to date with upstream."))
+          : hasChanges
+            ? resolve(msg("Commit or stash local changes before pulling."))
+            : null),
   );
   const sync = syncMenuItem(
     "sync",

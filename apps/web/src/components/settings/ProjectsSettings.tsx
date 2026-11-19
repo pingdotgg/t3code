@@ -85,11 +85,11 @@ const SKELETON_LINES = (
   </span>
 );
 
-function AddProjectButton() {
+function AddProjectButton({ primary = false }: { primary?: boolean }) {
   return (
     <Button
-      size="sm"
-      variant="secondary"
+      size="standard"
+      variant={primary ? "default" : "secondary"}
       onClick={() => openCommandPalette({ open: "add-project" })}
     >
       <FolderPlusIcon />
@@ -117,11 +117,11 @@ function ProjectChooser() {
           )}
         >
           <div className="flex flex-wrap justify-center gap-2">
-            <AddProjectButton />
+            <AddProjectButton primary />
             {scratchTarget !== null ? (
               <Button
                 size="sm"
-                variant="ghost"
+                variant="secondary"
                 onClick={() => void startScratchThread(scratchTarget)}
               >
                 <MessageSquareDashedIcon />

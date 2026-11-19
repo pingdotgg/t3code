@@ -91,12 +91,19 @@ export function PullRequestRowLines({
   ) : null;
   return (
     <span className={cn("min-w-0 flex-1", page && "flex flex-col gap-1.25")}>
-      <span className={cn("flex min-w-0 items-center", page ? "gap-2" : "gap-1.5")}>
+      <span
+        className={cn(
+          "flex min-w-0 items-center",
+          page ? "gap-2 @max-md/pr-list:flex-wrap @max-md/pr-list:gap-y-1" : "gap-1.5",
+        )}
+      >
         {page ? null : number}
         <span
           className={cn(
             "min-w-0 truncate text-body text-foreground",
-            page ? "font-normal" : "font-medium",
+            page
+              ? "font-normal @max-md/pr-list:line-clamp-2 @max-md/pr-list:w-full @max-md/pr-list:whitespace-normal @max-md/pr-list:wrap-anywhere"
+              : "font-medium",
           )}
         >
           {title}
@@ -112,13 +119,13 @@ export function PullRequestRowLines({
       <span
         className={cn(
           "flex min-w-0 items-center gap-1.5 overflow-hidden text-muted-foreground",
-          page ? "text-meta" : "text-caption",
+          page ? "text-meta @max-md/pr-list:flex-wrap" : "text-caption",
           metaClassName,
         )}
       >
         {meta}
         {page ? (
-          <span className="ml-auto flex min-w-0 max-w-3/5 shrink-0 items-center gap-2 pl-2">
+          <span className="ml-auto flex min-w-0 max-w-3/5 shrink-0 items-center gap-2 pl-2 @max-md/pr-list:ml-0 @max-md/pr-list:max-w-none @max-md/pr-list:basis-full @max-md/pr-list:justify-between @max-md/pr-list:pl-0">
             {metaStatus}
             {time}
           </span>

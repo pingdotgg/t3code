@@ -6,6 +6,7 @@ import type {
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
+  ScopedProjectRef,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import {
@@ -22,12 +23,13 @@ import {
   ChevronDownIcon,
   ListFilterIcon,
   SearchIcon,
+  XIcon,
   TagIcon,
   UserRoundIcon,
   UsersRoundIcon,
 } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
-import { type ElementType, useState } from "react";
+import { type ElementType, useRef, useState } from "react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 import { useDebouncedValue } from "~/state/queries";
@@ -116,15 +118,16 @@ export function PullRequestSearchInput({
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
 }) {
+  const gt = useGT();
   const [draft, setDraft] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <InputGroup className="min-w-0 flex-1">
       <InputGroupAddon>
         {busy ? <Spinner aria-hidden /> : <SearchIcon aria-hidden />}
       </InputGroupAddon>
       <InputGroupInput
-        // The header's control height: 28px beside the sm menus and icon-sm buttons.
-        size="sm"
+        ref={inputRef}
         type="search"
         value={draft ?? value}
         onFocus={() => setDraft(value)}
@@ -142,18 +145,29 @@ export function PullRequestSearchInput({
           }
         }}
         placeholder={placeholder}
-        placeholderTone="dim"
         aria-label={label}
       />
+      {(draft ?? value).length > 0 ? (
+        <InputGroupAddon align="inline-end">
+          <Button
+            size="icon-micro"
+            variant="ghost"
+            aria-label={gt("Clear pull request search")}
+            onClick={() => {
+              inputRef.current?.focus();
+              setDraft("");
+              onChange("");
+              onSubmit("");
+            }}
+          >
+            <XIcon aria-hidden />
+          </Button>
+        </InputGroupAddon>
+      ) : null}
     </InputGroup>
   );
 }
 
-/**
- * List narrowings live behind one filter control, separate from sorting, state and host, which
- * sit beside it in the header. The trigger carries a count whenever any filter is off its
- * default, so a narrowed list is never a mystery.
- */
 const ALL_PROJECTS_VALUE = "all";
 const ALL_SERVERS_VALUE = "";
 const UNFILTERED_VALUE = "all";
@@ -398,7 +412,7 @@ function PullRequestAuthorFilter({
           {value ?? gt("Anyone")}
         </span>
       </MenuSubTrigger>
-      <MenuSubPopup className="w-65 [--type-label:0.8125rem]">
+      <MenuSubPopup className="w-65">
         <PullRequestAuthorChoices
           value={value}
           options={options}
@@ -522,6 +536,9 @@ function PullRequestLabelFilter({
 }
 
 export function PullRequestFiltersMenu({
+  state,
+  stateOptions,
+  onState,
   onOpenChange,
   involvement,
   involvementOptions,
@@ -540,6 +557,9 @@ export function PullRequestFiltersMenu({
   unavailable,
   onProject,
 }: {
+  state: PullRequestListState;
+  stateOptions: ReadonlyArray<PullRequestFilterOption<PullRequestListState>>;
+  onState: (state: PullRequestListState) => void;
   onOpenChange?: (open: boolean) => void;
   involvement: PullRequestInvolvement;
   involvementOptions: ReadonlyArray<PullRequestFilterOption<PullRequestInvolvement>>;
@@ -552,7 +572,12 @@ export function PullRequestFiltersMenu({
   server: EnvironmentId | undefined;
   serverOptions: ReadonlyArray<PullRequestFilterOption<string>>;
   onServer: (server: EnvironmentId | undefined) => void;
-  projects: ReadonlyArray<ProjectFaviconProject & { readonly id: ProjectId }>;
+  projects: ReadonlyArray<
+    ProjectFaviconProject & {
+      readonly id: ProjectId;
+      readonly memberProjectRefs: ReadonlyArray<ScopedProjectRef>;
+    }
+  >;
   projectId: ProjectId | undefined;
   projectEnvironmentId: EnvironmentId | undefined;
   unavailable: ReadonlyMap<string, string>;
@@ -562,6 +587,7 @@ export function PullRequestFiltersMenu({
   const resolve = useMessages();
   const selectedLabels = (filters.labels ?? []).flatMap((group) => group);
   const filterCount = [
+    state !== "open",
     involvement !== "all",
     server,
     projectId,
@@ -585,21 +611,29 @@ export function PullRequestFiltersMenu({
     projectId === undefined || projectEnvironmentId === undefined
       ? ALL_PROJECTS_VALUE
       : pullRequestProjectKey({ id: projectId, environmentId: projectEnvironmentId });
+  const unavailableReason = (project: (typeof projects)[number]) =>
+    project.memberProjectRefs.every((ref) =>
+      unavailable.has(
+        pullRequestProjectKey({ id: ref.projectId, environmentId: ref.environmentId }),
+      ),
+    )
+      ? unavailable.get(pullRequestProjectKey(project))
+      : undefined;
   const projectOptions: ReadonlyArray<PullRequestFilterOption<string>> = [
     { value: ALL_PROJECTS_VALUE, label: gt("All projects"), Icon: LayersIcon },
     ...projects
       .toSorted(
         (left, right) =>
-          Number(unavailable.has(pullRequestProjectKey(left))) -
-          Number(unavailable.has(pullRequestProjectKey(right))),
+          Number(unavailableReason(left) !== undefined) -
+          Number(unavailableReason(right) !== undefined),
       )
       .map((project) => ({
         value: pullRequestProjectKey(project),
         label: project.title,
         Icon: FolderGit2Icon,
         project,
-        ...(unavailable.has(pullRequestProjectKey(project))
-          ? { unavailable: unavailable.get(pullRequestProjectKey(project)) }
+        ...(unavailableReason(project) !== undefined
+          ? { unavailable: unavailableReason(project) }
           : {}),
       })),
   ];
@@ -613,23 +647,25 @@ export function PullRequestFiltersMenu({
               })
             : gt("Filters")
         }
-        render={<Button variant="ghost-muted" size="sm" />}
+        render={<Button variant="secondary" />}
       >
-        <ListFilterIcon aria-hidden className="size-3.5" />
-        <span className="hidden @3xl/pr-list:inline">
-          <T>Filters</T>
-        </span>
+        <ListFilterIcon aria-hidden className="size-4" />
+        <T>Filters</T>
         {filterCount > 0 ? (
           <span className="rounded-full surface-selected-soft px-1.5 text-xs text-muted-foreground tabular-nums">
             {filterCount}
           </span>
         ) : null}
-        <ChevronDownIcon
-          aria-hidden
-          className="hidden size-3 text-dim-foreground @3xl/pr-list:inline"
-        />
+        <ChevronDownIcon aria-hidden className="size-3 text-dim-foreground" />
       </MenuTrigger>
-      <MenuPopup align="end" side="bottom" className="w-62 [--type-label:0.8125rem]">
+      <MenuPopup align="end" side="bottom" className="w-62">
+        <PullRequestFilterRadioSubmenu
+          label={gt("State", { $context: "pull request filter" })}
+          icon={PullRequestGlyph.pullRequest}
+          value={state}
+          options={stateOptions}
+          onChange={onState}
+        />
         <PullRequestFilterRadioSubmenu
           label={gt("Involvement")}
           icon={UsersRoundIcon}

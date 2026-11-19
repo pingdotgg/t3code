@@ -4,12 +4,11 @@ import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { useNavigate } from "@tanstack/react-router";
 import { T, useGT, useMessages, Var } from "gt-react";
 import { m as resolveMessage } from "~/i18n/messages";
-import { CalendarClockIcon, PencilIcon, PlayIcon, Settings2Icon } from "lucide-react";
+import { CalendarClockIcon, PlayIcon, Settings2Icon } from "lucide-react";
 import { useState } from "react";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
-  type ProjectId,
   type ScheduledTask,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -28,14 +27,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 
 import { readEnvironmentScope } from "../../state/session";
 import { stackedThreadToast, toastManager } from "../ui/toast";
-import {
-  Menu,
-  MenuCheckboxItem,
-  MenuItem,
-  MenuItemLabel,
-  MenuPopup,
-  MenuTrigger,
-} from "../ui/menu";
+import { THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS } from "./threadDetailsPanelStyles";
 import { StatusDot, type StatusDotTone } from "../ui/status-dot";
 
 function reportFailure(title: string, error: unknown) {
@@ -80,6 +72,8 @@ export function ThreadAutomationsPanel(props: {
   const boundTasks = (tasksQuery.data?.tasks ?? []).filter(
     (task) => task.threadId === props.threadId,
   );
+
+  if (boundTasks.length === 0 && tasksQuery.error === null) return null;
 
   const nextRun = boundTasks
     .filter((task) => task.enabled && task.nextRunAt !== null)
@@ -132,9 +126,7 @@ export function ThreadAutomationsPanel(props: {
           ) : (
             boundTasks.length
           )
-        ) : (
-          gt("None scheduled", { $context: "automations" })
-        )
+        ) : undefined
       }
       action={
         <ThreadDetailsControl
@@ -152,100 +144,67 @@ export function ThreadAutomationsPanel(props: {
       }
       data-thread-automations-panel
     >
-      {boundTasks.length === 0 && tasksQuery.error === null ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
-          <CalendarClockIcon className="size-4" />
-          <T>No automations scheduled</T>
-        </div>
-      ) : null}
-      <div className="max-h-[13.5rem] overflow-y-auto">
+      <div className="max-h-[13.5rem] overflow-x-hidden overflow-y-auto">
         {boundTasks.map((task) => (
-          <Menu key={task.id}>
-            <div className="flex min-h-9 items-center pe-1">
-              <MenuTrigger render={<ThreadDetailsControl multiline />}>
-                <span className="relative shrink-0">
-                  <CalendarClockIcon className="size-4 text-muted-foreground" />
-                  {task.enabled ? (
-                    <span className="absolute -right-0.5 -top-0.5">
-                      <StatusDot tone={STATUS_DOT_TONE[task.lastRunStatus]} />
-                    </span>
-                  ) : null}
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="truncate text-meta">{task.title}</span>
-                  <span className="truncate text-caption text-muted-foreground">
-                    {task.blockedByPolicy ??
-                      (!task.enabled
-                        ? gt("Paused", { $context: "automation state" })
-                        : task.lastRunStatus === "running"
-                          ? gt("Running", { $context: "automation state" })
-                          : scheduleLabel(
-                              task.schedule,
-                              tasksQuery.data?.timeZone,
-                              task.nextRunAt,
-                              m,
-                            ))}
+          <div key={task.id} className={`${THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS} min-h-9`}>
+            <ThreadDetailsControl
+              className="min-w-0 flex-1"
+              multiline
+              aria-label={gt("Edit {title}", { title: task.title })}
+              onClick={() =>
+                void navigate({
+                  to: "/settings/scheduled-tasks",
+                  search: { environmentId: props.environmentId, taskId: task.id },
+                })
+              }
+            >
+              <span className="relative shrink-0">
+                <CalendarClockIcon className="size-4 text-muted-foreground" />
+                {task.enabled ? (
+                  <span className="absolute -right-0.5 -top-0.5">
+                    <StatusDot tone={STATUS_DOT_TONE[task.lastRunStatus]} />
                   </span>
+                ) : null}
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate text-label leading-4">{task.title}</span>
+                <span className="truncate text-caption leading-4 text-muted-foreground">
+                  {task.blockedByPolicy ??
+                    (!task.enabled
+                      ? gt("Paused", { $context: "automation state" })
+                      : task.lastRunStatus === "running"
+                        ? gt("Running", { $context: "automation state" })
+                        : scheduleLabel(
+                            task.schedule,
+                            tasksQuery.data?.timeZone,
+                            task.nextRunAt,
+                            m,
+                          ))}
                 </span>
-              </MenuTrigger>
-              {task.schedule.type !== "webhook" ? (
-                <ThreadDetailsControl
-                  part="icon"
-                  aria-label={gt("Run {title} now", { title: task.title })}
-                  disabled={!canOperate || busyTaskId !== null || task.lastRunStatus === "running"}
-                  onClick={() => void runNow(task)}
-                >
-                  <PlayIcon />
-                </ThreadDetailsControl>
-              ) : null}
-              <Switch
-                size="sm"
-                checked={task.enabled}
-                disabled={!canOperate || busyTaskId !== null}
-                aria-label={
-                  task.enabled
-                    ? gt("Pause {title}", { title: task.title })
-                    : gt("Resume {title}", { title: task.title })
-                }
-                onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
-              />
-            </div>
-            <MenuPopup side="right" align="start">
-              <MenuItem
-                onClick={() =>
-                  void navigate({
-                    to: "/settings/scheduled-tasks",
-                    search: { environmentId: props.environmentId, taskId: task.id },
-                  })
-                }
+              </span>
+            </ThreadDetailsControl>
+            {task.schedule.type !== "webhook" ? (
+              <ThreadDetailsControl
+                part="icon"
+                aria-label={gt("Run {title} now", { title: task.title })}
+                disabled={!canOperate || busyTaskId !== null || task.lastRunStatus === "running"}
+                onClick={() => void runNow(task)}
               >
-                <PencilIcon />
-                <MenuItemLabel>{gt("Edit {title}", { title: task.title })}</MenuItemLabel>
-              </MenuItem>
-              {task.schedule.type !== "webhook" ? (
-                <MenuItem
-                  disabled={!canOperate || busyTaskId !== null || task.lastRunStatus === "running"}
-                  onClick={() => void runNow(task)}
-                >
-                  <PlayIcon />
-                  <MenuItemLabel>{gt("Run {title} now", { title: task.title })}</MenuItemLabel>
-                </MenuItem>
-              ) : null}
-              <MenuCheckboxItem
-                variant="switch"
-                checked={task.enabled}
-                disabled={!canOperate || busyTaskId !== null}
-                aria-label={
-                  task.enabled
-                    ? gt("Pause {title}", { title: task.title })
-                    : gt("Resume {title}", { title: task.title })
-                }
-                onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
-              >
-                <T context="automation state">Enabled</T>
-              </MenuCheckboxItem>
-            </MenuPopup>
-          </Menu>
+                <PlayIcon />
+              </ThreadDetailsControl>
+            ) : null}
+            <Switch
+              size="sm"
+              checked={task.enabled}
+              disabled={!canOperate || busyTaskId !== null}
+              aria-label={
+                task.enabled
+                  ? gt("Pause {title}", { title: task.title })
+                  : gt("Resume {title}", { title: task.title })
+              }
+              onCheckedChange={(enabled) => void toggleEnabled(task, enabled)}
+            />
+          </div>
         ))}
       </div>
       {tasksQuery.error !== null ? (
@@ -257,12 +216,4 @@ export function ThreadAutomationsPanel(props: {
       ) : null}
     </ThreadDetailsSection>
   );
-}
-
-export function ProjectAutomationsHeaderControl(_props: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly projectName: string;
-}) {
-  return null;
 }

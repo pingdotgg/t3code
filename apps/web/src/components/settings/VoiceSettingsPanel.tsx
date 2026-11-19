@@ -90,7 +90,7 @@ import {
   useEnvironmentSpeechInput,
   useVoiceTranscriptionDestination,
 } from "../../speech/useEnvironmentSpeechInput";
-import { ComposerSpeechRecordingPill } from "../chat/ComposerSpeechButton";
+import { ComposerSpeechButton } from "../chat/ComposerSpeechButton";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderPackageIcon } from "../chat/ProviderPackageIcon";
@@ -427,6 +427,7 @@ function DictionaryEditor(props: {
         {/* One line while empty, so a wrapped placeholder never makes the field taller than Add. */}
         <div className="min-w-0 flex-1 [&_textarea]:placeholder-shown:whitespace-nowrap">
           <Textarea
+            size="sm"
             value={termDraft}
             rows={1}
             maxLength={5_100}
@@ -442,7 +443,13 @@ function DictionaryEditor(props: {
             }}
           />
         </div>
-        <Button type="button" variant="secondary" disabled={!canAddTerm} onClick={addTerm}>
+        <Button
+          size="standard"
+          type="button"
+          variant="secondary"
+          disabled={!canAddTerm}
+          onClick={addTerm}
+        >
           <PlusIcon />
           <T>Add</T>
         </Button>
@@ -463,6 +470,7 @@ function DictionaryEditor(props: {
               ) : null}
               {aliasDraft?.term === term ? (
                 <Input
+                  size="settings"
                   autoFocus
                   value={aliasDraft.value}
                   maxLength={50}
@@ -836,7 +844,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label={gt("Transcription hardware")} className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label={gt("Transcription hardware")}
+              className="max-w-72"
+            >
               <SelectValue>
                 {supported.acceleration === "auto"
                   ? gt("Auto")
@@ -882,7 +895,12 @@ function AdvancedSpeechSettings({
                 );
             }}
           >
-            <SelectTrigger size="sm" aria-label={gt("Unload model")} className="max-w-72">
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              aria-label={gt("Unload model")}
+              className="max-w-72"
+            >
               <SelectValue>{messages(UNLOAD_LABELS[supported.modelUnloadTimeout])}</SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -1161,7 +1179,7 @@ function SpeechModelBrowser(props: {
         >
           <div className="w-full min-w-0 flex-1">
             <Input
-              size="compact"
+              size="settings"
               aria-label={gt("Path to a model file or folder already on this environment")}
               placeholder={gt("Already downloaded elsewhere? Paste the model file or folder path")}
               value={existingPath}
@@ -1218,17 +1236,19 @@ function TranscriptionTest(props: {
         stacked={showTranscript}
         testControls={
           <div className="order-last flex min-w-0 max-w-full basis-full items-center gap-1 @min-[28rem]/model:order-none @min-[28rem]/model:basis-auto">
-            <ComposerSpeechRecordingPill
-              state={speech.state}
-              progress={null}
-              level={speech.level}
-              onStart={() => void speech.start()}
-              onStop={() => void speech.stop()}
-              onCancel={() => speech.cancel()}
-              onSkipPostProcessing={() => speech.skipPostProcessing()}
-            />
             {speech.available ? (
-              speech.state.phase === "idle" ? (
+              speech.state.phase !== "idle" ? (
+                <ComposerSpeechButton
+                  state={speech.state}
+                  onStart={() => void speech.start()}
+                  dictation={{
+                    level: speech.level,
+                    onStop: () => void speech.stop(),
+                    onCancel: () => speech.cancel(),
+                    onSkipPostProcessing: () => speech.skipPostProcessing(),
+                  }}
+                />
+              ) : (
                 <Button
                   size="sm"
                   variant="secondary"
@@ -1240,7 +1260,7 @@ function TranscriptionTest(props: {
                   <MicIcon />
                   <T>Test model</T>
                 </Button>
-              ) : null
+              )
             ) : (
               <span className="text-meta text-muted-foreground">
                 {speech.status?.supported === false
@@ -1460,7 +1480,11 @@ export function VoiceSettingsPanel() {
                   void updateClientSettings({ voiceShortcutMode: value as VoiceShortcutMode });
               }}
             >
-              <SelectTrigger size="sm" aria-label={gt("Dictation shortcut mode")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                aria-label={gt("Dictation shortcut mode")}
+              >
                 <SelectValue>
                   {messages(SHORTCUT_MODES[settings.voiceShortcutMode].label)}
                 </SelectValue>
@@ -1518,7 +1542,8 @@ export function VoiceSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   aria-label={gt("Transcribe with")}
                   className="min-w-0 @min-[32rem]/settings-row:w-auto @min-[32rem]/settings-row:max-w-72"
                 >
@@ -1780,7 +1805,11 @@ export function VoiceSettingsPanel() {
                     });
                 }}
               >
-                <SelectTrigger size="sm" aria-label={gt("Cleanup instructions")}>
+                <SelectTrigger
+                  variant="well"
+                  size="compact"
+                  aria-label={gt("Cleanup instructions")}
+                >
                   <SelectValue>
                     {settings.speechPostProcessingPrompt.mode === "custom"
                       ? gt("Custom")
@@ -1825,6 +1854,7 @@ export function VoiceSettingsPanel() {
             description={gt("The phrase you say to fix a mistake, like “scratch that”.")}
             control={
               <Input
+                size="settings"
                 key={settings.speechCorrectionWord}
                 defaultValue={settings.speechCorrectionWord}
                 maxLength={50}

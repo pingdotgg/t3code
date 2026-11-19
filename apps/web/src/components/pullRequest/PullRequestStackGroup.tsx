@@ -266,7 +266,7 @@ export function PullRequestStackGroup({
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <span className="min-w-12 truncate font-mono text-caption text-dim-foreground" />
+                  <span className="min-w-12 truncate font-mono text-caption text-dim-foreground @max-md/pr-list:flex-1" />
                 }
               >
                 {bottom.headBranch}

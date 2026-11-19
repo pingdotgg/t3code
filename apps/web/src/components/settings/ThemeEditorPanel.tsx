@@ -422,6 +422,14 @@ export function ThemeEditorPanel({
       if (opener?.isConnected && panel?.contains(document.activeElement)) opener.focus();
     };
   }, [opener]);
+  // The toast stack steps left of the docked panel (toast.tsx).
+  const docked = position === null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Mark the document while the editor is docked so the external toast portal avoids it.
+  useLayoutEffect(() => {
+    if (!docked) return;
+    document.documentElement.setAttribute("data-theme-editor-docked", "");
+    return () => document.documentElement.removeAttribute("data-theme-editor-docked");
+  }, [docked]);
   const dragOffsetRef = useRef<{ dx: number; dy: number; width: number } | null>(null);
   const resizeStartRef = useRef<{
     pointerX: number;
@@ -975,7 +983,7 @@ export function ThemeEditorPanel({
 
   const renderNameField = () => (
     <label className="flex flex-col gap-1.5">
-      <span className="text-xs font-medium text-dim-foreground">
+      <span className="text-label text-dim-foreground">
         <T>Theme name</T>
       </span>
       <Input
@@ -1010,7 +1018,7 @@ export function ThemeEditorPanel({
 
   const renderAppearanceButtons = () => (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-medium text-dim-foreground">
+      <span className="text-label text-dim-foreground">
         <T>Appearance</T>
       </span>
       <ToggleGroup
@@ -1065,11 +1073,11 @@ export function ThemeEditorPanel({
 
   const renderSimpleColors = () => (
     <div className="flex flex-col gap-2">
-      <div className="flex items-baseline justify-between gap-3 text-xs text-dim-foreground">
-        <span className="font-medium">
+      <div className="flex items-baseline justify-between gap-3 text-dim-foreground">
+        <span className="text-label">
           <T>Colors</T>
         </span>
-        <span>
+        <span className="text-meta">
           <T>Two colors, rest derived</T>
         </span>
       </div>
@@ -1125,7 +1133,7 @@ export function ThemeEditorPanel({
                   onClick={() => toggleThemeRole(role)}
                   type="button"
                 >
-                  <span className="rounded-sm text-meta text-foreground group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring">
+                  <span className="rounded-sm text-body text-foreground group-focus-visible:ring-2 group-focus-visible:ring-inset group-focus-visible:ring-ring">
                     {label}
                   </span>
                 </button>
@@ -1178,7 +1186,7 @@ export function ThemeEditorPanel({
         </InputGroup>
         {groups.map((group) => (
           <section className="flex flex-col gap-0.5" key={group.id}>
-            <h4 className="pb-0.5 text-caption text-dim-foreground">{messages(group.title)}</h4>
+            <h4 className="pb-0.5 text-label text-dim-foreground">{messages(group.title)}</h4>
             {group.families.map((family) => (
               <ThemeColorField
                 key={family.id}
@@ -1196,7 +1204,7 @@ export function ThemeEditorPanel({
           </section>
         ))}
         {groups.length === 0 ? (
-          <p className="text-xs text-muted-foreground">
+          <p className="text-meta text-muted-foreground">
             <T>No matches.</T>
           </p>
         ) : null}
@@ -1414,7 +1422,7 @@ export function ThemeEditorPanel({
                 isAdvanced ? "gap-3" : "gap-4",
               )}
             >
-              {renderNameField()}
+              {!isAdvanced ? renderNameField() : null}
               {error ? (
                 <p aria-live="polite" className="text-body text-destructive">
                   {error}
@@ -1436,7 +1444,7 @@ export function ThemeEditorPanel({
                         )}
                 </p>
               ) : null}
-              {renderAppearanceButtons()}
+              {!isAdvanced ? renderAppearanceButtons() : null}
               {isAdvanced ? renderAdvancedColors() : renderSimpleColors()}
               {renderAdvancedSwitch()}
               <div className="space-y-2">

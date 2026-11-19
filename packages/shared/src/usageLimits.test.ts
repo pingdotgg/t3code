@@ -13,6 +13,9 @@ import {
   displayLimitWindows,
   cursorUsageWindowDetails,
   collectProviderUsageLimits,
+  limitPoolNotice,
+  resolveProviderLimitPool,
+  resolveProviderUsageLimits,
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
   collectLimitAccounts,
@@ -57,6 +60,147 @@ function provider(overrides: Partial<ServerProvider>): ServerProvider {
     ...overrides,
   };
 }
+
+describe("selected provider usage limits", () => {
+  const native = provider({
+    auth: { status: "authenticated", email: "selected@example.com", workspaceId: "work" },
+    usageLimits: {
+      checkedAt: "2026-09-03T11:00:00.000Z",
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    },
+  });
+  const limits = { checkedAt: "2026-09-03T11:30:00.000Z", windows: [window] };
+  const source = {
+    id: UsageLimitSourceId.make("hub"),
+    kind: "cliproxy" as const,
+    label: "Accounts",
+    checkedAt: limits.checkedAt,
+    accounts: [
+      {
+        id: "selected",
+        driver: native.driver,
+        email: "SELECTED@example.com",
+        workspaceId: "work",
+        usageLimits: limits,
+      },
+    ],
+  };
+
+  it("uses matching source limits when the native probe failed", () => {
+    expect(resolveProviderUsageLimits(native.instanceId, [native], [source])).toEqual(limits);
+  });
+
+  it("uses a fresher report from a duplicate login with another instance id", () => {
+    const duplicate = provider({
+      ...native,
+      instanceId: ProviderInstanceId.make("other-instance"),
+      usageLimits: limits,
+    });
+    expect(resolveProviderUsageLimits(native.instanceId, [native, duplicate], [])).toEqual(limits);
+  });
+
+  it("keeps other accounts and workspaces out of the selected login", () => {
+    for (const account of [
+      { ...source.accounts[0]!, email: "other@example.com" },
+      { ...source.accounts[0]!, workspaceId: "other" },
+    ]) {
+      expect(
+        resolveProviderUsageLimits(
+          native.instanceId,
+          [native],
+          [{ ...source, accounts: [account] }],
+        ),
+      ).toEqual(native.usageLimits);
+      expect(
+        resolveProviderLimitPool(
+          native.instanceId,
+          [native],
+          [{ ...source, accounts: [account] }],
+          now,
+        ),
+      ).toBeUndefined();
+    }
+  });
+
+  it("pools the linked accounts of its driver for a provider with no login of its own", () => {
+    const endpoint = provider({
+      auth: { status: "authenticated", type: "customEndpoint", workspaceId: "work" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      },
+    });
+    const account = (
+      id: string,
+      usedPercent: number,
+      driver = endpoint.driver,
+      workspaceId?: string,
+    ) => ({
+      id,
+      driver,
+      email: `${id.split("-")[0]}@example.com`,
+      ...(workspaceId ? { workspaceId } : {}),
+      usageLimits: { ...limits, windows: [{ ...window, usedPercent }] },
+    });
+    const pool = resolveProviderLimitPool(
+      endpoint.instanceId,
+      [endpoint],
+      [
+        {
+          ...source,
+          accounts: [
+            account("one", 40, endpoint.driver, "work"),
+            account("one-personal", 60, endpoint.driver, "personal"),
+            account("two", 80),
+            account("other", 0, ProviderDriverKind.make("claudeAgent")),
+          ],
+        },
+      ],
+      now,
+    );
+    expect(pool?.accounts.map((member) => member.email)).toEqual([
+      "one@example.com",
+      "one@example.com",
+      "two@example.com",
+    ]);
+    expect(pool?.windows.map((pooled) => [pooled.label, pooled.remainingPercent])).toEqual([
+      ["Session", 40],
+    ]);
+  });
+
+  it("says why a provider with no login of its own has no pooled limits", () => {
+    const endpoint = provider({
+      driver: ProviderDriverKind.make("claudeAgent"),
+      auth: { status: "authenticated", type: "customEndpoint", workspaceId: "work" },
+      usageLimits: {
+        checkedAt: "2026-09-03T11:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      },
+    });
+    const notice = (sources: Parameters<typeof limitPoolNotice>[2]) =>
+      limitPoolNotice(endpoint.instanceId, [endpoint], sources);
+    expect(notice([])).toBe(
+      "Claude runs through a custom endpoint. Add its usage provider in Settings → Providers → Usage providers to see the limits of the accounts behind it.",
+    );
+    expect(notice([{ ...source, accounts: [], error: "Invalid management key." }])).toBe(
+      "Accounts: Invalid management key.",
+    );
+    expect(
+      notice([{ ...source, accounts: [{ ...source.accounts[0]!, driver: endpoint.driver }] }]),
+    ).toBeNull();
+    expect(limitPoolNotice(native.instanceId, [native], [])).toBeNull();
+    expect(collectProviderUsageLimits(endpoint.instanceId, [endpoint], [], 0)?.notices).toEqual([
+      notice([]),
+    ]);
+  });
+
+  it("keeps genuine failures when no matching source reports limits", () => {
+    expect(resolveProviderUsageLimits(native.instanceId, [native], [])).toEqual(native.usageLimits);
+  });
+});
 
 describe("new thread model fallback", () => {
   const selection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };

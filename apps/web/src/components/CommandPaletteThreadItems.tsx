@@ -1,8 +1,10 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
 import { findForMessageMatch, openThreadFindOnQuery } from "./chat/threadFindStore";
 import {
   claimThreadOpen,
   nextShownOrder,
+  threadSearchSubject,
   type EnvironmentThreadSearchMatch,
   type ShownOrder,
 } from "@t3tools/client-runtime/state/thread-search";
@@ -98,6 +100,37 @@ function useConnectedThreadSearch(query: string) {
   );
 }
 
+function useRecentThreads(
+  activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null,
+  delegatedUnderParent: ReadonlySet<string>,
+) {
+  const threads = useVisibleThreadShells();
+  const { projectByKey } = useProjectLookups();
+  return threads
+    .filter(
+      (thread) =>
+        thread.archivedAt === null &&
+        !isShownUnderParent(
+          { environmentId: thread.environmentId, threadId: thread.id },
+          thread.lineage,
+          delegatedUnderParent,
+        ) &&
+        !(thread.id === activeThread?.id && thread.environmentId === activeThread.environmentId),
+    )
+    .map((thread) => ({
+      thread,
+      usedAt: threadRecentUse(
+        threadSearchSubject(
+          thread,
+          projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.title,
+        ),
+      ),
+    }))
+    .toSorted((left, right) => right.usedAt - left.usedAt)
+    .slice(0, RECENT_THREAD_LIMIT)
+    .map(({ thread }) => thread);
+}
+
 /**
  * Every visible thread as a palette item, plus, for a non-empty
  * `threadSearchQuery`, the threads whose messages match, best first.
@@ -105,13 +138,15 @@ function useConnectedThreadSearch(query: string) {
 export function useCommandPaletteThreadItems(input: {
   readonly activeThread: { readonly environmentId: EnvironmentId; readonly id: ThreadId } | null;
   readonly threadSearchQuery: string;
+  readonly includeAllThreads: boolean;
 }) {
-  const { activeThread, threadSearchQuery } = input;
+  const { activeThread, threadSearchQuery, includeAllThreads } = input;
   const messages = useMessages();
   const gt = useGT();
   const navigate = useNavigate();
   const threads = useVisibleThreadShells();
   const delegatedUnderParent = useDelegatedUnderParent();
+  const recentThreads = useRecentThreads(activeThread, delegatedUnderParent);
   const { projectEnvironmentLocationById } = useEnvironmentLookups();
   const providerEntryByEnvironmentAndInstanceId = useProviderEntryByEnvironmentAndInstanceId();
   const messageSearch = useConnectedThreadSearch(threadSearchQuery);
@@ -121,11 +156,11 @@ export function useCommandPaletteThreadItems(input: {
   const [now] = useState(() => Date.now());
 
   const nowMinute = useNowMinute();
-  const nowMs = Date.parse(`${nowMinute}:00.000Z`);
   const { environments } = useEnvironments();
+  const nowMs = Date.parse(`${nowMinute}:00.000Z`);
   const threadItems = buildThreadActionItems(
     {
-      threads,
+      threads: includeAllThreads ? threads : recentThreads,
       delegatedUnderParent,
       ...(environments.length > 1
         ? {
@@ -264,56 +299,41 @@ export function useCommandPaletteThreadItems(input: {
     .flatMap((value) => messageItemByValue.get(value) ?? []);
 
   // Recent threads stay on one line: provider logo, title, then the dim branch.
-  const recentThreadItems = (() => {
-    const threadByValue = new Map(
-      threads.map((thread) => [`thread:${thread.environmentId}:${thread.id}`, thread]),
-    );
-    const activeThreadValue = activeThread
-      ? `thread:${activeThread.environmentId}:${activeThread.id}`
-      : null;
-    return threadItems
-      .filter((item) => item.value !== activeThreadValue)
-      .toSorted(
-        (left, right) =>
-          (right.threadSearch ? threadRecentUse(right.threadSearch) : 0) -
-          (left.threadSearch ? threadRecentUse(left.threadSearch) : 0),
-      )
-      .slice(0, RECENT_THREAD_LIMIT)
-      .map(({ description: _description, ...item }): CommandPaletteActionItem => {
-        const thread = threadByValue.get(item.value);
-        if (!thread) return item;
-        const modelInstanceId =
-          thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
-        const providerEntry =
-          providerEntryByEnvironmentAndInstanceId.get(
-            `${thread.environmentId}:${modelInstanceId}`,
-          ) ?? null;
-        return {
-          ...item,
-          icon: providerEntry ? (
-            <ProviderInstanceIcon
-              driverKind={providerEntry.driverKind}
-              displayName={thread.runtime?.providerName ?? providerEntry.displayName}
-              acpRegistryAgentId={providerEntry.acpRegistryAgentId}
-              acpRegistryIconUrl={providerEntry.acpRegistryIconUrl}
-              iconClassName="size-3.5 shrink-0"
-            />
-          ) : (
-            item.icon
-          ),
-          title: (
-            <>
-              {thread.title}
-              {thread.branch ? (
-                <span className="command-palette-recent-branch ms-2 text-caption text-dim-foreground">
-                  {thread.branch}
-                </span>
-              ) : null}
-            </>
-          ),
-        };
-      });
-  })();
+  const recentThreadItems = recentThreads.flatMap((thread): CommandPaletteActionItem[] => {
+    const original = itemByValue.get(`thread:${thread.environmentId}:${thread.id}`);
+    if (!original) return [];
+    const { description: _description, ...item } = original;
+    const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
+    const providerEntry =
+      providerEntryByEnvironmentAndInstanceId.get(`${thread.environmentId}:${modelInstanceId}`) ??
+      null;
+    return [
+      {
+        ...item,
+        icon: providerEntry ? (
+          <ProviderInstanceIcon
+            driverKind={providerEntry.driverKind}
+            displayName={thread.runtime?.providerName ?? providerEntry.displayName}
+            acpRegistryAgentId={providerEntry.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry.acpRegistryIconUrl}
+            iconClassName="size-3.5 shrink-0"
+          />
+        ) : (
+          item.icon
+        ),
+        title: (
+          <>
+            {thread.title}
+            {thread.branch ? (
+              <span className="command-palette-recent-branch ms-2 text-caption text-dim-foreground">
+                {thread.branch}
+              </span>
+            ) : null}
+          </>
+        ),
+      },
+    ];
+  });
 
   return {
     threadItems,

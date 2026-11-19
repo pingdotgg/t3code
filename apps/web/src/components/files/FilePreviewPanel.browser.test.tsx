@@ -121,7 +121,6 @@ vi.mock(import("~/browser/openFileInPreview"), async (original) => {
 vi.mock(import("./OfficeFilePreview"), () => ({
   OfficeFilePreview: ({ src }: { src: string }) => <div data-testid="office-preview">{src}</div>,
 }));
-vi.mock(import("./FileBreadcrumbs"), () => ({ FileBreadcrumbs: () => <></> }));
 vi.mock(import("./FileBrowserPanel"), () => ({
   default: () => (
     <div role="tree">
@@ -163,6 +162,7 @@ vi.mock(import("./projectFilesQueryState"), async (original) => ({
 }));
 
 import FilePreviewPanel from "./FilePreviewPanel";
+import { PanelTabSlotsContext } from "../PanelTabBreadcrumb";
 
 const environmentId = EnvironmentId.make("markdown-preview-test");
 const threadRef = { environmentId, threadId: ThreadId.make("thread") };
@@ -249,8 +249,14 @@ describe("source file focus", () => {
     using _style = { [Symbol.dispose]: () => style.remove() };
     await preloadHighlighter({ themes: Object.values(DEFAULT_THEMES), langs: ["typescript"] });
     const panel = () => (
-      <div {...workspaceAreaProps("panel", 1, "Workspace panel")}>
-        <div data-right-panel-surface-content>{filePreview("server.ts")}</div>
+      <div {...workspaceAreaProps("panel", 1, "Workspace panel")} style={{ width: 900 }}>
+        <PanelTabSlotsContext
+          value={{ breadcrumb: null, actions: null, registerActions: () => () => {} }}
+        >
+          <div data-right-panel-surface-content>
+            {filePreview("src/orchestration-v2/server.ts")}
+          </div>
+        </PanelTabSlotsContext>
       </div>
     );
     const editorHasFocus = () => expect(deepActiveElement()?.matches("[data-content]")).toBe(true);
@@ -260,15 +266,29 @@ describe("source file focus", () => {
     using _focus = { [Symbol.dispose]: focus.dispose };
     expect(focus.focus("panel")).toBe(true);
     state.file = {
-      relativePath: "server.ts",
+      relativePath: "src/orchestration-v2/server.ts",
       contents: "const server = 1;\n",
       byteLength: 18,
       truncated: false,
     };
     await screen.rerender(panel());
     await vi.waitFor(editorHasFocus);
+    await expect.element(screen.getByRole("button", { name: "More file actions" })).toBeVisible();
     await userEvent.keyboard("x");
     await vi.waitFor(() => expect(deepActiveElement()?.textContent).toContain("xconst server"));
+
+    const crumbs = screen.getByRole("navigation", { name: "File path" }).element();
+    const currentCrumb = crumbs.querySelector<HTMLElement>("[aria-current='page']")!;
+    const breadcrumbViewport = crumbs.closest<HTMLElement>("[data-slot='scroll-area-viewport']")!;
+    screen.container.querySelector<HTMLElement>(
+      "[data-right-panel-surface-content]",
+    )!.parentElement!.style.width = "320px";
+    await vi.waitFor(() => {
+      const current = currentCrumb.getBoundingClientRect();
+      const viewport = breadcrumbViewport.getBoundingClientRect();
+      expect(current.left).toBeGreaterThanOrEqual(viewport.left - 1);
+      expect(current.right).toBeLessThanOrEqual(viewport.right + 1);
+    });
 
     (deepActiveElement() as HTMLElement).blur();
     expect(focus.focus("panel", false)).toBe(true);
@@ -369,6 +389,18 @@ describe("source file scroll", () => {
 });
 
 describe("rendered Markdown task saves", () => {
+  it("opens Markdown source until a rendered preview is requested", async () => {
+    using _settings = setup();
+    localStorage.removeItem("t3code.renderMarkdown");
+    await using screen = await render(
+      <div className="flex h-150 w-240">{markdownPreview(false)}</div>,
+    );
+    await expect
+      .element(screen.getByRole("button", { name: "Show preview", exact: true }))
+      .toHaveAttribute("aria-pressed", "true");
+    expect(screen.container.querySelector('input[type="checkbox"]')).toBeNull();
+  });
+
   it("keeps a truncated read read-only without queuing a replacement", async () => {
     using _settings = setup();
     await using screen = await render(markdownPreview(true));

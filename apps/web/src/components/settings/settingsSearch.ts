@@ -13,6 +13,7 @@ import * as Schema from "effect/Schema";
 import { decodeMsg, msg, useMessages } from "gt-react";
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { writeLocalStorageValue } from "../../hooks/useLocalStorage";
+import { isScrollingWorkspaceCommand } from "../../layout/layoutBehavior";
 import type { MessageResolver } from "../../i18n/messages";
 import { commandLabel } from "./KeybindingsSettings.logic";
 import type { ResolvedSettingsScope } from "./settingsScope";
@@ -25,6 +26,7 @@ export type SettingsPath =
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
+  | "/settings/layout"
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
@@ -75,6 +77,8 @@ export interface SettingsSearchItem {
   readonly textGeneratorsOnly?: boolean;
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
+  /** Hidden until Labs › Scrolling workspaces is on. */
+  readonly scrollingWorkspacesOnly?: boolean;
 }
 
 export interface SettingsSearchAvailability {
@@ -90,6 +94,7 @@ export interface SettingsSearchAvailability {
   readonly hasFastWorktreeCheckoutEnvironment?: boolean;
   /** An environment without a provider allow-list, which hides text generators. */
   readonly hasTextGeneratorsEnvironment?: boolean;
+  readonly scrollingWorkspaces?: boolean;
   readonly hasPrimaryEnvironment?: boolean;
 }
 
@@ -100,6 +105,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/appearance": msg("Appearance"),
   "/settings/chat": msg("Chat"),
   "/settings/diffs": msg("Diffs & pull requests"),
+  "/settings/layout": msg("Layout"),
   "/settings/keybindings": msg("Keybindings"),
   "/settings/snap-shot": msg("SnapShots"),
   "/settings/providers": msg("Providers"),
@@ -140,6 +146,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      "/settings/layout",
       "/settings/chat",
       "/settings/diffs",
       "/settings/keybindings",
@@ -194,6 +201,7 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
     to: "/settings/keybindings" as const,
     searchTerms: [command, ...defaultKeys],
     secondary: true,
+    ...(isScrollingWorkspaceCommand(command) ? { scrollingWorkspacesOnly: true } : {}),
     ...(defaultKeys.length === 0 ? { targetId: "keybindings" } : {}),
   };
 });
@@ -326,6 +334,58 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "layout-template",
+    title: msg("Your layout"),
+    to: "/settings/layout",
+    searchTerms: [
+      msg("layout panes split columns template chat terminal diff files browser drag resize"),
+    ],
+  },
+  {
+    id: "layout-terminal-placement",
+    title: msg("Terminal"),
+    to: "/settings/layout",
+    searchTerms: [msg("terminal placement where cmd+j opens it below the chat new tab new column")],
+  },
+  {
+    id: "layout-side-pane-placement",
+    title: msg("Side pane"),
+    to: "/settings/layout",
+    searchTerms: [
+      msg("side pane placement diff files browser pull request beside the chat new column"),
+    ],
+  },
+  {
+    id: "layout-side-pane-opens-on",
+    title: msg("Side pane opens on"),
+    to: "/settings/layout",
+    searchTerms: [msg("side pane first tab last used diff files browser pull request")],
+  },
+  {
+    id: "layout-new-tab-position",
+    title: msg("New tabs"),
+    to: "/settings/layout",
+    searchTerms: [msg("where new tabs open after the current tab at the end cmd+t")],
+  },
+  {
+    id: "layout-when-no-room",
+    title: msg("When it doesn't fit"),
+    to: "/settings/layout",
+    searchTerms: [
+      msg("no room shrink then scroll always shrink always scroll strip columns width"),
+    ],
+    scrollingWorkspacesOnly: true,
+  },
+  {
+    id: "layout-three-finger-swipe",
+    title: msg("Three-finger swipe"),
+    to: "/settings/layout",
+    searchTerms: [msg("trackpad gesture swipe between pages column workspace")],
+    desktopOnly: true,
+    macOnly: true,
+    scrollingWorkspacesOnly: true,
+  },
+  {
     id: "color-scheme",
     title: msg("Appearance mode"),
     to: "/settings/appearance",
@@ -336,7 +396,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "theme",
     title: msg("Themes"),
     to: "/settings/appearance",
-    searchTerms: [msg("appearance colors palette custom import export download")],
+    searchTerms: [
+      msg("appearance colors palette custom import export download t3 code classic old"),
+    ],
     targetId: "appearance",
   },
   {
@@ -377,6 +439,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("reasoning effort thinking bars graph word label level composer")],
   },
   {
+    id: "app-icon",
+    title: msg("App icon"),
+    to: "/settings/appearance",
+    searchTerms: [msg("dock taskbar favicon logo nightly blueprint sunrise orbital black classic")],
+  },
+  {
     id: "math-rendering",
     title: msg("Render math"),
     to: "/settings/appearance",
@@ -386,7 +454,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "surface-style",
     title: msg("Style"),
     to: "/settings/appearance",
-    searchTerms: [msg("surface buttons composer toned aqua gradient rim flat soft gloss blue")],
+    searchTerms: [
+      msg(
+        "surface buttons composer finish standard flat soft gloss glossy accent outline aqua gradient rim",
+      ),
+    ],
   },
   {
     id: "panel-animations",
@@ -498,6 +570,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
+    id: "scrolling-workspaces",
+    title: msg("Scrolling workspaces"),
+    to: "/settings/labs",
+    searchTerms: [
+      msg(
+        "beta labs redesign niri strip scroll sideways workspaces overview layout tour swipe panes shrink",
+      ),
+    ],
+  },
+  {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
     to: "/settings/labs",
@@ -510,6 +592,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
     targetId: "boring-sidebar",
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
+  },
+  {
+    id: "turn-work-fold",
+    title: msg("Fold each turn's work"),
+    to: "/settings/labs",
+    searchTerms: [
+      msg(
+        "beta labs redesign working section window fold collapse turn tool calls open worked for wake-ups timeline",
+      ),
+    ],
   },
   {
     id: "tool-call-visibility",
@@ -1512,6 +1604,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/appearance": null,
   "/settings/chat": null,
   "/settings/diffs": null,
+  "/settings/layout": null,
   "/settings/snap-shot": null,
   "/settings/keybindings": null,
   "/settings/providers": null,
@@ -1663,7 +1756,8 @@ export function filterAvailableSettingsSearchItems(
       (!item.peerLinksOnly || availability.hasPeerLinkHost === true) &&
       (!item.fastWorktreeCheckoutOnly ||
         availability.hasFastWorktreeCheckoutEnvironment === true) &&
-      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true),
+      (!item.textGeneratorsOnly || availability.hasTextGeneratorsEnvironment === true) &&
+      (!item.scrollingWorkspacesOnly || availability.scrollingWorkspaces === true),
   );
 }
 

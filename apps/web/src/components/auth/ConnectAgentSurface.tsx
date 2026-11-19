@@ -9,7 +9,6 @@ import {
 } from "@t3tools/contracts";
 import { managedRuntimeModeCeilingMessage } from "@t3tools/client-runtime/contract-labels";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
-import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@t3tools/shared/preview";
 import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
@@ -20,7 +19,6 @@ import { type ReactNode, useEffect, useState } from "react";
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { m, type MessageResolver } from "../../i18n/messages";
-import { cn } from "~/lib/utils";
 import {
   agentRedirectUrl,
   resolveApprovalDecision,
@@ -30,7 +28,7 @@ import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { RadioGroup } from "../ui/radio-group";
+import { Radio, RadioGroup } from "../ui/radio-group";
 import { Spinner } from "../ui/spinner";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
 
@@ -228,7 +226,7 @@ export function McpConsent({
 
   if (loaded.status === "loading") {
     return (
-      <StandalonePage tone="plain">
+      <StandalonePage>
         <ConnectAgentHeading
           title={gt("Checking the sign-in request")}
           description={gt("One moment while this environment verifies the agent's request.")}
@@ -240,7 +238,7 @@ export function McpConsent({
 
   if (loaded.status === "invalid") {
     return (
-      <StandalonePage tone="plain">
+      <StandalonePage>
         <ConnectAgentHeading
           title={gt("This sign-in cannot continue")}
           description={loaded.message}
@@ -264,7 +262,7 @@ export function McpConsent({
   const approveLevel = codeAccess ?? access;
 
   return (
-    <StandalonePage tone="plain">
+    <StandalonePage>
       <ConnectAgentHeading
         title={gt("Connect {app}", { app: details.clientName })}
         description={
@@ -378,7 +376,6 @@ export function McpConsent({
                 <AccessOption
                   key={option}
                   access={option}
-                  selected={option === access}
                   disabledReason={ceilingReason(details, option, messages)}
                 />
               ))}
@@ -398,7 +395,7 @@ export function McpConsent({
           </Alert>
         ) : null}
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <Button disabled={!canApprove} type="submit">
             {pending === "approve"
               ? gt("Approving…")
@@ -428,10 +425,7 @@ function ConnectAgentHeading({
   readonly title: string;
   readonly description: ReactNode;
 }) {
-  const gt = useGT();
-  return (
-    <StandalonePageHeader context={gt("Agent sign-in")} title={title} description={description} />
-  );
+  return <StandalonePageHeader title={title} description={description} />;
 }
 
 /** Why a managed policy keeps `access` from being granted, or undefined when it may be. */
@@ -451,12 +445,10 @@ function ceilingReason(
 /** One access level in a radio group; `description` replaces the level's own, null hides it. */
 export function AccessOption({
   access,
-  selected,
   disabledReason,
   description,
 }: {
   readonly access: AuthMcpClientAccess;
-  readonly selected: boolean;
   readonly disabledReason: string | undefined;
   readonly description?: string | null;
 }) {
@@ -466,30 +458,15 @@ export function AccessOption({
     disabledReason ??
     (description === undefined ? messages(accessConfig[access].description) : description);
   return (
-    <RadioPrimitive.Root
-      value={access}
-      disabled={disabledReason !== undefined}
-      className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 text-left outline-none transition-[background-color,border-color,box-shadow]",
-        "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-        selected
-          ? "border-primary bg-background ring-2 ring-inset ring-primary/25 dark:border-transparent dark:bg-primary/10 dark:ring-1 dark:ring-primary/30"
-          : "border-border bg-background hover:bg-muted/50 dark:border-transparent dark:bg-white/[0.035] dark:hover:bg-accent",
-      )}
-    >
-      <Icon
-        aria-hidden
-        className={cn(
-          "mt-0.5 size-4 shrink-0",
-          selected ? "text-primary" : "text-muted-foreground",
-        )}
-      />
+    <label className="flex cursor-pointer items-start gap-3 rounded-control surface-well px-3 py-3 has-data-disabled:cursor-not-allowed has-data-disabled:opacity-64">
+      <Radio value={access} disabled={disabledReason !== undefined} />
+      <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
       <span className="min-w-0">
         <span className="block text-label text-foreground">{messages(label)}</span>
         {detail === null ? null : (
           <span className="block text-meta text-muted-foreground">{detail}</span>
         )}
       </span>
-    </RadioPrimitive.Root>
+    </label>
   );
 }

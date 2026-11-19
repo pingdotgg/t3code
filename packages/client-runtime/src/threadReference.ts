@@ -63,13 +63,22 @@ export function resolveThreadReferenceCopyTarget(
     resolveThreadCurrentPullRequestLink(input.pullRequests ?? [])?.url ??
     input.linkedPullRequestUrl;
   return pullRequestUrl
-    ? {
-        kind: "pull-request",
-        value: pullRequestUrl,
-        description: pullRequestUrl,
-        clipboardTarget: "pull request link",
-        successTitle: resolve(msg("PR link copied")),
-        failureTitle: resolve(msg("Failed to copy PR link")),
-      }
+    ? pullRequestCopyTarget(pullRequestUrl, "PR", resolve)
     : threadChipCopyTarget(input.threadRef, input.title, input.hostedAppUrl, resolve);
+}
+
+/** `shortLabel` is the forge's name for it: "PR", or "MR" on GitLab. */
+export function pullRequestCopyTarget(
+  url: string,
+  shortLabel = "PR",
+  resolve: MFunctionType = mFallback,
+): ThreadReferenceCopyTarget {
+  return {
+    kind: "pull-request",
+    value: url,
+    description: url,
+    clipboardTarget: "pull request link",
+    successTitle: resolve(msg("{shortLabel} link copied", { shortLabel })),
+    failureTitle: resolve(msg("Failed to copy {shortLabel} link", { shortLabel })),
+  };
 }

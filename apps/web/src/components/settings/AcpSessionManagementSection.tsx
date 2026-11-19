@@ -435,9 +435,10 @@ function InstanceSessionManagement(
                   }}
                 >
                   <SelectTrigger
+                    variant="well"
                     aria-label={gt("Project for ACP sessions")}
                     className="w-40"
-                    size="sm"
+                    size="compact"
                   >
                     <SelectValue>
                       {props.projects.find((project) => project.id === projectId)?.title}

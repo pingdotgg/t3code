@@ -87,7 +87,8 @@ interface AnnotatableCodeViewProps {
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
   sectionTitle: string;
-  composerDraftTarget: ScopedThreadRef | DraftId;
+  /** The composer comments go to; without one (a threadless surface) there are none. */
+  composerDraftTarget?: ScopedThreadRef | DraftId | undefined;
   options: StyledDiffCodeViewOptions<DiffCommentAnnotationGroup>;
   viewerRef?: Ref<AnnotatableCodeViewHandle>;
   onScroll?: CodeViewProps<DiffCommentAnnotationGroup, undefined>["onScroll"];
@@ -135,7 +136,9 @@ export function AnnotatableCodeView({
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
+    (store) =>
+      (composerDraftTarget && store.getComposerDraft(composerDraftTarget)?.reviewComments) ||
+      EMPTY_REVIEW_COMMENTS,
   );
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
@@ -210,7 +213,7 @@ export function AnnotatableCodeView({
     if (draft?.annotation.metadata.entries.some((entry) => entry.id === entryId)) {
       setDraft(null);
       setDraftText("");
-    } else {
+    } else if (composerDraftTarget) {
       removeReviewComment(composerDraftTarget, entryId);
     }
   };
@@ -218,7 +221,7 @@ export function AnnotatableCodeView({
   const submitEntry = (entryId: string, text: string) => {
     const entry = draft?.annotation.metadata.entries.find((candidate) => candidate.id === entryId);
     const file = draft ? filesByKey.get(draft.fileKey) : undefined;
-    if (!entry || !file) return;
+    if (!entry || !file || !composerDraftTarget) return;
     const comment = buildDiffReviewComment({
       id: entry.id,
       sectionId,
@@ -288,7 +291,7 @@ export function AnnotatableCodeView({
       onSelectedLinesChange={setSelectedLines}
       options={{
         ...options,
-        enableGutterUtility: draft === null,
+        enableGutterUtility: composerDraftTarget !== undefined && draft === null,
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
         onItemCollapsedChange: (_item, nextItem) =>

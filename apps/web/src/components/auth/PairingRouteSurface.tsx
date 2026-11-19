@@ -29,7 +29,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 export function PairingPendingSurface() {
   const gt = useGT();
   return (
-    <StandalonePage tone="plain" size="card">
+    <StandalonePage size="card">
       <StandalonePageIcon>
         <Link2Icon />
       </StandalonePageIcon>
@@ -110,7 +110,7 @@ export function PairingRouteSurface({
   const failed = failure !== null;
 
   return (
-    <StandalonePage tone="plain" size="card">
+    <StandalonePage size="card">
       <StandalonePageIcon tone={failed ? "error" : "default"}>
         {failed ? <UnlinkIcon /> : <Link2Icon />}
       </StandalonePageIcon>
@@ -262,7 +262,7 @@ export function HostedPairingRouteSurface() {
   }, []);
 
   return (
-    <StandalonePage tone="plain" size="card">
+    <StandalonePage size="card">
       <StandalonePageIcon tone={status === "error" ? "error" : "default"}>
         {status === "error" ? <UnlinkIcon /> : <Link2Icon />}
       </StandalonePageIcon>

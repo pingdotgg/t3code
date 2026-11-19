@@ -3,6 +3,7 @@ import {
   CopyIcon,
   DownloadIcon,
   EllipsisIcon,
+  HistoryIcon,
   MoonIcon,
   PenLineIcon,
   PlusIcon,
@@ -15,6 +16,7 @@ import { useEnvironmentThemeDefinitions } from "../../hooks/useEnvironmentTheme"
 import {
   APPEARANCE_CHOICES,
   readThemeHalvesRaw,
+  setThemeVariant,
   type AppearanceChoice,
 } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
@@ -30,6 +32,7 @@ import {
   type ThemeDefinition,
   type ThemeHalves,
   T3_CHAT_THEME,
+  T3_CODE_CLASSIC_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -44,6 +47,7 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../ui/alert-dialog";
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -60,6 +64,7 @@ import {
   type ThemeMode,
 } from "./ThemePreviewCircles";
 import { ThemeWireframe } from "./ThemeWireframe";
+import { useCloseAppModal } from "../sidebar/mainAppLocation";
 import { msg, T, useGT, useMessages } from "gt-react";
 
 const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
@@ -216,23 +221,32 @@ function ThemeLibraryCard({
   onDuplicate?: () => void;
   onDownload?: () => void;
   onRemove?: () => void;
-  variantNavigation?: {
-    collectionLabel: string;
-    options: ReadonlyArray<{
-      themeIndex: number;
-      label: string;
-      activeModes: ReadonlyArray<ThemeMode>;
-      preview: ThemeCardDefinition["previews"][number];
-    }>;
-    onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
-  };
+  variantNavigation?:
+    | {
+        kind?: "collection";
+        collectionLabel: string;
+        options: ReadonlyArray<{
+          themeIndex: number;
+          label: string;
+          activeModes: ReadonlyArray<ThemeMode>;
+          preview: ThemeCardDefinition["previews"][number];
+        }>;
+        onSelectAndUse: (themeIndex: number, mode: ThemeAppearance) => void;
+      }
+    | {
+        kind: "rewind";
+        classic: boolean;
+        onToggle: () => void;
+      };
 }) {
   const gt = useGT();
+  const collectionNavigation = variantNavigation?.kind === "rewind" ? undefined : variantNavigation;
+  const rewindNavigation = variantNavigation?.kind === "rewind" ? variantNavigation : undefined;
   const cardModes = theme.previews.map((preview) => preview.mode);
   const [radialModeOpen, setRadialModeOpen] = useState<ThemeAppearance | null>(null);
   const radialModeGroups = (["light", "dark"] as const).map((mode) => {
     const options =
-      variantNavigation?.options.flatMap((option) => {
+      collectionNavigation?.options.flatMap((option) => {
         const preview = option.preview;
         return preview.mode === mode ? [{ option, preview }] : [];
       }) ?? [];
@@ -247,7 +261,7 @@ function ThemeLibraryCard({
       <TooltipTrigger
         render={
           <div
-            className="cursor-pointer overflow-hidden rounded-card border border-transparent surface-card-settings-rim transition-colors hover:surface-ghost-hover"
+            className="cursor-pointer overflow-hidden rounded-card border border-transparent surface-card-settings-rim transition-colors hover:surface-ghost-hover max-sm:flex max-sm:flex-col"
             data-theme-library-card={theme.id}
             onClick={onUse}
             style={
@@ -260,7 +274,31 @@ function ThemeLibraryCard({
             }
           >
             <div className="relative bg-settings-preview-fill">
-              {variantNavigation ? (
+              {rewindNavigation ? (
+                <div className="absolute top-1.5 right-1.5 z-10">
+                  <ThemeVariantTooltip
+                    label={
+                      rewindNavigation.classic ? gt("Use new colors") : gt("Use classic colors")
+                    }
+                  >
+                    <Button
+                      size="icon-xs"
+                      variant={rewindNavigation.classic ? "secondary" : "ghost-muted"}
+                      aria-label={
+                        rewindNavigation.classic ? gt("Use new colors") : gt("Use classic colors")
+                      }
+                      aria-pressed={rewindNavigation.classic}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        rewindNavigation.onToggle();
+                      }}
+                    >
+                      <HistoryIcon />
+                    </Button>
+                  </ThemeVariantTooltip>
+                </div>
+              ) : null}
+              {collectionNavigation ? (
                 <div
                   aria-label={gt("Light and dark theme variants")}
                   className="relative h-24"
@@ -319,7 +357,7 @@ function ThemeLibraryCard({
                             type="button"
                             onClick={(event) => {
                               event.stopPropagation();
-                              variantNavigation.onSelectAndUse(selected.option.themeIndex, mode);
+                              collectionNavigation.onSelectAndUse(selected.option.themeIndex, mode);
                             }}
                             onFocus={() => setRadialModeOpen(mode)}
                             onMouseEnter={() => setRadialModeOpen(mode)}
@@ -403,7 +441,7 @@ function ThemeLibraryCard({
                                     type="button"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      variantNavigation.onSelectAndUse(option.themeIndex, mode);
+                                      collectionNavigation.onSelectAndUse(option.themeIndex, mode);
                                     }}
                                     onFocus={() => setRadialModeOpen(mode)}
                                     onMouseEnter={() => setRadialModeOpen(mode)}
@@ -432,19 +470,19 @@ function ThemeLibraryCard({
                 />
               )}
             </div>
-            <div className="flex items-center gap-1 py-2 ps-2.5 pe-1.5">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1 py-2 ps-2.5 pe-1.5 max-sm:flex-1 max-sm:content-between sm:flex-nowrap">
+              <div className="min-w-0 basis-full sm:flex-1 sm:basis-auto">
+                <div className="flex flex-wrap items-center gap-1.5 sm:flex-nowrap">
                   <button
                     aria-label={
-                      variantNavigation
+                      collectionNavigation
                         ? isActive
                           ? gt("Use {collection}, {label} variant, currently active", {
-                              collection: variantNavigation.collectionLabel,
+                              collection: collectionNavigation.collectionLabel,
                               label: theme.label,
                             })
                           : gt("Use {collection}, {label} variant", {
-                              collection: variantNavigation.collectionLabel,
+                              collection: collectionNavigation.collectionLabel,
                               label: theme.label,
                             })
                         : isActive
@@ -452,20 +490,25 @@ function ThemeLibraryCard({
                           : gt("Use {label} theme", { label: theme.label })
                     }
                     aria-pressed={isActive}
-                    className="min-w-0 cursor-pointer truncate rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+                    className="min-w-0 cursor-pointer rounded-sm text-left text-label text-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-card max-sm:wrap-anywhere sm:truncate"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
                       onUse();
                     }}
                   >
-                    {variantNavigation?.collectionLabel ?? theme.label}
+                    {collectionNavigation?.collectionLabel ?? theme.label}
                   </button>
+                  {rewindNavigation?.classic ? (
+                    <Badge size="sm" variant="secondary">
+                      {gt("Classic", { $context: "classic color theme variant" })}
+                    </Badge>
+                  ) : null}
                 </div>
               </div>
               {onEdit || onDuplicate || onDownload || onRemove ? (
                 // The footer keeps the design's 10px name inset and 6px action inset.
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 items-center gap-1 max-sm:ms-auto">
                   {onDuplicate && !onEdit ? (
                     <Tooltip>
                       <TooltipTrigger
@@ -514,8 +557,8 @@ function ThemeLibraryCard({
                       keeps room in the three-per-row grid. */}
                   {onEdit ? (
                     <ThemeCardMoreMenu
-                      label={variantNavigation?.collectionLabel ?? theme.label}
-                      removeLabel={variantNavigation ? gt("Remove themes") : gt("Remove theme")}
+                      label={collectionNavigation?.collectionLabel ?? theme.label}
+                      removeLabel={collectionNavigation ? gt("Remove themes") : gt("Remove theme")}
                       onDuplicate={onDuplicate}
                       onDownload={onDownload}
                       onRemove={onRemove}
@@ -549,9 +592,9 @@ function ThemeLibraryCard({
                         render={
                           <Button
                             aria-label={
-                              variantNavigation
+                              collectionNavigation
                                 ? gt("Remove themes from {collectionLabel}", {
-                                    collectionLabel: variantNavigation.collectionLabel,
+                                    collectionLabel: collectionNavigation.collectionLabel,
                                   })
                                 : gt("Remove {label}", { label: theme.label })
                             }
@@ -567,7 +610,7 @@ function ThemeLibraryCard({
                         }
                       />
                       <TooltipPopup>
-                        {variantNavigation ? gt("Remove themes") : gt("Remove theme")}
+                        {collectionNavigation ? gt("Remove themes") : gt("Remove theme")}
                       </TooltipPopup>
                     </Tooltip>
                   ) : null}
@@ -578,7 +621,7 @@ function ThemeLibraryCard({
         }
       />
       <TooltipPopup>
-        {variantNavigation
+        {collectionNavigation
           ? gt("Use the first variants for light and dark")
           : cardModes.length > 1
             ? gt("Use for both light and dark")
@@ -702,8 +745,14 @@ export function ThemeLibrary({
   const setting = useSearchableSetting();
   const gt = useGT();
   const messages = useMessages();
-  const openThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const startThemeEditor = useThemeEditorStore((store) => store.openThemeEditor);
+  const closeAppModal = useCloseAppModal();
+  const openThemeEditor: typeof startThemeEditor = (session) => {
+    startThemeEditor(session);
+    void closeAppModal();
+  };
   const environmentThemes = useEnvironmentThemeDefinitions();
+  const [previewClassic, setPreviewClassic] = useState(false);
   const [themeRemovalTarget, setThemeRemovalTarget] = useState<{
     theme: ThemeDefinition;
     collectionThemes: ReadonlyArray<ThemeDefinition>;
@@ -917,25 +966,54 @@ export function ThemeLibrary({
     <TooltipProvider>
       {/* Three cards per row in the settings column (pen eWIa5). */}
       <div className="grid w-full grid-cols-2 gap-3 sm:grid-cols-3">
-        {STANDARD_THEME_CARDS.map((standardTheme) => (
-          <ThemeLibraryCard
-            activeModes={pickedModesFor(null)}
-            isActive={false}
-            key={standardTheme.id}
-            onDuplicate={() =>
-              openThemeEditor({
-                editingThemeId: null,
-                seedThemeId: null,
-                seedName: `${standardTheme.label} copy`,
-                initialAppearance,
-              })
-            }
-            onDownload={() => downloadLibraryTheme(standardThemeDefinition(standardTheme.label))}
-            onUse={() => persistTheme(appearanceMode === "system" ? "system" : appearanceMode)}
-            onUseMode={handlePairPick(null)}
-            theme={standardTheme}
-          />
-        ))}
+        {STANDARD_THEME_CARDS.map((standardTheme) => {
+          const classicModes = pickedModesFor(T3_CODE_CLASSIC_THEME.id);
+          const newModes = pickedModesFor(null);
+          const classic = classicModes.length > 0 || (newModes.length === 0 && previewClassic);
+          const themeId = classic ? T3_CODE_CLASSIC_THEME.id : null;
+          const shownTheme = classic ? T3_CODE_CLASSIC_THEME : null;
+          return (
+            <ThemeLibraryCard
+              activeModes={classic ? classicModes : newModes}
+              isActive={classicModes.length > 0 || newModes.length > 0}
+              key={standardTheme.id}
+              onDuplicate={() =>
+                openThemeEditor({
+                  editingThemeId: null,
+                  seedThemeId: themeId,
+                  seedName: `${shownTheme?.label ?? standardTheme.label} copy`,
+                  initialAppearance,
+                })
+              }
+              onDownload={() =>
+                downloadLibraryTheme(shownTheme ?? standardThemeDefinition(standardTheme.label))
+              }
+              onUse={() => persistTheme(themeId ?? appearanceMode)}
+              onUseMode={handlePairPick(themeId)}
+              theme={
+                shownTheme
+                  ? { ...standardTheme, previews: getThemeCardDefinition(shownTheme).previews }
+                  : standardTheme
+              }
+              variantNavigation={{
+                kind: "rewind",
+                classic,
+                onToggle: () => {
+                  if (
+                    setThemeVariant(
+                      [null, T3_CODE_CLASSIC_THEME.id],
+                      classic ? null : T3_CODE_CLASSIC_THEME.id,
+                    )
+                  ) {
+                    setPreviewClassic(!classic);
+                  } else {
+                    notifyThemeSaveFailure();
+                  }
+                },
+              }}
+            />
+          );
+        })}
         {MAINTAINER_THEMES.map((maintainerTheme) => {
           const card = getThemeCardDefinition(maintainerTheme);
           return (
@@ -1022,11 +1100,10 @@ export function ThemeLibrary({
   );
 
   return (
-    // Appearance headings carry 24px actions, 10px above the cards (pen eWIa5).
     <div className="space-y-7">
       <div className="space-y-2.5">
         <div className="flex min-h-6 flex-wrap items-center justify-between gap-3">
-          <h3 className="text-meta text-dim-foreground">{setting("color-scheme").title}</h3>
+          <h3 className="text-title text-dim-foreground">{setting("color-scheme").title}</h3>
           {/* The ghost button hangs by its 8px inline inset so its text ends on the card edge. */}
           <div className="-me-2 flex">{restoreAction}</div>
         </div>
@@ -1034,14 +1111,14 @@ export function ThemeLibrary({
       </div>
       <div className="space-y-2.5">
         <div className="flex min-h-6.5 flex-wrap items-center justify-between gap-3">
-          <h3 className="text-meta text-dim-foreground">{setting("theme").title}</h3>
+          <h3 className="text-title text-dim-foreground">{setting("theme").title}</h3>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <Button size="xs" variant="secondary" onClick={() => onImportOpenChange(true)}>
+            <Button size="standard" variant="secondary" onClick={() => onImportOpenChange(true)}>
               <UploadIcon />
               <T>Import</T>
             </Button>
             <Button
-              size="xs"
+              size="standard"
               variant="secondary"
               onClick={() =>
                 openThemeEditor({
@@ -1134,7 +1211,8 @@ export function ThemeLibrary({
                 const checkboxId = `remove-theme-${customTheme.id}`;
                 return (
                   <label
-                    className="group relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 has-checked:border-ring has-checked:surface-selected hover:surface-ghost-hover"
+                    className="relative flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-card border border-transparent surface-card-settings-rim p-3 data-checked:border-ring data-checked:surface-selected hover:surface-ghost-hover"
+                    data-checked={checked ? "" : undefined}
                     htmlFor={checkboxId}
                     key={customTheme.id}
                   >
@@ -1154,7 +1232,12 @@ export function ThemeLibrary({
                           );
                         }}
                       />
-                      <CheckIcon className="pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground opacity-0 group-has-checked:opacity-100 sm:size-3" />
+                      <CheckIcon
+                        className={cn(
+                          "pointer-events-none col-start-1 row-start-1 size-3.5 shrink-0 self-center justify-self-center stroke-primary-foreground sm:size-3",
+                          checked ? "opacity-100" : "opacity-0",
+                        )}
+                      />
                     </span>
                     <span className="flex min-h-12 items-center justify-center gap-1">
                       {card.previews.map((preview) => (

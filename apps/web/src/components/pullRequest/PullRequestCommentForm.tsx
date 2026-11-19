@@ -1,25 +1,20 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useAtomCommand } from "~/state/use-atom-command";
 import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3tools/contracts";
-import { SendIcon } from "lucide-react";
 import { msg, T, useGT } from "gt-react";
-import { useEffect, useState, type RefObject } from "react";
+import type { RefObject } from "react";
 
 import { m } from "~/i18n/messages";
 
-import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
 import { toastManager } from "../ui/toast";
+import { useWorkItemCommentForm, WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
 import { PullRequestGlyph } from "./pullRequestIcons";
-import {
-  PullRequestMarkdownTextarea,
-  pullRequestCompletionScope,
-} from "./PullRequestMarkdownTextarea";
+import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
 import { pullRequestReviewKey } from "./pullRequestReviewStore";
 import { useInlineActionConfirm } from "./useInlineActionConfirm";
-import { PullRequestSubmitKeyHint } from "./PullRequestSubmitKeyHint";
 
 import { changeRequestTermKind } from "./changeRequestTerm";
 
@@ -49,23 +44,6 @@ export function PullRequestCommentForm({
   onClose: () => void;
 }) {
   const gt = useGT();
-  const [body, setBody] = useState("");
-  const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const locked = submitting !== null || actionPending;
-  const speech = useTextFieldSpeech({
-    environmentId,
-    projectId: reference.projectId,
-    ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
-    text: body,
-    textareaRef,
-    onTextChange: setBody,
-    disabled: !active || locked,
-  });
-  const { cancel } = speech;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- discards a recording when the hidden form can no longer be submitted
-  useEffect(() => {
-    if (!active) cancel();
-  }, [active, cancel]);
   const postComment = useAtomCommand(pullRequestEnvironment.comment, {
     reportFailure: false,
   });
@@ -82,117 +60,79 @@ export function PullRequestCommentForm({
         : null;
 
   const submit = async (action: "comment" | "close" | "reopen", text: string) => {
-    const trimmed = text.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
-    setSubmitting(action);
     if (action !== "comment") {
-      const result = await onCommentAction(trimmed, action);
-      if (result.commentPosted) {
-        setBody("");
-        onClose();
-      }
-      setSubmitting(null);
-      return;
+      const result = await onCommentAction(text, action);
+      if (result.commentPosted) onClose();
+      return result.commentPosted;
     }
-    const result = await postComment({
-      environmentId,
-      input: {
-        ...reference,
-        body: trimmed,
-      },
-    });
+    const result = await postComment({ environmentId, input: { ...reference, body: text } });
     if (result._tag === "Failure") {
-      setSubmitting(null);
       toastManager.add({ type: "error", title: m(msg("Could not post the comment")) });
-      return;
+      return false;
     }
-    setBody("");
-    setSubmitting(null);
     onClose();
     onCommented();
+    return true;
   };
-  const submitAfterDictation = (action: "comment" | "close" | "reopen") =>
-    speech.submitAfterDictation((text) => void submit(action, text));
-  const submitDisabled =
-    speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked;
+
+  const form = useWorkItemCommentForm<"close" | "reopen">({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["pr-comment", environmentId, reference]),
+    active,
+    textareaRef,
+    locked: actionPending,
+    onSubmit: submit,
+  });
 
   return (
-    <div className="space-y-2">
-      <PullRequestMarkdownTextarea
-        ref={textareaRef}
-        completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
-        // Lock while posting because success clears the draft.
-        disabled={locked}
-        readOnly={speech.freezesEditor}
-        value={body}
-        rows={3}
-        placeholder={gt("Leave a comment")}
-        aria-label={gt(
-          "Comment on this {term, select, mr {merge request} cr {change request} other {pull request}}",
-          {
-            term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
-          },
-        )}
-        onValueChange={setBody}
-        onKeyDown={(event) => {
-          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-          if (
-            event.key === "Enter" &&
-            (event.metaKey || event.ctrlKey) &&
-            !event.shiftKey &&
-            !event.altKey
-          ) {
-            event.preventDefault();
-            event.stopPropagation();
-            if (!event.repeat) submitAfterDictation("comment");
-          }
-        }}
-      />
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <TextFieldSpeechControls speech={speech} disabled={locked} />
-        {followUpAction === null ? null : (
-          <Button
-            size="xs"
-            variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
-            disabled={submitDisabled}
-            {...(followUpAction === "close"
-              ? inlineConfirm.props("close", () => submitAfterDictation("close"))
-              : { onClick: () => submitAfterDictation("reopen") })}
-          >
-            {followUpAction === "close" ? (
-              <PullRequestGlyph.closed className="size-3.5" />
-            ) : (
-              <PullRequestGlyph.reopen className="size-3.5" />
-            )}
-            {followUpAction === "close" ? (
-              // The longest label holds the width, so the confirming click lands on the button.
-              <span className="inline-grid">
-                <span aria-hidden className="invisible col-start-1 row-start-1">
-                  <T>Close with comment</T>
-                </span>
-                <span className="col-start-1 row-start-1">
-                  {submitting === "close"
-                    ? gt("Closing...")
-                    : inlineConfirm.isArmed("close")
-                      ? gt("Confirm close?")
-                      : gt("Close with comment")}
-                </span>
+    <WorkItemCommentForm
+      form={form}
+      textareaRef={textareaRef}
+      completionScope={pullRequestCompletionScope(detail, environmentId, reference)}
+      label={gt(
+        "Comment on this {term, select, mr {merge request} cr {change request} other {pull request}}",
+        {
+          term: changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest),
+        },
+      )}
+      placeholder={gt("Leave a comment")}
+    >
+      {followUpAction === null ? null : (
+        <Button
+          size="xs"
+          variant={followUpAction === "close" ? "destructive-outline" : "secondary"}
+          disabled={form.submitDisabled}
+          {...(followUpAction === "close"
+            ? inlineConfirm.props("close", () => form.submit("close"))
+            : { onClick: () => form.submit("reopen") })}
+        >
+          {followUpAction === "close" ? (
+            <PullRequestGlyph.closed className="size-3.5" />
+          ) : (
+            <PullRequestGlyph.reopen className="size-3.5" />
+          )}
+          {followUpAction === "close" ? (
+            // The longest label holds the width, so the confirming click lands on the button.
+            <span className="inline-grid">
+              <span aria-hidden className="invisible col-start-1 row-start-1">
+                <T>Close with comment</T>
               </span>
-            ) : submitting === "reopen" ? (
-              gt("Reopening...")
-            ) : (
-              gt("Reopen with comment")
-            )}
-          </Button>
-        )}
-        <Button size="xs" disabled={submitDisabled} onClick={() => submitAfterDictation("comment")}>
-          <SendIcon className="size-3.5" />
-          {submitting === "comment"
-            ? gt("Posting...")
-            : gt("Comment", { $context: "verb, submit button" })}
-          <PullRequestSubmitKeyHint />
+              <span className="col-start-1 row-start-1">
+                {form.submitting === "close"
+                  ? gt("Closing...")
+                  : inlineConfirm.isArmed("close")
+                    ? gt("Confirm close?")
+                    : gt("Close with comment")}
+              </span>
+            </span>
+          ) : form.submitting === "reopen" ? (
+            gt("Reopening...")
+          ) : (
+            gt("Reopen with comment")
+          )}
         </Button>
-      </div>
-    </div>
+      )}
+    </WorkItemCommentForm>
   );
 }

@@ -58,6 +58,7 @@ function setup() {
   state.timestampFormat = "locale";
 }
 
+import "~/index.css";
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
@@ -169,6 +170,55 @@ it("updates comment ages without another panel render", async () => {
   expect(time.textContent).toBe("6m ago");
 });
 
+it("grows a collapsed description into the room a sparse summary leaves", async () => {
+  const sparse = {
+    ...detail,
+    body: Array.from({ length: 40 }, (_, index) => `Description paragraph ${index + 1}.`).join(
+      "\n\n",
+    ),
+  };
+  const sized = (value: PullRequestDetailView) => <div style={{ height: 600 }}>{tab(value)}</div>;
+  await using screen = await renderUi(sized(sparse));
+  const clip = () =>
+    screen.container.querySelector<HTMLElement>("[data-pr-description] [data-comment-clip]")!;
+  const scroller = screen.container.querySelector<HTMLElement>(
+    "[data-pull-request-summary-scroll]",
+  )!;
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBeGreaterThan(300));
+  expect(scroller.scrollHeight).toBeLessThanOrEqual(scroller.clientHeight);
+  await userEvent.click(screen.getByRole("button", { name: "Read more", exact: true }));
+  await expect
+    .element(screen.getByText("Description paragraph 40.", { exact: true }))
+    .toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show less", exact: true }));
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+  await screen.rerender(
+    sized({
+      ...sparse,
+      commentCount: 12,
+      comments: Array.from({ length: 12 }, (_, index) => ({
+        id: `comment-${index}`,
+        kind: "issue-comment",
+        author: detail.author,
+        body: `Conversation entry ${index + 1}`,
+        createdAt: detail.createdAt,
+        url: null,
+        path: null,
+        reviewState: null,
+      })),
+    }),
+  );
+  await vi.waitFor(() => expect(clip().getBoundingClientRect().height).toBe(64));
+  await expect
+    .element(screen.getByRole("button", { name: "Read more", exact: true }))
+    .toBeVisible();
+});
+
 it("keeps an unsaved description when collapsed and reopened, and after a failed save", async () => {
   setup();
   state.update.mockResolvedValue({ _tag: "Failure", cause: new Error("offline") });
@@ -196,7 +246,9 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   state.update.mockReturnValueOnce(new Promise((resolve) => (finishSave = resolve)));
   const body = "Intro\n\nhttps://example.com/shot.png\n\n## Test plan\n- [ ] First\n- [ ] Second";
   const ticked = body.replace("- [ ] Second", "- [x] Second");
-  await using screen = await render({ ...detail, body, observedAt: 1 });
+  await using screen = await renderUi(
+    <div style={{ height: 1000 }}>{tab({ ...detail, body, observedAt: 1 })}</div>,
+  );
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
 
@@ -320,64 +372,6 @@ function openThread(id: string, bot = false): PullRequestReviewThread {
   };
 }
 
-it("filters promoted bot threads while retaining human replies and bot verdicts", async () => {
-  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
-  const mixed = openThread("mixed", true);
-  await using screen = await render({
-    ...detail,
-    reviewThreads: [
-      openThread("bot-only", true),
-      {
-        ...mixed,
-        comments: [...mixed.comments, { ...openThread("human").comments[0]!, body: "Human reply" }],
-      },
-    ],
-    comments: [
-      {
-        ...openThread("verdict", true).comments[0]!,
-        kind: "review",
-        path: null,
-        reviewState: "CHANGES_REQUESTED",
-        body: "Bot verdict",
-      },
-    ],
-  });
-  await expect.element(screen.getByText("Finding bot-only")).not.toBeInTheDocument();
-  await expect.element(screen.getByText("Finding mixed")).toBeVisible();
-  await expect.element(screen.getByText("Human reply")).toBeVisible();
-  await expect.element(screen.getByText("Bot verdict")).toBeVisible();
-  await expect.element(screen.getByText("1 hidden", { exact: true })).toBeVisible();
-});
-
-it("pages promoted open threads together with the remaining conversations", async () => {
-  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
-  await using screen = await render({
-    ...detail,
-    reviewThreads: Array.from({ length: 12 }, (_, index) => openThread(`thread-${index}`)),
-    comments: [
-      {
-        ...openThread("loose").comments[0]!,
-        kind: "issue-comment",
-        path: null,
-        reviewState: null,
-        body: "Loose conversation",
-      },
-    ],
-  });
-  await expect.element(screen.getByText("Finding thread-9", { exact: true })).toBeVisible();
-  await expect
-    .element(screen.getByText("Finding thread-10", { exact: true }))
-    .not.toBeInTheDocument();
-  await expect.element(screen.getByText("Loose conversation")).not.toBeInTheDocument();
-  await userEvent.click(screen.getByRole("button", { name: /Show 3 .*conversation/ }));
-  await expect.element(screen.getByText("Finding thread-11", { exact: true })).toBeVisible();
-  await expect.element(screen.getByText("Loose conversation")).toBeVisible();
-  await userEvent.click(screen.getByRole("button", { name: "Show only 10 recent conversations" }));
-  await expect
-    .element(screen.getByText("Finding thread-10", { exact: true }))
-    .not.toBeInTheDocument();
-});
-
 it.each(["review", "issue-comment", "resolved-reply"] as const)(
   "reveals a linked %s in the summary conversation",
   async (kind) => {
@@ -467,3 +461,26 @@ it.each(["review", "issue-comment", "resolved-reply"] as const)(
     await expect.element(screen.getByText("Linked reply", { exact: true })).toBeVisible();
   },
 );
+
+it("adds promoted review conversations to chat without requiring review permissions", async () => {
+  setup();
+  localStorage.removeItem("t3code:pull-request-comment-filter:v1");
+  const thread = openThread("finding");
+  const onAddToChat = vi.fn();
+  const value = { ...detail, reviewThreads: [thread] };
+  await using screen = await renderUi(
+    <PullRequestSummaryTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      threadRef={null}
+      reference={value}
+      detail={value}
+      activityPending={false}
+      activityError={null}
+      onRefresh={() => {}}
+      onAddToChat={onAddToChat}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Add to chat", exact: true }));
+  expect(onAddToChat).toHaveBeenCalledWith({ kind: "thread", thread });
+});

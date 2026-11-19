@@ -11,7 +11,11 @@ import * as Semaphore from "effect/Semaphore";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type ClientSettings,
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -155,13 +159,17 @@ const { logInfo: logWindowInfo, logWarning: logWindowWarning } =
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
   platform: NodeJS.Platform,
+  appIconPath: Option.Option<string>,
 ): { icon: string } | Record<string, never> {
   if (platform === "darwin") return {};
   const ext = platform === "win32" ? "ico" : "png";
-  return Option.match(iconPaths[ext], {
-    onNone: () => ({}),
-    onSome: (icon) => ({ icon }),
-  });
+  return Option.match(
+    Option.orElse(appIconPath, () => iconPaths[ext]),
+    {
+      onNone: () => ({}),
+      onSome: (icon) => ({ icon }),
+    },
+  );
 }
 
 // The default theme's window chrome (--app-chrome-background), so the first
@@ -449,7 +457,15 @@ export const make = Effect.gen(function* () {
     yield* previewManager.getBrowserSession();
     const applicationUrl = getDesktopUrl(environment.isDevelopment);
     const iconPaths = yield* assets.iconPaths;
-    const iconOption = getIconOption(iconPaths, environment.platform);
+    const appIcon = Option.match(
+      yield* clientSettings.get.pipe(Effect.orElseSucceed(() => Option.none<ClientSettings>())),
+      { onNone: () => DEFAULT_CLIENT_SETTINGS.appIcon, onSome: (settings) => settings.appIcon },
+    );
+    const iconOption = getIconOption(
+      iconPaths,
+      environment.platform,
+      yield* assets.resolveAppIconPath(appIcon),
+    );
     // The native background and caption symbols follow the chrome, which stays
     // dark in the light, black chrome appearance.
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkChrome;
@@ -836,11 +852,26 @@ export const make = Effect.gen(function* () {
 
     if (environment.platform === "darwin") {
       // Mouse drivers can deliver Back/Forward as macOS swipe gestures instead of buttons.
-      window.on("swipe", (_event, direction) => {
-        const history = window.webContents.navigationHistory;
-        if (direction === "left" && history.canGoBack()) history.goBack();
-        else if (direction === "right" && history.canGoForward()) history.goForward();
-      });
+      window.on("swipe", (_event, direction) =>
+        runPromise(
+          Effect.gen(function* () {
+            const settings = yield* clientSettings.get.pipe(
+              Effect.orElseSucceed(() => Option.none()),
+            );
+            if (
+              Option.isSome(settings) &&
+              settings.value.layoutThreeFingerSwipe &&
+              settings.value.scrollingWorkspacesEnabled
+            ) {
+              window.webContents.send(MENU_ACTION_CHANNEL, `layout-swipe-${direction}`);
+              return;
+            }
+            const history = window.webContents.navigationHistory;
+            if (direction === "left" && history.canGoBack()) history.goBack();
+            else if (direction === "right" && history.canGoForward()) history.goForward();
+          }),
+        ),
+      );
       window.on("enter-full-screen", () => {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
       });

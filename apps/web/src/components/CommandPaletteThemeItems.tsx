@@ -2,9 +2,11 @@ import { BUILT_IN_THEMES } from "@t3tools/shared/themePalettes";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { AppWindowIcon, MonitorIcon, MoonIcon, PaletteIcon, SunIcon } from "lucide-react";
 
+import { APP_ICON_OPTIONS, appIconOption } from "../appIcon";
 import { m } from "../i18n/messages";
 import { useCustomThemes } from "../hooks/useCustomThemes";
 import { useEnvironmentThemeDefinitions } from "../hooks/useEnvironmentTheme";
+import { updateClientSettings, useClientSettings } from "../hooks/useSettings";
 import { APPEARANCE_CHOICES, useTheme, type AppearanceChoice } from "../hooks/useTheme";
 import { getThemeDefinition } from "../themePalette";
 import {
@@ -70,6 +72,7 @@ export function useCommandPaletteThemeItems() {
   const themeCards = useThemeCards();
   const gt = useGT();
   const messages = useMessages();
+  const currentAppIcon = appIconOption(useClientSettings((settings) => settings.appIcon));
 
   const changeThemeItem: CommandPaletteSubmenuItem = {
     kind: "submenu",
@@ -177,5 +180,34 @@ export function useCommandPaletteThemeItems() {
     },
   };
 
-  return { changeThemeItem, changeAppearanceItem, themeEditorItem };
+  const changeAppIconItem: CommandPaletteSubmenuItem = {
+    kind: "submenu",
+    value: "action:change-app-icon",
+    searchTerms: ["change app icon", "dock", "taskbar", "favicon", "logo", "nightly"],
+    title: gt("Change app icon"),
+    icon: <AppWindowIcon className={ITEM_ICON_CLASS} />,
+    addonIcon: <AppWindowIcon className={ADDON_ICON_CLASS} />,
+    groups: [
+      {
+        value: "app-icons",
+        label: gt("Change app icon"),
+        items: APP_ICON_OPTIONS.map((option) => ({
+          kind: "action",
+          value: `app-icon:${option.id}`,
+          title: messages(option.label),
+          searchTerms: [messages(option.label), option.label, "app icon"],
+          icon: <img alt="" className="size-4" draggable={false} src={option.src} />,
+          titleTrailingContent:
+            currentAppIcon.id === option.id ? (
+              <span className="text-meta text-dim-foreground">
+                <T context="the theme or mode in use now">Current</T>
+              </span>
+            ) : undefined,
+          run: () => updateClientSettings({ appIcon: option.id }),
+        })),
+      },
+    ],
+  };
+
+  return { changeThemeItem, changeAppearanceItem, changeAppIconItem, themeEditorItem };
 }

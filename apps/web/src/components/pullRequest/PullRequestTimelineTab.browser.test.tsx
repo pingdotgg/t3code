@@ -5,6 +5,7 @@ import {
   type PullRequestDetailView,
 } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import "../../index.css";
@@ -84,4 +85,47 @@ it("mounts only the timeline rows near the viewport of a huge pull request", asy
   const mounted = screen.container.querySelectorAll("button").length;
   expect(mounted).toBeGreaterThan(0);
   expect(mounted).toBeLessThan(COMMITS / 10);
+});
+
+it("opens sparse activity and keeps manual choices when more events arrive", async () => {
+  const sparse: PullRequestDetailView = {
+    ...detail,
+    body: "The full pull request description.",
+    commits: detail.commits.slice(0, 1),
+    comments: [
+      {
+        id: "review",
+        kind: "review",
+        author: detail.author,
+        body: "The full review text.",
+        createdAt: detail.createdAt,
+        url: null,
+        path: null,
+        reviewState: "APPROVED",
+      },
+    ],
+  };
+  const tab = (value: PullRequestDetailView) => (
+    <div style={{ height: 600 }}>
+      <PullRequestTimelineTab
+        detail={value}
+        environmentId={EnvironmentId.make("environment")}
+        order="oldest"
+        onOpenCommit={() => {}}
+      />
+    </div>
+  );
+  await using screen = await render(tab(sparse));
+  await expect.element(screen.getByRole("button", { name: "Hide review text" })).toBeVisible();
+  await expect.element(screen.getByText(sparse.body)).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Hide review text" }));
+  await screen.rerender(tab({ ...sparse, commits: detail.commits.slice(0, 2) }));
+  await expect.element(screen.getByRole("button", { name: "Show review text" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Show review text" }));
+  await screen.rerender(tab(sparse));
+  await expect.element(screen.getByRole("button", { name: "Hide review text" })).toBeVisible();
+  await userEvent.click(screen.getByRole("button", { name: "Hide description" }));
+  await screen.rerender(tab({ ...sparse, commits: detail.commits.slice(0, 2) }));
+  await screen.rerender(tab(sparse));
+  await expect.element(screen.getByRole("button", { name: "Show description" })).toBeVisible();
 });

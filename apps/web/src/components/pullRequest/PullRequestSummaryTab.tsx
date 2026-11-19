@@ -9,6 +9,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import { useAtomCommand } from "~/state/use-atom-command";
 import {
   type EnvironmentId,
+  type PullRequestActor,
   type PullRequestComment,
   type PullRequestDetailView,
   type PullRequestRef,
@@ -37,6 +38,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { cn } from "~/lib/utils";
+import { observeResize } from "~/lib/observeResize";
 import { RelativeTime } from "~/components/RelativeTime";
 
 import { Button } from "../ui/button";
@@ -54,6 +56,7 @@ import { toastManager } from "../ui/toast";
 import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
+  AddToChatIconButton,
   PullRequestActorLabel,
   PullRequestLabelChip,
   PullRequestReviewOutcomeBadge,
@@ -108,6 +111,26 @@ import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
 import { changeRequestTermKind } from "./changeRequestTerm";
 
+/** Who wrote a comment and when, the time linking to it on the host. */
+export function WorkItemCommentIdentity({
+  actor,
+  profileUrl,
+  createdAt,
+  url,
+}: {
+  actor: PullRequestActor | null;
+  profileUrl: string | null;
+  createdAt: string;
+  url: string | null;
+}) {
+  return (
+    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
+      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
+      <PullRequestCommentTime createdAt={createdAt} url={url} />
+    </div>
+  );
+}
+
 function CommentIdentity({
   comment,
   detail,
@@ -120,10 +143,51 @@ function CommentIdentity({
     ? sourceControlClients.get(detail.provider).authorProfileUrl(actor.login, detail.url)
     : null;
   return (
-    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1 text-meta">
-      <PullRequestActorLabel actor={actor} profileUrl={profileUrl} className="max-w-full" />
-      <PullRequestCommentTime createdAt={comment.createdAt} url={comment.url} />
-    </div>
+    <WorkItemCommentIdentity
+      actor={actor}
+      profileUrl={profileUrl}
+      createdAt={comment.createdAt}
+      url={comment.url}
+    />
+  );
+}
+
+/**
+ * One comment's card on a pull request or an issue: who and when with its actions on the first
+ * line, then whatever the comment holds, then its reactions.
+ */
+export function WorkItemCommentCard({
+  linkTarget = false,
+  header,
+  actions,
+  reactions,
+  footer,
+  children,
+}: {
+  /** The comment a followed link points at, outlined until the reader moves on. */
+  linkTarget?: boolean;
+  header: ReactNode;
+  actions?: ReactNode;
+  reactions: ReactNode;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <article
+      data-pr-link-target={linkTarget || undefined}
+      tabIndex={linkTarget ? -1 : undefined}
+      className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
+    >
+      <div className="flex flex-wrap items-center gap-1.5 px-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
+          {header}
+        </div>
+        {actions}
+      </div>
+      {children}
+      <div className="mt-2 flex px-3">{reactions}</div>
+      {footer}
+    </article>
   );
 }
 
@@ -256,47 +320,6 @@ function AddToChatButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-function AddToChatIconButton({ onClick }: { onClick: () => void }) {
-  const gt = useGT();
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <Button
-            size="icon-xs"
-            variant="ghost-muted"
-            aria-label={gt("Add to chat")}
-            onClick={onClick}
-          />
-        }
-      >
-        <MessageSquarePlusIcon className="size-3" />
-      </TooltipTrigger>
-      <TooltipPopup>{gt("Add to chat")}</TooltipPopup>
-    </Tooltip>
-  );
-}
-
-export function PullRequestMetaRow({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-h-7 min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-meta sm:min-h-6">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
-  );
-}
-
 export function PullRequestSection({
   title,
   name,
@@ -359,9 +382,9 @@ export function PullRequestSection({
     >
       <div
         ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-(--code-surface) pr-4"
+        className="sticky top-0 z-10 flex w-full flex-wrap items-center gap-x-2 bg-(--code-surface) pr-4"
       >
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
+        <CollapsibleTrigger className="flex min-w-fit flex-1 items-center gap-1.5 px-4 py-3 text-left text-label text-foreground">
           <span>{title}</span>
           {count !== undefined ? (
             <span className="font-normal tabular-nums text-muted-foreground">
@@ -590,6 +613,7 @@ export function PullRequestSummaryTab({
   const editingCommentId = commentScope?.pullRequest === detail.url ? commentScope.commentId : null;
 
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [descriptionRoom, setDescriptionRoom] = useState(0);
   const [checksReveals, setChecksReveals] = useState(0);
   const [descriptionReveals, setDescriptionReveals] = useState(0);
   const [seenSectionUrl, setSeenSectionUrl] = useState<string | undefined>(undefined);
@@ -748,44 +772,48 @@ export function PullRequestSummaryTab({
     // A reply goes with its conversation, from the card that heads it.
     const chat = reply ? null : chatSubject(comment, thread);
     return (
-      <article
+      <WorkItemCommentCard
         key={`${detail.url}:${comment.id}`}
-        data-pr-link-target={matchesLink(comment.url) || undefined}
-        tabIndex={matchesLink(comment.url) ? -1 : undefined}
-        className="group data-[pr-link-target=true]:ring-1 data-[pr-link-target=true]:ring-inset data-[pr-link-target=true]:ring-primary/40 rounded-xl surface-panel py-2.5 [contain-intrinsic-block-size:160px] [content-visibility:auto]"
-      >
-        <div className="flex flex-wrap items-center gap-1.5 px-3">
-          <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-meta text-muted-foreground">
+        linkTarget={matchesLink(comment.url)}
+        header={
+          <>
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
               <PullRequestReviewOutcomeBadge outcome={outcome} />
             ) : comment.reviewState ? (
               <span>{reviewStateLabel(comment.reviewState, resolve)}</span>
             ) : null}
-          </div>
-          {onFixFinding && finding ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
-              onClick={() => onFixFinding(finding)}
-            >
-              <span className="inline-flex items-baseline gap-1">
-                <HammerIcon className="size-3 self-center" />
-                <span>
-                  {pendingFinding === pullRequestFindingKey(finding)
-                    ? gt("Preparing...")
-                    : fixFindingLabel}
+          </>
+        }
+        actions={
+          <>
+            {onFixFinding && finding ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pendingFinding !== null && pendingFinding !== undefined}
+                onClick={() => onFixFinding(finding)}
+              >
+                <span className="inline-flex items-baseline gap-1">
+                  <HammerIcon className="size-3 self-center" />
+                  <span>
+                    {pendingFinding === pullRequestFindingKey(finding)
+                      ? gt("Preparing...")
+                      : fixFindingLabel}
+                  </span>
                 </span>
-              </span>
-            </Button>
-          ) : null}
-          {resolveButtonFor(thread)}
-          {onAddToChat && chat !== null ? (
-            <AddToChatButton onClick={() => onAddToChat(chat)} />
-          ) : null}
-        </div>
+              </Button>
+            ) : null}
+            {resolveButtonFor(thread)}
+            {onAddToChat && chat !== null ? (
+              <AddToChatButton onClick={() => onAddToChat(chat)} />
+            ) : null}
+          </>
+        }
+        reactions={reactionBarFor(comment)}
+        footer={footer}
+      >
         {reply ? null : (
           <div className="px-3">
             <CommentLocation comment={comment} thread={thread} />
@@ -799,9 +827,7 @@ export function PullRequestSummaryTab({
             editing={commentEditing}
           />
         )}
-        <div className="mt-2 flex px-3">{reactionBarFor(comment)}</div>
-        {footer}
-      </article>
+      </WorkItemCommentCard>
     );
   };
 
@@ -903,6 +929,7 @@ export function PullRequestSummaryTab({
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
       fixLabel={fixFindingLabel}
+      {...(onAddToChat ? { onAddToChat: (thread) => onAddToChat({ kind: "thread", thread }) } : {})}
       {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
       onLoadMore={async (cursor): Promise<PullRequestThreadCommentsResult | null> => {
         const result = await loadThreadComments({
@@ -1038,274 +1065,301 @@ export function PullRequestSummaryTab({
       className="h-full overflow-y-auto"
       data-pull-request-summary-scroll
     >
-      {readiness ? <section className="px-4 pt-3.5 pb-1.5">{readiness}</section> : null}
-
-      <PullRequestSection
-        key={`description:${detail.url}`}
-        title={gt("Description")}
-        keepMounted
-        revealCount={descriptionReveals}
+      <div
+        ref={(content) => {
+          const scroller = content?.parentElement;
+          if (!content || !scroller) return;
+          // A collapsed description fills what the rest of the tab leaves empty in the scroller.
+          return observeResize([scroller, content], () => {
+            const clip = content.querySelector<HTMLElement>(
+              "[data-pr-description] [data-comment-clip]",
+            );
+            setDescriptionRoom(
+              clip
+                ? Math.floor(
+                    scroller.clientHeight -
+                      content.getBoundingClientRect().height +
+                      clip.getBoundingClientRect().height,
+                  )
+                : 0,
+            );
+          });
+        }}
       >
-        <div className="group">
-          {editingDescription ? (
-            <PullRequestMarkdownEditor
-              allowEmpty
-              value={bodyScope.body}
-              cwd={detail.workspaceRoot}
-              environmentId={environmentId}
-              completionScope={completionScope}
-              threadRef={threadRef}
-              label={gt(
-                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} description",
-                { term: changeRequestTermKind(terminology) },
-              )}
-              placeholder={gt(
-                "Describe this {term, select, mr {merge request} cr {change request} other {pull request}}",
-                { term: changeRequestTermKind(terminology) },
-              )}
-              saving={descriptionSaving}
-              onSave={(body) => void saveBody(body)}
-              onCancel={() => setBodyScope(null)}
-            />
-          ) : (
-            <div className="flex items-start gap-1" data-pr-description>
-              <PullRequestCommentBody
-                key={detail.url}
-                variant="description"
-                revealCount={descriptionReveals}
-                className="min-w-0 flex-1"
-                text={
-                  description.trim().length > 0 ? description : gt("_No description provided._")
-                }
+        {readiness ? <section className="px-4 pt-0.75 pb-1">{readiness}</section> : null}
+
+        <PullRequestSection
+          key={`description:${detail.url}`}
+          title={gt("Description")}
+          keepMounted
+          revealCount={descriptionReveals}
+        >
+          <div className="group">
+            {editingDescription ? (
+              <PullRequestMarkdownEditor
+                allowEmpty
+                value={bodyScope.body}
                 cwd={detail.workspaceRoot}
                 environmentId={environmentId}
+                completionScope={completionScope}
                 threadRef={threadRef}
-                onTaskListChange={canEditDescription ? toggleTask : undefined}
-              />
-              {canEditDescription ? (
-                <PullRequestEditButton
-                  aria-label={gt("Edit description")}
-                  onClick={() => setBodyScope({ url: detail.url, body: description })}
-                />
-              ) : null}
-            </div>
-          )}
-        </div>
-        {/* Labels ride under the description, where the pull request says what it is about. The
-            row is shown empty only where a label could be put on it from here. */}
-        {detail.labels.length > 0 || detail.capabilities.labels === true ? (
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
-            <TagIcon aria-hidden className="mr-0.5 size-3.5 text-muted-foreground" />
-            {detail.labels.map((label) => (
-              <PullRequestLabelChip
-                key={label.name}
-                label={label}
-                size="default"
-                className="max-w-48"
-                focusable
-              />
-            ))}
-            {detail.capabilities.labels === true ? (
-              <PullRequestLabelPicker
-                environmentId={environmentId}
-                reference={reference}
-                allowed={detail.viewerPermissions.labels !== false}
-              />
-            ) : null}
-          </div>
-        ) : null}
-      </PullRequestSection>
-
-      {attachments.length > 0 ? (
-        <PullRequestSection
-          key={`attachments:${detail.url}`}
-          title={gt("Attachments")}
-          count={attachments.length}
-        >
-          <ScrollArea
-            chainVerticalScroll
-            className="-mx-4 h-auto w-auto"
-            radius="none"
-            viewportTabIndex={0}
-          >
-            <div className="flex w-max min-w-full gap-3 px-4 pb-2" data-image-gallery>
-              {attachments.map((attachment) => (
-                <figure key={attachment.url} className="w-44 shrink-0">
-                  <div className="h-28 overflow-hidden rounded-xl border border-border/60 [&_img]:h-28 [&_img]:w-44 [&_img]:object-cover [&_video]:h-28 [&_video]:object-cover">
-                    <PullRequestMarkdown
-                      gallery={false}
-                      text={
-                        attachment.media === "image" ? `![](<${attachment.url}>)` : attachment.url
-                      }
-                      cwd={detail.workspaceRoot}
-                      environmentId={environmentId}
-                      threadRef={threadRef}
-                    />
-                  </div>
-                  <figcaption className="mt-2 truncate text-meta text-muted-foreground">
-                    {attachment.caption}
-                  </figcaption>
-                </figure>
-              ))}
-            </div>
-          </ScrollArea>
-        </PullRequestSection>
-      ) : null}
-
-      <PullRequestSection
-        key={`conversation:${detail.url}`}
-        title={gt("Conversation")}
-        revealCount={linked?.url === detail.url ? linked.count : 0}
-        count={
-          activityPending || activityError ? undefined : Math.max(detail.commentCount, commentCount)
-        }
-        meta={conversationMeta}
-        actions={
-          <div className="flex shrink-0 items-center gap-1">
-            <Menu>
-              <MenuTrigger
-                render={<Button size="xs" variant="ghost-muted" />}
-                aria-label={gt("Filter comments")}
-              >
-                <ListFilterIcon aria-hidden className="size-3" />
-                {filteredOutCount > 0
-                  ? gt("{count, plural, one {{count} hidden} other {{count} hidden}}", {
-                      count: filteredOutCount,
-                    })
-                  : gt("Filter", { $context: "noun, filter menu" })}
-              </MenuTrigger>
-              <MenuPopup align="end">
-                <MenuGroup>
-                  <MenuGroupLabel>
-                    <T context="which comments to show">Show</T>
-                  </MenuGroupLabel>
-                  <MenuCheckboxItem
-                    checked={commentFilter.bots}
-                    closeOnClick={false}
-                    onCheckedChange={(bots) => setCommentFilter((value) => ({ ...value, bots }))}
-                  >
-                    <T>Bot comments</T>
-                  </MenuCheckboxItem>
-                  <MenuCheckboxItem
-                    checked={commentFilter.resolved}
-                    closeOnClick={false}
-                    onCheckedChange={(resolved) =>
-                      setCommentFilter((value) => ({ ...value, resolved }))
-                    }
-                  >
-                    <T>Resolved or dismissed</T>
-                  </MenuCheckboxItem>
-                </MenuGroup>
-              </MenuPopup>
-            </Menu>
-            <Button
-              size="xs"
-              variant="ghost-muted"
-              aria-label={
-                commentOrder === "newest"
-                  ? gt("Show oldest comments first")
-                  : gt("Show newest comments first")
-              }
-              onClick={() => setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))}
-            >
-              <ArrowDownUpIcon aria-hidden className="size-3" />
-              {commentOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
-            </Button>
-          </div>
-        }
-      >
-        {linkedAnchor !== null && revealUrl === undefined && !items.some(itemMatchesLink) ? (
-          <p role="status" className="py-4 text-meta text-muted-foreground">
-            <T>The linked item is not in the loaded activity.</T>
-          </p>
-        ) : null}
-        {activityPending ? (
-          <PullRequestConversationGhost terminology={terminology} />
-        ) : activityError ? (
-          <PullRequestActivityUnavailableState
-            compact
-            error={activityError}
-            term={changeRequestTermKind(terminology)}
-            onRetry={onRefresh}
-          />
-        ) : (
-          <>
-            {detail.commentsTruncated ? (
-              <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-meta">
-                {gt(
-                  "{count, plural, one {This conversation is only partially loaded. {count} comment is loaded; open it on the host to read the rest.} other {This conversation is only partially loaded. {count} comments are loaded; open it on the host to read the rest.}}",
-                  { count: commentCount },
+                label={gt(
+                  "{term, select, mr {Merge request} cr {Change request} other {Pull request}} description",
+                  { term: changeRequestTermKind(terminology) },
                 )}
-              </p>
-            ) : null}
-            {items.length === 0 ? (
-              <p className="py-2 text-meta text-muted-foreground">
-                <T>No comments yet.</T>
-              </p>
+                placeholder={gt(
+                  "Describe this {term, select, mr {merge request} cr {change request} other {pull request}}",
+                  { term: changeRequestTermKind(terminology) },
+                )}
+                saving={descriptionSaving}
+                onSave={(body) => void saveBody(body)}
+                onCancel={() => setBodyScope(null)}
+              />
             ) : (
-              <div className="space-y-3">
-                {conversation.changeRequests.map((entry) => (
-                  <div key={`pinned:${entry.comment.id}`}>
-                    {renderReview(
-                      entry.comment,
-                      entry.openThreadCount > 0 || entry.reRequestedAt ? (
-                        <div className="flex items-center gap-2 px-3 pt-0.5 text-meta text-muted-foreground">
-                          {entry.openThreadCount > 0 ? (
-                            <span className="inline-flex items-center gap-1.5">
-                              <CornerDownRightIcon aria-hidden className="size-3.5" />
-                              {gt(
-                                "{count, plural, one {{count} thread below} other {{count} threads below}}",
-                                { count: entry.openThreadCount },
-                              )}
-                            </span>
-                          ) : null}
-                          {entry.reRequestedAt ? (
-                            <span className="ml-auto inline-flex items-center gap-1.5">
-                              <RefreshCwIcon aria-hidden className="size-3" />
-                              <T context="followed by a relative time such as 5m ago">
-                                Re-requested{" "}
-                                <Var>
-                                  <RelativeTime timestamp={entry.reRequestedAt} />
-                                </Var>
-                              </T>
-                            </span>
-                          ) : null}
-                        </div>
-                      ) : null,
-                    )}
-                  </div>
-                ))}
-                {visibleOpenThreads.map(renderThreadCard)}
-                {filteredItems.length === 0 && filteredOutCount > 0 ? (
-                  <p className="py-2 text-meta text-muted-foreground">
-                    {filteredOutCount === 1
-                      ? gt("The only comment is hidden by the filter.")
-                      : gt(
-                          "{count, plural, one {All {count} comments are hidden by the filter.} other {All {count} comments are hidden by the filter.}}",
-                          { count: filteredOutCount },
-                        )}
-                  </p>
-                ) : null}
-                {commentOrder === "oldest" ? showOldestCommentsButton : null}
-                {visibleItems.map(renderItem)}
-                {commentOrder === "newest" ? showOldestCommentsButton : null}
-                {shownConversations > COMMENT_PAGE ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="w-full"
-                    onClick={() => setShown({ url: detail.url, count: COMMENT_PAGE })}
-                  >
-                    <T>
-                      Show only <Var>{COMMENT_PAGE}</Var> recent conversations
-                    </T>
-                  </Button>
+              <div className="flex items-start gap-1" data-pr-description>
+                <PullRequestCommentBody
+                  key={detail.url}
+                  variant="description"
+                  collapsedHeight={descriptionRoom}
+                  revealCount={descriptionReveals}
+                  className="min-w-0 flex-1"
+                  text={
+                    description.trim().length > 0 ? description : gt("_No description provided._")
+                  }
+                  cwd={detail.workspaceRoot}
+                  environmentId={environmentId}
+                  threadRef={threadRef}
+                  onTaskListChange={canEditDescription ? toggleTask : undefined}
+                />
+                {canEditDescription ? (
+                  <PullRequestEditButton
+                    aria-label={gt("Edit description")}
+                    onClick={() => setBodyScope({ url: detail.url, body: description })}
+                  />
                 ) : null}
               </div>
             )}
-          </>
-        )}
-      </PullRequestSection>
+          </div>
+          {/* Labels ride under the description, where the pull request says what it is about. The
+            row is shown empty only where a label could be put on it from here. */}
+          {detail.labels.length > 0 || detail.capabilities.labels === true ? (
+            <div className="mt-3 flex min-w-0 flex-wrap items-center gap-1 text-meta">
+              <TagIcon aria-hidden className="mr-0.5 size-3.5 text-muted-foreground" />
+              {detail.labels.map((label) => (
+                <PullRequestLabelChip
+                  key={label.name}
+                  label={label}
+                  size="default"
+                  className="max-w-48"
+                  focusable
+                />
+              ))}
+              {detail.capabilities.labels === true ? (
+                <PullRequestLabelPicker
+                  environmentId={environmentId}
+                  reference={reference}
+                  allowed={detail.viewerPermissions.labels !== false}
+                />
+              ) : null}
+            </div>
+          ) : null}
+        </PullRequestSection>
+
+        {attachments.length > 0 ? (
+          <PullRequestSection
+            key={`attachments:${detail.url}`}
+            title={gt("Attachments")}
+            count={attachments.length}
+          >
+            <ScrollArea
+              chainVerticalScroll
+              className="-mx-4 h-auto w-auto"
+              radius="none"
+              viewportTabIndex={0}
+            >
+              <div className="flex w-max min-w-full gap-3 px-4 pb-2" data-image-gallery>
+                {attachments.map((attachment) => (
+                  <figure key={attachment.url} className="w-44 shrink-0">
+                    <div className="h-28 overflow-hidden rounded-xl border border-border/60 [&_img]:h-28 [&_img]:w-44 [&_img]:object-cover [&_video]:h-28 [&_video]:object-cover">
+                      <PullRequestMarkdown
+                        gallery={false}
+                        text={
+                          attachment.media === "image" ? `![](<${attachment.url}>)` : attachment.url
+                        }
+                        cwd={detail.workspaceRoot}
+                        environmentId={environmentId}
+                        threadRef={threadRef}
+                      />
+                    </div>
+                    <figcaption className="mt-2 truncate text-meta text-muted-foreground">
+                      {attachment.caption}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </ScrollArea>
+          </PullRequestSection>
+        ) : null}
+
+        <PullRequestSection
+          key={`conversation:${detail.url}`}
+          title={gt("Conversation")}
+          revealCount={linked?.url === detail.url ? linked.count : 0}
+          count={
+            activityPending || activityError
+              ? undefined
+              : Math.max(detail.commentCount, commentCount)
+          }
+          meta={conversationMeta}
+          actions={
+            <div className="ml-auto flex shrink-0 items-center gap-1">
+              <Menu>
+                <MenuTrigger
+                  render={<Button size="xs" variant="ghost-muted" />}
+                  aria-label={gt("Filter comments")}
+                >
+                  <ListFilterIcon aria-hidden className="size-3" />
+                  {filteredOutCount > 0
+                    ? gt("{count, plural, one {{count} hidden} other {{count} hidden}}", {
+                        count: filteredOutCount,
+                      })
+                    : gt("Filter", { $context: "noun, filter menu" })}
+                </MenuTrigger>
+                <MenuPopup align="end">
+                  <MenuGroup>
+                    <MenuGroupLabel>
+                      <T context="which comments to show">Show</T>
+                    </MenuGroupLabel>
+                    <MenuCheckboxItem
+                      checked={commentFilter.bots}
+                      closeOnClick={false}
+                      onCheckedChange={(bots) => setCommentFilter((value) => ({ ...value, bots }))}
+                    >
+                      <T>Bot comments</T>
+                    </MenuCheckboxItem>
+                    <MenuCheckboxItem
+                      checked={commentFilter.resolved}
+                      closeOnClick={false}
+                      onCheckedChange={(resolved) =>
+                        setCommentFilter((value) => ({ ...value, resolved }))
+                      }
+                    >
+                      <T>Resolved or dismissed</T>
+                    </MenuCheckboxItem>
+                  </MenuGroup>
+                </MenuPopup>
+              </Menu>
+              <Button
+                size="xs"
+                variant="ghost-muted"
+                aria-label={
+                  commentOrder === "newest"
+                    ? gt("Show oldest comments first")
+                    : gt("Show newest comments first")
+                }
+                onClick={() =>
+                  setCommentOrder((value) => (value === "newest" ? "oldest" : "newest"))
+                }
+              >
+                <ArrowDownUpIcon aria-hidden className="size-3" />
+                {commentOrder === "newest" ? gt("Newest first") : gt("Oldest first")}
+              </Button>
+            </div>
+          }
+        >
+          {linkedAnchor !== null && revealUrl === undefined && !items.some(itemMatchesLink) ? (
+            <p role="status" className="py-4 text-meta text-muted-foreground">
+              <T>The linked item is not in the loaded activity.</T>
+            </p>
+          ) : null}
+          {activityPending ? (
+            <PullRequestConversationGhost terminology={terminology} />
+          ) : activityError ? (
+            <PullRequestActivityUnavailableState
+              compact
+              error={activityError}
+              term={changeRequestTermKind(terminology)}
+              onRetry={onRefresh}
+            />
+          ) : (
+            <>
+              {detail.commentsTruncated ? (
+                <p className="mb-2 rounded-md border border-warning/30 bg-warning-surface px-2 py-1.5 text-meta">
+                  {gt(
+                    "{count, plural, one {This conversation is only partially loaded. {count} comment is loaded; open it on the host to read the rest.} other {This conversation is only partially loaded. {count} comments are loaded; open it on the host to read the rest.}}",
+                    { count: commentCount },
+                  )}
+                </p>
+              ) : null}
+              {items.length === 0 ? (
+                <p className="py-2 text-meta text-muted-foreground">
+                  <T>No comments yet.</T>
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {conversation.changeRequests.map((entry) => (
+                    <div key={`pinned:${entry.comment.id}`}>
+                      {renderReview(
+                        entry.comment,
+                        entry.openThreadCount > 0 || entry.reRequestedAt ? (
+                          <div className="flex items-center gap-2 px-3 pt-0.5 text-meta text-muted-foreground">
+                            {entry.openThreadCount > 0 ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <CornerDownRightIcon aria-hidden className="size-3.5" />
+                                {gt(
+                                  "{count, plural, one {{count} thread below} other {{count} threads below}}",
+                                  { count: entry.openThreadCount },
+                                )}
+                              </span>
+                            ) : null}
+                            {entry.reRequestedAt ? (
+                              <span className="ml-auto inline-flex items-center gap-1.5">
+                                <RefreshCwIcon aria-hidden className="size-3" />
+                                <T context="followed by a relative time such as 5m ago">
+                                  Re-requested{" "}
+                                  <Var>
+                                    <RelativeTime timestamp={entry.reRequestedAt} />
+                                  </Var>
+                                </T>
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null,
+                      )}
+                    </div>
+                  ))}
+                  {visibleOpenThreads.map(renderThreadCard)}
+                  {filteredItems.length === 0 && filteredOutCount > 0 ? (
+                    <p className="py-2 text-meta text-muted-foreground">
+                      {filteredOutCount === 1
+                        ? gt("The only comment is hidden by the filter.")
+                        : gt(
+                            "{count, plural, one {All {count} comments are hidden by the filter.} other {All {count} comments are hidden by the filter.}}",
+                            { count: filteredOutCount },
+                          )}
+                    </p>
+                  ) : null}
+                  {commentOrder === "oldest" ? showOldestCommentsButton : null}
+                  {visibleItems.map(renderItem)}
+                  {commentOrder === "newest" ? showOldestCommentsButton : null}
+                  {shownConversations > COMMENT_PAGE ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="w-full"
+                      onClick={() => setShown({ url: detail.url, count: COMMENT_PAGE })}
+                    >
+                      <T>
+                        Show only <Var>{COMMENT_PAGE}</Var> recent conversations
+                      </T>
+                    </Button>
+                  ) : null}
+                </div>
+              )}
+            </>
+          )}
+        </PullRequestSection>
+      </div>
     </div>
   );
 }

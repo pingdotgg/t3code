@@ -11,6 +11,7 @@ import {
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
   AuthOrchestrationOperateScope,
+  type ContextMenuItem,
   type ScopedThreadRef,
   type ThreadId,
 } from "@t3tools/contracts";
@@ -63,14 +64,29 @@ function failureToast(title: string, error: unknown) {
   );
 }
 
+const NEW_SIDE_CHAT_MENU_ID = "thread:new-side-chat";
+
 export function useThreadActionMenu(input: {
   readonly threadRef: ScopedThreadRef | null;
   readonly projectCwd: string | null;
   readonly onStartRename: () => void;
   readonly onFind?: ((threadRef: ScopedThreadRef) => void) | undefined;
   readonly canShareWithGuest: boolean;
+  /** Tab actions prepended to the thread menu, read when it opens. */
+  readonly leadingItems?: () => readonly ContextMenuItem<string>[];
+  readonly onLeadingAction?: (id: string) => void;
+  readonly onNewSideChat?: (() => void) | undefined;
 }) {
-  const { threadRef, projectCwd, onStartRename, onFind, canShareWithGuest } = input;
+  const {
+    threadRef,
+    projectCwd,
+    onStartRename,
+    onFind,
+    canShareWithGuest,
+    leadingItems,
+    onLeadingAction,
+    onNewSideChat,
+  } = input;
   const router = useRouter();
   const projects = useProjects();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -156,9 +172,33 @@ export function useThreadActionMenu(input: {
         canShareWithGuest,
         canTurnIntoProject: canTurnThreadIntoProject(threadRef),
       });
-      const clicked = await settlePromise(() => api.contextMenu.show(items, position));
+      const leading = leadingItems?.() ?? [];
+      const leadingIds = new Set(leading.map((item) => item.id));
+      const sideChatItems: ContextMenuItem<string>[] = onNewSideChat
+        ? [{ id: NEW_SIDE_CHAT_MENU_ID, label: m(msg("New side chat")), icon: "messages-square" }]
+        : [];
+      const menuItems: ContextMenuItem<string>[] = [
+        ...sideChatItems,
+        ...leading.map((item, index) =>
+          index === 0 && sideChatItems.length > 0 ? { ...item, separatorBefore: true } : item,
+        ),
+        ...items.map((item, index) =>
+          index === 0 && (leading.length > 0 || sideChatItems.length > 0)
+            ? { ...item, separatorBefore: true }
+            : item,
+        ),
+      ];
+      const clicked = await settlePromise(() => api.contextMenu.show(menuItems, position));
       if (clicked._tag === "Failure" || clicked.value === null) return;
-      const action: ThreadActionMenuId = clicked.value;
+      if (clicked.value === NEW_SIDE_CHAT_MENU_ID) {
+        onNewSideChat?.();
+        return;
+      }
+      if (leadingIds.has(clicked.value)) {
+        onLeadingAction?.(clicked.value);
+        return;
+      }
+      const action = clicked.value as ThreadActionMenuId;
       if (
         threadActionRequiresOperate(action) &&
         !readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)

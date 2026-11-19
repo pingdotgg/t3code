@@ -11,18 +11,23 @@ const source = NodeFS.readdirSync(sourceDirectory, { recursive: true, encoding: 
   .map((file) => NodeFS.readFileSync(NodePath.join(sourceDirectory, file), "utf8"))
   .join("\n");
 
-/** How the selector's hook is written in source: an attribute, a slot value, or a class name. */
-function sourcePattern(selector: string): RegExp {
-  const slot = /^\[data-slot="([a-z-]+)"\]$/.exec(selector)?.[1];
-  if (slot) return new RegExp(`data-slot["']?\\s*[:=]\\s*["']${slot}["']`);
-  const attribute = /^\[(data-[a-z-]+)/.exec(selector)?.[1];
-  return new RegExp(`\\b${attribute ?? selector.slice(1)}\\b`);
+/** How each part of the selector is written in source: a slot value, an attribute, or a class. */
+function sourcePatterns(selector: string): RegExp[] {
+  return Array.from(
+    selector.matchAll(/\[data-slot="([a-z-]+)"\]|\[((?:data|aria)-[a-z-]+)|\.([a-z-]+)/g),
+    ([, slot, attribute, className]) =>
+      slot
+        ? new RegExp(`data-slot["']?\\s*[:=]\\s*["']${slot}["']`)
+        : new RegExp(`\\b${attribute ?? className}\\b`),
+  );
 }
 
 // Theme CSS and the agent guide rely on these selectors. Rename one in the guide too.
 it.each(THEME_CSS_HOOKS.map((hook) => hook.selector))(
   "%s is still in the web source",
   (selector) => {
-    expect(source).toMatch(sourcePattern(selector));
+    const patterns = sourcePatterns(selector);
+    expect(patterns.length).toBeGreaterThan(0);
+    for (const pattern of patterns) expect(source).toMatch(pattern);
   },
 );

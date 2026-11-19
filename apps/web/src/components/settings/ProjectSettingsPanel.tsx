@@ -18,7 +18,10 @@ import {
   useProjectGroupUpdate,
   type ProjectGroupUpdate,
 } from "../../hooks/useProjectGroupUpdate";
-import { Navigate, useLocation, useNavigate } from "@tanstack/react-router";
+import { Navigate, useNavigate } from "@tanstack/react-router";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
+import { useLayoutPane } from "../../layout/layoutPaneContext";
+import { closeLayoutProject } from "../../layout/layoutActions";
 import { SmileIcon, Trash2Icon, UploadIcon } from "lucide-react";
 import { lazy, Suspense, useRef, useState, type ReactNode } from "react";
 import { T, useGT, useMessages } from "gt-react";
@@ -122,7 +125,13 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
       }}
     >
       <SelectTrigger
+        variant="well"
         size="sm"
+        title={
+          selection === "inherit"
+            ? gt("Default ({mode})", { mode: m(PROJECT_GROUPING_MODE_LABELS[globalMode]) })
+            : m(PROJECT_GROUPING_MODE_LABELS[selection])
+        }
         aria-label={gt("Grouping rule for {path} on {environment}", {
           path: member.workspaceRoot,
           environment: member.environmentLabel
@@ -132,23 +141,19 @@ function CheckoutGroupingSelect({ member }: { member: SidebarProjectGroupMember 
       >
         <SelectValue>
           {selection === "inherit"
-            ? gt("Default ({mode})", { mode: m(PROJECT_GROUPING_MODE_LABELS[globalMode]) })
+            ? gt("Default", { $context: "grouping rule follows the global default" })
             : m(PROJECT_GROUPING_MODE_LABELS[selection])}
         </SelectValue>
       </SelectTrigger>
       <SelectPopup align="end" alignItemWithTrigger={false}>
-        <SelectItem hideIndicator value="inherit">
+        <SelectItem value="inherit">
           <T>Use global default</T>
         </SelectItem>
-        <SelectItem hideIndicator value="repository">
-          {m(PROJECT_GROUPING_MODE_LABELS.repository)}
-        </SelectItem>
-        <SelectItem hideIndicator value="repository_path">
+        <SelectItem value="repository">{m(PROJECT_GROUPING_MODE_LABELS.repository)}</SelectItem>
+        <SelectItem value="repository_path">
           {m(PROJECT_GROUPING_MODE_LABELS.repository_path)}
         </SelectItem>
-        <SelectItem hideIndicator value="separate">
-          {m(PROJECT_GROUPING_MODE_LABELS.separate)}
-        </SelectItem>
+        <SelectItem value="separate">{m(PROJECT_GROUPING_MODE_LABELS.separate)}</SelectItem>
       </SelectPopup>
     </Select>
   );
@@ -187,7 +192,8 @@ export function ProjectSettingsPanel({
 }) {
   const gt = useGT();
   const groups = useSettingsProjectGroups();
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const { pathname, search } = useLayoutPageLocation();
+  const { focused } = useLayoutPane();
 
   const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
   const members =
@@ -220,11 +226,12 @@ export function ProjectSettingsPanel({
           ),
         )
       : undefined;
-  if (successor) {
+  if (focused && successor) {
     return (
       <Navigate
         to={pathname}
         search={{
+          ...(search.pane === 1 ? { pane: 1 as const } : {}),
           project: successor.projectKey,
           machine: environmentId ?? undefined,
           checkout: checkoutKey ?? undefined,
@@ -423,6 +430,10 @@ function ProjectDetail({
       } else if (projectDraftThread) {
         draftStore.clearDraftThread(projectDraftThread.draftId);
       }
+      closeLayoutProject(
+        projectRef,
+        memberThreads.map((thread) => scopeThreadRef(thread.environmentId, thread.id)),
+      );
       draftStore.clearProjectDraftThreadId(projectRef);
     }
 
@@ -463,8 +474,18 @@ function ProjectDetail({
   );
   const checkoutControls = (member: SidebarProjectGroupMember) => (
     <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-auto">
-      <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-72 @min-[32rem]/settings-row:flex-none">
-        <CheckoutGroupingSelect member={member} />
+      <div className="min-w-0 flex-1 @min-[32rem]/settings-row:w-44 @min-[32rem]/settings-row:flex-none">
+        <Tooltip>
+          <TooltipTrigger render={<div />}>
+            <CheckoutGroupingSelect member={member} />
+          </TooltipTrigger>
+          <TooltipPopup>
+            <T>
+              Grouping rule decides how each checkout joins project groups in the sidebar. Changing
+              it can move a checkout to a different project.
+            </T>
+          </TooltipPopup>
+        </Tooltip>
       </div>
       {hasMultipleCheckouts ? checkoutRemoveButton(member) : null}
     </div>
@@ -486,19 +507,22 @@ function ProjectDetail({
   // Every checkout shows, even a lone one, so where the project lives is always visible.
   const checkoutChoices = (
     <SettingsSection title={gt("Checkouts")}>
-      <p className="px-3 py-2.5 text-meta text-muted-foreground sm:px-4">
-        <T>
-          Grouping rule decides how each checkout joins project groups in the sidebar. Changing it
-          can move a checkout to a different project.
-        </T>
-      </p>
       {Array.from(checkoutsByEnvironment, ([environmentId, members]) => {
         if (checkoutsByEnvironment.size === 1) {
           return members.map((member) => (
             <SettingsRow
               key={member.physicalProjectKey}
               title={member.environmentLabel ?? gt("Environment")}
-              description={<span className="font-mono">{member.workspaceRoot}</span>}
+              description={
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="block truncate font-mono" tabIndex={0} />}
+                  >
+                    {member.workspaceRoot}
+                  </TooltipTrigger>
+                  <TooltipPopup>{member.workspaceRoot}</TooltipPopup>
+                </Tooltip>
+              }
               leading={
                 <EnvironmentMachineIcon
                   kind={resolveEnvironmentMachineKind(
@@ -615,7 +639,7 @@ function ProjectDetail({
             control={
               <Input
                 key={`${group.projectKey}:${group.displayName}`}
-                size="sm"
+                size="settings"
                 className="w-full sm:w-50"
                 aria-label={gt("Project name")}
                 disabled={!canEditGroup}
@@ -691,58 +715,58 @@ function ProjectDetail({
               </div>
             }
           />
-          {canOrganize ? (
-            <>
-              <SettingsRow
-                title={gt("Pin")}
-                description={gt("Pinned projects come first in project pickers.")}
-                control={
-                  <Switch
-                    checked={group.pinned}
-                    disabled={isOrganizing}
-                    onCheckedChange={(checked) =>
-                      void organize(
-                        { pinned: Boolean(checked) },
-                        checked ? gt("Failed to pin project") : gt("Failed to unpin project"),
-                      )
-                    }
-                    aria-label={gt("Pin project")}
-                  />
-                }
-              />
-              <SettingsRow
-                title={gt("Archive")}
-                description={
-                  group.archived
-                    ? gt("Hidden from project pickers. Threads and files are kept.")
-                    : gt("Hides the project from project pickers. Threads and files are kept.")
-                }
-                control={
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={isOrganizing}
-                    onClick={() =>
-                      void organize(
-                        { archived: !group.archived },
-                        group.archived
-                          ? gt("Failed to unarchive project")
-                          : gt("Failed to archive project"),
-                      )
-                    }
-                  >
-                    {group.archived
-                      ? gt("Unarchive")
-                      : gt("Archive", { $context: "verb, archives a project" })}
-                  </Button>
-                }
-              />
-            </>
-          ) : null}
         </SettingsSection>
         {checkoutChoices}
         <ProjectActionsSettings />
         <ProjectDefaultsSettings category="project" />
+        {canOrganize ? (
+          <SettingsSection title={gt("Organization")}>
+            <SettingsRow
+              title={gt("Pin")}
+              description={gt("Pinned projects come first in project pickers.")}
+              control={
+                <Switch
+                  checked={group.pinned}
+                  disabled={isOrganizing}
+                  onCheckedChange={(checked) =>
+                    void organize(
+                      { pinned: Boolean(checked) },
+                      checked ? gt("Failed to pin project") : gt("Failed to unpin project"),
+                    )
+                  }
+                  aria-label={gt("Pin project")}
+                />
+              }
+            />
+            <SettingsRow
+              title={gt("Archive")}
+              description={
+                group.archived
+                  ? gt("Hidden from project pickers. Threads and files are kept.")
+                  : gt("Hides the project from project pickers. Threads and files are kept.")
+              }
+              control={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={isOrganizing}
+                  onClick={() =>
+                    void organize(
+                      { archived: !group.archived },
+                      group.archived
+                        ? gt("Failed to unarchive project")
+                        : gt("Failed to archive project"),
+                    )
+                  }
+                >
+                  {group.archived
+                    ? gt("Unarchive")
+                    : gt("Archive", { $context: "verb, archives a project" })}
+                </Button>
+              }
+            />
+          </SettingsSection>
+        ) : null}
         <SettingsSection title={gt("Danger")}>
           <SettingsRow
             title={

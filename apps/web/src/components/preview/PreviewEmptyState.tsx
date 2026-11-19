@@ -1,11 +1,13 @@
-import { T } from "gt-react";
+import { T, useGT } from "gt-react";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { parseUrl } from "@t3tools/shared/url";
 import { Globe, Link } from "lucide-react";
 
 import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Button } from "~/components/ui/button";
+import { LabeledSection } from "~/components/ui/labeled-section";
 
+import { PreviewEmptyHero } from "./PreviewEmptyHero";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
@@ -32,6 +34,7 @@ export function PreviewEmptyState({
   onOpenUrl,
   onFocusUrl,
 }: Props) {
+  const gt = useGT();
   const servers = useDiscoveredLocalServers({
     environmentId,
     configuredUrls,
@@ -41,30 +44,20 @@ export function PreviewEmptyState({
   return (
     <div className="scrollbar-gutter-both flex h-full min-h-0 overflow-y-auto px-4 pt-4 pb-6">
       <div className="mx-auto flex w-full max-w-xl flex-col gap-4.5">
-        <div className="flex flex-col items-center gap-2.5 px-4 py-6 text-center">
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-full surface-raised">
-            <Globe aria-hidden className="size-4.5 text-muted-foreground" />
-          </span>
-          <h2 className="text-label text-foreground">
-            <T>No preview yet</T>
-          </h2>
-          <p className="max-w-[300px] text-balance text-body text-muted-foreground">
-            <T>Start a dev server or open a URL. Agents can open pages here too.</T>
-          </p>
+        <PreviewEmptyHero
+          icon={<Globe />}
+          title={<T>No preview yet</T>}
+          description={<T>Start a dev server or open a URL. Agents can open pages here too.</T>}
+        >
           {onFocusUrl ? (
-            <div className="pt-1.5">
-              <Button type="button" variant="secondary" size="xs" onClick={onFocusUrl}>
-                <Link />
-                <T>Open URL</T>
-              </Button>
-            </div>
+            <Button type="button" variant="secondary" size="xs" onClick={onFocusUrl}>
+              <Link />
+              <T>Open URL</T>
+            </Button>
           ) : null}
-        </div>
+        </PreviewEmptyHero>
         {servers.length > 0 ? (
-          <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">
-              <T>Local servers</T>
-            </h3>
+          <LabeledSection label={gt("Local servers")}>
             {servers.map((server) => (
               <PreviewLocalServerCard
                 key={`${server.host}:${server.port}`}
@@ -72,13 +65,10 @@ export function PreviewEmptyState({
                 onOpen={() => onOpenUrl(server.requestedUrl)}
               />
             ))}
-          </section>
+          </LabeledSection>
         ) : null}
         {recents.length > 0 ? (
-          <section className="flex flex-col gap-2">
-            <h3 className="text-meta font-medium text-dim-foreground">
-              <T>Recently used</T>
-            </h3>
+          <LabeledSection label={gt("Recently used")}>
             <div className="flex flex-col">
               {recents.map((entry) => (
                 <PreviewRecentUrlCard
@@ -89,7 +79,7 @@ export function PreviewEmptyState({
                 />
               ))}
             </div>
-          </section>
+          </LabeledSection>
         ) : null}
       </div>
     </div>

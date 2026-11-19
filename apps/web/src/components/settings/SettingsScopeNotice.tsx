@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind, type EnvironmentId } from "@t3tools/contracts";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 import { ChevronRightIcon, LayersIcon } from "lucide-react";
 import type { ReactNode } from "react";
@@ -29,6 +29,7 @@ interface ScopeChoice {
   icon: ReactNode;
   search: SettingsScopeSearch;
 }
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
 
 export function SettingsScopeNotice({
   children,
@@ -47,7 +48,7 @@ export function SettingsScopeNotice({
   const gt = useGT();
   const { selectScope, search, groups } = useSettingsScope();
   const navigate = useNavigate({ from: "/settings" });
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const pathname = useLayoutPageLocation().pathname;
   const { environments } = useEnvironments();
   const environmentIcon = (environment: EnvironmentPresentation | undefined) =>
     environment ? (

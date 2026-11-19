@@ -1,6 +1,6 @@
 import { msg, T, useMessages } from "gt-react";
 import { Trash2Icon } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 
 import {
   completeConfirmDialogClose,
@@ -8,6 +8,7 @@ import {
   respondToConfirmDialog,
   subscribeConfirmDialogHost,
 } from "../confirmDialog";
+import { returnKeyboardToFocusedPane } from "../layout/layoutPaneContext";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -20,6 +21,7 @@ import {
 } from "./ui/alert-dialog";
 import { Button } from "./ui/button";
 import type { MessageResolver } from "../i18n/messages";
+import { useDialogActionInitialFocus } from "./ui/dialog";
 
 type ConfirmationCopy = {
   readonly title: string;
@@ -65,6 +67,9 @@ export function ConfirmDialogHost() {
     readConfirmDialogState,
   );
 
+  const openerRef = useRef<Element | null>(null);
+  const { popupRef, initialFocus } = useDialogActionInitialFocus();
+
   const copy =
     state.status !== "idle" && state.title
       ? { title: state.title, description: state.message.trim() || null }
@@ -88,7 +93,25 @@ export function ConfirmDialogHost() {
         if (!open) completeConfirmDialogClose();
       }}
     >
-      <AlertDialogPopup className="sm:max-w-105">
+      <AlertDialogPopup
+        ref={popupRef}
+        className="sm:max-w-105"
+        initialFocus={(openType) => {
+          openerRef.current = document.activeElement;
+          return initialFocus(openType);
+        }}
+        finalFocus={() => {
+          const opener = openerRef.current;
+          if (opener?.isConnected && !opener.closest("[data-layout-strip]")) return true;
+          if (returnKeyboardToFocusedPane()) return false;
+          // A chat pane takes it in its composer.
+          return (
+            document.querySelector<HTMLElement>(
+              "[data-layout-pane-focused] [contenteditable='true']",
+            ) ?? true
+          );
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
           {copy.description ? (

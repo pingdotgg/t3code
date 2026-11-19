@@ -153,7 +153,8 @@ describe("citation comment caret", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(textarea()));
 
     await userEvent.keyboard("agreed");
-    await userEvent.keyboard("{Tab}");
+    // The redesign keeps a mic before the buttons even without dictation; Cancel stays skipped.
+    await userEvent.keyboard("{Tab}{Tab}");
     await userEvent.keyboard("{Enter}");
 
     expect(onSave).toHaveBeenCalledWith("agreed");

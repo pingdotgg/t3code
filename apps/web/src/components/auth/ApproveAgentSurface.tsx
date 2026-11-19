@@ -143,7 +143,6 @@ export function ApproveAgentSurface() {
     return (
       <StandalonePage>
         <StandalonePageHeader
-          context={gt("Agent sign-in")}
           title={gt("Connecting to T3 Connect")}
           description={gt("One moment while your account loads.")}
         />
@@ -211,10 +210,9 @@ function Message({
   readonly description: string;
   readonly children?: ReactNode;
 }) {
-  const gt = useGT();
   return (
     <StandalonePage>
-      <StandalonePageHeader context={gt("Agent sign-in")} title={title} description={description} />
+      <StandalonePageHeader title={title} description={description} />
       {children}
     </StandalonePage>
   );

@@ -251,7 +251,7 @@ export function SnapShotSettings() {
   } = useSnapShotShortcutRecorder({
     shortcut: displayShortcut,
     shortcutLabel: !shortcutChanged ? state?.shortcutLabel : undefined,
-    disabled: setupBusy,
+    disabled: !captureAvailable || setupBusy,
     allowModifierPairs: state?.mode !== "portal",
     onRecord: (shortcut) => void checkShortcut(shortcut),
     onStart: () => {
@@ -372,7 +372,9 @@ export function SnapShotSettings() {
           <SettingsRow
             leading={<CameraIcon />}
             title={gt("SnapShots run in the desktop app")}
-            description={gt("Capture any window with a shortcut and drop it into your draft.")}
+            description={gt(
+              "Capture any window with a shortcut and drop it into your draft. These settings apply there.",
+            )}
           />
         </SettingsSection>
       ) : null}
@@ -381,9 +383,10 @@ export function SnapShotSettings() {
         title={gt("Capture", { $context: "settings section for window snapshots" })}
         warning={webOnly ? undefined : unavailableMessage}
       >
-        <SettingsUnavailableGroup unavailable={!webOnly && unavailableMessage !== undefined}>
+        <SettingsUnavailableGroup unavailable={webOnly || unavailableMessage !== undefined}>
           <SettingsRow
             {...setting("snap-shot-enabled")}
+            title={gt("Enable snapshots")}
             description={snapShotDescription(state, messages)}
             status={
               bridge
@@ -420,16 +423,17 @@ export function SnapShotSettings() {
               </>
             }
           />
-          {settings.snapShotEnabled && captureAvailable ? (
+          {webOnly || (settings.snapShotEnabled && captureAvailable) ? (
             <>
               <SettingsRow
                 {...setting("snap-shot-shortcut")}
+                title={gt("Shortcut")}
                 description={
                   state?.linuxBackend === "picker"
                     ? gt("Choose a window to capture from any app.")
                     : gt("Capture the window you're using without switching apps.")
                 }
-                status={managedShortcut ? undefined : shortcutStatus}
+                status={webOnly || managedShortcut ? undefined : shortcutStatus}
                 control={
                   managedShortcut ? (
                     <Button
@@ -484,6 +488,7 @@ export function SnapShotSettings() {
               />
               <SettingsRow
                 {...setting("snap-shot-accessibility")}
+                title={gt("Include app text in snapshots")}
                 description={gt("Include text and controls when the app makes them available.")}
                 status={snapShotAccessibilityUnavailableMessage(state, messages)}
                 control={
@@ -505,63 +510,69 @@ export function SnapShotSettings() {
           ) : null}
         </SettingsUnavailableGroup>
       </SettingsSection>
-      {settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined ? (
+      {webOnly ||
+      (settings.snapShotEnabled && captureAvailable && unavailableMessage === undefined) ? (
         <SettingsSection
           id="snap-shot-feedback"
           title={gt("Feedback", { $context: "settings section" })}
         >
-          <SettingsRow
-            {...setting("snap-shot-sound")}
-            description={gt("Choose the sound played when capture starts.")}
-            control={
-              <ToggleGroup
-                aria-label={gt("Snapshot sound: {sound}", { sound: soundLabel })}
-                value={[soundSelection]}
-                disabled={!captureAvailable}
-                onValueChange={(values) => {
-                  const next = values[0] as SnapShotSoundSelection | undefined;
-                  if (!next || next === soundSelection) return;
-                  // Choosing a sound previews it, replacing the old menu's play buttons.
-                  if (next !== "off") playSnapShotSound(next);
-                  void save(snapShotSoundPatch(next));
-                }}
-              >
-                <Toggle value="soft-pop">
-                  {gt("Whoosh", { $context: "name of a whoosh sound" })}
-                </Toggle>
-                <Toggle value="camera-shutter">
-                  {gt("Click", { $context: "name of a camera-shutter sound" })}
-                </Toggle>
-                <Toggle value="off">{gt("None", { $context: "no snapshot sound" })}</Toggle>
-              </ToggleGroup>
-            }
-          />
-          <SettingsRow
-            {...setting("snap-shot-flash")}
-            description={gt("Show a gentle cue on the captured window.")}
-            status={feedbackUnavailable}
-            control={
-              <Switch
-                checked={!feedbackUnavailable && settings.snapShotFlash}
-                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                aria-label={gt("Flash captured window")}
-                onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
-              />
-            }
-          />
-          <SettingsRow
-            {...setting("snap-shot-animations")}
-            description={gt("Animate captured windows into your draft.")}
-            status={feedbackUnavailable}
-            control={
-              <Switch
-                checked={!feedbackUnavailable && settings.snapShotAnimations}
-                disabled={!captureAvailable || Boolean(feedbackUnavailable)}
-                aria-label={gt("Animate snapshots")}
-                onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
-              />
-            }
-          />
+          <SettingsUnavailableGroup unavailable={webOnly}>
+            <SettingsRow
+              {...setting("snap-shot-sound")}
+              title={gt("Sound")}
+              description={gt("Choose the sound played when capture starts.")}
+              control={
+                <ToggleGroup
+                  aria-label={gt("Snapshot sound: {sound}", { sound: soundLabel })}
+                  value={[soundSelection]}
+                  disabled={!captureAvailable}
+                  onValueChange={(values) => {
+                    const next = values[0] as SnapShotSoundSelection | undefined;
+                    if (!next || next === soundSelection) return;
+                    // Choosing a sound previews it, replacing the old menu's play buttons.
+                    if (next !== "off") playSnapShotSound(next);
+                    void save(snapShotSoundPatch(next));
+                  }}
+                >
+                  <Toggle value="soft-pop">
+                    {gt("Whoosh", { $context: "name of a whoosh sound" })}
+                  </Toggle>
+                  <Toggle value="camera-shutter">
+                    {gt("Click", { $context: "name of a camera-shutter sound" })}
+                  </Toggle>
+                  <Toggle value="off">{gt("None", { $context: "no snapshot sound" })}</Toggle>
+                </ToggleGroup>
+              }
+            />
+            <SettingsRow
+              {...setting("snap-shot-flash")}
+              title={gt("Flash captured window")}
+              description={gt("Show a gentle cue on the captured window.")}
+              status={feedbackUnavailable}
+              control={
+                <Switch
+                  checked={!feedbackUnavailable && settings.snapShotFlash}
+                  disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                  aria-label={gt("Flash captured window")}
+                  onCheckedChange={(checked) => void save({ snapShotFlash: checked })}
+                />
+              }
+            />
+            <SettingsRow
+              {...setting("snap-shot-animations")}
+              title={gt("Animate snapshots")}
+              description={gt("Animate captured windows into your draft.")}
+              status={feedbackUnavailable}
+              control={
+                <Switch
+                  checked={!feedbackUnavailable && settings.snapShotAnimations}
+                  disabled={!captureAvailable || Boolean(feedbackUnavailable)}
+                  aria-label={gt("Animate snapshots")}
+                  onCheckedChange={(checked) => void save({ snapShotAnimations: checked })}
+                />
+              }
+            />
+          </SettingsUnavailableGroup>
         </SettingsSection>
       ) : null}
       {settings.snapShotEnabled && captureHelper && unavailableMessage === undefined ? (

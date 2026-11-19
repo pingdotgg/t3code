@@ -140,6 +140,7 @@ import { buildSidebarProjectSnapshots } from "../../sidebarProjectGrouping";
 import { ProjectSettingsPanel } from "./ProjectSettingsPanel";
 import { ProjectsSettings } from "./ProjectsSettings";
 import { SettingsScopeProvider } from "./SettingsScopeContext";
+import { SettingsBreadcrumb } from "./SettingsBreadcrumb";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { validateSettingsScopeSearch, type SettingsScopeSearch } from "./settingsScope";
 import { retainSettingsScope, validateSettingsRouteSearch } from "./settingsScopeNavigation";
@@ -282,6 +283,7 @@ async function mountSettings(search: SettingsScopeSearch) {
         search={route.useSearch()}
         onChange={(next) => void router.navigate({ to: "/settings/projects", search: () => next })}
       >
+        <SettingsBreadcrumb pathname="/settings/projects" />
         <ProjectsSettings />
       </SettingsScopeProvider>
     ),
@@ -644,9 +646,9 @@ it("opens the fallback search target across all environments from a checkout", a
 });
 
 describe("project settings scope", () => {
-  const scopeMenu = () => page.getByRole("button", { name: /^Environment scope:/ });
-  const primaryOption = () => page.getByRole("menuitemradio", { name: /^primary/ });
-  const remoteOption = () => page.getByRole("menuitemradio", { name: /^remote/ });
+  const scopeMenu = () => page.getByRole("button", { name: /^Settings scope:/ });
+  const primaryOption = () => page.getByRole("button", { name: /^primary/ });
+  const remoteOption = () => page.getByRole("button", { name: /^remote/ });
 
   it("offers every environment while no project is selected", async () => {
     setup();
@@ -708,11 +710,15 @@ describe("project settings scope", () => {
     const key = projectKey();
     await using screen = await mountSettings({ project: key, machine: primaryId });
 
-    await userEvent.click(page.getByRole("button", { name: "Checkout scope: All checkouts" }));
-    await userEvent.click(page.getByRole("menuitemradio", { name: /clone-b/ }));
+    await userEvent.click(scopeMenu());
+    await userEvent.click(
+      page.getByRole("group", { name: "Checkout" }).getByRole("button", { name: /^clone-b/ }),
+    );
 
     await expect
-      .element(page.getByRole("button", { name: "Checkout scope: clone-b" }))
+      .element(
+        page.getByRole("button", { name: "Settings scope: Shared repo on primary in clone-b" }),
+      )
       .toBeVisible();
     expect(screen.router.state.location.search).toMatchObject({
       project: key,
@@ -720,8 +726,12 @@ describe("project settings scope", () => {
       checkout: expect.stringContaining("clone-b"),
     });
 
-    await userEvent.click(page.getByRole("button", { name: "Checkout scope: clone-b" }));
-    await userEvent.click(page.getByRole("menuitemradio", { name: "All checkouts" }));
+    await userEvent.click(scopeMenu());
+    const checkouts = page.getByRole("group", { name: "Checkout" });
+    await expect
+      .element(checkouts.getByRole("button", { name: /^clone-b/ }))
+      .toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(checkouts.getByRole("button", { name: "All checkouts" }));
 
     await vi.waitFor(() =>
       expect(screen.router.state.location.search).toEqual({ project: key, machine: primaryId }),
@@ -763,7 +773,11 @@ describe("project settings scope", () => {
 
     await expect.element(page.getByText(message, { exact: true })).toBeVisible();
     await expect
-      .element(page.getByRole("button", { name: "Environment scope: remote" }))
+      .element(
+        page.getByRole("button", {
+          name: `Settings scope: Shared repo on remote${checkout ? " in Unavailable checkout" : ""}`,
+        }),
+      )
       .toBeVisible();
     await userEvent.click(page.getByRole("button", { name: "Show all environments" }));
 
@@ -772,7 +786,7 @@ describe("project settings scope", () => {
       .toHaveValue("Shared repo");
     expect(screen.router.state.location.search).toEqual({ project: key });
     await expect
-      .element(page.getByRole("button", { name: "Project scope: Shared repo", exact: true }))
+      .element(page.getByRole("button", { name: "Settings scope: Shared repo", exact: true }))
       .toBeVisible();
     await expect.element(page.getByText(message, { exact: true })).not.toBeInTheDocument();
     await expect

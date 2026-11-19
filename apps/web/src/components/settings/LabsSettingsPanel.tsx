@@ -28,7 +28,60 @@ export function LabsSettingsPanel() {
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
+      <SettingsSection
+        id="redesign"
+        title={gt("Redesign", { $context: "settings section, labs features of the redesign" })}
+      >
+        <ScrollingWorkspacesRow />
+        <TurnWorkFoldRow />
+      </SettingsSection>
     </SettingsPageContainer>
+  );
+}
+
+function ScrollingWorkspacesRow() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("scrolling-workspaces")}
+      description={gt(
+        "Panes scroll sideways instead of shrinking, and you can keep several workspaces with an overview, swipes and a layout tour. Splits, tabs and layout templates work either way.",
+      )}
+      control={
+        <Switch
+          checked={settings.scrollingWorkspacesEnabled}
+          onCheckedChange={(checked) =>
+            updateSettings({ scrollingWorkspacesEnabled: Boolean(checked) })
+          }
+          aria-label={gt("Scrolling workspaces")}
+        />
+      }
+    />
+  );
+}
+
+function TurnWorkFoldRow() {
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("turn-work-fold")}
+      description={gt(
+        "Gather a running turn's tool calls and notes under one Working line that folds into its Worked for row when the turn ends, with the tool calls inside shown open.",
+      )}
+      control={
+        <Switch
+          checked={settings.turnWorkFoldEnabled}
+          onCheckedChange={(checked) => updateSettings({ turnWorkFoldEnabled: Boolean(checked) })}
+          aria-label={gt("Fold each turn's work")}
+        />
+      }
+    />
   );
 }
 

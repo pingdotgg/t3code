@@ -26,20 +26,24 @@ export function PullRequestCommentBody({
   className,
   variant = "comment",
   revealCount = 0,
+  collapsedHeight = 0,
   ...props
 }: ComponentProps<typeof PullRequestMarkdown> & {
   variant?: "comment" | "description";
   revealCount?: number;
+  /** Lets the collapsed body grow past its minimum height, never below it. */
+  collapsedHeight?: number;
 }) {
   const gt = useGT();
-  const maxHeight = variant === "description" ? 64 : 240;
+  const maxHeight = Math.max(variant === "description" ? 64 : 240, collapsedHeight);
   const [expanded, setExpanded] = useState(revealCount > 0);
   const [seenRevealCount, setSeenRevealCount] = useState(revealCount);
   if (revealCount !== seenRevealCount) {
     setSeenRevealCount(revealCount);
     if (revealCount > 0) setExpanded(true);
   }
-  const [overflowing, setOverflowing] = useState(false);
+  const [textHeight, setTextHeight] = useState(0);
+  const overflowing = textHeight > maxHeight;
   const clip = useRef<HTMLDivElement>(null);
   const id = useId();
 
@@ -48,18 +52,16 @@ export function PullRequestCommentBody({
       <div
         ref={clip}
         id={id}
-        className={cn(
-          "relative",
-          !expanded && "overflow-hidden",
-          !expanded && (variant === "description" ? "max-h-16" : "max-h-60"),
-        )}
+        className={cn("relative", !expanded && "overflow-hidden")}
+        style={expanded ? undefined : { maxHeight }}
+        data-comment-clip
         onFocusCapture={() => setExpanded(true)}
       >
         <div
           ref={(element) => {
             if (element === null) return;
             return observeResize(element, ([entry]) => {
-              if (entry) setOverflowing(entry.contentRect.height > maxHeight);
+              if (entry) setTextHeight(entry.contentRect.height);
             });
           }}
         >

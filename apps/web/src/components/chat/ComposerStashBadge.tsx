@@ -4,10 +4,10 @@ import { memo } from "react";
 
 import { cn } from "~/lib/utils";
 
-import { Button } from "../ui/button";
+import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 
 /**
- * Filled "Stash 3" chip in the tray row, after the branch. Opens the stash menu.
+ * "Stash 3" chip in the tray row. Opens the stash menu.
  * On save the chip gives one quiet acknowledgement: the count ticks over.
  * `pulseKey` changes per stash, remounting the count so the transition replays
  * without a continuous animation.
@@ -23,9 +23,8 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
   if (props.count === 0) return null;
 
   return (
-    <Button
-      variant="ghost-muted"
-      size="micro"
+    <ComposerControl
+      size="xs"
       data-prompt-stash-badge="true"
       data-pressed={props.menuOpen ? "" : undefined}
       aria-label={gt("Stashed prompts: {count}. Open stash.", { count: props.count })}
@@ -33,10 +32,13 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       onPointerDown={(event) => event.preventDefault()}
       onClick={props.onToggleMenu}
     >
-      <ArchiveIcon aria-hidden />
-      <span>{gt("Stash", { $context: "noun, saved prompts set aside for later" })}</span>
+      <ComposerControlIcon icon={ArchiveIcon} size="xs" />
+      <span data-composer-control-label>
+        {gt("Stash", { $context: "noun, saved prompts set aside for later" })}
+      </span>
       <span
         key={props.pulseKey}
+        data-composer-control-label
         className={cn(
           "text-foreground tabular-nums",
           props.pulseKey > 0 &&
@@ -45,6 +47,6 @@ export const ComposerStashBadge = memo(function ComposerStashBadge(props: {
       >
         {props.count}
       </span>
-    </Button>
+    </ComposerControl>
   );
 });

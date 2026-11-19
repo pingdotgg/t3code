@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { errorDisplayMessage, thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
@@ -170,10 +171,14 @@ function LocalVersionStatusLabel() {
 
 /** Environments lists the machines this app connects to; access covers who may reach one of them. */
 export function ConnectionsSettings({ view }: { readonly view: "environments" | "access" }) {
-  return view === "access" ? (
-    <AccessSettings />
-  ) : (
-    <ConnectionsSettingsContent view="environments" accessEnvironmentId={null} />
+  return view === "access" ? <AccessSettings /> : <EnvironmentsSettings />;
+}
+
+/** The environments page opens with this machine's overview. */
+function EnvironmentsSettings() {
+  const primaryEnvironmentId = usePrimaryEnvironment()?.environmentId ?? null;
+  return (
+    <ConnectionsSettingsContent view="environments" accessEnvironmentId={primaryEnvironmentId} />
   );
 }
 
@@ -214,11 +219,7 @@ function AccessSettings() {
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
             {candidates.map((environment) => (
-              <SelectItem
-                hideIndicator
-                key={environment.environmentId}
-                value={environment.environmentId}
-              >
+              <SelectItem key={environment.environmentId} value={environment.environmentId}>
                 <span className="flex min-w-0 items-center gap-2">
                   <EnvironmentMachineIcon
                     aria-hidden
@@ -408,7 +409,7 @@ function ConnectionsSettingsContent({
   const canManageLocalBackend = isPrimaryAccess && !isLocalEnvironmentDisabled() && canMaintain;
   const showsAccess = view === "access";
   const authAccessChanges = useEnvironmentQuery(
-    showsAccess && canReadAccess && accessEnvironmentId !== null
+    canReadAccess && accessEnvironmentId !== null
       ? authEnvironment.accessChanges({
           environmentId: accessEnvironmentId,
           input: null,
@@ -424,11 +425,11 @@ function ConnectionsSettingsContent({
     reportFailure: false,
   });
   const desktopNetworkAccess = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopNetworkAccessStateAtom : null,
     m,
   );
   const desktopWsl = useEnvironmentQuery(
-    showsAccess && canManageLocalBackend && desktopBridge ? desktopWslAccessStateAtom : null,
+    canManageLocalBackend && desktopBridge ? desktopWslAccessStateAtom : null,
     m,
   );
   const desktopWslState = desktopWsl.data;
@@ -1065,7 +1066,8 @@ function ConnectionsSettingsContent({
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-56"
                 aria-label={gt("WSL backend")}
                 disabled={isUpdatingWslBackend}
@@ -1073,16 +1075,16 @@ function ConnectionsSettingsContent({
                 <SelectValue>{selectLabel}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={BACKEND_VALUE_WSL_OFF}>
+                <SelectItem value={BACKEND_VALUE_WSL_OFF}>
                   {gt("Off", { $context: "WSL backend is off" })}
                 </SelectItem>
                 {desktopWslState.distros.length === 0 ? (
-                  <SelectItem hideIndicator value={BACKEND_VALUE_DEFAULT_WSL}>
+                  <SelectItem value={BACKEND_VALUE_DEFAULT_WSL}>
                     <T>Default distro</T>
                   </SelectItem>
                 ) : (
                   desktopWslState.distros.map((distro) => (
-                    <SelectItem hideIndicator key={distro.name} value={distro.name}>
+                    <SelectItem key={distro.name} value={distro.name}>
                       {distro.name}
                       {distro.isDefault ? ` ${gt("(default)")}` : ""}
                     </SelectItem>
@@ -1302,32 +1304,6 @@ function ConnectionsSettingsContent({
                 <ManagedByOrganization policy={accessServerConfig.managedPolicy} />
               </div>
             ) : null}
-            {canManageLocalBackend && desktopBridge ? (
-              <>
-                {renderReachableRow()}
-                {renderNetworkAccessRow()}
-                {renderEndpointRows()}
-                {renderTailscaleRow()}
-                {renderWslRow()}
-              </>
-            ) : canManageLocalBackend ? (
-              renderDisabledNetworkAccessRow()
-            ) : null}
-            {canReadRelay || canManageRelay ? (
-              <CloudLinkRow
-                environmentId={accessEnvironmentId}
-                canReadRelay={canReadRelay}
-                canManageRelay={canManageRelay}
-                connectDeviceApproval={
-                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
-                    ? null
-                    : {
-                        required: accessServerConfig.settings.requireConnectDeviceApproval,
-                        canManage: canWriteAccess,
-                      }
-                }
-              />
-            ) : null}
             {canManageLocalBackend ? (
               <SettingsRow
                 title={gt("Version")}
@@ -1377,7 +1353,55 @@ function ConnectionsSettingsContent({
                 }
               />
             ) : null}
-            {accessEnvironment ? (
+            {canManageLocalBackend && desktopBridge ? (
+              <>
+                {renderReachableRow()}
+                {renderNetworkAccessRow()}
+                {renderEndpointRows()}
+                {renderTailscaleRow()}
+                {renderWslRow()}
+              </>
+            ) : canManageLocalBackend ? (
+              renderDisabledNetworkAccessRow()
+            ) : null}
+            {canReadRelay || canManageRelay ? (
+              <CloudLinkRow
+                environmentId={accessEnvironmentId}
+                canReadRelay={canReadRelay}
+                canManageRelay={canManageRelay}
+                connectDeviceApproval={
+                  accessServerConfig?.settings.requireConnectDeviceApproval === undefined
+                    ? null
+                    : {
+                        required: accessServerConfig.settings.requireConnectDeviceApproval,
+                        canManage: canWriteAccess,
+                      }
+                }
+              />
+            ) : null}
+            {!showsAccess && (canReadAccess || canWriteAccess) ? (
+              <SettingsRow
+                title={gt("Authorized clients")}
+                description={
+                  desktopAccessManagementError
+                    ? desktopAccessManagementError
+                    : isLoadingDesktopAccessManagement
+                      ? gt("Loading authorized clients…")
+                      : canReadAccess
+                        ? gt(
+                            "{count, plural, one {{count} authorized client} other {{count} authorized clients}}",
+                            { count: desktopClientSessions.length },
+                          )
+                        : gt("Manage pairing links and client access.")
+                }
+                control={
+                  <Button variant="secondary" size="sm" render={<Link to="/settings/access" />}>
+                    {gt("Manage", { $context: "button, opens access settings" })}
+                  </Button>
+                }
+              />
+            ) : null}
+            {showsAccess && accessEnvironment ? (
               <details className="group px-3 sm:px-4">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center [&::-webkit-details-marker]:hidden">
                   <span className="text-label">
@@ -1396,7 +1420,7 @@ function ConnectionsSettingsContent({
             ) : null}
           </SettingsSection>
 
-          {canReadAccess || canWriteAccess ? (
+          {showsAccess && (canReadAccess || canWriteAccess) ? (
             <>
               <SettingsSection
                 id="pairing"
@@ -1772,14 +1796,14 @@ function ConnectionsSettingsContent({
             </DialogPopup>
           </Dialog>
         </>
-      ) : (
+      ) : showsAccess ? (
         <SettingsSection {...searchableSetting("connections-environment")}>
           <SettingsRow
             title={gt("No environment selected")}
             description={gt("Connect an environment to view its settings and access.")}
           />
         </SettingsSection>
-      )}
+      ) : null}
     </>
   );
 
@@ -1795,6 +1819,7 @@ function ConnectionsSettingsContent({
           <LocalEnvironmentSetting />
         </SettingsSection>
       ) : null}
+      {primarySettings}
       <SettingsSection
         {...searchableSetting("remote-environments")}
         title={gt("Environments")}

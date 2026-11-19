@@ -184,8 +184,33 @@ function defaultBindingForBinding(
       (entry) =>
         entry.command === binding.command && whenAstToExpression(entry.whenAst) === bindingWhen,
     ) ??
-    DEFAULT_RESOLVED_KEYBINDINGS.find((entry) => entry.command === binding.command)
+    // The last rule is the main key; alt+cmd aliases come first (later rules win).
+    DEFAULT_RESOLVED_KEYBINDINGS.findLast((entry) => entry.command === binding.command)
   );
+}
+
+function platformAllowsWhen(node: KeybindingWhenNode | undefined, isMac: boolean): boolean | null {
+  if (!node) return null;
+  switch (node.type) {
+    case "identifier":
+      return node.name === "isMac" ? isMac : null;
+    case "not": {
+      const value = platformAllowsWhen(node.node, isMac);
+      return value === null ? null : !value;
+    }
+    case "and": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === false || right === false) return false;
+      return left === true && right === true ? true : null;
+    }
+    case "or": {
+      const left = platformAllowsWhen(node.left, isMac);
+      const right = platformAllowsWhen(node.right, isMac);
+      if (left === true || right === true) return true;
+      return left === false && right === false ? false : null;
+    }
+  }
 }
 
 function keybindingRowId(command: KeybindingCommand, key: string, when: string): string {
@@ -227,7 +252,9 @@ export function buildKeybindingRows(
   resolve: MessageResolver = m,
 ): ReadonlyArray<KeybindingRow> {
   const rowsById = new Map<string, KeybindingRow>();
+  const isMac = isMacPlatform(platform);
   for (const binding of keybindings) {
+    if (platformAllowsWhen(binding.whenAst, isMac) === false) continue;
     const defaultBinding = defaultBindingForBinding(binding);
     const key = shortcutToKeybindingInput(binding.shortcut);
     const when = whenAstToExpression(binding.whenAst);
@@ -364,13 +391,13 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "terminal.splitVertical": msg("Split terminal vertically"),
   "terminal.new": msg("New terminal"),
   "terminal.close": msg("Close terminal"),
-  "rightPanel.toggle": msg("Toggle right panel"),
+  "rightPanel.toggle": msg("Toggle side pane"),
   "threadPanel.toggle": msg("Toggle thread panel"),
   "rightPanel.close": msg("Close right panel"),
-  "rightPanel.new": msg("New right panel tab"),
   "view.reopenClosed": msg("Reopen closed tab"),
   "pullRequest.copyNumber": msg("Copy pull request number"),
   "diff.toggle": msg("Toggle diff panel"),
+  "pullRequests.toggle": msg("Toggle linked pull requests"),
   "preview.toggle": msg("Toggle browser"),
   "preview.refresh": msg("Reload browser"),
   "preview.focusUrl": msg("Focus browser address"),
@@ -414,6 +441,35 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "thread.pin": msg("Pin thread"),
   "thread.undo": msg("Undo last thread action"),
   "git.commitPush": msg("Commit and push"),
+  "tab.new": msg("New tab"),
+  "tab.close": msg("Close tab"),
+  "tab.next": msg("Next tab"),
+  "tab.previous": msg("Previous tab"),
+  "layout.splitRight": msg("New pane to the right"),
+  "layout.splitDown": msg("New pane below"),
+  "layout.fill": msg("Fill the window"),
+  "layout.focusLeft": msg("Focus pane on the left"),
+  "layout.focusRight": msg("Focus pane on the right"),
+  "layout.focusUp": msg("Focus pane above"),
+  "layout.focusDown": msg("Focus pane below"),
+  "layout.moveLeft": msg("Move pane left"),
+  "layout.moveRight": msg("Move pane right"),
+  "layout.moveUp": msg("Move pane up"),
+  "layout.moveDown": msg("Move pane down"),
+  "layout.focusFirstColumn": msg("Focus first column"),
+  "layout.focusLastColumn": msg("Focus last column"),
+  "layout.cycleColumnWidth": msg("Column width ⅓ ½ ⅔"),
+  "layout.centerColumn": msg("Center column"),
+  "layout.pullLeft": msg("Pull pane into the left column"),
+  "layout.pullRight": msg("Push pane out to its own column"),
+  "layout.shortcutSheet": msg("Show every shortcut"),
+  "layout.focusWorkspaceDown": msg("Next workspace"),
+  "layout.focusWorkspaceUp": msg("Previous workspace"),
+  "layout.moveToWorkspaceDown": msg("Send pane to the next workspace"),
+  "layout.moveToWorkspaceUp": msg("Send pane to the previous workspace"),
+  "layout.moveWorkspaceDown": msg("Move workspace down"),
+  "layout.moveWorkspaceUp": msg("Move workspace up"),
+  "layout.overview": msg("Overview", { $context: "shortcut, shows every workspace at once" }),
   "usage.open": msg("Open usage"),
   "usage.cost": msg("Show usage by cost"),
   "usage.tokens": msg("Show usage by tokens"),
@@ -426,6 +482,7 @@ const COMMAND_LABELS: Partial<Record<string, string>> = {
   "composer.increaseEffort": msg("Composer: Increase Effort"),
   "composer.decreaseEffort": msg("Composer: Decrease Effort"),
   "thread.regenerateTitle": msg("Thread: Regenerate Title"),
+  "rightPanel.new": msg("Right Panel: New"),
   "rightPanel.toggleMaximized": msg("Right Panel: Toggle Maximized"),
 };
 

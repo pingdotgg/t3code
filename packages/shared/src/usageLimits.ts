@@ -239,6 +239,94 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
   usageLimits: provider.usageLimits,
 });
 
+/** Resolve the selected login across native duplicates and linked usage sources. */
+export function resolveProviderUsageLimits(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): ServerProviderUsageLimits | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected) return undefined;
+  const reports = [
+    ...providers.filter((provider) => provider.enabled).map(nativeReport),
+    ...sources.flatMap((source) => source.accounts),
+  ];
+  const resolveKey = accountKeyResolver(reports);
+  const key = resolveKey(nativeReport(selected));
+  const candidates = key === null ? [] : reports.filter((report) => resolveKey(report) === key);
+  return (
+    candidates
+      .flatMap((report) =>
+        report.usageLimits && limitsNotice(report.usageLimits) === null ? [report.usageLimits] : [],
+      )
+      .sort((a, b) => Date.parse(b.checkedAt) - Date.parse(a.checkedAt))[0] ?? selected.usageLimits
+  );
+}
+
+/** A provider with no login of its own, such as a custom endpoint, spends from the accounts linked sources report for its driver. */
+export function resolveProviderLimitPool(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+  now: number,
+): LimitPool | undefined {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (!selected || accountKey(selected.driver, selected.auth.email, selected.usageLimits)) {
+    return undefined;
+  }
+  const resolveKey = accountKeyResolver(sources.flatMap((source) => source.accounts));
+  const accounts = new Map<string, LimitAccount>();
+  for (const source of sources) {
+    for (const account of source.accounts) {
+      if (account.driver !== selected.driver || limitsNotice(account.usageLimits) !== null) {
+        continue;
+      }
+      const key =
+        resolveKey(account) ??
+        `${source.id}:${account.id}${account.workspaceId ? `:${account.workspaceId}` : ""}`;
+      const seen = accounts.get(key);
+      if (seen && Date.parse(seen.limits.checkedAt) >= Date.parse(account.usageLimits.checkedAt)) {
+        continue;
+      }
+      accounts.set(key, {
+        key,
+        driver: account.driver,
+        displayName: account.email ? null : hubAccountName(account),
+        email: account.email,
+        plan: account.plan,
+        accentColor: undefined,
+        environments: [],
+        sourceLabel: source.label,
+        redeem: null,
+        limits: account.usageLimits,
+      });
+    }
+  }
+  return collectLimitPools([...accounts.values()], now)[0];
+}
+
+/** Why a custom endpoint provider has no pool: nothing linked reports accounts for its driver. */
+export function limitPoolNotice(
+  instanceId: ProviderInstanceId,
+  providers: readonly ServerProvider[],
+  sources: UsageLimitSourceSnapshots,
+): string | null {
+  const selected = providers.find((provider) => provider.instanceId === instanceId);
+  if (
+    !selected ||
+    selected.auth.type !== "customEndpoint" ||
+    accountKey(selected.driver, selected.auth.email, selected.usageLimits) ||
+    sources.some((source) => source.accounts.some((account) => account.driver === selected.driver))
+  ) {
+    return null;
+  }
+  const failed = sources.find((source) => source.error);
+  if (failed) return `${failed.label}: ${failed.error}`;
+  const name =
+    selected.displayName?.trim() || PROVIDER_DISPLAY_NAMES[selected.driver] || selected.driver;
+  return `${name} runs through a custom endpoint. Add its usage provider in Settings → Providers → Usage providers to see the limits of the accounts behind it.`;
+}
+
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
@@ -1028,5 +1116,7 @@ export function collectProviderUsageLimits(
       notices.push(`${source.label}: ${source.error}`);
     }
   }
+  const poolNotice = limitPoolNotice(instanceId, providers, sources);
+  if (poolNotice && !notices.includes(poolNotice)) notices.push(poolNotice);
   return { createdAt: DateTime.formatIso(DateTime.makeUnsafe(now)), accounts, notices };
 }

@@ -93,7 +93,7 @@ function DiffCodeLineSkeleton({ width }: { width: "short" | "medium" | "long" })
 export function DiffPanelLoadingState(props: { label: string }) {
   return (
     <div
-      className="min-h-0 flex-1 overflow-hidden bg-background"
+      className="min-h-0 flex-1 overflow-hidden bg-background pt-under-header"
       role="status"
       aria-live="polite"
       aria-label={props.label}

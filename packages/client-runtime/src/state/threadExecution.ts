@@ -150,6 +150,7 @@ function summarizeThreadRun(
       : turnStatus === "pending" || turnStatus === "running"
         ? {}
         : { turnEnded: true }),
+    ...(run.workspacePreparation?.type === "worktree" ? { preparedWorktree: true as const } : {}),
     ...(run.sourcePlanRef === undefined ? {} : { sourcePlanRef: run.sourcePlanRef }),
   };
 }
@@ -231,6 +232,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thinking",
 ];
 
 export function formatModelSelectionEffort(
@@ -242,7 +244,13 @@ export function formatModelSelectionEffort(
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
   const current = options ? { ...selection, options } : selection;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
+  const effortIds = [
+    ...REASONING_EFFORT_OPTION_IDS,
+    ...(caps.optionDescriptors
+      ?.filter((descriptor) => descriptor.type === "select" && descriptor.role === "reasoning")
+      .map((descriptor) => descriptor.id) ?? []),
+  ];
+  for (const id of effortIds) {
     const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
     if (descriptor?.type !== "select") continue;
     const value = getProviderOptionStatedValue(id, current, reportedSelection);

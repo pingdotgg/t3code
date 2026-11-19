@@ -123,11 +123,16 @@ function sameNativeItem(
  */
 function approvalFiles(
   turnItems: TurnItems,
-  nativeItemRef: OrchestrationV2ProviderRef | null,
+  approval: TurnItems[number],
 ): ThreadPendingApprovalFile[] {
   const files: ThreadPendingApprovalFile[] = [];
   for (const item of turnItems) {
-    if (item.type !== "file_change" || !sameNativeItem(item.nativeItemRef, nativeItemRef)) {
+    if (
+      item.type !== "file_change" ||
+      item.providerTurnId !== approval.providerTurnId ||
+      item.providerThreadId !== approval.providerThreadId ||
+      !sameNativeItem(item.nativeItemRef, approval.nativeItemRef)
+    ) {
       continue;
     }
     const source = {
@@ -352,7 +357,7 @@ export function derivePendingThreadRequests(
     );
     const files =
       request.kind === "file-change" && item !== undefined
-        ? approvalFiles(projection.turnItems, item.nativeItemRef)
+        ? approvalFiles(projection.turnItems, item)
         : [];
     approvals.push({
       requestId: request.id,

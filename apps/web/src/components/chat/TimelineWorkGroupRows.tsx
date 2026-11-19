@@ -21,6 +21,7 @@ import {
   WORKING_BAR_CLASS_NAME,
   WorkFoldCaret,
   WorkFoldToggle,
+  WorkingBarChip,
   WorkingBarControl,
   useCarriedTextFade,
 } from "./TimelineRowParts";
@@ -40,11 +41,7 @@ import {
 } from "./TimelineWorkEntryRow";
 import { formatWorkingTimer, formatWorkingTimerNow } from "./TimelineWorkGroupRows.logic";
 import { WorkLogButton, WorkLogList, WorkLogRow, WorkLogTarget, WorkLogVerb } from "./WorkLog";
-import {
-  type WorktreeSetupSnapshot,
-  type ToolActivityIcon,
-  type OrchestrationV2TurnItem,
-} from "@t3tools/contracts";
+import { type ToolActivityIcon, type OrchestrationV2TurnItem } from "@t3tools/contracts";
 import {
   liveThoughtLine,
   resolveViewedImageAsset,
@@ -73,6 +70,7 @@ import { assetMediaActionsSource } from "./ChatMarkdownMedia";
 import {
   Minimize2Icon,
   XIcon,
+  LaptopIcon,
   BellIcon,
   ActivityIcon,
   TerminalIcon,
@@ -95,9 +93,9 @@ import {
   type WorkingWindow,
   type WorkingWindowItem,
 } from "./MessagesTimeline.logic";
-import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { Spinner } from "../ui/spinner";
-import { WorktreeSetupCard } from "./WorktreeSetupCard";
+import { WorktreeSetupRows } from "./WorktreeSetupCard";
+import { RunningFor } from "./RunningFor";
+import { worktreeSetupAgentStarted } from "@t3tools/client-runtime/worktree-setup";
 import { cn } from "~/lib/utils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
@@ -192,6 +190,7 @@ function WorkingTimer({ createdAt, clock = false }: { createdAt: string; clock?:
 }
 
 const compactWorkEntryHeight = 24;
+const expandedWorkEntryHeight = 28;
 
 // The thumbnail strip below the group is its own virtualized row, so the gallery an expanded
 // entry opens is built from the same entries rather than from the strip's mounted images.
@@ -339,7 +338,9 @@ function ExpandedWorkGroupEntries({
   }, [updateScrollFades]);
 
   const renderEntry = ({ item }: { item: TimelineWorkEntry }) => (
-    <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    <div className="min-h-7">
+      <SimpleWorkEntryRow key={item.id} workEntry={item} workspaceRoot={workspaceRoot} />
+    </div>
   );
 
   const updateExpandedContentHeight = () => {
@@ -349,7 +350,7 @@ function ExpandedWorkGroupEntries({
       if (state?.indexByKey(entryId) === undefined) continue;
       height += Math.max(
         0,
-        (state.sizes.get(entryId) ?? compactWorkEntryHeight) - compactWorkEntryHeight,
+        (state.sizes.get(entryId) ?? expandedWorkEntryHeight) - expandedWorkEntryHeight,
       );
     }
     setExpandedContentHeight(height);
@@ -367,7 +368,7 @@ function ExpandedWorkGroupEntries({
           extraData={workspaceRoot}
           keyExtractor={workEntryKey}
           renderItem={renderEntry}
-          estimatedItemSize={compactWorkEntryHeight}
+          estimatedItemSize={expandedWorkEntryHeight}
           drawDistance={240}
           recycleItems
           {...(initialScrollIndex ? { initialScrollIndex } : {})}
@@ -408,10 +409,9 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const {
     isCompacting,
     isPreparingWorktree,
-    backgroundWorktreeSetup,
+    worktreeSetup,
     pendingRequest,
     providerStartingLabel,
-    worktreeSetupCardOwnsHeader,
   } = use(TimelineRowActivityCtx);
   const window = row.window;
   const [fit, onOverflowChange] = useReducer(
@@ -419,21 +419,19 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       current.overflows === overflows ? current : { overflows, fade: current.fade || !overflows },
     { overflows: false, fade: false },
   );
-  if (worktreeSetupCardOwnsHeader) return null;
+  // A turn that prepares a worktree keeps one "Working for" line from send to the agent's answer.
+  const setupTurn = isPreparingWorktree || worktreeSetup !== null;
   if (
     window?.compactCommand &&
     window.items.length === 0 &&
     !window.stopping &&
     !pendingRequest &&
-    !isPreparingWorktree &&
-    !backgroundWorktreeSetup
+    !setupTurn
   )
     return null;
   const compacting =
     row.compacting !== undefined || isCompacting || workingWindowHasActiveCompaction(window);
-  const label = isPreparingWorktree ? (
-    <T>Setting up worktree…</T>
-  ) : window?.stopping ? (
+  const label = window?.stopping ? (
     <T>Stopping…</T>
   ) : pendingRequest && row.createdAt ? (
     // The clock stops while the turn waits on the user.
@@ -451,7 +449,7 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
         <T>Compacting…</T>
       )}
     </span>
-  ) : providerStartingLabel ? (
+  ) : providerStartingLabel && !setupTurn ? (
     // Until the provider opens a turn, the run is still launching it.
     providerStartingLabel
   ) : row.createdAt ? (
@@ -464,6 +462,17 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const historyOpen = window?.historyOpen ?? false;
   const foldable =
     window !== undefined && (historyOpen || (fit.overflows && window.items.length > 0));
+  const setupLive = worktreeSetup?.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup);
+  const terminalId = worktreeSetup?.setupScript?.terminalId ?? null;
+  const openTerminal = ctx.onOpenWorktreeSetupTerminal;
+  const setupRows = worktreeSetup ? (
+    <WorktreeSetupRows
+      environmentId={ctx.activeThreadEnvironmentId}
+      snapshot={worktreeSetup}
+      startingLabel={providerStartingLabel}
+      onOpenTerminal={openTerminal && terminalId ? () => openTerminal(terminalId) : null}
+    />
+  ) : null;
   return (
     <div>
       <div className={WORKING_BAR_CLASS_NAME}>
@@ -482,65 +491,40 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
             if (window) ctx.onToggleWorkingHistory(window.key);
           }}
         >
-          <span
-            ref={isPreparingWorktree ? observeVisibleAnimation : undefined}
-            className="relative shrink-0 overflow-hidden whitespace-nowrap"
-          >
-            {label}
-            {isPreparingWorktree ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
-          </span>
+          <span className="relative shrink-0 overflow-hidden whitespace-nowrap">{label}</span>
         </WorkFoldToggle>
-        {backgroundWorktreeSetup ? (
-          <BackgroundWorktreeSetupChip snapshot={backgroundWorktreeSetup} />
-        ) : null}
-        <div className="ms-auto flex min-w-0 items-center justify-end">
+        {/* One trailing group: two auto margins would split the free space and center the chip. */}
+        <div className="ms-auto flex min-w-0 items-center justify-end gap-2">
+          {setupLive && ctx.onWorktreeSetupWorkLocally ? (
+            <WorkingBarChip
+              icon={<LaptopIcon aria-hidden className="size-3 shrink-0" />}
+              onClick={ctx.onWorktreeSetupWorkLocally}
+            >
+              <T>Work locally</T>
+            </WorkingBarChip>
+          ) : null}
+          {setupLive && ctx.onCancelWorktreeSetup ? (
+            <WorkingBarChip
+              icon={<XIcon aria-hidden className="size-3 shrink-0" />}
+              onClick={ctx.onCancelWorktreeSetup}
+            >
+              <T>Cancel</T>
+            </WorkingBarChip>
+          ) : null}
           {window ? <WorkingBarSlot window={window} pendingRequest={pendingRequest} /> : null}
         </div>
       </div>
       {window ? (
-        <WorkingWindowView window={window} itemKey={row.id} onOverflowChange={onOverflowChange} />
+        <WorkingWindowView
+          window={window}
+          itemKey={row.id}
+          leading={setupRows}
+          onOverflowChange={onOverflowChange}
+        />
+      ) : setupRows ? (
+        <div className="flex min-w-0 flex-col gap-1 pt-2">{setupRows}</div>
       ) : null}
     </div>
-  );
-}
-
-function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnapshot }) {
-  const ctx = use(TimelineRowCtx);
-  const gt = useGT();
-  const terminalId = snapshot.setupScript?.terminalId ?? null;
-  const openTerminal = ctx.onOpenWorktreeSetupTerminal;
-  const onOpenTerminal = openTerminal && terminalId ? () => openTerminal(terminalId) : null;
-  const scriptName = snapshot.setupScript?.name ?? gt("Setup script");
-  return (
-    <Popover>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="ghost-muted"
-            size="micro"
-            className="ml-auto min-w-0 shrink-0"
-            aria-label={gt(
-              "Background setup is still running: {scriptName}. Show setup progress.",
-              { scriptName },
-            )}
-          />
-        }
-      >
-        <Spinner className="size-3 shrink-0" />
-        <span className="truncate">
-          <T>Background setup</T>
-        </span>
-      </PopoverTrigger>
-      <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
-        <WorktreeSetupCard
-          snapshot={snapshot}
-          embedded
-          onCancel={null}
-          onWorkLocally={null}
-          onOpenTerminal={onOpenTerminal}
-        />
-      </PopoverPopup>
-    </Popover>
   );
 }
 
@@ -590,7 +574,7 @@ function LiveWorkToggle({
       <button
         type="button"
         className={cn(
-          "group/live-work flex min-w-0 flex-1 cursor-pointer rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
+          "group/live-work flex min-w-0 flex-1 cursor-pointer rounded-md text-left hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           stacked ? "flex-col items-start" : "min-h-6 items-center",
         )}
         {...props}
@@ -665,7 +649,7 @@ function LiveActivityContent({
                 ? failedToolIconClassName
                 : highlighted
                   ? "text-foreground"
-                  : "text-muted-foreground",
+                  : "text-dim-foreground",
             )}
             role={announceFailure ? "img" : undefined}
             aria-label={announceFailure ? gt("Tool call failed") : undefined}
@@ -731,7 +715,7 @@ export function LiveWorkEntryTimelineRow({
       {thoughtLine ? (
         <WorkLogRow
           icon={
-            <span className="flex size-4 items-center justify-center text-icon-muted">
+            <span className="flex size-4 items-center justify-center text-dim-foreground">
               <ToolActivityIconView
                 icon={undefined}
                 fallbackName="brain"
@@ -821,22 +805,27 @@ function WorkGroupHeader(props: {
 }) {
   const gt = useGT();
   return (
-    <WorkLogButton
-      aria-label={
-        props.failed ? gt("{label}, tool call failed", { label: props.label }) : props.label
-      }
-      aria-expanded={props.expanded}
-      onClick={props.onToggle}
-      icon={
-        <ToolActivityIconView
-          icon={props.toolIcon}
-          fallbackName={props.iconName}
-          className="size-3.5 shrink-0 stroke-2 text-muted-foreground"
-          muted
-        />
-      }
-      label={<span className="block truncate text-secondary-label">{props.label}</span>}
-    />
+    <div className="pb-2">
+      <WorkLogButton
+        aria-label={
+          props.failed ? gt("{label}, tool call failed", { label: props.label }) : props.label
+        }
+        aria-expanded={props.expanded}
+        onClick={props.onToggle}
+        icon={
+          <ToolActivityIconView
+            icon={props.toolIcon}
+            fallbackName={props.iconName}
+            className={cn(
+              "size-3.5 shrink-0 stroke-2",
+              props.failed ? "text-muted-foreground" : "text-dim-foreground",
+            )}
+            muted
+          />
+        }
+        label={<span className="block truncate text-secondary-label">{props.label}</span>}
+      />
+    </div>
   );
 }
 
@@ -864,11 +853,14 @@ export function BackgroundActivityTimelineRow({
       aria-label={gt("{label}: {summary}", { label, summary })}
       aria-expanded={row.expanded}
       onClick={() => ctx.onToggleWorkGroup(row.id, row.id)}
-      icon={<BellIcon aria-hidden className="size-3.5 text-muted-foreground" />}
+      icon={<BellIcon aria-hidden className="size-3.5 text-dim-foreground" />}
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <span className="shrink-0 text-label">{label}</span>
-          <span className="min-w-0 flex-1 truncate text-body text-dim-foreground">{summary}</span>
+          {/* Open, the rows below say it; the bare count is what reads as unfolded. */}
+          {row.expanded ? null : (
+            <span className="min-w-0 flex-1 truncate text-body text-dim-foreground">{summary}</span>
+          )}
         </span>
       }
       trailing={
@@ -961,10 +953,10 @@ function WorkingWindowText({
     item.projectedItemId,
   );
   const text = liveText ?? item.message.text;
-  const textRef = useCarriedTextFade(item.message.id);
+  const textRef = useCarriedTextFade(item.message.id, Boolean(item.message.streaming));
   if (text.trim().length === 0) return null;
   return (
-    <div ref={textRef} className="min-w-0 py-2">
+    <div ref={textRef} className="min-w-0 px-1 py-2">
       <AssistantCitationSource
         messageId={item.message.id}
         {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
@@ -1010,9 +1002,22 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
     if (entry.itemType === "approval_request" || entry.itemType === "user_input_request") {
       return <WorkingRequestRow entry={entry} />;
     }
+    const label = liveWorkEntryLabel(entry, ctx.workspaceRoot, true);
     return (
       <LiveActivityRow
-        label={liveWorkEntryLabel(entry, ctx.workspaceRoot, true)}
+        label={
+          entry.itemType === "command_execution" && entry.command?.trim() ? (
+            <>
+              {label}
+              <RunningFor
+                startedAt={entry.createdAt}
+                environmentId={ctx.activeThreadEnvironmentId}
+              />
+            </>
+          ) : (
+            label
+          )
+        }
         iconName={workEntryIconName(entry)}
         toolIcon={entry.toolIcon ?? entry.toolSource?.icon}
         active={current}
@@ -1035,10 +1040,13 @@ const WorkingWindowItemView = memo(function WorkingWindowItemView({
 function WorkingWindowView({
   window,
   itemKey,
+  leading,
   onOverflowChange,
 }: {
   window: WorkingWindow;
   itemKey: string;
+  /** Rows the turn shows before its first item, such as its worktree setup. */
+  leading: ReactNode;
   onOverflowChange: (overflows: boolean) => void;
 }) {
   const ctx = use(TimelineRowCtx);
@@ -1067,20 +1075,24 @@ function WorkingWindowView({
     if (open) return;
     setCollapseClips((windowRef.current?.scrollHeight ?? 0) > WORKING_WINDOW_COLLAPSED_HEIGHT);
   }, [open]);
-  const { onWorkingHistoryCollapsing } = ctx;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- older items stay mounted, and the timeline stops following its end, until the collapse transition finishes
+  const { onWorkingHistoryMoving, onWorkingHistorySettled } = ctx;
+  const hasHistory = history !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the timeline holds off following its end, and older items stay mounted, until the open or collapse transition finishes
   useEffect(() => {
-    if (open || history === null) return;
-    onWorkingHistoryCollapsing(true);
+    if (!open && !hasHistory) return;
+    onWorkingHistoryMoving(true);
     let cancelled = false;
     void transitionsSettled(windowRef.current).then(() => {
-      if (!cancelled) setHistory(null);
+      if (cancelled) return;
+      onWorkingHistoryMoving(false);
+      onWorkingHistorySettled();
+      if (!open) setHistory(null);
     });
     return () => {
       cancelled = true;
-      onWorkingHistoryCollapsing(false);
+      onWorkingHistoryMoving(false);
     };
-  }, [open, history, onWorkingHistoryCollapsing]);
+  }, [open, hasHistory, onWorkingHistoryMoving, onWorkingHistorySettled]);
   const head = history?.head;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as the timeline scroll brings them near the viewport
   useEffect(() => {
@@ -1138,7 +1150,7 @@ function WorkingWindowView({
     !isCompacting &&
     !isPreparingWorktree &&
     !workingWindowHasActiveCompaction(window);
-  if (shown.length === 0 && !showThinking) return null;
+  if (shown.length === 0 && !showThinking && !leading) return null;
   return (
     <WorkGroupViewCtx value={groupView}>
       <div
@@ -1159,11 +1171,13 @@ function WorkingWindowView({
             key={window.key}
             items={window.items}
             itemKey={itemKey}
+            leading={leading}
             showThinking={showThinking}
             onOverflowChange={onOverflowChange}
           />
         ) : (
           <>
+            {leading}
             {history ? window.items.slice(0, headEnd).map(renderItem) : null}
             {unmounted > 0 ? (
               <div
@@ -1191,11 +1205,13 @@ function WorkingWindowView({
 function CollapsedWorkingWindow({
   items,
   itemKey,
+  leading,
   showThinking,
   onOverflowChange,
 }: {
   items: WorkingWindow["items"];
   itemKey: string;
+  leading: ReactNode;
   showThinking: boolean;
   onOverflowChange: (overflows: boolean) => void;
 }) {
@@ -1233,7 +1249,12 @@ function CollapsedWorkingWindow({
     reportOverflow();
     return observeResize([content, viewport], () => {
       reportOverflow();
-      if (followRef.current) viewport.scrollTop = viewport.scrollHeight;
+      if (followRef.current) {
+        viewport.scrollTop = viewport.scrollHeight;
+      } else if (scrolledToEnd(viewport)) {
+        followRef.current = true;
+        setFollowing(true);
+      }
     });
   }, [onOverflowChange]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mounts older items as scrolling brings the spacer near the viewport
@@ -1273,13 +1294,14 @@ function CollapsedWorkingWindow({
         onScrollCapture={(event) => {
           const viewport = getViewport();
           if (!viewport || event.target !== viewport || prependRef.current) return;
-          const atEnd = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
+          const atEnd = scrolledToEnd(viewport);
           followRef.current = atEnd;
           setFollowing(atEnd);
           if (atEnd) setStart(Math.max(start, items.length - WORKING_WINDOW_TAIL));
         }}
       >
         <div ref={contentRef} className="flex min-w-0 flex-col gap-1">
+          {leading}
           {start > 0 ? (
             <div
               ref={spacerRef}
@@ -1321,6 +1343,10 @@ function CollapsedWorkingWindow({
       ) : null}
     </div>
   );
+}
+
+function scrolledToEnd(viewport: HTMLElement) {
+  return viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop <= 2;
 }
 
 function workingWindowItemIsLive(item: WorkingWindowItem | undefined): boolean {
@@ -1452,7 +1478,15 @@ export function SlashCommandTimelineRow({ command }: { command: TimelineSlashCom
   const compacting = command.name === "compact" && !command.skill && command.state === "running";
   return (
     <WorkLogRow
-      icon={<Icon aria-hidden="true" className="size-3.5 text-muted-foreground" />}
+      icon={
+        <Icon
+          aria-hidden="true"
+          className={cn(
+            "size-3.5",
+            command.state === "failed" ? "text-muted-foreground" : "text-dim-foreground",
+          )}
+        />
+      }
       label={
         <span className="flex min-w-0 items-center gap-1.5">
           <WorkLogVerb

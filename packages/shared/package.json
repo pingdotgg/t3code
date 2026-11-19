@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./appIcons": {
+      "types": "./src/appIcons.ts",
+      "import": "./src/appIcons.ts"
+    },
     "./png": {
       "types": "./src/png.ts",
       "import": "./src/png.ts"

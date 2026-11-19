@@ -27,6 +27,7 @@ import {
   EllipsisIcon,
   BookUp2Icon,
   CheckIcon,
+  ChevronDownIcon,
   CloudDownloadIcon,
   CloudUploadIcon,
   FileDiffIcon,
@@ -66,6 +67,7 @@ import {
 import { GitCommitDialog, type GitCommitDialogSubmission } from "./GitCommitDialog";
 import { PublishRepositoryDialog } from "./PublishRepositoryDialog";
 import { Button } from "~/components/ui/button";
+import { Group, GroupSeparator } from "~/components/ui/group";
 import {
   Dialog,
   DialogDescription,
@@ -120,11 +122,13 @@ import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { THREAD_DETAILS_PANEL_LABEL_CLASS } from "./chat/threadDetailsPanelStyles";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { PullRequestGlyph } from "./pullRequest/pullRequestIcons";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
+import { ChangeBreakdownGrid } from "./pullRequest/ChangeBreakdownGrid";
 
 interface GitActionsControlProps {
   /** "shortcut" keeps the commit and push shortcut and its dialogs live. */
-  presentation?: "shortcut";
+  presentation?: "shortcut" | "toolbar";
   displayMode?: "panel";
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
@@ -354,12 +358,11 @@ export default function GitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
-  keybindings: panelKeybindings,
 }: GitActionsControlProps) {
   const gt = useGT();
   const messages = useMessages();
   const progressLabelId = useId();
-  const isPanel = presentation !== "shortcut";
+  const isPanel = presentation === undefined;
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
     "thread branch metadata update",
@@ -471,7 +474,10 @@ export default function GitActionsControl({
   const { data: gitStatus, error: gitStatusError } = gitStatusQuery;
   const sourceControlPresentation = getSourceControlPresentation(gitStatus?.sourceControlProvider);
   const changeRequestTerminology = sourceControlPresentation.terminology;
-  const SourceControlIcon = sourceControlPresentation.Icon;
+  const SourceControlIcon =
+    gitStatus?.sourceControlProvider?.kind === "gitcafe"
+      ? PullRequestGlyph.pullRequest
+      : sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
@@ -523,6 +529,7 @@ export default function GitActionsControl({
     changesPreview.data?.sources.find((source) => source.kind === "branch-range"),
   );
   const changesTotals = resolvedChangesTotals ?? { insertions: 0, deletions: 0 };
+  const changesBreakdown = resolvedChangesTotals?.breakdown ?? null;
   const changesBaseLabel = resolvedChangesTotals
     ? resolvedChangesTotals.baseRef === null
       ? gt("Uncommitted")
@@ -793,14 +800,6 @@ export default function GitActionsControl({
           data: successToastData,
         }),
       );
-    } else {
-      resultToastId = toastManager.add({
-        type: "success",
-        title: actionResult.toast.title,
-        description: actionResult.toast.description,
-        timeout: successToastTiming.timeout,
-        data: successToastData,
-      });
     }
     return true;
   }
@@ -855,27 +854,11 @@ export default function GitActionsControl({
               })
             : gt("Updated {ref} from upstream", { ref: pullResult.refName })
           : gt("{ref} is already synchronized.", { ref: pullResult.refName });
-      if (isPanel) {
-        setInlineSuccess({
-          title,
-          description,
-          scopeKey: successScopeKey,
-          expiresAtMs: inlineSuccessExpiresAt(),
-        });
-        return;
-      }
-      const successToastTiming = resolveGitActionResultToastTiming("success");
-      toastManager.add({
-        type: "success",
+      setInlineSuccess({
         title,
         description,
-        timeout: successToastTiming.timeout,
-        data: {
-          ...threadToastData,
-          ...(successToastTiming.dismissAfterVisibleMs !== null
-            ? { dismissAfterVisibleMs: successToastTiming.dismissAfterVisibleMs }
-            : {}),
-        },
+        scopeKey: successScopeKey,
+        expiresAtMs: inlineSuccessExpiresAt(),
       });
     })();
   };
@@ -919,7 +902,7 @@ export default function GitActionsControl({
   };
 
   const runCommitPushFromShortcut = useEffectEvent(runCommitPush);
-  const handlesCommitPushShortcut = presentation === "shortcut" && isRepo;
+  const handlesCommitPushShortcut = presentation !== undefined && isRepo;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to window keydown for the mounted git control's commit and push shortcuts
   useEffect(() => {
     if (!listenForShortcuts || !handlesCommitPushShortcut) return;
@@ -1044,24 +1027,24 @@ export default function GitActionsControl({
     readonly disabledReason: string | null;
     readonly trailing?: ReactNode;
     readonly onClick: () => void;
-  }) => (
-    <div key={row.key}>
-      <MenuItem
-        density={menuDensity}
-        disabled={!canWriteSourceControl || row.disabled}
-        onClick={row.onClick}
-      >
+  }) => {
+    const disabled = !canWriteSourceControl || row.disabled;
+    const item = (
+      <MenuItem key={row.key} density={menuDensity} disabled={disabled} onClick={row.onClick}>
         {row.icon}
         <MenuItemLabel>{row.label}</MenuItemLabel>
         {row.trailing}
       </MenuItem>
-      {row.disabled && row.disabledReason ? (
-        <p className="max-w-72 ps-8 pe-2 pb-1.5 text-meta text-dim-foreground">
-          {row.disabledReason}
-        </p>
-      ) : null}
-    </div>
-  );
+    );
+    return disabled && row.disabledReason ? (
+      <Tooltip key={row.key}>
+        <TooltipTrigger render={<span className="block" />}>{item}</TooltipTrigger>
+        <TooltipPopup side="left">{row.disabledReason}</TooltipPopup>
+      </Tooltip>
+    ) : (
+      item
+    );
+  };
   const renderActionMenuItem = (item: GitActionMenuItem) =>
     renderMenuRow({
       key: `${item.id}-${item.label}`,
@@ -1222,12 +1205,12 @@ export default function GitActionsControl({
   return (
     <>
       {presentation === "shortcut" ? null : displayMode === "panel" && isRepo ? (
-        <div
-          className="flex shrink-0 items-center pe-1"
-          role="group"
-          aria-label={gt("Git actions")}
-        >
-          {showActions ? (
+        showActions ? (
+          <div
+            className="col-start-2 flex shrink-0 items-center pe-1"
+            role="group"
+            aria-label={gt("Git actions")}
+          >
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1247,31 +1230,82 @@ export default function GitActionsControl({
                 <T>Push branch</T>
               </TooltipPopup>
             </Tooltip>
-          ) : null}
+            <Menu
+              onOpenChange={(open) => {
+                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+              }}
+            >
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuTrigger
+                      render={
+                        <ThreadDetailsControl part="icon" aria-label={gt("Git action options")} />
+                      }
+                    />
+                  }
+                >
+                  <EllipsisIcon />
+                </TooltipTrigger>
+                <TooltipPopup>
+                  <T>Git action options</T>
+                </TooltipPopup>
+              </Tooltip>
+              <MenuPopup side="bottom" align="end" width="wide">
+                {gitItems}
+              </MenuPopup>
+            </Menu>
+          </div>
+        ) : null
+      ) : presentation === "toolbar" && isRepo ? (
+        <Group aria-label={gt("Git actions")}>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={
+              !canWriteSourceControl ||
+              isGitActionRunning ||
+              quickAction.disabled ||
+              Boolean(quickActionDisabledReason)
+            }
+            onClick={runQuickAction}
+            aria-label={quickAction.label}
+          >
+            {quickAction.label}
+          </Button>
+          <GroupSeparator />
           <Menu
             onOpenChange={(open) => {
               if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
             }}
           >
-            <MenuTrigger
-              render={<ThreadDetailsControl part="icon" aria-label={gt("Git action options")} />}
-            >
-              <EllipsisIcon />
-            </MenuTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <Button
+                        size="icon-sm"
+                        variant="secondary"
+                        aria-label={gt("Git action options")}
+                        // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
+                        data-toolbar-control=""
+                      />
+                    }
+                  />
+                }
+              >
+                <ChevronDownIcon />
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                <T>Git action options</T>
+              </TooltipPopup>
+            </Tooltip>
             <MenuPopup side="bottom" align="end">
-              {showChanges ? (
-                <MenuItem disabled={!onOpenChanges} onClick={onOpenChanges}>
-                  <FileDiffIcon />
-                  <MenuItemLabel>
-                    <T>View changes</T>
-                  </MenuItemLabel>
-                  {changesSummary}
-                </MenuItem>
-              ) : null}
-              {showActions ? gitItems : null}
+              {gitItems}
             </MenuPopup>
           </Menu>
-        </div>
+        </Group>
       ) : !isRepo ? (
         showActions ? (
           <ThreadDetailsControl
@@ -1314,20 +1348,6 @@ export default function GitActionsControl({
           ) : (
             panelQuickAction
           )}
-          {!showChanges || quietEmptyDraft ? null : (
-            <ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges}>
-              <FileDiffIcon aria-hidden />
-              <MenuItemLabel>
-                <T>View changes</T>
-              </MenuItemLabel>
-              {!showActions ? changesSummary : null}
-              {keybindings && (
-                <MenuShortcut>
-                  {shortcutLabelForCommand(panelKeybindings ?? keybindings, "diff.toggle")}
-                </MenuShortcut>
-              )}
-            </ThreadDetailsControl>
-          )}
           {showActions ? (
             <Menu
               onOpenChange={(open) => {
@@ -1345,13 +1365,72 @@ export default function GitActionsControl({
                   <T>Git actions</T>
                 </MenuItemLabel>
               </MenuTrigger>
-              <MenuPopup side="right" align="start">
+              <MenuPopup
+                side="right"
+                align="start"
+                collisionAvoidance={{ side: "flip", align: "shift", fallbackAxisSide: "end" }}
+              >
                 {gitItems}
               </MenuPopup>
             </Menu>
           ) : null}
         </div>
       )}
+
+      {isPanel && showChanges && isRepo && (displayMode === "panel" || !quietEmptyDraft) ? (
+        <div className="col-span-2 min-w-0">
+          <Tooltip>
+            <TooltipTrigger
+              render={<ThreadDetailsControl disabled={!onOpenChanges} onClick={onOpenChanges} />}
+            >
+              <FileDiffIcon aria-hidden />
+              <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                <span className="shrink-0">
+                  <T>Changes</T>
+                </span>
+                {changesBaseLabel ? (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span className="min-w-0 truncate text-muted-foreground" />}
+                    >
+                      {changesBaseLabel}
+                    </TooltipTrigger>
+                    <TooltipPopup side="top">{changesBaseLabel}</TooltipPopup>
+                  </Tooltip>
+                ) : null}
+                <span className="ms-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
+                  <span
+                    className={
+                      changesTotals?.insertions ? "text-diff-addition" : "text-muted-foreground"
+                    }
+                  >
+                    +{formatDiffCount(changesTotals?.insertions ?? 0)}
+                  </span>
+                  <span
+                    className={
+                      changesTotals?.deletions ? "text-diff-deletion" : "text-muted-foreground"
+                    }
+                  >
+                    -{formatDiffCount(changesTotals?.deletions ?? 0)}
+                  </span>
+                </span>
+              </span>
+            </TooltipTrigger>
+            {changesBreakdown && (changesTotals.insertions > 0 || changesTotals.deletions > 0) ? (
+              // Base UI fixes the popup width on open; remeasure when the breakdown changes.
+              <TooltipPopup key={JSON.stringify(changesBreakdown)} side="bottom">
+                <ChangeBreakdownGrid
+                  breakdown={changesBreakdown}
+                  total={{
+                    additions: changesTotals.insertions,
+                    deletions: changesTotals.deletions,
+                  }}
+                />
+              </TooltipPopup>
+            ) : null}
+          </Tooltip>
+        </div>
+      ) : null}
 
       <GitCommitDialog
         open={isCommitDialogOpen}

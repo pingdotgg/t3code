@@ -22,6 +22,7 @@ import {
 import {
   assistantCitationNavigation,
   assistantCitationRoute,
+  type AssistantCitationScope,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
@@ -33,20 +34,23 @@ import { observeAssistantCitationCommentSource } from "./AssistantCitationSource
 import { composerFloatingLayerProps } from "./composerEventScope";
 import { textDirection } from "~/textDirection";
 
-function useCitationSourceLinkProps(citation: AssistantCitation) {
+function useCitationSourceLinkProps(
+  citation: AssistantCitation,
+  scope: AssistantCitationScope = "passage",
+) {
   const navigate = useNavigate();
   const sourceThread = useQuietThreadShell(
     scopeThreadRef(citation.environmentId, citation.threadId),
   );
   return {
-    ...assistantCitationRoute(citation, sourceThread),
+    ...assistantCitationRoute(citation, sourceThread, scope),
     "data-markdown-copy": serializeAssistantCitation(citation),
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
       }
       event.preventDefault();
-      void navigate(assistantCitationNavigation(citation, sourceThread));
+      void navigate(assistantCitationNavigation(citation, sourceThread, scope));
     },
   };
 }
@@ -59,6 +63,7 @@ const flat = (text: string) => text.replace(/\s+/g, " ");
  */
 function ResponseCard({
   citation,
+  scope = "passage",
   copyMarkdown,
   cardCopyMarkdown = copyMarkdown,
   label,
@@ -69,6 +74,7 @@ function ResponseCard({
   trailing,
 }: {
   citation: AssistantCitation;
+  scope?: AssistantCitationScope;
   copyMarkdown: string;
   cardCopyMarkdown?: string;
   label: string;
@@ -78,7 +84,7 @@ function ResponseCard({
   leading: boolean;
   trailing: boolean;
 }) {
-  const linkProps = useCitationSourceLinkProps(citation);
+  const linkProps = useCitationSourceLinkProps(citation, scope);
   return (
     // One copy boundary for the card and its comment, so a copied card carries the comment once.
     <span
@@ -91,9 +97,10 @@ function ResponseCard({
         data-markdown-copy={cardCopyMarkdown}
         // The response is findable in its own message; here it is clamped and mostly hidden.
         data-thread-find-ignore
+        data-response-card
         aria-label={label}
         // The message's markdown styles colour and underline links; a card is neither.
-        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+        className="block min-w-0 cursor-pointer rounded-lg surface-bubble-quote px-2.5 py-1.5 text-start text-body text-muted-foreground! no-underline! wrap-break-word focus-visible:outline-2 focus-visible:outline-ring"
       >
         {title ? (
           <span className="block truncate text-meta text-foreground/80" dir="auto">
@@ -168,6 +175,7 @@ export function ResponseReplyCard({
   return (
     <ResponseCard
       citation={record.citation}
+      scope="response"
       copyMarkdown={copyMarkdown}
       label={gt("Go to the response this replies to: {label}", { label: record.label })}
       title={record.subagents?.map((subagent) => subagent.title).join(", ")}
@@ -203,13 +211,13 @@ export function AssistantCitationChip({
   const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
-  const chipRef = useRef<HTMLSpanElement>(null);
   const draftCommentRef = useRef<string | null>(null);
   const [voiceSetupOpen, setVoiceSetupOpen] = useState(false);
   const [unavailableSourceAnchor, setUnavailableSourceAnchor] =
     useState<AssistantCitationSourceAnchor | null>(null);
   const commentOpen = commentEditor?.open ?? false;
   const sourceAnchor = commentEditor?.sourceAnchor;
+  const activeSourceAnchor = sourceAnchor === unavailableSourceAnchor ? undefined : sourceAnchor;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the uncommitted comment draft held in a ref once the parent closes the comment editor
   useEffect(() => {
     if (!commentOpen) draftCommentRef.current = null;
@@ -243,10 +251,21 @@ export function AssistantCitationChip({
       onUnavailable: onSourceUnavailable,
     });
   }, [citation, commentOpen, sourceAnchor, unavailableSourceAnchor]);
-  // In the composer the editor sits above the tray, left-aligned with it like the composer's
-  // menus, so it reads as editing this chip rather than floating over the cited passage.
-  const popupAnchor = () =>
-    chipRef.current?.closest('[data-slot="composer-shell"]') ?? chipRef.current;
+  const popupAnchor = activeSourceAnchor
+    ? {
+        contextElement: activeSourceAnchor.source,
+        getBoundingClientRect: () => {
+          const rects = activeSourceAnchor.range.getClientRects();
+          const rect =
+            rects.item(rects.length - 1) ?? activeSourceAnchor.range.getBoundingClientRect();
+          // A quote can end inside horizontally clipped code or a table.
+          const bounds = activeSourceAnchor.source.getBoundingClientRect();
+          const left = Math.min(Math.max(rect.left, bounds.left), bounds.right);
+          const right = Math.max(Math.min(rect.right, bounds.right), left);
+          return new DOMRect(left, rect.top, right - left, rect.height);
+        },
+      }
+    : undefined;
   const label = assistantCitationLabel(citation);
   const composerSourceLink = (
     <Link
@@ -262,7 +281,6 @@ export function AssistantCitationChip({
   );
   return (
     <ContextChip
-      ref={chipRef}
       kind="citation"
       contentEditable={false}
       data-assistant-citation-chip="true"
@@ -294,9 +312,8 @@ export function AssistantCitationChip({
               // The editor stays mounted while its voice setup dialog replaces the popover.
               keepMounted
               {...composerFloatingLayerProps}
-              side="top"
-              align="start"
-              sideOffset={8}
+              side={activeSourceAnchor ? "bottom" : "top"}
+              align="end"
               anchor={popupAnchor}
               initialFocus={() => {
                 const input = commentInputRef.current;
@@ -324,7 +341,7 @@ export function AssistantCitationChip({
               }
               ref={commentPopupRef}
               aria-label={gt("Edit citation comment")}
-              width="lg"
+              width="md"
               padding="compact"
               onPointerDown={(event) => event.stopPropagation()}
             >

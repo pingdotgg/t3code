@@ -4,9 +4,14 @@ import { useGT } from "gt-react";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
+import { useLayoutPageLocation } from "../layout/pageNavigation";
 
 function SettingsProvidersRoute() {
-  const target = Route.useSearch();
+  const { search } = useLayoutPageLocation();
+  const instanceId =
+    typeof search.instanceId === "string" && search.instanceId.trim()
+      ? ProviderInstanceId.make(search.instanceId)
+      : undefined;
   const { environment, scope } = useSettingsScope();
   const { resumeEnvironmentId } = Route.useSearch();
   const gt = useGT();
@@ -22,7 +27,7 @@ function SettingsProvidersRoute() {
   return (
     <ProviderSettingsPanel
       environmentId={environment.environmentId}
-      {...(target.instanceId ? { instanceId: target.instanceId } : {})}
+      {...(instanceId ? { instanceId } : {})}
       projectIds={
         scope.kind === "project" || scope.kind === "checkout"
           ? scope.members

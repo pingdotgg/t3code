@@ -1,6 +1,6 @@
 import { PlusIcon, XIcon } from "lucide-react";
 import { T, useGT, useMessages } from "gt-react";
-import { useState, type SetStateAction } from "react";
+import { useId, useState, type SetStateAction } from "react";
 import type { ProviderDriverKind, ServerProviderModel } from "@t3tools/contracts";
 import type { CustomModelDefinition } from "@t3tools/shared/model";
 
@@ -45,6 +45,7 @@ export function CustomModelEditor({
   onCancel,
   onDraftChange,
 }: CustomModelEditorProps) {
+  const editorId = useId();
   const gt = useGT();
   const m = useMessages();
   const [draft, setDraft] = useState<CustomModelDraft>(() => draftFromDefinition(entry));
@@ -65,7 +66,8 @@ export function CustomModelEditor({
   const startFromCandidates = builtInModels.filter(
     (model) => (model.capabilities?.optionDescriptors?.length ?? 0) > 0,
   );
-  const domId = (suffix: string) => `provider-instance-${instanceId}-custom-model-${suffix}`;
+  const domId = (suffix: string) =>
+    `provider-instance-${instanceId}-custom-model-${editorId}-${suffix}`;
 
   const updateDescriptor = (key: string, patch: Partial<EditorDescriptor>) => {
     setError(null);

@@ -1,25 +1,22 @@
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, IssueRef } from "@t3tools/contracts";
 import { msg, useGT } from "gt-react";
-import { ArrowUpIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { m } from "~/i18n/messages";
-import { TextFieldSpeechControls, useTextFieldSpeech } from "~/speech/useTextFieldSpeech";
 import { issueEnvironment } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import {
-  COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME,
-  ComposerSendPill,
-} from "../chat/ComposerPrimaryActions";
-import { ComposerSurface } from "../chat/ComposerSurface";
 import { readableFailure } from "../pullRequest/pullRequestDetail.logic";
-import { Spinner } from "../ui/spinner";
-import { Textarea } from "../ui/textarea";
+import { PopoverTitle } from "../ui/popover";
 import { toastManager } from "../ui/toast";
+import { useWorkItemCommentForm, WorkItemCommentForm } from "../workItem/WorkItemCommentForm";
+import {
+  WorkItemComposerClose,
+  WorkItemComposerPopover,
+} from "../workItem/WorkItemComposerPopover";
 
-/** The thread composer's card, floating over the issue's timeline, with a comment as its message. */
+/** The pull request composer's floating button and popover, with a comment on the issue in it. */
 export function IssueCommentComposer({
   environmentId,
   reference,
@@ -31,26 +28,13 @@ export function IssueCommentComposer({
   blocked: string | null;
 }) {
   const gt = useGT();
-  const [body, setBody] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [open, setOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const comment = useAtomCommand(issueEnvironment.comment, { reportFailure: false });
-  const locked = blocked !== null || submitting;
-  const speech = useTextFieldSpeech({
-    environmentId,
-    projectId: reference.projectId,
-    ownerKey: JSON.stringify(["issue-comment", environmentId, reference]),
-    text: body,
-    textareaRef,
-    onTextChange: setBody,
-    disabled: locked,
-  });
+  const title = gt("Add a comment");
 
-  const submit = async (text: string) => {
-    if (text.trim().length === 0 || locked) return;
-    setSubmitting(true);
+  const submit = async (_action: "comment", text: string) => {
     const result = await comment({ environmentId, input: { ...reference, body: text } });
-    setSubmitting(false);
     if (result._tag === "Failure") {
       toastManager.add({
         type: "error",
@@ -60,68 +44,43 @@ export function IssueCommentComposer({
           m(msg("The tracker refused it.")),
         ),
       });
-      return;
+      return false;
     }
-    setBody("");
+    setOpen(false);
+    return true;
   };
-  const submitAfterDictation = () => speech.submitAfterDictation((text) => void submit(text));
-  const submitDisabled =
-    speech.preparing || (body.trim().length === 0 && !speech.blocksSubmission) || locked;
+
+  const form = useWorkItemCommentForm({
+    environmentId,
+    projectId: reference.projectId,
+    ownerKey: JSON.stringify(["issue-comment", environmentId, reference]),
+    active: open,
+    textareaRef,
+    locked: blocked !== null,
+    onSubmit: submit,
+  });
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-3">
-      <ComposerSurface.Shell className="pointer-events-auto">
-        <ComposerSurface.Host>
-          <form
-            className="relative z-10 flex flex-col px-0.5 pt-1.5 text-prompt text-foreground"
-            onSubmit={(event) => {
-              event.preventDefault();
-              submitAfterDictation();
-            }}
-          >
-            <Textarea
-              unstyled
-              ref={textareaRef}
-              rows={2}
-              aria-label={gt("Add a comment")}
-              placeholder={blocked ?? gt("Leave a comment")}
-              value={body}
-              // Lock while posting because success clears the draft.
-              disabled={locked}
-              readOnly={speech.freezesEditor}
-              onChange={(event) => setBody(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey) && !event.shiftKey) {
-                  event.preventDefault();
-                  if (!event.repeat) submitAfterDictation();
-                }
-              }}
-            />
-            <div className="flex flex-wrap items-center justify-end gap-2 px-2.5 pb-2.5">
-              <TextFieldSpeechControls speech={speech} disabled={locked} />
-              <ComposerSendPill>
-                <button
-                  type="submit"
-                  className={COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME}
-                  disabled={submitDisabled}
-                  aria-label={
-                    submitting
-                      ? gt("Posting comment")
-                      : gt("Comment", { $context: "verb, posts the comment" })
-                  }
-                >
-                  {submitting ? (
-                    <Spinner size="sm" aria-hidden />
-                  ) : (
-                    <ArrowUpIcon aria-hidden className="size-4" />
-                  )}
-                </button>
-              </ComposerSendPill>
-            </div>
-          </form>
-        </ComposerSurface.Host>
-      </ComposerSurface.Shell>
-    </div>
+    <WorkItemComposerPopover
+      open={open}
+      onOpenChange={setOpen}
+      triggerLabel={title}
+      popupLabel={title}
+      initialFocus={textareaRef}
+      header={
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <PopoverTitle>{title}</PopoverTitle>
+          <WorkItemComposerClose />
+        </div>
+      }
+    >
+      <WorkItemCommentForm
+        form={form}
+        textareaRef={textareaRef}
+        completionScope={null}
+        label={gt("Add a comment")}
+        placeholder={blocked ?? gt("Leave a comment")}
+      />
+    </WorkItemComposerPopover>
   );
 }

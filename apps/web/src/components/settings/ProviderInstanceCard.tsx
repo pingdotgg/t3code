@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
-import { Fragment, useState, type ReactElement, type ReactNode } from "react";
+import { Fragment, useId, useState, type ReactElement, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
 import {
   isProviderDriverKind,
@@ -302,7 +302,8 @@ function ProviderEnvironmentFieldRow(props: {
   readonly environmentId?: EnvironmentId | undefined;
 }) {
   const gt = useGT();
-  const inputId = `${props.idPrefix}-environment-${props.field.name}`;
+  const id = useId();
+  const inputId = `${props.idPrefix}-${id}-environment-${props.field.name}`;
   const value = props.variable?.valueRedacted ? "" : (props.variable?.value ?? "");
 
   return (
@@ -315,7 +316,7 @@ function ProviderEnvironmentFieldRow(props: {
           {props.field.sensitive === false ? (
             <DraftInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               autoComplete="off"
               value={typeof value === "string" ? value : ""}
@@ -326,7 +327,7 @@ function ProviderEnvironmentFieldRow(props: {
           ) : (
             <SecretSourceInput
               id={inputId}
-              size="sm"
+              size="settings"
               className="min-w-0 flex-1"
               value={value}
               onCommit={(next) => props.onCommit(props.field, next)}
@@ -1218,13 +1219,20 @@ export function ProviderInstanceCard({
       <div
         data-slot="provider-card"
         data-selected={selected ? "" : undefined}
+        onClickCapture={(event) => {
+          if (
+            event.target instanceof Element &&
+            !event.target.closest('button, input, [role="switch"], [data-slot="popover-trigger"]')
+          ) {
+            onConfigure?.();
+          }
+        }}
         className={cn(
           "relative flex items-start gap-2.5 rounded-row p-2.5",
           selected ? "surface-selected-soft" : "hover:surface-ghost-hover",
         )}
       >
-        {/* The select button sits under the text rather than around it, so the
-            email, status and enable controls stay separate hit targets. */}
+        {/* The overlay avoids nesting the email and enable controls inside a button. */}
         <button
           type="button"
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
@@ -1251,7 +1259,7 @@ export function ProviderInstanceCard({
             </Text>
             {enabled && !updateProgress ? statusDotNode : null}
             {versionLabel ? (
-              <code className="shrink-0 font-mono text-caption text-dim-foreground">
+              <code className="shrink-0 font-mono text-meta text-dim-foreground">
                 {versionLabel}
               </code>
             ) : null}
@@ -1436,7 +1444,7 @@ export function ProviderInstanceCard({
                 />
                 <DraftInput
                   id={`provider-instance-${instanceId}-display-name`}
-                  size="sm"
+                  size="settings"
                   className="min-w-0 flex-1 @min-[26rem]/settings-row:w-50"
                   value={instance.displayName ?? ""}
                   onCommit={updateDisplayName}

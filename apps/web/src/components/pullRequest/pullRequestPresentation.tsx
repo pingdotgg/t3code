@@ -16,6 +16,7 @@ import {
   CircleDotIcon,
   CircleSlashIcon,
   CircleXIcon,
+  MessageSquarePlusIcon,
   OctagonXIcon,
   UserCheckIcon,
   UserRoundIcon,
@@ -28,7 +29,7 @@ import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
 
 import { Badge } from "../ui/badge";
-import { InlineButton } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { PullRequestReviewOutcome } from "./pullRequestDetail.logic";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
@@ -38,6 +39,27 @@ import {
   type PullRequestStatePresentation,
   type PullRequestGlyphIcon,
 } from "./pullRequestIcons";
+
+export function AddToChatIconButton({ onClick }: { onClick: () => void }) {
+  const gt = useGT();
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            aria-label={gt("Add to chat")}
+            onClick={onClick}
+          />
+        }
+      >
+        <MessageSquarePlusIcon className="size-3" />
+      </TooltipTrigger>
+      <TooltipPopup>{gt("Add to chat")}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 export function PullRequestLabelChip({
   label,

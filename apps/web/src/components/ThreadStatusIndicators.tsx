@@ -17,7 +17,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { msg, useGT, useMessages } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -25,6 +25,7 @@ import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject } from "../state/entities";
 import {
   pullRequestListLines,
+  type PullRequestListLine,
   resolveThreadCurrentPullRequestLink,
   resolveThreadPullRequestBadge,
   resolveThreadPullRequestChains,
@@ -32,7 +33,7 @@ import {
   visibleThreadPullRequests,
 } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRender } from "@base-ui/react/use-render";
-import { type ReactNode, type AnimationEvent, type MouseEvent, type ReactElement } from "react";
+import { type AnimationEvent, type MouseEvent, type PointerEvent, type ReactElement } from "react";
 import { cn } from "../lib/utils";
 import { revealThreadTerminal } from "../lib/revealThreadTerminal";
 
@@ -410,6 +411,8 @@ export function ThreadPullRequestBadgeControl({
   status,
   onOpenList,
   onOpenPullRequest,
+  onPress,
+  onPressPullRequest,
   appearance = "glyph",
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
@@ -420,6 +423,8 @@ export function ThreadPullRequestBadgeControl({
   status: PrStatusIndicator | null;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
+  onPressPullRequest: (event: PointerEvent<HTMLElement>, url: string) => void;
   appearance?: ThreadPullRequestBadgeAppearance;
 }) {
   const m = useMessages();
@@ -437,6 +442,8 @@ export function ThreadPullRequestBadgeControl({
       pullRequests={pullRequests}
       onOpenList={onOpenList}
       onOpenPullRequest={onOpenPullRequest}
+      onPress={onPress}
+      onPressPullRequest={onPressPullRequest}
     />
   );
 }
@@ -452,6 +459,8 @@ function PullRequestBadge({
   pullRequests,
   onOpenList,
   onOpenPullRequest,
+  onPress,
+  onPressPullRequest,
 }: {
   render: ReactElement<{ render?: useRender.RenderProp }>;
   appearance: ThreadPullRequestBadgeAppearance;
@@ -463,6 +472,8 @@ function PullRequestBadge({
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenList: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLElement>, url?: string) => void;
+  onPress: (event: PointerEvent<HTMLElement>, opensList: boolean) => void;
+  onPressPullRequest: (event: PointerEvent<HTMLElement>, url: string) => void;
 }) {
   const onClick = opensList
     ? (event: MouseEvent<HTMLElement>) => {
@@ -474,14 +485,17 @@ function PullRequestBadge({
   const element = opensList ? (
     <button type="button" />
   ) : (
-    <a href={url} target="_blank" rel="noopener noreferrer" />
+    <a href={url} target="_blank" rel="noopener noreferrer" draggable={false} />
   );
   const control = useRender({
     render,
     props: {
       render: element,
       "aria-label": presentation.label,
-      onPointerDown: (event: MouseEvent<HTMLElement>) => event.stopPropagation(),
+      onPointerDown: (event: PointerEvent<HTMLElement>) => {
+        event.stopPropagation();
+        onPress(event, opensList);
+      },
       onClick,
     },
   });
@@ -512,6 +526,7 @@ function PullRequestBadge({
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
               onOpenPullRequest={onOpenPullRequest}
+              onPressPullRequest={onPressPullRequest}
             />
           ) : number !== undefined && url !== undefined ? (
             <ul className="flex flex-col gap-1">
@@ -521,6 +536,7 @@ function PullRequestBadge({
                 title={status?.tooltipTitle ?? presentation.label}
                 presentation={presentation}
                 onOpenPullRequest={onOpenPullRequest}
+                onPressPullRequest={onPressPullRequest}
               />
             </ul>
           ) : null}
@@ -535,66 +551,130 @@ const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
+  onPressPullRequest,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
+  onPressPullRequest?: (event: PointerEvent<HTMLElement>, url: string) => void;
 }) {
   const gt = useGT();
-  const chains = resolveThreadPullRequestChains(pullRequests);
-  const lines = pullRequestListLines(chains, THREAD_PULL_REQUEST_PREVIEW_LIMIT);
-  const hiddenCount =
-    chains.reduce((count, chain) => count + chain.layers.length, 0) - lines.length;
-  if (lines.length === 0) return null;
-  return (
-    // Interactive rows carry their own hover padding; static rows need the wider gap.
-    <ul className={cn("flex flex-col", onOpenPullRequest ? "gap-1" : "gap-1.5")}>
-      {lines.map((line) => {
-        const snapshot = line.link.snapshot;
-        const presentation =
+  const { shown, hiddenCount } = previewChains(
+    pullRequestListLines(resolveThreadPullRequestChains(pullRequests)),
+  );
+  if (shown.length === 0) return null;
+  const firstUrl = shown[0]!.lines[0]!.link.url;
+  const term = changeRequestTermKind(
+    sourceControlClients.findByChangeRequestUrl(firstUrl)?.changeRequest ??
+      sourceControlClients.get(undefined).changeRequest,
+  );
+  // Interactive rows carry their own hover padding; the header and the note line up with them.
+  const inset = onOpenPullRequest ? "px-1" : undefined;
+  const row = (line: PullRequestListLine) => {
+    const snapshot = line.link.snapshot;
+    return (
+      <ThreadPullRequestMiniListItem
+        key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
+        number={line.link.number}
+        url={line.link.url}
+        title={snapshot?.title ?? line.link.repository}
+        presentation={
           snapshot === null
             ? null
-            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft });
-        return (
-          <ThreadPullRequestMiniListItem
-            key={`${line.link.host}/${line.link.repository}#${line.link.number}`}
-            number={line.link.number}
-            url={line.link.url}
-            title={snapshot?.title ?? line.link.repository}
-            presentation={presentation}
-            depth={line.depth}
-            onOpenPullRequest={onOpenPullRequest}
+            : resolvePullRequestState({ state: snapshot.state, isDraft: snapshot.isDraft })
+        }
+        onOpenPullRequest={onOpenPullRequest}
+        onPressPullRequest={onPressPullRequest}
+      />
+    );
+  };
+  return (
+    <ul className={cn("flex flex-col", onOpenPullRequest ? "gap-1" : "gap-1.5")}>
+      {shown.map(({ group, lines }) =>
+        group.length < 2 ? (
+          lines.map(row)
+        ) : (
+          // The pull requests page's opened-stack frame; padding cancels the margin, keeping one edge.
+          <li
+            key={group[0]!.chainKey}
+            className={cn(
+              "rounded-md bg-foreground/[0.015] outline outline-border/60",
+              onOpenPullRequest ? "py-0.5" : "-mx-1.5 px-1.5 py-1",
+            )}
           >
-            {line.stack ? (
-              <span className="ml-auto shrink-0 pl-1 text-3xs">{line.stack.size}</span>
-            ) : null}
-          </ThreadPullRequestMiniListItem>
-        );
-      })}
+            <div className={cn("flex min-w-0 items-center gap-2 text-muted-foreground", inset)}>
+              <PullRequestGlyph.stack aria-hidden className="size-3 shrink-0" />
+              <span className="shrink-0 text-foreground">
+                <T context="noun, a stack of pull requests">Stack</T>
+              </span>
+              <span className="min-w-0 truncate">
+                {gt(
+                  "{count, plural, one {{count} {term, select, mr {merge request} cr {change request} other {pull request}}} other {{count} {term, select, mr {merge requests} cr {change requests} other {pull requests}}}}",
+                  { count: group.length, term },
+                )}
+              </span>
+            </div>
+            <ul
+              className={cn("flex flex-col", onOpenPullRequest ? "mt-1 gap-1" : "mt-1.5 gap-1.5")}
+            >
+              {lines.map(row)}
+            </ul>
+          </li>
+        ),
+      )}
       {hiddenCount > 0 ? (
-        <li className="text-muted-foreground">
-          {gt("{count, plural, one {{count} more} other {{count} more}}", { count: hiddenCount })}
+        <li className={cn("text-muted-foreground", inset)}>
+          {gt(
+            "{count, plural, one {{count} more {term, select, mr {merge request} cr {change request} other {pull request}}} other {{count} more {term, select, mr {merge requests} cr {change requests} other {pull requests}}}}",
+            { count: hiddenCount, term },
+          )}
         </li>
       ) : null}
     </ul>
   );
 }
 
+/** The first lines of the chains, any chain with an open layer first, each kept in order. */
+function previewChains(lines: ReadonlyArray<PullRequestListLine>) {
+  const groups: Array<Array<PullRequestListLine>> = [];
+  for (const line of lines) {
+    const last = groups.at(-1);
+    if (last !== undefined && last[0]!.chainKey === line.chainKey) last.push(line);
+    else groups.push([line]);
+  }
+  const isOpen = (line: PullRequestListLine) =>
+    line.link.snapshot === null || line.link.snapshot.state === "open";
+  const shown: Array<{ group: Array<PullRequestListLine>; lines: Array<PullRequestListLine> }> = [];
+  let budget = THREAD_PULL_REQUEST_PREVIEW_LIMIT;
+  for (const group of groups.toSorted(
+    (left, right) => Number(right.some(isOpen)) - Number(left.some(isOpen)),
+  )) {
+    if (budget <= 0) break;
+    shown.push({ group, lines: group.slice(0, budget) });
+    budget -= group.length;
+  }
+  return { shown, hiddenCount: lines.length - THREAD_PULL_REQUEST_PREVIEW_LIMIT };
+}
+
+/** One line of a thread's hover list: a pull request, or an issue with its own key. */
 export function ThreadPullRequestMiniListItem({
   number,
+  keyLabel,
+  ariaLabel,
   url,
   title,
   presentation,
-  depth = 0,
   onOpenPullRequest,
-  children,
+  onPressPullRequest,
 }: {
-  number: number;
+  number?: number;
+  /** In place of `#number`, for an issue whose tracker names it its own way. */
+  keyLabel?: string;
+  ariaLabel?: string;
   url: string;
   title: string;
   presentation: Pick<ThreadPullRequestBadgePresentation, "Icon" | "toneClassName"> | null;
-  depth?: number;
   onOpenPullRequest?: ((event: MouseEvent<HTMLAnchorElement>, url: string) => void) | undefined;
-  children?: ReactNode;
+  onPressPullRequest?: ((event: PointerEvent<HTMLElement>, url: string) => void) | undefined;
 }) {
   const Icon = presentation?.Icon ?? PullRequestGlyph.pullRequest;
   const content = (
@@ -603,20 +683,26 @@ export function ThreadPullRequestMiniListItem({
         aria-hidden
         className={cn("size-3 shrink-0", presentation?.toneClassName ?? "stroke-muted-foreground")}
       />
-      <span className="shrink-0 font-mono tabular-nums text-foreground">#{number}</span>
+      <span className="shrink-0 font-mono tabular-nums text-foreground">
+        {keyLabel ?? `#${number}`}
+      </span>
       <span className="min-w-0 truncate text-muted-foreground">{title}</span>
-      {children}
     </>
   );
   return (
-    <li style={{ paddingLeft: `${Math.min(depth, 3) * 0.75}rem` }}>
+    <li>
       {onOpenPullRequest ? (
         <a
           href={url}
           target="_blank"
           rel="noopener noreferrer"
+          draggable={onPressPullRequest ? false : undefined}
+          aria-label={ariaLabel}
           className="flex min-w-0 items-center gap-2 rounded-sm px-1 py-1 hover:surface-ghost-hover focus-visible:surface-ghost-hover focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          onPointerDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            onPressPullRequest?.(event, url);
+          }}
           onClick={(event) => onOpenPullRequest(event, url)}
         >
           {content}

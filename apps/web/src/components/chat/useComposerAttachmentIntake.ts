@@ -403,7 +403,10 @@ export function useComposerAttachmentIntake(input: {
               "Remove this image from the message?\nIt is referenced in your text; removing it also removes every reference.",
             ),
           ),
-      { variant: "destructive" },
+      {
+        variant: "destructive",
+        confirmLabel: m(msg("Remove", { $context: "verb, confirms removing an attachment" })),
+      },
     );
     if (!confirmation) {
       removeComposerImageFromDraft(imageId);

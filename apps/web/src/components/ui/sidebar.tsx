@@ -14,7 +14,12 @@ import {
   SheetPopup,
   SheetTitle,
 } from "~/components/ui/sheet";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import {
+  Tooltip,
+  TooltipPopup,
+  TooltipTrigger,
+  TooltipScrollDismissArea,
+} from "~/components/ui/tooltip";
 import { useResizeDrag } from "~/hooks/useResizeDrag";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -340,10 +345,8 @@ function Sidebar({
           <SheetPopup
             keepMounted
             {...(panelAnimationsActive ? {} : { transitionDurationMs: 0 })}
-            // The sheet paints the popover surface. In light, black chrome it is
-            // chrome like the desktop sidebar, so it takes the black, grain and keycaps.
             className={cn(
-              "w-(--sidebar-width) max-w-none p-0 text-sidebar-foreground [.black-chrome_&]:bg-(--app-chrome-background) [.black-chrome_&]:surface-grain [.black-chrome_&]:[--kbd-background:initial]",
+              "w-(--sidebar-width) max-w-none bg-(--app-chrome-background) bg-(image:--surface-grain) p-0 surface-grain text-sidebar-foreground [.black-chrome_&]:[--kbd-background:initial]",
               className,
             )}
             data-mobile="true"
@@ -458,13 +461,23 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
     >
       {isOpen ? (
         <PanelLeftCloseIcon
-          className="size-4 text-sidebar-toggle"
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation"
+              ? "text-current light:text-sidebar-toggle"
+              : "text-sidebar-toggle",
+          )}
 
           strokeWidth={2.25}
         />
       ) : (
         <PanelLeftIcon
-          className="size-4 text-sidebar-toggle"
+          className={cn(
+            "size-4",
+            props.variant === "media-navigation"
+              ? "text-current light:text-sidebar-toggle"
+              : "text-sidebar-toggle",
+          )}
 
           strokeWidth={2.25}
         />
@@ -653,15 +666,26 @@ function SidebarRail({
   );
 }
 
-function SidebarInset({ className, ...props }: React.ComponentProps<"main">) {
+/**
+ * `pane` draws the single inset pane. `split` keeps the same insets but draws
+ * nothing, for a layout whose panes each draw their own pane with gaps.
+ */
+function SidebarInset({
+  className,
+  variant = "pane",
+  ...props
+}: React.ComponentProps<"main"> & { variant?: "pane" | "split" }) {
   return (
     <main
       className={cn(
-        "relative flex min-w-0 w-full flex-1 flex-col bg-background surface-grain",
+        "relative flex min-w-0 w-full flex-1 flex-col",
+        variant === "pane" && "bg-background surface-grain",
         // The inset pane (pen mSaSF) on the window chrome: 12px from the window
         // and from the sidebar's content, centered on the chrome row at the top.
         // It stretches in the flex wrapper, so the route's own height yields.
-        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:rounded-pane md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+        "md:peer-data-[variant=inset]:h-auto md:peer-data-[variant=inset]:overflow-hidden md:peer-data-[variant=inset]:mt-(--workspace-pane-inset-top) md:peer-data-[variant=inset]:me-(--workspace-pane-inset) md:peer-data-[variant=inset]:mb-(--workspace-pane-inset) md:peer-data-[variant=inset]:ms-(--workspace-sidebar-edge-inset) md:peer-data-[variant=inset]:peer-data-[state=collapsed]:ms-(--workspace-pane-inset)",
+        "[[data-panel-animations=true]_&]:transition-[margin-inline-start,border-end-start-radius] [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
+        variant === "pane" && "md:peer-data-[variant=inset]:rounded-pane",
         className,
       )}
       data-slot="sidebar-inset"
@@ -711,6 +735,7 @@ function SidebarContent({
     <>
       {fixedHeader ? <div className="w-full shrink-0">{fixedHeader}</div> : null}
       <ScrollArea
+        render={<TooltipScrollDismissArea suppressHoverWhileScrolling />}
         hideScrollbars
         scrollFade
         scrollFadePadding={false}

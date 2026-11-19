@@ -61,9 +61,11 @@ function ComboboxInput({
         className={cn(
           startAddon &&
             "data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7.5)-1px)] *:data-[slot=combobox-input]:ps-[calc(--spacing(8.5)-1px)] sm:data-[size=sm]:*:data-[slot=combobox-input]:ps-[calc(--spacing(7)-1px)] sm:*:data-[slot=combobox-input]:ps-[calc(--spacing(8)-1px)]",
-          sizeValue === "sm"
-            ? "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-6.5"
-            : "has-[+[data-slot=combobox-trigger],+[data-slot=combobox-clear]]:*:data-[slot=combobox-input]:pe-7",
+          // Room for the trigger or clear button that follows the input.
+          (showTrigger || showClear) &&
+            (sizeValue === "sm"
+              ? "*:data-[slot=combobox-input]:pe-6.5"
+              : "*:data-[slot=combobox-input]:pe-7"),
           className,
         )}
         data-slot="combobox-input"
@@ -139,7 +141,7 @@ function ComboboxSearchInput({
       <div
         className={cn(
           "relative -translate-y-px border-b pb-1.5 transition-colors",
-          separator ? "border-border/70 focus-within:border-ring" : "border-transparent",
+          separator ? "surface-search-separator focus-within:border-ring" : "border-transparent",
         )}
       >
         <SearchIcon

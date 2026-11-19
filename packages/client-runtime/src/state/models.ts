@@ -97,6 +97,8 @@ export interface ThreadRunSummary {
    * instead of "Thinking".
    */
   readonly providerStartingLabel?: string;
+  /** The run prepared a new worktree before its provider started, so its work began at `requestedAt`. */
+  readonly preparedWorktree?: true;
   /** `providerStartingLabel` as a `msg()` string; display sites resolve this one. */
   readonly providerStartingLabelMsg?: string;
   readonly sourcePlanRef?: {

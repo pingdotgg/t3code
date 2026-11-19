@@ -1,3 +1,4 @@
+import { tooltipSafeFinalFocus } from "./focus-return";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { useRender } from "@base-ui/react/use-render";
 import { useGT } from "gt-react";
@@ -8,6 +9,7 @@ import {
   createContext,
   type ReactNode,
   use,
+  useId,
   useRef,
   useState,
 } from "react";
@@ -25,6 +27,9 @@ import {
   DIALOG_POPUP_CLASS,
 } from "~/components/ui/dialog-styles";
 import { ScrollArea } from "~/components/ui/scroll-area";
+import { createPartPresence } from "~/components/ui/part-presence";
+
+const { PartPresenceContext, useParts, usePart } = createPartPresence<"header">();
 
 const ControlledOpenContext = createContext<boolean | undefined>(undefined);
 
@@ -142,6 +147,9 @@ function DialogPopup({
   contentInset?: number;
 }) {
   const gt = useGT();
+  const [parts, registerPart] = useParts();
+  const defaultId = useId();
+  const popupId = props.id ?? defaultId;
   const { popupRef, initialFocus } = useDialogActionInitialFocus();
   const popup = useRender({
     ref: popupRef,
@@ -165,12 +173,15 @@ function DialogPopup({
             DIALOG_MOBILE_SHEET_CLASS,
           className,
         )}
+        data-has-header={parts.length > 0 ? "" : undefined}
         data-slot="dialog-popup"
         initialFocus={initialFocus}
         render={renderRetainedPopup}
         {...props}
+        id={popupId}
+        finalFocus={tooltipSafeFinalFocus(props.finalFocus, popupId)}
       >
-        {children}
+        <PartPresenceContext value={registerPart}>{children}</PartPresenceContext>
         {showCloseButton && (
           <DialogPrimitive.Close
             aria-label={gt("Close", { $context: "button, closes the dialog" })}
@@ -229,6 +240,7 @@ function DialogAction(props: DialogActionProps) {
 }
 
 function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
+  usePart("header");
   return (
     <div
       className={cn("flex flex-col gap-1 px-5 pt-5 pb-4", className)}
@@ -258,11 +270,18 @@ function DialogFooter({
   );
 }
 
-function DialogTitle({ className, ...props }: DialogPrimitive.Title.Props) {
+function DialogTitle({
+  className,
+  size = "default",
+  ...props
+}: DialogPrimitive.Title.Props & { size?: "default" | "page" }) {
   return (
     <DialogPrimitive.Title
       className={cn(
-        "wrap-anywhere text-label [font-size:0.9375rem] font-semibold text-strong-foreground leading-snug",
+        "wrap-anywhere text-strong-foreground",
+        size === "page"
+          ? "text-title"
+          : "text-label [font-size:0.9375rem] font-semibold leading-snug",
         className,
       )}
       data-slot="dialog-title"
@@ -293,7 +312,7 @@ function DialogPanel({
     <ScrollArea scrollFade={scrollFade}>
       <div
         className={cn(
-          "space-y-4 px-5 pt-5 pb-4 in-[[data-slot=dialog-popup]:has([data-slot=dialog-header])]:pt-0",
+          "space-y-4 px-5 pt-5 pb-4 in-[[data-slot=dialog-popup][data-has-header]]:pt-0",
           className,
         )}
         data-slot="dialog-panel"

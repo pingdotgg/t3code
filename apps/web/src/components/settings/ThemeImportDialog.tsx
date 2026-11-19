@@ -391,9 +391,6 @@ function ThemeImportBody({
         if (lone?.text != null && (!json.trim() || jsonSource !== null)) {
           setJson(lone.text);
           setJsonSource(lone.fileName);
-        } else if (jsonSource !== null) {
-          setJson("");
-          setJsonSource(null);
         }
       })
       .finally(() => {
@@ -656,14 +653,7 @@ function ThemeImportBody({
               <label className="text-meta text-muted-foreground" htmlFor="theme-json-editor">
                 <T>Theme JSON</T>
               </label>
-              <ThemeJsonEditor
-                id="theme-json-editor"
-                onChange={(value) => {
-                  setJson(value);
-                  if (!value.trim()) setJsonSource(null);
-                }}
-                value={json}
-              />
+              <ThemeJsonEditor id="theme-json-editor" onChange={setJson} value={json} />
             </div>
           </>
         )}

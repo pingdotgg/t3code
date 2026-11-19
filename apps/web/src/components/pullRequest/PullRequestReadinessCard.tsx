@@ -377,14 +377,16 @@ export function PullRequestReadinessCard({
             </Button>
           ) : null}
           {checksStale ? (
-            <div className="flex items-center gap-2 text-meta text-muted-foreground">
+            <div className="flex items-center gap-2 px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
               <span>{gt("Check details are out of date.")}</span>
               <Button size="xs" variant="ghost" onClick={onRefreshChecks}>
                 {gt("Refresh")}
               </Button>
             </div>
           ) : detail.checks.length === 0 ? (
-            <p className="text-meta text-muted-foreground">{gt("No checks reported.")}</p>
+            <p className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
+              {gt("No checks reported.")}
+            </p>
           ) : (
             detail.checks.map((check, index) => {
               const finding = { kind: "check", check } as const;
@@ -394,7 +396,7 @@ export function PullRequestReadinessCard({
                 <div
                   // oxlint-disable-next-line react/no-array-index-key -- Check names and URLs can repeat; these status rows have no local state.
                   key={`${index}:${check.name}:${check.url ?? ""}`}
-                  className="group -ml-2 flex items-center gap-2 rounded-md pr-1 hover:surface-ghost-hover"
+                  className="group -ml-0.5 flex items-center gap-2 rounded-md pr-1 hover:surface-ghost-hover"
                 >
                   <button
                     type="button"
@@ -450,9 +452,9 @@ export function PullRequestReadinessCard({
           label={reviewLabel}
           meta={reviewMeta}
         >
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 py-1">
             {reviewerEntries.length === 0 ? (
-              <span className="text-meta text-muted-foreground">
+              <span className="px-1.5 text-meta leading-5 text-muted-foreground">
                 <T>Nobody has been asked yet.</T>
               </span>
             ) : (
@@ -512,7 +514,7 @@ export function PullRequestReadinessCard({
             ) : null}
           </div>
           {detail.commentsTruncated ? (
-            <p className="mt-1 text-meta text-muted-foreground">
+            <p className="px-1.5 pb-1.5 text-meta leading-5 text-muted-foreground">
               <T>Only the recent conversation was read, so older reviews may be missing here.</T>
             </p>
           ) : null}
@@ -541,28 +543,32 @@ export function PullRequestReadinessCard({
             meta={conflictsMeta}
           >
             {conflicting ? (
-              <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
                 <span>{gt("These changes conflict with {baseBranch}.", { baseBranch })}</span>
                 {resolveConflicts}
               </div>
             ) : freshness ? (
-              <div className="flex flex-wrap items-center gap-1.5 text-meta text-muted-foreground">
-                <span className="w-full">{gt("Changes can be cleanly merged.")}</span>
-                {freshness.methods.map((method) => (
-                  <Button
-                    key={method}
-                    size="xs"
-                    variant="secondary"
-                    disabled={actionPending}
-                    onClick={() => onUpdateBranch(method)}
-                  >
-                    <PullRequestGlyph.merged aria-hidden className="size-3" />
-                    {method === "rebase" ? gt("Update with rebase") : gt("Update branch")}
-                  </Button>
-                ))}
+              <div className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
+                <p>{gt("Changes can be cleanly merged.")}</p>
+                {freshness.methods.length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    {freshness.methods.map((method) => (
+                      <Button
+                        key={method}
+                        size="xs"
+                        variant="secondary"
+                        disabled={actionPending}
+                        onClick={() => onUpdateBranch(method)}
+                      >
+                        <PullRequestGlyph.merged aria-hidden className="size-3" />
+                        {method === "rebase" ? gt("Update with rebase") : gt("Update branch")}
+                      </Button>
+                    ))}
+                  </div>
+                ) : null}
               </div>
             ) : (
-              <p className="text-meta text-muted-foreground">
+              <p className="px-1.5 py-1.5 text-meta leading-5 text-muted-foreground">
                 {detail.mergeability === "unknown"
                   ? gt("The host is still working out whether this merges cleanly.")
                   : gt("Changes can be cleanly merged.")}
@@ -572,7 +578,7 @@ export function PullRequestReadinessCard({
         ) : null}
       </div>
       {primary ? (
-        <div className="border-t border-border bg-foreground/[0.02] px-3 py-2.5">
+        <div className="px-3 pt-1 pb-3">
           <div className="flex min-w-0 items-stretch">
             {primaryMenu ? (
               <Group split className="w-full">

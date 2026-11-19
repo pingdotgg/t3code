@@ -41,7 +41,7 @@ interface ThreadServersPanelProps {
   readonly threadId: ThreadId;
 }
 
-/** Local servers the thread's terminals and agent started. Includes a quiet state while none run. */
+/** Local servers the thread's terminals and agent started. Hidden while none run. */
 export function ThreadServersPanel(props: ThreadServersPanelProps) {
   return <ThreadServersList key={`${props.environmentId}:${props.threadId}`} {...props} />;
 }
@@ -62,6 +62,8 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   });
   const [stoppingKey, setStoppingKey] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(SERVER_PAGE_COUNT);
+
+  if (servers.length === 0) return null;
 
   const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
@@ -110,18 +112,8 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   return (
     <ThreadDetailsSection
       title={gt("Servers", { $context: "thread details section: running dev servers" })}
-      summary={
-        servers.length
-          ? gt("{count} running", { count: servers.length, $context: "running dev servers" })
-          : gt("None running", { $context: "running dev servers" })
-      }
+      summary={gt("{count} running", { count: servers.length, $context: "running dev servers" })}
     >
-      {servers.length === 0 ? (
-        <div className="flex h-9 items-center gap-2.5 px-2.5 text-caption text-dim-foreground">
-          <GlobeIcon className="size-4" />
-          <T>No servers running</T>
-        </div>
-      ) : null}
       <ul className="m-0 list-none p-0">
         {servers.slice(0, visibleCount).map((server, index) => {
           const key = serverKey(server);
@@ -153,10 +145,10 @@ function ThreadServersList(props: ThreadServersPanelProps) {
                   </span>
                   {/* The end padding keeps text clear of the stop button. */}
                   <span className={cn("flex min-w-0 flex-1 flex-col gap-0.5", stoppable && "pe-6")}>
-                    <span className="truncate text-label text-foreground">
+                    <span className="truncate text-label leading-4 text-foreground">
                       localhost:{server.port}
                     </span>
-                    <span className="truncate text-caption text-dim-foreground">
+                    <span className="truncate text-caption leading-4 text-muted-foreground">
                       {server.processName ??
                         (server.terminal === null
                           ? gt("Agent", { $context: "who started a dev server" })
@@ -211,7 +203,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           }
           part="row"
           tone="muted"
-          className="w-full active:scale-100"
+          className="w-full"
         >
           {hiddenCount > 0 ? (
             <ChevronDownIcon aria-hidden className="size-4 shrink-0" />

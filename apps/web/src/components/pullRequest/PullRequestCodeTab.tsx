@@ -1429,8 +1429,8 @@ function PullRequestCodeTab({
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
             <DropdownMenuTrigger
-              render={<Button size="xs" variant="ghost" />}
-              className="min-w-0 max-w-64"
+              render={<Button size="sm" variant="ghost" />}
+              className="min-w-0 max-w-64 shrink"
               aria-label={gt("Diff scope: {scope}", { scope: scopeLabel })}
             >
               <span className="truncate">{scopeLabel}</span>
@@ -1478,7 +1478,7 @@ function PullRequestCodeTab({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : null}
-        <span className="flex min-w-0 items-center gap-x-2.5 whitespace-nowrap">
+        <span className="flex shrink-0 items-center gap-x-2.5 whitespace-nowrap">
           {filesViewed.enabled && files.length > 0 ? null : (
             <span className="shrink-0 tabular-nums">
               {gt("{count, plural, one {{count} file} other {{count} files}}", {
@@ -1504,7 +1504,7 @@ function PullRequestCodeTab({
             </Button>
           ) : null}
           {filesViewed.enabled && files.length > 0 ? (
-            <span className="flex min-w-0 items-center gap-1 tabular-nums">
+            <span className="flex shrink-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
                 {filePaths.filter(isFileViewed).length} / {files.length}
                 {nextCursor === null ? "" : "+"}
@@ -1600,6 +1600,7 @@ function PullRequestCodeTab({
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <DiffViewControls
+          foldBelow="md"
           diffLayout={diffLayout}
           wordWrap={wordWrap}
           onWordWrapChange={setWordWrapOverride}
@@ -1692,7 +1693,7 @@ function PullRequestCodeTab({
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- retries the reveal as diff pages and viewer items arrive
   }, [revealUrl, pendingLinkPath, canLoadNextSlice, items]);
   const withToolbar = (body: ReactNode) => (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       {toolbarView}
       <div ref={scrollerRef} className="min-h-0 flex-1 overflow-auto">
         {body}
@@ -1749,7 +1750,7 @@ function PullRequestCodeTab({
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-col">
       {toolbarView}
       {orphanFiles.size > 0 ? (
         <div className="shrink-0 border-b border-border">
@@ -1839,6 +1840,7 @@ function PullRequestCodeTab({
           {/* The viewer must own its scroll element to position virtual rows within it. */}
           <FileViewedToggleContext value={fileViewedToggle}>
             <StyledDiffCodeView<ReviewAnnotationGroup>
+              surface="cards"
               className="@container h-full overflow-auto [--surface-top-inset:0px] [scrollbar-gutter:stable]"
               {...(scrollerRef ? { containerRef: scrollerRef } : {})}
               viewerRef={codeViewReveal.attach}
@@ -1914,8 +1916,8 @@ function WithheldFileNotice({
 }) {
   const gt = useGT();
   return (
-    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-xs text-warning-foreground">
-      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0 text-warning" />
+    <div className="flex items-center gap-2 bg-warning/8 px-3 py-2 text-meta text-warning-foreground">
+      <TriangleAlertIcon aria-hidden className="size-3.5 shrink-0" />
       <span>
         {status === "error"
           ? gt("Couldn't load this diff.")

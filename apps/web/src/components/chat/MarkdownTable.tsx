@@ -36,7 +36,10 @@ export function MarkdownTable({ children, ...props }: ComponentProps<"table">) {
 
   return (
     <div ref={containerRef} className="chat-markdown-table-container">
-      <div className="overflow-hidden rounded-row-card surface-well shadow-none!">
+      <div
+        data-markdown-table
+        className="overflow-hidden rounded-row-card surface-well shadow-none!"
+      >
         <ScrollArea chainVerticalScroll scrollFade className="w-full max-w-full">
           <table {...props}>{children}</table>
         </ScrollArea>

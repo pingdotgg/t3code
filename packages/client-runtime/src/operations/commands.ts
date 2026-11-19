@@ -182,6 +182,7 @@ interface StartThreadBootstrap {
 
 export interface StartThreadTurnInput extends ThreadCommandInput {
   readonly manualContinuationOfRunId?: RunId;
+  readonly retryOfRunId?: RunId;
   readonly message: {
     readonly messageId: MessageId;
     readonly role: "user";
@@ -844,6 +845,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ...(input.message.idleCompaction === undefined
           ? {}
           : { idleCompaction: input.message.idleCompaction }),
+        ...(input.retryOfRunId === undefined ? {} : { retryOfRunId: input.retryOfRunId }),
         attachments,
         ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
         ...(input.sourceProposedPlan === undefined
@@ -873,6 +875,7 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
       ...(input.message.idleCompaction === undefined
         ? {}
         : { idleCompaction: input.message.idleCompaction }),
+      ...(input.retryOfRunId === undefined ? {} : { retryOfRunId: input.retryOfRunId }),
       attachments,
       ...(input.titleSeed === undefined ? {} : { titleSeed: input.titleSeed }),
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),

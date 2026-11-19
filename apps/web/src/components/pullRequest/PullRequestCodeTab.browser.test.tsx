@@ -8,7 +8,7 @@ import {
   type PullRequestDiffResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
@@ -250,9 +250,7 @@ it("restores saved Viewed folds, follows cleared marks, and allows explicit expa
   await expect
     .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
     .toHaveAttribute("aria-expanded", "false");
-  // The redesign's toolbar is a container query; in this flex harness it takes the overflow menu.
-  await screen.getByRole("button", { name: "More diff actions" }).click();
-  await page.getByRole("menuitem", { name: "Expand all files" }).click();
+  await screen.getByRole("button", { name: "Expand all files", exact: true }).click();
   await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
 
   await screen.rerender(<div />);

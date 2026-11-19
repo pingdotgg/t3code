@@ -125,7 +125,8 @@ export function PullRequestRoutingSettings({
             }}
           >
             <SelectTrigger
-              size="xs"
+              variant="well"
+              size="compact"
               className="w-32"
               aria-label={gt("{environment} pull request routing", {
                 environment: environment.label,

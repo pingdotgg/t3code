@@ -529,6 +529,10 @@ export interface OlderSettledThreadsListing {
 }
 
 export interface ProjectionStoreV2Shape {
+  readonly carryProviderTurnContextUsage: (
+    threadId: ThreadId,
+    turn: OrchestrationV2ProviderTurn,
+  ) => Effect.Effect<OrchestrationV2ProviderTurn, ProjectionStoreV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, ProjectionStoreV2Error>;
@@ -614,6 +618,10 @@ export interface ProjectionStoreV2Shape {
   >;
   /** Threads that are not deleted, archived ones included. */
   readonly countThreads: () => Effect.Effect<number, ProjectionStoreV2Error>;
+  readonly countArchivedThreadMessages: () => Effect.Effect<
+    ReadonlyMap<ThreadId, number>,
+    ProjectionStoreV2Error
+  >;
   /** Every active thread, in shell order. */
   readonly listActiveShellIndex: () => Effect.Effect<
     ReadonlyArray<ActiveShellIndexEntry>,
@@ -6809,6 +6817,44 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         sql.withTransaction(effect).pipe(Effect.mapError(controlReadError(threadId))),
     );
 
+    const carryProviderTurnContextUsage = Effect.fn(
+      "ProjectionStore.carryProviderTurnContextUsage",
+    )(
+      function* (threadId: ThreadId, turn: OrchestrationV2ProviderTurn) {
+        const usage = turn.tokenUsage;
+        if (usage === undefined || usage.breakdown?.length === 0) return turn;
+        const rows =
+          usage.breakdown === undefined
+            ? yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_provider_turns
+          WHERE thread_id = ${threadId} AND provider_thread_id = ${turn.providerThreadId}
+            AND json_extract(payload_json, '$.tokenUsage') IS NOT NULL
+          ORDER BY julianday(json_extract(payload_json, '$.tokenUsage.updatedAt')) DESC,
+            ordinal DESC
+          LIMIT 1
+        `
+            : [];
+        const previous =
+          rows[0] === undefined
+            ? undefined
+            : (yield* decodeProviderTurnPayload(rows[0].payload_json)).tokenUsage;
+        const lastBreakdown = usage.breakdown ?? previous?.breakdown;
+        if (!lastBreakdown?.length) return turn;
+        const categories = lastBreakdown.filter((category) => category.kind !== "messages");
+        const fixedTokens = categories.reduce((sum, category) => sum + category.tokens, 0);
+        // Only conversation growth is measured between summaries; compaction sends an empty split.
+        const breakdown =
+          fixedTokens > usage.usedTokens
+            ? []
+            : [
+                ...categories,
+                { kind: "messages" as const, tokens: usage.usedTokens - fixedTokens },
+              ];
+        return { ...turn, tokenUsage: { ...usage, breakdown } };
+      },
+      (effect, threadId) => effect.pipe(Effect.mapError(controlReadError(threadId))),
+    );
+
     const getRunCardRecords: ProjectionStoreV2Shape["getRunCardRecords"] = Effect.fn(
       "ProjectionStore.getRunCardRecords",
     )(
@@ -9242,6 +9288,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return rows[0]?.count ?? 0;
     }, Effect.mapError(shellSnapshotReadError));
 
+    const countArchivedThreadMessages = Effect.fn("ProjectionStore.countArchivedThreadMessages")(
+      function* () {
+        const rows = yield* sql<{ readonly thread_id: string; readonly count: number }>`
+          SELECT message.thread_id AS thread_id, COUNT(*) AS count
+          FROM orchestration_v2_projection_messages AS message
+          INNER JOIN orchestration_v2_projection_threads AS thread
+            ON thread.thread_id = message.thread_id
+          WHERE thread.archived_at IS NOT NULL
+            AND thread.deleted_at IS NULL
+            AND message.streaming = 0
+            AND message.role IN ('user', 'assistant')
+          GROUP BY message.thread_id
+        `;
+        return new Map(rows.map((row) => [ThreadId.make(row.thread_id), Number(row.count)]));
+      },
+      Effect.mapError(shellSnapshotReadError),
+    );
+
     // Migration 98 indexes these exact expressions, so the read takes them from the index instead
     // of parsing every active thread's payload. Changing one here needs a matching index change.
     const indexedField = (path: string, read: "json_extract" | "json_type" = "json_extract") =>
@@ -9596,11 +9660,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
 
     return {
       apply,
+      carryProviderTurnContextUsage,
       getAgentAwarenessSnapshot: readOnReader(getAgentAwarenessSnapshot),
       getShellSnapshot: readOnReader(getShellSnapshot),
       getPullRequestSnapshot: readOnReader(getPullRequestSnapshot),
       listActiveSubagentThreadIds: readOnReader(listActiveSubagentThreadIds),
       countThreads: readOnReader(countThreads),
+      countArchivedThreadMessages: readOnReader(countArchivedThreadMessages),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       listActiveThreads: readOnReader(listActiveThreads),
       readShellSnapshot: readOnReader(readShellSnapshot),

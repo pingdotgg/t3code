@@ -5,6 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { msg } from "gt-react";
+import { useLayoutPaneOwnsThreadRef } from "../../layout/layoutPaneContext";
 import { useEffect } from "react";
 
 import { usePreferredEditor } from "../../editorPreferences";
@@ -62,11 +63,13 @@ export function useOpenFavoriteEditorShortcut({
   const [preferredEditor] = usePreferredEditor(
     remote.mode === "local-exec" ? availableEditors : remoteCapableEditors,
   );
+  const ownsThreadRef = useLayoutPaneOwnsThreadRef();
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a window keydown listener for the open-in-editor shortcut while enabled
   useEffect(() => {
     if (!enabled || remote.mode === "remote-unavailable") return;
     const handler = (event: globalThis.KeyboardEvent) => {
+      if (!ownsThreadRef.current) return;
       if (
         event.repeat ||
         event.defaultPrevented ||
@@ -107,6 +110,7 @@ export function useOpenFavoriteEditorShortcut({
     keybindings,
     openInCwd,
     openInEditorMutation,
+    ownsThreadRef,
     preferredEditor,
     remote,
   ]);

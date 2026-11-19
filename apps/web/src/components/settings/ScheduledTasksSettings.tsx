@@ -501,7 +501,7 @@ export function ScheduledTasksSettings(target: {
   // New task lives on the first environment group's header; the dialog picks the machine.
   const newTaskButton = (
     <Button
-      size="sm"
+      size="standard"
       variant="secondary"
       disabled={!creationEnvironment}
       onClick={() =>
@@ -960,7 +960,7 @@ function ScheduledTaskRow({
       title={task.title}
       description={<span className="line-clamp-2">{task.prompt}</span>}
       status={
-        <div className="grid gap-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <span>{scheduleLabel(task.schedule, timeZone, task.nextRunAt, messages, locale)}</span>
           <span>
             {task.blockedByPolicy !== undefined ? (

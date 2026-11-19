@@ -108,7 +108,7 @@ function AccessScopeSummary({
           <button
             type="button"
             aria-label={gt("{label}: show {scopes}", { label, scopes: scopeCountLabel })}
-            className="cursor-help underline decoration-border underline-offset-2 outline-hidden hover:text-foreground focus-visible:text-foreground"
+            className="cursor-help underline decoration-border underline-offset-2 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
@@ -393,11 +393,15 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
                 ) : null}
               </DialogPanel>
               <DialogFooter variant="bare">
-                <Button variant="secondary" onClick={() => setIsRevealDialogOpen(false)}>
+                <Button
+                  size="standard"
+                  variant="secondary"
+                  onClick={() => setIsRevealDialogOpen(false)}
+                >
                   <T>Done</T>
                 </Button>
                 {canCopyToClipboard ? (
-                  <Button variant="secondary" onClick={handleCopyCode}>
+                  <Button size="standard" variant="secondary" onClick={handleCopyCode}>
                     <T>Copy code</T>
                   </Button>
                 ) : null}
@@ -711,7 +715,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
   if (part === "revoke") {
     return (
       <Button
-        size="xs"
+        size="standard"
         variant="destructive-outline"
         disabled={isRevokingOtherClients || !canRevokeOtherClients(clientSessions)}
         onClick={() => void onRevokeOtherClients()}
@@ -723,13 +727,17 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
 
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
-      <Button size="xs" variant="secondary" onClick={() => openUseInAnotherApp(environmentId)}>
-        <PlugIcon className="size-3" />
+      <Button
+        size="standard"
+        variant="secondary"
+        onClick={() => openUseInAnotherApp(environmentId)}
+      >
+        <PlugIcon />
         <T>Use in another app (MCP)</T>
       </Button>
       {pairingDenial !== undefined ? (
         <ManagedControl reason={pairingDenial}>
-          <Button size="xs" variant="default" disabled>
+          <Button size="standard" variant="default" disabled>
             <QrCodeIcon />
             <T>Create pairing link</T>
           </Button>
@@ -750,7 +758,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
         {pairingDenial === undefined ? (
           <DialogTrigger
             render={
-              <Button size="xs" variant="default">
+              <Button size="standard" variant="default">
                 <QrCodeIcon />
                 <T>Create pairing link</T>
               </Button>
@@ -874,6 +882,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
           </DialogPanel>
           <DialogFooter variant="bare">
             <Button
+              size="standard"
               variant="secondary"
               disabled={isCreatingPairingLink}
               onClick={() => setDialogOpen(false)}
@@ -881,6 +890,7 @@ export const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHead
               <T>Cancel</T>
             </Button>
             <Button
+              size="standard"
               disabled={isCreatingPairingLink || selectedScopes.length === 0}
               onClick={() => void handleCreatePairingLink()}
             >
@@ -1078,8 +1088,6 @@ export function ReachableAddressRow({
 }) {
   const gt = useGT();
   const { copyToClipboard, isCopied } = useCopyToClipboard<void>({
-    onCopy: () =>
-      toastManager.add({ type: "success", title: resolveMessage(msg("Address copied")) }),
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({

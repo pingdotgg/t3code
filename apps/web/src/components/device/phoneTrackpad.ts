@@ -4,6 +4,8 @@ import {
   type createPhoneInteraction,
 } from "@t3tools/client-runtime/device/phone-interaction";
 
+import { setWheelScroller } from "../../motion/gesture";
+
 /** Safari reports cumulative pinch scale instead of Ctrl-wheel. */
 export function bindPhoneTrackpad(
   canvas: Pick<
@@ -115,6 +117,8 @@ export function bindPhoneTrackpad(
     finish();
   };
   canvas.addEventListener("wheel", wheel, { passive: false });
+  // The phone takes every wheel, so a swipe over it never switches workspaces.
+  setWheelScroller(canvas, () => true);
   canvas.addEventListener("gesturestart", start, { passive: false });
   canvas.addEventListener("gesturechange", change, { passive: false });
   canvas.addEventListener("gestureend", end, { passive: false });
@@ -126,6 +130,7 @@ export function bindPhoneTrackpad(
     },
     dispose() {
       canvas.removeEventListener("wheel", wheel);
+      setWheelScroller(canvas, null);
       canvas.removeEventListener("gesturestart", start);
       canvas.removeEventListener("gesturechange", change);
       canvas.removeEventListener("gestureend", end);

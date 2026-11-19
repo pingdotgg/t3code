@@ -11,6 +11,7 @@ import { waitForProjectRemoval } from "../state/entities";
 import { projectEnvironment } from "../state/projects";
 import { useAtomCommand } from "../state/use-atom-command";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { closeLayoutProject } from "../layout/layoutActions";
 import { m } from "../i18n/messages";
 
 export function useRemoveClonedProject() {
@@ -45,6 +46,7 @@ export function useRemoveClonedProject() {
       viewingDraft?.environmentId === projectRef.environmentId &&
       viewingDraft.projectId === projectRef.projectId;
     releaseProjectDraftUploads(projectRef);
+    closeLayoutProject(projectRef);
     const projectDraft = draftStore.getDraftThreadByProjectRef(projectRef);
     if (projectDraft) draftStore.clearDraftThread(projectDraft.draftId);
     draftStore.clearProjectDraftThreadId(projectRef);

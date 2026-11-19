@@ -12,6 +12,7 @@ import { selectActiveRightPanelSurface, useRightPanelStore } from "../rightPanel
 import {
   assistantCitationFromLocation,
   assistantCitationNavigation,
+  assistantCitationScopeFromLocation,
   revealSideChatCitation,
 } from "./assistantCitationNavigation";
 
@@ -37,25 +38,29 @@ function createCitationRouter(initialEntry = "/environment-one/thread-one") {
 }
 
 describe("assistant citation navigation", () => {
-  it("preserves encoded quote whitespace through router navigation and reload", async () => {
-    const router = createCitationRouter();
-    await router.navigate(assistantCitationNavigation(citation, null));
+  it.each(["passage", "response"] as const)(
+    "preserves %s targets through navigation and reload",
+    async (scope) => {
+      const router = createCitationRouter();
+      await router.navigate(assistantCitationNavigation(citation, null, scope));
 
-    expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
-    let href = router.history.location.href;
-    for (let reload = 0; reload < 3; reload++) {
-      const reloaded = createCitationRouter(href);
-      await reloaded.load();
-      await reloaded.navigate({
-        to: "/$environmentId/$threadId",
-        params: { environmentId: citation.environmentId, threadId: citation.threadId },
-        hash: true,
-        replace: true,
-      });
-      href = reloaded.history.location.href;
-      expect(assistantCitationFromLocation(href)).toEqual(citation);
-    }
-  });
+      expect(assistantCitationFromLocation(router.state.location.href)).toEqual(citation);
+      let href = router.history.location.href;
+      for (let reload = 0; reload < 3; reload++) {
+        const reloaded = createCitationRouter(href);
+        await reloaded.load();
+        await reloaded.navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: citation.environmentId, threadId: citation.threadId },
+          hash: true,
+          replace: true,
+        });
+        href = reloaded.history.location.href;
+        expect(assistantCitationFromLocation(href)).toEqual(citation);
+        expect(assistantCitationScopeFromLocation(href)).toBe(scope);
+      }
+    },
+  );
 
   it("reactivates an identical citation instead of deduplicating its navigation", async () => {
     const router = createCitationRouter();

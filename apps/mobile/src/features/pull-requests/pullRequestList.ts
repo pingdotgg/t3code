@@ -1,4 +1,7 @@
-import { pullRequestFilterProjects } from "@t3tools/client-runtime/pull-request-project-filter";
+import {
+  pullRequestFilterProjects,
+  type PullRequestProjectFilterGroup,
+} from "@t3tools/client-runtime/pull-request-project-filter";
 import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
 import {
   ProjectId,
@@ -9,6 +12,7 @@ import {
   type PullRequestListInput,
   type PullRequestListResult,
   type PullRequestListStatsInput,
+  type ScopedProjectRef,
 } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 import type { PullRequestListControls } from "../../persistence/mobile-preferences";
@@ -47,7 +51,7 @@ export function pullRequestProjectChoices<
   input: {
     readonly environmentId: string | null;
     readonly controls: PullRequestListControls;
-    readonly environmentLabels: ReadonlyMap<EnvironmentId, string>;
+    readonly groups: ReadonlyArray<PullRequestProjectFilterGroup>;
     readonly servesPullRequests: (environmentId: EnvironmentId) => boolean;
   },
 ) {
@@ -61,7 +65,7 @@ export function pullRequestProjectChoices<
         (input.environmentId === null || project.environmentId === input.environmentId) &&
         (input.servesPullRequests(project.environmentId) || isSelected(project)),
     ),
-    input.environmentLabels,
+    input.groups,
     projects.find(isSelected),
   );
 }
@@ -408,6 +412,7 @@ export function filterPullRequestList<
   query: string,
   localSearchHosts: ReadonlySet<string>,
   connectedEnvironmentIds?: ReadonlySet<string>,
+  projectRefs?: ReadonlyArray<ScopedProjectRef>,
 ) {
   const normalize = (value: string) => value.toLowerCase();
   const parsed = parsePullRequestQuery(query);
@@ -415,9 +420,18 @@ export function filterPullRequestList<
   const filters = { ...controls.filters, ...parsed.filters };
   const filtered = entries.filter((entry) => {
     if (controls.state !== "all" && entry.state !== controls.state) return false;
-    if (controls.projectId && entry.projectId !== controls.projectId) return false;
-    if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
-      return false;
+    if (projectRefs !== undefined) {
+      if (
+        !projectRefs.some(
+          (ref) => ref.projectId === entry.projectId && ref.environmentId === entry.environmentId,
+        )
+      )
+        return false;
+    } else {
+      if (controls.projectId && entry.projectId !== controls.projectId) return false;
+      if (controls.projectEnvironmentId && entry.environmentId !== controls.projectEnvironmentId)
+        return false;
+    }
     const viewerKey = entry.environmentId ? `${entry.environmentId} ${entry.host}` : entry.host;
     const viewer = viewers[viewerKey];
     if (controls.involvement === "reviewing" && !entry.viewerReviewRequested) return false;

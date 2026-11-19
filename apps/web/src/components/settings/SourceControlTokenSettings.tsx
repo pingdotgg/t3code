@@ -6,7 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { T, useGT, Var } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
 import {
@@ -41,6 +41,9 @@ export function SourceControlTokenSettings({
     definition.kind === "github"
       ? gt("read and write access to pull requests and contents")
       : credentials.tokenAccess;
+  const id = useId();
+  const hostInputId = `${definition.kind}-token-host-${environmentId}-${id}`;
+  const tokenInputId = `${definition.kind}-token-${environmentId}-${id}`;
   const { tokens } = useEnvironmentSettings(environmentId, (settings) =>
     readHostCredentialSettings(settings, definition.kind),
   );
@@ -124,11 +127,11 @@ export function SourceControlTokenSettings({
         </p>
         <div className="grid gap-3 sm:grid-cols-[12rem_1fr]">
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-host-${environmentId}`}>
+            <Label htmlFor={hostInputId}>
               <T>Host</T>
             </Label>
             <Input
-              id={`${definition.kind}-token-host-${environmentId}`}
+              id={hostInputId}
               autoComplete="off"
               size="sm"
               placeholder={defaultHost}
@@ -137,11 +140,11 @@ export function SourceControlTokenSettings({
             />
           </div>
           <div className="grid gap-1.5">
-            <Label htmlFor={`${definition.kind}-token-${environmentId}`}>
+            <Label htmlFor={tokenInputId}>
               <T>Token</T>
             </Label>
             <SecretSourceInput
-              id={`${definition.kind}-token-${environmentId}`}
+              id={tokenInputId}
               size="sm"
               aria-label={gt("{host} token", { host: definition.label })}
               environmentId={environmentId}

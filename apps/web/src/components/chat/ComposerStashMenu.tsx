@@ -7,6 +7,7 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 import { RelativeTime } from "../RelativeTime";
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn, isMacPlatform } from "~/lib/utils";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
 import { type PromptStashEntry } from "../../promptStashStore";
@@ -57,7 +58,7 @@ export function stashEntrySnippet(entry: PromptStashEntry, resolve: MessageResol
       );
 }
 
-/** Window capture gives the open menu priority over composer key handlers. */
+/** Window capture gives the focused pane's open menu priority over composer key handlers. */
 export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   entries: ReadonlyArray<PromptStashEntry>;
   stashShortcutLabel: string | null;
@@ -71,6 +72,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   const gt = useGT();
   const m = useMessages();
   const [highlightedId, setHighlightedId] = useState<string | null>(entries[0]?.id ?? null);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
 
   const highlightedEntry = entries.find((entry) => entry.id === highlightedId) ?? entries[0];
   const drawerRef = useRef<HTMLDivElement>(null);
@@ -89,7 +91,7 @@ export const ComposerStashMenu = memo(function ComposerStashMenu(props: {
   });
 
   const handleKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (backgroundThread) return;
+    if (backgroundThread || !paneFocusedRef.current) return;
     const drawer = drawerRef.current;
     if (!drawer) return;
     const target = event.target;

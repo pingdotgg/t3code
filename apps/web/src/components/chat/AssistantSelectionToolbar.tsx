@@ -6,7 +6,6 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { msg, useGT } from "gt-react";
-import { m } from "~/i18n/messages";
 import { CopyIcon, TextQuoteIcon } from "lucide-react";
 import { use, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -225,19 +224,15 @@ export function AssistantSelectionToolbar({
         return false;
       }
     })();
-    const done = () => {
-      toastManager.add({ type: "success", title: m(msg("Copied to clipboard")) });
-      dismiss();
-    };
     if (copied) {
-      done();
+      dismiss();
       return;
     }
     void writeTextToClipboard(text, {
       target: "selection",
       unavailableMessage: msg("Clipboard API is unavailable while copying text."),
       failureMessage: msg("Failed to copy text to the clipboard."),
-    }).then(done, (error: unknown) => {
+    }).then(dismiss, (error: unknown) => {
       toastManager.add({
         type: "error",
         title: gt("Could not copy selection"),
@@ -253,7 +248,7 @@ export function AssistantSelectionToolbar({
       ref={attachToolbar}
       role="toolbar"
       aria-label={gt("Selection actions")}
-      className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75"
+      className="fixed z-50 flex h-8 max-w-[calc(100vw-1rem)] items-center gap-0.5 rounded-project-icon surface-popover p-0.75 [--control-radius:var(--radius-row)]"
       style={{ left: selection.anchor.centerX, top: selection.anchor.top }}
       onPointerDown={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -265,7 +260,7 @@ export function AssistantSelectionToolbar({
       }}
     >
       {/* Cite is the toolbar's primary action, so it sits on the selected fill. */}
-      <span className={tooLong ? "flex" : "flex rounded-control surface-selected-soft"}>
+      <span className={tooLong ? "flex" : "flex rounded-row surface-selected-soft"}>
         <Button
           variant="ghost"
           size="xs"

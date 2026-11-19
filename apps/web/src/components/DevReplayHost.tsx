@@ -97,6 +97,7 @@ export function DevReplayHost() {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- exposes the console API on window and listens for the hidden window hotkey
   useEffect(() => {
     window.t3dev = {
+      ...window.t3dev,
       replayScenarios: () => listScenarios(),
       replay: (scenario) => replayFromConsole(scenario),
     };
@@ -109,7 +110,10 @@ export function DevReplayHost() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
-      delete window.t3dev;
+      if (window.t3dev) {
+        delete window.t3dev.replay;
+        delete window.t3dev.replayScenarios;
+      }
       window.removeEventListener("keydown", onKeyDown);
     };
   }, []);

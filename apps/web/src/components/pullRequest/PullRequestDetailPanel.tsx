@@ -20,6 +20,10 @@ import {
 import { PullRequestActionsMenu } from "./PullRequestActionsMenu";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
+import { pullRequestCopyTarget } from "@t3tools/client-runtime/thread-reference";
+import { copyThreadReference } from "~/lib/copyThreadReference";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
+import { openPullRequestWorkspace } from "../../layout/openRules";
 import { useAtomValue } from "@effect/atom-react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -67,7 +71,7 @@ import { m } from "~/i18n/messages";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
+import { useEnvironmentSettings, useScrollingWorkspacesEnabled } from "~/hooks/useSettings";
 import { usePanelAnimationSettings } from "~/panelAnimations";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -439,6 +443,8 @@ export function PullRequestDetailPanel({
   const [selectedTab, setTab] = useState<PullRequestDetailTab>(
     () => linkedTab(revealAnchor) ?? initialTab,
   );
+  const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
+  const scrollingWorkspaces = useScrollingWorkspacesEnabled();
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -546,6 +552,9 @@ export function PullRequestDetailPanel({
     Partial<Record<PullRequestDetailTab, boolean>>
   >({});
   const condensed = condensedByTab[tab] ?? false;
+  const [scrolledByTab, setScrolledByTab] = useState<
+    Partial<Record<PullRequestDetailTab, boolean>>
+  >({});
   const scrollerByTab = useRef<Partial<Record<PullRequestDetailTab, HTMLElement | null>>>({});
   const [scrollerRefs] = useState(() => ({
     summary: (node: HTMLElement | null) => {
@@ -624,11 +633,21 @@ export function PullRequestDetailPanel({
         description: error.message,
       }),
   });
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!paneFocusedRef.current) return;
     if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: getShortcutContext(),
     });
+    const url = handoffSummary?.url;
+    if (command === "thread.copyReference" && url) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat)
+        void copyThreadReference(pullRequestCopyTarget(url, terminology.shortLabel, m));
+      return;
+    }
     if (command !== "pullRequest.copyNumber") return;
     event.preventDefault();
     event.stopPropagation();
@@ -642,7 +661,7 @@ export function PullRequestDetailPanel({
         ),
       );
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number shortcut
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window keydown capture listener for the copy-number and copy-link shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => copyFromShortcut(event);
     window.addEventListener("keydown", onKeyDown, true);
@@ -1530,6 +1549,10 @@ export function PullRequestDetailPanel({
           mergeMethod: selectedMergeMethod,
           stale: !nativeStackQuery.isFresh,
           canMerge: supportsStackActions && can("merge") && allowedMergeMethods.length > 0,
+          conflictsWith:
+            detail.state === "open" && detail.mergeability === "conflicting"
+              ? detail.baseBranch
+              : null,
           canRebase: supportsStackActions && detail.viewerPermissions.stackRebase === true,
           onActed: () => {
             refreshDetail();
@@ -1561,7 +1584,7 @@ export function PullRequestDetailPanel({
     />
   ) : null;
   const stackMergeButton =
-    stackMenuProps !== null && stackMenuProps.canMerge ? (
+    stackMenuProps !== null && stackMenuProps.canMerge && stackMenuProps.conflictsWith === null ? (
       <PullRequestStackMenu {...stackMenuProps} display="merge-button" />
     ) : null;
   const showsArmedNote = autoMergeArmed && primaryAction !== "auto-merge-armed";
@@ -1699,9 +1722,8 @@ export function PullRequestDetailPanel({
     );
 
   const headerBranches = detail ? (
-    <span className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1.5 font-mono text-caption text-dim-foreground">
+    <span className="flex min-w-0 flex-1 basis-full items-center gap-1.5 font-mono text-caption text-dim-foreground @md/pr-header:ml-auto @md/pr-header:basis-0 @md/pr-header:justify-end">
       <PullRequestBaseBranch
-        compact
         baseBranch={detail.baseBranch}
         freshness={freshness}
         stacked={isStackedPullRequest}
@@ -1767,7 +1789,6 @@ export function PullRequestDetailPanel({
       <div
         className={cn(
           "@container/pr-header grid min-w-0 shrink-0 grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2",
-          detail && "border-b border-(--detail-separator)",
           !detail && !onClose && "hidden",
         )}
       >
@@ -1781,15 +1802,17 @@ export function PullRequestDetailPanel({
           {detail ? (
             <>
               {stackMenuProps !== null ? (
-                <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                <span className="inline-flex shrink-0 @max-2xs/pr-header:hidden">
+                  <PullRequestStackMenu {...stackMenuProps} display="trigger" />
+                </span>
               ) : supportsStackActions && nativeStackQuery.error ? (
                 <Button variant="ghost" size="micro" onClick={nativeStackQuery.refresh}>
                   <T>Retry stack lookup</T>
                 </Button>
               ) : null}
-              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground">
+              <span className="ml-auto inline-flex shrink-0 items-baseline gap-1.5 text-caption text-muted-foreground @max-[30rem]/pr-header:hidden">
                 <span
-                  className="inline-flex items-baseline gap-1 tabular-nums"
+                  className="inline-flex items-baseline gap-1 tabular-nums @max-[34rem]/pr-header:hidden"
                   aria-label={gt(
                     "{count, plural, one {{formattedCount} changed file} other {{formattedCount} changed files}}",
                     {
@@ -1837,9 +1860,18 @@ export function PullRequestDetailPanel({
                   threadRef ??
                   (typeof composerDraftTarget === "object" ? composerDraftTarget : null)
                 }
+                onOpenAsWorkspace={
+                  threadRef !== null && context !== "page" && scrollingWorkspaces
+                    ? () => openPullRequestWorkspace(threadRef, reference.number)
+                    : undefined
+                }
                 onThreadPickerOpenChange={setThreadPickerOpen}
                 refreshing={refreshing}
                 refreshFromHost={refreshFromHost}
+                timelineOrder={tab === "timeline" ? timelineOrder : null}
+                onToggleTimelineOrder={() =>
+                  setTimelineOrder((order) => (order === "newest" ? "oldest" : "newest"))
+                }
                 handoff={handoff}
                 attachesToComposer={attachTarget !== null}
                 askAboutPullRequest={askAboutPullRequest}
@@ -2013,11 +2045,11 @@ export function PullRequestDetailPanel({
               <span
                 aria-hidden
                 className={cn(
-                  "pointer-events-none absolute top-px left-0.5 h-6 rounded-lg surface-raised",
+                  "pointer-events-none absolute top-px left-px h-6 rounded-md surface-raised",
                   tabMotionActive && "transition-transform ease-out",
                 )}
                 style={{
-                  width: `calc((100% - 0.25rem - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
+                  width: `calc((100% - 2px - ${visibleTabs.length - 1} * 0.125rem) / ${visibleTabs.length})`,
                   transform: `translateX(calc(${Math.max(
                     0,
                     visibleTabs.findIndex((item) => item.value === tab),
@@ -2058,7 +2090,7 @@ export function PullRequestDetailPanel({
         )}
       >
         <div className="min-h-0 overflow-hidden" inert={tab !== "code" || !detail}>
-          <div ref={setCodeToolbarContainer} className="flex px-4 pt-3 pb-2.5" />
+          <div ref={setCodeToolbarContainer} className="flex px-4 pt-1 pb-2.5" />
         </div>
       </div>
 
@@ -2070,11 +2102,17 @@ export function PullRequestDetailPanel({
         className="border-b border-(--detail-separator)"
       />
       <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+        className={cn(
+          "relative flex min-h-0 flex-1 flex-col overflow-hidden border-t",
+          detail && scrolledByTab[tab] ? "border-(--detail-separator)" : "border-transparent",
+        )}
         onScrollCapture={(event) => {
           const scroller = scrollerByTab.current[tab];
           if (event.target !== scroller || scroller === null || scroller === undefined) return;
           const top = scroller.scrollTop;
+          if (top > 0 !== (scrolledByTab[tab] ?? false)) {
+            setScrolledByTab({ ...scrolledByTab, [tab]: top > 0 });
+          }
           const previous = condensedByTab[tab] ?? false;
           const foldHeight = foldRef.current?.scrollHeight ?? 0;
           let next = previous;
@@ -2191,7 +2229,7 @@ export function PullRequestDetailPanel({
                     detail={detail}
                     environmentId={environmentId}
                     threadRef={threadRef}
-                    order="newest"
+                    order={timelineOrder}
                     onOpenCommit={openCommit}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onOpenCode={openFileInCode}

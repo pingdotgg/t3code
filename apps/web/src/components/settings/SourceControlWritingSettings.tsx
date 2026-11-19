@@ -233,7 +233,8 @@ export function SourceControlWritingSettingsSection() {
             }}
           >
             <SelectTrigger
-              size="sm"
+              variant="well"
+              size="compact"
               className="w-full sm:w-56"
               aria-label={gt("Commit and pull request writing")}
               leadingIcon={<GitCommitHorizontalIcon />}
@@ -246,7 +247,7 @@ export function SourceControlWritingSettingsSection() {
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {(Object.keys(MODE_OPTIONS) as SourceControlWritingStyleMode[]).map((mode) => (
-                <SelectItem key={mode} hideIndicator value={mode}>
+                <SelectItem key={mode} value={mode}>
                   {messages(MODE_OPTIONS[mode].label)}
                 </SelectItem>
               ))}

@@ -1,4 +1,3 @@
-import { SettingsScopeSentence } from "./SettingsScopeSentence";
 import { SettingsGroup } from "./SettingsGroup";
 import {
   InfoIcon,
@@ -20,6 +19,8 @@ import {
 import * as Equal from "effect/Equal";
 import { T, useGT } from "gt-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLayoutPageLocation } from "../../layout/pageNavigation";
+import { useLayoutPane, useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import { flushSync } from "react-dom";
 import {
   createContext,
@@ -316,7 +317,7 @@ export function SettingsSection({
       {...sectionProps}
       ref={targetRef}
       tabIndex={sectionProps.id ? -1 : sectionProps.tabIndex}
-      className={cn(!hideTitle && "space-y-2", className)}
+      className={cn(hideTitle ? "relative" : "space-y-2", className)}
     >
       {hideTitle ? (
         <h2 className="sr-only">{title}</h2>
@@ -960,14 +961,18 @@ export function SettingsPageContainer({
   centered?: boolean;
 }) {
   const navigate = useNavigate();
-  const hash = useLocation({ select: (location) => location.hash });
-  const pathname = useLocation({ select: (location) => location.pathname });
+  const { hash, pathname, search } = useLayoutPageLocation();
+  const focusedRef = useLayoutPaneFocusedRef();
+  const { focused } = useLayoutPane();
   const highlightTarget = useLocation({
     select: (location) => location.state.settingsTargetHighlight !== false,
   });
   const targetId = hash.replace(/^#/, "") || null;
   const clearTargetHash = () => {
+    if (!focusedRef.current) return;
     void navigate({
+      to: pathname,
+      search: () => search,
       hash: "",
       replace: true,
       resetScroll: false,
@@ -978,20 +983,25 @@ export function SettingsPageContainer({
 
   return (
     <SettingsSearchTargetProvider
-      targetId={targetId === null ? null : (searchTargetFallbacks?.[targetId] ?? targetId)}
+      targetId={
+        focused && targetId !== null ? (searchTargetFallbacks?.[targetId] ?? targetId) : null
+      }
       highlightTarget={highlightTarget}
       onTargetHandled={clearTargetHash}
     >
-      <div className="scrollbar-gutter-both flex-1 overflow-y-auto" data-settings-page-scroll>
+      <div
+        className="scrollbar-gutter-both flex-1 scroll-pt-[var(--surface-top-inset,0px)] overflow-y-auto"
+        data-settings-page-scroll
+      >
         <WorkspacePageContainer
           width={width}
+          // Below a pane header the page scrolls under (--surface-top-inset).
           className={cn(
-            "max-w-[688px] gap-7 pt-9",
+            "max-w-[688px] gap-7 pt-under-header-15",
             centered && "min-h-full justify-center",
             className,
           )}
         >
-          <SettingsScopeSentence pathname={pathname} />
           {children}
         </WorkspacePageContainer>
       </div>

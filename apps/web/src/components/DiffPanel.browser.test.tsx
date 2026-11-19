@@ -103,6 +103,7 @@ vi.mock("./diffs/DiffFileTree", () => ({ DiffFileTree: () => null }));
 vi.mock("./DiffFilePathCopyButton", () => ({ DiffFilePathCopyButton: () => null }));
 
 import DiffPanel from "./DiffPanel";
+import { PanelTabSlotsContext } from "./PanelTabBreadcrumb";
 import { useDiffPanelSessionStore, useDiffPanelStore } from "~/diffPanelStore";
 import { selectThreadRightPanelState, useRightPanelStore } from "~/rightPanelStore";
 
@@ -228,10 +229,17 @@ it.each([
     using context = setup(failedBaseRef);
     await using screen = await render(
       <RegistryContext.Provider value={context.registry}>
-        <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        <PanelTabSlotsContext
+          value={{ breadcrumb: null, actions: null, registerActions: () => () => {} }}
+        >
+          <DiffPanel composerDraftTarget={context.threadRef} workspaceMutationId={null} visible />
+        </PanelTabSlotsContext>
       </RegistryContext.Provider>,
     );
     await expect.element(screen.getByText(errorMessage, { exact: true })).toBeVisible();
+    await expect
+      .element(screen.getByRole("button", { name: "Diff scope: Branch changes" }))
+      .toBeVisible();
     const selector = screen.getByRole("combobox", { name: /Change comparison target/ });
     await vi.waitFor(() => expect(selector.query()).not.toBeNull());
     await userEvent.click(selector);

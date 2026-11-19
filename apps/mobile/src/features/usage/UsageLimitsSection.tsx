@@ -187,7 +187,10 @@ export function AccountLimits(props: {
   const color = normalizeProviderAccentColor(props.accentColor) ?? providerColor;
   const m = useMessages();
   if (!limits) return null;
-  const notice = limitsNotice(limits, m);
+  const notice =
+    limits.unavailable?.reason === "unsupported"
+      ? m(msg("Usage unavailable for this API connection"))
+      : limitsNotice(limits, m);
   const externalUsage = limits.externalUsage;
   const padding = dense ? "px-4 py-3" : "p-4";
   return (

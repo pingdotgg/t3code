@@ -9,7 +9,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { ConnectionStatusDot } from "../ConnectionStatusDot";
+import { StatusDot } from "../ui/status-dot";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { useScopedSettings } from "./useScopedSettings";
 import { SettingsSection } from "./settingsLayout";
@@ -70,31 +70,30 @@ function endpointStatus(
   if (url === "") {
     return {
       label: resolve(msg("Off", { $context: "export disabled" })),
-      dot: "bg-muted-foreground/40",
-    };
+      tone: "neutral",
+    } as const;
   }
-  if (check?.url !== url)
-    return { label: resolve(msg("Not checked")), dot: "bg-muted-foreground/40" };
+  if (check?.url !== url) return { label: resolve(msg("Not checked")), tone: "neutral" } as const;
   const { result } = check;
-  if (result === null) return { label: resolve(msg("Checking…")), dot: "bg-warning" };
+  if (result === null) return { label: resolve(msg("Checking…")), tone: "warning" } as const;
   switch (result._tag) {
     case "Accepted":
       return {
         label: resolve(msg("Connected")),
         detail: resolve(msg("{ms} ms", { ms: Math.round(result.latencyMs) })),
-        dot: "bg-success",
-      };
+        tone: "success",
+      } as const;
     case "Rejected":
       return {
         label: resolve(msg("Rejected")),
         detail: resolve(msg("HTTP {status}", { status: result.status })),
-        dot: "bg-destructive",
-      };
+        tone: "danger",
+      } as const;
     case "Unreachable":
       return {
         label: result.timedOut ? resolve(msg("Timed out")) : resolve(msg("Unreachable")),
-        dot: "bg-destructive",
-      };
+        tone: "danger",
+      } as const;
   }
 }
 
@@ -223,14 +222,14 @@ function TelemetryExportForm() {
           const status = override
             ? {
                 label: check?.label ?? override.label,
-                dot: check?.dot ?? "bg-muted-foreground/40",
+                tone: check?.tone ?? ("neutral" as const),
               }
             : check;
           return (
             <div key={key} className="grid gap-1.5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5">
-                  {status && <ConnectionStatusDot dotClassName={status.dot} />}
+                  {status && <StatusDot tone={status.tone} />}
                   <Label htmlFor={key}>{messages(label)}</Label>
                 </div>
                 <span className="grid justify-items-end gap-1 text-meta text-muted-foreground">
@@ -242,7 +241,7 @@ function TelemetryExportForm() {
               <div className="flex gap-2">
                 <Input
                   id={key}
-                  size="sm"
+                  size="settings"
                   type="url"
                   pattern="[Hh][Tt][Tt][Pp][Ss]?://.*"
                   title={gt("Enter an HTTP or HTTPS endpoint, or leave empty to disable export.")}

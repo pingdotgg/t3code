@@ -7,11 +7,24 @@ import { extendTailwindMerge } from "tailwind-merge";
 import { DraftId } from "../composerDraftStore";
 import { m, type MessageResolver } from "../i18n/messages";
 
-// Register font sizes, type roles and seam images so tailwind-merge does not treat them as colors.
 const twMerge = extendTailwindMerge({
   extend: {
     classGroups: { "bg-image": [{ bg: ["composer-seam-below", "composer-seam-above"] }] },
     theme: {
+      radius: [
+        "model-tag",
+        "kbd",
+        "badge",
+        "row",
+        "item",
+        "control",
+        "card",
+        "row-card",
+        "pane",
+        "thread-details",
+        "project-icon",
+      ],
+      shadow: ["dialog", "composer"],
       text: [
         "2xs",
         "3xs",

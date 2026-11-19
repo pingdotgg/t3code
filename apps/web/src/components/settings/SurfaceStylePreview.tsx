@@ -4,12 +4,12 @@ import { msg, useGT, useMessages } from "gt-react";
 import { Button, ContentButton } from "../ui/button";
 
 const SURFACE_STYLE_LABELS: Record<SurfaceStyle, string> = {
-  "gradient-rim": msg("Toned aqua", { $context: "surface style" }),
+  "gradient-rim": msg("Standard", { $context: "surface style" }),
   flat: msg("Flat", { $context: "surface style" }),
-  "soft-gradient": msg("Soft gradient", { $context: "surface style" }),
-  "aqua-gloss-full": msg("Aqua gloss", { $context: "surface style" }),
-  "aqua-blue": msg("Aqua blue", { $context: "surface style" }),
-  "gradient-rim-everywhere": msg("Gradient rim", { $context: "surface style" }),
+  "soft-gradient": msg("Soft", { $context: "surface style" }),
+  "aqua-gloss-full": msg("Gloss", { $context: "surface style" }),
+  "aqua-blue": msg("Accent gloss", { $context: "surface style" }),
+  "gradient-rim-everywhere": msg("Outline", { $context: "surface style" }),
 };
 
 /**
@@ -44,34 +44,31 @@ export function SurfaceStylePicker({
             onClick={() => onChange(style)}
             type="button"
           >
-            <span
-              aria-hidden
-              className="flex h-24 items-center justify-center gap-2 bg-settings-preview-fill"
-              data-surface-preview={style}
-              inert
-            >
-              <Button render={<span />} size="sm">
-                {gt("Approve", { $context: "sample button in a style preview" })}
-              </Button>
-              <Button
-                render={<span />}
-
-                size="sm"
-                variant="secondary"
+            <span className="max-sm:block max-sm:h-full">
+              <span
+                aria-hidden
+                className="flex h-24 flex-col items-center justify-center gap-2 bg-settings-preview-fill sm:flex-row"
+                data-surface-preview={style}
+                inert
               >
-                {gt("Button", { $context: "sample button in a style preview" })}
-              </Button>
-            </span>
-            {/* px-3 like the theme cards above, so names in a column share one line. */}
-            <span className="flex items-center gap-1.5 border-t border-divider px-3 py-3">
-              <span className="min-w-0 flex-1 truncate text-label text-foreground">
-                {m(SURFACE_STYLE_LABELS[style])}
+                <Button render={<span />} size="sm">
+                  {gt("Approve", { $context: "sample button in a style preview" })}
+                </Button>
+                <Button render={<span />} size="sm" variant="secondary">
+                  {gt("Button", { $context: "sample button in a style preview" })}
+                </Button>
               </span>
-              {style === defaultValue ? (
-                <span className="shrink-0 text-meta text-dim-foreground">
-                  {gt("Default", { $context: "marks the default choice" })}
+              {/* px-3 like the theme cards above, so names in a column share one line. */}
+              <span className="flex flex-col items-start gap-1.5 border-t border-divider px-3 py-3 sm:flex-row sm:items-center">
+                <span className="min-w-0 flex-1 text-label text-foreground max-sm:wrap-anywhere sm:truncate">
+                  {m(SURFACE_STYLE_LABELS[style])}
                 </span>
-              ) : null}
+                {style === defaultValue ? (
+                  <span className="shrink-0 text-meta text-dim-foreground">
+                    {gt("Default", { $context: "marks the default choice" })}
+                  </span>
+                ) : null}
+              </span>
             </span>
           </ContentButton>
         );

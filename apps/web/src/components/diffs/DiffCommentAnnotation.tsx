@@ -218,7 +218,7 @@ export function DiffCommentAnnotation({
         readOnly={speech?.freezesEditor}
         autoFocus={focusOnMount}
         size="sm"
-        value={displayedText}
+        value={speech?.displayText ?? displayedText}
         dir={textDirection(displayedText)}
         placeholder={placeholder ?? gt("Add a comment…")}
         aria-label={gt("Comment on lines {rangeLabel}", {

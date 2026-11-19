@@ -1,5 +1,6 @@
 import { msg } from "gt-react";
 import { m } from "~/i18n/messages";
+import { useLayoutPaneFocusedRef } from "../../layout/layoutPaneContext";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
   type ComposerContextRecord,
@@ -155,6 +156,7 @@ export function useComposerStash(input: {
   const [isStashMenuOpen, setIsStashMenuOpen] = useState(false);
   // Each stash bumps the key; the badge replays its one-shot pulse animation per key.
   const [stashPulseKey, setStashPulseKey] = useState(0);
+  const paneFocusedRef = useLayoutPaneFocusedRef();
   const stashInFlightRef = useRef<Set<string>>(new Set());
 
   const stashQueue = usePromptStashStore((state) => state.entries);
@@ -770,6 +772,7 @@ export function useComposerStash(input: {
   // Read at event time, so the scope registers once per mounted composer instead of
   // re-registering (and reshuffling capture-scope priority) whenever a guard flips.
   const handleStashShortcut = useStableCallback((event: KeyboardEvent) => {
+    if (!paneFocusedRef.current) return false;
     // Always claim the shortcut so the browser save dialog never opens,
     // even when the composer is in a state that can't stash.
     event.preventDefault();

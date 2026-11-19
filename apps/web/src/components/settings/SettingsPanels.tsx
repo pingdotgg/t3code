@@ -404,7 +404,8 @@ function AboutVersionSection() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label={gt("Update track")}
                 disabled={switchChannel !== null || updateRun !== null}
@@ -412,11 +413,10 @@ function AboutVersionSection() {
                 <SelectValue>{channelSwitchLabel(selectedUpdateChannel, messages)}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
+                <SelectItem value="latest">
                   <T>Stable</T>
                 </SelectItem>
                 <SelectItem
-                  hideIndicator
                   value="nightly"
                   disabled={nightlyDeniedBy !== undefined && selectedUpdateChannel !== "nightly"}
                 >
@@ -440,14 +440,19 @@ function AboutVersionSection() {
                 );
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Update track")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label={gt("Update track")}
+              >
                 <SelectValue>{HOSTED_APP_CHANNEL_LABEL}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="latest">
+                <SelectItem value="latest">
                   <T>Latest</T>
                 </SelectItem>
-                <SelectItem hideIndicator value="nightly">
+                <SelectItem value="nightly">
                   <T>Nightly</T>
                 </SelectItem>
               </SelectPopup>
@@ -806,7 +811,7 @@ function AutoSettleDaysInput({
   return (
     <InputGroup className="w-full sm:w-24">
       <InputGroupInput
-        size="sm"
+        size="settings"
         type="number"
         min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
         max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
@@ -831,30 +836,31 @@ function AutoSettleDaysInput({
 }
 
 /** Restores every device setting from the settings and appearance headers. */
-export function RestoreDeviceDefaultsButton({
-  onRestored,
-  compact = false,
-}: {
-  onRestored?: () => void;
-  compact?: boolean;
-}) {
+export function RestoreDeviceDefaultsButton({ onRestored }: { onRestored?: () => void }) {
   const gt = useGT();
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
   return (
-    <Button
-      size={compact ? "icon-sm" : "xs"}
-      variant="ghost"
-      aria-label={compact ? gt("Restore device defaults") : undefined}
-      disabled={changedSettingLabels.length === 0}
-      onClick={() => void restoreDefaults()}
-    >
-      <RotateCcwIcon className="size-3.5" />
-      {compact ? null : (
-        <span>
-          <T>Restore device defaults</T>
-        </span>
-      )}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger render={<span className="inline-flex" />}>
+        <Button
+          size="standard"
+          variant="ghost"
+          aria-label={gt("Restore device defaults")}
+          disabled={changedSettingLabels.length === 0}
+          onClick={() => void restoreDefaults()}
+        >
+          <RotateCcwIcon className="size-3.5" />
+          <span className="max-sm:sr-only">
+            <T>Restore device defaults</T>
+          </span>
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">
+        {changedSettingLabels.length === 0
+          ? gt("Device settings already use their defaults.")
+          : gt("Restore device defaults")}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 export function GeneralSettingsPanel() {
@@ -948,14 +954,19 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={gt("Project order")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-44"
+                aria-label={gt("Project order")}
+              >
                 <SelectValue>
                   {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[settings.sidebarProjectSortOrder])}
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SidebarProjectSortOrder.literals.map((sortOrder) => (
-                  <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
+                  <SelectItem key={sortOrder} value={sortOrder}>
                     {m(SIDEBAR_PROJECT_SORT_ORDER_LABELS[sortOrder])}
                   </SelectItem>
                 ))}
@@ -1121,7 +1132,8 @@ export function GeneralSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full sm:w-40"
                   aria-label={gt("Quit shortcut behavior")}
                 >
@@ -1131,7 +1143,7 @@ export function GeneralSettingsPanel() {
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
+                    <SelectItem key={value} value={value}>
                       {m(label)}
                     </SelectItem>
                   ))}
@@ -1167,7 +1179,12 @@ export function GeneralSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Language")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label={gt("Language")}
+              >
                 <SelectValue>
                   {languageValue === SYSTEM_LANGUAGE
                     ? m(TIMESTAMP_FORMAT_LABELS.locale)
@@ -1175,11 +1192,9 @@ export function GeneralSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value={SYSTEM_LANGUAGE}>
-                  {m(TIMESTAMP_FORMAT_LABELS.locale)}
-                </SelectItem>
+                <SelectItem value={SYSTEM_LANGUAGE}>{m(TIMESTAMP_FORMAT_LABELS.locale)}</SelectItem>
                 {SUPPORTED_LOCALES.map((locale) => (
-                  <SelectItem hideIndicator key={locale} value={locale}>
+                  <SelectItem key={locale} value={locale}>
                     {nativeLanguageName(locale)}
                   </SelectItem>
                 ))}
@@ -1212,22 +1227,17 @@ export function GeneralSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label={gt("Timestamp format")}
               >
                 <SelectValue>{m(TIMESTAMP_FORMAT_LABELS[settings.timestampFormat])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {m(TIMESTAMP_FORMAT_LABELS.locale)}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {m(TIMESTAMP_FORMAT_LABELS["12-hour"])}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {m(TIMESTAMP_FORMAT_LABELS["24-hour"])}
-                </SelectItem>
+                <SelectItem value="locale">{m(TIMESTAMP_FORMAT_LABELS.locale)}</SelectItem>
+                <SelectItem value="12-hour">{m(TIMESTAMP_FORMAT_LABELS["12-hour"])}</SelectItem>
+                <SelectItem value="24-hour">{m(TIMESTAMP_FORMAT_LABELS["24-hour"])}</SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -1303,7 +1313,8 @@ export function ChatSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-auto min-w-0 max-w-full"
                 aria-label={gt("Send shortcut")}
               >
@@ -1397,7 +1408,8 @@ export function ChatSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-auto min-w-0"
                 aria-label={gt("Follow-up behavior")}
               >
@@ -1612,7 +1624,12 @@ function DiffColorsSettingsRow() {
                 updateSettings({ diffColorScheme: value });
             }}
           >
-            <SelectTrigger size="sm" className="w-full min-w-0" aria-label={gt("Diff colors")}>
+            <SelectTrigger
+              variant="well"
+              size="compact"
+              className="w-full min-w-0"
+              aria-label={gt("Diff colors")}
+            >
               <span
                 aria-hidden="true"
                 className={
@@ -1675,16 +1692,17 @@ export function DiffsSettingsPanel() {
                 }
               }}
             >
-              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Diff layout")}>
+              <SelectTrigger
+                variant="well"
+                size="compact"
+                className="w-full sm:w-40"
+                aria-label={gt("Diff layout")}
+              >
                 <SelectValue>{messages(DIFF_LAYOUT_LABELS[settings.diffLayout])}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="stacked">
-                  {messages(DIFF_LAYOUT_LABELS.stacked)}
-                </SelectItem>
-                <SelectItem hideIndicator value="split">
-                  {messages(DIFF_LAYOUT_LABELS.split)}
-                </SelectItem>
+                <SelectItem value="stacked">{messages(DIFF_LAYOUT_LABELS.stacked)}</SelectItem>
+                <SelectItem value="split">{messages(DIFF_LAYOUT_LABELS.split)}</SelectItem>
               </SelectPopup>
             </Select>
           }
@@ -1739,7 +1757,8 @@ export function DiffsSettingsPanel() {
               }}
             >
               <SelectTrigger
-                size="sm"
+                variant="well"
+                size="compact"
                 className="w-full sm:w-40"
                 aria-label={gt("Default diff file state")}
               >
@@ -1748,10 +1767,10 @@ export function DiffsSettingsPanel() {
                 </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="expanded">
+                <SelectItem value="expanded">
                   <T>Expanded</T>
                 </SelectItem>
-                <SelectItem hideIndicator value="collapsed">
+                <SelectItem value="collapsed">
                   <T>Collapsed</T>
                 </SelectItem>
               </SelectPopup>
@@ -1841,7 +1860,8 @@ function ScopedCompactIdleThreadsRow() {
           }}
         >
           <SelectTrigger
-            size="sm"
+            variant="well"
+            size="compact"
             className="w-full sm:w-56"
             aria-label={gt("Compact idle threads")}
           >
@@ -1858,7 +1878,6 @@ function ScopedCompactIdleThreadsRow() {
           <SelectPopup align="end" alignItemWithTrigger={false}>
             {IDLE_COMPACTION_MODES.map((mode) => (
               <SelectItem
-                hideIndicator
                 key={mode.value}
                 value={mode.value}
                 // A server from before modes has only the on/off switch, so it cannot store "Never".
@@ -1960,7 +1979,7 @@ export function ThreadsSettingsPanel() {
           }
           control={
             <DraftInput
-              size="sm"
+              size="settings"
               className="w-full sm:w-72"
               value={mixedAddProjectBaseDirectory ? "" : settings.addProjectBaseDirectory}
               onCommit={(next) => updateSettings({ addProjectBaseDirectory: next })}
@@ -2288,7 +2307,8 @@ export function ThreadsSettingsPanel() {
                 }}
               >
                 <SelectTrigger
-                  size="sm"
+                  variant="well"
+                  size="compact"
                   className="w-full sm:w-56"
                   aria-label={gt("Response streaming")}
                 >
@@ -2299,10 +2319,10 @@ export function ThreadsSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="turn">
+                  <SelectItem value="turn">
                     {messages(RESPONSE_STREAMING_MODE_LABELS.turn)}
                   </SelectItem>
-                  <SelectItem hideIndicator value="paragraph">
+                  <SelectItem value="paragraph">
                     {messages(RESPONSE_STREAMING_MODE_LABELS.paragraph)}
                   </SelectItem>
                 </SelectPopup>

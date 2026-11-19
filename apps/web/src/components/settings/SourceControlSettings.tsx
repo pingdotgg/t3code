@@ -541,14 +541,14 @@ export function SourceControlSettingsPanel() {
     </Tooltip>
   );
 
-  const providersTitle = gt("Source Control Providers");
+  const providersTitle = gt("Source control providers");
   return (
     <SettingsPageContainer className="max-w-[688px]">
       <ProjectDefaultsSettings category="source-control" />
       {environmentId === null ? (
         <SettingsSection
           id={searchableSetting("source-control").id}
-          title={gt("Source Control Providers")}
+          title={gt("Source control providers")}
         >
           <p className="px-4 py-3 text-sm text-muted-foreground">
             <T>
@@ -563,7 +563,7 @@ export function SourceControlSettingsPanel() {
           {hasVersionControlSystems ? (
             <SettingsSection
               id={searchableSetting("source-control").id}
-              title={gt("Version Control")}
+              title={gt("Version control")}
               titleAction={environmentContext}
               headerAction={scanButton}
             >
@@ -576,7 +576,7 @@ export function SourceControlSettingsPanel() {
           {result.sourceControlProviders.length > 0 ? (
             <SettingsSection
               id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={gt("Source Control Providers")}
+              title={gt("Source control providers")}
               titleAction={hasVersionControlSystems ? null : environmentContext}
               headerAction={hasVersionControlSystems ? null : scanButton}
             >

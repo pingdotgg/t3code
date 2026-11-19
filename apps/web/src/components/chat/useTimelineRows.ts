@@ -101,6 +101,12 @@ export function useStableRows(
     }
   }
   const previous = state.identity === identity ? state.stable : { byId: new Map(), result: [] };
+  // Labs fold off: the running turn streams in place and wake-ups keep their rows, like main.
+  if (!input.turnWorkFold) {
+    const stable = computeStableMessagesTimelineRows(rows, previous);
+    setState({ identity, source: rows, input, stable });
+    return stable.result;
+  }
   const windowed = input.windowlessCitation
     ? rows
     : applyWorkingWindow(rows, input, input.workingHistoryKey);
@@ -130,6 +136,7 @@ type StableTimelineRowsInput = Parameters<typeof applyBackgroundActivityGroups>[
   readonly workingHistoryKey: string | null;
   readonly windowlessCitation: boolean;
   readonly activeFindEntryId: string | null;
+  readonly turnWorkFold: boolean;
 };
 
 export function useTimelineSlashCommandCatalog(

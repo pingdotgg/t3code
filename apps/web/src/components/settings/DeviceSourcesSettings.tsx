@@ -564,7 +564,9 @@ export function DeviceSourcesSettings(props: {
   const addMenu = (
     <Menu>
       <MenuTrigger
-        render={<Button size="sm" variant="secondary" disabled={disabled || editing !== null} />}
+        render={
+          <Button size="standard" variant="secondary" disabled={disabled || editing !== null} />
+        }
       >
         <PlusIcon className="size-3.5" /> <T>Add source</T>
         <ChevronDownIcon className="size-3.5" />

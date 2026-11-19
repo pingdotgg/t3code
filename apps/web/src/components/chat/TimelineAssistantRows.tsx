@@ -54,7 +54,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   const text = liveText ?? row.message.text;
   const messageText =
     text || (row.message.streaming || row.suppressEmptyResponse ? "" : gt("(empty response)"));
-  const textRef = useCarriedTextFade(row.message.id);
+  const textRef = useCarriedTextFade(row.message.id, Boolean(row.message.streaming));
 
   return (
     <>
@@ -500,6 +500,7 @@ function AssistantChangedFilesSectionInner({
 
   return (
     <ChangedFilesCard
+      threadRef={ctx.threadRef}
       runId={turnSummary.runId}
       files={checkpointFiles}
       totals={checkpointFileTotals(turnSummary)}

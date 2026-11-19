@@ -175,7 +175,6 @@ function Wizard({
                 <AccessOption
                   key={level}
                   access={level}
-                  selected={level === access}
                   disabledReason={levels.get(level)}
                   description={
                     level === "full-access"
@@ -538,7 +537,7 @@ function GateMessage({
 }) {
   return (
     <section className="space-y-3">
-      <h3 className="text-title">{title}</h3>
+      <h3 className="text-title [--type-title:1rem]">{title}</h3>
       {lines.length > 0 ? (
         <div className="space-y-1 text-body text-muted-foreground">
           {lines.map((line) => (

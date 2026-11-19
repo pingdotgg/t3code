@@ -12,33 +12,6 @@ import { isTerminalSubagentStatus } from "./subagentRuntime.ts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
-export function subagentGroupSummary(
-  members: ReadonlyArray<{ readonly status: OrchestrationV2TurnItemStatus }>,
-  resolve: MFunctionType = mFallback,
-) {
-  const active = members.some(
-    ({ status }) => status === "pending" || status === "running" || status === "waiting",
-  );
-  return {
-    label: active
-      ? resolve(
-          msg(
-            "{count, plural, one {Kicked off {count} subagent} other {Kicked off {count} subagents}}",
-            {
-              count: members.length,
-            },
-          ),
-        )
-      : resolve(
-          msg("{count, plural, one {Ran {count} subagent} other {Ran {count} subagents}}", {
-            count: members.length,
-          }),
-        ),
-    active,
-    failed: members.some(({ status }) => status === "failed"),
-  };
-}
-
 const SUBAGENT_STATUS_COUNTS = {
   working: msg("{count} working"),
   done: msg("{count} done"),
@@ -46,7 +19,6 @@ const SUBAGENT_STATUS_COUNTS = {
   stopped: msg("{count} stopped"),
   idle: msg("{count} idle"),
 };
-
 export function summarizeSubagentStatuses(
   statuses: ReadonlyArray<OrchestrationV2TurnItemStatus>,
   resolve: MFunctionType = mFallback,

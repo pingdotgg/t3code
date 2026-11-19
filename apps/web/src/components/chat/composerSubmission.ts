@@ -9,6 +9,7 @@ type ComposerSubmitEvent = { preventDefault: () => void };
 type ComposerSubmissionInput = {
   prompt: string;
   providerInput?: string;
+  isSendBusy?: boolean;
   submissionTarget: "provider-turn" | "pending-user-input";
 };
 
@@ -21,7 +22,7 @@ export function getComposerPromptInputLength(prompt: string): number {
   );
 }
 
-export function getComposerPromptLengthValidationMessage(
+function getComposerPromptLengthValidationMessage(
   prompt: string,
   resolve: MessageResolver = m,
   locale: string = getActiveLocale(),
@@ -46,6 +47,11 @@ export function getComposerSubmissionValidationMessage(
   options: ComposerSubmissionInput,
   resolve: MessageResolver = m,
 ): string | null {
+  if (options.isSendBusy) {
+    return resolve(
+      msg("Your previous message is still saving. Wait for it to finish, then send again."),
+    );
+  }
   return options.submissionTarget === "provider-turn"
     ? getComposerPromptLengthValidationMessage(options.providerInput ?? options.prompt, resolve)
     : null;

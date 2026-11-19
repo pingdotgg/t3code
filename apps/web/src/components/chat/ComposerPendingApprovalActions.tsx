@@ -133,9 +133,7 @@ export function ComposerPendingApprovalActions({
           <Menu>
             <MenuTrigger
               disabled={disabled}
-              render={
-                <Button size="icon-sm" variant="ghost" aria-label={gt("More approval options")} />
-              }
+              render={<Button size="sm" variant="ghost" aria-label={gt("More approval options")} />}
             >
               {gt("More", { $context: "button that opens more approval options" })}
             </MenuTrigger>

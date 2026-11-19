@@ -206,7 +206,7 @@ function ThreadRowContext({
         render={
           <span
             tabIndex={0}
-            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption"
+            className="max-w-[45%] shrink-0 truncate text-dim-foreground text-caption outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           />
         }
       >
@@ -260,7 +260,12 @@ function CommandPaletteRowContent({ item }: { item: CommandPaletteResultItem }) 
           ) : item.matchHint ? (
             <SearchMatchHintLine hint={item.matchHint} />
           ) : item.description ? (
-            <span className="min-w-0 text-dim-foreground text-meta font-normal">
+            <span
+              className={cn(
+                "min-w-0 text-dim-foreground text-meta font-normal",
+                !stacked && "max-w-[45%] shrink-0 truncate",
+              )}
+            >
               {item.description}
             </span>
           ) : null}
@@ -288,8 +293,12 @@ function CommandPaletteResultRow(props: {
   keybindings: ResolvedKeybindingsConfig;
   onExecuteItem: (item: CommandPaletteResultItem) => void;
 }) {
+  // Terminal-only keys (splits) have no binding outside a terminal; show the terminal's.
   const shortcutLabel = props.item.shortcutCommand
-    ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
+    ? (shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand) ??
+      shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand, {
+        context: { terminalFocus: true },
+      }))
     : null;
 
   return (

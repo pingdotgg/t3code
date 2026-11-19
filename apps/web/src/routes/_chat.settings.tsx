@@ -1,12 +1,14 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
-import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useMatches, useNavigate } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RestoreDeviceDefaultsButton } from "../components/settings/SettingsPanels";
 
 import { AppRouteModal, AppRouteModalClose } from "../components/AppRouteModal";
-import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
 import { SettingsSidebarNav } from "../components/settings/SettingsSidebarNav";
+import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
+import { useLayoutPageLocation } from "../layout/pageNavigation";
 import {
   SettingsScopeProvider,
   useSettingsScope,
@@ -31,7 +33,7 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   const { environments } = useEnvironments();
   const gt = useGT();
   const m = useMessages();
-  const hash = useLocation({ select: (location) => location.hash });
+  const { hash } = useLayoutPageLocation();
   const searchTarget = getSettingsSearchTargetScope(hash);
   const autoSettlementAvailability = searchTarget?.requiresThreadAutoSettlement
     ? getThreadAutoSettlementSearchAvailability(environments, scope)
@@ -102,42 +104,47 @@ function SettingsScopeBoundary({ pathname, children }: { pathname: string; child
   return children;
 }
 
-function SettingsContentLayout() {
+function SettingsContentLayout({ children }: { children: ReactNode }) {
   const gt = useGT();
+  const isMobile = useMediaQuery("max-md");
   const contentArea = workspaceAreaProps("settings", 1, gt("Settings content"));
-  const location = useLocation();
+  const pathname = useMatches({ select: (matches) => matches.at(-1)!.pathname });
   const { search, environment } = useSettingsScope();
   const contentScopeKey =
-    location.pathname === "/settings/diagnostics" || location.pathname === "/settings/providers"
+    pathname === "/settings/diagnostics" || pathname === "/settings/providers"
       ? environment?.environmentId
       : JSON.stringify(search);
   const [restoreSignal, setRestoreSignal] = useState(0);
-
   return (
     <AppRouteModal label={gt("Settings")} variant="app-panel">
       <div className="relative flex min-h-0 flex-1">
-        <SettingsSidebarNav pathname={location.pathname} />
+        <SettingsSidebarNav pathname={pathname} />
         <div
           {...contentArea}
           data-app-modal-pane=""
-          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          className="pane-mobile-chrome flex min-h-0 min-w-0 flex-1 flex-col"
         >
-          <header className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3">
-            <SettingsBreadcrumb pathname={location.pathname} />
-            <div className="ms-auto flex shrink-0 items-center gap-1">
-              {location.pathname === "/settings/general" ? (
+          <header
+            data-pane-header=""
+            data-chrome-scope={isMobile ? "" : undefined}
+            className="flex h-13 shrink-0 items-center gap-3 ps-5 pe-3"
+          >
+            <SettingsBreadcrumb pathname={pathname} />
+            <div className="relative z-20 ms-auto flex shrink-0 items-center gap-1">
+              {pathname === "/settings/general" ? (
                 <RestoreDeviceDefaultsButton
-                  compact
                   onRestored={() => setRestoreSignal((value) => value + 1)}
                 />
               ) : null}
               <AppRouteModalClose />
             </div>
           </header>
-          <div key={`${contentScopeKey}:${restoreSignal}`} className="min-h-0 flex flex-1 flex-col">
-            <SettingsScopeBoundary pathname={location.pathname}>
-              <Outlet />
-            </SettingsScopeBoundary>
+
+          <div
+            key={`${contentScopeKey}:${restoreSignal}`}
+            className="min-h-0 flex flex-1 flex-col max-md:overflow-hidden"
+          >
+            <SettingsScopeBoundary pathname={pathname}>{children}</SettingsScopeBoundary>
           </div>
         </div>
       </div>
@@ -145,11 +152,13 @@ function SettingsContentLayout() {
   );
 }
 
-function SettingsRouteLayout() {
-  const rawSearch = Route.useSearch();
-  const navigate = Route.useNavigate();
-  const pathname = useLocation({ select: (location) => location.pathname });
-  return (
+function SettingsPage({ children }: { children?: ReactNode }) {
+  const content = children === undefined ? <Outlet /> : children;
+  const location = useLayoutPageLocation();
+  const rawSearch = validateSettingsRouteSearch(location.search);
+  const navigate = useNavigate({ from: "/settings" });
+  const pathname = location.pathname;
+  const page = (
     <SettingsScopeProvider
       search={rawSearch}
       singleEnvironment={pathname === "/settings/providers" || pathname === "/settings/secrets"}
@@ -159,6 +168,7 @@ function SettingsRouteLayout() {
         void navigate({
           to: pathname,
           search: () => ({
+            pane: rawSearch.pane,
             project: next.project,
             machine: next.machine,
             checkout: next.checkout,
@@ -168,9 +178,10 @@ function SettingsRouteLayout() {
         });
       }}
     >
-      <SettingsContentLayout />
+      <SettingsContentLayout>{content}</SettingsContentLayout>
     </SettingsScopeProvider>
   );
+  return page;
 }
 
 export const Route = createFileRoute("/_chat/settings")({
@@ -183,5 +194,5 @@ export const Route = createFileRoute("/_chat/settings")({
     const moved = movedSettingsPath(location.pathname, location.hash);
     if (moved) throw redirect({ to: moved, search: true, hash: true, replace: true });
   },
-  component: SettingsRouteLayout,
+  component: SettingsPage,
 });

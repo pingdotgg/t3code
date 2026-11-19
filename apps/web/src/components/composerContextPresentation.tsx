@@ -441,6 +441,7 @@ function ComposerThreadContextChip(props: { record: ThreadContextRecord }) {
   return (
     <ThreadContextChip
       record={props.record}
+      inPromptEditor
       unreadable={
         environmentId !== null &&
         props.record.environmentId !== environmentId &&

@@ -167,6 +167,7 @@ export function SourceControlAccountSettings({
                     }}
                   >
                     <SelectTrigger
+                      variant="well"
                       size="sm"
                       aria-label={gt("{label} account for {host}", { label, host: group.host })}
                     >

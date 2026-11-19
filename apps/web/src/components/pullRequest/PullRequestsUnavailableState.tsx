@@ -1,18 +1,22 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { T, useGT } from "gt-react";
 import { ExternalLinkIcon } from "lucide-react";
+import type { ElementType } from "react";
 
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
+  icon: Icon = PullRequestGlyph.pullRequest,
   title,
   error,
   onRetry,
   refreshing = false,
   host,
 }: {
+  /** The glyph of what could not load; a pull request by default. */
+  icon?: ElementType;
   title?: string;
   error: string;
   onRetry?: () => void;
@@ -23,7 +27,7 @@ export function PullRequestsUnavailableState({
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
-        <PullRequestGlyph.pullRequest />
+        <Icon />
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>{title ?? gt("Could not load pull requests")}</EmptyTitle>

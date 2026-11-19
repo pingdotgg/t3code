@@ -3,7 +3,11 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
 import { Sidebar, SidebarProvider, SidebarTrigger, useSidebar } from "../ui/sidebar";
-import { type SidebarRouteReveal, useActiveRowReveal } from "./routeReveal";
+import {
+  observeSidebarDraftPromotion,
+  type SidebarRouteReveal,
+  useActiveRowReveal,
+} from "./routeReveal";
 
 const ROW_HEIGHT_PX = 24;
 
@@ -89,6 +93,23 @@ describe("useActiveRowReveal", () => {
     );
 
     await vi.waitFor(() => expect(reveal.pendingKey).toBeNull());
+    await expect.element(screen.getByText("thread-45", { exact: true })).not.toBeInViewport();
+  });
+
+  it("leaves the list where it is when a draft open since the mount lists its thread", async () => {
+    const reveal = newReveal();
+    // The sidebar mounted on the draft, so no row has spent the mount reveal yet.
+    await using screen = await render(
+      <RevealList reveal={reveal} rowKeys={rowKeys(40)} activeKey={null} />,
+      // No router: the route arrives as the activeKey prop.
+      { router: false },
+    );
+    observeSidebarDraftPromotion(reveal, "thread-45");
+
+    await screen.rerender(
+      <RevealList reveal={reveal} rowKeys={rowKeys(50)} activeKey="thread-45" />,
+    );
+
     await expect.element(screen.getByText("thread-45", { exact: true })).not.toBeInViewport();
   });
 
