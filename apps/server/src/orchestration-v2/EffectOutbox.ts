@@ -75,6 +75,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     messageId: MessageId,
     modelSelection: Schema.optional(ModelSelection),
     steerFollowUpAfterRunOrdinal: Schema.optional(NonNegativeInt),
+    runtimeAccepted: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-turn.restart"),
@@ -233,6 +234,12 @@ export interface EffectOutboxV2Shape {
     threadId: ThreadId,
     messageId: MessageId,
   ) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly steerForProviderTurn: (input: {
+    readonly threadId: ThreadId;
+    readonly messageId: MessageId;
+    readonly providerTurnId: ProviderTurnId;
+  }) => Effect.Effect<Option.Option<OrchestrationEffectV2>, EffectOutboxError>;
+  readonly markSteerAccepted: (effectId: string) => Effect.Effect<void, EffectOutboxError>;
   readonly cancelUnsettled: (input: {
     readonly threadId: ThreadId;
     readonly effectTypes: ReadonlyArray<OrchestrationEffectRequestV2["type"]>;
@@ -498,6 +505,60 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
               : new EffectOutboxError({ operation: "first-steer", cause }),
           ),
         ),
+      steerForProviderTurn: ({ threadId, messageId, providerTurnId }) =>
+        sql<EffectRow>`
+          SELECT *
+          FROM orchestration_v2_effect_outbox
+          WHERE thread_id = ${threadId}
+            AND effect_type = 'provider-turn.steer'
+            AND json_extract(payload_json, '$.messageId') = ${messageId}
+            AND json_extract(payload_json, '$.providerTurnId') = ${providerTurnId}
+          ORDER BY rowid DESC
+          LIMIT 1
+        `.pipe(
+          NodeSqliteClient.readOnly,
+          Effect.flatMap((rows) => decodeRows("steer-for-provider-turn", rows)),
+          Effect.map((effects) => Option.fromNullishOr(effects[0])),
+          Effect.mapError((cause) =>
+            isEffectOutboxError(cause)
+              ? cause
+              : new EffectOutboxError({ operation: "steer-for-provider-turn", cause }),
+          ),
+        ),
+      markSteerAccepted: Effect.fn("EffectOutbox.markSteerAccepted")(
+        function* (effectId: string) {
+          const now = DateTime.formatIso(yield* DateTime.now);
+          const rows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET payload_json = json_set(payload_json, '$.runtimeAccepted', json('true')),
+                updated_at = ${now}
+            WHERE effect_id = ${effectId}
+              AND effect_type = 'provider-turn.steer'
+              AND status IN ('pending', 'running')
+            RETURNING effect_id
+          `;
+          if (rows.length > 0) return;
+          const existing = Option.getOrUndefined(yield* service.get(effectId));
+          if (
+            existing?.request.type === "provider-turn.steer" &&
+            existing.request.runtimeAccepted === true
+          )
+            return;
+          return yield* new EffectOutboxError({
+            operation: "mark-steer-accepted",
+            effectId,
+            cause: "The steer effect is no longer pending or running.",
+          });
+        },
+        (effect, effectId) =>
+          effect.pipe(
+            Effect.mapError((cause) =>
+              isEffectOutboxError(cause)
+                ? cause
+                : new EffectOutboxError({ operation: "mark-steer-accepted", effectId, cause }),
+            ),
+          ),
+      ),
       cancelUnsettled: Effect.fn("EffectOutbox.cancelUnsettled")(
         function* ({ threadId, effectTypes, reason }) {
           if (effectTypes.length === 0) return [];
