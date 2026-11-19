@@ -35,7 +35,6 @@ import {
   isTimelineMinimapTurnVisible,
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
-  type TimelineLatestRun,
   workEntryDisplayLabel,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
@@ -1610,7 +1609,13 @@ describe("deriveMessagesTimelineRows", () => {
             projectedItem: { item: { type: "subagent", status: "completed", runId } } as never,
           },
         ],
-        latestRun: { runId, status: "completed", startedAt: time(0), completedAt: time(30) },
+        // A later wake run is the latest, so this turn's times come from its entries.
+        latestRun: {
+          runId: RunId.make("wake-run"),
+          status: "completed",
+          startedAt: time(55),
+          completedAt: time(58),
+        },
         isWorking: false,
         expandedRunIds,
         turnDiffSummaries: [],
@@ -4825,16 +4830,7 @@ describe("live subagents after their parent turn settles", () => {
     prompt: `Inspect ${id}`,
     result: null,
   });
-  const rowsFor = (
-    children: ReadonlyArray<OrchestrationV2TurnItem>,
-    afterReply: ReadonlyArray<OrchestrationV2TurnItem> = [],
-    latestRun: TimelineLatestRun = {
-      runId,
-      status: "completed",
-      startedAt: DateTime.formatIso(at(0)),
-      completedAt: DateTime.formatIso(at(8)),
-    },
-  ) =>
+  const rowsFor = (children: ReadonlyArray<OrchestrationV2TurnItem>) =>
     deriveMessagesTimelineRows({
       timelineEntries: deriveTimelineEntriesFromVisibleTurnItems({
         visibleTurnItems: (
@@ -4874,12 +4870,16 @@ describe("live subagents after their parent turn settles", () => {
               text: "Both children are running.",
               streaming: false,
             },
-            ...afterReply,
           ] satisfies OrchestrationV2TurnItem[]
         ).map(projected),
         optimisticMessages: [],
       }),
-      latestRun,
+      latestRun: {
+        runId,
+        status: "completed",
+        startedAt: DateTime.formatIso(at(0)),
+        completedAt: DateTime.formatIso(at(8)),
+      },
       isWorking: false,
       turnDiffSummaries: [],
       supportsConversationRollback: false,
@@ -4897,19 +4897,6 @@ describe("live subagents after their parent turn settles", () => {
       ]);
     },
   );
-
-  it("keeps the turn's duration when a background child delegates after it settles", () => {
-    // The child's completion woke a later run, so this run's duration comes from its entries.
-    const rows = rowsFor([], [child("late", 50, "completed")], {
-      runId: RunId.make("wake-run"),
-      status: "completed",
-      startedAt: DateTime.formatIso(at(55)),
-      completedAt: DateTime.formatIso(at(58)),
-    });
-    expect(rows.find((row) => row.kind === "turn-fold")).toMatchObject({
-      label: "Worked for 8s",
-    });
-  });
 
   it("keeps a launch batch visible while any member is still running", () => {
     const rows = rowsFor([child("done", 3, "completed"), child("live", 4, "running")]);
