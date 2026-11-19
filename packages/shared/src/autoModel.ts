@@ -160,9 +160,20 @@ const PACE_BAND = 0.15;
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-function sessionUsedPercent(provider: ServerProvider): number {
-  const windows = (provider.usageLimits?.windows ?? []).filter((w) => w.kind === "session");
-  return Math.max(0, ...windows.map((w) => w.usedPercent ?? 0));
+/** Used % of each window that limits `model` and has not reset yet. */
+function roomPercents(provider: ServerProvider, model: string, now: number, kind?: string) {
+  return (provider.usageLimits?.windows ?? []).flatMap((w) =>
+    usageWindowLimitsModel(provider, w, model) &&
+    (kind === undefined || w.kind === kind) &&
+    !(w.resetsAt && Date.parse(w.resetsAt) <= now)
+      ? [w.usedPercent]
+      : [],
+  );
+}
+
+function sessionUsedPercent(provider: ServerProvider, model: string, now: number) {
+  const percents = roomPercents(provider, model, now, "session");
+  return percents.length > 0 ? Math.max(...percents) : undefined;
 }
 
 /**
@@ -204,33 +215,54 @@ function comparePace(a: number | undefined, b: number | undefined): number {
   return Math.abs(a - b) > PACE_BAND * Math.max(a, b) ? b - a : 0;
 }
 
+/** The further along session first; sessions within 10 points tie, and an account without a session window goes last. */
+function compareSession(a: number | undefined, b: number | undefined): number {
+  if (a === undefined || b === undefined) return Number(a === undefined) - Number(b === undefined);
+  return Math.abs(b - a) >= SESSION_BAND_PERCENT ? b - a : 0;
+}
+
+function roomRank(provider: ServerProvider, model: string, now: number): number {
+  const peak = peakUsedPercent(provider, model, now);
+  if (peak === undefined) return 1;
+  return peak < STICKY_MAX_USED_PERCENT ? 0 : 2;
+}
+
 /**
- * Best instance for `model` first: Auto-aware, then accounts under 90% everywhere. Among those,
- * the higher weekly pace, so the quota a reset would waste is spent first. With similar paces,
- * the further along 5-hour window, so windows stagger (one refreshes while the other runs);
- * within 10 points, the sooner weekly reset. Past 90% everywhere, the most left.
+ * Auto-aware first, then room under 90% everywhere; unknown usage ranks after known accounts with room.
+ * Higher weekly pace first, then further-along session (no session window goes last), then sooner weekly reset.
+ * Past 90% everywhere, the most left.
  */
 function compareInstances(a: ServerProvider, b: ServerProvider, model: string, now: number) {
   const aware = Number(isAutoAware(b)) - Number(isAutoAware(a));
   if (aware !== 0) return aware;
-  const room = Number(hasRoom(b)) - Number(hasRoom(a));
+  const room = roomRank(a, model, now) - roomRank(b, model, now);
   if (room !== 0) return room;
-  if (!hasRoom(a)) return peakUsedPercent(a) - peakUsedPercent(b);
+  if (roomRank(a, model, now) === 2) {
+    return (peakUsedPercent(a, model, now) ?? 0) - (peakUsedPercent(b, model, now) ?? 0);
+  }
   const pace = comparePace(weeklyPace(a, model, now), weeklyPace(b, model, now));
   if (pace !== 0) return pace;
-  const session = sessionUsedPercent(b) - sessionUsedPercent(a);
-  if (Math.abs(session) >= SESSION_BAND_PERCENT) return session;
+  const sessionA = sessionUsedPercent(a, model, now);
+  const sessionB = sessionUsedPercent(b, model, now);
+  const session = compareSession(sessionA, sessionB);
+  if (session !== 0) return session;
   const weekly = weeklyResetAt(a, model, now) - weeklyResetAt(b, model, now);
   if (Number.isFinite(weekly) && weekly !== 0) return weekly;
-  return session || peakUsedPercent(a) - peakUsedPercent(b);
+  const rawSession = sessionA !== undefined && sessionB !== undefined ? sessionB - sessionA : 0;
+  return (
+    rawSession || (peakUsedPercent(a, model, now) ?? 0) - (peakUsedPercent(b, model, now) ?? 0)
+  );
 }
 
-function hasRoom(provider: ServerProvider): boolean {
-  return peakUsedPercent(provider) < STICKY_MAX_USED_PERCENT;
+function hasRoom(provider: ServerProvider, model: string, now: number): boolean {
+  const peak = peakUsedPercent(provider, model, now);
+  return peak !== undefined && peak < STICKY_MAX_USED_PERCENT;
 }
 
-function peakUsedPercent(provider: ServerProvider): number {
-  return Math.max(0, ...(provider.usageLimits?.windows ?? []).map((w) => w.usedPercent ?? 0));
+/** Undefined when no window that limits `model` reports usage: unknown, not empty. */
+function peakUsedPercent(provider: ServerProvider, model: string, now: number) {
+  const percents = roomPercents(provider, model, now);
+  return percents.length > 0 ? Math.max(...percents) : undefined;
 }
 
 /**
@@ -318,14 +350,15 @@ export function resolveAutoModelSelection(input: {
           (entry) =>
             entry.driver === (better.driver as ProviderDriverKind) &&
             open(entry, better.model) &&
-            hasRoom(entry),
+            hasRoom(entry, better.model, input.now),
         ),
       );
     if (
       provider &&
       candidate &&
       open(provider, candidate.model) &&
-      hasRoom(provider) &&
+      (hasRoom(provider, candidate.model, input.now) ||
+        peakUsedPercent(provider, candidate.model, input.now) === undefined) &&
       !betterHasRoom
     ) {
       return { selection: toSelection(provider, candidate, level), level, sticky: true };

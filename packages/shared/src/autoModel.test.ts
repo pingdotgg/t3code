@@ -76,6 +76,57 @@ function withWeekly(
   } as unknown as ServerProvider;
 }
 
+function withWindow(provider: ServerProvider, window: Record<string, unknown>) {
+  return {
+    ...provider,
+    usageLimits: {
+      windows: [...(provider.usageLimits?.windows ?? []), window],
+    },
+  } as unknown as ServerProvider;
+}
+
+const antigravityProvider = (id: string, geminiSession: number, claudeSession: number) =>
+  ({
+    ...claude(id, 0, false),
+    displayName: "Auto",
+    driver: ProviderDriverKind.make("antigravity"),
+    models: [
+      {
+        slug: "claude-opus-4-6-thinking",
+        name: "Claude Opus 4.6",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "thinking_level",
+              label: "Thinking",
+              type: "select" as const,
+              options: [{ id: "medium", label: "medium" }],
+            },
+          ],
+        },
+      },
+    ],
+    usageLimits: {
+      windows: [
+        {
+          id: "gemini-5h",
+          kind: "session",
+          label: "Gemini session",
+          usedPercent: geminiSession,
+          resetsAt,
+        },
+        {
+          id: "claude-5h",
+          kind: "session",
+          label: "Claude session",
+          usedPercent: claudeSession,
+          resetsAt,
+        },
+      ],
+    },
+  }) as unknown as ServerProvider;
+
 const auto = (level?: string): ModelSelection => ({
   instanceId: ProviderInstanceId.make("claudeAuto"),
   model: "auto",
@@ -247,6 +298,178 @@ describe("resolveAutoModelSelection", () => {
     expect(routeTo(providers)).toBe("claudeAutoB");
   });
 
+  it("checks room only against windows that limit the candidate model", () => {
+    const weeklyReset = inHours(48);
+    const a = withWindow(withWeekly(claude("claudeAuto", 50), 20, weeklyReset), {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 95,
+      resetsAt: weeklyReset,
+    });
+    const b = withWeekly(claude("claudeAutoB", 10), 20, weeklyReset);
+    expect(routeTo([a, b])).toBe("claudeAuto");
+
+    const grok = {
+      ...claude("grok", 10, false),
+      driver: ProviderDriverKind.make("grok"),
+      models: [{ slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null }],
+    } as unknown as ServerProvider;
+    const current = { instanceId: ProviderInstanceId.make("grok"), model: "grok-4.7" };
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers: [grok, a], now, current }),
+    ).toMatchObject({ sticky: false, selection: { instanceId: "claudeAuto" } });
+  });
+
+  it("checks room only against the Antigravity pool that limits the model", () => {
+    const out = [claude("claudeAuto", 100), claude("claudeAutoB", 100)];
+    expect(
+      routeTo([
+        ...out,
+        antigravityProvider("antigravityA", 92, 50),
+        antigravityProvider("antigravityB", 10, 10),
+      ]),
+    ).toBe("antigravityA");
+  });
+
+  it("does not count Claude's extra-usage spend window for room", () => {
+    const a = withWindow(withWeekly(claude("claudeAuto", 50), 20, inHours(48)), {
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 95,
+    });
+    const b = withWeekly(claude("claudeAutoB", 10), 20, inHours(48));
+    expect(routeTo([a, b])).toBe("claudeAuto");
+    const spentPastPlan = withWindow(claude("claudeAuto", 92), {
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 99,
+    });
+    expect(routeTo([claude("claudeAutoB", 95), spentPastPlan])).toBe("claudeAuto");
+    const spendCapped = withWindow(claude("claudeAuto", 20), {
+      id: "monthly_spend",
+      kind: "monthly",
+      label: "Monthly spend",
+      usedPercent: 100,
+    });
+    expect(routeTo([spendCapped])).toBe("claudeAuto");
+  });
+
+  it("ignores a window whose reset has already passed when checking room", () => {
+    const a = {
+      ...claude("claudeAuto", 0),
+      usageLimits: {
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent: 95,
+            resetsAt: inHours(-1),
+          },
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 0,
+            resetsAt: inHours(168),
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    const b = withWeekly(claude("claudeAutoB", 10), 40, inHours(168));
+    expect(routeTo([a, b])).toBe("claudeAuto");
+  });
+
+  it("ranks unknown usage after an account with known room", () => {
+    const known = withWeekly(claude("claudeAuto", 0), 30, inHours(100));
+    // Only a Fable allowance is reported, so nothing says how much Opus room is left.
+    const unknown = {
+      ...claude("claudeAutoB", 0),
+      usageLimits: {
+        windows: [
+          {
+            id: "seven_day_fable",
+            kind: "weekly",
+            label: "Weekly · Fable",
+            usedPercent: 10,
+            resetsAt: inHours(100),
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    expect(routeTo([known, unknown])).toBe("claudeAuto");
+    expect(routeTo([unknown, known])).toBe("claudeAuto");
+
+    const noReport = {
+      ...claude("claudeAutoB", 0),
+      usageLimits: undefined,
+    } as unknown as ServerProvider;
+    expect(routeTo([known, noReport])).toBe("claudeAuto");
+    expect(routeTo([noReport, known])).toBe("claudeAuto");
+    expect(routeTo([noReport, claude("claudeAuto", 95)])).toBe("claudeAutoB");
+    expect(routeTo([unknown, claude("claudeAuto", 95)])).toBe("claudeAutoB");
+    expect(routeTo([noReport])).toBe("claudeAutoB");
+  });
+
+  it("ranks an account with no session window after one with a known session", () => {
+    const noSession = {
+      ...claude("claudeAutoB", 0),
+      usageLimits: {
+        windows: [
+          {
+            id: "seven_day",
+            kind: "weekly",
+            label: "Weekly",
+            usedPercent: 30,
+            resetsAt: inHours(100),
+          },
+        ],
+      },
+    } as unknown as ServerProvider;
+    const known = withWeekly(claude("claudeAuto", 0), 30, inHours(100));
+    expect(routeTo([noSession, known])).toBe("claudeAuto");
+  });
+
+  it("does not let unknown usage pull a sticky thread off a known account", () => {
+    const openCode = {
+      ...claude("openCode", 10, false),
+      driver: ProviderDriverKind.make("opencode"),
+      models: [
+        {
+          slug: "opencode/big-pickle",
+          name: "Big Pickle",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "variant",
+                label: "Variant",
+                type: "select" as const,
+                options: [{ id: "medium", label: "medium" }],
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as ServerProvider;
+    const grok = {
+      ...claude("grok", 0, false),
+      driver: ProviderDriverKind.make("grok"),
+      models: [{ slug: "grok-4.7", name: "Grok 4.7", isCustom: false, capabilities: null }],
+      usageLimits: undefined,
+    } as unknown as ServerProvider;
+    const current = {
+      instanceId: ProviderInstanceId.make("openCode"),
+      model: "opencode/big-pickle",
+    };
+    expect(
+      resolveAutoModelSelection({ selection: auto(), providers: [grok, openCode], now, current }),
+    ).toMatchObject({ sticky: true, selection: { instanceId: "openCode" } });
+  });
+
   it("switches to the other account once a 5-hour or weekly window is 90% used", () => {
     const sessionFull = [claude("claudeAuto", 92), claude("claudeAutoB", 0)];
     expect(
@@ -268,6 +491,15 @@ describe("resolveAutoModelSelection", () => {
     expect(
       resolveAutoModelSelection({ selection: auto(), providers, now })?.selection.instanceId,
     ).toBe("claudeAuto");
+    // Fable's allowance does not limit Opus, so A's highest relevant window is its 92% session.
+    const fableFull = withWindow(claude("claudeAuto", 92), {
+      id: "seven_day_fable",
+      kind: "weekly",
+      label: "Weekly · Fable",
+      usedPercent: 98,
+      resetsAt: inHours(48),
+    });
+    expect(routeTo([fableFull, claude("claudeAutoB", 97)])).toBe("claudeAuto");
   });
 
   it("with similar weekly pace and 5-hour use, spends the account whose weekly limit resets first", () => {
