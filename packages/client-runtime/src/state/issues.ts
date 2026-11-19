@@ -105,20 +105,25 @@ export function createIssueCommentPager<E>(
 
   return {
     view,
-    async refresh(registry: AtomRegistry.AtomRegistry, read: () => void | Promise<void>) {
+    /** `read` settles once the detail has been read again, whether or not that read failed. */
+    async refresh(registry: AtomRegistry.AtomRegistry, read: () => Promise<unknown>) {
       const current = registry.get(state);
       if (current.refreshing) return;
-      // The refreshed detail can return the same cursor, so invalidate outstanding pages explicitly.
-      registry.set(state, {
-        ...current,
-        older: null,
-        refreshing: true,
-        refreshes: current.refreshes + 1,
-      });
+      registry.set(state, { ...current, refreshing: true });
+      let succeeded = false;
       try {
         await read();
+        const result = registry.get(detailAtom);
+        succeeded = result._tag === "Success" && !result.waiting;
       } finally {
-        registry.set(state, { ...registry.get(state), refreshing: false });
+        const latest = registry.get(state);
+        // A successful read invalidates older pages even when the query reuses unchanged detail.
+        registry.set(
+          state,
+          succeeded
+            ? { ...latest, older: null, refreshing: false, refreshes: latest.refreshes + 1 }
+            : { ...latest, refreshing: false },
+        );
       }
     },
     async loadOlder(
