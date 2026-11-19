@@ -993,7 +993,13 @@ describe("AgentAwarenessRelay", () => {
       yield* relay.publishThread(THREAD_ID);
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
-      for (const delay of ["1 second", "2 seconds", "4 seconds", "8 seconds", "16 seconds"]) {
+      for (const delay of [
+        "1 second",
+        "2 seconds",
+        "4 seconds",
+        "8 seconds",
+        "16 seconds",
+      ] as const) {
         yield* TestClock.adjust(delay);
         yield* relay.drain;
       }
