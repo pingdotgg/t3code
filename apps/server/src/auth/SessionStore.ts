@@ -434,11 +434,15 @@ export class SessionStore extends Context.Service<
       SessionCredentialError | ServerAuthInvalidCredentialError | ServerAuthInternalError
     >;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
-    /** Moves a live session's expiry to `expiresAt`; false when it is revoked, expired or missing. */
+    /**
+     * Moves a live session's expiry to `expiresAt` unless it is already within `step` of it, and
+     * returns the expiry it now has. None when it is revoked, expired or missing.
+     */
     readonly extend: (
       sessionId: AuthSessionId,
       expiresAt: DateTime.Utc,
-    ) => Effect.Effect<boolean, SessionCredentialInternalError>;
+      step: Duration.Duration,
+    ) => Effect.Effect<Option.Option<DateTime.Utc>, SessionCredentialInternalError>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -932,16 +936,27 @@ const make = Effect.gen(function* () {
   );
 
   const extend: SessionStore["Service"]["extend"] = Effect.fn("SessionStore.extend")(
-    function* (sessionId, expiresAt) {
+    function* (sessionId, expiresAt, step) {
+      const now = yield* DateTime.now;
+      // The step is checked in the update, so of two uses that read the same expiry one writes.
       const extended = yield* authSessions.extend({
         sessionId,
         expiresAt,
-        now: yield* DateTime.now,
+        now,
+        onlyIfExpiresBy: DateTime.subtract(expiresAt, { milliseconds: Duration.toMillis(step) }),
       });
-      if (!extended) return false;
+      if (!extended) {
+        const row = yield* authSessions.getById({ sessionId });
+        return Option.filter(
+          Option.map(row, (current) => current.expiresAt),
+          (current) =>
+            Option.exists(row, (session) => session.revokedAt === null) &&
+            DateTime.isGreaterThan(current, now),
+        );
+      }
       const session = yield* loadActiveSession(sessionId);
       if (Option.isSome(session)) yield* emitUpsert(session.value);
-      return true;
+      return Option.some(expiresAt);
     },
     (effect, sessionId) =>
       Effect.mapError(

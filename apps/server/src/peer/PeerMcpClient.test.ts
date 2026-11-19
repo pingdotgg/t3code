@@ -301,6 +301,7 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
     const sessionHeaders: Array<string | undefined> = [];
     const statuses = [200, 202, 404, 200, 202, 200, 200, 200];
     const outcomes: Array<string | null> = [];
+    const expiries: Array<string> = [];
     const http = HttpClient.make((request) =>
       Effect.sync(() => {
         const index = sessionHeaders.length;
@@ -323,7 +324,10 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
               status,
               headers:
                 index === 0
-                  ? { "mcp-session-id": "old" }
+                  ? {
+                      "mcp-session-id": "old",
+                      [McpInvocationContext.LINK_EXPIRES_AT_HEADER]: "1970-01-02T00:00:00.000Z",
+                    }
                   : index === 3
                     ? { "mcp-session-id": "renewed" }
                     : {},
@@ -355,6 +359,8 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
                   token: "fixture",
                 }),
               recordOutcome: (_, outcome) => Effect.sync(() => outcomes.push(outcome.error)),
+              recordExpiry: (_, expiresAt) =>
+                Effect.sync(() => expiries.push(DateTime.formatIso(expiresAt))),
             }),
           ),
         ),
@@ -383,6 +389,8 @@ it.effect("renews a missing peer session once and reuses its replacement", () =>
       })
       .pipe(Effect.flip);
     expect(outcomes).toEqual([null, null, empty.message]);
+    // Only the handshake answered with an expiry, and it is kept.
+    expect(expiries).toEqual(["1970-01-02T00:00:00.000Z"]);
     expect(sessionHeaders).toEqual([
       undefined,
       "old",

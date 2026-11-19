@@ -1594,14 +1594,16 @@ export const make = Effect.gen(function* () {
     if (DateTime.distance(expiresAt, renewed).pipe(Duration.isLessThan(PEER_LINK_RENEWAL_STEP))) {
       return DateTime.toUtc(expiresAt);
     }
-    const extended = yield* sessions.extend(sessionId, renewed).pipe(mapSessionVerificationErrors);
+    const current = yield* sessions
+      .extend(sessionId, renewed, PEER_LINK_RENEWAL_STEP)
+      .pipe(mapSessionVerificationErrors);
     // A revoke can land between the verification and the update.
-    if (!extended) {
+    if (Option.isNone(current)) {
       return yield* new ServerAuthInvalidCredentialError({
         diagnostic: "The peer link session ended before it could be renewed.",
       });
     }
-    return renewed;
+    return current.value;
   });
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
