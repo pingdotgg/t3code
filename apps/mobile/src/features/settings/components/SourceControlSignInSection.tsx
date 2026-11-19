@@ -8,7 +8,7 @@ import {
 } from "@t3tools/client-runtime/source-control-clients";
 import * as Cause from "effect/Cause";
 import * as Clipboard from "expo-clipboard";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Linking } from "react-native";
 import { m } from "../../../i18n/messages";
 
@@ -46,8 +46,16 @@ export function AppSignInRow(props: {
   const start = useAtomCommand(sourceControlEnvironment.startSignIn, { reportFailure: false });
   const wait = useAtomCommand(sourceControlEnvironment.waitForSignIn, { reportFailure: false });
   const cancel = useAtomCommand(sourceControlEnvironment.cancelSignIn, { reportFailure: false });
-  // The attempt a pending `wait` belongs to; a cancel or a newer attempt makes its outcome stale.
-  const attempt = useRef<SourceControlSignInPrompt | null>(null);
+  // The attempt this row still answers for; a cancel, a newer attempt or leaving the screen makes
+  // its outcome stale, so a server that fails it later raises no alert over another screen.
+  const attempt = useRef<object | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- drops the pending attempt's dialogs once the screen unmounts
+  useEffect(
+    () => () => {
+      attempt.current = null;
+    },
+    [],
+  );
   const input = { provider: definition.kind, host };
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, {
     label: `sign out of ${appSignIn.appName}`,
@@ -81,19 +89,22 @@ export function AppSignInRow(props: {
   };
 
   const signIn = async () => {
+    const current = {};
+    attempt.current = current;
     setPending("starting");
     const started = await start({ environmentId, input });
+    if (attempt.current !== current) return;
     if (started._tag !== "Success") {
+      attempt.current = null;
       setPending(null);
       Dialog.alert(gt("Could not start the sign-in"), failureMessage(started.cause));
       return;
     }
     const prompt = started.value;
-    attempt.current = prompt;
     setPending(prompt);
     showCode(prompt);
     const finished = await wait({ environmentId, input });
-    if (attempt.current !== prompt) return;
+    if (attempt.current !== current) return;
     attempt.current = null;
     setPending(null);
     if (finished._tag !== "Success") {
