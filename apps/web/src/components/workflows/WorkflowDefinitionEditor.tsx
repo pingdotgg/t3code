@@ -25,7 +25,7 @@ import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
 import { useEditableAfterHighlight } from "../files/useEditableAfterHighlight";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { diskChange, staleAfterSave } from "./WorkflowDefinitionEditor.logic";
+import { type DiskChange, diskChange, staleAfterSave } from "./WorkflowDefinitionEditor.logic";
 import { WorkflowsEmpty } from "./WorkflowRunsView";
 
 type DefinitionEditor = Editor<"file", undefined, undefined>;
@@ -121,7 +121,7 @@ function Surface({
   // a save, `source` is still the old text until the server's answer is read again.
   const [seen, setSeen] = useState(source);
   // The disk text that changed under the person's edits, until they settle it.
-  const [staleAt, setStaleAt] = useState<string | null>(null);
+  const [staleAt, setStaleAt] = useState<DiskChange | null>(null);
   const stale = staleAt !== null;
   const [shown, setShown] = useState(() => fileOf(path, draft ?? source, revision));
   const [edited, setEdited] = useState<string | null>(draft ?? null);
@@ -144,7 +144,7 @@ function Surface({
     setSeen(source);
     // With nothing of the person's own in the editor, it follows the file.
     const change = diskChange({ source, baseline, dirty, saving: savingText });
-    if (change === "stale") setStaleAt(source);
+    if (change === "stale") setStaleAt({ source });
     else if (change === "follow") adopt();
   }
   const { ready: editable, onPostRender } = useEditableAfterHighlight(shown);

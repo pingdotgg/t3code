@@ -37,8 +37,13 @@ describe("diskChange", () => {
 
 describe("staleAfterSave", () => {
   it("settles the change the person saved over and keeps a newer one", () => {
-    expect(staleAfterSave("B", "B")).toBeNull();
-    expect(staleAfterSave("A", "B")).toBe("A");
-    expect(staleAfterSave("A", null)).toBe("A");
+    const b = { source: "B" };
+    expect(staleAfterSave(b, b)).toBeNull();
+    const a = { source: "A" };
+    expect(staleAfterSave(a, b)).toBe(a);
+    expect(staleAfterSave(a, null)).toBe(a);
+    // The disk went B → A → B while the save was out: back at the same text, but a change of its own.
+    const bAgain = { source: "B" };
+    expect(staleAfterSave(bAgain, b)).toBe(bAgain);
   });
 });
