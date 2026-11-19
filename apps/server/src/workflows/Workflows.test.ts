@@ -834,6 +834,11 @@ it.effect("a cancelled run ends, and two steps with one name pause their run", (
           .start("nothing", {}, { idempotencyKey: "n1" })
           .pipe(Effect.flip);
         assert.equal(missing._tag, "WorkflowNotRegisteredError");
+        // A version asked for by name is that version or nothing, never the latest instead.
+        const unknownVersion = yield* workflows
+          .start("twice", {}, { idempotencyKey: "t2", version: 2 })
+          .pipe(Effect.flip);
+        assert.equal(unknownVersion.message, "Version 2 of workflow twice is not registered.");
       }),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
