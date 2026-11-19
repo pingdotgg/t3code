@@ -5,6 +5,8 @@ import type { DraftComposerAttachment } from "../../lib/composerImages";
 import type { IncomingShareDraft } from "../sharing/incoming-share-model";
 import { undoComposerDraftMergeState, type ComposerDraft } from "../../state/use-composer-drafts";
 import {
+  idleShareImportPhaseAtom,
+  isShareImportBlockingDraft,
   makeIncomingShareImports,
   type ShareImportDeps,
   type ShareImportPhase,
@@ -387,10 +389,10 @@ describe("incoming share imports", () => {
     expect(deps.mergeIntoDraft).toHaveBeenCalledWith("draft-b", expect.anything());
   });
 
-  it("stays in flight for its route after the screen stops rendering its target", async () => {
+  it("lets the draft choose a destination until the share import starts", async () => {
     const mergeStarted = Promise.withResolvers<void>();
     const merged = Promise.withResolvers<{ readonly skippedAttachmentCount: number }>();
-    const { imports, registry, watch } = setup({
+    const { imports, inbox, registry, watch } = setup({
       mergeIntoDraft: () => {
         mergeStarted.resolve();
         return merged.promise;
@@ -399,15 +401,25 @@ describe("incoming share imports", () => {
     const inFlight = imports.inFlightAtom("flow-a");
     const unmountInFlight = registry.mount(inFlight);
     const target = importTarget();
+    const draftLocked = (phase = registry.get(idleShareImportPhaseAtom)) =>
+      isShareImportBlockingDraft({
+        phase,
+        hasShare: inbox.has(target.shareId),
+        inFlight: registry.get(inFlight),
+      });
+
+    expect(draftLocked()).toBe(false);
+
     const watched = watch(target);
     await mergeStarted.promise;
+    expect(draftLocked(watched.phase())).toBe(true);
 
     watched.unmount();
-    expect(registry.get(inFlight)).toBe(true);
+    expect(draftLocked()).toBe(true);
 
     merged.resolve({ skippedAttachmentCount: 0 });
     await imports.settled(target);
-    expect(registry.get(inFlight)).toBe(false);
+    expect(draftLocked()).toBe(false);
     unmountInFlight();
   });
 });
