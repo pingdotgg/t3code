@@ -71,6 +71,10 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as McpProviderSession from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
+import {
+  cuaCallContext,
+  mcpToolPresentation,
+} from "@t3tools/provider-core/server/mcpToolPresentation";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { HTML_RENDER_TOOL_NAME } from "@t3tools/shared/htmlRender";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
@@ -1445,7 +1449,34 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               : undefined,
         },
       );
-      yield* emit({ type: "turn_item.updated", driver, turnItem });
+      // OpenCode names the thread's Cua tools `cua-driver-<thread>_<tool>`.
+      const cuaPrefix = state.cua === undefined ? undefined : `${state.cua.name}_`;
+      const cuaTool =
+        cuaPrefix !== undefined && tool.name.startsWith(cuaPrefix)
+          ? tool.name.slice(cuaPrefix.length)
+          : undefined;
+      yield* emit({
+        type: "turn_item.updated",
+        driver,
+        turnItem:
+          cuaTool === undefined || turnItem.type !== "dynamic_tool"
+            ? turnItem
+            : {
+                ...turnItem,
+                ...mcpToolPresentation({
+                  serverName: McpProviderSession.CUA_MCP_SERVER_NAME,
+                  toolName: cuaTool,
+                  ...cuaCallContext({
+                    serverName: McpProviderSession.CUA_MCP_SERVER_NAME,
+                    toolName: cuaTool,
+                    threadId: turnItem.threadId,
+                    status: turnItem.status,
+                    args: tool.input,
+                    result: result?.output,
+                  }),
+                }),
+              },
+      });
       if (status === "running") return;
       // A script that returns the reference already renders through its own item.
       const returnedPage =

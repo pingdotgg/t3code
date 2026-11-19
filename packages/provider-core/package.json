@@ -27,6 +27,10 @@
       "types": "./src/server/collectStreamText.ts",
       "import": "./src/server/collectStreamText.ts"
     },
+    "./server/cuaToolPresentation": {
+      "types": "./src/server/cuaToolPresentation.ts",
+      "import": "./src/server/cuaToolPresentation.ts"
+    },
     "./server/driver": {
       "types": "./src/server/driver.ts",
       "import": "./src/server/driver.ts"
