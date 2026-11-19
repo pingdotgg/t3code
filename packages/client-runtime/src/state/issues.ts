@@ -23,6 +23,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
@@ -174,7 +175,18 @@ export function createIssueEnvironmentAtoms<R, E>(
     { environmentId, input }: { readonly environmentId: EnvironmentId; readonly input: IssueRef },
     registry: AtomRegistry.AtomRegistry,
   ) => Effect.sync(() => registry.refresh(detail({ environmentId, input: detailRef(input) })));
+  const linkedThreadSignals = createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+    label: "environment-data:issues:linked-thread-refreshes",
+    tag: WS_METHODS.pullRequestsSubscribeLinkedThreadRefreshes,
+  });
   return {
+    /** The threads an issue is linked to, reread when the server signals a link changed. */
+    linkedThreads: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:issues:linked-threads",
+      tag: WS_METHODS.issuesLinkedThreads,
+      staleTimeMs: 0,
+      refreshTrigger: ({ environmentId }) => linkedThreadSignals({ environmentId, input: {} }),
+    }),
     list: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:issues:list",
       tag: WS_METHODS.issuesList,
