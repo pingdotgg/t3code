@@ -672,6 +672,8 @@ it.effect("updates a managed install to OpenAI's newest release and never downgr
       version: upstreamVersion,
     });
 
+    const sessionScope = yield* Scope.make();
+    const previous = yield* h.installation.acquire().pipe(Scope.provide(sessionScope));
     yield* h.installation.start;
     expect(yield* terminalState(h.installation)).toMatchObject({
       phase: "succeeded",
@@ -679,9 +681,13 @@ it.effect("updates a managed install to OpenAI's newest release and never downgr
       version: upstreamVersion,
     });
     expect((yield* h.installation.resolve()).version).toBe(upstreamVersion);
+    // The running session keeps its release until the next start prunes it.
+    expect(yield* h.fs.exists(previous.managedVersionDirectory!)).toBe(true);
+    yield* Scope.close(sessionScope, Exit.void);
 
     // Without upstream information the older pin is not offered as a reinstall.
     const restarted = yield* makeHarness({ baseDir: h.baseDir });
+    expect(yield* h.fs.exists(previous.managedVersionDirectory!)).toBe(false);
     expect(yield* restarted.installation.state).toMatchObject({
       installedVersion: upstreamVersion,
       version: upstreamVersion,

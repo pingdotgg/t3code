@@ -6,6 +6,8 @@ import {
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   EnvironmentId,
   type FilesystemBrowseEntry,
+  type IssueListInput,
+  type IssueListResult,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ArchivedShellSnapshot,
   ThreadId,
@@ -52,6 +54,7 @@ import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
 import { createFilesystemEnvironmentAtoms } from "./filesystem.ts";
+import { createIssueEnvironmentAtoms, createMergedIssueListAtoms } from "./issues.ts";
 import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
@@ -194,8 +197,8 @@ const readEnvironmentQuery = <A, E>(
     Effect.tap(() => Effect.yieldNow),
   );
 
-const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A, E>(
-  atom: Atom.Atom<AsyncResult.AsyncResult<A, E>>,
+const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* <A>(
+  atom: Atom.Atom<A>,
 ) {
   const registry = AtomRegistry.make();
   const unmount = registry.mount(atom);
@@ -260,6 +263,50 @@ it.effect("keeps complete review metadata visible while a refresh is held", () =
       expect(value?.sources[0]!.files).toHaveLength(2);
     }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)));
     expect((yield* readEnvironmentQuery(registry, atom)).sources[0]!.diffHash).toBe("2");
+  }),
+);
+
+it.effect("keeps manual Issues refresh intent through an overlapping write", () =>
+  Effect.gen(function* () {
+    const requests = yield* Queue.unbounded<IssueListInput>();
+    const release = yield* Deferred.make<void>();
+    const answer: IssueListResult = {
+      viewers: {},
+      trackers: [],
+      entries: [],
+      errors: [],
+      nextCursors: {},
+    };
+    const rpcSession = {
+      client: {
+        [WS_METHODS.issuesList]: (input: IssueListInput) =>
+          Queue.offer(requests, input).pipe(
+            Effect.andThen(input.refresh ? Deferred.await(release) : Effect.void),
+            Effect.as(answer),
+          ),
+      },
+    } as unknown as RpcSession.RpcSession;
+    const { runtime } = yield* makeEnvironmentQueryHarness(Effect.void, { rpcSession });
+    const issues = createIssueEnvironmentAtoms(runtime);
+    const listings = createMergedIssueListAtoms(issues, String);
+    const target = {
+      environmentId: QUERY_ENVIRONMENT.environmentId,
+      input: { state: "all" },
+    } as const;
+    const registry = yield* mountEnvironmentQuery(listings.atom([target]));
+    expect(yield* Queue.take(requests)).toEqual({ state: "all" });
+    yield* readEnvironmentQuery(registry, issues.list(target));
+
+    listings.refresh(registry, [target], "manual");
+    expect(yield* Queue.take(requests)).toEqual({ state: "all", refresh: true });
+
+    listings.refreshEnvironment(registry, target.environmentId);
+    expect(yield* Queue.take(requests)).toEqual({ state: "all", refresh: true });
+
+    yield* Deferred.succeed(release, undefined);
+    yield* readEnvironmentQuery(registry, issues.list(target));
+    listings.refreshEnvironment(registry, target.environmentId);
+    expect(yield* Queue.take(requests)).toEqual({ state: "all" });
   }),
 );
 
@@ -1240,7 +1287,7 @@ describe("environment query lifecycle", () => {
     }),
   );
 
-  it.effect("refetches when mounted again after its stale time, while still cached", () =>
+  it.effect("refetches a stale query on remount while another view keeps the cache live", () =>
     Effect.gen(function* () {
       let now = 0;
       using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
@@ -1254,6 +1301,11 @@ describe("environment query lifecycle", () => {
       );
       const registry = AtomRegistry.make();
       yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+      const sidebar = harness.family(
+        { environmentId: QUERY_ENVIRONMENT.environmentId, input: undefined },
+        "sidebar",
+      );
+      registry.mount(sidebar);
       const read = readEnvironmentQuery(registry, harness.atom);
       const remount = Effect.gen(function* () {
         const unmount = registry.mount(harness.atom);
@@ -1275,6 +1327,7 @@ describe("environment query lifecycle", () => {
       // Past the stale time, well inside the default 5 minute idle TTL.
       now = 61_000;
       expect(yield* remount).toBe("after edit");
+      expect(yield* readEnvironmentQuery(registry, sidebar)).toBe("after edit");
       expect(fetches).toBe(2);
     }),
   );
