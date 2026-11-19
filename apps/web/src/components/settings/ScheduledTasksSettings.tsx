@@ -24,6 +24,7 @@ import type {
   ScheduledTask,
   ScheduledTaskId,
   ScheduledTaskThreadMode,
+  ScheduledTaskSendMode,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
   ThreadId,
@@ -37,6 +38,10 @@ import {
   type WebhookFilterDraft,
 } from "@t3tools/client-runtime/scheduled-task-webhook";
 import { scheduleTimeZoneLabel } from "@t3tools/client-runtime/scheduled-task-time-zone";
+import {
+  SCHEDULED_TASK_SEND_MODE_COPY,
+  SCHEDULED_TASK_SEND_MODES,
+} from "@t3tools/client-runtime/scheduled-task-send-mode";
 import {
   MAX_WEBHOOK_DELIVERY_AGE_MINUTES,
   MAX_WEBHOOK_FILTERS,
@@ -194,6 +199,7 @@ const EMPTY_DRAFT: DraftState = {
   projectId: "",
   threadId: "",
   threadMode: "new_thread",
+  sendMode: "queue",
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -1665,6 +1671,8 @@ function ScheduledTaskEditorForm({
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
+      // Only an edited mode is sent, so a stale form keeps a mode changed elsewhere.
+      ...(draft.sendMode === task?.sendMode ? {} : { sendMode: draft.sendMode }),
       workspaceStrategy,
       modelSelection,
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
@@ -1815,6 +1823,41 @@ function ScheduledTaskEditorForm({
                 : undefined
             }
           />
+
+          {draft.threadMode === "continue" &&
+          environment?.serverConfig?.environment.capabilities.scheduledTaskSendMode === true ? (
+            <Field
+              label={gt("Delivery", { $context: "how a scheduled task sends its prompt" })}
+              htmlFor="scheduled-task-send-mode"
+            >
+              <Select
+                value={draft.sendMode}
+                onValueChange={(value) =>
+                  setDraft((current) => ({ ...current, sendMode: value as ScheduledTaskSendMode }))
+                }
+              >
+                <SelectTrigger size="sm" id="scheduled-task-send-mode">
+                  <SelectValue>
+                    {messages(SCHEDULED_TASK_SEND_MODE_COPY[draft.sendMode].label)}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {SCHEDULED_TASK_SEND_MODES.map((mode) => (
+                    <SelectItem
+                      key={mode}
+                      value={mode}
+                      label={messages(SCHEDULED_TASK_SEND_MODE_COPY[mode].label)}
+                    >
+                      {messages(SCHEDULED_TASK_SEND_MODE_COPY[mode].label)}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {messages(SCHEDULED_TASK_SEND_MODE_COPY[draft.sendMode].description)}
+              </p>
+            </Field>
+          ) : null}
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={gt("Project")} htmlFor="scheduled-task-project">

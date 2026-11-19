@@ -7,6 +7,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskSchedule,
   type ScheduledTaskThreadMode,
+  type ScheduledTaskSendMode,
   type ScheduledTaskUpsertSchedule,
   scheduledTaskThreadMode,
   type ModelSelection,
@@ -130,6 +131,7 @@ export interface DraftState {
   readonly projectId: string;
   readonly threadId: string;
   readonly threadMode: ScheduledTaskThreadMode;
+  readonly sendMode: ScheduledTaskSendMode;
   readonly workspaceMode: WorkspaceMode;
   readonly baseRef: string;
   readonly startFromOrigin: boolean;
@@ -331,6 +333,7 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     projectId: task.projectId,
     threadId: task.threadId ?? "",
     threadMode: scheduledTaskThreadMode(task),
+    sendMode: task.sendMode,
     workspaceMode: task.workspaceStrategy.type,
     baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
     startFromOrigin:

@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
@@ -217,6 +218,9 @@ export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Typ
 export const ScheduledTaskRunStatus = Schema.Literals(["never", "running", "succeeded", "failed"]);
 export type ScheduledTaskRunStatus = typeof ScheduledTaskRunStatus.Type;
 
+export const ScheduledTaskSendMode = Schema.Literals(["queue", "auto", "steer", "restart"]);
+export type ScheduledTaskSendMode = typeof ScheduledTaskSendMode.Type;
+
 export const ScheduledTaskWebhookEndpoint = Schema.Struct({
   path: TrimmedNonEmptyString,
   url: Schema.NullOr(TrimmedNonEmptyString),
@@ -247,6 +251,10 @@ export const ScheduledTask = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.NullOr(ThreadId),
   threadMode: Schema.optional(ScheduledTaskThreadMode),
+  // Older servers omit it; they always queue.
+  sendMode: ScheduledTaskSendMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed("queue" as const)),
+  ),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
@@ -290,6 +298,7 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   threadId: Schema.optional(Schema.NullOr(ThreadId)),
   /** Omitted: keep the stored mode, or derive it from `threadId` for a new or rebound task. */
   threadMode: Schema.optional(ScheduledTaskThreadMode),
+  sendMode: Schema.optional(ScheduledTaskSendMode),
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,
