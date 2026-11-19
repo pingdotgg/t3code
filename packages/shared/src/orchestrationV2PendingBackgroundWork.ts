@@ -314,10 +314,7 @@ function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
   return (pullRequests ?? []).flatMap((link) =>
-    // A merged PR's watch ends at the next sweep, whose wake starts its own run, so it holds nothing.
-    link.watch === undefined ||
-    link.source === "stack-dismissed" ||
-    link.snapshot?.state === "merged"
+    link.watch === undefined || link.source === "stack-dismissed"
       ? []
       : [
           {
@@ -327,7 +324,10 @@ function pullRequestWatchTasks(
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
             // Once every check finished, a person moves the PR next: the watch stays on but holds nothing.
-            ...(link.watch.checksPending === false ? {} : { awaited: true as const }),
+            // A merged PR's watch holds until its read wakes the agent, so settling on merge waits.
+            ...(link.watch.checksPending === false && link.snapshot?.state !== "merged"
+              ? {}
+              : { awaited: true as const }),
           },
         ],
   );
