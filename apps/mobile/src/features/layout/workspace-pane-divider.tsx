@@ -14,6 +14,8 @@ interface WorkspacePaneDividerProps {
   readonly onResizeStart?: () => void;
   readonly onResizeBy: (delta: number) => void;
   readonly onResizeEnd?: () => void;
+  /** A compact touch grip for primary panes; inspector dividers remain visually quiet. */
+  readonly showHandle?: boolean;
 }
 
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
@@ -79,6 +81,14 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
           )}
           style={[styles.line, dragging && styles.activeLine]}
         />
+        {props.showHandle ? (
+          <View
+            className={cn(
+              "absolute h-8 w-1 self-center rounded-full bg-border",
+              dragging && "w-1.5 bg-primary",
+            )}
+          />
+        ) : null}
       </Pressable>
     </GestureDetector>
   );

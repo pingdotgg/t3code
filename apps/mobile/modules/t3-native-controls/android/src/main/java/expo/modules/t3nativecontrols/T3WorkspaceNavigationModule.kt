@@ -125,6 +125,9 @@ class T3WorkspaceNavigationModule : Module() {
       Prop("quickThreadWorking") { view: T3WorkspaceNavigationView, value: List<Boolean> ->
         view.quickThreadWorking = value
       }
+      Prop("showQuickThreads") { view: T3WorkspaceNavigationView, value: Boolean ->
+        view.showQuickThreads = value
+      }
       Prop("selectedThreadKey") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedThreadKey = value
       }
@@ -173,6 +176,7 @@ class T3WorkspaceNavigationView(
   var quickThreadKeys by mutableStateOf(emptyList<String>())
   var quickThreadTitles by mutableStateOf(emptyList<String>())
   var quickThreadWorking by mutableStateOf(emptyList<Boolean>())
+  var showQuickThreads by mutableStateOf(true)
   var selectedThreadKey by mutableStateOf("")
 
   override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -351,15 +355,17 @@ class T3WorkspaceNavigationView(
           onEnvironmentSelected(emptyMap<String, Any>())
         }
         sectionSpacer(fraction)
-        quickThreadKeys.take(MAX_QUICK_THREADS).forEachIndexed { index, key ->
-          quickThreadItem(
-            key = key,
-            title = quickThreadTitles.getOrNull(index) ?: "Thread",
-            working = quickThreadWorking.getOrNull(index) == true,
-            fraction = fraction,
-          ) {
-            expanded = false
-            onThreadSelected(mapOf("key" to key))
+        if (showQuickThreads) {
+          quickThreadKeys.take(MAX_QUICK_THREADS).forEachIndexed { index, key ->
+            quickThreadItem(
+              key = key,
+              title = quickThreadTitles.getOrNull(index) ?: "Thread",
+              working = quickThreadWorking.getOrNull(index) == true,
+              fraction = fraction,
+            ) {
+              expanded = false
+              onThreadSelected(mapOf("key" to key))
+            }
           }
         }
         railItem("threads", fraction, icon = R.drawable.t3_threads_rail) {

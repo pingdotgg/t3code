@@ -50,6 +50,7 @@ describe("sidebar toggle shortcut", () => {
     await userEvent.click(screen.getByRole("button", { name: "Outside" }));
     await userEvent.keyboard("{Control>}b{/Control}");
     await vi.waitFor(() => expect(wrapper.getAttribute("data-sidebar-state")).toBe("collapsed"));
+    expect(document.querySelector("[data-session-pane-collapsed-handle]")).not.toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Threads", exact: true }));
 
     await vi.waitFor(() =>

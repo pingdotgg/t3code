@@ -81,11 +81,13 @@ function initials(label: string): string {
 
 export function SidebarNavigationRail({
   drawerOpen,
+  sidebarOpen,
   onEnvironment,
   onSearch,
   onThreads,
 }: {
   drawerOpen: boolean;
+  sidebarOpen: boolean;
   onEnvironment: () => void;
   onSearch: () => void;
   onThreads: () => void;
@@ -156,37 +158,39 @@ export function SidebarNavigationRail({
         />
       </RailSection>
       <RailSection>
-        {quickThreads.map(({ thread, working }) => {
-          const ref = scopeThreadRef(thread.environmentId, thread.id);
-          const active =
-            routeThreadRef !== null && scopedThreadKey(routeThreadRef) === scopedThreadKey(ref);
-          const label = working ? `${gt("Working")}: ${thread.title}` : thread.title;
-          return (
-            <RailButton
-              active={active}
-              icon={
-                working ? (
-                  <span className="relative grid size-6 place-items-center">
-                    <CircleDotDashedIcon className="size-4 text-emerald-600 dark:text-emerald-400" />
-                    <span className="absolute right-0 top-0 size-1.5 rounded-full bg-emerald-500" />
-                  </span>
-                ) : (
-                  <span className="grid size-6 place-items-center rounded-full bg-foreground/[0.07] text-[9px] font-medium text-muted-foreground">
-                    {initials(thread.title) || "·"}
-                  </span>
-                )
-              }
-              key={scopedThreadKey(ref)}
-              label={label}
-              onClick={() =>
-                void navigate({
-                  to: "/$environmentId/$threadId",
-                  params: buildThreadRouteParams(ref),
-                })
-              }
-            />
-          );
-        })}
+        {!sidebarOpen && !drawerOpen
+          ? quickThreads.map(({ thread, working }) => {
+              const ref = scopeThreadRef(thread.environmentId, thread.id);
+              const active =
+                routeThreadRef !== null && scopedThreadKey(routeThreadRef) === scopedThreadKey(ref);
+              const label = working ? `${gt("Working")}: ${thread.title}` : thread.title;
+              return (
+                <RailButton
+                  active={active}
+                  icon={
+                    working ? (
+                      <span className="relative grid size-6 place-items-center">
+                        <CircleDotDashedIcon className="size-4 text-emerald-600 dark:text-emerald-400" />
+                        <span className="absolute right-0 top-0 size-1.5 rounded-full bg-emerald-500" />
+                      </span>
+                    ) : (
+                      <span className="grid size-6 place-items-center rounded-full bg-foreground/[0.07] text-[9px] font-medium text-muted-foreground">
+                        {initials(thread.title) || "·"}
+                      </span>
+                    )
+                  }
+                  key={scopedThreadKey(ref)}
+                  label={label}
+                  onClick={() =>
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(ref),
+                    })
+                  }
+                />
+              );
+            })
+          : null}
         <RailButton
           active={threadsActive}
           icon={<MessagesSquareIcon />}

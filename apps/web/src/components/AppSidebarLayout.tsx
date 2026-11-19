@@ -3,6 +3,7 @@ import { useGT } from "gt-react";
 import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
   type CSSProperties,
@@ -19,6 +20,7 @@ import {
   undoLatestThreadAction,
 } from "../hooks/showThreadUndoNotice";
 import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalStorage";
+import { useResizeDrag } from "../hooks/useResizeDrag";
 import {
   isRichTextBoldShortcut,
   resolveShortcutCommand,
@@ -452,6 +454,7 @@ function ThreadSidebarShellContent({
     <>
       <SidebarNavigationRail
         drawerOpen={showDrawer}
+        sidebarOpen={open}
         onEnvironment={() => {
           setOpenScopeFilterRequest((request) => request + 1);
           if (!open) setDrawerOpen(true);
@@ -462,6 +465,7 @@ function ThreadSidebarShellContent({
         }}
       />
       <div className="hidden w-(--sidebar-width-icon) shrink-0 md:block" aria-hidden="true" />
+      {!open && !showDrawer ? <CollapsedSessionPaneDragHandle /> : null}
       <Sidebar
         side="left"
         collapsible="offcanvas"
@@ -471,6 +475,7 @@ function ThreadSidebarShellContent({
         role="navigation"
         aria-label={gt("Threads")}
         resizable={{
+          collapseOnDrag: true,
           maxWidth: sidebarMaximumWidth,
           minWidth: sidebarMinimumWidth,
           shouldAcceptWidth: ({ currentWidth, nextWidth, wrapper }) =>
@@ -513,6 +518,46 @@ function ThreadSidebarShellContent({
         </SheetPopup>
       </Sheet>
     </>
+  );
+}
+
+function CollapsedSessionPaneDragHandle() {
+  const gt = useGT();
+  const { setOpen } = useSidebar();
+  const suppressClickRef = useRef(false);
+  const resize = useResizeDrag<HTMLButtonElement>(() => ({
+    width: 0,
+    edge: "right",
+    bounds: { min: 0, max: 160 },
+    resize: (width) => width,
+    finish: (width, moved) => {
+      suppressClickRef.current = moved;
+      if (!moved || width >= 48) setOpen(true);
+    },
+  }));
+
+  return (
+    <button
+      aria-label={gt("Drag to open session list")}
+      className="fixed inset-y-0 left-(--sidebar-width-icon) z-20 hidden w-4 -translate-x-1/2 touch-none cursor-e-resize items-center justify-center md:flex"
+      data-session-pane-collapsed-handle=""
+      onClick={(event) => {
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
+          event.preventDefault();
+          return;
+        }
+        setOpen(true);
+      }}
+      onLostPointerCapture={resize.onLostPointerCapture}
+      onPointerCancel={resize.onPointerCancel}
+      onPointerDown={resize.onPointerDown}
+      onPointerMove={resize.onPointerMove}
+      onPointerUp={resize.onPointerUp}
+      type="button"
+    >
+      <span aria-hidden className="h-8 w-1 rounded-full bg-sidebar-border shadow-sm" />
+    </button>
   );
 }
 

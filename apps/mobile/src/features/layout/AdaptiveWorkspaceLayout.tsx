@@ -92,6 +92,7 @@ import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderE
 import { PaneContext } from "../../components/ui/Pane";
 import { WORKSPACE_PANE_TIMING } from "./workspace-pane-animation";
 import { WorkspaceInspectorPane } from "./workspace-inspector-pane";
+import { WorkspacePaneDivider } from "./workspace-pane-divider";
 import { WorkspaceInspectorSheet } from "./workspace-inspector-sheet";
 import type { InspectorContent } from "./inspector-panes";
 import {
@@ -120,6 +121,11 @@ import { workspaceTabOf, type WorkspaceTab } from "./workspace/workspace-tabs-st
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
 import { SettingsWorkspaceLayout } from "../settings/SettingsWorkspaceLayout";
 import { WorkspaceThreadSidebar } from "./workspace/WorkspaceThreadSidebar";
+
+const ANDROID_SESSION_PANE_MIN_WIDTH = 280;
+const ANDROID_SESSION_PANE_MAX_WIDTH = 380;
+const ANDROID_SESSION_PANE_MIN_CONTENT_WIDTH = 320;
+const ANDROID_SESSION_PANE_COLLAPSE_THRESHOLD = 154;
 
 export { useAdaptiveWorkspaceLayout, useWorkspacePaneState };
 
@@ -275,6 +281,12 @@ function AdaptiveWorkspaceLayoutContent(
     Platform.OS === "android" && (androidSettingsOpen || workspace?.state.selectedTab === "usage");
   const navigation = useNavigation();
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
+  const [androidSessionPaneWidth, setAndroidSessionPaneWidth] = useState<number | null>(null);
+  const [androidSessionPaneDragWidth, setAndroidSessionPaneDragWidth] = useState<number | null>(
+    null,
+  );
+  const androidSessionPaneResizeStart = useRef(0);
+  const androidSessionPaneDragWidthRef = useRef<number | null>(null);
   const [fileInspectorPreferredVisible, setFileInspectorPreferredVisible] = useState(true);
   const [nativeInspectorWidthFraction, setNativeInspectorWidthFraction] = useState(0.4);
   const horizontalSafeArea =
@@ -343,12 +355,32 @@ function AdaptiveWorkspaceLayoutContent(
     setWindowHinge(nextWindow);
   };
   const layout = useMemo(() => {
-    const aligned = alignListPaneToHinge({
+    let aligned = alignListPaneToHinge({
       layout: baseLayout,
       hinge,
       viewportWidth,
       leadingWidth: navigationRailWidth,
     });
+    const requestedAndroidWidth = androidSessionPaneDragWidth ?? androidSessionPaneWidth;
+    if (
+      Platform.OS === "android" &&
+      hinge === null &&
+      aligned.usesSplitView &&
+      aligned.listPaneWidth !== null &&
+      requestedAndroidWidth !== null
+    ) {
+      const maximumWidth = Math.max(
+        0,
+        Math.min(
+          ANDROID_SESSION_PANE_MAX_WIDTH,
+          viewportWidth - navigationRailWidth - ANDROID_SESSION_PANE_MIN_CONTENT_WIDTH,
+        ),
+      );
+      aligned = {
+        ...aligned,
+        listPaneWidth: Math.max(0, Math.min(requestedAndroidWidth, maximumWidth)),
+      };
+    }
     if (
       !floatingTabsEnabled ||
       !aligned.usesSplitView ||
@@ -366,6 +398,8 @@ function AdaptiveWorkspaceLayoutContent(
     viewportWidth,
     floatingTabs.row,
     floatingTabsEnabled,
+    androidSessionPaneDragWidth,
+    androidSessionPaneWidth,
   ]);
   // The rail keeps its room even while the sidebar floats; only the list pane overlays the page.
   const width = viewportWidth - navigationRailWidth;
@@ -494,6 +528,33 @@ function AdaptiveWorkspaceLayoutContent(
     if (panes.primarySidebarSuppressedByAuxiliary) {
       setFileInspectorPreferredVisible(false);
     }
+    setPrimarySidebarVisible(true);
+  };
+  const beginAndroidSessionPaneResize = () => {
+    androidSessionPaneResizeStart.current = panes.primarySidebarVisible
+      ? (layout.listPaneWidth ?? 0)
+      : 0;
+    androidSessionPaneDragWidthRef.current = androidSessionPaneResizeStart.current;
+    setAndroidSessionPaneDragWidth(androidSessionPaneResizeStart.current);
+    if (!panes.primarySidebarVisible) setPrimarySidebarVisible(true);
+  };
+  const resizeAndroidSessionPaneBy = (delta: number) => {
+    const width = androidSessionPaneResizeStart.current + delta;
+    androidSessionPaneDragWidthRef.current = width;
+    setAndroidSessionPaneDragWidth(width);
+  };
+  const endAndroidSessionPaneResize = () => {
+    const width = androidSessionPaneDragWidthRef.current ?? androidSessionPaneResizeStart.current;
+    androidSessionPaneDragWidthRef.current = null;
+    if (width < ANDROID_SESSION_PANE_COLLAPSE_THRESHOLD) {
+      setPrimarySidebarVisible(false);
+      setAndroidSessionPaneDragWidth(null);
+      return;
+    }
+    setAndroidSessionPaneWidth(
+      Math.max(ANDROID_SESSION_PANE_MIN_WIDTH, Math.min(width, ANDROID_SESSION_PANE_MAX_WIDTH)),
+    );
+    setAndroidSessionPaneDragWidth(null);
     setPrimarySidebarVisible(true);
   };
   const handleToggleSidebarCommand = () => {
@@ -1053,6 +1114,17 @@ function AdaptiveWorkspaceLayoutContent(
           </Animated.View>
         </Animated.View>
       ) : null}
+      {shouldRenderNavigationRail && !workspacePage && hinge === null && sidebarToggleable ? (
+        <WorkspacePaneDivider
+          accessibilityLabel={gt("Resize session list")}
+          currentWidth={panes.primarySidebarVisible ? (layout.listPaneWidth ?? 0) : 0}
+          resizeDirection={1}
+          onResizeStart={beginAndroidSessionPaneResize}
+          onResizeBy={resizeAndroidSessionPaneBy}
+          onResizeEnd={endAndroidSessionPaneResize}
+          showHandle
+        />
+      ) : null}
       <Animated.View
         className={
           Platform.OS === "android"
@@ -1165,6 +1237,7 @@ function AdaptiveWorkspaceLayoutContent(
             rail
             onSelect={revealPrimarySidebar}
             onOverlayChange={setRailOverlay}
+            showQuickThreads={!panes.primarySidebarVisible}
           />
         </View>
       ) : null}

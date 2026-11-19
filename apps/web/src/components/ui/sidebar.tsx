@@ -49,6 +49,8 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
+  /** Let dragging past the minimum width snap an off-canvas sidebar closed. */
+  collapseOnDrag?: boolean;
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
@@ -64,6 +66,7 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
+  collapseOnDrag: boolean;
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
@@ -271,6 +274,7 @@ function resolveSidebarResizable({
 
   const options = typeof resizable === "boolean" ? {} : resizable;
   return {
+    collapseOnDrag: options.collapseOnDrag ?? false,
     maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
     minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
     storageKey: options.storageKey ?? null,
@@ -469,7 +473,7 @@ function SidebarRail({
   onPointerUp,
   ...props
 }: React.ComponentProps<"button">) {
-  const { open, toggleSidebar, onCollapse } = useSidebar();
+  const { open, setOpen, toggleSidebar, onCollapse } = useSidebar();
   const gt = useGT();
   const sidebarInstance = React.use(SidebarInstanceContext);
   const suppressClickRef = React.useRef(false);
@@ -489,7 +493,12 @@ function SidebarRail({
     if (!wrapper || !sidebarRoot || !sidebarContainer) return null;
 
     const side = sidebarInstance?.side ?? "left";
-    let width = clampSidebarWidth(sidebarContainer.getBoundingClientRect().width, options);
+    const wasOpen = open;
+    const previousWidth = clampSidebarWidth(
+      sidebarContainer.getBoundingClientRect().width,
+      options,
+    );
+    let width = wasOpen ? previousWidth : 0;
     // Write width only to gap/container during drag; inherited --sidebar-width restyles the whole app, so
     // update it at commit.
     const widthTargets = [
@@ -509,7 +518,7 @@ function SidebarRail({
     return {
       width,
       edge: side === "left" ? "right" : "left",
-      bounds: { min: options.minWidth, max: options.maxWidth },
+      bounds: { min: options.collapseOnDrag ? 0 : options.minWidth, max: options.maxWidth },
       resize(nextWidth) {
         const accepted =
           options.shouldAcceptWidth?.({
@@ -527,18 +536,26 @@ function SidebarRail({
         return width;
       },
       finish(finalWidth, moved) {
-        wrapper.style.setProperty("--sidebar-width", `${finalWidth}px`);
         suppressClickRef.current = moved;
+        // A press on the collapsed edge still opens at the last width. A real drag follows the
+        // pointer and settles to the nearest useful state.
+        const requestedWidth = !wasOpen && !moved ? previousWidth : finalWidth;
+        if (options.collapseOnDrag && requestedWidth < options.minWidth * 0.55) {
+          setOpen(false);
+          return;
+        }
+        const settledWidth = clampSidebarWidth(requestedWidth, options);
+        wrapper.style.setProperty("--sidebar-width", `${settledWidth}px`);
         if (options.storageKey) {
           try {
-            setLocalStorageItem(options.storageKey, finalWidth, Schema.Finite);
+            setLocalStorageItem(options.storageKey, settledWidth, Schema.Finite);
           } catch (error) {
             console.error("Could not persist sidebar width.", error);
           }
         }
-        options.onResize?.(finalWidth);
+        options.onResize?.(settledWidth);
       },
-      cleanup() {
+      cleanup(committed) {
         widthTargets.forEach((element) => {
           element.style.removeProperty("width");
           element.style.removeProperty("transition-duration");
@@ -584,7 +601,7 @@ function SidebarRail({
             aria-label={railLabel}
             className={cn(
               /* A collapsed offcanvas rail overlaps the native scrollbar on Windows and Linux. */
-              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
+              "-translate-x-1/2 group-data-[side=left]:-right-4 absolute inset-y-0 z-20 hidden w-4 items-center justify-center after:absolute after:inset-y-0 after:left-1/2 after:w-[2px] hover:after:bg-sidebar-border group-data-[side=right]:left-0 sm:flex [[data-collapsible=offcanvas][data-state=collapsed]_&]:pointer-events-none",
               "[[data-panel-animations=true]_&]:transition-all [[data-panel-animations=true]_&]:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:ease-out",
               "touch-none",
               canResize
@@ -622,7 +639,12 @@ function SidebarRail({
             tabIndex={-1}
             type="button"
             {...props}
-          />
+          >
+            <span
+              aria-hidden
+              className="relative z-10 h-8 w-1 rounded-full bg-sidebar-border shadow-sm transition-colors group-hover:bg-sidebar-foreground/35"
+            />
+          </button>
         }
       />
       <TooltipPopup side="right">{railTitle}</TooltipPopup>

@@ -15,12 +15,16 @@ function CollapseFromInside() {
   );
 }
 
-function Harness(props: { readonly onResize?: (width: number) => void }) {
+function Harness(props: {
+  readonly collapseOnDrag?: boolean;
+  readonly onResize?: (width: number) => void;
+}) {
   return (
     <SidebarProvider defaultOpen>
       <Sidebar
         collapsible="offcanvas"
         resizable={{
+          ...(props.collapseOnDrag ? { collapseOnDrag: true } : {}),
           minWidth: 200,
           maxWidth: 600,
           ...(props.onResize ? { onResize: props.onResize } : {}),
@@ -72,6 +76,25 @@ describe("Sidebar", () => {
     rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
 
     expect(onResize).toHaveBeenCalledTimes(1);
+  });
+
+  it("snaps an off-canvas sidebar closed when its resize handle crosses the threshold", async () => {
+    await page.viewport(1280, 800);
+    await using screen = await render(<Harness collapseOnDrag />, {
+      router: false /* no routes involved */,
+    });
+    const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    const { left, top } = rail.getBoundingClientRect();
+    const pointer = { bubbles: true, cancelable: true, pointerId: 2, button: 0, clientY: top + 10 };
+    // Synthetic events do not own a native browser pointer, so keep capture deterministic.
+    using _capture = vi.spyOn(rail, "setPointerCapture").mockImplementation(() => {});
+
+    rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: left }));
+    rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX: left - 1000 }));
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left - 1000 }));
+
+    await vi.waitFor(() => expect(sidebar.getAttribute("data-state")).toBe("collapsed"));
   });
 });
 

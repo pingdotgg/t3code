@@ -58,6 +58,7 @@ interface NativeNavigationProps extends ViewProps {
   readonly quickThreadKeys: readonly string[];
   readonly quickThreadTitles: readonly string[];
   readonly quickThreadWorking: readonly boolean[];
+  readonly showQuickThreads: boolean;
   readonly selectedThreadKey: string;
   readonly onTabSelected: (
     event: NativeSyntheticEvent<{ readonly tab: AndroidWorkspaceNavigationTab }>,
@@ -84,6 +85,7 @@ export function AndroidWorkspaceNavigation(props: {
   readonly onSelect?: () => void;
   /** The rail needs the whole workspace while the original menu expands over the list. */
   readonly onOverlayChange?: (overlay: boolean) => void;
+  readonly showQuickThreads?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useNavigationTabOrder();
@@ -173,6 +175,7 @@ export function AndroidWorkspaceNavigation(props: {
         )}
         quickThreadTitles={quickThreads.map(({ thread }) => thread.title)}
         quickThreadWorking={quickThreads.map(({ working }) => working)}
+        showQuickThreads={props.showQuickThreads ?? true}
         selectedThreadKey={
           selectedThread ? scopedThreadKey(selectedThread.environmentId, selectedThread.id) : ""
         }

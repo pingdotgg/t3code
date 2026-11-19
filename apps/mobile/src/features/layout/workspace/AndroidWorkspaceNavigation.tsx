@@ -6,6 +6,7 @@ export function AndroidWorkspaceNavigation(_props: {
   readonly paneWidth?: number;
   readonly onSelect?: () => void;
   readonly onOverlayChange?: (overlay: boolean) => void;
+  readonly showQuickThreads?: boolean;
 }) {
   return null;
 }
