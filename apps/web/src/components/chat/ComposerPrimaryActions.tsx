@@ -569,3 +569,7 @@ export function ComposerSendPill({
     </span>
   );
 }
+
+// A 32px button slot of the send pill.
+export const COMPOSER_PILL_SLOT_BUTTON_CLASS_NAME =
+  "relative isolate flex h-full w-8 items-center justify-center overflow-hidden rounded-md text-foreground outline-none transition-colors duration-150 enabled:cursor-pointer enabled:hover:bg-foreground/8 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-64 [&_svg]:pointer-events-none";
