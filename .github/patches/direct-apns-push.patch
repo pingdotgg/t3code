@@ -1,0 +1,2420 @@
+diff --git a/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts b/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts
+new file mode 100644
+index 0000000000..14c0e7e7df
+--- /dev/null
++++ b/apps/mobile/src/features/agent-awareness/directApnsRegistration.test.ts
+@@ -0,0 +1,144 @@
++import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
++import { EnvironmentId } from "@t3tools/contracts";
++import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
++
++const mocks = vi.hoisted(() => ({
++  runAtomCommand: vi.fn(),
++  environmentIds: [] as string[],
++  catalogListeners: [] as Array<() => void>,
++}));
++
++vi.mock("@t3tools/client-runtime/state/runtime", () => ({
++  runAtomCommand: mocks.runAtomCommand,
++}));
++vi.mock("@t3tools/client-runtime/state/connections", () => ({
++  enabledEnvironmentIds: () => mocks.environmentIds,
++}));
++vi.mock("../../connection/catalog", () => ({
++  environmentCatalog: { catalogValueAtom: Symbol("catalog") },
++}));
++vi.mock("../../state/atom-registry", () => ({
++  appAtomRegistry: {
++    get: () => ({}),
++    subscribe: (_atom: unknown, listener: () => void) => {
++      mocks.catalogListeners.push(listener);
++      return () => undefined;
++    },
++  },
++}));
++vi.mock("../../state/server", () => ({
++  serverEnvironment: { registerPushDevice: { label: "register" } },
++}));
++
++import {
++  __resetDirectApnsRegistrationForTest,
++  registerDirectApnsDevice,
++  toPushDeviceRegistration,
++} from "./directApnsRegistration";
++
++const ENV_A = EnvironmentId.make("env-a");
++const ENV_B = EnvironmentId.make("env-b");
++
++const request = (
++  overrides: Partial<RelayDeviceRegistrationRequest> = {},
++): RelayDeviceRegistrationRequest => ({
++  deviceId: "device-1",
++  label: "iPhone",
++  platform: "ios",
++  iosMajorVersion: 18,
++  bundleId: "com.example.t3code",
++  apsEnvironment: "sandbox",
++  pushToken: "ab".repeat(32),
++  preferences: {
++    liveActivitiesEnabled: true,
++    notificationsEnabled: true,
++    notifyOnApproval: true,
++    notifyOnInput: false,
++    notifyOnCompletion: true,
++    notifyOnFailure: true,
++  },
++  ...overrides,
++});
++
++beforeEach(() => {
++  mocks.runAtomCommand.mockReset();
++  mocks.runAtomCommand.mockResolvedValue({ _tag: "Success" });
++  mocks.environmentIds = [ENV_A, ENV_B];
++  mocks.catalogListeners.length = 0;
++  __resetDirectApnsRegistrationForTest();
++});
++
++describe("toPushDeviceRegistration", () => {
++  it("maps the relay registration onto the direct push registration", () => {
++    expect(toPushDeviceRegistration(request())).toEqual({
++      deviceId: "device-1",
++      apnsToken: "ab".repeat(32),
++      apsEnvironment: "sandbox",
++      bundleId: "com.example.t3code",
++      platform: "ios",
++      notificationsEnabled: true,
++      notifyOnApproval: true,
++      notifyOnInput: false,
++      notifyOnCompletion: true,
++      notifyOnFailure: true,
++    });
++  });
++
++  it("has nothing to register without a token, bundle ID or APNs environment, or on Android", () => {
++    const { pushToken: _token, ...withoutToken } = request();
++    expect(toPushDeviceRegistration(withoutToken)).toBeNull();
++    const { bundleId: _bundle, ...withoutBundle } = request();
++    expect(toPushDeviceRegistration(withoutBundle)).toBeNull();
++    const { apsEnvironment: _env, ...withoutEnvironment } = request();
++    expect(toPushDeviceRegistration(withoutEnvironment)).toBeNull();
++    expect(
++      toPushDeviceRegistration(
++        request({
++          platform: "android",
++          androidApiLevel: 35,
++        } as Partial<RelayDeviceRegistrationRequest>),
++      ),
++    ).toBeNull();
++  });
++});
++
++describe("registerDirectApnsDevice", () => {
++  it("registers with every connected environment", async () => {
++    await registerDirectApnsDevice(request());
++    expect(mocks.runAtomCommand.mock.calls.map(([, , target]) => target.environmentId)).toEqual([
++      ENV_A,
++      ENV_B,
++    ]);
++    expect(mocks.runAtomCommand.mock.calls[0]?.[2].input.apnsToken).toBe("ab".repeat(32));
++  });
++
++  it("skips environments that already hold this exact registration, and resends on change", async () => {
++    mocks.environmentIds = [ENV_A];
++    await registerDirectApnsDevice(request());
++    await registerDirectApnsDevice(request());
++    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
++    await registerDirectApnsDevice(request({ pushToken: "cd".repeat(32) }));
++    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2);
++  });
++
++  it("retries an environment whose registration failed and never throws", async () => {
++    mocks.environmentIds = [ENV_A];
++    mocks.runAtomCommand.mockResolvedValueOnce({ _tag: "Failure" });
++    await expect(registerDirectApnsDevice(request())).resolves.toBeUndefined();
++    await registerDirectApnsDevice(request());
++    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2);
++  });
++
++  it("registers environments that connect after the token was registered", async () => {
++    mocks.environmentIds = [ENV_A];
++    await registerDirectApnsDevice(request());
++    expect(mocks.runAtomCommand).toHaveBeenCalledTimes(1);
++    mocks.environmentIds = [ENV_A, ENV_B];
++    mocks.catalogListeners[0]?.();
++    await vi.waitFor(() => expect(mocks.runAtomCommand).toHaveBeenCalledTimes(2));
++    expect(mocks.runAtomCommand.mock.calls[1]?.[2].environmentId).toBe(ENV_B);
++    // A later registration does not stack a second catalog subscription.
++    await registerDirectApnsDevice(request({ pushToken: "cd".repeat(32) }));
++    expect(mocks.catalogListeners).toHaveLength(1);
++  });
++});
+diff --git a/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts b/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts
+new file mode 100644
+index 0000000000..8ae839cb5f
+--- /dev/null
++++ b/apps/mobile/src/features/agent-awareness/directApnsRegistration.ts
+@@ -0,0 +1,85 @@
++import type { EnvironmentId, PushDeviceRegistration } from "@t3tools/contracts";
++import type { RelayDeviceRegistrationRequest } from "@t3tools/contracts/relay";
++import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
++import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
++
++import { environmentCatalog } from "../../connection/catalog";
++import { appAtomRegistry } from "../../state/atom-registry";
++import { serverEnvironment } from "../../state/server";
++
++// Forks whose bundle ID the official relay's APNs key cannot reach run their own
++// push sender on each T3 server. That server needs this device's token, which
++// the relay registration never gives it.
++export function toPushDeviceRegistration(
++  request: RelayDeviceRegistrationRequest,
++): PushDeviceRegistration | null {
++  if (
++    request.platform !== "ios" ||
++    !request.pushToken ||
++    !request.bundleId ||
++    !request.apsEnvironment
++  ) {
++    return null;
++  }
++  return {
++    deviceId: request.deviceId,
++    apnsToken: request.pushToken,
++    apsEnvironment: request.apsEnvironment,
++    bundleId: request.bundleId,
++    platform: "ios",
++    notificationsEnabled: request.preferences.notificationsEnabled,
++    notifyOnApproval: request.preferences.notifyOnApproval,
++    notifyOnInput: request.preferences.notifyOnInput,
++    notifyOnCompletion: request.preferences.notifyOnCompletion,
++    notifyOnFailure: request.preferences.notifyOnFailure,
++  };
++}
++
++// Only successes are remembered, so an environment that was unreachable is
++// retried on the next registration trigger (foreground, token rotation, or a
++// change to the connected environments).
++const registeredSignatures = new Map<EnvironmentId, string>();
++let lastRequest: RelayDeviceRegistrationRequest | null = null;
++let watchingCatalog = false;
++
++async function registerWithConnectedEnvironments(
++  request: RelayDeviceRegistrationRequest,
++): Promise<void> {
++  const registration = toPushDeviceRegistration(request);
++  if (registration === null) return;
++  const signature = JSON.stringify(registration);
++  const catalog = appAtomRegistry.get(environmentCatalog.catalogValueAtom);
++  await Promise.all(
++    [...enabledEnvironmentIds(catalog)].map(async (environmentId) => {
++      if (registeredSignatures.get(environmentId) === signature) return;
++      const result = await runAtomCommand(
++        appAtomRegistry,
++        serverEnvironment.registerPushDevice,
++        { environmentId, input: registration },
++        { reportFailure: false, reportDefect: false },
++      );
++      if (result._tag === "Success") registeredSignatures.set(environmentId, signature);
++    }),
++  );
++}
++
++export async function registerDirectApnsDevice(
++  request: RelayDeviceRegistrationRequest,
++): Promise<void> {
++  lastRequest = request;
++  // Environments connect after the app registers its token, and nothing else
++  // re-triggers registration for them.
++  if (!watchingCatalog) {
++    watchingCatalog = true;
++    appAtomRegistry.subscribe(environmentCatalog.catalogValueAtom, () => {
++      if (lastRequest) void registerWithConnectedEnvironments(lastRequest);
++    });
++  }
++  await registerWithConnectedEnvironments(request);
++}
++
++export function __resetDirectApnsRegistrationForTest(): void {
++  registeredSignatures.clear();
++  lastRequest = null;
++  watchingCatalog = false;
++}
+diff --git a/apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts b/apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts
+index d4438911eb..f85301ba4f 100644
+--- a/apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts
++++ b/apps/mobile/src/features/agent-awareness/remoteRegistration.test.ts
+@@ -64,6 +64,9 @@ const environmentConfigsMock = vi.hoisted(() => ({
+     { environment: { capabilities: { agentActivityPublishing?: boolean } } }
+   >(),
+ }));
++const directApns = vi.hoisted(() => ({
++  register: vi.fn(() => Promise.resolve()),
++}));
+ const backgroundRuntime = vi.hoisted(() => ({
+   pending: [] as Array<{
+     readonly operation: unknown;
+@@ -81,6 +84,10 @@ const registrationRecordStore = vi.hoisted(() => ({
+   } | null,
+ }));
+ 
++vi.mock("./directApnsRegistration", () => ({
++  registerDirectApnsDevice: directApns.register,
++}));
++
+ vi.mock("expo-constants", () => ({
+   default: {
+     expoConfig: {
+@@ -579,6 +586,33 @@ describe("makeRelayDeviceRegistrationRequest", () => {
+     }).pipe(Effect.provide(layerRelayTest));
+   });
+ 
++  it.effect("also registers the push token for direct server push", () => {
++    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
++    directApns.register.mockClear();
++    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
++
++    return Effect.gen(function* () {
++      yield* runBackgroundOperations();
++      expect(directApns.register).toHaveBeenCalledWith(
++        expect.objectContaining({ deviceId: "device-1", pushToken: "apns-token" }),
++      );
++    }).pipe(Effect.provide(layerRelayTest));
++  });
++
++  it.effect("still registers with the relay when the direct registration fails", () => {
++    Constants.expoConfig!.extra = { relay: { url: "https://relay.example.test/" } };
++    directApns.register.mockRejectedValue(new Error("environment unreachable"));
++    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
++
++    return Effect.gen(function* () {
++      yield* runBackgroundOperations();
++      expect(getAgentAwarenessRegistrationStatus()).toBe("registered");
++    }).pipe(
++      Effect.ensuring(Effect.sync(() => directApns.register.mockResolvedValue(undefined))),
++      Effect.provide(layerRelayTest),
++    );
++  });
++
+   it.effect("keeps a registered status when a later refresh fails", () => {
+     Constants.expoConfig!.extra = {
+       relay: {
+diff --git a/apps/mobile/src/features/agent-awareness/remoteRegistration.ts b/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
+index 2c995bd8ea..11abc9491e 100644
+--- a/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
++++ b/apps/mobile/src/features/agent-awareness/remoteRegistration.ts
+@@ -51,6 +51,7 @@ import {
+ } from "./agentLiveActivity";
+ import { resolveCloudPublicConfig } from "../cloud/publicConfig";
+ import { supportsAgentAwarenessPush } from "./capabilities";
++import { registerDirectApnsDevice } from "./directApnsRegistration";
+ import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+ 
+ const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
+@@ -388,6 +389,11 @@ const registerDeviceWithRelay = Effect.fn("remoteRegistration.registerDeviceWith
+   body: RelayDeviceRegistrationRequest,
+   expectedGeneration: number,
+ ): Effect.fn.Return<void, AgentAwarenessRegistrationError, ManagedRelay.ManagedRelayClient> {
++  // Direct server push does not depend on a T3 Connect sign-in, and its failure
++  // must never affect relay registration, so it runs detached.
++  void registerDirectApnsDevice(body).catch((error: unknown) => {
++    logRegistrationError("direct push registration failed", error);
++  });
+   if (expectedGeneration !== deviceRegistrationGeneration) {
+     return;
+   }
+diff --git a/apps/server/src/auth/RpcAuthorization.test.ts b/apps/server/src/auth/RpcAuthorization.test.ts
+index 8afe47e715..72f5228cf7 100644
+--- a/apps/server/src/auth/RpcAuthorization.test.ts
++++ b/apps/server/src/auth/RpcAuthorization.test.ts
+@@ -54,6 +54,15 @@ describe("RPC authorization scopes", () => {
+     );
+   });
+ 
++  it("lets any thread-reading client manage its own push registration, and nothing broader", () => {
++    for (const method of [
++      WS_METHODS.notificationsRegisterDevice,
++      WS_METHODS.notificationsUnregisterDevice,
++    ]) {
++      expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);
++    }
++  });
++
+   it("separates passive terminal observation from operations that can change a shell", () => {
+     for (const method of [WS_METHODS.terminalObserve, WS_METHODS.subscribeTerminalMetadata]) {
+       expect(requiredScopeForRpcMethod(method)).toBe(AuthTerminalReadScope);
+diff --git a/apps/server/src/observability/RpcInstrumentation.ts b/apps/server/src/observability/RpcInstrumentation.ts
+index 2ac9c94d5e..1e7a6c2abd 100644
+--- a/apps/server/src/observability/RpcInstrumentation.ts
++++ b/apps/server/src/observability/RpcInstrumentation.ts
+@@ -97,6 +97,8 @@ const RPC_AGGREGATES = {
+   [WS_METHODS.serverRefreshUsageRates]: "server",
+   [WS_METHODS.serverSignalProcess]: "server",
+   [WS_METHODS.serverReportClientActivity]: "server",
++  [WS_METHODS.notificationsRegisterDevice]: "server",
++  [WS_METHODS.notificationsUnregisterDevice]: "server",
+   [WS_METHODS.scheduledTasksSubscribe]: "scheduledTasks",
+   [WS_METHODS.scheduledTasksUpsert]: "scheduledTasks",
+   [WS_METHODS.scheduledTasksSetEnabled]: "scheduledTasks",
+diff --git a/apps/server/src/relay/DirectApnsClient.test.ts b/apps/server/src/relay/DirectApnsClient.test.ts
+new file mode 100644
+index 0000000000..db8bd9e99b
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsClient.test.ts
+@@ -0,0 +1,268 @@
++// @effect-diagnostics-next-line nodeBuiltinImport:off -- Generates a throwaway P-256 key for signing.
++import * as NodeCrypto from "node:crypto";
++import * as NodeHttp2 from "node:http2";
++
++import { assert, describe, it } from "@effect/vitest";
++import * as ConfigProvider from "effect/ConfigProvider";
++import * as Effect from "effect/Effect";
++import * as FileSystem from "effect/FileSystem";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++import * as DirectApnsClient from "./DirectApnsClient.ts";
++import type { StoredPushDevice } from "./DirectApnsDevices.ts";
++
++const { privateKey } = NodeCrypto.generateKeyPairSync("ec", { namedCurve: "prime256v1" });
++const PRIVATE_PEM = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
++
++const device = (overrides: Partial<StoredPushDevice> = {}): StoredPushDevice => ({
++  deviceId: "iphone",
++  apnsToken: "ab".repeat(32),
++  apsEnvironment: "sandbox",
++  bundleId: "com.example.t3code",
++  platform: "ios",
++  notificationsEnabled: true,
++  notifyOnApproval: true,
++  notifyOnInput: true,
++  notifyOnCompletion: true,
++  notifyOnFailure: true,
++  ...overrides,
++});
++
++const notification = {
++  title: "Fix the bug",
++  body: "Needs approval: Project",
++  environmentId: "env-1",
++  threadId: "thread-1",
++  deepLink: "/threads/env-1/thread-1",
++  phase: "waiting_for_approval",
++  updatedAt: "2026-09-04T11:59:30.000Z",
++};
++
++const ENV = {
++  T3CODE_APNS_KEY_ID: "KEY1234567",
++  T3CODE_APNS_TEAM_ID: "TEAM123456",
++  T3CODE_APNS_PRIVATE_KEY_PATH: "/keys/AuthKey.p8",
++};
++
++const fileSystemWith = (files: Record<string, string>) =>
++  FileSystem.layerNoop({
++    readFileString: (path) =>
++      path in files ? Effect.succeed(files[path]!) : Effect.die(`unexpected read of ${path}`),
++  });
++
++const secretsWith = (values: Record<string, string> = {}) =>
++  Layer.succeed(
++    ServerSecretStore.ServerSecretStore,
++    ServerSecretStore.ServerSecretStore.of({
++      get: (name) =>
++        Effect.succeed(
++          name in values ? Option.some(new TextEncoder().encode(values[name]!)) : Option.none(),
++        ),
++      set: () => Effect.die("unused"),
++      create: () => Effect.die("unused"),
++      remove: () => Effect.die("unused"),
++      getOrCreateRandom: () => Effect.die("unused"),
++    }),
++  );
++
++const makeHarness = (options: {
++  readonly env?: Record<string, string>;
++  readonly secrets?: Record<string, string>;
++  readonly respond?: (
++    request: DirectApnsClient.ApnsHttp2Request,
++  ) => DirectApnsClient.ApnsHttp2Response;
++}) => {
++  const requests: DirectApnsClient.ApnsHttp2Request[] = [];
++  const transport = Layer.succeed(
++    DirectApnsClient.DirectApnsTransport,
++    DirectApnsClient.DirectApnsTransport.of({
++      post: (request) =>
++        Effect.sync(() => {
++          requests.push(request);
++          return options.respond?.(request) ?? { status: 200, body: "" };
++        }),
++    }),
++  );
++  const layer = DirectApnsClient.layer.pipe(
++    Layer.provide(transport),
++    Layer.provide(fileSystemWith({ "/keys/AuthKey.p8": PRIVATE_PEM })),
++    Layer.provide(secretsWith(options.secrets)),
++    Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: options.env ?? ENV }))),
++  );
++  return { requests, layer };
++};
++
++const send = (input: Parameters<DirectApnsClient.DirectApnsClient["Service"]["send"]>[0]) =>
++  DirectApnsClient.DirectApnsClient.use((client) => client.send(input));
++
++describe("DirectApnsClient", () => {
++  it.effect("posts an alert push to the sandbox host with the APNs headers and payload", () => {
++    const harness = makeHarness({});
++    return Effect.gen(function* () {
++      const result = yield* send({ device: device(), notification });
++      assert.strictEqual(result.outcome, "sent");
++      const [request] = harness.requests;
++      assert.strictEqual(request?.origin, "https://api.sandbox.push.apple.com");
++      assert.strictEqual(request?.path, `/3/device/${"ab".repeat(32)}`);
++      assert.strictEqual(request?.headers["apns-push-type"], "alert");
++      assert.strictEqual(request?.headers["apns-topic"], "com.example.t3code");
++      assert.strictEqual(request?.headers["apns-priority"], "10");
++      assert.match(request?.headers.authorization ?? "", /^bearer [\w-]+\.[\w-]+\.[\w-]+$/);
++      assert.deepStrictEqual(JSON.parse(request?.body ?? ""), {
++        aps: {
++          alert: { title: "Fix the bug", body: "Needs approval: Project" },
++          sound: "default",
++          "thread-id": "env-1/thread-1",
++        },
++        body: {
++          environmentId: "env-1",
++          threadId: "thread-1",
++          deepLink: "/threads/env-1/thread-1",
++          phase: "waiting_for_approval",
++          updatedAt: "2026-09-04T11:59:30.000Z",
++        },
++      });
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("picks the APNs host per device token, not per server", () => {
++    const harness = makeHarness({});
++    return Effect.gen(function* () {
++      yield* send({ device: device({ apsEnvironment: "production" }), notification });
++      yield* send({ device: device({ apsEnvironment: "sandbox" }), notification });
++      assert.deepStrictEqual(
++        harness.requests.map((request) => request.origin),
++        ["https://api.push.apple.com", "https://api.sandbox.push.apple.com"],
++      );
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("reuses one provider token across pushes", () => {
++    const harness = makeHarness({});
++    return Effect.gen(function* () {
++      yield* send({ device: device(), notification });
++      yield* send({ device: device({ deviceId: "ipad" }), notification });
++      assert.strictEqual(
++        harness.requests[0]?.headers.authorization,
++        harness.requests[1]?.headers.authorization,
++      );
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("is a silent no-op that sends nothing when credentials are not configured", () => {
++    const harness = makeHarness({ env: {} });
++    return Effect.gen(function* () {
++      const client = yield* DirectApnsClient.DirectApnsClient;
++      assert.strictEqual(yield* client.isConfigured, false);
++      const result = yield* client.send({ device: device(), notification });
++      assert.strictEqual(result.outcome, "unconfigured");
++      assert.strictEqual(harness.requests.length, 0);
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("falls back to credentials in the secret store", () => {
++    const harness = makeHarness({
++      env: {},
++      secrets: {
++        "apns-key-id": "KEY1234567",
++        "apns-team-id": "TEAM123456",
++        "apns-private-key": PRIVATE_PEM,
++      },
++    });
++    return Effect.gen(function* () {
++      const result = yield* send({ device: device(), notification });
++      assert.strictEqual(result.outcome, "sent");
++      assert.strictEqual(harness.requests.length, 1);
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect.each([
++    [410, "Unregistered"],
++    [400, "BadDeviceToken"],
++    [400, "DeviceTokenNotForTopic"],
++  ] as const)("flags the token for removal on %s %s", ([status, reason]) => {
++    const harness = makeHarness({ respond: () => ({ status, body: JSON.stringify({ reason }) }) });
++    return Effect.gen(function* () {
++      const result = yield* send({ device: device(), notification });
++      assert.deepStrictEqual(result, { outcome: "rejected", status, reason, removeToken: true });
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("keeps the token after a transient rejection", () => {
++    const harness = makeHarness({
++      respond: () => ({ status: 429, body: JSON.stringify({ reason: "TooManyRequests" }) }),
++    });
++    return Effect.gen(function* () {
++      const result = yield* send({ device: device(), notification });
++      assert.deepStrictEqual(result, {
++        outcome: "rejected",
++        status: 429,
++        reason: "TooManyRequests",
++        removeToken: false,
++      });
++    }).pipe(Effect.provide(harness.layer));
++  });
++
++  it.effect("reports a transport failure instead of failing the caller", () => {
++    const layer = DirectApnsClient.layer.pipe(
++      Layer.provide(
++        Layer.succeed(
++          DirectApnsClient.DirectApnsTransport,
++          DirectApnsClient.DirectApnsTransport.of({
++            post: () =>
++              Effect.fail(new DirectApnsClient.DirectApnsTransportError({ cause: "boom" })),
++          }),
++        ),
++      ),
++      Layer.provide(fileSystemWith({ "/keys/AuthKey.p8": PRIVATE_PEM })),
++      Layer.provide(secretsWith()),
++      Layer.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: ENV }))),
++    );
++    return Effect.gen(function* () {
++      const result = yield* send({ device: device(), notification });
++      assert.deepStrictEqual(result, { outcome: "error", removeToken: false });
++    }).pipe(Effect.provide(layer));
++  });
++});
++
++describe("node http2 transport", () => {
++  it.live("speaks HTTP/2 and returns the status and body", () =>
++    Effect.scoped(
++      Effect.gen(function* () {
++        const seen: Array<{ headers: NodeHttp2.IncomingHttpHeaders; body: string }> = [];
++        const server = NodeHttp2.createServer((request, response) => {
++          const chunks: Buffer[] = [];
++          request.on("data", (chunk: Buffer) => chunks.push(chunk));
++          request.on("end", () => {
++            seen.push({ headers: request.headers, body: Buffer.concat(chunks).toString("utf8") });
++            response.writeHead(400, { "content-type": "application/json" });
++            response.end(JSON.stringify({ reason: "BadDeviceToken" }));
++          });
++        });
++        yield* Effect.addFinalizer(() => Effect.sync(() => server.close()));
++        const port = yield* Effect.promise(
++          () =>
++            new Promise<number>((resolve) =>
++              server.listen(0, "127.0.0.1", () =>
++                resolve((server.address() as { port: number }).port),
++              ),
++            ),
++        );
++        const transport = yield* DirectApnsClient.makeNodeHttp2Transport;
++        const response = yield* transport.post({
++          origin: `http://127.0.0.1:${port}`,
++          path: "/3/device/abc",
++          headers: { "apns-topic": "com.example.t3code", authorization: "bearer x" },
++          body: '{"aps":{}}',
++        });
++        assert.deepStrictEqual(response, { status: 400, body: '{"reason":"BadDeviceToken"}' });
++        assert.strictEqual(seen[0]?.headers[":method"], "POST");
++        assert.strictEqual(seen[0]?.headers[":path"], "/3/device/abc");
++        assert.strictEqual(seen[0]?.headers["apns-topic"], "com.example.t3code");
++        assert.strictEqual(seen[0]?.body, '{"aps":{}}');
++      }),
++    ),
++  );
++});
+diff --git a/apps/server/src/relay/DirectApnsClient.ts b/apps/server/src/relay/DirectApnsClient.ts
+new file mode 100644
+index 0000000000..bf13f8932e
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsClient.ts
+@@ -0,0 +1,297 @@
++// @effect-diagnostics nodeBuiltinImport:off -- APNs requires HTTP/2, which Effect's HttpClient and Node's fetch do not guarantee.
++import * as NodeHttp2 from "node:http2";
++
++import { makeApnsProviderTokenCache } from "@t3tools/shared/apnsProviderToken";
++import * as Clock from "effect/Clock";
++import * as Config from "effect/Config";
++import * as ConfigProvider from "effect/ConfigProvider";
++import * as Context from "effect/Context";
++import * as Effect from "effect/Effect";
++import * as FileSystem from "effect/FileSystem";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++import * as Schema from "effect/Schema";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++import type { DirectApnsNotification } from "./directApnsPolicy.ts";
++import type { StoredPushDevice } from "./DirectApnsDevices.ts";
++
++const APNS_PRODUCTION_ORIGIN = "https://api.push.apple.com";
++const APNS_SANDBOX_ORIGIN = "https://api.sandbox.push.apple.com";
++const APNS_REQUEST_TIMEOUT = "10 seconds";
++
++// Credentials come from the environment, with the secret store as an
++// alternative for servers that cannot set env vars.
++const KEY_ID_ENV = "T3CODE_APNS_KEY_ID";
++const TEAM_ID_ENV = "T3CODE_APNS_TEAM_ID";
++const PRIVATE_KEY_PATH_ENV = "T3CODE_APNS_PRIVATE_KEY_PATH";
++const KEY_ID_SECRET = "apns-key-id";
++const TEAM_ID_SECRET = "apns-team-id";
++const PRIVATE_KEY_SECRET = "apns-private-key";
++
++const PERMANENT_TOKEN_REASONS = new Set([
++  "BadDeviceToken",
++  "DeviceTokenNotForTopic",
++  "Unregistered",
++]);
++
++export interface ApnsHttp2Request {
++  readonly origin: string;
++  readonly path: string;
++  readonly headers: Readonly<Record<string, string>>;
++  readonly body: string;
++}
++
++export interface ApnsHttp2Response {
++  readonly status: number;
++  readonly body: string;
++}
++
++export class DirectApnsTransportError extends Schema.TaggedError<DirectApnsTransportError>()(
++  "DirectApnsTransportError",
++  { cause: Schema.Defect() },
++) {
++  override get message(): string {
++    return "APNs request failed.";
++  }
++}
++
++export class DirectApnsTransport extends Context.Service<
++  DirectApnsTransport,
++  {
++    readonly post: (
++      request: ApnsHttp2Request,
++    ) => Effect.Effect<ApnsHttp2Response, DirectApnsTransportError>;
++  }
++>()("t3/relay/DirectApnsClient/DirectApnsTransport") {}
++
++export type DirectApnsSendResult =
++  | { readonly outcome: "sent" }
++  | { readonly outcome: "unconfigured" }
++  | {
++      readonly outcome: "rejected";
++      readonly status: number;
++      readonly reason: string | undefined;
++      /** The token is permanently dead and must not be tried again. */
++      readonly removeToken: boolean;
++    }
++  | { readonly outcome: "error"; readonly removeToken: false };
++
++export class DirectApnsClient extends Context.Service<
++  DirectApnsClient,
++  {
++    readonly isConfigured: Effect.Effect<boolean>;
++    readonly send: (input: {
++      readonly device: StoredPushDevice;
++      readonly notification: DirectApnsNotification;
++    }) => Effect.Effect<DirectApnsSendResult>;
++  }
++>()("t3/relay/DirectApnsClient") {}
++
++const decodeErrorBody = Schema.decodeUnknownOption(
++  Schema.fromJsonString(Schema.Struct({ reason: Schema.optional(Schema.String) })),
++);
++const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
++
++const reasonFromBody = (body: string): string | undefined =>
++  Option.getOrUndefined(decodeErrorBody(body))?.reason;
++
++export const makeNodeHttp2Transport = Effect.gen(function* () {
++  const sessions = new Map<string, NodeHttp2.ClientHttp2Session>();
++  yield* Effect.addFinalizer(() =>
++    Effect.sync(() => {
++      for (const session of sessions.values()) session.close();
++      sessions.clear();
++    }),
++  );
++
++  // One long-lived session per APNs host: Apple asks providers to keep
++  // connections open rather than reconnecting for every push.
++  const sessionFor = (origin: string) => {
++    const existing = sessions.get(origin);
++    if (existing && !existing.closed && !existing.destroyed) return existing;
++    const session = NodeHttp2.connect(origin);
++    session.unref();
++    const forget = () => {
++      if (sessions.get(origin) === session) sessions.delete(origin);
++    };
++    // Request-level errors reach the caller through the stream; this only
++    // keeps a dead session from being reused.
++    session.on("error", forget);
++    session.on("close", forget);
++    session.on("goaway", () => {
++      forget();
++      session.close();
++    });
++    sessions.set(origin, session);
++    return session;
++  };
++
++  return DirectApnsTransport.of({
++    post: (request) =>
++      Effect.tryPromise({
++        try: (signal) =>
++          new Promise<ApnsHttp2Response>((resolve, reject) => {
++            const stream = sessionFor(request.origin).request({
++              ":method": "POST",
++              ":path": request.path,
++              ...request.headers,
++            });
++            const chunks: Buffer[] = [];
++            let status = 0;
++            signal.addEventListener("abort", () =>
++              stream.close(NodeHttp2.constants.NGHTTP2_CANCEL),
++            );
++            stream.on("response", (headers) => {
++              status = Number(headers[":status"] ?? 0);
++            });
++            stream.on("data", (chunk: Buffer) => chunks.push(chunk));
++            stream.on("end", () =>
++              resolve({ status, body: Buffer.concat(chunks).toString("utf8") }),
++            );
++            stream.on("error", reject);
++            stream.end(request.body);
++          }),
++        catch: (cause) => new DirectApnsTransportError({ cause }),
++      }).pipe(
++        Effect.timeoutOrElse({
++          duration: APNS_REQUEST_TIMEOUT,
++          orElse: () =>
++            Effect.fail(new DirectApnsTransportError({ cause: "APNs request timed out" })),
++        }),
++      ),
++  });
++});
++
++export const transportLayer = Layer.effect(DirectApnsTransport, makeNodeHttp2Transport);
++
++const make = Effect.gen(function* () {
++  const transport = yield* DirectApnsTransport;
++  const fileSystem = yield* FileSystem.FileSystem;
++  const secrets = yield* ServerSecretStore.ServerSecretStore;
++  const configProvider = yield* ConfigProvider.ConfigProvider;
++  const providerTokens = makeApnsProviderTokenCache();
++
++  const readSecret = (name: string) =>
++    secrets.get(name).pipe(
++      Effect.map(Option.map((bytes) => new TextDecoder().decode(bytes).trim())),
++      Effect.orElseSucceed(() => Option.none<string>()),
++    );
++
++  const readConfig = (name: string) =>
++    Config.String(name).pipe(
++      Config.option,
++      // The send path runs outside the layer's context, so pin the provider it was built with.
++      Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
++      Effect.map(Option.filter((value) => value.trim().length > 0)),
++      Effect.orElseSucceed(() => Option.none<string>()),
++    );
++
++  const readPrivateKey = Effect.gen(function* () {
++    const path = yield* readConfig(PRIVATE_KEY_PATH_ENV);
++    if (Option.isNone(path)) return yield* readSecret(PRIVATE_KEY_SECRET);
++    // An unreadable key file is a misconfiguration, never a reason to fail a thread.
++    return yield* fileSystem.readFileString(path.value).pipe(
++      Effect.map(Option.some),
++      Effect.tapError(() =>
++        Effect.logWarning("direct APNs key file could not be read", {
++          envVar: PRIVATE_KEY_PATH_ENV,
++        }),
++      ),
++      Effect.orElseSucceed(() => Option.none<string>()),
++    );
++  });
++
++  const readCredentials = Effect.gen(function* () {
++    const keyId = Option.orElse(yield* readConfig(KEY_ID_ENV), () => Option.none<string>());
++    const teamId = yield* readConfig(TEAM_ID_ENV);
++    const privateKey = yield* readPrivateKey;
++    return Option.all({
++      keyId: Option.isSome(keyId) ? keyId : yield* readSecret(KEY_ID_SECRET),
++      teamId: Option.isSome(teamId) ? teamId : yield* readSecret(TEAM_ID_SECRET),
++      privateKey,
++    });
++  });
++
++  const send: DirectApnsClient["Service"]["send"] = Effect.fn("DirectApnsClient.send")(function* ({
++    device,
++    notification,
++  }) {
++    const credentials = yield* readCredentials;
++    if (Option.isNone(credentials)) {
++      yield* Effect.logDebug("direct APNs push skipped; credentials not configured");
++      return { outcome: "unconfigured" } as const;
++    }
++    const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1_000);
++    const jwt = yield* Effect.try(() => providerTokens.getJwt(credentials.value, nowSeconds)).pipe(
++      Effect.option,
++    );
++    if (Option.isNone(jwt)) {
++      yield* Effect.logWarning("direct APNs provider token could not be signed; check the .p8 key");
++      return { outcome: "error", removeToken: false } as const;
++    }
++    const response = yield* transport
++      .post({
++        // The token's own environment decides the host: a dev build and a
++        // store build can both be registered with one server.
++        origin:
++          device.apsEnvironment === "production" ? APNS_PRODUCTION_ORIGIN : APNS_SANDBOX_ORIGIN,
++        path: `/3/device/${device.apnsToken}`,
++        headers: {
++          authorization: `bearer ${jwt.value}`,
++          "apns-push-type": "alert",
++          "apns-topic": device.bundleId,
++          "apns-priority": "10",
++          "content-type": "application/json",
++        },
++        body: encodeJson({
++          aps: {
++            alert: { title: notification.title, body: notification.body },
++            sound: "default",
++            "thread-id":
++              notification.threadId.length > 0
++                ? `${notification.environmentId}/${notification.threadId}`
++                : "t3-agent-alerts",
++          },
++          // Expo iOS exposes userInfo.body as notification.content.data.
++          body: {
++            environmentId: notification.environmentId,
++            threadId: notification.threadId,
++            deepLink: notification.deepLink,
++            phase: notification.phase,
++            updatedAt: notification.updatedAt,
++          },
++        }),
++      })
++      .pipe(Effect.option);
++    if (Option.isNone(response)) {
++      yield* Effect.logWarning("direct APNs push failed in transport", {
++        deviceId: device.deviceId,
++      });
++      return { outcome: "error", removeToken: false } as const;
++    }
++    const { status, body } = response.value;
++    if (status >= 200 && status < 300) return { outcome: "sent" } as const;
++    const reason = reasonFromBody(body);
++    yield* Effect.logWarning("direct APNs push rejected", {
++      deviceId: device.deviceId,
++      status,
++      reason,
++    });
++    return {
++      outcome: "rejected",
++      status,
++      reason,
++      removeToken:
++        status === 410 ||
++        (status === 400 && reason !== undefined && PERMANENT_TOKEN_REASONS.has(reason)),
++    } as const;
++  });
++
++  return DirectApnsClient.of({
++    isConfigured: readCredentials.pipe(Effect.map(Option.isSome)),
++    send,
++  });
++});
++
++export const layer = Layer.effect(DirectApnsClient, make);
+diff --git a/apps/server/src/relay/DirectApnsDevices.test.ts b/apps/server/src/relay/DirectApnsDevices.test.ts
+new file mode 100644
+index 0000000000..376b64e6b3
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsDevices.test.ts
+@@ -0,0 +1,140 @@
++import { assert, describe, it } from "@effect/vitest";
++import type { PushDeviceRegistration } from "@t3tools/contracts";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++import * as DirectApnsDevices from "./DirectApnsDevices.ts";
++
++const TOKEN_A = "a".repeat(64);
++const TOKEN_B = "b".repeat(64);
++const TOKEN_C = "c".repeat(64);
++
++const registration = (overrides: Partial<PushDeviceRegistration> = {}): PushDeviceRegistration => ({
++  deviceId: "iphone",
++  apnsToken: TOKEN_A,
++  apsEnvironment: "sandbox",
++  bundleId: "com.example.t3code",
++  platform: "ios",
++  notificationsEnabled: true,
++  notifyOnApproval: true,
++  notifyOnInput: true,
++  notifyOnCompletion: true,
++  notifyOnFailure: true,
++  ...overrides,
++});
++
++const makeSecrets = () => {
++  const values = new Map<string, Uint8Array>();
++  const layer = Layer.succeed(
++    ServerSecretStore.ServerSecretStore,
++    ServerSecretStore.ServerSecretStore.of({
++      get: (name) => Effect.sync(() => Option.fromUndefinedOr(values.get(name))),
++      set: (name, value) => Effect.sync(() => void values.set(name, value)),
++      create: (name, value) => Effect.sync(() => void values.set(name, value)),
++      remove: (name) => Effect.sync(() => void values.delete(name)),
++      getOrCreateRandom: () => Effect.die("unused"),
++    }),
++  );
++  return { values, layer };
++};
++
++const withDevices = <A, E>(
++  body: (devices: DirectApnsDevices.DirectApnsDevices["Service"]) => Effect.Effect<A, E>,
++  secrets = makeSecrets(),
++) =>
++  Effect.gen(function* () {
++    const devices = yield* DirectApnsDevices.DirectApnsDevices;
++    return yield* body(devices);
++  }).pipe(Effect.provide(DirectApnsDevices.layer.pipe(Layer.provide(secrets.layer))));
++
++describe("DirectApnsDevices", () => {
++  it.effect("keeps a record per device so an iPhone and an iPad both get alerts", () =>
++    withDevices((devices) =>
++      Effect.gen(function* () {
++        yield* devices.register(registration());
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: TOKEN_B }));
++        const listed = yield* devices.list;
++        assert.deepStrictEqual(listed.map((device) => device.deviceId).toSorted(), [
++          "ipad",
++          "iphone",
++        ]);
++      }),
++    ),
++  );
++
++  it.effect("replaces a device's record when its token rotates or environment changes", () =>
++    withDevices((devices) =>
++      Effect.gen(function* () {
++        yield* devices.register(registration());
++        yield* devices.register(
++          registration({
++            apnsToken: TOKEN_C,
++            apsEnvironment: "production",
++            notifyOnCompletion: false,
++          }),
++        );
++        const listed = yield* devices.list;
++        assert.strictEqual(listed.length, 1);
++        assert.strictEqual(listed[0]?.apnsToken, TOKEN_C);
++        assert.strictEqual(listed[0]?.apsEnvironment, "production");
++        assert.strictEqual(listed[0]?.notifyOnCompletion, false);
++      }),
++    ),
++  );
++
++  it.effect("persists across a restart", () => {
++    const secrets = makeSecrets();
++    return withDevices((devices) => devices.register(registration()), secrets).pipe(
++      Effect.andThen(
++        withDevices(
++          (devices) =>
++            devices.list.pipe(
++              Effect.tap((listed) =>
++                Effect.sync(() =>
++                  assert.deepStrictEqual(
++                    listed.map((d) => d.deviceId),
++                    ["iphone"],
++                  ),
++                ),
++              ),
++            ),
++          secrets,
++        ),
++      ),
++    );
++  });
++
++  it.effect("unregisters one device and leaves the others", () =>
++    withDevices((devices) =>
++      Effect.gen(function* () {
++        yield* devices.register(registration());
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: TOKEN_B }));
++        yield* devices.unregister("iphone");
++        assert.deepStrictEqual(
++          (yield* devices.list).map((device) => device.deviceId),
++          ["ipad"],
++        );
++      }),
++    ),
++  );
++
++  it.effect("removes a rejected token but not one the device has since rotated", () =>
++    withDevices((devices) =>
++      Effect.gen(function* () {
++        yield* devices.register(registration());
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: TOKEN_B }));
++        yield* devices.register(registration({ apnsToken: TOKEN_C }));
++        // A BadDeviceToken for iphone's old token arrives after it rotated.
++        yield* devices.removeRejectedToken({ deviceId: "iphone", apnsToken: TOKEN_A });
++        assert.strictEqual((yield* devices.list).length, 2);
++        yield* devices.removeRejectedToken({ deviceId: "iphone", apnsToken: TOKEN_C });
++        assert.deepStrictEqual(
++          (yield* devices.list).map((device) => device.deviceId),
++          ["ipad"],
++        );
++      }),
++    ),
++  );
++});
+diff --git a/apps/server/src/relay/DirectApnsDevices.ts b/apps/server/src/relay/DirectApnsDevices.ts
+new file mode 100644
+index 0000000000..f68cd90bc2
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsDevices.ts
+@@ -0,0 +1,97 @@
++import { PushDeviceRegistration } from "@t3tools/contracts";
++import * as Context from "effect/Context";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++import * as Schema from "effect/Schema";
++import * as Semaphore from "effect/Semaphore";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++
++export type StoredPushDevice = PushDeviceRegistration;
++
++// APNs device tokens are bearer-like identifiers for pushing to a phone, so
++// they live in the secret store (mode-600 files in a mode-700 directory)
++// rather than in settings.json or the database.
++const DEVICES_SECRET = "direct-apns-devices";
++
++const DevicesJson = Schema.fromJsonString(Schema.Array(PushDeviceRegistration));
++const decodeDevices = Schema.decodeUnknownEffect(DevicesJson);
++const encodeDevices = Schema.encodeEffect(DevicesJson);
++
++export class DirectApnsDevices extends Context.Service<
++  DirectApnsDevices,
++  {
++    readonly register: (
++      device: PushDeviceRegistration,
++    ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
++    readonly unregister: (
++      deviceId: string,
++    ) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
++    readonly list: Effect.Effect<
++      ReadonlyArray<StoredPushDevice>,
++      ServerSecretStore.SecretStoreError
++    >;
++    /** Drops a token APNs rejected, unless the device has since registered a new one. */
++    readonly removeRejectedToken: (input: {
++      readonly deviceId: string;
++      readonly apnsToken: string;
++    }) => Effect.Effect<void, ServerSecretStore.SecretStoreError>;
++  }
++>()("t3/relay/DirectApnsDevices") {}
++
++const make = Effect.gen(function* () {
++  const secrets = yield* ServerSecretStore.ServerSecretStore;
++  // Registrations, unregistrations and APNs rejections all rewrite one file.
++  const lock = yield* Semaphore.make(1);
++
++  const read = secrets.get(DEVICES_SECRET).pipe(
++    Effect.flatMap(
++      Option.match({
++        onNone: () => Effect.succeed<ReadonlyArray<StoredPushDevice>>([]),
++        onSome: (bytes) =>
++          decodeDevices(new TextDecoder().decode(bytes)).pipe(
++            // A corrupt file must not block registering a fresh token.
++            Effect.catch(() => Effect.succeed<ReadonlyArray<StoredPushDevice>>([])),
++          ),
++      }),
++    ),
++  );
++
++  const modify = (
++    change: (devices: ReadonlyArray<StoredPushDevice>) => ReadonlyArray<StoredPushDevice>,
++  ) =>
++    lock.withPermits(1)(
++      Effect.gen(function* () {
++        const current = yield* read;
++        const next = change(current);
++        if (next.length === current.length && next.every((device, i) => device === current[i])) {
++          return;
++        }
++        const encoded = yield* encodeDevices(next).pipe(Effect.orDie);
++        yield* secrets.set(DEVICES_SECRET, new TextEncoder().encode(encoded));
++      }),
++    );
++
++  return DirectApnsDevices.of({
++    register: Effect.fn("DirectApnsDevices.register")(function* (device) {
++      yield* modify((devices) => [
++        ...devices.filter((existing) => existing.deviceId !== device.deviceId),
++        device,
++      ]);
++    }),
++    unregister: Effect.fn("DirectApnsDevices.unregister")(function* (deviceId) {
++      yield* modify((devices) => devices.filter((device) => device.deviceId !== deviceId));
++    }),
++    list: lock.withPermits(1)(read),
++    removeRejectedToken: Effect.fn("DirectApnsDevices.removeRejectedToken")(function* (input) {
++      yield* modify((devices) =>
++        devices.filter(
++          (device) => !(device.deviceId === input.deviceId && device.apnsToken === input.apnsToken),
++        ),
++      );
++    }),
++  });
++});
++
++export const layer = Layer.effect(DirectApnsDevices, make);
+diff --git a/apps/server/src/relay/DirectApnsNotifier.test.ts b/apps/server/src/relay/DirectApnsNotifier.test.ts
+new file mode 100644
+index 0000000000..331ffeb377
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsNotifier.test.ts
+@@ -0,0 +1,274 @@
++import { assert, describe, it } from "@effect/vitest";
++import {
++  EnvironmentId,
++  ProjectId,
++  ThreadId,
++  type OrchestrationV2DomainEvent,
++  type OrchestrationV2ThreadShell,
++  type PushDeviceRegistration,
++} from "@t3tools/contracts";
++import * as DateTime from "effect/DateTime";
++import * as Deferred from "effect/Deferred";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++import * as Ref from "effect/Ref";
++import * as Stream from "effect/Stream";
++import * as TestClock from "effect/testing/TestClock";
++
++import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
++import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
++import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
++import * as ProjectService from "../project/ProjectService.ts";
++import * as DirectApnsClient from "./DirectApnsClient.ts";
++import * as DirectApnsDevices from "./DirectApnsDevices.ts";
++import * as DirectApnsNotifier from "./DirectApnsNotifier.ts";
++
++const NOW = "2026-09-04T12:00:00.000Z";
++const THREAD_ID = ThreadId.make("thread-1");
++const PROJECT_ID = ProjectId.make("project-1");
++
++// Only the fields the awareness projection and the notifier read.
++const shell = (overrides: Record<string, unknown>) =>
++  ({
++    id: THREAD_ID,
++    projectId: PROJECT_ID,
++    title: "Fix the bug",
++    modelSelection: { instanceId: "codex", model: "test-model" },
++    lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
++    status: "running",
++    activityRunStatus: "running",
++    pendingRuntimeRequest: null,
++    pendingBackgroundTasks: [],
++    settledOverride: null,
++    archivedAt: null,
++    updatedAt: DateTime.makeUnsafe(NOW),
++    ...overrides,
++  }) as unknown as OrchestrationV2ThreadShell;
++
++const registration = (overrides: Partial<PushDeviceRegistration> = {}): PushDeviceRegistration => ({
++  deviceId: "iphone",
++  apnsToken: "a".repeat(64),
++  apsEnvironment: "sandbox",
++  bundleId: "com.example.t3code",
++  platform: "ios",
++  notificationsEnabled: true,
++  notifyOnApproval: true,
++  notifyOnInput: true,
++  notifyOnCompletion: true,
++  notifyOnFailure: true,
++  ...overrides,
++});
++
++const makeHarness = Effect.fnUntraced(function* (options: {
++  readonly configured?: boolean;
++  readonly domainEvents?: Stream.Stream<OrchestrationV2DomainEvent>;
++  readonly respond?: (
++    device: DirectApnsDevices.StoredPushDevice,
++  ) => DirectApnsClient.DirectApnsSendResult;
++}) {
++  const currentShell = yield* Ref.make<OrchestrationV2ThreadShell | null>(shell({}));
++  const reads: ThreadId[] = [];
++  const firstRead = yield* Deferred.make<void>();
++  const sent: Array<{ deviceId: string; title: string; body: string; phase: string }> = [];
++  const values = new Map<string, Uint8Array>();
++  const secrets = Layer.succeed(
++    ServerSecretStore.ServerSecretStore,
++    ServerSecretStore.ServerSecretStore.of({
++      get: (name) => Effect.sync(() => Option.fromUndefinedOr(values.get(name))),
++      set: (name, value) => Effect.sync(() => void values.set(name, value)),
++      create: (name, value) => Effect.sync(() => void values.set(name, value)),
++      remove: (name) => Effect.sync(() => void values.delete(name)),
++      getOrCreateRandom: () => Effect.die("unused"),
++    }),
++  );
++  const devicesLayer = DirectApnsDevices.layer.pipe(Layer.provide(secrets));
++  const layer = DirectApnsNotifier.layer.pipe(
++    Layer.provideMerge(devicesLayer),
++    Layer.provide(
++      Layer.succeed(
++        DirectApnsClient.DirectApnsClient,
++        DirectApnsClient.DirectApnsClient.of({
++          isConfigured: Effect.succeed(options.configured ?? true),
++          send: ({ device, notification }) =>
++            Effect.sync(() => {
++              sent.push({
++                deviceId: device.deviceId,
++                title: notification.title,
++                body: notification.body,
++                phase: notification.phase,
++              });
++              return options.respond?.(device) ?? { outcome: "sent" as const };
++            }),
++        }),
++      ),
++    ),
++    Layer.provide(
++      Layer.mock(ThreadManagement.ThreadManagementService)({
++        getThreadShell: (threadId) =>
++          Effect.sync(() => reads.push(threadId)).pipe(
++            Effect.andThen(Ref.get(currentShell)),
++            Effect.tap(() => Deferred.succeed(firstRead, undefined)),
++          ),
++        getShellSnapshot: () =>
++          Ref.get(currentShell).pipe(
++            Effect.map((current) => ({
++              schemaVersion: 2,
++              snapshotSequence: 1,
++              threads: current === null ? [] : [current],
++              archivedThreads: [],
++            })),
++          ) as never,
++        streamDomainEvents: options.domainEvents ?? Stream.empty,
++      }),
++    ),
++    Layer.provide(
++      Layer.mock(ProjectService.ProjectService)({
++        getById: () => Effect.succeed(Option.some({ id: PROJECT_ID, title: "Project" } as never)),
++        snapshot: Effect.succeed({ projects: [{ id: PROJECT_ID, title: "Project" }] } as never),
++      }),
++    ),
++    Layer.provide(
++      Layer.succeed(ServerEnvironment.ServerEnvironment, {
++        getEnvironmentId: Effect.succeed(EnvironmentId.make("env-1")),
++        getDescriptor: Effect.die("unused"),
++      } as never),
++    ),
++  );
++  return { layer, currentShell, sent, reads, firstRead };
++});
++
++describe("DirectApnsNotifier", () => {
++  it.effect("alerts every registered device on a transition, never on the first observation", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({});
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.register(registration());
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: "b".repeat(64) }));
++
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(harness.sent, []);
++
++        yield* Ref.set(
++          harness.currentShell,
++          shell({ activityRunStatus: "completed", status: "completed" }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(
++          harness.sent.map((push) => [push.deviceId, push.title, push.body, push.phase]).toSorted(),
++          [
++            ["ipad", "Fix the bug", "Done: Project", "completed"],
++            ["iphone", "Fix the bug", "Done: Project", "completed"],
++          ],
++        );
++
++        // Re-observing the same terminal state is not a new transition.
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.strictEqual(harness.sent.length, 2);
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("skips devices whose preferences exclude the transition", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({});
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.register(registration({ notifyOnCompletion: false }));
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: "b".repeat(64) }));
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        yield* Ref.set(
++          harness.currentShell,
++          shell({ activityRunStatus: "completed", status: "completed" }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(
++          harness.sent.map((push) => push.deviceId),
++          ["ipad"],
++        );
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("deletes a token APNs rejects as dead and keeps the other devices", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({
++        respond: (device) =>
++          device.deviceId === "iphone"
++            ? { outcome: "rejected", status: 400, reason: "BadDeviceToken", removeToken: true }
++            : { outcome: "sent" },
++      });
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.register(registration());
++        yield* devices.register(registration({ deviceId: "ipad", apnsToken: "b".repeat(64) }));
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        yield* Ref.set(
++          harness.currentShell,
++          shell({ activityRunStatus: "failed", status: "failed" }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(
++          (yield* devices.list).map((device) => device.deviceId),
++          ["ipad"],
++        );
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("does nothing, and reads nothing, while APNs credentials are not configured", () =>
++    Effect.gen(function* () {
++      yield* TestClock.setTime(Date.parse(NOW));
++      const harness = yield* makeHarness({ configured: false });
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        const devices = yield* DirectApnsDevices.DirectApnsDevices;
++        yield* devices.register(registration());
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        yield* Ref.set(
++          harness.currentShell,
++          shell({ activityRunStatus: "completed", status: "completed" }),
++        );
++        yield* notifier.observeThread(THREAD_ID);
++        yield* notifier.drain;
++        assert.deepStrictEqual(harness.sent, []);
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++
++  it.effect("reads a thread only for events that can change its phase", () =>
++    Effect.gen(function* () {
++      const event = (type: string, threadId: ThreadId) =>
++        ({ type, threadId, payload: {} }) as unknown as OrchestrationV2DomainEvent;
++      const harness = yield* makeHarness({
++        domainEvents: Stream.make(
++          event("message.updated", ThreadId.make("chatty")),
++          event("turn-item.updated", ThreadId.make("chatty")),
++          event("run.updated", THREAD_ID),
++        ),
++      });
++      yield* Effect.gen(function* () {
++        const notifier = yield* DirectApnsNotifier.DirectApnsNotifier;
++        yield* notifier.start();
++        yield* Deferred.await(harness.firstRead);
++        yield* notifier.drain;
++        assert.deepStrictEqual(harness.reads, [THREAD_ID]);
++      }).pipe(Effect.provide(harness.layer));
++    }),
++  );
++});
+diff --git a/apps/server/src/relay/DirectApnsNotifier.ts b/apps/server/src/relay/DirectApnsNotifier.ts
+new file mode 100644
+index 0000000000..c90817d483
+--- /dev/null
++++ b/apps/server/src/relay/DirectApnsNotifier.ts
+@@ -0,0 +1,177 @@
++import type { OrchestrationV2DomainEvent, ThreadId } from "@t3tools/contracts";
++import { projectThreadAwarenessV2 } from "@t3tools/shared/agentAwareness";
++import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
++import { turnItemUpdateCanEndBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
++import * as Cause from "effect/Cause";
++import * as Clock from "effect/Clock";
++import * as Context from "effect/Context";
++import * as Effect from "effect/Effect";
++import * as Layer from "effect/Layer";
++import * as Option from "effect/Option";
++import type * as Scope from "effect/Scope";
++import * as Stream from "effect/Stream";
++
++import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
++import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
++import * as ProjectService from "../project/ProjectService.ts";
++import { forkParked } from "../serverActivation.ts";
++import * as DirectApnsClient from "./DirectApnsClient.ts";
++import * as DirectApnsDevices from "./DirectApnsDevices.ts";
++import { alertForTransition, makePhaseTracker, notificationForState } from "./directApnsPolicy.ts";
++
++const SEND_CONCURRENCY = 4;
++
++// Only these events can change a thread's awareness phase. Turn-item updates matter
++// when they end background work that was holding a completion back.
++const PHASE_EVENT_TYPES = new Set<string>([
++  "thread.created",
++  "thread.archived",
++  "thread.unarchived",
++  "thread.deleted",
++  "thread.settled",
++  "run.created",
++  "run.updated",
++  "runtime-request.updated",
++  "subagent.updated",
++  "provider-thread.updated",
++]);
++
++function affectsAwarenessPhase(event: OrchestrationV2DomainEvent): boolean {
++  if (PHASE_EVENT_TYPES.has(event.type)) return true;
++  const payload: unknown = "payload" in event ? event.payload : undefined;
++  return (
++    event.type === "turn-item.updated" &&
++    typeof payload === "object" &&
++    payload !== null &&
++    "type" in payload &&
++    "status" in payload &&
++    turnItemUpdateCanEndBackgroundWork(
++      payload as Parameters<typeof turnItemUpdateCanEndBackgroundWork>[0],
++    )
++  );
++}
++
++/**
++ * Sends alert pushes straight to APNs for threads on this environment, for
++ * forks whose bundle ID the official relay's APNs key cannot reach. It reads the
++ * same domain events and awareness projection as AgentAwarenessRelay but is
++ * independent of T3 Connect: no relay link is required.
++ */
++export class DirectApnsNotifier extends Context.Service<
++  DirectApnsNotifier,
++  {
++    readonly observeThread: (threadId: ThreadId) => Effect.Effect<void>;
++    readonly drain: Effect.Effect<void>;
++    readonly start: () => Effect.Effect<void, never, Scope.Scope>;
++  }
++>()("t3/relay/DirectApnsNotifier") {}
++
++const make = Effect.gen(function* () {
++  const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
++  const threads = yield* ThreadManagement.ThreadManagementService;
++  const projects = yield* ProjectService.ProjectService;
++  const devices = yield* DirectApnsDevices.DirectApnsDevices;
++  const client = yield* DirectApnsClient.DirectApnsClient;
++  const tracker = makePhaseTracker();
++
++  const process = Effect.fn("DirectApnsNotifier.process")(function* (threadId: ThreadId) {
++    if (!(yield* client.isConfigured)) {
++      yield* Effect.logDebug("direct APNs notifier idle; credentials not configured");
++      return;
++    }
++    const shell = yield* threads.getThreadShell(threadId);
++    if (shell === null || shell.archivedAt !== null) {
++      tracker.forget(threadId);
++      return;
++    }
++    const project = yield* projects.getById(shell.projectId);
++    if (Option.isNone(project)) return;
++    const state = projectThreadAwarenessV2({
++      environmentId: yield* serverEnvironment.getEnvironmentId,
++      project: project.value,
++      thread: shell,
++    });
++    const { previous } = tracker.observe(threadId, state);
++    if (state === null) return;
++    const nowMs = yield* Clock.currentTimeMillis;
++    const recipients = (yield* devices.list).filter((device) =>
++      alertForTransition({ previous, state, preferences: device, nowMs }),
++    );
++    if (recipients.length === 0) return;
++    const notification = notificationForState(state);
++    yield* Effect.forEach(
++      recipients,
++      (device) =>
++        client.send({ device, notification }).pipe(
++          Effect.flatMap((result) =>
++            result.outcome === "rejected" && result.removeToken
++              ? devices.removeRejectedToken({
++                  deviceId: device.deviceId,
++                  apnsToken: device.apnsToken,
++                })
++              : Effect.void,
++          ),
++        ),
++      { concurrency: SEND_CONCURRENCY, discard: true },
++    );
++  });
++
++  // A thread queued twice before its turn is processed is read once, from the latest state.
++  const queued = new Set<ThreadId>();
++  const worker = yield* makeDrainableWorker((threadId: ThreadId) =>
++    Effect.sync(() => queued.delete(threadId)).pipe(
++      Effect.andThen(process(threadId)),
++      // A failing push must never disturb the thread or the relay publish path.
++      Effect.catchCause((cause) =>
++        Cause.hasInterruptsOnly(cause)
++          ? Effect.void
++          : Effect.logWarning("direct APNs notification failed", {
++              threadId,
++              cause: Cause.pretty(cause),
++            }),
++      ),
++    ),
++  );
++  const enqueue = (threadId: ThreadId) =>
++    Effect.suspend(() => {
++      if (queued.has(threadId)) return Effect.void;
++      queued.add(threadId);
++      return worker.enqueue(threadId);
++    });
++
++  // Threads already waiting or finished at startup are the baseline, not news.
++  const seedBaseline = Effect.gen(function* () {
++    const [projectSnapshot, shellSnapshot] = yield* Effect.all([
++      projects.snapshot,
++      threads.getShellSnapshot(),
++    ]);
++    const environmentId = yield* serverEnvironment.getEnvironmentId;
++    const projectById = new Map(projectSnapshot.projects.map((project) => [project.id, project]));
++    for (const shell of shellSnapshot.threads) {
++      const project = projectById.get(shell.projectId);
++      if (!project || shell.archivedAt !== null) continue;
++      tracker.seed(shell.id, projectThreadAwarenessV2({ environmentId, project, thread: shell }));
++    }
++  });
++
++  return DirectApnsNotifier.of({
++    observeThread: enqueue,
++    drain: worker.drain,
++    start: Effect.fn("DirectApnsNotifier.start")(function* () {
++      yield* forkParked(
++        seedBaseline.pipe(
++          Effect.catchCause((cause) =>
++            Effect.logWarning("direct APNs baseline failed", { cause: Cause.pretty(cause) }),
++          ),
++        ),
++      );
++      yield* forkParked(
++        Stream.runForEach(threads.streamDomainEvents, (event) =>
++          affectsAwarenessPhase(event) ? enqueue(event.threadId) : Effect.void,
++        ),
++      );
++    }),
++  });
++});
++
++export const layer = Layer.effect(DirectApnsNotifier, make);
+diff --git a/apps/server/src/relay/directApnsPolicy.test.ts b/apps/server/src/relay/directApnsPolicy.test.ts
+new file mode 100644
+index 0000000000..77c5fdfabe
+--- /dev/null
++++ b/apps/server/src/relay/directApnsPolicy.test.ts
+@@ -0,0 +1,217 @@
++import * as DateTime from "effect/DateTime";
++import { describe, expect, it } from "vite-plus/test";
++import type { AgentAwarenessState } from "@t3tools/shared/agentAwareness";
++import { EnvironmentId, ThreadId } from "@t3tools/contracts";
++
++import {
++  alertForTransition,
++  DIRECT_APNS_TERMINAL_FRESHNESS_MS,
++  makePhaseTracker,
++  notificationForState,
++  type DirectApnsPreferences,
++} from "./directApnsPolicy.ts";
++
++const NOW_MS = Date.parse("2026-09-04T12:00:00.000Z");
++const ALL_ON: DirectApnsPreferences = {
++  notificationsEnabled: true,
++  notifyOnApproval: true,
++  notifyOnInput: true,
++  notifyOnCompletion: true,
++  notifyOnFailure: true,
++};
++
++const state = (overrides: Partial<AgentAwarenessState> = {}): AgentAwarenessState => ({
++  environmentId: EnvironmentId.make("env-1"),
++  threadId: ThreadId.make("thread-1"),
++  projectTitle: "Project",
++  threadTitle: "Fix the bug",
++  phase: "running",
++  headline: "Working",
++  modelTitle: "Model",
++  updatedAt: "2026-09-04T11:59:30.000Z",
++  deepLink: "/threads/env-1/thread-1",
++  ...overrides,
++});
++
++describe("phase tracker", () => {
++  it("never alerts on the first observation of a thread", () => {
++    const tracker = makePhaseTracker();
++    const waiting = state({ phase: "waiting_for_approval" });
++    expect(tracker.observe(waiting.threadId, waiting)).toEqual({ previous: undefined });
++  });
++
++  it("reports the previous phase and remembers the new one", () => {
++    const tracker = makePhaseTracker();
++    tracker.observe(ThreadId.make("thread-1"), state({ phase: "running" }));
++    expect(tracker.observe(ThreadId.make("thread-1"), state({ phase: "completed" }))).toEqual({
++      previous: "running",
++    });
++    expect(tracker.observe(ThreadId.make("thread-1"), state({ phase: "completed" }))).toEqual({
++      previous: "completed",
++    });
++  });
++
++  it("keeps the last phase while a thread projects to no activity", () => {
++    const tracker = makePhaseTracker();
++    const id = ThreadId.make("thread-1");
++    tracker.observe(id, state({ phase: "running" }));
++    expect(tracker.observe(id, null)).toEqual({ previous: "running" });
++    expect(tracker.observe(id, state({ phase: "waiting_for_input" }))).toEqual({
++      previous: "running",
++    });
++  });
++
++  it("seeds a baseline without overriding an observed phase, and forgets deleted threads", () => {
++    const tracker = makePhaseTracker();
++    const id = ThreadId.make("thread-1");
++    tracker.observe(id, state({ phase: "running" }));
++    tracker.seed(id, state({ phase: "completed" }));
++    expect(tracker.observe(id, state({ phase: "completed" }))).toEqual({ previous: "running" });
++    tracker.forget(id);
++    expect(tracker.observe(id, state({ phase: "completed" }))).toEqual({ previous: undefined });
++    const other = ThreadId.make("thread-2");
++    tracker.seed(other, state({ phase: "waiting_for_approval" }));
++    expect(tracker.observe(other, state({ phase: "waiting_for_approval" }))).toEqual({
++      previous: "waiting_for_approval",
++    });
++  });
++});
++
++describe("alertForTransition", () => {
++  it.each(["waiting_for_approval", "waiting_for_input"] as const)(
++    "alerts when a running thread starts %s",
++    (phase) => {
++      expect(
++        alertForTransition({
++          previous: "running",
++          state: state({ phase }),
++          preferences: ALL_ON,
++          nowMs: NOW_MS,
++        }),
++      ).toBe(true);
++    },
++  );
++
++  it("does not alert when moving between attention phases or staying put", () => {
++    for (const [previous, phase] of [
++      ["waiting_for_approval", "waiting_for_input"],
++      ["waiting_for_input", "waiting_for_input"],
++    ] as const) {
++      expect(
++        alertForTransition({
++          previous,
++          state: state({ phase }),
++          preferences: ALL_ON,
++          nowMs: NOW_MS,
++        }),
++      ).toBe(false);
++    }
++  });
++
++  it.each(["completed", "failed"] as const)("alerts when a running thread %s", (phase) => {
++    expect(
++      alertForTransition({
++        previous: "running",
++        state: state({ phase }),
++        preferences: ALL_ON,
++        nowMs: NOW_MS,
++      }),
++    ).toBe(true);
++  });
++
++  it("does not re-alert a thread that was already terminal", () => {
++    expect(
++      alertForTransition({
++        previous: "completed",
++        state: state({ phase: "failed" }),
++        preferences: ALL_ON,
++        nowMs: NOW_MS,
++      }),
++    ).toBe(false);
++  });
++
++  it("does not alert on a first observation", () => {
++    expect(
++      alertForTransition({
++        previous: undefined,
++        state: state({ phase: "completed" }),
++        preferences: ALL_ON,
++        nowMs: NOW_MS,
++      }),
++    ).toBe(false);
++  });
++
++  it("drops terminal alerts older than the freshness window but not attention alerts", () => {
++    const stale = DateTime.formatIso(
++      DateTime.makeUnsafe(NOW_MS - DIRECT_APNS_TERMINAL_FRESHNESS_MS - 1_000),
++    );
++    expect(
++      alertForTransition({
++        previous: "running",
++        state: state({ phase: "completed", updatedAt: stale }),
++        preferences: ALL_ON,
++        nowMs: NOW_MS,
++      }),
++    ).toBe(false);
++    expect(
++      alertForTransition({
++        previous: "running",
++        state: state({ phase: "waiting_for_input", updatedAt: stale }),
++        preferences: ALL_ON,
++        nowMs: NOW_MS,
++      }),
++    ).toBe(true);
++  });
++
++  it("honours the device's notification preferences", () => {
++    const decide = (phase: AgentAwarenessState["phase"], preferences: DirectApnsPreferences) =>
++      alertForTransition({
++        previous: "running",
++        state: state({ phase }),
++        preferences,
++        nowMs: NOW_MS,
++      });
++    expect(decide("waiting_for_approval", { ...ALL_ON, notifyOnApproval: false })).toBe(false);
++    expect(decide("waiting_for_input", { ...ALL_ON, notifyOnInput: false })).toBe(false);
++    expect(decide("completed", { ...ALL_ON, notifyOnCompletion: false })).toBe(false);
++    expect(decide("failed", { ...ALL_ON, notifyOnFailure: false })).toBe(false);
++    expect(decide("completed", { ...ALL_ON, notificationsEnabled: false })).toBe(false);
++  });
++
++  it("ignores phases that are not alert-worthy", () => {
++    for (const phase of ["starting", "running", "stale"] as const) {
++      expect(
++        alertForTransition({
++          previous: "completed",
++          state: state({ phase }),
++          preferences: ALL_ON,
++          nowMs: NOW_MS,
++        }),
++      ).toBe(false);
++    }
++  });
++});
++
++describe("notificationForState", () => {
++  it("carries the fields the mobile app routes on", () => {
++    expect(notificationForState(state({ phase: "waiting_for_approval" }))).toEqual({
++      title: "Fix the bug",
++      body: "Approval: Project",
++      environmentId: "env-1",
++      threadId: "thread-1",
++      deepLink: "/threads/env-1/thread-1",
++      phase: "waiting_for_approval",
++      updatedAt: "2026-09-04T11:59:30.000Z",
++    });
++  });
++
++  it("truncates long text and rejects off-app deep links", () => {
++    const notification = notificationForState(
++      state({ threadTitle: "t".repeat(400), projectTitle: "p".repeat(400), deepLink: "//evil" }),
++    );
++    expect(notification.title.length).toBe(120);
++    expect(notification.title.endsWith("...")).toBe(true);
++    expect(notification.body.length).toBe(120);
++    expect(notification.deepLink).toBe("/");
++  });
++});
+diff --git a/apps/server/src/relay/directApnsPolicy.ts b/apps/server/src/relay/directApnsPolicy.ts
+new file mode 100644
+index 0000000000..4d20f72ac9
+--- /dev/null
++++ b/apps/server/src/relay/directApnsPolicy.ts
+@@ -0,0 +1,141 @@
++// Ported from infra/relay/src/agentActivity/agentActivityAlerts.ts and
++// agentActivityPayloads.ts. The relay decides on aggregates it receives from
++// every environment; this server only sees its own threads, so the decision is
++// per thread phase transition instead.
++import type { ThreadId } from "@t3tools/contracts";
++import type { AgentAwarenessPhase, AgentAwarenessState } from "@t3tools/shared/agentAwareness";
++
++export interface DirectApnsPreferences {
++  readonly notificationsEnabled: boolean;
++  readonly notifyOnApproval: boolean;
++  readonly notifyOnInput: boolean;
++  readonly notifyOnCompletion: boolean;
++  readonly notifyOnFailure: boolean;
++}
++
++export interface DirectApnsNotification {
++  readonly title: string;
++  readonly body: string;
++  readonly environmentId: string;
++  readonly threadId: string;
++  readonly deepLink: string;
++  readonly phase: string;
++  readonly updatedAt: string;
++}
++
++type Phase = AgentAwarenessPhase;
++
++export const DIRECT_APNS_TERMINAL_FRESHNESS_MS = 2 * 60 * 1_000;
++
++const MAX_TEXT_LENGTH = 120;
++const MAX_DEEP_LINK_LENGTH = 512;
++
++const isAttentionPhase = (phase: Phase) =>
++  phase === "waiting_for_approval" || phase === "waiting_for_input";
++const isTerminalPhase = (phase: Phase) => phase === "completed" || phase === "failed";
++
++function allowedByPreferences(preferences: DirectApnsPreferences, phase: Phase): boolean {
++  if (!preferences.notificationsEnabled) return false;
++  switch (phase) {
++    case "waiting_for_approval":
++      return preferences.notifyOnApproval;
++    case "waiting_for_input":
++      return preferences.notifyOnInput;
++    case "completed":
++      return preferences.notifyOnCompletion;
++    case "failed":
++      return preferences.notifyOnFailure;
++    default:
++      return false;
++  }
++}
++
++/**
++ * Remembers each thread's last observed phase. The first observation of a
++ * thread is a replay (server restart, catch-up), never a transition that
++ * should buzz a phone, so it reports `previous: undefined`.
++ */
++export function makePhaseTracker() {
++  const phases = new Map<ThreadId, Phase>();
++  return {
++    observe(
++      threadId: ThreadId,
++      state: AgentAwarenessState | null,
++    ): { readonly previous: Phase | undefined } {
++      const previous = phases.get(threadId);
++      // A thread whose activity projects to nothing (settled, interrupted) keeps its last
++      // phase, so a re-projected terminal state is not mistaken for a new completion.
++      if (state !== null) phases.set(threadId, state.phase);
++      return { previous };
++    },
++    /** Records a startup baseline without overriding anything an event already observed. */
++    seed(threadId: ThreadId, state: AgentAwarenessState | null): void {
++      if (state !== null && !phases.has(threadId)) phases.set(threadId, state.phase);
++    },
++    forget(threadId: ThreadId): void {
++      phases.delete(threadId);
++    },
++  };
++}
++
++export function alertForTransition(input: {
++  readonly previous: Phase | undefined;
++  readonly state: AgentAwarenessState;
++  readonly preferences: DirectApnsPreferences;
++  readonly nowMs: number;
++}): boolean {
++  const { previous, state } = input;
++  if (previous === undefined || previous === state.phase) return false;
++  if (!allowedByPreferences(input.preferences, state.phase)) return false;
++  if (isAttentionPhase(state.phase)) return !isAttentionPhase(previous);
++  if (!isTerminalPhase(state.phase) || isTerminalPhase(previous)) return false;
++  const updatedAtMs = Date.parse(state.updatedAt);
++  return (
++    Number.isFinite(updatedAtMs) && input.nowMs - updatedAtMs <= DIRECT_APNS_TERMINAL_FRESHNESS_MS
++  );
++}
++
++function truncateText(value: string, maxLength: number): string {
++  const trimmed = value.trim();
++  return trimmed.length <= maxLength ? trimmed : trimmed.slice(0, maxLength - 3).trimEnd() + "...";
++}
++
++// Only in-app thread paths are routable by the mobile client.
++function sanitizeDeepLink(value: string): string {
++  const trimmed = value.trim();
++  if (!trimmed.startsWith("/") || trimmed.startsWith("//")) return "/";
++  return truncateText(trimmed, MAX_DEEP_LINK_LENGTH);
++}
++
++// Same short status words as infra/relay's statusForPhase, so a push reads the
++// same whether the relay or this server sent it.
++function statusForPhase(phase: Phase): string {
++  switch (phase) {
++    case "waiting_for_approval":
++      return "Approval";
++    case "waiting_for_input":
++      return "Input";
++    case "completed":
++      return "Done";
++    case "failed":
++      return "Failed";
++    case "starting":
++      return "Connecting";
++    case "running":
++      return "Working";
++    case "stale":
++      return "Waiting";
++  }
++}
++
++export function notificationForState(state: AgentAwarenessState): DirectApnsNotification {
++  return {
++    title: truncateText(state.threadTitle, MAX_TEXT_LENGTH),
++    body: truncateText(`${statusForPhase(state.phase)}: ${state.projectTitle}`, MAX_TEXT_LENGTH),
++    environmentId: state.environmentId,
++    threadId: state.threadId,
++    deepLink: sanitizeDeepLink(state.deepLink),
++    phase: state.phase,
++    updatedAt: state.updatedAt,
++  };
++}
+diff --git a/apps/server/src/server.ts b/apps/server/src/server.ts
+index ab3bbeb1d1..a97d041058 100644
+--- a/apps/server/src/server.ts
++++ b/apps/server/src/server.ts
+@@ -113,6 +113,9 @@ import * as Keybindings from "./keybindings.ts";
+ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
+ import * as ServerOwnership from "./serverOwnership.ts";
+ import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
++import * as DirectApnsClient from "./relay/DirectApnsClient.ts";
++import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
++import * as DirectApnsNotifier from "./relay/DirectApnsNotifier.ts";
+ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
+ import * as ServerSettings from "./serverSettings.ts";
+ import * as ManagedLimits from "./policy/managedLimits.ts";
+@@ -688,8 +691,22 @@ const layerServerRestart = Layer.effect(
+   }),
+ );
+ 
++// One DirectApnsDevices instance serves the RPC handlers and the notifier, so its
++// write lock covers every registration and rejection.
++const layerDirectApnsNotifier = Layer.effectDiscard(
++  Effect.gen(function* () {
++    const service = yield* DirectApnsNotifier.DirectApnsNotifier;
++    yield* service.start();
++  }),
++).pipe(
++  Layer.provide(DirectApnsNotifier.layer),
++  Layer.provide(DirectApnsClient.layer.pipe(Layer.provide(DirectApnsClient.transportLayer))),
++  Layer.provideMerge(DirectApnsDevices.layer),
++);
++
+ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
+   AgentAwarenessRelay.layer,
++  layerDirectApnsNotifier,
+   HeldHooksWaker.layer,
+   layerThreadSettlementWorker,
+   layerIdleCompactionWorker,
+diff --git a/apps/server/src/ws.test.ts b/apps/server/src/ws.test.ts
+index 26456c0da3..79bce6ab24 100644
+--- a/apps/server/src/ws.test.ts
++++ b/apps/server/src/ws.test.ts
+@@ -96,6 +96,7 @@ import * as McpAppRequests from "./mcpApps/McpAppRequests.ts";
+ import * as ModelManifest from "./provider/ModelManifest.ts";
+ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
+ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
++import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
+ import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+ import * as RpcAuthorization from "./auth/RpcAuthorization.ts";
+ import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
+@@ -841,6 +842,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
+   Layer.mock(ModelManifest.ModelManifest)({}),
+   Layer.mock(OrchestrationEventStore.OrchestrationEventStore)({}),
+   Layer.mock(Orchestrator.OrchestratorV2)({}),
++  Layer.mock(DirectApnsDevices.DirectApnsDevices)({}),
+   Layer.mock(OtlpEndpointCheck.OtlpEndpointCheck)({}),
+   Layer.mock(PairingGrantStore.PairingGrantStore)({}),
+   Layer.mock(PeerLinks.PeerLinks)({}),
+diff --git a/apps/server/src/ws.ts b/apps/server/src/ws.ts
+index f06453a1c2..c85872d42c 100644
+--- a/apps/server/src/ws.ts
++++ b/apps/server/src/ws.ts
+@@ -260,6 +260,7 @@ import * as SqlClient from "effect/sql/SqlClient";
+ import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
+ import * as SourceControlDiscovery from "./sourceControl/SourceControlDiscovery.ts";
+ import * as OtlpEndpointCheck from "./observability/OtlpEndpointCheck.ts";
++import * as DirectApnsDevices from "./relay/DirectApnsDevices.ts";
+ import * as TextGenerators from "./textGeneration/TextGenerators.ts";
+ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+ import * as SourceControlSignIn from "./sourceControl/SourceControlSignIn.ts";
+@@ -1584,6 +1585,7 @@ export const layerWsRpc = (
+       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+       const secretCheck = yield* SecretCheck.SecretCheck;
+       const otlpEndpointCheck = yield* OtlpEndpointCheck.OtlpEndpointCheck;
++      const directApnsDevices = yield* DirectApnsDevices.DirectApnsDevices;
+       const textGenerators = yield* TextGenerators.TextGenerators;
+       const sourceControlRepositories =
+         yield* SourceControlRepositoryService.SourceControlRepositoryService;
+@@ -2743,6 +2745,20 @@ export const layerWsRpc = (
+         [WS_METHODS.serverListTextGeneratorModels]: (input) => textGenerators.listModels(input),
+         [WS_METHODS.serverPrepareTriage]: (input) => triage.prepare(input),
+         [WS_METHODS.serverSignalProcess]: (input) => processDiagnostics.signal(input),
++        [WS_METHODS.notificationsRegisterDevice]: (input) =>
++          directApnsDevices.register(input).pipe(
++            Effect.tapError((cause) =>
++              Effect.logWarning("push device registration failed", { cause }),
++            ),
++            Effect.orDie,
++          ),
++        [WS_METHODS.notificationsUnregisterDevice]: (input) =>
++          directApnsDevices.unregister(input.deviceId).pipe(
++            Effect.tapError((cause) =>
++              Effect.logWarning("push device unregistration failed", { cause }),
++            ),
++            Effect.orDie,
++          ),
+         [WS_METHODS.serverReportClientActivity]: (input, metadata) =>
+           Ref.update(rpcClientIds, (clientIds) => {
+             const next = new Set(clientIds);
+diff --git a/packages/client-runtime/src/state/commandPermissions.test.ts b/packages/client-runtime/src/state/commandPermissions.test.ts
+index 403f443946..e14493c405 100644
+--- a/packages/client-runtime/src/state/commandPermissions.test.ts
++++ b/packages/client-runtime/src/state/commandPermissions.test.ts
+@@ -101,6 +101,33 @@ describe("command permissions", () => {
+     }),
+   );
+ 
++  it.effect.each([
++    WS_METHODS.notificationsRegisterDevice,
++    WS_METHODS.notificationsUnregisterDevice,
++  ])("requires the destination thread-read grant for %s", (method) =>
++    Effect.scoped(
++      Effect.gen(function* () {
++        const registry = yield* setup;
++        const push = createCommandPermissions(runtime, method);
++        registry.set(sessions(env), AsyncResult.success(grant(false)));
++        expect(registry.get(push.permissionAtom(env))).toBe(false);
++        expect((yield* push.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
++          "EnvironmentAuthorizationError",
++        );
++        registry.set(
++          sessions(env),
++          AsyncResult.success({
++            ...grant(false),
++            scopes: [AuthOrchestrationReadScope],
++            permissions: [AuthOrchestrationReadScope],
++          }),
++        );
++        expect(registry.get(push.permissionAtom(env))).toBe(true);
++        yield* push.authorize(registry, env);
++      }),
++    ),
++  );
++
+   it.effect("requires the destination preview grant to close a browser tab", () =>
+     Effect.gen(function* () {
+       const registry = yield* setup;
+diff --git a/packages/client-runtime/src/state/server.ts b/packages/client-runtime/src/state/server.ts
+index cb02405722..ed606054e0 100644
+--- a/packages/client-runtime/src/state/server.ts
++++ b/packages/client-runtime/src/state/server.ts
+@@ -1894,6 +1894,16 @@ export function createServerEnvironmentAtoms<R, E>(
+         key: ({ environmentId }) => environmentId,
+       },
+     }),
++    // Mobile registers its APNs token with the environments it talks to so the
++    // server can push alerts directly, independent of the T3 Connect relay.
++    registerPushDevice: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:register-push-device",
++      tag: WS_METHODS.notificationsRegisterDevice,
++    }),
++    unregisterPushDevice: createEnvironmentRpcCommand(runtime, {
++      label: "environment-data:server:unregister-push-device",
++      tag: WS_METHODS.notificationsUnregisterDevice,
++    }),
+     checkOtlpEndpoint: createEnvironmentRpcCommand(runtime, {
+       label: "environment-data:server:check-otlp-endpoint",
+       tag: WS_METHODS.serverCheckOtlpEndpoint,
+diff --git a/packages/contracts/src/clientRpcPermissions.ts b/packages/contracts/src/clientRpcPermissions.ts
+index 0b6164871a..f830aef406 100644
+--- a/packages/contracts/src/clientRpcPermissions.ts
++++ b/packages/contracts/src/clientRpcPermissions.ts
+@@ -21,6 +21,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
+   [WS_METHODS.previewClose]: AuthPreviewOperateScope,
+   // Stopping a server signals its processes, as closing a terminal does.
+   [WS_METHODS.previewStopLocalServer]: AuthTerminalOperateScope,
++  // Registering a device only asks this server to alert it about threads its grant can already read.
++  [WS_METHODS.notificationsRegisterDevice]: AuthOrchestrationReadScope,
++  [WS_METHODS.notificationsUnregisterDevice]: AuthOrchestrationReadScope,
+   [WS_METHODS.serverRunStorageCleanup]: AuthSettingsWriteScope,
+   // Restarts the server, as an update does.
+   [WS_METHODS.serverReclaimDatabaseSpace]: AuthEnvironmentMaintainScope,
+diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
+index b740790740..bbc6a54d47 100644
+--- a/packages/contracts/src/index.ts
++++ b/packages/contracts/src/index.ts
+@@ -75,3 +75,4 @@ export * from "./secretRequest.ts";
+ export * from "./secretReference.ts";
+ export * from "./settingsSecretValue.ts";
+ export * from "./clientRpcPermissions.ts";
++export * from "./pushNotifications.ts";
+diff --git a/packages/contracts/src/pushNotifications.ts b/packages/contracts/src/pushNotifications.ts
+new file mode 100644
+index 0000000000..c8786b9dd9
+--- /dev/null
++++ b/packages/contracts/src/pushNotifications.ts
+@@ -0,0 +1,28 @@
++import * as Schema from "effect/Schema";
++
++import { TrimmedNonEmptyString } from "./baseSchemas.ts";
++
++export const PushApsEnvironment = Schema.Literals(["sandbox", "production"]);
++export type PushApsEnvironment = typeof PushApsEnvironment.Type;
++
++// The token is interpolated into the APNs request path, so only hex is accepted.
++const ApnsDeviceToken = Schema.String.check(Schema.isPattern(/^[0-9a-fA-F]{32,200}$/));
++
++export const PushDeviceRegistration = Schema.Struct({
++  deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
++  apnsToken: ApnsDeviceToken,
++  apsEnvironment: PushApsEnvironment,
++  bundleId: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
++  platform: Schema.Literal("ios"),
++  notificationsEnabled: Schema.Boolean,
++  notifyOnApproval: Schema.Boolean,
++  notifyOnInput: Schema.Boolean,
++  notifyOnCompletion: Schema.Boolean,
++  notifyOnFailure: Schema.Boolean,
++});
++export type PushDeviceRegistration = typeof PushDeviceRegistration.Type;
++
++export const PushDeviceUnregistration = Schema.Struct({
++  deviceId: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
++});
++export type PushDeviceUnregistration = typeof PushDeviceUnregistration.Type;
+diff --git a/packages/contracts/src/rpc.ts b/packages/contracts/src/rpc.ts
+index 301206d859..5d9e59712e 100644
+--- a/packages/contracts/src/rpc.ts
++++ b/packages/contracts/src/rpc.ts
+@@ -84,6 +84,7 @@ import {
+   AuthAccessStreamEvent,
+   EnvironmentAuthorizationError,
+ } from "./auth.ts";
++import { PushDeviceRegistration, PushDeviceUnregistration } from "./pushNotifications.ts";
+ import { ClientActivityReportInput } from "./background.ts";
+ import {
+   FilesystemGetMetadataInput,
+@@ -591,6 +592,9 @@ export const WS_METHODS = {
+   scheduledTasksListWebhookDeliveries: "scheduledTasks.listWebhookDeliveries",
+   scheduledTasksGetWebhookDelivery: "scheduledTasks.getWebhookDelivery",
+ 
++  notificationsRegisterDevice: "notifications.registerDevice",
++  notificationsUnregisterDevice: "notifications.unregisterDevice",
++
+   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
+   cloudInstallRelayClient: "cloud.installRelayClient",
+ 
+@@ -1097,6 +1101,16 @@ const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRelayClient
+   stream: true,
+ });
+ 
++const WsNotificationsRegisterDeviceRpc = Rpc.make(WS_METHODS.notificationsRegisterDevice, {
++  payload: PushDeviceRegistration,
++  error: EnvironmentAuthorizationError,
++});
++
++const WsNotificationsUnregisterDeviceRpc = Rpc.make(WS_METHODS.notificationsUnregisterDevice, {
++  payload: PushDeviceUnregistration,
++  error: EnvironmentAuthorizationError,
++});
++
+ const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
+   payload: ClientActivityReportInput,
+   error: EnvironmentAuthorizationError,
+@@ -2346,6 +2360,8 @@ export const WsRpcGroup = RpcGroup.make(
+   WsSecretsAnswerRequestRpc,
+   WsScheduledTasksListWebhookDeliveriesRpc,
+   WsScheduledTasksGetWebhookDeliveryRpc,
++  WsNotificationsRegisterDeviceRpc,
++  WsNotificationsUnregisterDeviceRpc,
+   WsServerReportClientActivityRpc,
+   WsCloudGetRelayClientStatusRpc,
+   WsCloudInstallRelayClientRpc,
+diff --git a/packages/shared/package.json b/packages/shared/package.json
+index 68a0b589f8..3913b71e70 100644
+--- a/packages/shared/package.json
++++ b/packages/shared/package.json
+@@ -67,6 +67,10 @@
+       "types": "./src/advertisedEndpoint.ts",
+       "import": "./src/advertisedEndpoint.ts"
+     },
++    "./apnsProviderToken": {
++      "types": "./src/apnsProviderToken.ts",
++      "import": "./src/apnsProviderToken.ts"
++    },
+     "./agentAwareness": {
+       "types": "./src/agentAwareness.ts",
+       "import": "./src/agentAwareness.ts"
+diff --git a/packages/shared/src/apnsProviderToken.test.ts b/packages/shared/src/apnsProviderToken.test.ts
+new file mode 100644
+index 0000000000..e4493c27d1
+--- /dev/null
++++ b/packages/shared/src/apnsProviderToken.test.ts
+@@ -0,0 +1,62 @@
++// @effect-diagnostics-next-line nodeBuiltinImport:off -- Verifies signatures with node's own verifier.
++import * as NodeCrypto from "node:crypto";
++
++import { describe, expect, it } from "vite-plus/test";
++
++import {
++  APNS_JWT_REUSE_SECONDS,
++  makeApnsProviderTokenCache,
++  signApnsProviderJwt,
++} from "./apnsProviderToken.ts";
++
++const { privateKey, publicKey } = NodeCrypto.generateKeyPairSync("ec", {
++  namedCurve: "prime256v1",
++});
++const privatePem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
++const credentials = { teamId: "TEAM123456", keyId: "KEY1234567", privateKey: privatePem };
++
++const decodePart = (part: string) =>
++  JSON.parse(Buffer.from(part, "base64url").toString("utf8")) as Record<string, unknown>;
++
++describe("signApnsProviderJwt", () => {
++  it("emits an ES256 token APNs can verify with the key's public half", () => {
++    const jwt = signApnsProviderJwt({ ...credentials, issuedAtUnixSeconds: 1_800_000_000 });
++    const [header, payload, signature] = jwt.split(".") as [string, string, string];
++    expect(decodePart(header)).toEqual({ alg: "ES256", kid: "KEY1234567" });
++    expect(decodePart(payload)).toEqual({ iss: "TEAM123456", iat: 1_800_000_000 });
++    expect(
++      NodeCrypto.verify(
++        "sha256",
++        Buffer.from(`${header}.${payload}`),
++        { key: publicKey, dsaEncoding: "ieee-p1363" },
++        Buffer.from(signature, "base64url"),
++      ),
++    ).toBe(true);
++  });
++
++  it("accepts keys whose newlines were escaped by an env file", () => {
++    const escaped = privatePem.replaceAll("\n", "\\n");
++    expect(() =>
++      signApnsProviderJwt({ ...credentials, privateKey: escaped, issuedAtUnixSeconds: 1 }),
++    ).not.toThrow();
++  });
++});
++
++describe("makeApnsProviderTokenCache", () => {
++  it("reuses one token for the reuse window and re-signs after it", () => {
++    const cache = makeApnsProviderTokenCache();
++    const first = cache.getJwt(credentials, 1_800_000_000);
++    expect(cache.getJwt(credentials, 1_800_000_000 + APNS_JWT_REUSE_SECONDS - 1)).toBe(first);
++    const refreshed = cache.getJwt(credentials, 1_800_000_000 + APNS_JWT_REUSE_SECONDS);
++    expect(refreshed).not.toBe(first);
++    expect(decodePart(refreshed.split(".")[1]!).iat).toBe(1_800_000_000 + APNS_JWT_REUSE_SECONDS);
++  });
++
++  it("does not hand one key's token to different credentials", () => {
++    const cache = makeApnsProviderTokenCache();
++    const first = cache.getJwt(credentials, 1_800_000_000);
++    const other = cache.getJwt({ ...credentials, keyId: "OTHERKEY12" }, 1_800_000_000);
++    expect(decodePart(other.split(".")[0]!).kid).toBe("OTHERKEY12");
++    expect(other).not.toBe(first);
++  });
++});
+diff --git a/packages/shared/src/apnsProviderToken.ts b/packages/shared/src/apnsProviderToken.ts
+new file mode 100644
+index 0000000000..d27f61e2e9
+--- /dev/null
++++ b/packages/shared/src/apnsProviderToken.ts
+@@ -0,0 +1,53 @@
++// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's Crypto cannot import a PEM private key.
++import * as NodeCrypto from "node:crypto";
++
++export interface ApnsProviderCredentials {
++  readonly teamId: string;
++  readonly keyId: string;
++  /** PEM contents of the `.p8` key. */
++  readonly privateKey: string;
++}
++
++// APNs answers 429 TooManyProviderTokenUpdates when a provider token is
++// refreshed more than about once per 20 minutes, and rejects tokens older than
++// 60. Reusing one for 45 minutes stays inside both limits.
++export const APNS_JWT_REUSE_SECONDS = 45 * 60;
++
++const encodePart = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
++
++export function signApnsProviderJwt(
++  input: ApnsProviderCredentials & { readonly issuedAtUnixSeconds: number },
++): string {
++  const signingInput = `${encodePart({ alg: "ES256", kid: input.keyId })}.${encodePart({
++    iss: input.teamId,
++    iat: input.issuedAtUnixSeconds,
++  })}`;
++  // Env files often store a PEM with literal "\n" escapes.
++  const key = NodeCrypto.createPrivateKey(input.privateKey.replaceAll("\\n", "\n"));
++  // APNs wants the raw r||s signature (IEEE P1363), not node's default DER.
++  const signature = NodeCrypto.sign("sha256", Buffer.from(signingInput), {
++    key,
++    dsaEncoding: "ieee-p1363",
++  });
++  return `${signingInput}.${signature.toString("base64url")}`;
++}
++
++export function makeApnsProviderTokenCache() {
++  const cache = new Map<string, { readonly jwt: string; readonly issuedAtUnixSeconds: number }>();
++  return {
++    getJwt(credentials: ApnsProviderCredentials, nowUnixSeconds: number): string {
++      const cacheKey = JSON.stringify([
++        credentials.teamId,
++        credentials.keyId,
++        NodeCrypto.createHash("sha256").update(credentials.privateKey).digest("hex"),
++      ]);
++      const cached = cache.get(cacheKey);
++      if (cached && nowUnixSeconds - cached.issuedAtUnixSeconds < APNS_JWT_REUSE_SECONDS) {
++        return cached.jwt;
++      }
++      const jwt = signApnsProviderJwt({ ...credentials, issuedAtUnixSeconds: nowUnixSeconds });
++      cache.set(cacheKey, { jwt, issuedAtUnixSeconds: nowUnixSeconds });
++      return jwt;
++    },
++  };
++}
