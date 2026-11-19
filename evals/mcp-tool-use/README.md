@@ -62,6 +62,8 @@ Check that the case builds with `--dry-run --case <id>`. Then run it on the text
 
 OWN-01 uses an authored agent-device ownership claim. Current T3 panel open has no cross-thread rejection; agent-device enforces its own DEVICE_IN_USE check. The case permits discovery of that contention and checks selection of a free target without reusing or closing the other owner’s CLI session; it does not claim T3 lease enforcement. DISC-01 covers an allowed alternate, not a fleet without one. CAP-01 models a PNG whose header says 0×0, not arbitrary blank or corrupt pixels; agent-device capture is unaffected. OWN-01 models same-daemon ownership, not cross-workspace claims. Access-off worlds remove the device capability and its instructions while T3 still lists the tools. Optional remote-install coverage (F2) remains outside this increment.
 
+PHYS-01, from [#38920](https://github.com/pingdotgg/t3code/issues/38920), is a `bad` case: a delegated child told to screenshot a physical phone with `adb`, where `device_list` returns only an emulator, must run `adb` against the phone instead of refusing.
+
 ### Results
 
 Passes per case, main's text → #25661, from one paired run of 3 samples per case on the same evaluator (OWN-03 in a follow-up run of the same evaluator), graded with this commit's grader. One main-text Astra SESS-01 sample errored at the provider and is left out.

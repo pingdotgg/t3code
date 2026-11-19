@@ -1444,7 +1444,7 @@ const deviceCases = () =>
 it.effect("builds device cases from product-backed worlds and synthetic prior turns", () =>
   Effect.gen(function* () {
     const cases = deviceCases();
-    assert.equal(new Set(cases.map((c) => c.id)).size, 16);
+    assert.equal(new Set(cases.map((c) => c.id)).size, 17);
     const base = buildBase(
       {
         ...template,
@@ -2403,7 +2403,7 @@ it("shares failed device attempts across tools and launcher steps, resetting onl
 });
 
 it("applies device shell checks to decoded cases and stops raw UI early", () => {
-  for (const testCase of deviceCases()) {
+  for (const testCase of deviceCases().filter((c) => c.expect.device?.noRawUi)) {
     const run = {
       calls: [
         {
