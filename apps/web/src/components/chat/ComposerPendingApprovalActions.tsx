@@ -116,7 +116,11 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               presentation === "inline" ? (
                 <InlineButton tone="muted" aria-label={gt("More approval options")} />
               ) : (
-                <Button size="icon-xs" variant="secondary" aria-label={gt("More approval options")} />
+                <Button
+                  size="icon-xs"
+                  variant="secondary"
+                  aria-label={gt("More approval options")}
+                />
               )
             }
           >
