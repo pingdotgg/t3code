@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
+import * as Queue from "effect/Queue";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
@@ -16,6 +17,7 @@ import * as ServerConfig from "../config.ts";
 import * as DocumentText from "./DocumentText.ts";
 import { extractDocumentText } from "./documentTextWorker.ts";
 import * as Cleanup from "../orchestration-v2/ResourceCleanupService.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -85,6 +87,116 @@ describe("question answer paths", () => {
           }),
         );
       }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect.each(["interrupted", "failed"])(
+    "extracts two documents at once and frees a slot when one is %s",
+    (outcome) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const [first, second, third] = ["first", "second", "third"].map((name) =>
+          NodePath.join(config.attachmentsDir, `${name}.rtf`),
+        );
+        NodeFS.writeFileSync(first!, String.raw`{\rtf1 First}`);
+        NodeFS.writeFileSync(second!, "invalid document");
+        NodeFS.writeFileSync(third!, String.raw`{\rtf1 Third}`);
+        const started = yield* Queue.unbounded<string>();
+        const releases = new Map<string, Deferred.Deferred<void>>();
+        for (const path of [first!, second!, third!])
+          releases.set(path, yield* Deferred.make<void>());
+        yield* Effect.gen(function* () {
+          const documents = yield* DocumentText.DocumentText;
+          const leaving = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const staying = yield* documents.ensure(first!).pipe(Effect.forkChild);
+          const freed = yield* documents.ensure(second!).pipe(Effect.forkChild);
+          expect(new Set([yield* Queue.take(started), yield* Queue.take(started)])).toEqual(
+            new Set([first, second]),
+          );
+          const waiting = yield* documents.ensure(third!).pipe(Effect.forkChild);
+          yield* Fiber.interrupt(leaving);
+          if (outcome === "interrupted") yield* Fiber.interrupt(freed);
+          else {
+            yield* Deferred.succeed(releases.get(second!)!, undefined);
+            expect(yield* Fiber.join(freed)).toBeUndefined();
+          }
+          expect(yield* Queue.take(started)).toBe(third);
+          yield* Deferred.succeed(releases.get(first!)!, undefined);
+          yield* Deferred.succeed(releases.get(third!)!, undefined);
+          expect(yield* Fiber.join(staying)).toBe(first + ".txt");
+          expect(yield* Fiber.join(waiting)).toBe(third + ".txt");
+          expect(yield* Queue.size(started)).toBe(0);
+          expect(NodeFS.existsSync(second + ".txt")).toBe(false);
+          expect(
+            NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+          ).toEqual([]);
+        }).pipe(
+          Effect.provide(Layer.fresh(DocumentText.layer)),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            // An async probe can let `staying` join only after `leaving` cancelled the lookup.
+            exists: (file) => Effect.sync(() => NodeFS.existsSync(file)),
+            stat: (file) =>
+              Effect.gen(function* () {
+                yield* Queue.offer(started, file);
+                yield* Deferred.await(releases.get(file)!);
+                return yield* fs.stat(file);
+              }),
+          }),
+        );
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("retries a document while its cancelled extraction is still publishing", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      const path = NodePath.join(config.attachmentsDir, "retried.rtf");
+      NodeFS.writeFileSync(path, String.raw`{\rtf1 Retried}`);
+      const writing = yield* Deferred.make<void>();
+      const writeReleased = yield* Deferred.make<void>();
+      const renaming = yield* Deferred.make<void>();
+      const renameReleased = yield* Deferred.make<void>();
+      let writes = 0;
+      let renames = 0;
+      yield* Effect.gen(function* () {
+        const documents = yield* DocumentText.DocumentText;
+        const cancelled = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(writing);
+        const interrupting = yield* Fiber.interrupt(cancelled).pipe(Effect.forkChild);
+        const retry = yield* documents.ensure(path).pipe(Effect.forkChild);
+        yield* Deferred.await(renaming);
+        yield* Deferred.succeed(writeReleased, undefined);
+        yield* Fiber.join(interrupting);
+        yield* Deferred.succeed(renameReleased, undefined);
+        expect(yield* Fiber.join(retry)).toBe(path + ".txt");
+        expect(NodeFS.readFileSync(path + ".txt", "utf8")).toBe("Retried");
+        expect(
+          NodeFS.readdirSync(config.attachmentsDir).filter((file) => file.endsWith(".part")),
+        ).toEqual([]);
+      }).pipe(
+        Effect.provide(Layer.fresh(DocumentText.layer)),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          writeFileString: (file, data) =>
+            Effect.gen(function* () {
+              if (++writes === 1) {
+                yield* Deferred.succeed(writing, undefined);
+                yield* Deferred.await(writeReleased);
+              }
+              return yield* fs.writeFileString(file, data);
+            }),
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              if (++renames === 1) {
+                yield* Deferred.succeed(renaming, undefined);
+                yield* Deferred.await(renameReleased);
+              }
+              return yield* fs.rename(from, to);
+            }),
+        }),
+      );
+    }).pipe(Effect.provide(layer)),
   );
 
   it.effect.each(["spawn", "read"])("retries after a transient %s failure expires", (failure) =>
@@ -166,6 +278,15 @@ describe("question answer paths", () => {
 
   it.effect.each([
     [
+      "page-specific headers and footers",
+      String.raw`{\rtf1\ansi\facingp\sectd\titlepg
+{\headerf First-page header}{\headerl Left-page header}{\headerr Right-page header}
+{\footerf First-page footer}{\footerl Left-page footer}{\footerr Right-page footer}
+\pard Approved delivery date: 24 November.\par
+}`,
+      "Approved delivery date: 24 November.",
+    ],
+    [
       "text symbols",
       String.raw`{\rtf1\ansi Pages 1\endash 5\emdash\lquote left\rquote\ldblquote right\rdblquote\bullet\b End\b0\unknown{\*\secret\bullet hidden}}`,
       "Pages 1–5—‘left’“right”•End",
@@ -176,6 +297,11 @@ describe("question answer paths", () => {
       "A\u2002B\u2003C\u2005D\u00a0E\u2011FG",
     ],
     [
+      "joiner and direction marks",
+      String.raw`{\rtf1\ansi A\zwj B\zwnj C\ltrmark D\rtlmark E}`,
+      "A\u200dB\u200cC\u200eD\u200fE",
+    ],
+    [
       "text symbol fallback",
       String.raw`{\rtf1\ansi\uc10\u945\endash\emdash\enspace\emspace\qmspace\lquote\rquote\ldblquote\rdblquote\bullet Z}`,
       "αZ",
@@ -183,17 +309,48 @@ describe("question answer paths", () => {
     ["hyphen symbol fallback", String.raw`{\rtf1\ansi\uc3\u945\~\_\-Z}`, "αZ"],
     ["control word", String.raw`{\rtf1\ansi A\u9\tab X}`, "A\tX"],
     ["line break paragraphs", "{\\rtf1\\ansi First\\\nSecond\\\r\nThird}", "First\nSecond\nThird"],
+    [
+      "tracked deletion",
+      String.raw`{\rtf1\ansi The fee is {\deleted\revauthdel1\revdttmdel1 $500}{\revised\revauth1 $700}.}`,
+      "The fee is $700.",
+    ],
+    [
+      "tracked deletion end",
+      String.raw`{\rtf1\ansi{\header Header\plain Plain}A\deleted B\deleted0 C\deleted D\plain E}`,
+      "ACE",
+    ],
+    [
+      "tracked deletion fallback",
+      String.raw`{\rtf1\ansi A{\deleted\uc1\u945\deleted0 B}\deleted\u946?\deleted0 C}`,
+      "AC",
+    ],
+    [
+      "tracked deletion table",
+      String.raw`{\rtf1\ansi\trowd\cellx1000\cellx2000\intbl A\deleted\cell\deleted0 B\cell\deleted\row\deleted0 C\cell}`,
+      "A\tB\t\nC",
+    ],
+    [
+      "document breaks",
+      String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
+      "North quota: 120\nSouth quota: 240\nEast quota: 360\nWest quota: 480",
+    ],
     ["group close", String.raw`{\rtf1\ansi{\u945}Z}`, "αZ"],
     ["group open", String.raw`{\rtf1\ansi\u945{Z}}`, "αZ"],
     ["hex byte", String.raw`{\rtf1\ansi\u945\'3fZ}`, "αZ"],
     ["escaped symbol", String.raw`{\rtf1\ansi\u945\{Z}`, "αZ"],
+    ["Macintosh text", String.raw`{\rtf1\mac Caf\'8e Cr\'8fme}`, "Café Crème"],
+    [
+      "explicit Macintosh code page",
+      String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
+      "Café Crème",
+    ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
     ["binary unit", String.raw`{\rtf1\ansi\u945\bin3 abcZ}`, "αZ"],
     ["large fallback", String.raw`{\rtf1\ansi\uc20\u945????????????????????Z}`, "αZ"],
     ["no fallback", String.raw`{\rtf1\ansi\uc0\u945Z}`, "αZ"],
     ["scoped count", String.raw`{\rtf1\ansi{\uc2\u945??}\u946?Z}`, "αβZ"],
-  ] as const)("extracts RTF symbols and Unicode fallbacks: %s", ([name, source, expected]) =>
+  ] as const)("extracts RTF text: %s", ([name, source, expected]) =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const path = NodePath.join(config.attachmentsDir, `${name}.rtf`);
@@ -265,6 +422,7 @@ describe("question answer paths", () => {
         mimeType: "application/x-ipynb+json",
       };
       const path = NodePath.join(config.attachmentsDir, `${file.id}.ipynb`);
+      const rawSource = String.raw`\begin{tabular}{lr} North & 120 \\ \end{tabular}`;
       const notebook = JSON.stringify({
         cells: [
           { cell_type: "markdown", source: ["# Survey\n", "Vessel: Larkspur"] },
@@ -286,6 +444,7 @@ describe("question answer paths", () => {
               },
             ],
           },
+          { cell_type: "raw", source: [rawSource] },
         ],
       });
       NodeFS.writeFileSync(path, notebook);
@@ -299,6 +458,7 @@ describe("question answer paths", () => {
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("301");
       expect(NodeFS.readFileSync(`${path}.txt`, "utf8")).toContain("42");
       const extracted = NodeFS.readFileSync(`${path}.txt`, "utf8");
+      expect(extracted).toContain(`## Cell 3 (raw)\n${rawSource}`);
       expect(extracted).toContain(
         "ZeroDivisionError: division by zero\nCell In[1], line 1\n----> 1 1 / 0\nZeroDivisionError: division by zero",
       );
@@ -328,6 +488,7 @@ describe("question answer paths", () => {
               Layer.mergeAll(
                 Layer.mock(TerminalManager.TerminalManager)({}),
                 Layer.mock(PreviewManager.PreviewManager)({}),
+                Layer.mock(DeviceService.DeviceService)({}),
                 Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
               ),
             ),
@@ -367,6 +528,37 @@ describe("question answer paths", () => {
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;
       const cases = [
+        // Word stores object layout and field data outside the visible document text.
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Total cost is </w:t><w:drawing><wp:anchor><wp:positionH><wp:posOffset>1905000</wp:posOffset></wp:positionH><wp:positionV><wp:posOffset>-635</wp:posOffset></wp:positionV><wp14:sizeRelH><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH><wp14:sizeRelV><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV></wp:anchor></w:drawing><w:t>42 EUR.</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["Total cost is 42 EUR."],
+          absent: ["1905000", "-635", "0042"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><mc:AlternateContent><mc:Choice Requires="cx"><w:drawing><wp:anchor><wp:positionH><wp:posOffset>1905000</wp:posOffset></wp:positionH><wp:positionV><wp:posOffset>-635</wp:posOffset></wp:positionV><wp14:sizeRelH><wp14:pctWidth>0</wp14:pctWidth></wp14:sizeRelH><wp14:sizeRelV><wp14:pctHeight>0</wp14:pctHeight></wp14:sizeRelV></wp:anchor></w:drawing><cx:chart/></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Chart caption</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:p></w:body></w:document>',
+          },
+          expected: ["Chart caption"],
+          absent: ["1905000", "-635"],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml":
+              '<w:document xmlns:w="urn:w" xmlns:wp="urn:wp" xmlns:wp14="urn:wp14" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>As shown </w:t><w:fldChar><w:fldData>RU5ETk9URQ==</w:fldData></w:fldChar><w:t>(Smith 2020) earlier.</w:t></w:r></w:p></w:body></w:document>',
+          },
+          expected: ["As shown (Smith 2020) earlier."],
+          absent: ["RU5ETk9URQ=="],
+        },
         {
           ext: "docx",
           bounded: true,
@@ -527,7 +719,7 @@ describe("question answer paths", () => {
             ext === "pptx"
               ? {
                   "ppt/presentation.xml":
-                    '<presentation><sldId r:id="bad"/><sldId r:id="good"/></presentation>',
+                    '<presentation><sldIdLst><sldId r:id="bad"/><sldId r:id="good"/></sldIdLst></presentation>',
                   "ppt/_rels/presentation.xml.rels":
                     '<Relationships><Relationship Id="bad" Target="bad.xml"/><Relationship Id="good" Target="good.xml"/></Relationships>',
                   "ppt/bad.xml": "<slide><p>Discard</slide>",
@@ -579,28 +771,40 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
           },
-          expected: ["## Report & totals", "North\t12 34", "Before Inner After\tNeighbor"],
+          expected: [
+            "## Report & totals",
+            "North\t12 34",
+            "Before Inner After\tNeighbor\t\u2011\n\u2011",
+          ],
+        },
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "word/document.xml": [
+              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body>',
+              '<w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t><w:noBreakHyphen/><w:t>party</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:noBreakHyphen/></mc:Choice><mc:Fallback><w:t>‑</w:t></mc:Fallback></mc:AlternateContent><w:t>End</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 104</w:t><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/><w:t>$700.00</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 105</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/></mc:Choice><mc:Fallback><w:tab/></mc:Fallback></mc:AlternateContent><w:t>$800.00</w:t></w:r></w:p>',
+              '<w:p><w:r><w:t>Invoice 106</w:t><mc:AlternateContent><mc:Choice Requires="w"><w:ptab w:alignment="right" w:relativeTo="margin" w:leader="none"/></mc:Choice><mc:Fallback><w:t xml:space="preserve"> total </w:t></mc:Fallback></mc:AlternateContent><w:t>$900.00</w:t></w:r></w:p>',
+              "</w:body></w:document>",
+            ].join(""),
+          },
+          expected: [
+            "First\nSecond\nThird\u2011party\u2011End\nInvoice 104\t$700.00\nInvoice 105\t$800.00\nInvoice 106 total $900.00",
+          ],
         },
         {
           ext: "docx",
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>First</w:t><w:cr/><w:t>Second</w:t><w:br/><w:t>Third</w:t></w:r></w:p></w:body></w:document>',
-          },
-          expected: ["First\nSecond\nThird"],
-        },
-        {
-          ext: "docx",
-          bounded: true,
-          parts: {
-            "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom><w:r><w:tab/><w:t>due</w:t></w:r></w:p></w:body></w:document>',
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:r><w:t>Intro</w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGEREF _Toc1 \\h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t> 3</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p><w:p><w:pPr><w:tabs><w:tab w:val="right" w:pos="9350"/></w:tabs></w:pPr><w:r><w:t xml:space="preserve">Fee </w:t></w:r><w:del><w:r><w:delText>$500</w:delText><w:noBreakHyphen/></w:r></w:del><w:ins><w:r><w:t>$700</w:t></w:r></w:ins><w:moveFrom><w:r><w:t>Moved</w:t></w:r></w:moveFrom><w:r><w:tab/><w:t>due</w:t></w:r></w:p></w:body></w:document>',
           },
           expected: ["Intro 3\nFee $700\tdue"],
-          absent: ["PAGEREF", "$500", "Moved"],
+          absent: ["PAGEREF", "$500", "Moved", "\u2011"],
         },
         {
           ext: "odt",
@@ -611,6 +815,16 @@ describe("question answer paths", () => {
           },
           expected: ["Fee $700"],
           absent: ["Reviewer", "$500"],
+        },
+        {
+          ext: "odt",
+          bounded: true,
+          parts: {
+            "content.xml":
+              '<document><text><p>Fee <office:annotation><dc:creator>Reviewer</dc:creator><dc:date>2026-01-01T00:00:00</dc:date><initials>JR</initials><p>Check</p></office:annotation>$700</p><table><table-row><table-cell office:value-type="float" office:value="150"><office:annotation><p>was 120</p></office:annotation></table-cell></table-row></table><p>Formula <math:math><math:semantics><math:mrow>x+y</math:mrow><math:annotation encoding="application/x-tex">x+y</math:annotation></math:semantics></math:math></p></text></document>',
+          },
+          expected: ["Fee $700\n150\nFormula x+yx+y"],
+          absent: ["Reviewer", "2026-01-01", "JR", "Check", "was 120"],
         },
         {
           ext: "docx",
@@ -636,6 +850,18 @@ describe("question answer paths", () => {
             "33 [Excel numFmtId=9; date system 1900]\t0 [Excel numFmtId=9; date system 1900]",
           ],
           absent: ["SUM(0,0)", "[Extracted text truncated"],
+        },
+        {
+          ext: "xlsx",
+          bounded: true,
+          parts: {
+            "xl/workbook.xml": '<workbook><sheet name="Flags" r:id="a"/></workbook>',
+            "xl/_rels/workbook.xml.rels":
+              '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
+            "xl/worksheets/a.xml":
+              '<worksheet><row><c r="A1" t="b"><v>1</v></c><c r="B1" t="b"><v>0</v></c><c r="C1" t="n"><v>1</v></c><c r="D1" t="b"><v>2</v></c></row></worksheet>',
+          },
+          expected: ["true\tfalse\t1\t2"],
         },
         {
           ext: "xlsx",
@@ -681,6 +907,22 @@ describe("question answer paths", () => {
           ext: "xlsx",
           bounded: true,
           parts: {
+            "xl/workbook.xml": '<workbook><sheet name="Escapes" r:id="a"/></workbook>',
+            "xl/_rels/workbook.xml.rels":
+              '<Relationships><Relationship Id="a" Target="worksheets/a.xml"/></Relationships>',
+            "xl/sharedStrings.xml":
+              "<sst><si><t>first_x000D_\nsecond</t></si><si><t>_x005F_x0041_</t></si><si><t>_x005F_x005F_x0041_</t></si><si><r><t>Bold_x000D_</t></r><r><t>_x005F_x000D_</t></r></si><si><t>&amp;_xnothex_ cap_X0041_ _x000d_ tail</t></si></sst>",
+            "xl/worksheets/a.xml":
+              '<worksheet><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c><c t="s"><v>2</v></c><c t="s"><v>3</v></c><c t="s"><v>4</v></c></row><row><c t="inlineStr"><is><t>_x005F_x005F_</t></is></c><c t="inlineStr"><is><t>first_x000D_second</t></is></c><c t="str"><f>A1</f><v>Total_x000D_due</v></c></row></worksheet>',
+          },
+          expected: [
+            "## Sheet: Escapes\nfirst second\t_x0041_\t_x005F_x0041_\tBold _x000D_\t&_xnothex_ cap_X0041_ tail\n_x005F_\tfirst second\tTotal due",
+          ],
+        },
+        {
+          ext: "xlsx",
+          bounded: true,
+          parts: {
             "xl/workbook.xml":
               '<workbook><workbookPr date1904="true"/><sheets><sheet name="Dates" r:id="a"/></sheets></workbook>',
             "xl/_rels/workbook.xml.rels":
@@ -712,8 +954,16 @@ describe("question answer paths", () => {
           ext: "pptx",
           bounded: true,
           parts: {
-            "ppt/presentation.xml":
-              '<p:presentation><p:sldIdLst><p:sldId id="1" r:id="b"/><p:sldId id="2" r:id="a"/></p:sldIdLst></p:presentation>',
+            "ppt/presentation.xml": `<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+              xmlns:p14="http://schemas.microsoft.com/office/powerpoint/2010/main">
+              <p:sldIdLst><p:sldId id="256" r:id="b"/><p:sldId id="257" r:id="a"/></p:sldIdLst>
+              <p:extLst><p:ext uri="{521415D9-36F7-43E2-AB2F-B90AF26B5E84}"><p14:sectionLst>
+                <p14:section name="Schedule" id="{01F07B81-39E6-4BBB-9B89-66EA253FBD29}">
+                  <p14:sldIdLst><p14:sldId id="256"/><p14:sldId id="257"/></p14:sldIdLst>
+                </p14:section>
+              </p14:sectionLst></p:ext></p:extLst>
+            </p:presentation>`,
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide1.xml"/><Relationship Id="b" Target="slides/slide2.xml"/></Relationships>',
             "ppt/slides/slide1.xml": "<p:sld><a:p><a:r><a:t>Departure</a:t></a:r></a:p></p:sld>",
@@ -734,13 +984,15 @@ describe("question answer paths", () => {
             "## Slide 2",
             "Departure\nNotes:\nBoard at gate 4",
           ],
+          occurrences: { text: "## Slide ", count: 2 },
           absent: ["Unrelated notes", "[Skipped document part", "[Extracted text truncated"],
         },
         ...[false, true].map((missing) => ({
           ext: "pptx",
           bounded: true,
           parts: {
-            "ppt/presentation.xml": '<presentation><sldId r:id="a"/></presentation>',
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
             "ppt/slides/a.xml": "<slide><p>Slide text</p></slide>",
@@ -758,7 +1010,7 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "ppt/presentation.xml":
-              '<presentation><sldId r:id="a"/><sldId r:id="b"/></presentation>',
+              '<presentation><sldIdLst><sldId r:id="a"/><sldId r:id="b"/></sldIdLst></presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/a.xml"/><Relationship Id="b" Target="slides/b.xml"/></Relationships>',
             "ppt/slides/a.xml": `<slide><p>${"A".repeat(600_000)}</p></slide>`,
@@ -780,9 +1032,11 @@ describe("question answer paths", () => {
           ext: "odt",
           parts: {
             "content.xml":
-              '<office:document><text:h text:outline-level="2">Orchard</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates</text:p></office:document>',
+              '<office:document><text:h text:outline-level="2">\n  Orchard\n</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates <text:span>\n\t  shipped</text:span>   today<text:tab/>Dock<text:line-break/>Gate\u00a0B </text:p><text:p>Second</text:p><text:p>A<text:span><text:script>console.log(1);\n</text:script></text:span> B</text:p></office:document>',
           },
-          expected: ["## Orchard", "19   violet crates"],
+          expected: [
+            "## Orchard\n19   violet crates shipped today\tDock\nGate\u00a0B\nSecond\nA B",
+          ],
         },
         {
           ext: "ods",
@@ -829,9 +1083,9 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><text:p>First</text:p></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
+              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
           },
-          expected: ["## Slide 1", "First", "## Slide 2", "Second"],
+          expected: ["## Slide 1\nFirst slide\n\n## Slide 2\nSecond"],
         },
         {
           ext: "ods",
@@ -890,7 +1144,7 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "ppt/presentation.xml":
-              '<p:presentation><p:sldId r:id="a"/><p:sldId r:id="missing"/></p:presentation>',
+              '<p:presentation><p:sldIdLst><p:sldId r:id="a"/><p:sldId r:id="missing"/></p:sldIdLst></p:presentation>',
             "ppt/_rels/presentation.xml.rels":
               '<Relationships><Relationship Id="a" Target="slides/slide.xml"/></Relationships>',
             "ppt/slides/slide.xml": `<p:sld><a:p><a:t>${"A".repeat(1_000_100)}</a:t></a:p></p:sld>`,
@@ -926,13 +1180,13 @@ describe("question answer paths", () => {
             "OEBPS/book.opf":
               '<package><manifest><item id="a" href="a.xhtml"/><item id="b" href="b.xhtml"/></manifest><spine><itemref idref="b"/><itemref idref="a"/></spine></package>',
             "OEBPS/a.xhtml":
-              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8</p></body></html>',
+              '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html><body><p>Last chapter</p><p>Price <s>10</s> 8 <del>old</del></p></body></html>',
             "OEBPS/b.xhtml":
-              "<!DOCTYPE html><html><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>",
+              '<!DOCTYPE html><html><head><title>My Novel</title><meta name="author" content="Hidden Author"/></head><body><h1>First chapter</h1><p>Larkspur</p><div>Direct div<section>Direct section<li>Direct item <em>emphasis</em> trailing</li></section></div><div>Account: A<br/>Balance: 731<line-break/>Currency: USD</div><table><thead><tr><th>Heading</th><th>Total</th></tr></thead><tbody><tr><td>Important value</td><td>731</td></tr><tr><td>Before<table><tr><td>Inner</td></tr></table>After</td><td>Neighbor</td></tr></tbody></table></body></html>',
           },
           expected: [
             "## Chapter 1",
-            "# First chapter",
+            "\n# First chapter",
             "Larkspur",
             "Direct div",
             "Direct section",
@@ -943,8 +1197,9 @@ describe("question answer paths", () => {
             "Before Inner After\tNeighbor",
             "## Chapter 2",
             "Last chapter",
-            "Price 10 8",
+            "Price 10 8 old",
           ],
+          absent: ["My Novel", "Hidden Author"],
         },
       ];
       for (const [caseIndex, item] of cases.entries()) {
@@ -1115,10 +1370,14 @@ describe("question answer paths", () => {
       });
       expect(yield* (yield* DocumentText.DocumentText).ensure(unsupportedPath)).toBeUndefined();
       expect(NodeFS.existsSync(unsupportedPath + ".txt")).toBe(false);
-      NodeFS.writeFileSync(path, String.raw`{\rtf1 ` + "x".repeat(1_000_100) + "}");
-      expect(yield* Effect.promise(() => extractDocumentText(path, ".rtf"))).toContain(
-        "[Extracted text truncated",
+      NodeFS.writeFileSync(
+        path,
+        String.raw`{\rtf1 ` + "x".repeat(999_999) + String.raw`\u-10179?\u-8576? After}`,
       );
+      const unicodeTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
+      expect(unicodeTruncated).toContain("[Extracted text truncated");
+      expect(unicodeTruncated.isWellFormed()).toBe(true);
+      expect(unicodeTruncated.startsWith("x".repeat(999_999))).toBe(true);
       NodeFS.writeFileSync(path, String.raw`{\rtf1 First` + " ".repeat(1_000_100) + "Last}");
       const whitespaceTruncated = yield* Effect.promise(() => extractDocumentText(path, ".rtf"));
       expect(whitespaceTruncated).toBe(
