@@ -7,6 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -249,20 +250,22 @@ describe("AgentScope service", () => {
       ),
   );
 
-  it.effect("keeps a symlinked parent in an absolute executable path", () =>
-    withFakeSystemd(({ scope }) =>
-      Effect.gen(function* () {
-        const plain = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "s" });
-        const bin = NodePath.dirname(String(plain.args.at(-1)));
-        NodeFS.mkdirSync(NodePath.join(bin, "real", "sub"), { recursive: true });
-        NodeFS.writeFileSync(NodePath.join(bin, "real", "agent"), "", { mode: 0o755 });
-        NodeFS.symlinkSync(NodePath.join(bin, "real", "sub"), NodePath.join(bin, "link"));
-        // The kernel follows the link before "..", so this names real/agent, not bin/agent.
-        const command = `${NodePath.join(bin, "link")}/../agent`;
-        const wrapped = yield* scope.wrap({ command, args: [], name: "t", threadId: "s" });
-        expect(wrapped.args.at(-1)).toBe(command);
-      }),
-    ),
+  it.effect.skipIf(!symlinksSupported)(
+    "keeps a symlinked parent in an absolute executable path",
+    () =>
+      withFakeSystemd(({ scope }) =>
+        Effect.gen(function* () {
+          const plain = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "s" });
+          const bin = NodePath.dirname(String(plain.args.at(-1)));
+          NodeFS.mkdirSync(NodePath.join(bin, "real", "sub"), { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(bin, "real", "agent"), "", { mode: 0o755 });
+          NodeFS.symlinkSync(NodePath.join(bin, "real", "sub"), NodePath.join(bin, "link"));
+          // The kernel follows the link before "..", so this names real/agent, not bin/agent.
+          const command = `${NodePath.join(bin, "link")}/../agent`;
+          const wrapped = yield* scope.wrap({ command, args: [], name: "t", threadId: "s" });
+          expect(wrapped.args.at(-1)).toBe(command);
+        }),
+      ),
   );
 
   it.effect.each([{ oomPolicy: true }, { oomPolicy: false }])(
