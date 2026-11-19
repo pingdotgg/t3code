@@ -1082,6 +1082,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   commandInput: Record<string, unknown>,
   /** The prompt launches one agy 1.5 subagent instead; its records live below this profile. */
   detachedChildProfile?: string,
+  /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
+  steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1103,6 +1105,12 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     rawInput: { CommandLine: "node fetch_throughput.mjs", ...commandInput },
   } as const;
   let cancels = 0;
+  const prompts: Array<{
+    readonly prompt: ReadonlyArray<EffectAcpSchema.ContentBlock>;
+    readonly released: Deferred.Deferred<void> | undefined;
+  }> = [];
+  const steered = yield* Deferred.make<void>();
+  const releaseSteer = yield* Deferred.make<void>();
   let terminate: AntigravityAdapterV2RuntimeInput["onTermination"];
   const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
@@ -1121,7 +1129,10 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
           command: process.execPath,
           args: [mockAgentPath],
           cwd: input.cwd,
-          env: { T3_ACP_ANTIGRAVITY: "1" },
+          env: {
+            T3_ACP_ANTIGRAVITY: "1",
+            ...(steering === undefined ? {} : { T3_ACP_AGENT_VERSION: steering.agentVersion }),
+          },
         },
       }).pipe(
         Effect.provideService(SecureRandom.SecureRandom, crypto),
@@ -1138,8 +1149,17 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             Effect.sync(() => {
               requestPermission = handler;
             }).pipe(Effect.andThen(runtime.handleRequestPermission(handler))),
-          prompt: () =>
+          prompt: (payload, promptOptions) =>
             Effect.gen(function* () {
+              prompts.push({ prompt: payload.prompt, released: promptOptions?.released });
+              if (promptOptions?.dispatched !== undefined) {
+                yield* Deferred.succeed(promptOptions.dispatched, undefined);
+              }
+              if (prompts.length > 1) {
+                yield* Deferred.succeed(steered, undefined);
+                yield* Deferred.await(releaseSteer);
+                return { stopReason: "end_turn" as const };
+              }
               yield* send(
                 detachedChildProfile === undefined
                   ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
@@ -1157,6 +1177,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
                 content: { type: "text", text: "I'll render once the fetch finishes." },
               });
               yield* send(usage);
+              if (steering?.holdsFirstPrompt === true) yield* Deferred.await(steered);
               return { stopReason: "end_turn" as const };
             }),
         })),
@@ -1264,6 +1285,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         ? Effect.die("the adapter must handle permission requests")
         : requestPermission(...args),
     cancels: () => cancels,
+    prompts,
+    releaseSteer: Deferred.succeed(releaseSteer, undefined),
     runtimeDies: Effect.suspend(
       () =>
         terminate?.(
@@ -1372,6 +1395,156 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
       assert.include(JSON.stringify(run), "Here is the chart.", "the reply is part of the run");
       assert.lengthOf(offers, 0, "the open run needs no continuation");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // agy 1.5.11 reads a prompt sent mid-turn as a steer: it answers the running prompt end_turn
+  // and goes on under the new one. session/cancel would end its running commands and subagents.
+  it.effect("steers a running prompt with the next one and leaves its work running", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, {
+        agentVersion: "1.5.11",
+        holdsFirstPrompt: true,
+      });
+      const { session, providerThread, command, usage, send, startTurn, until } = opened;
+      assert.isTrue(session.providerSession.capabilities.turns.supportsActiveSteering);
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      yield* send({
+        sessionUpdate: "tool_call",
+        toolCallId: "call_artist",
+        kind: "other",
+        title: "Run invoke_subagent",
+        status: "completed",
+        rawInput: { Role: "Artist", Prompt: "Paint the scooter" },
+      });
+
+      yield* session.steerTurn({
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        providerThread,
+        providerTurnId,
+        message: {
+          messageId: MessageId.make("message-antigravity-steer"),
+          text: "Use opus subagents from now on",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
+      assert.lengthOf(opened.prompts, 2);
+      assert.deepEqual(opened.prompts[1]!.prompt, [
+        { type: "text", text: "Use opus subagents from now on" },
+      ]);
+      assert.isTrue(
+        yield* Deferred.isDone(opened.prompts[0]!.released!),
+        "the steered prompt frees the runtime for the steer",
+      );
+      // The steered prompt has answered end_turn; the turn must outlast the finalize debounce.
+      yield* TestClock.adjust("10 seconds");
+
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "Switching to opus subagents." },
+      });
+      yield* send(usage);
+      yield* opened.releaseSteer;
+      const run = [...started, ...(yield* until((event) => event.type === "turn.terminal"))];
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.include(JSON.stringify(run), "Switching to opus subagents.");
+      const finished = run.findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.equal(finished?.type === "turn_item.updated" && finished.turnItem.status, "completed");
+      const subagentStatuses = run.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent.status] : [],
+      );
+      assert.notInclude(subagentStatuses, "interrupted");
+      assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("steers a run held open by a detached subagent without stopping it", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-antigravity-kids-" });
+      const records = (conversationId: string, kind: string) =>
+        path.join(profile, "antigravity-acp", "brain", conversationId, ".system_generated", kind);
+      const write = (directory: string, name: string, value: unknown) =>
+        fileSystem
+          .makeDirectory(directory, { recursive: true })
+          .pipe(
+            Effect.andThen(
+              fileSystem.writeFileString(path.join(directory, name), JSON.stringify(value)),
+            ),
+          );
+      yield* write(records("mock-session-1", "subagents"), "child-1.json", {});
+      yield* write(records("child-1", "messages"), "launch.json", {
+        sender: "mock-session-1",
+        sourceMetadata: { tool: { toolCall: { id: "call_research", name: "invoke_subagent" } } },
+      });
+      const opened = yield* openSessionWithRunningCommand({}, profile, {
+        agentVersion: "1.5.11",
+        holdsFirstPrompt: false,
+      });
+      const { session, providerThread, usage, send, startTurn, until, throughPromptSettled } =
+        opened;
+      yield* startTurn(1, false);
+      const prompt = yield* throughPromptSettled;
+      const providerTurnId = prompt.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      yield* TestClock.adjust("10 minutes");
+
+      yield* session.steerTurn({
+        threadId: ThreadId.make("thread-antigravity-wake"),
+        runId: RunId.make("run-antigravity-wake-1"),
+        providerThread,
+        providerTurnId,
+        message: {
+          messageId: MessageId.make("message-antigravity-steer"),
+          text: "Also check the footnotes",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      });
+      assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's subagents");
+      assert.lengthOf(opened.prompts, 2);
+      yield* write(records("mock-session-1", "messages"), "report.json", { sender: "child-1" });
+      yield* send({
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "I'll have the footnotes checked too." },
+      });
+      yield* send(usage);
+      yield* opened.releaseSteer;
+      const run = [...prompt, ...(yield* until((event) => event.type === "turn.terminal"))];
+      const terminal = run.at(-1);
+      assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.include(JSON.stringify(run), "I'll have the footnotes checked too.");
+      const subagentStatuses = run.flatMap((event) =>
+        event.type === "subagent.updated" ? [event.subagent.status] : [],
+      );
+      assert.notInclude(subagentStatuses, "interrupted");
+      assert.equal(subagentStatuses.at(-1), "idle");
     }).pipe(Effect.provide(layerSession)),
   );
 
