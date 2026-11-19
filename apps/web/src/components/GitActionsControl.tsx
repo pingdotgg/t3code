@@ -28,7 +28,7 @@ import type {
 import { useNavigate } from "@tanstack/react-router";
 import { shortcutLabelForCommand } from "~/keybindings";
 import * as Option from "effect/Option";
-import { useEffect, useEffectEvent, useId, useState } from "react";
+import { memo, useEffect, useEffectEvent, useId, useState } from "react";
 import { useDeadlinePassed } from "../hooks/useDeadline";
 import { useNowSecond } from "../hooks/useNowSecond";
 import { flushSync } from "react-dom";
@@ -175,7 +175,6 @@ interface RunGitActionWithToastInput {
 interface InlineGitActionSuccess {
   readonly title: string;
   readonly description: string | null;
-  readonly scopeKey: string;
   readonly expiresAtMs: number;
 }
 
@@ -968,7 +967,12 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   );
 }
 
-export default function GitActionsControl({
+export default memo(function GitActionsControl(props: GitActionsControlProps) {
+  const checkoutKey = JSON.stringify([props.activeThreadRef?.environmentId ?? null, props.gitCwd]);
+  return <CheckoutGitActionsControl key={checkoutKey} {...props} />;
+});
+
+function CheckoutGitActionsControl({
   displayMode,
   gitCwd,
   activeThreadRef,
@@ -987,7 +991,6 @@ export default function GitActionsControl({
     "thread branch metadata update",
   );
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const successScopeKey = `${activeEnvironmentId ?? ""}\u0000${gitCwd ?? ""}`;
   const canWriteSourceControl = useEnvironmentScope(
     activeEnvironmentId,
     AuthSourceControlWriteScope,
@@ -1026,8 +1029,7 @@ export default function GitActionsControl({
   const sourceControlScope = { environmentId: activeEnvironmentId, cwd: gitCwd };
   const vcsActionState = useAtomValue(vcsActionManager.stateAtom(sourceControlScope));
   const inlineSuccessExpired = useDeadlinePassed(inlineSuccess?.expiresAtMs ?? null);
-  const visibleInlineSuccess =
-    inlineSuccess?.scopeKey === successScopeKey && !inlineSuccessExpired ? inlineSuccess : null;
+  const visibleInlineSuccess = inlineSuccessExpired ? null : inlineSuccess;
 
   const persistThreadBranchSync = (branch: string | null, manualSelection = false) => {
     if (!activeThreadRef) {
@@ -1356,7 +1358,6 @@ export default function GitActionsControl({
           })
         : actionResult.toast.title,
       description: createdPullRequest ? null : (actionResult.toast.description ?? null),
-      scopeKey: successScopeKey,
       expiresAtMs: inlineSuccessExpiresAt(),
     });
     return true;
@@ -1443,7 +1444,6 @@ export default function GitActionsControl({
         setInlineSuccess({
           title,
           description,
-          scopeKey: successScopeKey,
           expiresAtMs: inlineSuccessExpiresAt(),
         });
       })();
