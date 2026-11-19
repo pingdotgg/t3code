@@ -680,7 +680,6 @@ it.effect(
         const result = yield* knowledge.saveAutomatic(
           { ...create(`crowded-auto-${index}`, content), sources: facts[0]!.sources },
           { kind: "assisted", threadId, runId, runOutcome: "completed" },
-          "standing",
         );
         assert.equal(result.outcome, "duplicate");
       }
@@ -720,7 +719,6 @@ it.effect(
             .saveAutomatic(
               { ...create(`negation-${index}`, content), sources: facts[0]!.sources },
               { kind: "assisted", threadId, runId, runOutcome: "completed" },
-              "standing",
             )
             .pipe(Effect.map((result) => result.outcome)),
       );
