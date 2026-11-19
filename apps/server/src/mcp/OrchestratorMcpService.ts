@@ -2519,7 +2519,7 @@ const make = Effect.gen(function* () {
       }
       const runId = run.id;
       const nodeId = run.rootNodeId;
-      const key = yield* requestKey(input.clientRequestId);
+      const key = `${runId}:${yield* requestKey(input.clientRequestId)}`;
       const turnItemId = TurnItemId.make(
         `turn-item:secret-request:${stablePart(threadId)}:${stablePart(key)}`,
       );
@@ -2585,6 +2585,13 @@ const make = Effect.gen(function* () {
             current === undefined ||
             ThreadManagementService.isTerminalRunStatus(current.status)
           ) {
+            yield* record("cancelled");
+            return "cancelled" as const;
+          }
+          // A steering restart replaced the run's root, so this request belonged to
+          // the superseded attempt: its card can never be answered into that attempt,
+          // and the call must stop blocking the agent's turn.
+          if (current.rootNodeId !== nodeId) {
             yield* record("cancelled");
             return "cancelled" as const;
           }

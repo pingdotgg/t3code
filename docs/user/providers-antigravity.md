@@ -98,8 +98,9 @@ Antigravity. Antigravity cannot rewind its own conversation, so the next turn
 starts a fresh Antigravity session and T3 Code sends it the kept conversation,
 without the turns you removed.
 
-Manual context compaction is unavailable through Antigravity's ACP runtime, even
-though its CLI has `/compact`. Send `/clear` when you need a fresh context.
+Use `/compact` to summarize a long conversation when your Antigravity runtime
+offers that command. If it is unavailable, update Antigravity in provider settings
+or send `/clear` when you need a fresh context.
 
 ### Skills and attachments
 
@@ -141,6 +142,8 @@ runtimes are shared on the environment.
 
 All three keep thread history and workspace files. Sending `/logout` by itself in
 a thread signs out its instance, including stopping that instance's other sessions.
+That needs a client allowed to manage providers, and it has to be your own message:
+`/logout` from an agent or a scheduled task is refused.
 Sign out, then sign in again to replace an account.
 
 Before removing a managed runtime, disable its instances and cancel any active
