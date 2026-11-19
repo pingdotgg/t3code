@@ -9387,14 +9387,24 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             dropped.pdfReservation.refund();
             yield* persistAttachmentBudget(context.nativeThreadId);
           }
-          if (context.pendingSteers.size === 0 && context.heldResult !== undefined) {
-            yield* finalizeActiveTurn({
-              context,
-              status: "completed",
-              completedAt: yield* DateTime.now,
-              result: context.heldResult,
-            });
-          }
+          yield* settleHeldResult(context);
+        });
+
+        // A result held for steers settles the turn once no steer is left for Claude to read. A
+        // stopped turn settles as interrupted when its process closes.
+        const settleHeldResult = Effect.fnUntraced(function* (context: ActiveClaudeTurnContext) {
+          if (
+            context.pendingSteers.size > 0 ||
+            context.heldResult === undefined ||
+            (yield* Ref.get(interruptedTurns)).has(context.providerTurnId)
+          )
+            return;
+          yield* finalizeActiveTurn({
+            context,
+            status: "completed",
+            completedAt: yield* DateTime.now,
+            result: context.heldResult,
+          });
         });
 
         const finalizeActiveTurn = Effect.fnUntraced(function* (requested: {
@@ -9415,6 +9425,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
               : requested;
           input.context.steersClosed = true;
+          // A turn that ends without a result still bills the reply its held result recorded.
+          if (input.result === undefined) absorbHeldResult(input.context);
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           if (input.status === "completed") {
             yield* assistantDeltas.flushTurn(input.context.nativeTurnId);
@@ -14066,7 +14078,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ).pipe(
               Effect.onError(() =>
                 currentTurn.pendingSteers.delete(steerUuid)
-                  ? emitSteerStatus(currentTurn, messageId, "completed")
+                  ? emitSteerStatus(currentTurn, messageId, "completed").pipe(
+                      Effect.andThen(settleHeldResult(currentTurn)),
+                    )
                   : Effect.void,
               ),
             );
