@@ -1020,6 +1020,59 @@ describe("source control tools", () => {
     }),
   );
 
+  it.effect("a stack merge pins every open layer up to the PR", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      let lowerHead: string | undefined = "bbb";
+      const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
+        number,
+        state,
+        ...(headSha === undefined ? {} : { headSha }),
+        headBranch: `layer-${number}`,
+      });
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          stack: (_input, options) =>
+            options?.bypassCache !== true
+              ? Effect.die("a merge must not pin heads from the cache")
+              : Effect.succeed({
+                  id: "stack-1",
+                  number: 7,
+                  url: "https://github.com/acme/app/stacks/7",
+                  base: "main",
+                  layers: [
+                    layer(40, "merged", "aaa"),
+                    layer(41, "open", lowerHead),
+                    layer(42, "open", "stale"),
+                    layer(43, "open", "ddd"),
+                  ],
+                }),
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "merged" } as never),
+        },
+      });
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "ccc", stack: true });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "merge",
+          stackNumber: 7,
+          expectedStackHeads: [
+            { number: 41, headSha: "bbb" },
+            { number: 42, headSha: "ccc" },
+          ],
+        },
+      ]);
+      lowerHead = undefined;
+      const unpinned = yield* harness
+        .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
+        .pipe(Effect.flip);
+      expect(unpinned._tag).toBe("PullRequestForgeError");
+      expect(actions).toHaveLength(1);
+    }),
+  );
+
   it.effect("re-running checks reopens a watch that saw its checks finish", () =>
     Effect.gen(function* () {
       const watch = {
