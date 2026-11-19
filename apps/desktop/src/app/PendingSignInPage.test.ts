@@ -54,9 +54,9 @@ describe("pending sign-in page", () => {
     expect(await statusWithHost(url, `rebound.example:${new URL(url).port}`)).toBe(404);
   });
 
-  it("forwards to the Google link once it is supplied", async () => {
+  it("forwards to the normalized Google link once it is supplied", async () => {
     const { id, url } = await open();
-    settlePendingSignInPage(id, googleLink);
+    settlePendingSignInPage(id, `${googleLink}\n`);
     const forwarded = await get(url);
     expect(forwarded.status).toBe(303);
     expect(forwarded.headers.get("location")).toBe(googleLink);
@@ -98,18 +98,6 @@ describe("pending sign-in page", () => {
     }
   });
 
-  it("forwards to the normalized link", async () => {
-    const { id, url } = await open();
-    settlePendingSignInPage(
-      id,
-      `${googleLink}
-`,
-    );
-    const forwarded = await get(url);
-    expect(forwarded.status).toBe(303);
-    expect(forwarded.headers.get("location")).toBe(googleLink);
-  });
-
   it("caps concurrently opening pages", async () => {
     const results = await Promise.allSettled(Array.from({ length: 5 }, () => open()));
     expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(4);
@@ -118,25 +106,21 @@ describe("pending sign-in page", () => {
     });
   });
 
-  it("closes the listener when opening the browser throws", async () => {
-    let url = "";
-    await expect(
-      openPendingSignInPage((target) => {
-        url = target;
-        throw new Error("no shell");
-      }),
-    ).rejects.toThrow("Could not open your browser.");
-    await expect(get(url)).rejects.toThrow();
-  });
-
   it("closes the listener when the browser cannot be opened", async () => {
-    let url = "";
-    await expect(
-      openPendingSignInPage(async (target) => {
-        url = target;
-        return false;
-      }),
-    ).rejects.toThrow("Could not open your browser.");
-    await expect(get(url)).rejects.toThrow();
+    for (const openBrowser of [
+      async () => false,
+      () => {
+        throw new Error("no shell");
+      },
+    ]) {
+      let url = "";
+      await expect(
+        openPendingSignInPage((target) => {
+          url = target;
+          return openBrowser();
+        }),
+      ).rejects.toThrow("Could not open your browser.");
+      await expect(get(url)).rejects.toThrow();
+    }
   });
 });
