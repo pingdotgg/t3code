@@ -549,9 +549,20 @@ export const layer: Layer.Layer<
             projection.runs.some(
               (source) =>
                 source.id === handoff.targetRunId &&
-                (source.status === "failed" ||
+                // A settled delivery retires history of this thread: the session that took it
+                // holds it, and a fresh session starts from a full summary of the thread. That
+                // summary lacks another thread's history (a fork source, a merge-back).
+                (((source.status === "failed" ||
                   source.status === "interrupted" ||
-                  source.status === "cancelled" ||
+                  source.status === "cancelled") &&
+                  !(
+                    (handoff.delivery?.status === "injected" ||
+                      handoff.delivery?.status === "inline") &&
+                    handoff.fromProviderThreadIds.length > 0 &&
+                    handoff.fromProviderThreadIds.every((id) =>
+                      projection.providerThreads.some((candidate) => candidate.id === id),
+                    )
+                  )) ||
                   (source.status === "completed" &&
                     handoff.delivery === undefined &&
                     // Compaction and /goal turns defer history to the next turn.
