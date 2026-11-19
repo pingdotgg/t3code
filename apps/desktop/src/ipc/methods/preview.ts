@@ -13,6 +13,7 @@ import {
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetAudioMutedInputSchema,
   DesktopPreviewSetShownInputSchema,
+  DesktopPreviewSetCaptureDrawnInputSchema,
   DesktopPreviewSetColorSchemeInputSchema,
   DesktopPreviewSetZoomFactorInputSchema,
   BrowserImportResult,
@@ -21,6 +22,7 @@ import {
   DesktopPreviewImportCookiesInputSchema,
   DesktopPreviewCreateTabInputSchema,
   DesktopPreviewTabInputSchema,
+  DesktopPreviewTunnelAccessResolutionInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
   PreviewCaptureFailure,
@@ -36,6 +38,7 @@ import * as NodeURL from "node:url";
 
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as BrowserImport from "../../preview/BrowserImport/BrowserImport.ts";
+import * as LoopbackTunnel from "../../preview/LoopbackTunnel.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 import { normalizeCaptureFailure } from "../../preview/captureErrors.ts";
 import * as DesktopClientSettings from "../../settings/DesktopClientSettings.ts";
@@ -234,6 +237,15 @@ const setShown = DesktopIpc.makeIpcMethod({
     yield* manager.setShown(tabId, shown);
   }),
 });
+const setCaptureDrawn = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_CAPTURE_DRAWN_CHANNEL,
+  payload: DesktopPreviewSetCaptureDrawnInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setCaptureDrawn")(function* ({ tabId, drawn }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setCaptureDrawn(tabId, drawn);
+  }),
+});
 const openDevTools = tabMethod(
   IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL,
   "desktop.ipc.preview.openDevTools",
@@ -337,16 +349,33 @@ const getPreviewConfig = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.PREVIEW_GET_CONFIG_CHANNEL,
   payload: DesktopPreviewConfigInputSchema,
   result: DesktopPreviewWebviewConfigSchema,
-  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({ environmentId, profileId }) {
+  handler: Effect.fn("desktop.ipc.preview.getConfig")(function* ({
+    environmentId,
+    profileId,
+    tunnelLoopback,
+  }) {
     const manager = yield* PreviewManager.PreviewManager;
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
     const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
     // Session creation installs UA and permission handlers before a guest can attach.
-    yield* manager.getBrowserSession(scope, persistent, namespace);
+    const session = yield* manager.getBrowserSession(scope, persistent, namespace);
+    // Routed before the renderer learns the partition, so no guest loads loopback directly.
+    yield* tunnel.route({ environmentId, session, tunnelled: tunnelLoopback === true });
     return {
       partition: yield* manager.getBrowserPartition(scope, persistent, namespace),
       webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
       preloadUrl: NodeURL.pathToFileURL(`${__dirname}/preview-pick-preload.cjs`).href,
     };
+  }),
+});
+
+const resolveTunnelAccess = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_TUNNEL_ACCESS_RESOLVE_CHANNEL,
+  payload: DesktopPreviewTunnelAccessResolutionInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.resolveTunnelAccess")(function* (input) {
+    const tunnel = yield* LoopbackTunnel.LoopbackTunnel;
+    yield* tunnel.resolveAccess(input);
   }),
 });
 
@@ -488,10 +517,12 @@ export const methods = [
   setZoomFactor,
   setAudioMuted,
   setShown,
+  setCaptureDrawn,
   openDevTools,
   clearCookies,
   clearCache,
   getPreviewConfig,
+  resolveTunnelAccess,
   setAnnotationTheme,
   setAnnotationSendEnabled,
   pickElement,

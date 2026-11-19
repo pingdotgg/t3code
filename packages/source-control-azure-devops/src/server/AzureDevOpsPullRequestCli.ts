@@ -9,6 +9,7 @@ import type {
   PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
@@ -21,6 +22,7 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLabelsJson,
   decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
@@ -186,6 +188,13 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
+    /** `az repos pr show` returns null labels, so the detail reads them here. */
+    readonly listLabels: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestLabel>, AzureDevOpsPullRequestCliError>;
+
     readonly listIterations: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
@@ -314,7 +323,6 @@ export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -628,6 +636,16 @@ export const make = Effect.gen(function* () {
       });
     }),
 
+    listLabels: Effect.fn("AzureDevOpsPullRequestCli.listLabels")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "listLabels",
+        resource: "pullRequestLabels",
+        routeParameters: pullRequestRoute(input),
+        decode: decodeLabelsJson,
+      });
+    }),
+
     listIterations: Effect.fn("AzureDevOpsPullRequestCli.listIterations")(function (input) {
       return invoke({
         cwd: input.cwd,
@@ -819,25 +837,41 @@ export const make = Effect.gen(function* () {
     ),
 
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
-      return azure
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "repos",
-            "pr",
-            "update",
-            ...detectArgs,
-            "--id",
-            String(input.number),
-            // One argv entry preserves leading dashes and multi-string descriptions.
-            ...(input.title === undefined ? [] : [`--title=${input.title}`]),
-            ...(input.body === undefined ? [] : [`--description=${input.body}`]),
-            "--only-show-errors",
-            "--output",
-            "json",
-          ],
-        })
-        .pipe(Effect.asVoid);
+      // One argv entry preserves leading dashes and multi-string descriptions.
+      const fields = [
+        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
+        ...(input.body === undefined
+          ? []
+          : [AzureDevOpsCli.textOption("--description", input.body)]),
+      ];
+      // az has one stdin, so each value read from it needs its own call.
+      const batches =
+        fields.filter((field) => field.stdin !== undefined).length > 1
+          ? fields.map((field) => [field])
+          : [fields];
+      return Effect.forEach(
+        batches,
+        (batch) => {
+          const stdin = batch.find((field) => field.stdin !== undefined)?.stdin;
+          return azure.execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "update",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              ...batch.map((field) => field.arg),
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+            ...(stdin === undefined ? {} : { stdin }),
+          });
+        },
+        { discard: true },
+      );
     }),
   });
 });
