@@ -442,7 +442,11 @@ it.effect.each(
       }
       assert.equal(started.length, 2);
       assert.equal(started[1]?.message.messageId, messageId);
-      if (mailbox) assert.include(started[1]?.message.text ?? "", String(taskId));
+      if (mailbox)
+        assert.include(
+          started[1]?.message.text ?? "",
+          `Delegated task "Background test" [completed] (…${taskId.slice(-4)})`,
+        );
       else assert.equal(started[1]?.message.text, "fix the popover");
       assert.deepEqual(started[1]?.message.attachments, [
         {

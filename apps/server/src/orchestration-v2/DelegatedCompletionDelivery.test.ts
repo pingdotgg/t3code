@@ -704,7 +704,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       const message = projection.messages.find((candidate) => candidate.id === messageId);
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
-      assert.include(message?.text ?? "", String(firstTaskId));
+      assert.include(message?.text ?? "", `(…${firstTaskId.slice(-4)}):\nchild finished`);
       assert.include(message?.text ?? "", String(secondTaskId));
       assert.include(message?.text ?? "", "task_status");
       assert.include(message?.text ?? "", "child finished");
@@ -872,7 +872,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           runId,
           nodeId: id,
           occurredAt: now,
-          payload: { ...task, id, result, status, title: "Inspect regression" },
+          payload: { ...task, id, result, status, title: "Inspect\nregression" },
         })),
       });
       yield* orchestrator.dispatch({
@@ -898,9 +898,8 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
       assert.include(
         message.text,
-        `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+        `Delegated task "Inspect regression" [${testCase.inlineFirst ? "cancelled" : "failed"}] (…${deferredTaskId.slice(-4)}). Use task_status with taskId ${deferredTaskId} to read the result.`,
       );
-      assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
       assert.equal(
         projection.subagents.find((candidate) => candidate.id === deferredTaskId)?.result,
@@ -1178,7 +1177,10 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       assert.equal(wake.status, "queued");
       const message = rewritten.messages.find((row) => row.id === delivery.messageId);
       assert.deepEqual(message?.delegatedCompletion?.taskIds, [siblingId]);
-      assert.equal(message?.text, `Delegated task ${siblingId} [completed]:\nchild finished`);
+      assert.equal(
+        message?.text,
+        `Delegated task [completed] (…${siblingId.slice(-4)}):\nchild finished`,
+      );
 
       yield* acknowledge(siblingId);
       const cancelled = yield* orchestrator.getThreadProjection(threadId);
