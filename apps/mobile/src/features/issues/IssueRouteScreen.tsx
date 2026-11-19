@@ -489,7 +489,7 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
   const [busy, setBusy] = useState<"comment" | "state" | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
-  const [olderCommentsFailed, setOlderCommentsFailed] = useState(false);
+  const [olderCommentsError, setOlderCommentsError] = useState<string | null>(null);
   const [composerHeight, setComposerHeight] = useState(0);
 
   const timeline = detail
@@ -526,19 +526,17 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
   const loadOlder = async () => {
     if (busy !== null) return;
     const failure = await pager.loadOlder(registry, (cursor) => {
-      setOlderCommentsFailed(false);
+      setOlderCommentsError(null);
       return loadComments({ ...target, input: { ...target.input, cursor } });
     });
-    if (failure) setOlderCommentsFailed(true);
+    if (failure) setOlderCommentsError(gt("Older comments could not be read."));
   };
   const submitComment = (body: string) =>
     access?.comment === true
       ? run("comment", () => postComment({ ...target, input: { ...target.input, body } }))
       : Promise.resolve(false);
-  const moveTo = (state: string) => {
-    if (registry.get(pager.view).loadingOlder) return;
+  const moveTo = (state: string) =>
     void run("state", () => setState({ ...target, input: { ...target.input, state } }));
-  };
 
   const showComposer = detail?.capabilities.comment === true;
   const commentBlocked =
@@ -660,9 +658,9 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                   onEditLabels={() => navigation.navigate("IssueLabels", identity)}
                   onEditAssignees={() => navigation.navigate("IssueAssignees", identity)}
                 />
-                {mutationError || (detail && detailQuery.error) ? (
+                {mutationError || olderCommentsError || (detail && detailQuery.error) ? (
                   <Text selectable className="text-sm text-danger-foreground">
-                    {mutationError ?? detailQuery.error}
+                    {mutationError ?? olderCommentsError ?? detailQuery.error}
                   </Text>
                 ) : null}
                 {!detail ? (
@@ -708,11 +706,6 @@ function IssueRoute({ params }: { readonly params: IssueParams }) {
                           disabled={busy !== null || !canLoadOlder}
                           onPress={() => void loadOlder()}
                         />
-                      ) : null}
-                      {olderCommentsFailed ? (
-                        <Text selectable className="text-sm text-danger-foreground">
-                          <T>Older comments could not be read.</T>
-                        </Text>
                       ) : null}
                       {timeline.length === 0 ? (
                         <Text className="text-sm text-foreground-muted">

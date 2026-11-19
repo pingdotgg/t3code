@@ -108,7 +108,6 @@ export function createIssueCommentPager<E>(
       registry.set(state, {
         ...current,
         older: null,
-        loadingOlder: false,
         refreshing: true,
         refreshes: current.refreshes + 1,
       });
@@ -140,10 +139,7 @@ export function createIssueCommentPager<E>(
           },
         });
       } finally {
-        const latest = registry.get(state);
-        if (latest.refreshes === current.refreshes) {
-          registry.set(state, { ...latest, loadingOlder: false });
-        }
+        registry.set(state, { ...registry.get(state), loadingOlder: false });
       }
     },
   };
@@ -210,10 +206,16 @@ export function createIssueEnvironmentAtoms<R, E>(
       },
     }),
     detail,
-    // The pager guards duplicate taps; after a refresh the same cursor needs a new read.
+    /** Older comments past the cursor the detail handed over; the panel prepends what arrives. */
     comments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:comments",
       tag: WS_METHODS.issuesComments,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([environmentId, input.projectId, input.scope, input.key, input.cursor]),
+      },
     }),
     /** Read when the composer opens: what a scope offers a new issue changes with a commit. */
     templates: createEnvironmentRpcQueryAtomFamily(runtime, {

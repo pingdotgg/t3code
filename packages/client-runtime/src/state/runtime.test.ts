@@ -3,13 +3,9 @@ import * as NodeV8 from "node:v8";
 import * as NodeVM from "node:vm";
 import { vi } from "vite-plus/test";
 import {
-  AuthSourceControlWriteScope,
   DEFAULT_MAX_TERMINAL_BUFFER_BYTES,
   EnvironmentId,
   type FilesystemBrowseEntry,
-  type IssueCommentInput,
-  type IssueCommentsPage,
-  IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
   type OrchestrationV2ArchivedShellSnapshot,
   ThreadId,
@@ -52,7 +48,6 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { EnvironmentRpcUnavailableError } from "../rpc/client.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type * as RpcSession from "../rpc/session.ts";
-import { createIssueCommentPager, createIssueEnvironmentAtoms } from "./issues.ts";
 import { createOrchestrationEnvironmentAtoms } from "./orchestration.ts";
 import { createReviewEnvironmentAtoms } from "./review.ts";
 import { createPreviewEnvironmentAtoms } from "./preview.ts";
@@ -61,7 +56,6 @@ import type { QueryPersistence } from "./queryPersistence.ts";
 import type { EnvironmentShellState } from "./shell.ts";
 import { v2Now, v2Project, v2ThreadId, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { createTerminalEnvironmentAtoms } from "./terminal.ts";
-import { createEnvironmentSessionAtoms } from "./session.ts";
 import {
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
@@ -213,92 +207,6 @@ const mountEnvironmentQuery = Effect.fn("TestEnvironmentQuery.mount")(function* 
   );
   return registry;
 });
-
-it.effect(
-  "lets a comment post during paging and fetches a fresh same-cursor page after refresh",
-  () =>
-    Effect.gen(function* () {
-      const oldPageStarted = yield* Deferred.make<void>();
-      const oldPage = yield* Deferred.make<IssueCommentsPage>();
-      const page = (body: string): IssueCommentsPage => ({
-        comments: [
-          { id: body, body, author: null, createdAt: "2026-10-01T00:00:00.000Z", url: null },
-        ],
-        nextCursor: null,
-      });
-      let reads = 0;
-      const posts: string[] = [];
-      const harness = yield* makeEnvironmentQueryHarness(Effect.void, {
-        rpcSession: {
-          client: {
-            [WS_METHODS.issuesComments]: () =>
-              ++reads === 1
-                ? Deferred.succeed(oldPageStarted, undefined).pipe(
-                    Effect.andThen(Deferred.await(oldPage)),
-                  )
-                : Effect.succeed(page("fresh")),
-            [WS_METHODS.issuesComment]: ({ body }: IssueCommentInput) =>
-              Effect.sync(() => {
-                posts.push(body);
-              }),
-          },
-        } as unknown as RpcSession.RpcSession,
-      });
-      const { runtime } = harness;
-      const issues = createIssueEnvironmentAtoms(runtime);
-      const { environmentId } = QUERY_ENVIRONMENT;
-      const target = {
-        environmentId,
-        input: {
-          projectId: ProjectId.make("project"),
-          tracker: IssueTrackerKind.make("github"),
-          scope: "acme/app",
-          key: "1",
-        },
-      };
-      const registry = AtomRegistry.make({
-        initialValues: [
-          Atom.initialValue(
-            createEnvironmentSessionAtoms(runtime).sessionStateAtom(environmentId),
-            AsyncResult.success({
-              authenticated: true,
-              auth: {
-                policy: "remote-reachable",
-                bootstrapMethods: [],
-                sessionMethods: [],
-                sessionCookieName: "test",
-              },
-              scopes: [AuthSourceControlWriteScope],
-              permissions: [AuthSourceControlWriteScope],
-            }),
-            { skipInitialRun: true },
-          ),
-        ],
-      });
-      yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
-      const detail = Atom.make(AsyncResult.success({ comments: [], commentsCursor: "first-page" }));
-      const pager = createIssueCommentPager(detail);
-      yield* AtomRegistry.mount(registry, pager.view);
-      const read = (cursor: string) =>
-        issues.comments.run(registry, { ...target, input: { ...target.input, cursor } });
-
-      const stale = pager.loadOlder(registry, read);
-      yield* Deferred.await(oldPageStarted);
-      const result = yield* Effect.promise(() =>
-        issues.comment.run(registry, { ...target, input: { ...target.input, body: "posted" } }),
-      );
-      expect(result._tag).toBe("Success");
-      expect(posts).toEqual(["posted"]);
-      expect(registry.get(pager.view).loadingOlder).toBe(true);
-
-      yield* Effect.promise(() => pager.refresh(registry, () => {}));
-      const fresh = pager.loadOlder(registry, read);
-      yield* Deferred.succeed(oldPage, page("stale"));
-      yield* Effect.promise(() => Promise.all([stale, fresh]));
-
-      expect(registry.get(pager.view).comments.map(({ body }) => body)).toEqual(["fresh"]);
-    }),
-);
 
 it.effect("keeps complete review metadata visible while a refresh is held", () =>
   Effect.gen(function* () {
