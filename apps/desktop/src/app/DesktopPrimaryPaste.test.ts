@@ -12,8 +12,10 @@ import { readGtkPrimaryPasteEnabled } from "./DesktopPrimaryPaste.ts";
 
 const encoder = new TextEncoder();
 
-const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
-  ChildProcessSpawner.make(() =>
+const spawnerWithStdout = (
+  stdout: Stream.Stream<Uint8Array> | ((command: string) => Stream.Stream<Uint8Array>),
+) =>
+  ChildProcessSpawner.make((command) =>
     Effect.succeed(
       ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
@@ -22,7 +24,10 @@ const spawnerWithStdout = (stdout: Stream.Stream<Uint8Array>) =>
         kill: () => Effect.void,
         unref: Effect.succeed(Effect.void),
         stdin: Sink.drain,
-        stdout,
+        stdout:
+          typeof stdout === "function"
+            ? stdout(command._tag === "StandardCommand" ? command.command : "")
+            : stdout,
         stderr: Stream.empty,
         all: Stream.empty,
         getInputFd: () => Sink.drain,
@@ -50,12 +55,19 @@ describe("readGtkPrimaryPasteEnabled", () => {
     }),
   );
 
-  it.effect("ignores the GNOME key outside GNOME, where nothing applies it to GTK", () =>
+  it.effect("outside GNOME, honours only a value the user set", () =>
     Effect.gen(function* () {
-      const disabled = spawnerWithStdout(Stream.make(encoder.encode("false\n")));
-      assert.isTrue(yield* read(disabled, "XFCE"));
-      assert.isTrue(yield* read(disabled, "KDE"));
-      assert.isTrue(yield* read(disabled, ""));
+      // gsettings reports the schema default, which only GNOME applies; dconf prints nothing when unset.
+      const unset = spawnerWithStdout((command) =>
+        command === "gsettings" ? Stream.make(encoder.encode("false\n")) : Stream.empty,
+      );
+      assert.isFalse(yield* read(unset, "ubuntu:GNOME"));
+      assert.isTrue(yield* read(unset, "XFCE"));
+      assert.isTrue(yield* read(unset, ""));
+      const userSet = spawnerWithStdout((command) =>
+        command === "dconf" ? Stream.make(encoder.encode("false\n")) : Stream.empty,
+      );
+      assert.isFalse(yield* read(userSet, "Hyprland"));
     }),
   );
 
