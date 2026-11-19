@@ -1,5 +1,5 @@
-import { useNavigation } from "@react-navigation/native";
-import { useEffect } from "react";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
+import { useCallback } from "react";
 
 import { useProjects } from "../../state/entities";
 import { useConnectionsReady, useWorkspaceEnvironments } from "../../state/workspace";
@@ -14,8 +14,10 @@ export function usePullRequestEnvironmentFallback(params: PullRequestEnvironment
   const isReady = useConnectionsReady();
   const environments = useWorkspaceEnvironments();
   const fallback = isReady ? pullRequestFallbackEnvironment(params, projects, environments) : null;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- rewrites the route params through the navigator to the fallback environment once connections are ready
-  useEffect(() => {
-    if (fallback) navigation.setParams(fallback);
-  }, [fallback, navigation]);
+  // Only while focused: a screen kept as a placeholder throws on any navigation action.
+  useFocusEffect(
+    useCallback(() => {
+      if (fallback) navigation.setParams(fallback);
+    }, [fallback, navigation]),
+  );
 }

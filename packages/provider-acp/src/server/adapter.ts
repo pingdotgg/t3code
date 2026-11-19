@@ -143,6 +143,8 @@ export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
 
 // Grok summaries can trail hydrated tools by over two seconds; shorter waits split the wake.
 const ACP_DEFERRED_FINALIZE_DEBOUNCE: Duration.Input = "3000 millis";
+// A model can stay silent this long before the first token of a reply the agent started itself.
+const ACP_OPEN_REPLY_QUIET_LIMIT: Duration.Input = "2 minutes";
 const ACP_BUSY_PROMPT_RETRY_INTERVAL: Duration.Input = "1 second";
 
 // pi-agent-core agents (oh-my-pi) end a turn while background work runs and reject
@@ -582,10 +584,20 @@ export interface AcpAdapterV2Flavor {
     readonly appendOutput: string;
   }>;
   readonly isPersistentBackgroundTool?: (toolCall: AcpToolCallState) => boolean;
+  /**
+   * A tool the agent goes on running after its prompt ends, and reports on by itself when the
+   * tool ends. With `deferFinalizeForBackgroundWork`, the turn stays open until then.
+   */
+  readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
   readonly deferFinalizeForBackgroundWork?: AcpNegotiatedFlag;
+  /**
+   * Every model reply ends with `usage_update`, also the ones the agent starts with no prompt
+   * open. A turn that ends on the deferred finalize waits for it instead of the short debounce.
+   */
+  readonly replyEndsWithUsageUpdate?: boolean;
   readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
   /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
   readonly interruptPromptOnCancel?: boolean;
@@ -618,6 +630,8 @@ export interface AcpAdapterV2Flavor {
   readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
   readonly preserveRuntimeOnSettledInterrupt?: boolean;
   readonly enablePostSettleContinuation?: AcpNegotiatedFlag;
+  /** A native request after prompt settlement starts a continuation before it is handled. */
+  readonly wakeOnDetachedRequest?: boolean;
   /** Settle on native idle after the accepted user echo, only on negotiated ACP v2. */
   readonly followAgentWorkState?: boolean;
   /**
@@ -1554,6 +1568,8 @@ interface ActiveAcpTurn {
   readonly promptStarted: Deferred.Deferred<void, never>;
   promptUsage: EffectAcpSchema.Usage | undefined;
   backgroundFinalizeGeneration: number;
+  /** `replyEndsWithUsageUpdate`: output arrived and its closing `usage_update` has not. */
+  replyOpen: boolean;
   /** The agent's own id for this turn's prompt, from `forkFromTurn.nativeTurnId`. */
   nativePromptId: string | undefined;
   /** Clock millis of the prompt's last progress, for `promptInactivityTimeout`. */
@@ -2564,7 +2580,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             runtimeGeneration,
             Effect.gen(function* () {
               yield* Ref.set(runtimeRestartRequired, true);
-              if (!followsAgentWorkState) return;
+              if (!followsAgentWorkState) {
+                // An open prompt fails with its transport. A turn held open for a running tool
+                // has no prompt, so nothing else ends it.
+                const held = yield* Ref.get(activeTurn);
+                if (
+                  flavor.toolOutlivesPrompt === undefined ||
+                  held === null ||
+                  !held.promptSettled ||
+                  held.finalized ||
+                  !hasDeferredBackgroundWork(held)
+                )
+                  return;
+                for (const tool of held.tools.values()) {
+                  const status = toolStatus(tool.status);
+                  if (status === "pending" || status === "running" || status === "waiting") {
+                    yield* emitTool(held, tool, "failed");
+                  }
+                }
+                yield* finalizeTurn(
+                  held,
+                  "failed",
+                  makeProviderFailure({ class: "transport_error" }),
+                );
+                return;
+              }
               agentWork = { sessionUpdate: "state_update", state: "idle", stopReason: "error" };
               for (const child of nativeChildren.values()) {
                 if (child.status !== "running") continue;
@@ -4041,6 +4081,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
         const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+          if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
+          if (flavor.toolOutlivesPrompt !== undefined) {
+            // A tool that never started has nothing to report later.
+            for (const tool of context.tools.values()) {
+              if (toolStatus(tool.status) === "running" && flavor.toolOutlivesPrompt(tool))
+                return true;
+            }
+          }
           if (context.awaitingBackgroundHydration.size > 0) return true;
           if (context.pendingInjectedReport.size > 0) return true;
           for (const [taskId, toolCallId] of context.toolCallIdsByBackgroundTaskId) {
@@ -4052,6 +4100,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running") return true;
           }
+          // finalizeTurn idles these subagents, so waiting on them would never settle.
+          if (flavor.subagentsIdleOnTurnCompletion === true) return false;
           for (const subagent of context.subagents.values()) {
             if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
               return true;
@@ -5318,7 +5368,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         const awaitRequestTurn = Effect.fnUntraced(function* (generation: number) {
-          if (!followsAgentWorkState) return true;
+          if (
+            !followsAgentWorkState &&
+            !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
+          )
+            return true;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
@@ -5341,7 +5395,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           (generation: number) =>
           <A, E, R>(effect: Effect.Effect<A, E, R>) =>
             Effect.suspend(() =>
-              !followsAgentWorkState
+              !followsAgentWorkState &&
+              !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
                 ? effect
                 : Effect.acquireUseRelease(
                     runRuntimeCallbackAtGeneration(
@@ -5360,6 +5415,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           if (Option.isSome(token)) agentRequests.delete(token.value);
                           const context = yield* Ref.get(activeTurn);
                           if (context !== null) yield* settleIdleWork(context);
+                          if (context !== null && flavor.wakeOnDetachedRequest) {
+                            // The agent goes on with its reply once the request is answered.
+                            if (flavor.replyEndsWithUsageUpdate === true) context.replyOpen = true;
+                            yield* rearmDeferredFinalize(context);
+                          }
                         }),
                       ).pipe(Effect.asVoid),
                   ),
@@ -5379,6 +5439,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
+          if (flavor.replyEndsWithUsageUpdate === true) {
+            if (context === null) {
+              // A reply can end before its continuation run starts; replay its end with its output.
+              if (
+                update.sessionUpdate === "usage_update" &&
+                (yield* Ref.get(wakeBuffer)).length > 0
+              ) {
+                yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+              }
+            } else if (context.nativeThreadId === notification.sessionId) {
+              if (update.sessionUpdate === "usage_update") {
+                context.replyOpen = false;
+                yield* rearmDeferredFinalize(context);
+              } else if (acpRootSessionUpdateIngestsOutput(notification)) {
+                context.replyOpen = true;
+              }
+            }
+          }
           if (
             update.sessionUpdate === "usage_update" ||
             update.sessionUpdate === "session_info_update"
@@ -6924,6 +7002,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* targetRuntime.handleRequestPermission((nativeParams, requestContext) =>
             Effect.gen(function* () {
+              if (
+                postSettleContinuationEnabled &&
+                flavor.wakeOnDetachedRequest &&
+                nativeParams.sessionId !== (yield* Ref.get(activeSessionId))
+              ) {
+                return { outcome: { outcome: "cancelled" } } as const;
+              }
               const trackedTurn = yield* Ref.get(activeTurn);
               const params =
                 trackedTurn !== null && nativeParams.sessionId === (yield* Ref.get(activeSessionId))
@@ -6961,7 +7046,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
-              if (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") {
+              if (
+                (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
+                (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
+              ) {
                 if (!(yield* awaitRequestTurn(handlerGeneration)))
                   return { outcome: { outcome: "cancelled" } } as const;
               }
@@ -8315,8 +8403,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (hasDeferredBackgroundWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
+          const debounce = context.replyOpen
+            ? ACP_OPEN_REPLY_QUIET_LIMIT
+            : ACP_DEFERRED_FINALIZE_DEBOUNCE;
           yield* Effect.gen(function* () {
-            yield* Effect.sleep(ACP_DEFERRED_FINALIZE_DEBOUNCE);
+            yield* Effect.sleep(debounce);
             if (
               context.finalized ||
               context.interrupted ||
@@ -8328,10 +8419,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
-          yield* (
-            options.testHooks?.onDeferredFinalizeScheduled?.(ACP_DEFERRED_FINALIZE_DEBOUNCE) ??
-              Effect.void
-          );
+          yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
 
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
@@ -8769,6 +8857,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               promptStarted,
               promptUsage: undefined,
               backgroundFinalizeGeneration: 0,
+              replyOpen: false,
               nativePromptId: undefined,
               lastProgressAt: 0,
               inactivityWatchdog: undefined,

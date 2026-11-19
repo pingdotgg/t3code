@@ -99,7 +99,9 @@ const layerLinkProofRoutes = HttpApiBuilder.layer(LinkProofTestApi).pipe(
         capabilities: { repositoryIdentity: false },
       }),
     }),
-    Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({}),
+    Layer.mock(ManagedEndpointRuntime.CloudManagedEndpointRuntime)({
+      withLinkStateLock: (effect) => effect,
+    }),
     Layer.mock(CliTokenManager.CloudCliTokenManager)({}),
     Layer.mock(AgentAwarenessRelay.AgentAwarenessRelay)({}),
     Layer.mock(HttpServer.HttpServer)({
@@ -213,7 +215,7 @@ describe("link proof over a non-loopback desktop transport", () => {
         const paired = yield* post(
           "/api/auth/pairing-token",
           {
-            scopes: ["relay:read", "relay:write"],
+            scopes: ["relay:read", "relay:configure"],
             label: "desktop-bootstrap",
             subject: "desktop-bootstrap",
           },
@@ -284,10 +286,10 @@ describe("link proof over a non-loopback desktop transport", () => {
     }),
   );
 
-  it.effect("requires relay-write scope even for desktop bootstrap", () =>
+  it.effect("requires relay configuration permission even for desktop bootstrap", () =>
     Effect.gen(function* () {
       const { post, exchange } = yield* linkProofClient;
-      const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:read");
+      const token = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:write");
       const response = yield* post("/api/connect/link-proof", proofRequest, {
         authorization: `Bearer ${token}`,
       });
@@ -295,6 +297,54 @@ describe("link proof over a non-loopback desktop transport", () => {
       expect(yield* responseJson(response)).toMatchObject({
         code: "insufficient_scope",
         requiredScope: "relay:write",
+        requiredPermission: "relay:configure",
+      });
+    }),
+  );
+
+  it.effect("allows relay writers to set preferences without creating a link", () =>
+    Effect.gen(function* () {
+      const { post, exchange } = yield* linkProofClient;
+      const path = "/api/connect/live-activity-preference";
+      const payload = { liveActivitiesEnabled: true };
+      const readToken = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:read");
+      const denied = yield* post(path, payload, { authorization: `Bearer ${readToken}` });
+      expect(denied.status).toBe(403);
+
+      const writeToken = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN, "relay:write");
+      const unlinked = yield* post(path, payload, { authorization: `Bearer ${writeToken}` });
+      expect(unlinked.status).toBe(200);
+      expect(yield* responseJson(unlinked)).toEqual({ ok: false });
+    }),
+  );
+
+  it.effect("requires explicit permission to configure the relay", () =>
+    Effect.gen(function* () {
+      const { post, exchange } = yield* linkProofClient;
+      const admin = yield* exchange(DESKTOP_BOOTSTRAP_TOKEN);
+      const paired = yield* post(
+        "/api/auth/pairing-token",
+        {},
+        { authorization: `Bearer ${admin}` },
+      );
+      expect(paired.status).toBe(200);
+      const { credential } = (yield* responseJson(paired)) as { credential: string };
+      const token = yield* exchange(credential);
+      const response = yield* post(
+        "/api/connect/relay-config",
+        {
+          relayUrl: "https://relay.example.test",
+          cloudUserId: "test-link-owner",
+          environmentCredential: "test-environment-credential",
+          cloudMintPublicKey: "test-public-key",
+          endpointRuntime: null,
+        },
+        { authorization: `Bearer ${token}` },
+      );
+      expect(response.status).toBe(403);
+      expect(yield* responseJson(response)).toMatchObject({
+        code: "insufficient_scope",
+        requiredPermission: "relay:configure",
       });
     }),
   );
