@@ -5797,7 +5797,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         const expected = human ? { kind: "human" } : undefined;
         assert.deepEqual(harness.offeredMessages[0]?.origin, expected);
-        assert.equal(harness.offeredMessages[1]?.priority, "now");
+        assert.equal(harness.offeredMessages[1]?.priority, "next");
         assert.deepEqual(harness.offeredMessages[1]?.origin, expected);
       }).pipe(
         Effect.scoped,
