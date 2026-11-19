@@ -1538,11 +1538,26 @@ function ComposerPromptEditorTiptapInner(
     if (!editor) return;
     if (disabled && editor.isEditable) resumeEditingFocusRef.current = editor.view.hasFocus();
     editor.setEditable(!disabled);
-    if (!disabled && resumeEditingFocusRef.current) {
-      resumeEditingFocusRef.current = false;
-      // Respect focus moved to another control while dictation was finishing.
-      if (document.activeElement === document.body || document.activeElement === editor.view.dom)
-        editor.view.focus();
+    if (!resumeEditingFocusRef.current) return;
+
+    const editorDom = editor.view.dom;
+    const ownerDocument = editorDom.ownerDocument;
+    if (disabled) {
+      const cancelFocusRestore = (event: FocusEvent) => {
+        if (!event.composedPath().includes(editorDom)) {
+          resumeEditingFocusRef.current = false;
+        }
+      };
+      ownerDocument.addEventListener("focusin", cancelFocusRestore, true);
+      return () => ownerDocument.removeEventListener("focusin", cancelFocusRestore, true);
+    }
+
+    resumeEditingFocusRef.current = false;
+    if (
+      ownerDocument.activeElement === ownerDocument.body ||
+      ownerDocument.activeElement === editorDom
+    ) {
+      editor.view.focus();
     }
   }, [disabled, editor]);
 

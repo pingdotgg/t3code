@@ -1096,29 +1096,35 @@ it.each([true, false])(
     });
     await screen.rerender(ui(true));
     await screen.rerender(ui(false));
-    expect(editor.view.hasFocus()).toBe(true);
-    expect(
-      window.getSelection()?.anchorNode &&
-        editor.view.dom.contains(window.getSelection()!.anchorNode),
-    ).toBe(true);
+    await vi.waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true);
+      expect(editor.view.dom.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+    });
     await userEvent.keyboard("X");
-    expect(editor.getText()).toBe("DrXaft");
+    await vi.waitFor(() => expect(editor.getText()).toBe("DrXaft"));
   },
 );
 
-it("does not reclaim focus moved to another field during dictation", async () => {
-  const ui = (disabled: boolean) => (
-    <>
-      <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
-      <input aria-label="Other field" />
-    </>
-  );
-  await using screen = await render(ui(false));
-  const editor = editorIn(screen.container);
-  await act(() => editor.view.focus());
-  await screen.rerender(ui(true));
-  const other = screen.container.querySelector("input")!;
-  other.focus();
-  await screen.rerender(ui(false));
-  expect(document.activeElement).toBe(other);
-});
+it.each(["other field", "document body"])(
+  "does not reclaim focus when it moves away during dictation and ends on the %s",
+  async (focusTarget) => {
+    const ui = (disabled: boolean) => (
+      <>
+        <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
+        <input aria-label="Other field" />
+      </>
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => editor.view.focus());
+    await screen.rerender(ui(true));
+    const other = screen.container.querySelector("input")!;
+    other.focus();
+    await vi.waitFor(() => expect(document.activeElement).toBe(other));
+    if (focusTarget === "document body") other.blur();
+    await screen.rerender(ui(false));
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(focusTarget === "document body" ? document.body : other),
+    );
+  },
+);
