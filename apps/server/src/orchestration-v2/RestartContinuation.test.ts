@@ -1240,18 +1240,36 @@ it.effect("does not continue a run the user asked to stop before the restart", (
   }),
 );
 
-it.effect("does not continue a cut /compact or /logout turn", () =>
+it.effect("does not continue a human's cut /compact or /logout turn", () =>
   Effect.gen(function* () {
     for (const text of ["/compact", " /LOGOUT "]) {
-      const texts = yield* continuationTexts({
-        ...cutMidTurn(),
-        messages: [{ id: MessageId.make("message:user"), text, attachments: [] }],
-      } as unknown as OrchestrationV2ThreadProjection);
-      assert.deepEqual(texts, [], text);
+      for (const createdBy of ["user", "agent"] as const) {
+        const texts = yield* continuationTexts({
+          ...cutMidTurn(),
+          messages: [
+            {
+              id: MessageId.make("message:user"),
+              text,
+              attachments: [],
+              createdBy,
+              creationSource: createdBy === "user" ? "web" : "mcp",
+            },
+          ],
+        } as unknown as OrchestrationV2ThreadProjection);
+        assert.lengthOf(texts, createdBy === "user" ? 0 : 1, `${createdBy}: ${text}`);
+      }
     }
     const texts = yield* continuationTexts({
       ...cutMidTurn(),
-      messages: [{ id: MessageId.make("message:user"), text: "/compact later", attachments: [] }],
+      messages: [
+        {
+          id: MessageId.make("message:user"),
+          text: "/compact later",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+      ],
     } as unknown as OrchestrationV2ThreadProjection);
     assert.lengthOf(texts, 1);
   }),

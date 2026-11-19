@@ -717,7 +717,7 @@ it("shows real score components and sends the viewed revision for feedback", asy
 
 it("restores a set-aside fact using the inspected revision", async () => {
   const registry = await setup();
-  const reviewed: ProjectFact = {
+  let currentFact: ProjectFact = {
     ...fact,
     revision: 3,
     verdict: { value: "task", by: "agent", at: fact.updatedAt },
@@ -732,15 +732,14 @@ it("restores a set-aside fact using the inspected revision", async () => {
       },
     },
   });
-  state.detail = Atom.make(AsyncResult.success(factDetail(reviewed)));
+  state.detail = Atom.make(() => AsyncResult.success(factDetail(currentFact)));
   state.mutate.mockImplementation(async () => {
-    const restored: ProjectFact = {
-      ...reviewed,
+    currentFact = {
+      ...currentFact,
       revision: 4,
       verdict: { value: "standing", by: "person", at: fact.updatedAt },
     };
-    registry.set(state.detail as Atom.Writable<unknown>, AsyncResult.success(factDetail(restored)));
-    return { _tag: "Success", value: restored };
+    return { _tag: "Success", value: currentFact };
   });
   await using screen = await mount(registry);
   await openMemory(screen);
@@ -766,6 +765,7 @@ it("restores a set-aside fact using the inspected revision", async () => {
   await expect
     .element(inspector().getByRole("button", { name: "Restore to recall", exact: true }))
     .not.toBeInTheDocument();
+  await expect.element(inspector().getByText(/Standing, recalled into related work/)).toBeVisible();
 });
 
 it("forgets a fact only after the permanent-erase warning is confirmed", async () => {

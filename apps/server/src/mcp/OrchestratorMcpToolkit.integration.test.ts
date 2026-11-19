@@ -39,6 +39,7 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { formatMessageWithProvenance } from "@t3tools/provider-core/server/messageProvenance";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
@@ -102,6 +103,23 @@ const delegatedTaskStatusTranscriptFile = new URL(
   import.meta.url,
 );
 
+function attributedChildPrompt(value: unknown): unknown {
+  if (
+    typeof value === "string" &&
+    [delegatedPrompt, cancellationPrompt, queuedFollowupPrompt].includes(value)
+  )
+    return formatMessageWithProvenance(value, {
+      createdBy: "agent",
+      creationSource: "mcp",
+      senderThreadId: parentThreadId,
+    });
+  if (Array.isArray(value)) return value.map(attributedChildPrompt);
+  if (typeof value !== "object" || value === null) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [key, attributedChildPrompt(entry)]),
+  );
+}
+
 const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
   function* (followupResult: string) {
     const fs = yield* FileSystem.FileSystem;
@@ -114,7 +132,13 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
     // replaying the exit would kill the shared process and fail the parent run.
     return {
       ...transcript,
-      entries: transcript.entries.filter((entry) => entry.type !== "runtime_exit"),
+      entries: transcript.entries
+        .filter((entry) => entry.type !== "runtime_exit")
+        .map((entry) =>
+          entry.type === "expect_outbound"
+            ? { ...entry, frame: attributedChildPrompt(entry.frame) }
+            : entry,
+        ),
     };
   },
   Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
@@ -365,6 +389,7 @@ describe("orchestrator MCP toolkit", () => {
           mode: "async",
           clientRequestId: "delegate-codex-replay-1",
         });
+        expect(delegatedCall).not.toHaveProperty("isError", true);
         const delegatedStart = yield* decodeDelegateTaskResult(
           delegatedCall.structuredContent,
         ).pipe(Effect.orDie);
@@ -393,6 +418,7 @@ describe("orchestrator MCP toolkit", () => {
         const delegatedStatusCall = yield* invoke("task_status", {
           taskId: delegatedStart.taskId,
         });
+        expect(delegatedStatusCall).not.toHaveProperty("isError", true);
         const delegated = yield* decodeDelegateTaskResult(
           delegatedStatusCall.structuredContent,
         ).pipe(Effect.orDie);

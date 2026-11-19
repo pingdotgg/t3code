@@ -2747,9 +2747,12 @@ describe("group conversations", () => {
               label: OPUS.model,
               handle: "opus",
             });
-            const seatPrompt = (yield* turnsOf(harness.control, seat))[0]!.text.split("\n")[0]!;
-            assert.include(seatPrompt, `${OPUS.model} (@opus)`);
-            assert.notInclude(seatPrompt, "Fable");
+            const seatIdentity = (yield* turnsOf(harness.control, seat))[0]!.text
+              .split("\n")
+              .find((line) => line.startsWith("You are "));
+            assert.isDefined(seatIdentity);
+            assert.include(seatIdentity, `${OPUS.model} (@opus)`);
+            assert.notInclude(seatIdentity, "Fable");
           }),
         ).pipe(Effect.provide(harness.layer));
       }),

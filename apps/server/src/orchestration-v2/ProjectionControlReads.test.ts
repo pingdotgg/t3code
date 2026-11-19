@@ -284,6 +284,7 @@ it.effect.each(storageCases)(
       const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
         get: () =>
           Effect.succeedSome({
+            driver,
             interruptTurn: () =>
               Effect.sync(() => {
                 calls.push("interrupt");
