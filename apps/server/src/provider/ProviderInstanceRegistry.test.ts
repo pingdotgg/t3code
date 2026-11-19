@@ -698,6 +698,81 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("re-reads Claude usage on an explicit refresh once the reading is a minute old", () =>
+    Effect.gen(function* () {
+      if (yield* HostProcess.isWindows) return;
+
+      const fixtures = yield* makeTildeProviderFixtures();
+      const claudeId = ProviderInstanceId.make("claude_usage_refresh");
+      // The probe answers with whatever utilization the test asks for, so a re-read is
+      // told apart from a reading served out of the capabilities cache.
+      let reportedUtilization = 12;
+      let usageReads = 0;
+      const query = vi.spyOn(ClaudeSdk, "query").mockImplementation(
+        () =>
+          ({
+            initializationResult: () =>
+              Promise.resolve({
+                commands: [{ name: "usage", description: "", argumentHint: "" }],
+                account: {
+                  email: "test@example.com",
+                  subscriptionType: "pro",
+                  tokenSource: "oauth",
+                },
+              }),
+            usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: async () => {
+              usageReads++;
+              return {
+                rate_limits_available: true,
+                rate_limits: {
+                  five_hour: {
+                    utilization: reportedUtilization,
+                    resets_at: "2026-07-18T14:39:00Z",
+                  },
+                },
+              };
+            },
+          }) as ReturnType<typeof ClaudeSdk.query>,
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(() => query.mockRestore()));
+
+      const { registry } = yield* makeProviderInstanceRegistry<ClaudeDriverEnv>({
+        drivers: [ClaudeDriver],
+        configMap: {
+          [claudeId]: {
+            driver: ProviderDriverKind.make("claudeAgent"),
+            enabled: true,
+            config: makeClaudeConfig({
+              enabled: true,
+              binaryPath: fixtures.claudeBinaryPath,
+              homePath: fixtures.claudeHomePath,
+            }),
+          },
+        },
+      });
+      const claude = yield* registry.getInstance(claudeId);
+      expect(claude).toBeDefined();
+
+      const first = yield* claude!.snapshot.refresh;
+      expect(first.usageLimits?.windows[0]?.usedPercent).toBe(12);
+      const readsBeforeSecond = usageReads;
+
+      // Claude's capabilities probe keeps a fresh reading for five minutes, so a refresh
+      // inside the floor is answered from that cache: this is the stale bar the Usage →
+      // Limits tab shows.
+      const withinFloor = yield* claude!.snapshot.refresh;
+      expect(withinFloor.usageLimits?.windows[0]?.usedPercent).toBe(12);
+      expect(usageReads).toBe(readsBeforeSecond);
+
+      // A minute later the floor has passed, so an explicit refresh re-reads Claude.
+      yield* TestClock.adjust("1 minute");
+      reportedUtilization = 88;
+      const afterFloor = yield* claude!.snapshot.refresh;
+      expect(afterFloor.usageLimits?.windows[0]?.usedPercent).toBe(88);
+      expect(usageReads).toBeGreaterThan(readsBeforeSecond);
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   const redeemClaudeReset = (claim: { result: string; usageFailsAfterClaim: boolean }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
