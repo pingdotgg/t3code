@@ -2977,8 +2977,9 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-cursor: var(--app-theme-terminal-cursor);
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
 
-  /* Design-system tiers and recipe fills derived from the theme's roles. Rims,
-     shadows and hover overlays keep the appearance's black or white alpha. */
+  /* Design-system tiers and recipe fills derived from the theme's roles. Filled
+     controls tint their rim from their fill; other rims, shadows and hover
+     overlays keep the appearance's black or white alpha. */
   --strong-foreground: color-mix(
     in oklab,
     var(--foreground) 45%,
@@ -3000,6 +3001,11 @@ html[data-theme-id]:not([data-theme-id=""]) {
     color-mix(in srgb, var(--popover) 92%, var(--destructive))
   );
   --lit-fill: linear-gradient(var(--primary), var(--primary));
+  --lit-rim: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 45%, white),
+    color-mix(in srgb, var(--primary) 0%, transparent)
+  );
   --lit-hover-fill: linear-gradient(var(--message-action-hover), var(--message-action-hover));
   --destructive-fill: linear-gradient(var(--destructive), var(--destructive));
   --destructive-hover-fill: linear-gradient(
@@ -4421,6 +4427,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     &[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim-everywhere"] > body,
     &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="gradient-rim-everywhere"] {
       --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+      /* The default's lift would clip a colored primary to a white rim. */
+      --lit-rim: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--primary) 45%, white),
+        color-mix(in srgb, var(--primary) 0%, transparent)
+      ) !important;
     }
   }
 }
