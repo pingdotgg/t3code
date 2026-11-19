@@ -872,7 +872,14 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           runId,
           nodeId: id,
           occurredAt: now,
-          payload: { ...task, id, result, status, title: "Inspect regression" },
+          payload: {
+            ...task,
+            id,
+            result,
+            status,
+            title: "Inspect regression",
+            childThreadId: ThreadId.make(`thread:inline-budget-child:${id}`),
+          },
         })),
       });
       yield* orchestrator.dispatch({
@@ -898,7 +905,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
       const deferredTaskId = testCase.inlineFirst ? secondTaskId : firstTaskId;
       assert.include(
         message.text,
-        `Delegated task ${deferredTaskId} (Inspect regression) [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
+        `Delegated task ${deferredTaskId} (Inspect regression) in child thread thread:inline-budget-child:${deferredTaskId} [${testCase.inlineFirst ? "cancelled" : "failed"}]`,
       );
       assert.include(message.text, `Use task_status with taskId ${deferredTaskId}`);
       assert.deepEqual(message.delegatedCompletion?.taskIds, [firstTaskId, secondTaskId]);
