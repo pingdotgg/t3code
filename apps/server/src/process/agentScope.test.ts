@@ -234,7 +234,10 @@ describe("AgentScope service", () => {
           const codex = yield* launchCodex(scope, "a", {
             PATH: NodePath.relative(process.cwd(), NodePath.dirname(executable)),
           });
-          expect(codex.args.at(-2)).toBe(executable);
+          // Anchored to the cwd for systemd-run, with its ".." kept; it names the same file.
+          const anchored = String(codex.args.at(-2));
+          expect(NodePath.isAbsolute(anchored)).toBe(true);
+          expect(NodePath.resolve(anchored)).toBe(executable);
           expect(codex.args).toContain("--property=OOMPolicy=continue");
           expect(codex.args).not.toContain("--property=OOMPolicy=stop");
           expect(codex.args).toContain("--property=TimeoutStopSec=10s");
@@ -251,7 +254,7 @@ describe("AgentScope service", () => {
   );
 
   it.effect.skipIf(!symlinksSupported)(
-    "keeps a symlinked parent in an absolute executable path",
+    "keeps a symlinked parent in absolute and relative executable paths",
     () =>
       withFakeSystemd(({ scope }) =>
         Effect.gen(function* () {
@@ -264,6 +267,15 @@ describe("AgentScope service", () => {
           const command = `${NodePath.join(bin, "link")}/../agent`;
           const wrapped = yield* scope.wrap({ command, args: [], name: "t", threadId: "s" });
           expect(wrapped.args.at(-1)).toBe(command);
+          // A relative path is anchored to the cwd the same way, without collapsing "..".
+          const relative = `${NodePath.relative(process.cwd(), NodePath.join(bin, "link"))}/../agent`;
+          const anchored = yield* scope.wrap({
+            command: relative,
+            args: [],
+            name: "t",
+            threadId: "s",
+          });
+          expect(anchored.args.at(-1)).toBe(`${process.cwd()}${NodePath.sep}${relative}`);
         }),
       ),
   );
