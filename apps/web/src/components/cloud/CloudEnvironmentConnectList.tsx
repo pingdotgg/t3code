@@ -106,7 +106,6 @@ export function CloudEnvironmentConnectRows({
   const environmentsState = useRelayEnvironmentDiscovery();
   const accountPage = useT3ConnectAccountPage();
   const openAccountPage = accountPage.open;
-  // Kept on every path so the account modal survives the last row being deregistered.
   const withPortals = (node: ReactNode) => (
     <>
       {node}
