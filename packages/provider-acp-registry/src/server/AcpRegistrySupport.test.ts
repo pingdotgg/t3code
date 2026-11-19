@@ -792,6 +792,55 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("gives Antigravity a T3-owned temp directory that is removed with the process", () => {
+    const agent = {
+      ...makeAgent({ binary: { "linux-x86_64": { archive: archiveUrl, cmd: "./agy" } } }),
+      id: "antigravity-acp",
+    };
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-runtime-temp-",
+      });
+      const runtimeTempDir = `${cacheDir}/antigravity-tmp/acp-registry`;
+      yield* fileSystem.makeDirectory(`${runtimeTempDir}/run-killed/_MEI123`, { recursive: true });
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        runtimeTempDir,
+        registryUrl,
+      });
+      expect(yield* fileSystem.exists(`${runtimeTempDir}/run-killed`)).toBe(false);
+
+      const temp = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const resolved = yield* resolver.resolve(
+            settings({ agentId: "antigravity-acp" }),
+            "/workspace",
+            { TMPDIR: "/tmp" },
+          );
+          const directory = resolved.spawn.env?.TMPDIR ?? "";
+          expect(directory.startsWith(`${runtimeTempDir}/run-`)).toBe(true);
+          expect(yield* fileSystem.exists(directory)).toBe(true);
+          return directory;
+        }),
+      );
+      expect(yield* fileSystem.exists(temp)).toBe(false);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(request.url === registryUrl ? makeRegistry(agent) : "#!/bin/sh\n"),
+            ),
+          ),
+        ),
+      ),
+    );
+  });
+
   it.effect("installs a contained binary whose name starts with two dots", () => {
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: archiveUrl, cmd: "..example-agent" } },
