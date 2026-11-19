@@ -11,6 +11,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  bankedResetCreditCount,
   type LimitPace,
   paceOf,
   paceRemainingPercent,
@@ -363,7 +364,7 @@ export function ResetCredits({
     useResetCredit(environmentId);
   const gt = useGT();
   const m = useMessages();
-  if (credits.availableCount === 0 && status === null) return null;
+  if (bankedResetCreditCount(credits) === 0 && status === null) return null;
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
       {resetCreditChoices(credits, input, now, false, m).map((choice) => (

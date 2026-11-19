@@ -12,6 +12,7 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import {
+  bankedResetCreditCount,
   type ResetCreditChoice,
   paceOf,
   paceRemainingPercent,
@@ -258,7 +259,7 @@ export function ResetCredits(props: {
   const [status, setStatus] = useState<string | null>(null);
   const gt = useGT();
   const m = useMessages();
-  if (dense && credits.availableCount === 0 && status === null) return null;
+  if (dense && bankedResetCreditCount(credits) === 0 && status === null) return null;
 
   const redeem = async (choice: ResetCreditChoice) => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;

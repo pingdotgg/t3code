@@ -106,6 +106,29 @@ describe("server config forward compatibility", () => {
       { id: "primary", kind: "session", label: "Session", usedPercent: 12 },
     ]);
   });
+
+  it("keeps the banked reset list and ignores reset fields this build does not know", () => {
+    const option = { creditId: "full_a", label: "Full reset", description: "Refills." };
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      usageLimits: {
+        checkedAt: "2026-04-10T00:00:00.000Z",
+        windows: [],
+        resetCredits: {
+          availableCount: 0,
+          bankedOptions: [
+            { ...option, availableCount: 1, unavailableReason: "Try again in a minute" },
+          ],
+          someFutureField: [{ creditId: "later" }],
+        },
+      },
+    });
+
+    expect(parsed.usageLimits?.resetCredits).toEqual({
+      availableCount: 0,
+      bankedOptions: [{ ...option, availableCount: 1, unavailableReason: "Try again in a minute" }],
+    });
+  });
 });
 
 describe("ServerObservability", () => {

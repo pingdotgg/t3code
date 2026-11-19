@@ -4,6 +4,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import { providerClients } from "@t3tools/client-runtime/provider-clients";
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
+  bankedResetCreditCount,
   collectLimitAccounts,
   collectLimitPools,
   displayLimitWindows,
@@ -247,7 +248,7 @@ function PoolWindowCard({
           );
         const { account, window } = member;
         const timeLeft = paceRemainingPercent(window, now);
-        const credits = account.limits.resetCredits?.availableCount ?? 0;
+        const credits = bankedResetCreditCount(account.limits.resetCredits);
         const resetsIn = resetLabels(window, now, m)?.compact;
         return (
           <Pressable
@@ -351,7 +352,7 @@ function PoolWindowCard({
       {pool.columns.map(({ account, window }, index) => {
         if (!window) return null;
         const segmentColor = normalizeProviderAccentColor(account.accentColor) ?? color;
-        const credits = account.limits.resetCredits?.availableCount ?? 0;
+        const credits = bankedResetCreditCount(account.limits.resetCredits);
         const reset = resetLabels(window, now, m);
         const resetsIn = reset?.full;
         return (

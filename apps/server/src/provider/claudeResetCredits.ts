@@ -189,55 +189,64 @@ const waitingReason = (grant: typeof Grant.Type, status: typeof CedarEmber.Type,
     : WAITING_REASONS[reason];
 };
 
-/** Every reset still banked stays listed; one Claude won't take right now says why instead. */
+/**
+ * The legacy fields keep their usable-only meaning so older clients never offer Use on a waiting
+ * reset; `bankedOptions` lists every banked reset, and one Claude won't take right now says why.
+ */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
 ): ServerProviderResetCredits | undefined {
   const parsed = decodeCedarEmber(block);
   if (Option.isNone(parsed) || !parsed.value.eligible) return undefined;
-  const live = (parsed.value.grants ?? [])
+  const status = parsed.value;
+  const banked = (status.grants ?? [])
     .flatMap((raw) => Option.toArray(decodeGrant(raw)))
     .filter(
       (grant) =>
         !grant.paused && (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.usable_now && grant.id === parsed.value.next_grant_id);
+  const live = banked.filter((grant) => grant.usable_now);
+  const next = live.find((grant) => grant.id === status.next_grant_id);
   const expiresAt = (grant: typeof Grant.Type | undefined) => {
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
   };
-  const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
-  for (const grant of live) {
-    if (grant.resets_left === 0) continue;
-    const kind = grantKind(grant);
-    byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
-  }
-  const options = (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
-    (kind): Array<ServerProviderResetCreditOption> => {
-      const grants = byKind.get(kind);
-      const target = grants?.find((grant) => grant.usable_now) ?? grants?.[0];
-      if (!grants || !target) return [];
-      const optionExpiresAt = expiresAt(target);
-      return [
-        {
-          creditId: target.id,
-          ...RESET_KINDS[kind],
-          availableCount: grants.reduce((sum, grant) => sum + grant.resets_left, 0),
-          ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
-          ...(target.usable_now
-            ? {}
-            : { unavailableReason: waitingReason(target, parsed.value, nowMs) }),
-        },
-      ];
-    },
-  );
+  const kindOptions = (grants: ReadonlyArray<typeof Grant.Type>) => {
+    const byKind = new Map<ResetKind, Array<typeof Grant.Type>>();
+    for (const grant of grants) {
+      if (grant.resets_left === 0) continue;
+      const kind = grantKind(grant);
+      byKind.set(kind, [...(byKind.get(kind) ?? []), grant]);
+    }
+    return (Object.keys(RESET_KINDS) as Array<ResetKind>).flatMap(
+      (kind): Array<ServerProviderResetCreditOption> => {
+        const ofKind = byKind.get(kind);
+        const target = ofKind?.find((grant) => grant.usable_now) ?? ofKind?.[0];
+        if (!ofKind || !target) return [];
+        const optionExpiresAt = expiresAt(target);
+        return [
+          {
+            creditId: target.id,
+            ...RESET_KINDS[kind],
+            availableCount: ofKind.reduce((sum, grant) => sum + grant.resets_left, 0),
+            ...(optionExpiresAt ? { expiresAt: optionExpiresAt } : {}),
+            ...(target.usable_now
+              ? {}
+              : { unavailableReason: waitingReason(target, status, nowMs) }),
+          },
+        ];
+      },
+    );
+  };
+  const bankedOptions = kindOptions(banked);
   const nextExpiresAt = expiresAt(next);
   return {
-    availableCount: live.reduce((sum, grant) => sum + grant.resets_left, 0),
+    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
     ...(next ? { nextCreditId: next.id } : {}),
-    ...(options.length > 0 ? { options } : {}),
+    ...(next ? { options: kindOptions(live) } : {}),
+    ...(bankedOptions.length > 0 ? { bankedOptions } : {}),
   };
 }
 
@@ -321,9 +330,11 @@ export const claudeRedeemTarget = (
   if (creditId === undefined) {
     return credits?.nextCreditId ? { grantId: credits.nextCreditId } : { outcome: "noCredit" };
   }
-  const option = credits?.options?.find((candidate) => candidate.creditId === creditId);
+  const option = (credits?.bankedOptions ?? credits?.options)?.find(
+    (candidate) => candidate.creditId === creditId,
+  );
   if (!option) return { outcome: "noCredit" };
-  // Clients older than unavailableReason still offer Use on a waiting reset.
+  // A client reading an older snapshot can still ask for a reset that is now waiting.
   return option.unavailableReason ? { outcome: "nothingToReset" } : { grantId: creditId };
 };
 

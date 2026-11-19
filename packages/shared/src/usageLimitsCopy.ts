@@ -8,6 +8,7 @@ import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
 import {
+  bankedResetCreditOptions,
   collectExternalUsageLinks as collectExternalUsageLinksWith,
   cursorUsageWindowDetails as cursorUsageWindowDetailsBase,
   type LimitPool,
@@ -155,8 +156,9 @@ export function resetCreditChoices(
 ): ReadonlyArray<ResetCreditChoice> {
   const expiresIn = (at: string | undefined) =>
     at ? formatDuration(Date.parse(at) - now, resolve) : null;
-  if (credits.options && "instanceId" in input) {
-    return credits.options.map((option) => {
+  const options = bankedResetCreditOptions(credits);
+  if (options && "instanceId" in input) {
+    return options.map((option) => {
       const expires = expiresIn(option.expiresAt);
       const values = { label: option.label, count: option.availableCount };
       const reason = option.unavailableReason;

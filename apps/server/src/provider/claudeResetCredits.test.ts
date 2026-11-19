@@ -37,6 +37,11 @@ const respond = (status: number, body: unknown) =>
   );
 const refuseRequests = HttpClient.make(() => Effect.die("must not send a request"));
 
+const FULL = {
+  label: "Full reset",
+  description: "Refills your 5-hour and weekly limits.",
+} as const;
+
 describe("claudeResetCreditsToContract", () => {
   it("counts live grants and pins the next usable one", () => {
     expect(
@@ -59,14 +64,21 @@ describe("claudeResetCreditsToContract", () => {
         NOW,
       ),
     ).toEqual({
-      availableCount: 5,
+      availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
       options: [
         {
           creditId: "grant_a",
-          label: "Full reset",
-          description: "Refills your 5-hour and weekly limits.",
+          ...FULL,
+          availableCount: 2,
+          expiresAt: "2026-10-01T00:00:00.000Z",
+        },
+      ],
+      bankedOptions: [
+        {
+          creditId: "grant_a",
+          ...FULL,
           availableCount: 5,
           expiresAt: "2026-10-01T00:00:00.000Z",
         },
@@ -94,17 +106,16 @@ describe("claudeResetCreditsToContract", () => {
       },
       NOW,
     );
-    expect(
-      credits?.options?.map(({ creditId, label, availableCount }) => [
-        creditId,
-        label,
-        availableCount,
-      ]),
-    ).toEqual([
+    const rows = [
       ["session_a", "5-hour reset", 1],
       ["weekly_a", "Weekly reset", 1],
       ["fable_a", "Fable reset", 2],
-    ]);
+    ];
+    for (const options of [credits?.options, credits?.bankedOptions]) {
+      expect(
+        options?.map(({ creditId, label, availableCount }) => [creditId, label, availableCount]),
+      ).toEqual(rows);
+    }
     expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
   });
 
@@ -136,7 +147,7 @@ describe("claudeResetCreditsToContract", () => {
       "No Fable usage this week to give back",
     ],
   ])(
-    "keeps a banked reset that can't be used yet and says why: %j %j",
+    "lists a banked reset that can't be used yet with why, and leaves it out of the older fields: %j %j",
     (overrides, status, why) => {
       const credits = ClaudeResetCredits.claudeResetCreditsToContract(
         {
@@ -148,13 +159,13 @@ describe("claudeResetCreditsToContract", () => {
         NOW,
       );
       expect(credits).toEqual({
-        availableCount: 1,
-        options: [expect.objectContaining({ creditId: "grant_a", unavailableReason: why })],
+        availableCount: 0,
+        bankedOptions: [expect.objectContaining({ creditId: "grant_a", unavailableReason: why })],
       });
     },
   );
 
-  it("offers a usable reset beside one that is waiting, whichever Claude names next", () => {
+  it("keeps the older fields empty when Claude's next grant is waiting beside a usable one", () => {
     const credits = ClaudeResetCredits.claudeResetCreditsToContract(
       {
         eligible: true,
@@ -167,9 +178,9 @@ describe("claudeResetCreditsToContract", () => {
       },
       NOW,
     );
-    expect(credits?.nextCreditId).toBeUndefined();
+    expect(credits).toEqual({ availableCount: 0, bankedOptions: expect.any(Array) });
     expect(
-      credits?.options?.map(({ creditId, availableCount, unavailableReason }) => [
+      credits?.bankedOptions?.map(({ creditId, availableCount, unavailableReason }) => [
         creditId,
         availableCount,
         unavailableReason,
@@ -180,7 +191,7 @@ describe("claudeResetCreditsToContract", () => {
     ]);
   });
 
-  it("sends no claim for a reset that is waiting or unknown", () => {
+  it("keeps older clients' usable-only options when a waiting kind sits beside the next grant", () => {
     const credits = ClaudeResetCredits.claudeResetCreditsToContract(
       {
         eligible: true,
@@ -192,16 +203,68 @@ describe("claudeResetCreditsToContract", () => {
       },
       NOW,
     );
+    expect(credits).toMatchObject({ availableCount: 1, nextCreditId: "fable_a" });
+    expect(credits?.options?.map((option) => option.creditId)).toEqual(["fable_a"]);
+    expect(
+      credits?.bankedOptions?.map(({ creditId, unavailableReason }) => [
+        creditId,
+        unavailableReason,
+      ]),
+    ).toEqual([
+      ["fable_a", undefined],
+      ["full_a", "Usable once you reach a limit it refills"],
+    ]);
+  });
+
+  it("claims an eligible reset by id, even when Claude's next grant is waiting, and never a waiting one", () => {
+    const waitingNext = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "full_a",
+        grants: [
+          grant({ id: "full_a", type: "full", usable_now: false }),
+          grant({ id: "fable_a", gives_back_weekly: true }),
+        ],
+      },
+      NOW,
+    );
     expect(
       [undefined, "fable_a", "full_a", "gone"].map((creditId) =>
-        ClaudeResetCredits.claudeRedeemTarget(credits, creditId),
+        ClaudeResetCredits.claudeRedeemTarget(waitingNext, creditId),
       ),
     ).toEqual([
-      { grantId: "fable_a" },
+      { outcome: "noCredit" },
       { grantId: "fable_a" },
       { outcome: "nothingToReset" },
       { outcome: "noCredit" },
     ]);
+    const usableNext = ClaudeResetCredits.claudeResetCreditsToContract(
+      {
+        eligible: true,
+        next_grant_id: "fable_a",
+        grants: [
+          grant({ id: "full_a", type: "full", usable_now: false }),
+          grant({ id: "fable_a", gives_back_weekly: true }),
+        ],
+      },
+      NOW,
+    );
+    expect(
+      [undefined, "fable_a", "full_a"].map((creditId) =>
+        ClaudeResetCredits.claudeRedeemTarget(usableNext, creditId),
+      ),
+    ).toEqual([{ grantId: "fable_a" }, { grantId: "fable_a" }, { outcome: "nothingToReset" }]);
+  });
+
+  it("claims by an older server's options when there is no banked list", () => {
+    const olderServer = {
+      availableCount: 1,
+      nextCreditId: "fable_a",
+      options: [{ creditId: "fable_a", ...FULL, availableCount: 1 }],
+    };
+    expect(ClaudeResetCredits.claudeRedeemTarget(olderServer, "fable_a")).toEqual({
+      grantId: "fable_a",
+    });
     expect(ClaudeResetCredits.claudeRedeemTarget({ availableCount: 1 }, undefined)).toEqual({
       outcome: "noCredit",
     });
