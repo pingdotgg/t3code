@@ -200,6 +200,20 @@ describe("resolveDraftProjectSelection", () => {
       }),
     ).toEqual({ kind: "pick" });
   });
+
+  it("starts a share draft in the last project when Use last project is on", () => {
+    const scopes = [makeScope([projects[0]!]), makeScope([projects[1]!])];
+    const shareDraft = {
+      incomingShareId: "share",
+      pickerClosed: false,
+      useLastProject: undefined,
+      lastProject: { environmentId: "environment", projectId: "t3code-2" },
+    };
+    expect(resolveDraftProjectSelection(null, projects, scopes, shareDraft)).toEqual({
+      kind: "select",
+      project: projects[1],
+    });
+  });
 });
 
 describe("newTaskDestination", () => {
