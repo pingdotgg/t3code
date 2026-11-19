@@ -282,6 +282,14 @@ async function pathExists(target: string): Promise<boolean> {
   }
 }
 
+async function databaseBackupExists(backupDir: string): Promise<boolean> {
+  if (!(await pathExists(backupDir))) return false;
+  if (!(await pathExists(databaseBackupFile(backupDir, "")))) {
+    throw new Error(`Database backup is incomplete: ${backupDir} has no main database file.`);
+  }
+  return true;
+}
+
 const MANAGED_SERVICE_ENV_NAMES = new Set([
   "PATH",
   "T3CODE_HOME",
@@ -371,9 +379,10 @@ const CLONED_BACKUP_HEADROOM_FRACTION = 0.1;
 const ONLINE_BACKUP_WAL_HEADROOM_BYTES = 2 * 128 * 1024 ** 2;
 
 async function statDatabaseFiles(dbPath: string): Promise<ReadonlyArray<NodeFS.Stats>> {
+  const databasePath = await NodeFSP.realpath(dbPath);
   const stats: Array<NodeFS.Stats> = [];
   for (const suffix of DB_FILE_SUFFIXES) {
-    const stat = await NodeFSP.stat(`${dbPath}${suffix}`).catch((cause: unknown) => {
+    const stat = await NodeFSP.stat(`${databasePath}${suffix}`).catch((cause: unknown) => {
       if (suffix !== "" && (cause as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw cause;
     });
@@ -400,8 +409,9 @@ async function backupCanClone(dbPath: string, backupRoot: string): Promise<boole
   if (platform !== "linux") return false;
   const probe = NodePath.join(backupRoot, `.clone-probe-${NodeCrypto.randomUUID()}`);
   try {
+    const databasePath = await NodeFSP.realpath(dbPath);
     for (const suffix of DB_FILE_SUFFIXES) {
-      const source = `${dbPath}${suffix}`;
+      const source = `${databasePath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       if (!(await runCp(["--reflink=always", source, `${probe}${suffix}`]))) return false;
     }
@@ -479,7 +489,7 @@ async function startOnlineDatabaseBackup(
   probe: Partial<BackupSpaceProbe> = {},
 ): Promise<(() => Promise<void>) | undefined> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return undefined;
+  if (await databaseBackupExists(backupDir)) return undefined;
   const { canClone } = { ...filesystemBackupSpaceProbe, ...probe };
   if (await canClone(pending.dbPath, NodePath.dirname(backupDir)).catch(() => true))
     return undefined;
@@ -546,15 +556,16 @@ async function backupDatabaseOnce(
   signal: AbortSignal,
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (await pathExists(backupDir)) return;
+  if (await databaseBackupExists(backupDir)) return;
 
   const stagingDir = `${backupDir}.staging`;
   await NodeFSP.rm(stagingDir, { recursive: true, force: true });
   await NodeFSP.mkdir(stagingDir, { recursive: true, mode: 0o700 });
   try {
+    const databasePath = await NodeFSP.realpath(pending.dbPath);
     for (const suffix of DB_FILE_SUFFIXES) {
       signal.throwIfAborted();
-      const source = `${pending.dbPath}${suffix}`;
+      const source = `${databasePath}${suffix}`;
       if (suffix !== "" && !(await pathExists(source))) continue;
       const destination = databaseBackupFile(stagingDir, suffix);
       await copyDatabaseFile(source, destination, signal);
@@ -616,7 +627,7 @@ async function restoreDatabaseBackup(
   pending: PendingServiceUpdate,
 ): Promise<void> {
   const backupDir = databaseBackupDir(baseDir, pending.id);
-  if (!(await pathExists(backupDir))) return;
+  if (!(await databaseBackupExists(backupDir))) return;
 
   await markDatabaseRestorePending(backupDir);
   const directories = new Set([NodePath.dirname(pending.dbPath)]);

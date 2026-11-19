@@ -239,6 +239,7 @@ export const layer: Layer.Layer<
         });
 
       const { worktreePath, branch } = context.thread;
+      let rollbackCommitted = false;
       // Recreated only where the server would have made it, as turn start does.
       if (worktreePath != null && branch != null) {
         // A failed removal can leave the folder without its checkout; only a file restore replaces it.
@@ -263,8 +264,8 @@ export const layer: Layer.Layer<
             );
             if (leftover) {
               if (!(yield* isolated)) return yield* sharedWorkspace();
-              // Set aside, not removed: a checkout that fails puts the folder and its files back.
-              yield* Effect.acquireUseRelease(
+              // Keep the original folder until the completed rollback is recorded.
+              yield* Effect.acquireRelease(
                 Effect.gen(function* () {
                   const aside = yield* fileSystem.makeTempDirectory({
                     directory: path.dirname(worktreePath),
@@ -273,9 +274,8 @@ export const layer: Layer.Layer<
                   yield* fileSystem.rename(worktreePath, path.join(aside, "folder"));
                   return aside;
                 }),
-                () => recreate,
                 (aside, exit) =>
-                  (Exit.isSuccess(exit)
+                  (Exit.isSuccess(exit) || rollbackCommitted
                     ? Effect.void
                     : fileSystem
                         .remove(worktreePath, { recursive: true, force: true })
@@ -295,6 +295,7 @@ export const layer: Layer.Layer<
                     ),
                   ),
               );
+              yield* recreate;
             } else {
               yield* recreate;
             }
@@ -369,9 +370,6 @@ export const layer: Layer.Layer<
             providerThreadTurns,
           });
       if (input.restoreFiles !== false) yield* checkpoints.restore({ scope, checkpoint });
-      if (staleCheckpoints.length > 0) {
-        yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints });
-      }
 
       // Lock against full-row thread writes that could restore the old native session after rollback.
       yield* threadCommands.withLock(
@@ -442,10 +440,30 @@ export const layer: Layer.Layer<
               );
             }
           }
-          yield* eventSink.write({ events });
+          // Cancellation after the durable commit must not restore the old folder.
+          yield* eventSink.write({ events }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                rollbackCommitted = true;
+              }),
+            ),
+            Effect.uninterruptible,
+          );
+          // Ready checkpoints must remain recoverable if the rollback transaction fails.
+          if (staleCheckpoints.length > 0) {
+            yield* checkpoints.deleteStaleRefs({ scope, checkpoints: staleCheckpoints }).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Rollback left stale checkpoint refs", {
+                  threadId: input.threadId,
+                  scopeId: scope.id,
+                  cause,
+                }),
+              ),
+            );
+          }
         }),
       );
-    });
+    }, Effect.scoped);
 
     return CheckpointRollbackServiceV2.of({
       // The inner execute owns the rollback span; this wrapper selects the workspace lease.

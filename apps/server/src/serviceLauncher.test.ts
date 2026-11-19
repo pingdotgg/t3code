@@ -1406,6 +1406,94 @@ if (context.update?.status === "pending") {
     }),
   );
 
+  it.effect.each([false, true])(
+    "preserves the live database when a backup has lost its main file, restore pending %s",
+    (restoring) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-partial-backup-" });
+        const statePath = path.join(root, "runtime", "service-state.json");
+        const databasePath = path.join(root, "userdata", "state.sqlite");
+        const backupDir = path.join(root, "runtime", "db-backup", "partial-update");
+        const trialStarted = path.join(root, "trial-started");
+        yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
+        {
+          using database = new NodeSqlite.DatabaseSync(databasePath);
+          database.exec("CREATE TABLE saved (value TEXT); INSERT INTO saved VALUES ('keep');");
+        }
+        // A killed recursive discard can leave its directory after deleting the backup file.
+        yield* fs.makeDirectory(backupDir, { recursive: true });
+        if (restoring) yield* fs.writeFileString(path.join(backupDir, ".restore-pending"), "");
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.0.0"),
+          'process.send("active"); setInterval(() => {}, 1_000);',
+        );
+        yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(root, "runtime", "versions", "1.1.0"),
+          `require("node:fs").writeFileSync(${JSON.stringify(trialStarted)}, ""); process.exit(1);`,
+        );
+        yield* Effect.promise(() =>
+          writeServiceState(statePath, {
+            protocol: SERVICE_LAUNCHER_PROTOCOL,
+            activeVersion: "1.0.0",
+            update: {
+              id: "partial-update",
+              fromVersion: "1.0.0",
+              targetVersion: "1.1.0",
+              dbPath: databasePath,
+              status: "pending",
+            },
+          }),
+        );
+        const active = Promise.withResolvers<void>();
+        yield* Effect.acquireRelease(
+          Effect.sync(() => {
+            spawnHook.current = (child) =>
+              child.on("message", (message) => message === "active" && active.resolve());
+          }),
+          () =>
+            Effect.sync(() => {
+              spawnHook.current = undefined;
+            }),
+        );
+        const launcher = new Launcher(
+          root,
+          yield* Effect.promise(() => readServiceState(statePath)),
+        );
+        const running = launcher.run().then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        yield* Effect.addFinalizer(() =>
+          Effect.promise(async () => {
+            await launcher.stop("SIGTERM");
+            await running;
+          }),
+        );
+        const result = yield* Effect.promise(() => Promise.race([running, active.promise]));
+
+        assert.isTrue(yield* fs.exists(databasePath));
+        using restored = new NodeSqlite.DatabaseSync(databasePath, { readOnly: true });
+        assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
+        assert.deepEqual(restored.prepare("SELECT value FROM saved").all(), [{ value: "keep" }]);
+        assert.isFalse(yield* fs.exists(trialStarted));
+        assert.include(
+          result instanceof Error ? result.message : "",
+          "Database backup is incomplete",
+        );
+        assert.equal(
+          (yield* Effect.promise(() => readServiceState(statePath))).update?.status,
+          "pending",
+        );
+        assert.isTrue(yield* fs.exists(backupDir));
+      }),
+  );
+
   it.effect.each(["file", "symlink", "dangling symlink"] as const)(
     "restores the database when a migrating trial exits, with the database a %s",
     (kind) =>
@@ -1485,9 +1573,13 @@ if (context.update?.status === "pending") {
       }),
   );
 
-  it.effect.each(["wal", "delete"] as const)(
-    "backs up a %s-mode database (online when WAL) and restores its final state",
-    (journalMode) =>
+  it.effect.each([
+    { journalMode: "wal", canClone: false },
+    { journalMode: "delete", canClone: false },
+    { journalMode: "wal", canClone: true },
+  ] as const)(
+    "backs up a $journalMode-mode database with clone support $canClone and restores its final state",
+    ({ journalMode, canClone }) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1535,6 +1627,7 @@ if (context.update?.status === "pending") {
       backupsAtStop: readdirSync(backupRoot).map((entry) => readdirSync(backupRoot + "/" + entry)),
       rows: db.prepare("SELECT count(*) AS n FROM events").get().n,
     }));
+    ${canClone ? 'process.kill(process.pid, "SIGKILL");' : ""}
     db.close();
     process.exit(0);
   });
@@ -1562,7 +1655,7 @@ if (context.update?.status === "pending") {
           root,
           yield* Effect.promise(() => readServiceState(statePath)),
           {
-            backupSpaceProbe: { canClone: async () => false },
+            backupSpaceProbe: { canClone: async () => canClone },
           },
         );
         yield* Effect.promise(() =>
@@ -1576,13 +1669,9 @@ if (context.update?.status === "pending") {
         assert.equal(state.update?.status, "rolled-back");
         const observed = JSON.parse(yield* fs.readFileString(observationsPath));
         // A WAL database's main file is copied before the server is asked to stop; others fall back offline.
-        assert.deepEqual(observed.backupsAtStop, journalMode === "wal" ? [["database"]] : []);
+        const online = journalMode === "wal" && !canClone;
+        assert.deepEqual(observed.backupsAtStop, online ? [["database"]] : []);
         assert.isAbove(observed.rows, 501);
-        // Only the online copy holds no -shm: the offline fallback copies the one the server left.
-        assert.deepEqual(
-          JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
-          journalMode === "wal" ? ["database", "database-wal"] : ["database"],
-        );
         const restored = new NodeSqlite.DatabaseSync(databasePath);
         try {
           assert.equal(restored.prepare("PRAGMA integrity_check").get()?.integrity_check, "ok");
@@ -1601,6 +1690,15 @@ if (context.update?.status === "pending") {
         } finally {
           restored.close();
         }
+        // Only the online copy holds no -shm: the offline fallback copies the one the server left.
+        assert.deepEqual(
+          JSON.parse(yield* fs.readFileString(`${observationsPath}.trial`)),
+          online
+            ? ["database", "database-wal"]
+            : journalMode === "wal"
+              ? ["database", "database-shm", "database-wal"]
+              : ["database"],
+        );
       }),
   );
 
