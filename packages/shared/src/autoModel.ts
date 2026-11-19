@@ -167,7 +167,8 @@ function sessionUsedPercent(provider: ServerProvider): number {
 
 /**
  * Weekly windows that limit `model` (a one-model window counts only for it) and when each
- * resets. A window that has not started reports no reset; it would run its full length from now.
+ * resets. A window with no reported reset, such as one that has not started, counts as a full
+ * window from now.
  */
 function weeklyWindows(provider: ServerProvider, model: string, now: number) {
   return (provider.usageLimits?.windows ?? []).flatMap((w) => {
