@@ -1453,6 +1453,58 @@ it.layer(
       );
     });
 
+    it("marks a ready catalog retained for one failed check", () => {
+      const readyProvider = {
+        instanceId: ProviderInstanceId.make("codex"),
+        driver: ProviderDriverKind.make("codex"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-30T00:00:00.000Z",
+        version: "1.0.0",
+        models: [{ slug: "gpt-5.5", name: "GPT-5.5", isCustom: false, capabilities: null }],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const failedProvider = {
+        ...readyProvider,
+        status: "error",
+        auth: { status: "unknown" },
+        checkedAt: "2026-10-30T00:01:00.000Z",
+        models: [],
+      } as const satisfies ServerProvider;
+      const merge = ProviderRegistry.mergeProviderSnapshot;
+
+      const failedOnce = merge(readyProvider, failedProvider);
+      assert.deepStrictEqual(failedOnce.models, [...readyProvider.models]);
+      assert.strictEqual(failedOnce.modelsRetained, true);
+      assert.strictEqual(merge(failedOnce, failedProvider).modelsRetained, true);
+      assert.strictEqual(
+        merge(failedOnce, { ...failedProvider, checkedAt: "2026-10-30T00:02:00.000Z" })
+          .modelsRetained,
+        undefined,
+      );
+      assert.strictEqual(merge(failedOnce, readyProvider).modelsRetained, undefined);
+      const customOnly = {
+        ...readyProvider,
+        models: [{ slug: "bailian", name: "bailian", isCustom: true, capabilities: null }],
+      } satisfies ServerProvider;
+      assert.strictEqual(
+        merge(customOnly, { ...failedProvider, models: customOnly.models }).modelsRetained,
+        true,
+      );
+      assert.strictEqual(
+        merge(readyProvider, { ...failedProvider, installed: false }).modelsRetained,
+        undefined,
+      );
+      assert.strictEqual(
+        merge(readyProvider, { ...failedProvider, auth: { status: "unauthenticated" } })
+          .modelsRetained,
+        undefined,
+      );
+    });
+
     it.each(["kiro", "claudeAgent"] as const)(
       "keeps %s models a ready probe can omit",
       (driver) => {
@@ -3541,6 +3593,7 @@ it.layer(
             withBundledCompatibility({
               ...refreshedProvider,
               models: [...initialProvider.models],
+              modelsRetained: true,
             }),
           );
         }).pipe(Effect.provide(runtimeServices));
