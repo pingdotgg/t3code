@@ -1293,6 +1293,23 @@ const make = Effect.gen(function* () {
       );
   };
 
+  // A directory watch follows the directory's inode, so when the target's
+  // directory is renamed away and another takes its path, watch the new one.
+  const watchLinkTargetChanges = (linkTargetPath: string) => {
+    const directoryReplacements = watchFileChanges(pathService.dirname(linkTargetPath)).pipe(
+      Stream.ignore({ log: true }),
+    );
+    const fileChanges = watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true }));
+    return Stream.make(fileChanges).pipe(
+      Stream.concat(
+        directoryReplacements.pipe(
+          Stream.map((replacement) => Stream.concat(Stream.make(replacement), fileChanges)),
+        ),
+      ),
+      Stream.switchMap((changes) => changes),
+    );
+  };
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
 
@@ -1331,8 +1348,7 @@ const make = Effect.gen(function* () {
       Stream.switchMap(
         Option.match({
           onNone: () => Stream.empty,
-          onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+          onSome: watchLinkTargetChanges,
         }),
       ),
     );
