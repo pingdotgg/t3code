@@ -811,6 +811,24 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
       activeAttemptId: continuedAttemptId,
       checkpointId,
     };
+    const backgroundCommand = {
+      id: TurnItemId.make(`${continuedId}:background`),
+      threadId,
+      runId: continuedId,
+      nodeId: continuedNodeId,
+      providerThreadId: nativeThread.id,
+      providerTurnId: ProviderTurnId.make(`${continuedId}:native`),
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 2,
+      status: "running" as const,
+      title: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+      type: "command_execution" as const,
+      input: "build",
+    };
     yield* sink.write({
       events: [
         {
@@ -890,11 +908,39 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
             attachments: [],
           },
         },
+        {
+          id: EventId.make(`${continuedId}:background-started`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: backgroundCommand,
+        },
       ],
     });
     nativeHistory.push(nativeTurn("continued", "Continued in T3"));
     failRead = false;
-    const restarted = yield* makeImporter([], Effect.void, () => Effect.succeed(adapter));
+    const restarted = yield* makeImporter(
+      [],
+      sink
+        .write({
+          events: [
+            {
+              id: EventId.make(`${continuedId}:background-finished`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...backgroundCommand,
+                status: "completed",
+                completedAt: now,
+                output: "Build succeeded",
+              },
+            },
+          ],
+        })
+        .pipe(Effect.orDie, Effect.asVoid),
+      () => Effect.succeed(adapter),
+    );
     expect(yield* restarted.refreshCodexHistory({ threadId })).toBe(1);
     expect(yield* refresh).toBe(0);
     expect(readAnchors.slice(-3)).toEqual(["outside-2", "outside-2", "continued"]);
@@ -923,7 +969,7 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
       "missed",
       "continued",
     ]);
-    expect(after.turnItems.map((item) => ("text" in item ? item.text : null))).toEqual([
+    expect(after.turnItems.flatMap((item) => ("text" in item ? [item.text] : []))).toEqual([
       "From Codex",
       "Reply to From Codex",
       "Next Codex message",
@@ -932,8 +978,63 @@ it.effect("refreshes completed Codex turns in order, including gaps after a fail
       "Reply to Missed Codex message",
       "Continued in T3",
     ]);
+    expect(after.turnItems.at(-1)).toMatchObject({
+      id: backgroundCommand.id,
+      ordinal: 6_000_002,
+      status: "completed",
+      output: "Build succeeded",
+    });
     expect(after.turnItems[0]?.ordinal).toBeGreaterThan(2_000_000);
     expect(after.thread.id).toBe(threadId);
+
+    // A held run submitted before the continuation can reach Codex after it.
+    const heldAttemptId = RunAttemptId.make(`${laterRun.id}:1`);
+    const heldNodeId = NodeId.make(`${laterRun.id}:root`);
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make(`${laterRun.id}:held-completed`),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...laterRun,
+            activeAttemptId: heldAttemptId,
+            rootNodeId: heldNodeId,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+        {
+          id: EventId.make(`${laterRun.id}:held-native`),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: ProviderTurnId.make(`${laterRun.id}:held-native`),
+            providerThreadId: nativeThread.id,
+            nodeId: heldNodeId,
+            runAttemptId: heldAttemptId,
+            nativeTurnRef: { driver: nativeThread.driver, nativeId: "held", strength: "strong" },
+            ordinal: 6,
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        },
+      ],
+    });
+    nativeHistory.push(
+      nativeTurn("before-held", "Before the held run"),
+      nativeTurn("held", "Held"),
+    );
+    expect(yield* refresh).toBe(0);
+    expect(yield* refresh).toBe(0);
+    expect(readAnchors.slice(-2)).toEqual(["continued", "continued"]);
+    expect((yield* projections.getThreadRecords(threadId, ["turnItems"])).turnItems).toEqual(
+      after.turnItems,
+    );
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 

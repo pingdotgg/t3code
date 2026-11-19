@@ -4976,6 +4976,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         data: Array<ReturnType<typeof turn>>,
         nextCursor: string | null,
         itemsView = "notLoaded",
+        backwardsCursor?: string,
+        headCheck = false,
       ): Array<CodexReplay.CodexAppServerReplayEntry> => [
         {
           type: "expect_outbound",
@@ -4986,16 +4988,23 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             params: {
               threadId: nativeThreadId,
               cursor,
-              limit: itemsView === "full" ? 8 : 32,
+              limit: headCheck ? 1 : itemsView === "full" ? 8 : 32,
               itemsView,
-              sortDirection: "desc",
+              sortDirection: headCheck ? "asc" : "desc",
             },
           },
         },
         {
           type: "emit_inbound",
           label: "thread/turns/list",
-          frame: { id, result: { data, nextCursor } },
+          frame: {
+            id,
+            result: {
+              data,
+              nextCursor,
+              ...(backwardsCursor === undefined ? {} : { backwardsCursor }),
+            },
+          },
         },
       ];
       const listItems = (
@@ -5060,8 +5069,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                   user("steer", "Steer the turn"),
                   answer("legacy"),
                 ]),
-                turn(nativeTurnId, "full"),
               ],
+              "older-1",
+              "full",
+              "legacy-head",
+            ),
+            ...listPage(16, "older-1", [turn("local-3", "full")], "older-2", "full"),
+            ...listPage(17, "older-2", [turn("local-2", "full")], "older-3", "full"),
+            ...listPage(18, "older-3", [turn("local-1", "full")], "older-4", "full"),
+            ...readMode(19, "legacy"),
+            ...listPage(
+              20,
+              "legacy-head",
+              [turn("legacy")],
+              "new-append",
+              "notLoaded",
+              undefined,
+              true,
+            ),
+            ...listPage(
+              21,
+              "older-4",
+              [turn("missed-legacy", "full", [user("missed-legacy")]), turn(nativeTurnId, "full")],
               null,
               "full",
             ),
@@ -5088,8 +5117,14 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
       const error = yield* Effect.flip(readHistory({ providerThread, nativeTurnId }));
       assert.equal(error._tag, "ProviderAdapterReadThreadSnapshotError");
+      assert.deepEqual(yield* readHistory({ providerThread, nativeTurnId }), []);
       const legacy = yield* readHistory({ providerThread, nativeTurnId });
-      assert.deepEqual(legacy[0]?.messages, [
+      assert.deepEqual(
+        legacy.map((turn) => turn.id),
+        ["missed-legacy", "local-1", "local-2", "local-3", "legacy"],
+      );
+      assert.deepEqual(legacy[0]?.messages, [{ role: "user", text: "missed-legacy" }]);
+      assert.deepEqual(legacy.at(-1)?.messages, [
         { role: "user", text: "legacy" },
         { role: "user", text: "Steer the turn" },
         { role: "assistant", text: "Reply to legacy" },
@@ -10552,7 +10587,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  it.effect("unarchives an unloaded Codex thread before rolling it back", () =>
+  it.effect("unarchives a Codex thread and reverts all native turns after the checkpoint", () =>
     Effect.gen(function* () {
       const nativeThreadId = "archived-rollback-thread";
       const resumeParams = {
@@ -10605,13 +10640,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             {
               threadId: nativeThreadId,
               cursor: null,
-              limit: 1,
+              limit: 32,
               sortDirection: "desc",
-              itemsView: "summary",
+              itemsView: "notLoaded",
             },
             {
               result: {
-                data: [{ id: "native-turn-second", items: [], status: "completed", error: null }],
+                data: [
+                  { id: "native-turn-second", items: [], status: "completed", error: null },
+                  { id: "external-interrupted", items: [], status: "interrupted", error: null },
+                  { id: "native-turn-first", items: [], status: "completed", error: null },
+                ],
                 nextCursor: null,
               },
             },
@@ -10619,7 +10658,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ...exchange(
             8,
             "thread/revert",
-            { threadId: nativeThreadId, beforeTurnId: "native-turn-second" },
+            { threadId: nativeThreadId, beforeTurnId: "external-interrupted" },
             { result: thread },
           ),
         ],

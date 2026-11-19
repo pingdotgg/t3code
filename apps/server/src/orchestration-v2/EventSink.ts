@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   type OrchestrationV2Run,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
@@ -114,6 +115,8 @@ export interface EventSinkV2Shape {
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
     readonly guardPendingUserInputCancellations?: boolean;
+    /** Reposition items of updated runs using the rows current at commit time. */
+    readonly repositionRunItems?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, EventSinkV2Error>;
@@ -128,6 +131,7 @@ export interface EventSinkV2Shape {
       "driver" | "providerInstanceId" | "appThreadId" | "nativeThreadRef"
     >;
     readonly guardPendingUserInputCancellations?: boolean;
+    readonly repositionRunItems?: boolean;
     readonly commandId?: CommandId;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -481,6 +485,34 @@ const layerBase: Layer.Layer<
       );
     });
 
+    const repositionRunItems = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) {
+      const runIds = events.flatMap((event) =>
+        event.threadId === threadId && event.type === "run.updated" ? [event.payload.id] : [],
+      );
+      if (runIds.length === 0) return events;
+      const { turnItems } = yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+        turnItemRunIds: runIds,
+      });
+      const itemsByRun = Map.groupBy(turnItems, (item) => item.runId);
+      return events.flatMap((event): ReadonlyArray<OrchestrationV2DomainEvent> =>
+        event.type === "run.updated" && event.threadId === threadId
+          ? [
+              event,
+              ...(itemsByRun.get(event.payload.id) ?? []).map((item) => ({
+                type: "turn-item.updated" as const,
+                id: EventId.make(`${event.id}:position:${item.id}`),
+                threadId,
+                occurredAt: event.occurredAt,
+                payload: item,
+              })),
+            ]
+          : [event],
+      );
+    });
+
     const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
       input: Parameters<EventSinkV2Shape["writeWithEffects"]>[0],
     ) {
@@ -514,10 +546,15 @@ const layerBase: Layer.Layer<
           const events = input.updateDelegatedCompletionOnly
             ? yield* updateDelegatedCompletionOnly(input.events, () => true)
             : input.events;
+          const threadId = events[0]?.threadId;
+          const withPositions =
+            input.repositionRunItems && threadId !== undefined
+              ? yield* repositionRunItems(threadId, events)
+              : events;
           const normalized = yield* normalizeEvents(
             input.guardPendingUserInputCancellations === true
-              ? yield* guardUserInputCancellations(events)
-              : events,
+              ? yield* guardUserInputCancellations(withPositions)
+              : withPositions,
           );
           const committed = yield* eventStore.append({
             ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

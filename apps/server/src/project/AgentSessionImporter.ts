@@ -857,12 +857,21 @@ const make = Effect.gen(function* () {
         const run = runsById.get(attempt.runId);
         if (run !== undefined && run.status !== "rolled_back") runsByAttempt.set(attempt.id, run);
       }
+      let anchorRunOrdinal = run.ordinal;
+      for (const turn of knownTurns.values()) {
+        if (turn.ordinal > anchorTurn.ordinal || turn.runAttemptId === null) continue;
+        const preceding = runsByAttempt.get(turn.runAttemptId);
+        if (preceding !== undefined)
+          anchorRunOrdinal = Math.max(anchorRunOrdinal, preceding.ordinal);
+      }
       return {
         thread,
         providerThreads,
         owner,
         nativeId,
         anchor,
+        anchorRunOrdinal,
+        anchorTurnOrdinal: anchorTurn.ordinal,
         modelSelection: run.modelSelection,
         runs,
         ownedTurns,
@@ -916,9 +925,21 @@ const make = Effect.gen(function* () {
           Effect.timeout(CODEX_HISTORY_READ_TIMEOUT),
         );
       const settled = [];
+      const preceding = new Map<string, { run: number; turn: number }>();
+      let lastRun = target.anchorRunOrdinal;
+      let lastTurn = target.anchorTurnOrdinal;
       for (const nativeTurn of history) {
         if (nativeTurn.status === "inProgress") break;
         settled.push(nativeTurn);
+        const known = target.knownTurns.get(nativeTurn.id);
+        if (known === undefined) {
+          preceding.set(nativeTurn.id, { run: lastRun, turn: lastTurn });
+          continue;
+        }
+        const run =
+          known.runAttemptId === null ? undefined : target.runsByAttempt.get(known.runAttemptId);
+        lastTurn = Math.max(lastTurn, known.ordinal);
+        if (run !== undefined) lastRun = Math.max(lastRun, run.ordinal);
       }
       const additions = [];
       let beforeRun = (target.runs.at(-1)?.ordinal ?? 0) + 1;
@@ -930,7 +951,7 @@ const make = Effect.gen(function* () {
         seen.add(nativeTurn.id);
         const known = target.knownTurns.get(nativeTurn.id);
         if (known !== undefined) {
-          beforeTurn = known.ordinal;
+          beforeTurn = Math.min(beforeTurn, known.ordinal);
           const attemptId = known.runAttemptId;
           if (attemptId !== null) {
             beforeRun = Math.min(
@@ -946,6 +967,9 @@ const make = Effect.gen(function* () {
           (message) => message.role === "user",
         );
         if (indexOfUserMessage < 0) continue;
+        // A held run can execute after a later submission, leaving no ordered slot for a gap.
+        const after = preceding.get(nativeTurn.id)!;
+        if (beforeRun <= after.run || beforeTurn <= after.turn) return 0;
         additions.push({ nativeTurn, indexOfUserMessage, beforeRun, beforeTurn });
       }
       additions.reverse();
@@ -989,12 +1013,7 @@ const make = Effect.gen(function* () {
         });
       }
       if (movedRuns.size > 0) {
-        const runIds = target.runs.filter((run) => movedRuns.has(run.ordinal)).map((run) => run.id);
-        const { checkpoints, turnItems } = yield* orchestrator.getThreadRecords(
-          threadId,
-          ["checkpoints", "turnItems"],
-          { turnItemRunIds: runIds },
-        );
+        const { checkpoints } = yield* orchestrator.getThreadRecords(threadId, ["checkpoints"]);
         for (const providerThread of target.providerThreads) {
           const first = providerThread.firstRunOrdinal;
           const last = providerThread.lastRunOrdinal;
@@ -1021,18 +1040,6 @@ const make = Effect.gen(function* () {
             payload: { ...checkpoint, appRunOrdinal },
           });
         }
-        const itemsByRun = Map.groupBy(turnItems, (item) => item.runId);
-        for (const runId of runIds.toReversed()) {
-          for (const item of itemsByRun.get(runId) ?? []) {
-            events.push({
-              id: yield* idAllocator.allocate.event({ threadId }),
-              type: "turn-item.updated",
-              threadId,
-              occurredAt,
-              payload: item,
-            });
-          }
-        }
       }
       for (const [
         index,
@@ -1052,7 +1059,11 @@ const make = Effect.gen(function* () {
         );
       }
       if (events.length === 0) return 0;
-      const stored = yield* eventSink.write({ unlessNativeThreadOwned: target.owner, events });
+      const stored = yield* eventSink.write({
+        unlessNativeThreadOwned: target.owner,
+        repositionRunItems: movedRuns.size > 0,
+        events,
+      });
       return stored.length === 0 ? 0 : additions.length;
     },
     (effect, { threadId }) =>
