@@ -57,7 +57,7 @@ import * as Settings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import { isFilesystemRoot, managedWorktreesDirectories } from "./worktreesDirectory.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
-import { isNonRepositoryGitStderr } from "./vcs/GitVcsDriverCore.ts";
+import { isNonRepositoryGitStderr, NON_INTERACTIVE_GIT_ENV } from "./vcs/GitVcsDriverCore.ts";
 import { isLinkedWorktree, removeLinkedWorktree } from "./vcs/worktreeRemoval.ts";
 import { withWorkspaceLease } from "./workspace/workspaceLease.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -900,8 +900,101 @@ const make = Effect.gen(function* () {
     return file === undefined ? null : `has ignored files (${file})`;
   });
 
+  const unpushedHistoryReason = Effect.fn("StorageCleanup.unpushedHistoryReason")(function* (
+    cwd: string,
+    directory: string,
+    remoteTags: Map<string, ReadonlySet<string> | null>,
+  ) {
+    const inspect = (args: string[], options?: Partial<GitVcsDriver.ExecuteGitInput>) =>
+      git.execute({
+        operation: "StorageCleanup.submodules",
+        cwd,
+        args: ["--git-dir", directory, "--work-tree", cwd, ...args],
+        maxOutputBytes: 64 * 1024,
+        ...options,
+      });
+    const exceeded = "submodule inspection exceeded the limit";
+    const unpushed = "submodule has commits not on a remote-tracking ref";
+    const reachable = Effect.fnUntraced(function* (stdin?: string) {
+      const result = yield* inspect(
+        [
+          "rev-list",
+          "--max-count=1",
+          ...(stdin === undefined ? [] : ["--stdin"]),
+          "HEAD",
+          // Checkpoint refs hold workspace snapshots, not commits a user could lose.
+          "--exclude=refs/t3/*",
+          "--all",
+          "--reflog",
+          "--not",
+          "--remotes",
+        ],
+        stdin === undefined ? {} : { stdin },
+      );
+      if (result.stdoutTruncated || result.stderrTruncated) return exceeded;
+      return result.stdout.trim() === "" ? null : unpushed;
+    });
+    const all = yield* reachable();
+    if (all !== unpushed) return all;
+    // Clones fetch every upstream tag, so a tag a remote has at the same object is pushed.
+    const tags = yield* inspect(
+      ["for-each-ref", "--format=%(objectname)%09%(refname)", "refs/tags"],
+      {
+        maxOutputBytes: 16 * 1024 * 1024,
+      },
+    );
+    const remotes = yield* inspect(["remote"]);
+    const worktree = yield* inspect(["config", "core.worktree"], { allowNonZeroExit: true });
+    if (tags.stdoutTruncated || tags.stderrTruncated || remotes.stdoutTruncated) return exceeded;
+    // Relative remote paths resolve from the submodule's work tree. Deinit unsets it.
+    const base = path.resolve(directory, worktree.stdout.trim() || ".");
+    const local = tags.stdout.split("\n").filter(Boolean);
+    const pushed = new Set<string>();
+    for (const remote of remotes.stdout.split("\n").filter(Boolean)) {
+      if (pushed.size === local.length) break;
+      const url = yield* inspect(["ls-remote", "--get-url", "--", remote]);
+      if (url.stdoutTruncated) return exceeded;
+      const location = url.stdout.trim();
+      const key =
+        path.isAbsolute(location) || /^[^/]*:/.test(location)
+          ? location
+          : path.resolve(base, location);
+      let published = remoteTags.get(key);
+      if (published === undefined) {
+        published = yield* git
+          .execute({
+            operation: "StorageCleanup.remoteTags",
+            cwd: base,
+            args: ["--git-dir", directory, "ls-remote", "--tags", "--refs", "--", remote],
+            env: NON_INTERACTIVE_GIT_ENV,
+            timeoutMs: 20_000,
+            maxOutputBytes: 16 * 1024 * 1024,
+          })
+          .pipe(
+            Effect.map((result) =>
+              result.stdoutTruncated ? null : new Set(result.stdout.split("\n")),
+            ),
+            // An unreachable remote vouches for no tags.
+            Effect.orElseSucceed(() => new Set<string>()),
+          );
+        remoteTags.set(key, published);
+      }
+      if (published === null) return exceeded;
+      for (const line of local) if (published.has(line)) pushed.add(line);
+    }
+    if (pushed.size === 0) return unpushed;
+    return yield* reachable(
+      // Exclude the verified objects, not the names: a tag can move after the listing.
+      [...pushed].map((line) => `^${line.slice(0, line.indexOf("\t"))}\n`).join(""),
+    );
+  });
+
   const submoduleRemoval = Effect.fn("StorageCleanup.submoduleRemoval")(
-    function* (cwd: string, rules: WorktreeCleanupRules) {
+    function* (
+      cwd: string,
+      rules: WorktreeCleanupRules,
+      remoteTags: Map<string, ReadonlySet<string> | null>,
+    ) {
       const inspect = (args: string[], maxOutputBytes = 64 * 1024) =>
         git.execute({
           operation: "StorageCleanup.submodules",
@@ -945,25 +1038,8 @@ const make = Effect.gen(function* () {
         if ((yield* fs.stat(directory)).type !== "Directory")
           return { force: false, reason: "submodule repository could not be inspected" };
         if (yield* fs.exists(path.join(directory, "HEAD"))) {
-          const unpushed = yield* inspect([
-            "--git-dir",
-            directory,
-            "--work-tree",
-            cwd,
-            "rev-list",
-            "--max-count=1",
-            "HEAD",
-            // Checkpoint refs hold workspace snapshots, not commits a user could lose.
-            "--exclude=refs/t3/*",
-            "--all",
-            "--reflog",
-            "--not",
-            "--remotes",
-          ]);
-          if (unpushed.stdoutTruncated || unpushed.stderrTruncated)
-            return { force: false, reason: "submodule inspection exceeded the limit" };
-          if (unpushed.stdout.trim() !== "")
-            return { force: false, reason: "submodule has commits not on a remote-tracking ref" };
+          const unpushed = yield* unpushedHistoryReason(cwd, directory, remoteTags);
+          if (unpushed !== null) return { force: false, reason: unpushed };
           pending.push(path.join(directory, "modules"));
         } else {
           for (const name of yield* fs.readDirectory(directory))
@@ -1125,6 +1201,7 @@ const make = Effect.gen(function* () {
     const threadsById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
     const refreshedDefaultRefs = new Map<string, Set<string>>();
     const defaultBranches = new Map<string, string | null>();
+    const remoteTags = new Map<string, ReadonlySet<string> | null>();
     // Threads may store one checkout through different symlinked spellings; compare real paths.
     // Keys are only compared, never opened, so they take pathKey's Windows case folding.
     const canonicalPaths = new Map<string, string>();
@@ -1579,7 +1656,7 @@ const make = Effect.gen(function* () {
             const finalChanges = yield* localChangesReason(worktreePath, settings);
             if (finalChanges !== null) return keep(finalChanges);
             if (yield* settingsChangedSinceCheck) return keep("settings changed since check");
-            const submodules = yield* submoduleRemoval(worktreePath, settings);
+            const submodules = yield* submoduleRemoval(worktreePath, settings, remoteTags);
             if (submodules.reason !== null) return keep(submodules.reason);
             if (submodules.force) {
               const changes = yield* localChangesReason(worktreePath, settings);
