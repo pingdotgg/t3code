@@ -117,7 +117,6 @@ const snapshot = (
   backends: ReadonlyArray<FxBackendProbe> = [],
 ): ServerProviderDraft => ({
   ...buildServerProvider({
-    // Gives the snapshot its version advisory; fx runs no enrichment pass.
     driver: FX_DRIVER_KIND,
     presentation: FX_PRESENTATION,
     enabled: settings.enabled,
