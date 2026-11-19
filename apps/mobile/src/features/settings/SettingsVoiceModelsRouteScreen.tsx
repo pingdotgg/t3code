@@ -1,9 +1,12 @@
+import { T, useGT, Var } from "gt-react-native";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
+import { LegendList } from "@legendapp/list/react-native";
 import { useAtomValue } from "@effect/atom-react";
 import type { StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
-import { FlatList, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -17,10 +20,11 @@ import { useVoiceModels, VoiceModelRow } from "./VoiceModelSection";
 export function SettingsVoiceModelsRouteScreen({
   route,
 }: StaticScreenProps<{ readonly environmentId: EnvironmentId }>) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const label =
     environments.find((environment) => environment.environmentId === route.params.environmentId)
-      ?.label ?? "This environment";
+      ?.label ?? gt("This environment");
   const voice = useVoiceModels(route.params.environmentId, label);
   const benchmarks = new Map(
     (
@@ -46,17 +50,21 @@ export function SettingsVoiceModelsRouteScreen({
     );
   return (
     <PullRequestSearchSheet
-      title="Transcription models"
-      placeholder="Search models or languages"
-      closeAccessibilityLabel="Close transcription models"
-      clearAccessibilityLabel="Clear model search"
+      title={gt("Transcription models")}
+      placeholder={gt("Search models or languages")}
+      closeAccessibilityLabel={gt("Close transcription models")}
+      clearAccessibilityLabel={gt("Clear model search")}
       query={query}
       onQueryChange={setQuery}
     >
       {({ paddingBottom }) => (
-        <FlatList
+        <LegendList
+          renderScrollComponent={NativeScrollView}
           data={models}
           keyExtractor={(model) => model.id}
+          extraData={{ voice, language, count: models.length }}
+          estimatedItemSize={72}
+          recycleItems
           className="flex-1"
           contentInsetAdjustmentBehavior="automatic"
           automaticallyAdjustKeyboardInsets={Platform.OS === "ios"}
@@ -67,7 +75,9 @@ export function SettingsVoiceModelsRouteScreen({
           ListHeaderComponent={
             voice.canManage ? undefined : (
               <Text className="pb-3 text-xs text-foreground-muted">
-                This connection can’t change settings on {label}.
+                <T>
+                  This connection can’t change settings on <Var>{label}</Var>.
+                </T>
               </Text>
             )
           }
@@ -87,9 +97,11 @@ export function SettingsVoiceModelsRouteScreen({
               <AppActivityIndicator className="my-8" />
             ) : (
               <EmptyState
-                title={needle ? "No models match" : "No transcription models"}
+                title={needle ? gt("No models match") : gt("No transcription models")}
                 detail={
-                  needle ? "Try another name or language." : `${label} has no models to list.`
+                  needle
+                    ? gt("Try another name or language.")
+                    : gt("{environment} has no models to list.", { environment: label })
                 }
                 variant="plain"
               />
