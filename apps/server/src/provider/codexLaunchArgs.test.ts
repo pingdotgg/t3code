@@ -9,11 +9,24 @@ import {
 } from "./codexLaunchArgs.ts";
 
 describe("codexAppServerArgs", () => {
-  it("preserves escaped TOML quotes in config values", () => {
-    NodeAssert.deepStrictEqual(
-      codexAppServerArgs(String.raw`--config model=\"gpt-6.1-sol\" --strict-config`),
-      ["app-server", "--config", 'model="gpt-6.1-sol"', "--strict-config"],
-    );
+  it.each([
+    {
+      name: "preserves escaped TOML quotes in config values",
+      launchArgs: String.raw`--config model=\"gpt-6.1-sol\" --strict-config`,
+      expected: ["--config", 'model="gpt-6.1-sol"', "--strict-config"],
+    },
+    {
+      name: "lets launch args override the unload delay",
+      launchArgs: "-c thread_unload_delay_secs=1800",
+      expected: ["-c", "thread_unload_delay_secs=1800"],
+    },
+  ])("asks Codex to unload unsubscribed threads immediately and $name", (row) => {
+    NodeAssert.deepStrictEqual(codexAppServerArgs(row.launchArgs), [
+      "app-server",
+      "-c",
+      "thread_unload_delay_secs=0",
+      ...row.expected,
+    ]);
   });
 });
 
@@ -25,6 +38,15 @@ describe("codexExecLaunchArgs", () => {
     );
   });
 
+  it("drops launch args that enable user hooks", () => {
+    NodeAssert.deepStrictEqual(
+      codexExecLaunchArgs(
+        "--enable hooks --enable=hooks --enable codex_hooks --enable=codex_hooks --enable foo --disable hooks",
+      ),
+      ["--enable", "foo", "--disable", "hooks"],
+    );
+  });
+
   it("does not pair value-taking flags with adjacent flags", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs("--config --strict-config --enable --disable"), [
       "--strict-config",
@@ -32,9 +54,8 @@ describe("codexExecLaunchArgs", () => {
   });
 });
 
-describe("codex exec and mcp list launch args", () => {
-  const launchArgs =
-    "--strict-config --oss --local-provider ollama --profile local -p=work --listen off --enable foo";
+describe.each(["", "="])("codex exec and mcp list launch args with -p%swork", (separator) => {
+  const launchArgs = `--strict-config --oss --local-provider ollama --profile local -p${separator}work -c${separator}model_provider=ollama --listen off --enable foo`;
 
   it("keeps the local model provider flags for codex exec", () => {
     NodeAssert.deepStrictEqual(codexExecLaunchArgs(launchArgs), [
@@ -45,6 +66,7 @@ describe("codex exec and mcp list launch args", () => {
       "--profile",
       "local",
       "-p=work",
+      "-c=model_provider=ollama",
       "--enable",
       "foo",
     ]);
@@ -55,6 +77,7 @@ describe("codex exec and mcp list launch args", () => {
       "--profile",
       "local",
       "-p=work",
+      "-c=model_provider=ollama",
       "--enable",
       "foo",
     ]);
