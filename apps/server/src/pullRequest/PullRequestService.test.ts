@@ -1431,6 +1431,123 @@ it.effect(
     }),
 );
 
+it.effect(
+  "reads logs of the failing checks, or of the one named, and names the checks it lacks",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<ReadonlyArray<string>> = [];
+      let failing = 0;
+      const check = (name: string, status: "success" | "failure" | "cancelled") => ({
+        name,
+        status,
+        description: null,
+        url: `https://github.com/acme/web/runs/${name.length}`,
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open",
+                checks: [
+                  check("Lint", "success"),
+                  check("Test", "failure"),
+                  check("E2E", "cancelled"),
+                  ...Array.from({ length: failing }, (_, index) =>
+                    check(`Shard ${index}`, "failure"),
+                  ),
+                ],
+              }),
+            getCheckLogs: (input) =>
+              Effect.sync(() => {
+                asked.push(input.checks.map((entry) => entry.name));
+                return input.checks.map((entry) => ({
+                  ...entry,
+                  log: "boom",
+                  truncated: false,
+                  detail: null,
+                }));
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      yield* service.checkLogs({ ...reference, tailLines: 50 });
+      yield* service.checkLogs({ ...reference, check: "lint", tailLines: 50 });
+      const missing = yield* Effect.flip(
+        service.checkLogs({ ...reference, check: "Deploy", tailLines: 50 }),
+      );
+      assert.deepStrictEqual(asked, [["Test", "E2E"], ["Lint"]]);
+      assert.include(missing.message, "Lint, Test, E2E");
+
+      failing = 6;
+      asked.length = 0;
+      const many = yield* service.checkLogs({ ...reference, tailLines: 50 });
+      // The host is asked for five; the other three come back unread, by name.
+      assert.lengthOf(asked[0] ?? [], 5);
+      assert.deepStrictEqual(
+        many.map((log) => [log.name, log.log]),
+        [
+          ["Test", "boom"],
+          ["E2E", "boom"],
+          ["Shard 0", "boom"],
+          ["Shard 1", "boom"],
+          ["Shard 2", "boom"],
+          ["Shard 3", null],
+          ["Shard 4", null],
+          ["Shard 5", null],
+        ],
+      );
+      assert.include(many.at(-1)?.detail ?? "", "Ask for this check by name");
+    }),
+);
+
+it.effect.each([false, true])(
+  "re-reads checks after a rerun instead of serving the failed ones (rerun fails: %s)",
+  (failAfterRerun) =>
+    Effect.gen(function* () {
+      let rerun = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open" as const,
+                checks: [
+                  {
+                    name: "Test",
+                    status: rerun ? ("pending" as const) : ("failure" as const),
+                    description: null,
+                    url: null,
+                  },
+                ],
+              }),
+            // A failure can come after one run already restarted.
+            rerunChecks: (input) =>
+              Effect.suspend(() => {
+                rerun = true;
+                return failAfterRerun
+                  ? Effect.fail(requestFailed)
+                  : Effect.succeed(
+                      input.checks.map((check) => ({ ...check, rerun: true, detail: null })),
+                    );
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "failure");
+      yield* service.rerunChecks(reference).pipe(Effect.ignore);
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "pending");
+    }),
+);
+
 it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
   Effect.gen(function* () {
     const pinned: Array<string | undefined> = [];
