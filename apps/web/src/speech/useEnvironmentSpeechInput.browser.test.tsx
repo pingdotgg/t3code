@@ -652,6 +652,14 @@ it.each([
     false,
   ],
   [
+    "selects the downloaded model after another client changed the selection",
+    "installed",
+    ["german"],
+    null,
+    false,
+    "german",
+  ],
+  [
     "does not advance a cancelled download when another model is ready",
     "downloadable",
     [],
@@ -672,15 +680,19 @@ it.each([
     "The model downloaded, but this environment could not select it. Try again.",
     false,
   ],
-] as const)("%s", async (_, landedState, selected, error, cancelled) => {
+] as const)("%s", async (_, landedState, selected, error, cancelled, initialModelId) => {
   setup({ destination: "env-a" });
   using _languages = vi.spyOn(navigator, "languages", "get").mockReturnValue(["de-DE"]);
   mocks.selectionFails = error !== null && !cancelled;
   mocks.modelState = "missing-model";
-  mocks.statusModelId = "english";
+  mocks.statusModelId = initialModelId ?? "english";
   mocks.models = [catalogModel("english", ["en"], true), catalogModel("german", ["de"], true)];
   mocks.download.mockImplementation(async () => {
-    mocks.models = [mocks.models[0]!, { ...mocks.models[1]!, state: landedState }];
+    mocks.models = [
+      { ...mocks.models[0]!, state: "installed", active: true },
+      { ...mocks.models[1]!, state: landedState, active: false },
+    ];
+    mocks.statusModelId = "english";
     mocks.modelState = "ready";
     mocks.statusTier = "accelerated";
     return cancelled;

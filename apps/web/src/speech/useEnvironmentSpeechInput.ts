@@ -3,6 +3,7 @@ import {
   downloadEnvironmentSpeechModel,
   getEnvironmentSpeechModels,
   getEnvironmentSpeechStatus,
+  getSpeechModelDownloadOutcome,
   selectEnvironmentSpeechModel,
   voiceInputBlocksSubmission,
   type VoiceInputState,
@@ -450,13 +451,12 @@ export function useEnvironmentSpeechInput(input: HookInput) {
     const request = ++startRequestRef.current;
     setSetup((current) => ({ ...current, downloading: true, error: null }));
     try {
-      const { models, cancelled } = await runEnvironmentSpeech(
+      const downloaded = await runEnvironmentSpeech(
         downloadEnvironmentSpeechModel(prepared, modelId),
       );
       if (request !== startRequestRef.current) return;
-      const completed =
-        !cancelled && models.some(({ id, state }) => id === modelId && state === "installed");
-      if (completed && modelId !== currentStatus.modelId) {
+      const outcome = getSpeechModelDownloadOutcome(downloaded, modelId);
+      if (outcome === "needs-selection") {
         try {
           await runEnvironmentSpeech(selectEnvironmentSpeechModel(prepared, modelId));
         } catch {
@@ -476,7 +476,10 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       if (request !== startRequestRef.current) return;
       setStatus({ prepared, value: next });
       const ready =
-        completed && next.supported && next.modelId === modelId && next.state !== "missing-model";
+        outcome !== "incomplete" &&
+        next.supported &&
+        next.modelId === modelId &&
+        next.state !== "missing-model";
       setSetup((current) => ({
         ...current,
         downloading: false,
