@@ -14,6 +14,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Exit from "effect/Exit";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as TestClock from "effect/testing/TestClock";
@@ -40,6 +41,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
     local?: { version: string; appServerFails?: boolean; versionFails?: boolean };
     platform?: NodeJS.Platform;
     spawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    useDefaultValidation?: boolean;
     runtimeRenameFailures?: number;
     /** Served by URL instead of the pinned package. */
     responses?: Readonly<Record<string, () => Response>>;
@@ -89,7 +91,7 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   const installation = yield* CodexInstallation.makeCodexInstallation({
     baseDir,
     releaseAsset: { ...asset, sha256 },
-    validate: () => Effect.void,
+    ...(input.useDefaultValidation ? {} : { validate: () => Effect.void }),
     ...input.options,
   }).pipe(
     Effect.provideService(ModelManifest.ModelManifest, {
@@ -461,9 +463,14 @@ it.effect(
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
-it.effect.each(["cached update", "reverify"] as const)(
-  "reports a verification timeout during %s and preserves the managed runtime",
-  (operation) =>
+it.effect.each([
+  { operation: "cached update", exits: false },
+  { operation: "reverify", exits: false },
+  { operation: "cached update", exits: true },
+  { operation: "cached update", exits: true, pipesOpen: true },
+])(
+  "reports verification diagnostics during $operation (exited: $exits) and preserves the managed runtime",
+  ({ operation, exits, pipesOpen }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-verify-test-" });
@@ -490,9 +497,41 @@ it.effect.each(["cached update", "reverify"] as const)(
       const pointer = JSON.stringify({ version: installedVersion });
       yield* fs.writeFileString(`${managed}/active.json`, pointer);
       const entered = yield* Deferred.make<void>();
+      const exited = yield* Deferred.make<void>();
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: exits
+              ? Deferred.await(entered).pipe(
+                  Effect.andThen(Deferred.succeed(exited, undefined)),
+                  Effect.as(ChildProcessSpawner.ExitCode(3)),
+                )
+              : Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.succeed(
+              new TextEncoder().encode(
+                "Startup library missing\nAuthorization: Bearer private-fixture-token\n",
+              ),
+            ).pipe(
+              Stream.tap(() => Deferred.succeed(entered, undefined)),
+              (stream) => (pipesOpen ? Stream.concat(stream, Stream.never) : stream),
+            ),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
       const h = yield* makeHarness({
         baseDir,
         platform: "win32",
+        spawner,
+        useDefaultValidation: true,
         manifestCurrent: Effect.succeed({
           ...ModelManifest.BUNDLED_MODEL_MANIFEST,
           compatibility: [
@@ -505,21 +544,35 @@ it.effect.each(["cached update", "reverify"] as const)(
         }),
         options: {
           releaseAsset: operation === "reverify" ? null : { ...asset, target, sha256: checksum },
-          validate: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
         },
       });
       yield* h.installation.start;
       yield* Deferred.await(entered);
-      yield* TestClock.adjust("90 seconds");
+      if (pipesOpen) yield* Deferred.await(exited);
+      if (!exits || pipesOpen) yield* TestClock.adjust("90 seconds");
       expect(yield* terminalState(h.installation)).toMatchObject({
         phase: "failed",
         installedVersion,
         message:
-          "Codex runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
+          exits && !pipesOpen
+            ? "Could not unpack or start the downloaded Codex package."
+            : expect.stringContaining("Codex runtime verification timed out after 90 seconds."),
+        diagnostics: {
+          step: "Codex version check",
+          stderr: "Startup library missing\nAuthorization: [redacted]",
+          exitCode: exits ? 3 : null,
+          signal: null,
+          truncated: false,
+        },
       });
       expect(yield* fs.readFileString(`${managed}/active.json`)).toBe(pointer);
       expect((yield* h.installation.resolve()).version).toBe(installedVersion);
       expect(h.downloads()).toBe(0);
+      if (!exits) {
+        expect((yield* h.installation.start).diagnostics).toBeNull();
+        const running = yield* h.installation.state;
+        expect((yield* h.installation.cancel(running.operationId!)).diagnostics).toBeNull();
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

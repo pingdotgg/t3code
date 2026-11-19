@@ -44,6 +44,7 @@ import { waitForQuerySettled } from "../../state/waitForQuerySettled";
 import { Button } from "../ui/button";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { ChatGptUsageButton } from "./ChatGptUsageButton";
+import { ProviderInstallationDetails } from "./ProviderInstallationDetails";
 import { ChatGptAccountPicker } from "./ChatGptAccountPicker";
 import { Input } from "../ui/input";
 import { OpenAI } from "../Icons";
@@ -971,6 +972,12 @@ function ManagedCodexSetup({
               {setupError}
             </p>
           ) : null}
+          {installation?.phase === "failed" ? (
+            <ProviderInstallationDetails
+              diagnostics={installation.diagnostics}
+              operationId={installation.operationId}
+            />
+          ) : null}
         </CodexWelcomeCard>
       </>
     );
@@ -1115,6 +1122,14 @@ function ManagedCodexSetup({
               ? installation.message
               : gt("Could not read Codex setup status. Reconnect and try again."))}
         </p>
+      ) : null}
+      {installation?.phase === "failed" ? (
+        <div className="px-3 pb-3 sm:px-4">
+          <ProviderInstallationDetails
+            diagnostics={installation.diagnostics}
+            operationId={installation.operationId}
+          />
+        </div>
       ) : null}
     </section>
   );

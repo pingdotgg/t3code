@@ -25,6 +25,7 @@ import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SettingsRow } from "./settingsLayout";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
+import { ProviderInstallationDetails } from "./ProviderInstallationDetails";
 
 interface ProviderSetupSectionProps {
   readonly environmentId: EnvironmentId;
@@ -266,6 +267,12 @@ function ProviderSetupActions({
               <p className="text-muted-foreground [overflow-wrap:anywhere]">
                 {installation.message}
               </p>
+            ) : null}
+            {installation?.phase === "failed" ? (
+              <ProviderInstallationDetails
+                diagnostics={installation.diagnostics}
+                operationId={installation.operationId}
+              />
             ) : null}
             <div className="grid min-h-7 grid-cols-[1.75rem_minmax(0,1fr)] gap-2">
               <div className="col-start-2 row-start-1 grid">

@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { ProviderAuthState } from "./providerSetup.ts";
+import { ProviderAuthState, ProviderInstallState } from "./providerSetup.ts";
 
 const decodeState = Schema.decodeUnknownSync(ProviderAuthState);
+const decodeInstallState = Schema.decodeUnknownSync(ProviderInstallState);
+
+it("accepts installation state from servers that predate startup diagnostics", () => {
+  const state = {
+    driver: "codex",
+    operationId: "attempt",
+    phase: "failed",
+    downloadedBytes: 0,
+    totalBytes: null,
+    version: null,
+    installedVersion: null,
+    canRemove: false,
+    message: "Verification failed.",
+  };
+  expect(decodeInstallState(state)).toEqual(state);
+});
 
 describe("provider auth state", () => {
   it("drops auth variants from newer servers instead of rejecting the state", () => {

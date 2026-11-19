@@ -137,7 +137,9 @@ function managedProviders(
 
 function canManageProvider(provider: ServerProvider) {
   return Boolean(
-    provider.setup?.canAuthenticate || (provider.driver === "acpRegistry" && provider.installed),
+    provider.setup?.canAuthenticate ||
+    provider.setup?.canInstall ||
+    (provider.driver === "acpRegistry" && provider.installed),
   );
 }
 
@@ -155,6 +157,10 @@ function ProviderAccount({
   const instanceId = provider.instanceId;
   const target = { environmentId, input: { instanceId } };
   const auth = useEnvironmentQuery(serverEnvironment.providerAuthState(target));
+  const installation = useEnvironmentQuery(
+    provider.setup?.canInstall ? serverEnvironment.providerInstallState(target) : null,
+  );
+  const [installationDetailsOpen, setInstallationDetailsOpen] = useState(false);
   const options = { reportFailure: false, reportDefect: false };
   const start = useAtomCommand(serverEnvironment.startProviderAuth, options);
   const respond = useAtomCommand(serverEnvironment.respondProviderAuth, options);
@@ -438,6 +444,66 @@ function ProviderAccount({
         <ProviderAccountSummary key={email} name={name} status={status} email={email} />
         {trailing}
       </View>
+      {installation.data?.phase === "failed" && installation.data.diagnostics ? (
+        <View className="gap-2 px-4 pb-3">
+          <Text selectable accessibilityRole="alert" className="text-danger-foreground">
+            {installation.data.message}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded: installationDetailsOpen }}
+            onPress={() => setInstallationDetailsOpen((open) => !open)}
+          >
+            <Text className="text-sm text-foreground">
+              <T>Installation details</T>
+            </Text>
+          </Pressable>
+          {installationDetailsOpen ? (
+            <>
+              <Text className="text-sm text-foreground-muted">
+                {installation.data.diagnostics.step}
+              </Text>
+              {installation.data.operationId ? (
+                <Text selectable className="font-mono text-xs text-foreground-muted">
+                  <T>
+                    Attempt: <Var>{installation.data.operationId}</Var>
+                  </T>
+                </Text>
+              ) : null}
+              {installation.data.diagnostics.systemError ? (
+                <Text className="text-sm text-foreground-muted">
+                  {installation.data.diagnostics.systemError}
+                </Text>
+              ) : null}
+              {installation.data.diagnostics.exitCode !== null ? (
+                <Text className="text-sm text-foreground-muted">
+                  <T>
+                    Exit code: <Var>{installation.data.diagnostics.exitCode}</Var>
+                  </T>
+                </Text>
+              ) : null}
+              {installation.data.diagnostics.signal !== null ? (
+                <Text className="text-sm text-foreground-muted">
+                  <T>
+                    Exit signal: <Var>{installation.data.diagnostics.signal}</Var>
+                  </T>
+                </Text>
+              ) : null}
+              <ScrollView className="max-h-48" nestedScrollEnabled>
+                <Text selectable className="font-mono text-sm text-foreground">
+                  {installation.data.diagnostics.stderr ||
+                    gt("No startup error output was captured for this check.")}
+                </Text>
+              </ScrollView>
+              {installation.data.diagnostics.truncated ? (
+                <Text className="text-sm text-foreground-muted">
+                  <T>Some startup output was omitted or truncated.</T>
+                </Text>
+              ) : null}
+            </>
+          ) : null}
+        </View>
+      ) : null}
       {interaction?.type === "deviceCode" ||
       interaction?.type === "terminal" ||
       interaction?.type === "credentials" ||

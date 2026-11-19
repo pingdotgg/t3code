@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Effect has no incremental digest.
 import {
   ProviderDriverKind,
+  type ProviderInstallDiagnostics,
   type ProviderInstallState,
   type ServerProviderCompatibilityAdvisory,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import * as Ref from "effect/Ref";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -32,6 +34,7 @@ import * as ServerConfig from "../config.ts";
 import { selectManagedRelease } from "./managedRelease.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
+import { makeInstallationDiagnostics } from "./installationDiagnostics.ts";
 
 const DRIVER = ProviderDriverKind.make("codex");
 const STAGING_STALE_AFTER_MS = 24 * 60 * 60_000;
@@ -191,6 +194,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcess.Platform;
   const environment = yield* HostProcess.Environment;
+  const homeDirectory = yield* HostProcess.HomeDirectory;
   const arch = yield* HostProcess.Architecture;
   const asset =
     options.releaseAsset === undefined
@@ -417,7 +421,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     const resolved = yield* resolveSpawnCommand(command, args).pipe(
       Effect.provideService(HostProcess.Platform, platform),
     );
-    const child = yield* spawner.spawn(
+    const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* commandSpawner.spawn(
       ChildProcess.make(resolved.command, resolved.args, { shell: resolved.shell }),
     );
     const [output, , exitCode] = yield* Effect.all(
@@ -521,6 +526,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       const advisory = yield* compatibility(executable.version);
       return advisory?.status === "supported" ? executable : null;
     },
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.orElseSucceed(() => null),
   );
   const resolve = Effect.fn("CodexInstallation.resolve")(function* () {
@@ -543,21 +549,27 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           downloadedBytes: 0,
           totalBytes: null,
           message: null,
+          diagnostics: null,
         }) satisfies ProviderInstallState,
     );
     return true;
   });
+  const validationTimeoutError = installationError(
+    "verify",
+    "Codex runtime verification timed out after 90 seconds. Review Installation details or this environment's server log, then retry installation.",
+  );
   const withValidationTimeout = Effect.timeoutOrElse({
     duration: "90 seconds",
-    orElse: () =>
-      Effect.fail(
-        installationError(
-          "verify",
-          "Codex runtime verification timed out after 90 seconds. Check this environment's server logs for startup errors, then retry installation.",
-        ),
-      ),
+    orElse: () => Effect.fail(validationTimeoutError),
   });
-  const validate =
+  const validateRuntime: (
+    executable: CodexExecutable,
+    version: string,
+  ) => Effect.Effect<
+    void,
+    CodexInstallationError,
+    Scope.Scope | ChildProcessSpawner.ChildProcessSpawner
+  > =
     options.validate ??
     Effect.fn("CodexInstallation.validate")(
       function* (executable: CodexExecutable, version: string) {
@@ -570,6 +582,39 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       },
       Effect.mapError(wrapFailure("verify", "The downloaded Codex runtime could not start.")),
     );
+  const validate = Effect.fn("CodexInstallation.verify")(function* (
+    executable: CodexExecutable,
+    version: string,
+    verificationDiagnostics: Ref.Ref<ProviderInstallDiagnostics | null>,
+  ) {
+    const capture = yield* makeInstallationDiagnostics("Codex version check").pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Effect.provideService(HostProcess.Environment, environment),
+      Effect.provideService(HostProcess.HomeDirectory, homeDirectory),
+    );
+    return yield* validateRuntime(executable, version).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, capture.spawner),
+      Effect.scoped,
+      withValidationTimeout,
+      Effect.tapError(() =>
+        Effect.gen(function* () {
+          const diagnostics = capture.snapshot();
+          yield* Ref.set(verificationDiagnostics, diagnostics);
+          const { operationId } = yield* SubscriptionRef.get(state);
+          yield* Effect.logWarning("Managed runtime verification failed", {
+            driver: DRIVER,
+            operationId,
+            step: diagnostics.step,
+            exitCode: diagnostics.exitCode,
+            signal: diagnostics.signal,
+            systemError: diagnostics.systemError,
+            stderrChars: diagnostics.stderr.length,
+            truncated: diagnostics.truncated,
+          });
+        }),
+      ),
+    );
+  });
   // Each update lands in its own directory. Best effort: a busy gate means a session is
   // resolving, so the next start or update finishes the cleanup.
   const pruneInactiveReleases = Effect.gen(function* () {
@@ -591,7 +636,10 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   );
 
   const install = Effect.fn("CodexInstallation.install")(
-    function* (release: CodexReleaseAsset) {
+    function* (
+      release: CodexReleaseAsset,
+      verificationDiagnostics: Ref.Ref<ProviderInstallDiagnostics | null>,
+    ) {
       const ensureEligible = Effect.fn("CodexInstallation.ensureEligible")(function* () {
         if (release.version !== asset?.version && !(yield* isSupported(release.version))) {
           return yield* installationError(
@@ -648,7 +696,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             "The existing managed Codex release differs from the official package. Remove it and reinstall.",
           );
         yield* ensureEligible();
-        yield* validate(existing, release.version).pipe(Effect.scoped, withValidationTimeout);
+        yield* validate(existing, release.version, verificationDiagnostics);
         yield* activate();
         return;
       }
@@ -742,7 +790,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
       const executable = yield* fromDirectory(runtime, release.version, release.target);
       yield* ensureEligible();
-      yield* validate(executable, release.version).pipe(Effect.scoped, withValidationTimeout);
+      yield* validate(executable, release.version, verificationDiagnostics);
       yield* fs.writeFileString(
         path.join(runtime, ".install-complete.json"),
         yield* encodeRecord({
@@ -774,6 +822,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         });
       },
     }),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.mapError(
       wrapFailure(
         "install",
@@ -784,10 +833,10 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   // Nothing newer is known, so "reinstall" re-checks the active runtime rather
   // than replacing it with an older pinned release.
   const reverify = Effect.fn("CodexInstallation.reverify")(
-    function* () {
+    function* (verificationDiagnostics: Ref.Ref<ProviderInstallDiagnostics | null>) {
       const active = yield* readRecord(activePath, ActiveRelease);
       const executable = yield* completedRelease(active.version);
-      yield* validate(executable, executable.version).pipe(Effect.scoped, withValidationTimeout);
+      yield* validate(executable, executable.version, verificationDiagnostics);
       const kept = yield* keptInstall(executable.version);
       if (kept === null) {
         yield* SubscriptionRef.update(state, (current) => ({ ...current, ...offer(kept) }));
@@ -839,26 +888,35 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
           downloadedBytes: 0,
           ...offer(installedVersion),
           message: release ? "Downloading Codex." : "Checking Codex.",
+          diagnostics: null,
         };
         yield* SubscriptionRef.set(state, next);
-        const work = (release ? install(release) : reverify()).pipe(
+        const verificationDiagnostics = yield* Ref.make<ProviderInstallDiagnostics | null>(null);
+        const work = (
+          release ? install(release, verificationDiagnostics) : reverify(verificationDiagnostics)
+        ).pipe(
           Effect.onExit((exit) =>
             Exit.isFailure(exit)
-              ? SubscriptionRef.update(state, (value) => {
-                  if (value.operationId !== operationId || value.phase === "succeeded")
-                    return value;
-                  const error = Cause.findErrorOption(exit.cause);
-                  const cancelled = Cause.hasInterruptsOnly(exit.cause);
-                  return {
-                    ...value,
-                    phase: cancelled ? "cancelled" : "failed",
-                    message: cancelled
-                      ? "Installation cancelled. The previous runtime is unchanged."
-                      : Option.isSome(error)
-                        ? error.value.detail
-                        : "Could not finish the Codex installation. Check disk space and directory access.",
-                  } satisfies ProviderInstallState;
-                })
+              ? Ref.get(verificationDiagnostics).pipe(
+                  Effect.flatMap((diagnostics) =>
+                    SubscriptionRef.update(state, (value) => {
+                      if (value.operationId !== operationId || value.phase === "succeeded")
+                        return value;
+                      const error = Cause.findErrorOption(exit.cause);
+                      const cancelled = Cause.hasInterruptsOnly(exit.cause);
+                      return {
+                        ...value,
+                        phase: cancelled ? "cancelled" : "failed",
+                        diagnostics: cancelled ? null : diagnostics,
+                        message: cancelled
+                          ? "Installation cancelled. The previous runtime is unchanged."
+                          : Option.isSome(error)
+                            ? error.value.detail
+                            : "Could not finish the Codex installation. Check disk space and directory access.",
+                      } satisfies ProviderInstallState;
+                    }),
+                  ),
+                )
               : Effect.void,
           ),
           Effect.ignoreCause,
@@ -930,6 +988,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
                 source: null,
                 canRemove: false,
                 message: null,
+                diagnostics: null,
               }) satisfies ProviderInstallState,
           );
           yield* reuseLocal();

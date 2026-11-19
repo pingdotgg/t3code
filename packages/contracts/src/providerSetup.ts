@@ -151,6 +151,18 @@ export type ProviderAuthCancelInput = typeof ProviderAuthCancelInput.Type;
 
 const ByteCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
+export const ProviderInstallDiagnostics = Schema.Struct({
+  step: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  stderr: Schema.String.check(Schema.isMaxLength(2_000)),
+  exitCode: Schema.NullOr(Schema.Int),
+  signal: Schema.NullOr(
+    Schema.String.check(Schema.isMaxLength(32), Schema.isPattern(/^SIG[A-Z0-9]+$/u)),
+  ),
+  systemError: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(128))),
+  truncated: Schema.Boolean,
+});
+export type ProviderInstallDiagnostics = typeof ProviderInstallDiagnostics.Type;
+
 export const ProviderInstallState = Schema.Struct({
   driver: ProviderDriverKind,
   operationId: Schema.NullOr(SetupOperationId),
@@ -171,6 +183,7 @@ export const ProviderInstallState = Schema.Struct({
   source: Schema.optionalKey(Schema.NullOr(Schema.Literals(["managed", "local"]))),
   canRemove: Schema.Boolean,
   message: Schema.NullOr(Schema.String),
+  diagnostics: Schema.optionalKey(Schema.NullOr(ProviderInstallDiagnostics)),
 });
 export type ProviderInstallState = typeof ProviderInstallState.Type;
 
