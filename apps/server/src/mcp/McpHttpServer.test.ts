@@ -1695,6 +1695,119 @@ it.effect("hides tools for links and refuses another environment while the beta 
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
 
+it.effect("lists only read tools to a read-only client and still refuses its writes", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const AccessToolkit = Toolkit.make(
+        Tool.make("peek", {
+          description: "Reads.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+        }),
+        Tool.make("poke", {
+          description: "Writes.",
+          success: Schema.Struct({ ok: Schema.Boolean }),
+          failure: OrchestratorMcpFailure,
+          failureMode: "return",
+          dependencies: [
+            McpInvocationContext.McpInvocationContext,
+            ThreadManagementService.ThreadManagementService,
+          ],
+        }),
+      );
+      const scopeFor = (
+        token: string,
+        access: "read-only" | "auto",
+      ): McpInvocationContext.McpInvocationScope => ({
+        environmentId,
+        requestNamespace: `client:${token}`,
+        thread: undefined,
+        client: { sessionId: token, label: "probe", access },
+        capabilities: new Set(["orchestration"]),
+        issuedAt: 1,
+      });
+      const serverLayer = McpHttpServer.layerMcpTransport(
+        McpHttpServer.toolkitRegistration(
+          AccessToolkit,
+          McpToolAccess.toLayer(AccessToolkit, {
+            peek: McpToolAccess.reads(() => Effect.succeed({ ok: true })),
+            poke: McpToolAccess.writes(() => Effect.succeed({ ok: true })),
+          }),
+        ),
+      ).pipe(
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
+        Layer.provide(
+          Layer.mock(McpSessionRegistry.McpSessionRegistry)({
+            resolve: () => Effect.undefined,
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(McpHttpServer.McpClientAuthenticator, {
+            authenticate: (request) => {
+              const token = request.headers.authorization?.slice("Bearer ".length);
+              return Effect.succeed(
+                token === "reader"
+                  ? scopeFor(token, "read-only")
+                  : token === "operator"
+                    ? scopeFor(token, "auto")
+                    : undefined,
+              );
+            },
+          }),
+        ),
+      );
+      yield* HttpRouter.serve(serverLayer, { disableListenLog: true, disableLogger: true }).pipe(
+        Layer.build,
+      );
+      const httpClient = yield* HttpClient.HttpClient;
+      const session = Effect.fn(function* (token: string) {
+        const headers = {
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${token}`,
+        };
+        const initialize = yield* httpClient.post("/mcp", {
+          headers,
+          body: HttpBody.text(
+            `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"probe","version":"1.0.0"}}}`,
+            "application/json",
+          ),
+        });
+        return (method: string, params: object) =>
+          httpClient
+            .post("/mcp", {
+              headers: {
+                ...headers,
+                "mcp-session-id": initialize.headers["mcp-session-id"]!,
+                "mcp-protocol-version": "2025-06-18",
+              },
+              body: HttpBody.text(
+                JSON.stringify({ jsonrpc: "2.0", id: 2, method, params }),
+                "application/json",
+              ),
+            })
+            .pipe(
+              Effect.flatMap((response) => response.json),
+              Effect.map((body) => (body as { result: Record<string, unknown> }).result),
+            );
+      });
+      const names = (result: Record<string, unknown>) =>
+        (result.tools as ReadonlyArray<{ name: string }>).map((tool) => tool.name);
+
+      const reader = yield* session("reader");
+      expect(names(yield* reader("tools/list", {}))).toEqual(["peek"]);
+      expect(yield* reader("tools/call", { name: "poke", arguments: {} })).toMatchObject({
+        isError: true,
+        content: [{ text: expect.stringContaining("approved for read-only access") }],
+      });
+
+      const operator = yield* session("operator");
+      expect(names(yield* operator("tools/list", {}))).toEqual(["peek", "poke"]);
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
 it.effect("lists pull request watch tools only to threads that are not delegated children", () =>
   Effect.scoped(
     Effect.gen(function* () {
