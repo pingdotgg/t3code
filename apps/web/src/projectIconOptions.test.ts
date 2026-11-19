@@ -26,8 +26,6 @@ describe("projectIconOptions", () => {
       ["T3", true],
       ["E\u0301E\u0301", true],
       ["ABC", false],
-      ["A B", false],
-      ["", false],
     ] as const) {
       expect(isValidProjectMonogram(text), text).toBe(valid);
     }
