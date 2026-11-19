@@ -63,6 +63,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     tokenStatus?: number;
     refreshToken?: string;
     userId?: string;
+    userEmail?: string | null | undefined;
     userInfoAt?: number;
     missingToken?: boolean;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
@@ -107,7 +108,14 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
         return HttpClientResponse.fromWeb(
           request,
           options.userId
-            ? Response.json({ id: options.userId, email: "someone@example.com" })
+            ? Response.json({
+                id: options.userId,
+                ...(options.userEmail === undefined
+                  ? { email: "someone@example.com" }
+                  : options.userEmail === null
+                    ? {}
+                    : { email: options.userEmail }),
+              })
             : Response.json({}, { status: 403 }),
         );
       }
@@ -179,7 +187,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      const limits = yield* probe;
+      const { limits } = yield* probe;
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("3p-5h")).toEqual({
         id: "3p-5h",
@@ -217,7 +225,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      expect((yield* probe).windows[0]?.resetsAt).toBeUndefined();
+      expect((yield* probe).limits.windows[0]?.resetsAt).toBeUndefined();
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -263,7 +271,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      expect((yield* probe).windows.map(({ id, resetsAt }) => ({ id, resetsAt }))).toEqual([
+      expect((yield* probe).limits.windows.map(({ id, resetsAt }) => ({ id, resetsAt }))).toEqual([
         { id: "described", resetsAt: "2026-10-21T15:16:04.000Z" },
         { id: "empty-description", resetsAt: "2026-10-21T15:16:04.000Z" },
         { id: "overfull", resetsAt: "2026-10-21T15:16:04.000Z" },
@@ -319,7 +327,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      expect((yield* probe).windows.map(({ id, resetsAt }) => ({ id, resetsAt }))).toEqual([
+      expect((yield* probe).limits.windows.map(({ id, resetsAt }) => ({ id, resetsAt }))).toEqual([
         { id: "5h-after", resetsAt: "2026-10-21T15:17:05.000Z" },
         { id: "5h-before", resetsAt: undefined },
         { id: "5h-edge", resetsAt: undefined },
@@ -371,7 +379,7 @@ describe("Antigravity subscription limits", () => {
           },
         },
       });
-      expect((yield* probe).windows).toEqual([
+      expect((yield* probe).limits.windows).toEqual([
         {
           id: "3p-5h",
           label: "Claude & GPT (shared) · 5-hour",
@@ -407,7 +415,7 @@ describe("Antigravity subscription limits", () => {
         },
       });
       expect(
-        (yield* probe).windows.map(({ id, resetsAt, windowDurationMins }) => ({
+        (yield* probe).limits.windows.map(({ id, resetsAt, windowDurationMins }) => ({
           id,
           resetsAt,
           windowDurationMins,
@@ -422,7 +430,8 @@ describe("Antigravity subscription limits", () => {
   it.effect("reports separate Gemini and shared Claude/GPT five-hour and weekly limits", () =>
     Effect.gen(function* () {
       const { probe, requests } = yield* fixture();
-      const limits = yield* probe;
+      const { limits, email } = yield* probe;
+      expect(email).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
       expect(limits.unavailable).toBeUndefined();
       expect(limits.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
@@ -464,7 +473,7 @@ describe("Antigravity subscription limits", () => {
           },
         },
       });
-      const limits = yield* probe;
+      const { limits } = yield* probe;
       expect(limits.windows.map((window) => window.id).toSorted()).toEqual([
         "3p-5h",
         "3p-weekly",
@@ -504,7 +513,7 @@ describe("Antigravity subscription limits", () => {
           "cloudcode-pa.googleapis.com": argon(0, "2026-11-08T18:27:14Z"),
         },
       });
-      expect((yield* probe).windows).toEqual([
+      expect((yield* probe).limits.windows).toEqual([
         expect.objectContaining({
           id: "gemini-argon-wtu-weekly",
           usedPercent: expect.closeTo(13.77, 2),
@@ -539,7 +548,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      const limits = yield* probe;
+      const { limits } = yield* probe;
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("gemini-argon-wtu-weekly")?.label).toBe("Gemini 4 Argon · Weekly");
@@ -553,7 +562,7 @@ describe("Antigravity subscription limits", () => {
       const { probe } = yield* fixture({
         summaryStatusByHost: { "daily-cloudcode-pa.googleapis.com": 503 },
       });
-      const limits = yield* probe;
+      const { limits } = yield* probe;
       expect(limits.unavailable).toBeUndefined();
       expect(limits.windows).toHaveLength(4);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -565,10 +574,10 @@ describe("Antigravity subscription limits", () => {
       const first = yield* probe;
       yield* writeToken("refresh-b");
       const second = yield* probe;
-      expect(second.credentialFingerprint).not.toBe(first.credentialFingerprint);
+      expect(second.limits.credentialFingerprint).not.toBe(first.limits.credentialFingerprint);
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(2);
       yield* (yield* FileSystem.FileSystem).remove(tokenPath);
-      expect((yield* probe).unavailable?.reason).toBe("unsupported");
+      expect((yield* probe).limits.unavailable?.reason).toBe("unsupported");
       yield* writeToken("refresh-b");
       yield* probe;
       expect(requests.filter((request) => request.url.endsWith("/token"))).toHaveLength(3);
@@ -578,17 +587,49 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("caches normalized account email across probes and clears it on sign-out", () =>
+    Effect.gen(function* () {
+      const { probe, requests, writeToken, tokenPath } = yield* fixture({
+        userId: "google-user-1",
+        userEmail: " someone@example.com ",
+      });
+      const first = yield* probe;
+      expect(first.email).toBe("someone@example.com");
+      expect((yield* probe).email).toBe("someone@example.com");
+      expect(requests.filter((request) => request.url.endsWith("/userinfo"))).toHaveLength(1);
+      yield* (yield* FileSystem.FileSystem).remove(tokenPath);
+      const signedOut = yield* probe;
+      expect(signedOut.limits.unavailable?.reason).toBe("unsupported");
+      expect(signedOut.email).toBeUndefined();
+      yield* writeToken("refresh-b");
+      expect((yield* probe).email).toBe("someone@example.com");
+      expect(requests.filter((request) => request.url.endsWith("/userinfo"))).toHaveLength(2);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect("names one Google account the same way from every sign-in", () =>
     Effect.gen(function* () {
-      const read = (refreshToken: string, userId: string) =>
-        fixture({ refreshToken, userId }).pipe(Effect.flatMap((usage) => usage.probe));
+      const read = (refreshToken: string, userId: string, userEmail?: string | null) =>
+        fixture({ refreshToken, userId, userEmail }).pipe(Effect.flatMap((usage) => usage.probe));
       const machineA = yield* read("refresh-a", "google-user-1");
       const machineB = yield* read("refresh-b", "google-user-1");
-      const otherAccount = yield* read("refresh-c", "google-user-2");
-      expect(machineA.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
-      expect(machineB.credentialFingerprint).toBe(machineA.credentialFingerprint);
-      expect(otherAccount.credentialFingerprint).not.toBe(machineA.credentialFingerprint);
-      expect(JSON.stringify(machineA)).not.toMatch(/google-user-1|someone@example.com/);
+      const otherAccount = yield* read("refresh-c", "google-user-2", "other@example.com");
+      const missingEmail = yield* read("refresh-d", "google-user-3", null);
+      const blankEmail = yield* read("refresh-e", "google-user-3", "   ");
+      expect(machineA.limits.credentialFingerprint).toMatch(/^[0-9a-f]{64}$/);
+      expect(machineB.limits.credentialFingerprint).toBe(machineA.limits.credentialFingerprint);
+      expect(otherAccount.limits.credentialFingerprint).not.toBe(
+        machineA.limits.credentialFingerprint,
+      );
+      expect(machineA.email).toBe("someone@example.com");
+      expect(machineB.email).toBe("someone@example.com");
+      expect(otherAccount.email).toBe("other@example.com");
+      expect(missingEmail.email).toBeUndefined();
+      expect(blankEmail.email).toBeUndefined();
+      expect(blankEmail.limits.credentialFingerprint).toBe(
+        missingEmail.limits.credentialFingerprint,
+      );
+      expect(JSON.stringify(machineA.limits)).not.toMatch(/google-user-1|someone@example.com/);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -610,7 +651,7 @@ describe("Antigravity subscription limits", () => {
           },
         },
       });
-      const limits = yield* probe;
+      const { limits } = yield* probe;
       expect(limits.windows).toHaveLength(2);
       expect(limits.windows.find((window) => window.id === "gemini-quota")?.usedPercent).toBe(40);
       expect(
@@ -632,7 +673,7 @@ describe("Antigravity subscription limits", () => {
           ],
         },
       });
-      expect((yield* probe).windows).toEqual([
+      expect((yield* probe).limits.windows).toEqual([
         {
           id: "gemini-5h",
           kind: "session",
@@ -647,7 +688,8 @@ describe("Antigravity subscription limits", () => {
   it.effect("returns a safe failure when OAuth refresh fails", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({ tokenStatus: 401 });
-      const limits = yield* probe;
+      const { limits, email } = yield* probe;
+      expect(email).toBeUndefined();
       expect(limits.windows).toEqual([]);
       expect(limits.unavailable?.reason).toBe("probeFailed");
       expect(JSON.stringify(limits)).not.toMatch(/client-secret|refresh-a|access-token/);
@@ -658,7 +700,9 @@ describe("Antigravity subscription limits", () => {
     Effect.gen(function* () {
       for (const options of [{ authMethod: "gemini-api-key" as const }, { missingToken: true }]) {
         const { probe, requests } = yield* fixture(options);
-        expect((yield* probe).unavailable?.reason).toBe("unsupported");
+        const result = yield* probe;
+        expect(result.limits.unavailable?.reason).toBe("unsupported");
+        expect(result.email).toBeUndefined();
         expect(requests).toEqual([]);
       }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),

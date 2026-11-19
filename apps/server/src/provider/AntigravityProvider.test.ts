@@ -30,6 +30,7 @@ import {
   buildAntigravityModelsFromSession,
   makeAntigravityProvider,
 } from "./AntigravityProvider.ts";
+import type { AntigravityUsageProbeResult } from "./antigravityUsageLimits.ts";
 
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
 const instanceId = ProviderInstanceId.make("antigravity-test");
@@ -134,7 +135,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly auth?: { readonly type: string; readonly label: string };
     readonly enabled?: boolean;
     readonly safe?: boolean;
-    readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly probeUsage?: Effect.Effect<AntigravityUsageProbeResult>;
   } = {},
 ) {
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
@@ -677,11 +678,16 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             },
           ],
         };
-        const usage = yield* Ref.make(limits);
+        const usage = yield* Ref.make<AntigravityUsageProbeResult>({
+          limits,
+          email: "user@example.com",
+        });
         const harness = yield* makeHarness({ probeUsage: Ref.get(usage) });
         const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
         yield* harness.initialize;
-        expect((yield* published)?.usageLimits).toEqual(limits);
+        const first = yield* published;
+        expect(first?.usageLimits).toEqual(limits);
+        expect(first?.auth.email).toBe("user@example.com");
         // The second health check is the one the failed background read triggers.
         const checks = yield* Ref.make(0);
         const failedReadApplied = yield* Deferred.make<void>();
@@ -695,34 +701,44 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ),
         );
         yield* Ref.set(usage, {
-          checkedAt: "2026-10-09T12:01:00.000Z",
-          windows: [],
-          unavailable: { reason: "probeFailed" },
+          limits: {
+            checkedAt: "2026-10-09T12:01:00.000Z",
+            windows: [],
+            unavailable: { reason: "probeFailed" },
+          },
         });
         yield* harness.provider.snapshot.refresh;
         yield* Deferred.await(failedReadApplied);
-        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toEqual(limits);
+        const retained = yield* harness.provider.snapshot.getSnapshot;
+        expect(retained.usageLimits).toEqual(limits);
+        expect(retained.auth.email).toBe("user@example.com");
         yield* harness.provider.onSignedOut;
-        expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+        const signedOut = yield* harness.provider.snapshot.getSnapshot;
+        expect(signedOut.usageLimits).toBeUndefined();
+        expect(signedOut.auth.email).toBeUndefined();
         yield* Ref.set(usage, {
-          checkedAt: "2026-10-09T12:02:00.000Z",
-          windows: [],
-          unavailable: { reason: "unsupported" },
+          limits: {
+            checkedAt: "2026-10-09T12:02:00.000Z",
+            windows: [],
+            unavailable: { reason: "unsupported" },
+          },
         });
         const unsupported = yield* harness.nextPublish(
           (snapshot) => snapshot.usageLimits?.unavailable?.reason === "unsupported",
         );
         yield* harness.provider.snapshot.refresh;
-        expect((yield* unsupported)?.usageLimits?.windows).toEqual([]);
+        const afterUnsupported = yield* unsupported;
+        expect(afterUnsupported?.usageLimits?.windows).toEqual([]);
+        expect(afterUnsupported?.auth.email).toBeUndefined();
       }),
   );
 
   it.effect("a quota read finishing after sign-out cannot restore account limits", () =>
     Effect.gen(function* () {
       const readStarted = yield* Deferred.make<void>();
-      const readResult = yield* Deferred.make<ServerProviderUsageLimits>();
-      const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
-        Effect.succeed({ checkedAt: "2026-10-09T12:00:00.000Z", windows: [] }),
+      const readResult = yield* Deferred.make<AntigravityUsageProbeResult>();
+      const usage = yield* Ref.make<Effect.Effect<AntigravityUsageProbeResult>>(
+        Effect.succeed({ limits: { checkedAt: "2026-10-09T12:00:00.000Z", windows: [] } }),
       );
       const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
       yield* harness.initialize;
@@ -735,11 +751,18 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       yield* Deferred.await(readStarted);
       yield* harness.provider.onSignedOut;
       yield* Deferred.succeed(readResult, {
-        checkedAt: "2026-10-09T12:01:00.000Z",
-        windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 }],
+        email: "stale@example.com",
+        limits: {
+          checkedAt: "2026-10-09T12:01:00.000Z",
+          windows: [
+            { id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 },
+          ],
+        },
       });
       yield* Fiber.join(refresh);
-      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      const snapshot = yield* harness.provider.snapshot.getSnapshot;
+      expect(snapshot.usageLimits).toBeUndefined();
+      expect(snapshot.auth.email).toBeUndefined();
     }),
   );
 
@@ -747,7 +770,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     Effect.gen(function* () {
       const reads = yield* Ref.make(0);
       const readStarted = yield* Deferred.make<void>();
-      const readResult = yield* Deferred.make<ServerProviderUsageLimits>();
+      const readResult = yield* Deferred.make<AntigravityUsageProbeResult>();
       const harness = yield* makeHarness({
         probeUsage: Ref.update(reads, (count) => count + 1).pipe(
           Effect.andThen(Deferred.succeed(readStarted, undefined)),
@@ -767,8 +790,13 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         checkedAt: "2026-10-09T12:00:00.000Z",
         windows: [{ id: "gemini-5h", kind: "session", label: "Gemini · 5-hour", usedPercent: 10 }],
       } satisfies ServerProviderUsageLimits;
-      yield* Deferred.succeed(readResult, limits);
-      expect((yield* published)?.usageLimits).toEqual(limits);
+      yield* Deferred.succeed(readResult, { limits, email: "first@example.com" });
+      const afterProbe = yield* published;
+      expect(afterProbe?.usageLimits).toEqual(limits);
+      expect(afterProbe?.auth.email).toBe("first@example.com");
+      // Subsequent session starts keep the email resolved from the usage probe.
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      expect((yield* harness.provider.snapshot.getSnapshot).auth.email).toBe("first@example.com");
     }),
   );
 
@@ -779,31 +807,37 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         checkedAt: "2026-10-09T12:01:00.000Z",
         windows: [{ id: "3p-weekly", kind: "weekly", label: "Weekly", usedPercent: 40 }],
       } satisfies ServerProviderUsageLimits;
-      const usage = yield* Ref.make<Effect.Effect<ServerProviderUsageLimits>>(
+      const usage = yield* Ref.make<Effect.Effect<AntigravityUsageProbeResult>>(
         Deferred.succeed(oldReadStarted, undefined).pipe(Effect.andThen(Effect.never)),
       );
       const harness = yield* makeHarness({ probeUsage: Ref.get(usage).pipe(Effect.flatten) });
       const published = yield* harness.nextPublish((snapshot) => !!snapshot.usageLimits);
       yield* harness.initialize;
       yield* Deferred.await(oldReadStarted);
-      yield* Ref.set(usage, Effect.succeed(newLimits));
+      yield* Ref.set(usage, Effect.succeed({ limits: newLimits, email: "new@example.com" }));
       yield* harness.provider.onSignedIn;
       yield* harness.provider.onSessionStarted(started);
-      expect((yield* published)?.usageLimits).toEqual(newLimits);
+      const afterSignIn = yield* published;
+      expect(afterSignIn?.usageLimits).toEqual(newLimits);
+      expect(afterSignIn?.auth.email).toBe("new@example.com");
       // Switching again must not republish the previous account's limits, even if the read fails.
       const failed = {
         checkedAt: "2026-10-09T12:02:00.000Z",
         windows: [],
         unavailable: { reason: "probeFailed" },
       } satisfies ServerProviderUsageLimits;
-      yield* Ref.set(usage, Effect.succeed(failed));
+      yield* Ref.set(usage, Effect.succeed({ limits: failed }));
       const republished = yield* harness.nextPublish(
         (snapshot) => snapshot.usageLimits?.unavailable?.reason === "probeFailed",
       );
       yield* harness.provider.onSignedIn;
-      expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
+      const cleared = yield* harness.provider.snapshot.getSnapshot;
+      expect(cleared.usageLimits).toBeUndefined();
+      expect(cleared.auth.email).toBeUndefined();
       yield* harness.provider.onSessionStarted(started);
-      expect((yield* republished)?.usageLimits).toEqual(failed);
+      const afterFailedSwitch = yield* republished;
+      expect(afterFailedSwitch?.usageLimits).toEqual(failed);
+      expect(afterFailedSwitch?.auth.email).toBeUndefined();
     }),
   );
 });

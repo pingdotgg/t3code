@@ -7,7 +7,6 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
-  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Context from "effect/Context";
@@ -38,6 +37,7 @@ import {
 import { resolveUsageLimitsAfterProbe } from "@t3tools/provider-core/server/usageLimits";
 
 import { antigravityThinkingConfig } from "./acp/AntigravityAcpSupport.ts";
+import type { AntigravityUsageProbeResult } from "./antigravityUsageLimits.ts";
 
 const EMPTY_MODEL_CAPABILITIES = createModelCapabilities({ optionDescriptors: [] });
 const MAX_WORKSPACE_SNAPSHOTS = 32;
@@ -163,7 +163,7 @@ interface AntigravityProviderOptions {
     EffectAcpErrors.AcpError | ProviderSetupError
   >;
   readonly supportsTextGeneration: Effect.Effect<boolean>;
-  readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+  readonly probeUsage?: Effect.Effect<AntigravityUsageProbeResult>;
   readonly clearUsage?: Effect.Effect<void>;
   readonly maintenanceCapabilities?: ProviderMaintenanceCapabilities;
   readonly auth?: { readonly type: string; readonly label: string };
@@ -240,16 +240,29 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       usageRead,
       options.probeUsage.pipe(
         Effect.flatMap((probed) =>
-          SubscriptionRef.update(metadata, (state) => ({
-            ...state,
-            draft: {
-              ...state.draft,
-              usageLimits: resolveUsageLimitsAfterProbe({
-                published: state.draft.usageLimits,
-                probed,
-              }),
-            },
-          })),
+          SubscriptionRef.update(metadata, (state) => {
+            const { email: _previousEmail, ...auth } = state.draft.auth;
+            const email =
+              probed.limits.unavailable?.reason === "unsupported"
+                ? undefined
+                : probed.email?.trim() || state.draft.auth.email;
+            return {
+              ...state,
+              draft: {
+                ...state.draft,
+                auth:
+                  state.draft.auth.status === "unauthenticated"
+                    ? auth
+                    : email
+                      ? { ...auth, email }
+                      : auth,
+                usageLimits: resolveUsageLimitsAfterProbe({
+                  published: state.draft.usageLimits,
+                  probed: probed.limits,
+                }),
+              },
+            };
+          }),
         ),
         // Enrichment cannot change published limits; a health check publishes them.
         Effect.andThen(
@@ -393,6 +406,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
             status: "authenticated",
             type: options.auth?.type ?? "oauth-personal",
             label: options.auth?.label ?? "Google account",
+            ...(draft.auth.email ? { email: draft.auth.email } : {}),
           },
           checkedAt: updatedAt,
           models: buildAntigravityModelsFromSession(started.sessionSetupResult, thinkingLevels),
@@ -532,7 +546,8 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       Effect.andThen(
         SubscriptionRef.update(metadata, (state) => {
           const { usageLimits: _previousAccount, ...draft } = state.draft;
-          return { ...state, draft };
+          const { email: _previousEmail, ...auth } = draft.auth;
+          return { ...state, draft: { ...draft, auth } };
         }),
       ),
       Effect.andThen(

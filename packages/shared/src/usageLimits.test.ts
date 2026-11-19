@@ -406,7 +406,7 @@ describe("pools", () => {
     const local = provider({
       driver: antigravity,
       instanceId: ProviderInstanceId.make("antigravity"),
-      auth: { status: "authenticated" },
+      auth: { status: "authenticated", email: "g@example.com" },
       usageLimits: {
         checkedAt,
         credentialFingerprint: "google-key",
@@ -437,6 +437,7 @@ describe("pools", () => {
       ]),
     );
     expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.email).toBe("g@example.com");
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
   });
 

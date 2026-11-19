@@ -241,15 +241,35 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 
 // Include every enabled login, even unreadable workspaces.
 function accountKeyResolver(reports: Iterable<AccountReport>) {
+  const emailByCredential = new Map<string, string | null>();
   const workspaces = new Map<string, Set<string>>();
-  for (const report of reports) {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+  const reportList = [...reports];
+  for (const report of reportList) {
+    const normalizedEmail = report.email?.trim().toLowerCase();
+    const fingerprint = report.usageLimits?.credentialFingerprint;
+    if (normalizedEmail && fingerprint) {
+      const credKey = `${report.driver}:credential:${fingerprint}`;
+      const emailKey = `${report.driver}:${normalizedEmail}`;
+      const existing = emailByCredential.get(credKey);
+      emailByCredential.set(
+        credKey,
+        existing === undefined || existing === emailKey ? emailKey : null,
+      );
+    }
+  }
+  const baseKey = (report: AccountReport): string | null => {
+    const direct = accountKey(report.driver, report.email, report.usageLimits);
+    if (!direct) return null;
+    return emailByCredential.get(direct) ?? direct;
+  };
+  for (const report of reportList) {
+    const key = baseKey(report);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
   return (report: AccountReport): string | null => {
-    const key = accountKey(report.driver, report.email, report.usageLimits);
+    const key = baseKey(report);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
@@ -346,6 +366,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     const displayName = previous.displayName ?? next.displayName;
     accounts.set(key, {
       ...previous,
+      email: previous.email ?? next.email,
       displayName:
         hubEmail &&
         displayName?.toLowerCase() === PROVIDER_DISPLAY_NAMES[previous.driver]?.toLowerCase()

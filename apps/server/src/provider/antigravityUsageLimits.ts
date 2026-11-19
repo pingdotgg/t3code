@@ -1,4 +1,8 @@
-import type { AntigravitySettings, ServerProviderUsageWindow } from "@t3tools/contracts";
+import type {
+  AntigravitySettings,
+  ServerProviderUsageLimits,
+  ServerProviderUsageWindow,
+} from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
 import * as Digest from "effect/crypto/Digest";
@@ -42,7 +46,15 @@ const TokenResponse = Schema.Struct({
   access_token: Schema.NonEmptyString,
   expires_in: Schema.Number.check(Schema.isGreaterThan(0)),
 });
-const UserInfo = Schema.Struct({ id: Schema.NonEmptyString });
+const UserInfo = Schema.Struct({
+  id: Schema.NonEmptyString,
+  email: Schema.optional(Schema.NullOr(Schema.String)),
+});
+
+export interface AntigravityUsageProbeResult {
+  readonly limits: ServerProviderUsageLimits;
+  readonly email?: string | undefined;
+}
 const Quota = Schema.Struct({
   remainingFraction: Schema.optional(Schema.Number),
   resetTime: Schema.optional(Schema.String),
@@ -219,7 +231,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const architecture = yield* HostProcess.Architecture;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   let cached:
-    | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
+    | {
+        fingerprint: string;
+        account: string;
+        email: string | undefined;
+        accessToken: string;
+        expiresAt: number;
+      }
     | undefined;
   let generation = 0;
 
@@ -234,15 +252,17 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const startedGeneration = generation;
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.authMethod !== "oauth-personal" && input.authMethod !== "oauth-business") {
-      return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
+      return { limits: makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" }) };
     }
     if (!(yield* fs.exists(tokenPath))) {
       cached = undefined;
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "unsupported",
-        message: "Sign in with Google to see Antigravity limits.",
-      });
+      return {
+        limits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "unsupported",
+          message: "Sign in with Google to see Antigravity limits.",
+        }),
+      };
     }
     const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
     const fingerprint = yield* sha256(
@@ -251,6 +271,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const now = yield* Clock.currentTimeMillis;
     let accessToken: string;
     let account: string;
+    let email: string | undefined;
     if (cached?.fingerprint !== fingerprint || cached.expiresAt <= now + 60_000) {
       cached = undefined;
       const refreshed = yield* request(
@@ -265,18 +286,29 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
       ).pipe(Effect.flatMap(decodeTokenResponse));
       accessToken = refreshed.access_token;
       // Use Google account IDs to merge accounts across environments; refresh tokens differ per machine.
-      account = yield* request(
+      const identity = yield* request(
         HttpClientRequest.get("https://www.googleapis.com/oauth2/v2/userinfo").pipe(
           HttpClientRequest.setHeaders({ Authorization: `Bearer ${accessToken}` }),
         ),
       ).pipe(
-        Effect.flatMap(antigravityAccountFingerprint),
-        Effect.orElseSucceed(() => fingerprint),
+        Effect.flatMap(decodeUserInfo),
+        Effect.flatMap((info) =>
+          sha256(`google-account\0${info.id}`).pipe(
+            Effect.map((id) => ({
+              account: id,
+              email: info.email?.trim() || undefined,
+            })),
+          ),
+        ),
+        Effect.orElseSucceed(() => ({ account: fingerprint, email: undefined })),
       );
+      account = identity.account;
+      email = identity.email;
       if (generation === startedGeneration) {
         cached = {
           fingerprint,
           account,
+          email,
           accessToken,
           expiresAt: now + refreshed.expires_in * 1000,
         };
@@ -284,6 +316,7 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     } else {
       accessToken = cached.accessToken;
       account = cached.account;
+      email = cached.email;
     }
     const endpoints = ENDPOINTS[input.authMethod];
     // Merge endpoints because quota groups differ; the metered host's reading of a bucket wins.
@@ -330,24 +363,32 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
           decodeModels(response).pipe(Effect.map(modelWindows)),
         );
     if (windows.length === 0) {
-      return makeUnavailableUsageLimits({
-        checkedAt,
-        reason: "probeFailed",
-        message: "Antigravity did not return usable quota information.",
-      });
+      return {
+        limits: makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          message: "Antigravity did not return usable quota information.",
+        }),
+        ...(email ? { email } : {}),
+      };
     }
-    return { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account };
+    return {
+      limits: { ...makeUsageLimits({ checkedAt, windows }), credentialFingerprint: account },
+      ...(email ? { email } : {}),
+    };
   });
-  const probe = read.pipe(
+  const probe: Effect.Effect<AntigravityUsageProbeResult> = read.pipe(
     Effect.provideService(Digest.Digest, crypto),
     Effect.timeout("30 seconds"),
     Effect.catch(() =>
       Effect.gen(function* () {
-        return makeUnavailableUsageLimits({
-          checkedAt: DateTime.formatIso(yield* DateTime.now),
-          reason: "probeFailed",
-          message: "Could not read Antigravity limits. Refresh provider status to retry.",
-        });
+        return {
+          limits: makeUnavailableUsageLimits({
+            checkedAt: DateTime.formatIso(yield* DateTime.now),
+            reason: "probeFailed",
+            message: "Could not read Antigravity limits. Refresh provider status to retry.",
+          }),
+        };
       }),
     ),
   );
