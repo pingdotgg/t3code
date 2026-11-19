@@ -2,6 +2,7 @@ import {
   CommandId,
   type OrchestrationProjectShell,
   type PullRequestState,
+  type PullRequestWatchUntil,
   type OrchestrationV2ThreadShell,
   type ThreadId,
   type ThreadPullRequestLink,
@@ -199,18 +200,20 @@ const make = Effect.gen(function* () {
 
   // The domain service owns the registration span.
   const setWatching = Effect.fnUntraced(function* (
-    input: PullRequestTargetInput,
+    input: PullRequestTargetInput & { readonly until?: PullRequestWatchUntil | undefined },
     watching: boolean,
   ) {
     const scope = yield* McpInvocationContext.requireMcpCapability("pull-requests");
     const threadId = input.threadId ?? scope.thread?.threadId;
     if (threadId === undefined) return yield* new PullRequestThreadRequiredError();
-    return yield* watches.setWatching({ threadId, target: input, watching }).pipe(
-      Effect.catchTags({
-        PullRequestWatchThreadNotFoundError: (error) =>
-          threadNotFound(engine, scope, error.threadId, error.message),
-      }),
-    );
+    return yield* watches
+      .setWatching({ threadId, target: input, watching, until: input.until })
+      .pipe(
+        Effect.catchTags({
+          PullRequestWatchThreadNotFoundError: (error) =>
+            threadNotFound(engine, scope, error.threadId, error.message),
+        }),
+      );
   });
 
   const locateAll = Effect.fn("PullRequestsToolkit.locateAll")(function* (

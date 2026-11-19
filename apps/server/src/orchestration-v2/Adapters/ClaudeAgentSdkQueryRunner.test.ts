@@ -231,6 +231,35 @@ const resumedMcpQueryInput = {
   },
 } satisfies ClaudeAgentSdkQueryOpenInput;
 
+it.effect("resumes a session whose history exceeds the status-probe output limit", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const configDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-large-history-",
+    });
+    yield* writeClaudeSession(configDir, [
+      sessionEntry("aaaaaaaa-0000-4000-8000-000000000001", null, {
+        role: "user",
+        content: "x".repeat(9 * 1024 * 1024),
+      }),
+    ]);
+    const querySpy = vi
+      .spyOn(ClaudeSdk, "query")
+      .mockImplementation(() => ({ close: vi.fn() }) as unknown as ClaudeSdk.Query);
+    yield* Effect.addFinalizer(() => Effect.sync(() => querySpy.mockRestore()));
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    const { mcpServers: _mcpServers, ...options } = resumedMcpQueryInput.options;
+    const session = yield* runner.open({
+      ...resumedMcpQueryInput,
+      resume: true,
+      options: { ...options, cwd: "/repo", env: { ...process.env, CLAUDE_CONFIG_DIR: configDir } },
+    });
+    yield* Effect.addFinalizer(() => session.close.pipe(Effect.orDie));
+    assert.equal(querySpy.mock.calls.length, 1);
+    assert.equal(querySpy.mock.calls[0]?.[0].options?.resume, FORK_SESSION_ID);
+  }).pipe(Effect.provide(Layer.merge(realQueryRunner, NodeServices.layer))),
+);
+
 it.effect("reopens a stalled MCP registration before delivering the resumed prompt", () =>
   Effect.gen(function* () {
     const registrationStarted = Promise.withResolvers<void>();
