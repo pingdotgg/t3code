@@ -59,9 +59,10 @@ function screenAspect(platform: DevicePlatform, screen: DeviceScreenSize | null)
 function listenForMenuPaste(element: HTMLElement, onPaste: (text: string) => void) {
   const document = element.ownerDocument;
   const listener = (event: ClipboardEvent) => {
-    if (document.activeElement !== element || !event.clipboardData) return;
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (document.activeElement !== element || text === "") return;
     event.preventDefault();
-    onPaste(event.clipboardData.getData("text/plain"));
+    onPaste(text);
   };
   document.addEventListener("paste", listener);
   return () => document.removeEventListener("paste", listener);

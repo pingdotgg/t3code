@@ -258,6 +258,15 @@ it("pastes into the foreground iOS app when a menu paste targets text outside th
     .dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
   await vi.waitFor(() => expect(input.pastes).toHaveLength(2));
   expect(runAction).toHaveBeenCalledTimes(2);
+  const files = new DataTransfer();
+  files.items.add(new File(["x"], "x.png", { type: "image/png" }));
+  const filePaste = new ClipboardEvent("paste", {
+    bubbles: true,
+    cancelable: true,
+    clipboardData: files,
+  });
+  screen.getByText("Input connected", { exact: true }).element().dispatchEvent(filePaste);
+  expect(filePaste.defaultPrevented).toBe(false);
 });
 
 it("sends keys typed during a paste after the pasted text", async () => {
